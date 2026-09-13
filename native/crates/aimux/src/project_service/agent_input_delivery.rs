@@ -662,6 +662,7 @@ impl PeriodicTask for AgentInputDeliveryTask {
     fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             run_pending_agent_input_deliveries_async(&self.context, scheduler_now_ms()).await;
+            Ok(())
         })
     }
 }

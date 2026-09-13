@@ -1704,6 +1704,53 @@ fn renders_service_and_failure_footer_hints() {
 }
 
 #[test]
+fn renders_global_loop_alert_pause_chrome() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full.clone();
+    snapshot.extra.insert(
+        "loopAlertState".into(),
+        json!({
+            "ok": true,
+            "pausedCount": 0,
+            "bufferedCount": 3,
+            "globalPause": {
+                "enabled": true,
+                "bufferedCount": 3,
+                "remainingMs": 125_000
+            }
+        }),
+    );
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: Some("<WORKTREE>"),
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("LOOP ALERTS PAUSED"));
+    assert!(plain.contains("3 buffered"));
+    assert!(plain.contains("expires in 3m"));
+    assert!(plain.contains("press O"));
+}
+
+#[test]
 fn renders_typed_operation_failures_in_banner_and_worktree_details() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");

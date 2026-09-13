@@ -26,6 +26,8 @@ import {
   type AgentOverseerResponse,
   type AgentScribeInput,
   type AgentScribeResponse,
+  type AgentWatchInput,
+  type AgentWatchResponse,
   type AgentOutputStreamInput,
   type AgentSessionInput,
   type ControlActionResponse,
@@ -97,6 +99,7 @@ import {
   type SwitchableAgentsResponse,
   type SwitchAgentRequest,
   type TaskAssignInput,
+  type TaskCancelInput,
   type TaskDetailResponse,
   type TaskLifecycleInput,
   type TaskListResponse,
@@ -126,8 +129,12 @@ import { CORE_API_ROUTES } from "../../src/core-command-contract";
 export type {
   AgentLane,
   AgentRole,
+  AgentRoleMutationRefusalReason,
   AgentRoleState,
   AgentSupervisorRole,
+  AgentWatchInput,
+  AgentWatchRefusalReason,
+  AgentWatchResponse,
   CoordinationBucket,
   CoordinationReachability,
   CoordinationWorklistItem,
@@ -144,6 +151,7 @@ export type {
   ProjectTopologyResponse,
   TeammateListResponse,
   ProjectWorktreeSummary,
+  TaskCancelInput,
   TaskDetailResponse,
   TaskListResponse,
   TaskSummaryResponse,
@@ -773,6 +781,14 @@ export async function setAgentScribe(
   opts?: ApiOpts,
 ): Promise<AgentScribeResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.scribe, opts, input);
+}
+
+export async function setAgentWatch(
+  endpoint: ServiceEndpoint,
+  input: AgentWatchInput,
+  opts?: ApiOpts,
+): Promise<AgentWatchResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.watch, opts, input);
 }
 
 function workOutlineQueryPath(query?: WorkOutlineQuery & { entryId?: string }): string {
@@ -1676,7 +1692,7 @@ export async function blockTask(
 
 export async function cancelTask(
   endpoint: ServiceEndpoint,
-  input: TaskLifecycleInput,
+  input: TaskCancelInput,
   opts?: ApiOpts,
 ): Promise<WorkflowMutationResponse> {
   return callProjectJson<WorkflowMutationResponse>(

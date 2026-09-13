@@ -153,10 +153,30 @@ pub fn agent_role_state(session: Option<&Value>) -> Value {
             "reason": "session-unavailable",
         });
     };
+    let role = agent_role(Some(session));
+    let lane = agent_lane(Some(session));
+    if bool_field(session, "pendingRelaunchForRole") == Some(true) {
+        let effective_role = string_field(session, "effectiveRole").unwrap_or(role);
+        let effective_lane = session
+            .get("effectiveLane")
+            .cloned()
+            .unwrap_or_else(|| lane.clone());
+        return json!({
+            "status": "pending-relaunch",
+            "role": role,
+            "lane": lane,
+            "projectControl": is_project_control_session(Some(session)),
+            "declaredRole": role,
+            "declaredLane": lane,
+            "effectiveRole": effective_role,
+            "effectiveLane": effective_lane,
+            "runtimeWorkingDirectory": string_field(session, "runtimeWorkingDirectory"),
+        });
+    }
     json!({
         "status": "resolved",
-        "role": agent_role(Some(session)),
-        "lane": agent_lane(Some(session)),
+        "role": role,
+        "lane": lane,
         "projectControl": is_project_control_session(Some(session)),
     })
 }

@@ -777,6 +777,18 @@ pub fn render_core_loop_remove_lines(payload: &Value) -> Vec<String> {
         js_string(field(payload, "sessionId"))
     )]
 }
+pub fn render_core_loop_pause_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "loop alerts paused for {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
+pub fn render_core_loop_unpause_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "loop alerts unpaused for {}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
 pub fn render_core_loop_list_lines(payload: &Value) -> Vec<String> {
     let agents = array(payload, "agents");
     if agents.is_empty() {

@@ -26,11 +26,14 @@ pub struct LoopSend {
 pub enum LoopSendKind {
     OverseerBriefing,
     DirectNudge,
+    PausedSummary,
+    Reconciliation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoopDeliveryOutcome {
     Delivered,
+    Buffered,
     Failed { error: String },
 }
 
@@ -46,6 +49,48 @@ pub struct LoopDeliveryRecord {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopAlertPause {
+    pub paused_at_ms: i64,
+    pub loop_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by_role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopGlobalPause {
+    pub paused_at_ms: i64,
+    pub expires_at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by_role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BufferedLoopSend {
+    pub first_buffered_at_ms: i64,
+    pub last_seen_at_ms: i64,
+    pub seen_count: u64,
+    pub session_id: String,
+    pub text: String,
+    pub signature: String,
+    pub kind: String,
+}
+
 /// Cross-scan state: who was nudged when, and when the overseer was last woken.
 #[derive(Debug, Default)]
 pub struct LoopWatcher {
@@ -57,6 +102,18 @@ pub struct LoopWatcher {
     last_overseer_attempted_signature: Option<String>,
     unchanged_candidate_ticks: u64,
     delivery_records: Vec<LoopDeliveryRecord>,
+    paused_loop_alerts: BTreeMap<String, LoopAlertPause>,
+    paused_summary_ticks: u64,
+    last_paused_summary_signature: Option<String>,
+    global_pause: Option<LoopGlobalPause>,
+    buffered_sends: BTreeMap<String, BufferedLoopSend>,
+    global_pause_reminder_ticks: u64,
+    last_reconciliation_signature: Option<String>,
+    last_reconciliation_attempted_signature: Option<String>,
+    last_reconciliation_reported_signature: Option<String>,
+    last_reconciliation_wake_at: i64,
+    unchanged_reconciliation_ticks: u64,
+    reconciliation_condition_since_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -102,7 +159,13 @@ impl LoopWatcher {
         let mut sends = Vec::new();
         let metadata = input.get("metadata").unwrap_or(&Value::Null);
         let overseer_id = find_overseer_session_id(metadata);
-        let raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        self.gc_stale_pauses(input);
+        let mut raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        let paused_candidates = self.extract_paused_candidates(&mut raw_candidates);
+        let paused_summary =
+            self.plan_paused_summary(&paused_candidates, overseer_id.as_deref(), input);
+        let reconciliation =
+            self.plan_reconciliation(overseer_id.as_deref(), &paused_candidates, input, now_ms);
         let candidates = self.dwelled_candidates(
             raw_candidates,
             now_ms,
@@ -113,6 +176,12 @@ impl LoopWatcher {
             self.last_overseer_reported_signature = None;
             self.last_overseer_attempted_signature = None;
             self.unchanged_candidate_ticks = 0;
+            if let Some(send) = paused_summary {
+                sends.push(send);
+            }
+            if let Some(send) = reconciliation {
+                sends.push(send);
+            }
             return sends;
         }
         let candidate_sig = candidate_signature(&candidates);
@@ -140,6 +209,9 @@ impl LoopWatcher {
                 cooldown,
             );
             if (already_reported || already_attempted) && !reminder_due {
+                if let Some(send) = paused_summary {
+                    sends.push(send);
+                }
                 return sends;
             }
             let send = LoopSend {
@@ -152,6 +224,12 @@ impl LoopWatcher {
                 kind: LoopSendKind::OverseerBriefing,
             };
             sends.push(send);
+            if let Some(send) = paused_summary {
+                sends.push(send);
+            }
+            if let Some(send) = reconciliation {
+                sends.push(send);
+            }
             return sends;
         }
 
@@ -161,6 +239,9 @@ impl LoopWatcher {
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
+            if let Some(send) = reconciliation {
+                sends.push(send);
+            }
             return sends;
         }
 
@@ -175,6 +256,12 @@ impl LoopWatcher {
                 signature: candidate_signature(&[candidate]),
                 kind: LoopSendKind::DirectNudge,
             };
+            sends.push(send);
+        }
+        if let Some(send) = paused_summary {
+            sends.push(send);
+        }
+        if let Some(send) = reconciliation {
             sends.push(send);
         }
         sends
@@ -197,6 +284,14 @@ impl LoopWatcher {
             LoopSendKind::DirectNudge => {
                 self.last_nudge_at.insert(send.session_id.clone(), now_ms);
             }
+            LoopSendKind::PausedSummary => {}
+            LoopSendKind::Reconciliation => {
+                self.last_reconciliation_wake_at = now_ms;
+                self.last_reconciliation_attempted_signature = Some(send.signature.clone());
+                if matches!(outcome, LoopDeliveryOutcome::Delivered) {
+                    self.last_reconciliation_reported_signature = Some(send.signature.clone());
+                }
+            }
         }
         self.record_delivery(send, now_ms, outcome);
     }
@@ -205,20 +300,156 @@ impl LoopWatcher {
         self.delivery_records.last()
     }
 
+    pub fn pause_loop_alerts(
+        &mut self,
+        session_id: &str,
+        loop_key: String,
+        paused_at_ms: i64,
+        provenance: LoopAlertPauseProvenance,
+    ) -> LoopAlertPause {
+        let pause = LoopAlertPause {
+            paused_at_ms,
+            loop_key,
+            paused_by: provenance.paused_by,
+            paused_by_session_id: provenance.paused_by_session_id,
+            paused_by_role: provenance.paused_by_role,
+            reason: provenance.reason,
+        };
+        self.paused_loop_alerts
+            .insert(session_id.to_owned(), pause.clone());
+        pause
+    }
+
+    pub fn unpause_loop_alerts(&mut self, session_id: &str) -> Option<LoopAlertPause> {
+        self.paused_loop_alerts.remove(session_id)
+    }
+
+    pub fn paused_loop_alert(&self, session_id: &str) -> Option<&LoopAlertPause> {
+        self.paused_loop_alerts.get(session_id)
+    }
+
+    pub fn set_global_pause(
+        &mut self,
+        now_ms: i64,
+        expires_at_ms: i64,
+        provenance: LoopAlertPauseProvenance,
+    ) -> LoopGlobalPause {
+        let pause = LoopGlobalPause {
+            paused_at_ms: now_ms,
+            expires_at_ms: expires_at_ms.max(now_ms.saturating_add(1)),
+            paused_by: provenance.paused_by,
+            paused_by_session_id: provenance.paused_by_session_id,
+            paused_by_role: provenance.paused_by_role,
+            reason: provenance.reason,
+        };
+        self.global_pause = Some(pause.clone());
+        self.global_pause_reminder_ticks = 0;
+        pause
+    }
+
+    pub fn clear_global_pause(&mut self) -> Option<LoopGlobalPause> {
+        self.global_pause_reminder_ticks = 0;
+        self.global_pause.take()
+    }
+
+    pub fn expire_global_pause(&mut self, now_ms: i64) -> Option<LoopGlobalPause> {
+        if self
+            .global_pause
+            .as_ref()
+            .is_some_and(|pause| pause.expires_at_ms <= now_ms)
+        {
+            return self.clear_global_pause();
+        }
+        None
+    }
+
+    pub fn is_global_pause_active(&self, now_ms: i64) -> bool {
+        self.global_pause
+            .as_ref()
+            .is_some_and(|pause| pause.expires_at_ms > now_ms)
+    }
+
+    pub fn buffer_send(&mut self, send: &LoopSend, now_ms: i64) {
+        let key = buffered_send_key(send);
+        let entry = self
+            .buffered_sends
+            .entry(key)
+            .or_insert_with(|| BufferedLoopSend {
+                first_buffered_at_ms: now_ms,
+                last_seen_at_ms: now_ms,
+                seen_count: 0,
+                session_id: send.session_id.clone(),
+                text: send.text.clone(),
+                signature: send.signature.clone(),
+                kind: loop_send_kind_name(send.kind).to_owned(),
+            });
+        entry.last_seen_at_ms = now_ms;
+        entry.seen_count = entry.seen_count.saturating_add(1);
+        entry.session_id = send.session_id.clone();
+        entry.text = send.text.clone();
+        entry.signature = send.signature.clone();
+        entry.kind = loop_send_kind_name(send.kind).to_owned();
+    }
+
+    pub fn buffered_sends_to_deliver(&self, limit: usize) -> Vec<LoopSend> {
+        self.buffered_sends
+            .values()
+            .take(limit)
+            .filter_map(buffered_send_to_loop_send)
+            .collect()
+    }
+
+    pub fn remove_buffered_send(&mut self, send: &LoopSend) {
+        self.buffered_sends.remove(&buffered_send_key(send));
+    }
+
+    pub fn buffered_send_count(&self) -> usize {
+        self.buffered_sends.len()
+    }
+
+    pub fn note_global_pause_tick(&mut self) {
+        if self.global_pause.is_some() {
+            self.global_pause_reminder_ticks = self.global_pause_reminder_ticks.saturating_add(1);
+        }
+    }
+
+    pub fn loop_alert_state(&self, now_ms: i64) -> Value {
+        let global_pause = self.global_pause.as_ref().map(|pause| {
+            json!({
+                "enabled": pause.expires_at_ms > now_ms,
+                "pausedAtMs": pause.paused_at_ms,
+                "expiresAtMs": pause.expires_at_ms,
+                "remainingMs": pause.expires_at_ms.saturating_sub(now_ms),
+                "bufferedCount": self.buffered_sends.len(),
+                "pausedBy": pause.paused_by,
+                "pausedBySessionId": pause.paused_by_session_id,
+                "pausedByRole": pause.paused_by_role,
+                "reason": pause.reason,
+                "reminderTicks": self.global_pause_reminder_ticks
+            })
+        });
+        json!({
+            "ok": true,
+            "globalPause": global_pause.unwrap_or_else(|| json!({
+                "enabled": false,
+                "bufferedCount": self.buffered_sends.len()
+            })),
+            "pausedCount": self.paused_loop_alerts.len(),
+            "bufferedCount": self.buffered_sends.len()
+        })
+    }
+
     fn record_delivery(&mut self, send: &LoopSend, now_ms: i64, outcome: LoopDeliveryOutcome) {
         let (outcome, error) = match outcome {
             LoopDeliveryOutcome::Delivered => ("delivered".to_owned(), None),
+            LoopDeliveryOutcome::Buffered => ("buffered".to_owned(), None),
             LoopDeliveryOutcome::Failed { error } => ("failed".to_owned(), Some(error)),
         };
         self.delivery_records.push(LoopDeliveryRecord {
             at_ms: now_ms,
             session_id: send.session_id.clone(),
             signature: send.signature.clone(),
-            kind: match send.kind {
-                LoopSendKind::OverseerBriefing => "overseerBriefing",
-                LoopSendKind::DirectNudge => "directNudge",
-            }
-            .to_owned(),
+            kind: loop_send_kind_name(send.kind).to_owned(),
             outcome,
             error,
         });
@@ -253,7 +484,133 @@ impl LoopWatcher {
             })
             .collect()
     }
+
+    fn extract_paused_candidates(&self, candidates: &mut Vec<Value>) -> Vec<Value> {
+        let mut paused = Vec::new();
+        candidates.retain(|candidate| {
+            let id = str_field(candidate, "id");
+            let is_paused = loop_pause_key(candidate)
+                .as_deref()
+                .and_then(|key| {
+                    self.paused_loop_alerts
+                        .get(id)
+                        .map(|pause| pause.loop_key == key)
+                })
+                .unwrap_or(false);
+            if is_paused {
+                paused.push(candidate.clone());
+                false
+            } else {
+                true
+            }
+        });
+        paused
+    }
+
+    fn gc_stale_pauses(&mut self, input: &Value) {
+        if self.paused_loop_alerts.is_empty() {
+            return;
+        }
+        let current = active_loop_pause_keys(input);
+        self.paused_loop_alerts
+            .retain(|session_id, pause| current.get(session_id) == Some(&pause.loop_key));
+    }
+
+    fn plan_paused_summary(
+        &mut self,
+        paused_candidates: &[Value],
+        overseer_id: Option<&str>,
+        input: &Value,
+    ) -> Option<LoopSend> {
+        if paused_candidates.is_empty() {
+            self.paused_summary_ticks = 0;
+            self.last_paused_summary_signature = None;
+            return None;
+        }
+        let overseer_id = overseer_id.filter(|id| session_exists(input, id))?;
+        self.paused_summary_ticks = self.paused_summary_ticks.saturating_add(1);
+        let signature = format!("paused:{}", candidate_signature(paused_candidates));
+        let due_by_cadence = self.paused_summary_ticks >= PAUSED_SUMMARY_TICK_CADENCE;
+        let due_by_change = self.last_paused_summary_signature.as_deref() != Some(&signature)
+            && self.last_paused_summary_signature.is_some();
+        if !due_by_cadence && !due_by_change {
+            return None;
+        }
+        self.paused_summary_ticks = 0;
+        self.last_paused_summary_signature = Some(signature.clone());
+        Some(LoopSend {
+            session_id: overseer_id.to_owned(),
+            text: build_paused_summary(paused_candidates),
+            signature,
+            kind: LoopSendKind::PausedSummary,
+        })
+    }
+
+    fn plan_reconciliation(
+        &mut self,
+        overseer_id: Option<&str>,
+        paused_candidates: &[Value],
+        input: &Value,
+        now_ms: i64,
+    ) -> Option<LoopSend> {
+        let overseer_id = overseer_id.filter(|id| session_exists(input, id))?;
+        let available = find_idle_loop_capacity(input, Some(overseer_id), paused_candidates);
+        let work = find_visible_unowned_work(input);
+        if available.is_empty() || work.is_empty() {
+            self.last_reconciliation_signature = None;
+            self.last_reconciliation_attempted_signature = None;
+            self.last_reconciliation_reported_signature = None;
+            self.unchanged_reconciliation_ticks = 0;
+            self.reconciliation_condition_since_ms = None;
+            return None;
+        }
+
+        let condition_since = *self.reconciliation_condition_since_ms.get_or_insert(now_ms);
+        let dwell_ms = config_i64(input, "reconciliationDwellMs", 30_000).max(0);
+        if now_ms.saturating_sub(condition_since) < dwell_ms {
+            return None;
+        }
+
+        let signature = reconciliation_signature(&work, &available);
+        if self.last_reconciliation_signature.as_deref() == Some(signature.as_str()) {
+            self.unchanged_reconciliation_ticks =
+                self.unchanged_reconciliation_ticks.saturating_add(1);
+        } else {
+            self.last_reconciliation_signature = Some(signature.clone());
+            self.unchanged_reconciliation_ticks = 0;
+        }
+
+        let already_reported =
+            self.last_reconciliation_reported_signature.as_deref() == Some(signature.as_str());
+        let already_attempted =
+            self.last_reconciliation_attempted_signature.as_deref() == Some(signature.as_str());
+        let reminder_due = reconciliation_reminder_due(
+            input,
+            self.unchanged_reconciliation_ticks,
+            now_ms.saturating_sub(self.last_reconciliation_wake_at),
+        );
+        if (already_reported || already_attempted) && !reminder_due {
+            return None;
+        }
+
+        Some(LoopSend {
+            session_id: overseer_id.to_owned(),
+            text: build_reconciliation_briefing(&work, &available),
+            signature,
+            kind: LoopSendKind::Reconciliation,
+        })
+    }
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LoopAlertPauseProvenance {
+    pub paused_by: Option<String>,
+    pub paused_by_session_id: Option<String>,
+    pub paused_by_role: Option<String>,
+    pub reason: Option<String>,
+}
+
+const PAUSED_SUMMARY_TICK_CADENCE: u64 = 10;
 
 pub fn loop_watcher_state_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
     project_state_dir.as_ref().join("loop-watcher-state.json")
@@ -288,6 +645,33 @@ pub fn save_loop_watcher_state(
     })
 }
 
+pub fn loop_alert_state_summary(project_state_dir: impl AsRef<Path>, now_ms: i64) -> Value {
+    let path = loop_watcher_state_path(project_state_dir);
+    match load_loop_watcher_state(&path) {
+        Ok(watcher) => watcher.loop_alert_state(now_ms),
+        Err(error) => json!({
+            "ok": false,
+            "error": error,
+            "globalPause": { "enabled": false, "bufferedCount": 0 },
+            "pausedCount": 0,
+            "bufferedCount": 0
+        }),
+    }
+}
+
+pub fn clear_loop_alert_pause_for_work(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+) -> Result<Option<LoopAlertPause>, String> {
+    let state_path = loop_watcher_state_path(project_state_dir);
+    let mut watcher = load_loop_watcher_state(&state_path)?;
+    let cleared = watcher.unpause_loop_alerts(session_id);
+    if cleared.is_some() {
+        save_loop_watcher_state(&state_path, &watcher)?;
+    }
+    Ok(cleared)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistentLoopWatcherState {
@@ -301,6 +685,30 @@ struct PersistentLoopWatcherState {
     unchanged_candidate_ticks: u64,
     #[serde(default)]
     delivery_records: Vec<LoopDeliveryRecord>,
+    #[serde(default)]
+    paused_loop_alerts: BTreeMap<String, LoopAlertPause>,
+    #[serde(default)]
+    paused_summary_ticks: u64,
+    #[serde(default)]
+    last_paused_summary_signature: Option<String>,
+    #[serde(default)]
+    global_pause: Option<LoopGlobalPause>,
+    #[serde(default)]
+    buffered_sends: BTreeMap<String, BufferedLoopSend>,
+    #[serde(default)]
+    global_pause_reminder_ticks: u64,
+    #[serde(default)]
+    last_reconciliation_signature: Option<String>,
+    #[serde(default)]
+    last_reconciliation_attempted_signature: Option<String>,
+    #[serde(default)]
+    last_reconciliation_reported_signature: Option<String>,
+    #[serde(default)]
+    last_reconciliation_wake_at: i64,
+    #[serde(default)]
+    unchanged_reconciliation_ticks: u64,
+    #[serde(default)]
+    reconciliation_condition_since_ms: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -335,6 +743,22 @@ impl PersistentLoopWatcherState {
             last_overseer_attempted_signature: watcher.last_overseer_attempted_signature.clone(),
             unchanged_candidate_ticks: watcher.unchanged_candidate_ticks,
             delivery_records: watcher.delivery_records.clone(),
+            paused_loop_alerts: watcher.paused_loop_alerts.clone(),
+            paused_summary_ticks: watcher.paused_summary_ticks,
+            last_paused_summary_signature: watcher.last_paused_summary_signature.clone(),
+            global_pause: watcher.global_pause.clone(),
+            buffered_sends: watcher.buffered_sends.clone(),
+            global_pause_reminder_ticks: watcher.global_pause_reminder_ticks,
+            last_reconciliation_signature: watcher.last_reconciliation_signature.clone(),
+            last_reconciliation_attempted_signature: watcher
+                .last_reconciliation_attempted_signature
+                .clone(),
+            last_reconciliation_reported_signature: watcher
+                .last_reconciliation_reported_signature
+                .clone(),
+            last_reconciliation_wake_at: watcher.last_reconciliation_wake_at,
+            unchanged_reconciliation_ticks: watcher.unchanged_reconciliation_ticks,
+            reconciliation_condition_since_ms: watcher.reconciliation_condition_since_ms,
         }
     }
 
@@ -368,8 +792,67 @@ impl PersistentLoopWatcherState {
             last_overseer_attempted_signature: self.last_overseer_attempted_signature,
             unchanged_candidate_ticks: self.unchanged_candidate_ticks,
             delivery_records: self.delivery_records,
+            paused_loop_alerts: self.paused_loop_alerts,
+            paused_summary_ticks: self.paused_summary_ticks,
+            last_paused_summary_signature: self.last_paused_summary_signature,
+            global_pause: self.global_pause,
+            buffered_sends: self.buffered_sends,
+            global_pause_reminder_ticks: self.global_pause_reminder_ticks,
+            last_reconciliation_signature: self.last_reconciliation_signature,
+            last_reconciliation_attempted_signature: self.last_reconciliation_attempted_signature,
+            last_reconciliation_reported_signature: self.last_reconciliation_reported_signature,
+            last_reconciliation_wake_at: self.last_reconciliation_wake_at,
+            unchanged_reconciliation_ticks: self.unchanged_reconciliation_ticks,
+            reconciliation_condition_since_ms: self.reconciliation_condition_since_ms,
         })
     }
+}
+
+fn buffered_send_key(send: &LoopSend) -> String {
+    format!("{}:{}", loop_send_kind_name(send.kind), send.signature)
+}
+
+fn buffered_send_to_loop_send(buffered: &BufferedLoopSend) -> Option<LoopSend> {
+    Some(LoopSend {
+        session_id: buffered.session_id.clone(),
+        text: buffered.text.clone(),
+        signature: buffered.signature.clone(),
+        kind: loop_send_kind_from_name(&buffered.kind)?,
+    })
+}
+
+fn loop_send_kind_name(kind: LoopSendKind) -> &'static str {
+    match kind {
+        LoopSendKind::OverseerBriefing => "overseerBriefing",
+        LoopSendKind::DirectNudge => "directNudge",
+        LoopSendKind::PausedSummary => "pausedSummary",
+        LoopSendKind::Reconciliation => "reconciliation",
+    }
+}
+
+fn loop_send_kind_from_name(value: &str) -> Option<LoopSendKind> {
+    match value {
+        "overseerBriefing" => Some(LoopSendKind::OverseerBriefing),
+        "directNudge" => Some(LoopSendKind::DirectNudge),
+        "pausedSummary" => Some(LoopSendKind::PausedSummary),
+        "reconciliation" => Some(LoopSendKind::Reconciliation),
+        _ => None,
+    }
+}
+
+pub fn loop_pause_key_from_loop_metadata(loop_meta: &Value) -> Option<String> {
+    let loop_meta = loop_meta.as_object()?;
+    if !loop_meta
+        .get("active")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let since = optional_str_value(loop_meta.get("since"));
+    let goal = optional_str_value(loop_meta.get("goal"));
+    let source = optional_str_value(loop_meta.get("source"));
+    Some(format!("{since}\n{goal}\n{source}"))
 }
 
 pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
@@ -442,6 +925,22 @@ pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&st
         .collect()
 }
 
+fn active_loop_pause_keys(input: &Value) -> BTreeMap<String, String> {
+    let metadata = input.get("metadata").unwrap_or(&Value::Null);
+    let metadata_sessions = match metadata.get("sessions").and_then(Value::as_object) {
+        Some(sessions) => sessions,
+        None => empty_object(),
+    };
+    array_field(input, "sessions")
+        .iter()
+        .filter_map(|session| {
+            let id = str_field(session, "id");
+            let loop_meta = metadata_sessions.get(id)?.get("loop")?;
+            loop_pause_key_from_loop_metadata(loop_meta).map(|key| (id.to_owned(), key))
+        })
+        .collect()
+}
+
 pub fn build_overseer_briefing(candidates: &[Value], template: Option<&str>) -> String {
     if let Some(template) = template
         .map(str::trim)
@@ -469,6 +968,45 @@ pub fn build_overseer_briefing(candidates: &[Value], template: Option<&str>) -> 
             "If it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back.",
         ),
     ]);
+    lines.join("\n")
+}
+
+fn build_paused_summary(candidates: &[Value]) -> String {
+    let mut lines = Vec::from([String::from(
+        "[aimux loop check] These agents have loop alerts paused; remove them from the loop if you are fully done:",
+    )]);
+    lines.extend(candidates.iter().map(describe_candidate));
+    lines.join("\n")
+}
+
+fn build_reconciliation_briefing(work: &[Value], available: &[Value]) -> String {
+    let mut lines = Vec::from([String::from(
+        "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.",
+    )]);
+    lines.push(String::from(
+        "This does not include external queue files such as Sam's gqaapg queue unless they are imported into runtime exchange.",
+    ));
+    lines.push(String::new());
+    lines.push(String::from("Visible unowned work:"));
+    lines.extend(work.iter().take(8).map(describe_reconciliation_work));
+    if work.len() > 8 {
+        lines.push(format!("- ... and {} more", work.len() - 8));
+    }
+    lines.push(String::new());
+    lines.push(String::from("Available watched loop capacity:"));
+    lines.extend(
+        available
+            .iter()
+            .take(8)
+            .map(describe_reconciliation_capacity),
+    );
+    if available.len() > 8 {
+        lines.push(format!("- ... and {} more", available.len() - 8));
+    }
+    lines.push(String::new());
+    lines.push(String::from(
+        "Assign or pause agents intentionally. If these runtime-exchange/worklist items are no longer real, close or update them so the worklist matches the work.",
+    ));
     lines.join("\n")
 }
 
@@ -511,6 +1049,142 @@ fn replace_template_token(template: &str, token: &str, replacement: &str) -> Str
         index += 1;
     }
     output
+}
+
+fn find_idle_loop_capacity(
+    input: &Value,
+    overseer_id: Option<&str>,
+    paused_candidates: &[Value],
+) -> Vec<Value> {
+    let paused_ids = paused_candidates
+        .iter()
+        .map(|candidate| str_field(candidate, "id").to_owned())
+        .collect::<BTreeSet<_>>();
+    find_loop_candidates_with_overseer(input, overseer_id)
+        .into_iter()
+        .filter(|candidate| !paused_ids.contains(str_field(candidate, "id")))
+        .collect()
+}
+
+fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
+    let live_sessions = array_field(input, "sessions")
+        .iter()
+        .filter_map(|session| optional_str(session, "id").map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    let mut work = Vec::new();
+    let exchange = input.get("runtimeExchange").unwrap_or(&Value::Null);
+    for task in array_field(exchange, "tasks") {
+        if let Some(item) = unowned_task_item(task, &live_sessions) {
+            work.push(item);
+        }
+    }
+    for item in array_field(input, "coordinationWorklist") {
+        if let Some(item) = unowned_worklist_item(item) {
+            work.push(item);
+        }
+    }
+    work.sort_by(|left, right| {
+        str_field(left, "sortKey")
+            .cmp(str_field(right, "sortKey"))
+            .then_with(|| str_field(left, "id").cmp(str_field(right, "id")))
+    });
+    work.dedup_by(|left, right| str_field(left, "dedupeKey") == str_field(right, "dedupeKey"));
+    work
+}
+
+fn unowned_task_item(task: &Value, live_sessions: &BTreeSet<String>) -> Option<Value> {
+    if str_field(task, "status") != "pending" {
+        return None;
+    }
+    let assigned_to = optional_str(task, "assignedTo");
+    let owner_state = match assigned_to {
+        None => "unassigned",
+        Some(owner) if !live_sessions.contains(owner) => "assigned-owner-unreachable",
+        Some(_) => return None,
+    };
+    let id = optional_str(task, "id")?;
+    Some(json!({
+        "id": id,
+        "kind": "task",
+        "dedupeKey": format!("task:{id}"),
+        "sortKey": format!("task:{id}"),
+        "status": str_field(task, "status"),
+        "ownerState": owner_state,
+        "assignedTo": assigned_to,
+        "title": optional_str(task, "description").unwrap_or("task")
+    }))
+}
+
+fn unowned_worklist_item(item: &Value) -> Option<Value> {
+    if !item
+        .get("actionable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    if optional_str(item, "sessionId").is_some() {
+        return None;
+    }
+    let key = optional_str(item, "key")?;
+    let kind = optional_str(item, "kind").unwrap_or("worklist");
+    Some(json!({
+        "id": key,
+        "kind": kind,
+        "dedupeKey": format!("worklist:{key}"),
+        "sortKey": format!("worklist:{key}"),
+        "status": optional_str(item, "bucket").unwrap_or("actionable"),
+        "ownerState": "unassigned-worklist",
+        "title": optional_str(item, "title").unwrap_or("worklist item")
+    }))
+}
+
+fn reconciliation_signature(work: &[Value], available: &[Value]) -> String {
+    format!(
+        "reconciliation:condition:unowned-work-present:{}:idle-capacity-present:{}",
+        !work.is_empty(),
+        !available.is_empty()
+    )
+}
+
+fn reconciliation_reminder_due(
+    input: &Value,
+    unchanged_ticks: u64,
+    elapsed_since_last_wake_ms: i64,
+) -> bool {
+    let ticks = input
+        .get("config")
+        .and_then(|config| config.get("reconciliationReminderTicks"))
+        .and_then(Value::as_u64)
+        .unwrap_or(6)
+        .max(1);
+    let cooldown = config_i64(input, "reconciliationCooldownMs", 15 * 60 * 1000).max(0);
+    unchanged_ticks > 0
+        && unchanged_ticks.is_multiple_of(ticks)
+        && elapsed_since_last_wake_ms >= cooldown
+}
+
+fn describe_reconciliation_work(item: &Value) -> String {
+    let title = optional_str(item, "title").unwrap_or("");
+    let title = if title.is_empty() {
+        String::new()
+    } else {
+        format!(" — {title}")
+    };
+    format!(
+        "- {} {} ({}){}",
+        str_field(item, "kind"),
+        str_field(item, "id"),
+        str_field(item, "ownerState"),
+        title
+    )
+}
+
+fn describe_reconciliation_capacity(candidate: &Value) -> String {
+    let goal = optional_str(candidate, "goal")
+        .map(|goal| format!(" — goal: {goal}"))
+        .unwrap_or_default();
+    format!("- {}{}", str_field(candidate, "id"), goal)
 }
 
 pub fn describe_candidate(candidate: &Value) -> String {
@@ -629,6 +1303,16 @@ fn candidate_signature(candidates: &[Value]) -> String {
     ids.join("\u{1e}")
 }
 
+fn loop_pause_key(candidate: &Value) -> Option<String> {
+    let since = optional_str(candidate, "loopSince").unwrap_or_default();
+    if since.is_empty() {
+        return None;
+    }
+    let goal = optional_str(candidate, "goal").unwrap_or_default();
+    let source = optional_str(candidate, "loopSource").unwrap_or_default();
+    Some(format!("{since}\n{goal}\n{source}"))
+}
+
 fn dwell_key(candidate: &Value) -> Option<LoopDwellKey> {
     optional_str(candidate, "id").map(|session_id| LoopDwellKey {
         session_id: session_id.to_owned(),
@@ -640,6 +1324,10 @@ fn dwell_key(candidate: &Value) -> Option<LoopDwellKey> {
             .unwrap_or_default()
             .to_owned(),
     })
+}
+
+fn optional_str_value(value: Option<&Value>) -> String {
+    value.and_then(Value::as_str).unwrap_or("").to_owned()
 }
 
 fn config_i64(input: &Value, field: &str, fallback: i64) -> i64 {

@@ -49,23 +49,45 @@ describe("desktop state resource lifecycle", () => {
     expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["canonical"]);
   });
 
-  it("keeps overseer sessions out of legacy client-side worktree grouping", () => {
+  it("projects supervisor sessions into their own lane instead of a worktree", () => {
     const groups = groupByWorktree(
       desktopState({
         sessions: [
-          { id: "overseer-flag", status: "running", toolConfigKey: "codex", overseer: true },
+          {
+            id: "overseer-flag",
+            status: "running",
+            toolConfigKey: "codex",
+            role: "overseer",
+            lane: { kind: "supervisor" },
+            overseer: true,
+          },
           {
             id: "overseer-team",
             status: "running",
             toolConfigKey: "claude",
             team: { role: "overseer" },
           },
-          { id: "agent", status: "running", toolConfigKey: "codex" },
+          {
+            id: "agent",
+            status: "running",
+            toolConfigKey: "codex",
+            worktreePath: "/repo/wt",
+          },
         ],
+        worktrees: [{ name: "wt", path: "/repo/wt", branch: "feature" }],
       }),
     );
 
-    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["agent"]);
+    expect(groups[0]).toMatchObject({ isSupervisorLane: true, name: "Supervisor Lane" });
+    expect(groups[0]?.sessions.map((session) => session.id)).toEqual([
+      "overseer-flag",
+      "overseer-team",
+    ]);
+    expect(groups.flatMap((group) => group.sessions.map((session) => session.id))).toEqual([
+      "overseer-flag",
+      "overseer-team",
+      "agent",
+    ]);
   });
 
   it("uses explicit project-control flags before legacy team roles", () => {
@@ -91,7 +113,38 @@ describe("desktop state resource lifecycle", () => {
       }),
     );
 
-    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["stale-role", "agent"]);
+    expect(groups[0]).toMatchObject({ isSupervisorLane: true });
+    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["legacy-scribe"]);
+    expect(groups[1]?.sessions.map((session) => session.id)).toEqual(["stale-role", "agent"]);
+  });
+
+  it("uses a future server supervisor lane when present", () => {
+    const groups = groupByWorktree(
+      desktopState({
+        sessions: [
+          {
+            id: "legacy-copy",
+            status: "running",
+            toolConfigKey: "codex",
+            lane: { kind: "supervisor" },
+          },
+        ],
+        supervisorLane: {
+          sessions: [
+            {
+              id: "server-supervisor",
+              status: "running",
+              toolConfigKey: "codex",
+              role: "overseer",
+              lane: { kind: "supervisor" },
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(groups[0]).toMatchObject({ isSupervisorLane: true });
+    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["server-supervisor"]);
   });
 
   it("preserves pending worktree flags through worktree grouping", () => {
@@ -155,6 +208,37 @@ describe("desktop state resource lifecycle", () => {
     expect(shown).toHaveLength(1);
     expect(shown[0]?.sessions.map((session) => session.id)).toEqual(["needs-live"]);
     expect(shown[0]?.services).toEqual([]);
+  });
+
+  it("keeps active supervisor lane entries in the compact sidebar projection", () => {
+    const groups = groupByWorktree(
+      desktopState({
+        sessions: [
+          {
+            id: "overseer",
+            status: "running",
+            toolConfigKey: "codex",
+            role: "overseer",
+            lane: { kind: "supervisor" },
+          },
+          {
+            id: "stopped-scribe",
+            status: "offline",
+            toolConfigKey: "claude",
+            role: "scribe",
+            lane: { kind: "supervisor" },
+          },
+        ],
+      }),
+    );
+
+    const shown = groups.flatMap((bucket) => {
+      const activeBucket = filterWorktreeBucketToActiveEntries(bucket);
+      return activeBucket ? [activeBucket] : [];
+    });
+
+    expect(shown[0]).toMatchObject({ isSupervisorLane: true });
+    expect(shown[0]?.sessions.map((session) => session.id)).toEqual(["overseer"]);
   });
 
   it("marks an in-flight refresh stale when a previous desktop-state exists", () => {

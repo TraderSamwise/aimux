@@ -147,6 +147,12 @@ function agentRecencyText(session: DesktopSession): string | null {
   return formatSessionRecency(session);
 }
 
+function agentRoleBadge(session: DesktopSession): string | null {
+  const role = session.role;
+  if (!role || role === "coder") return null;
+  return role;
+}
+
 function serviceRecencyText(service: DesktopService): string | null {
   return formatServiceRecency(service);
 }
@@ -188,6 +194,7 @@ function AgentRow({
   onPress: () => void;
 }) {
   const shortName = agentShortName(session);
+  const roleBadge = agentRoleBadge(session);
   const state = deriveAgentState(session);
   const recency = agentRecencyText(session);
   const previewUnavailable = formatPreviewCaptureUnavailable(session.previewCapture);
@@ -215,6 +222,11 @@ function AgentRow({
         >
           {shortName}
         </Text>
+        {roleBadge ? (
+          <Text className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-[#7c7e88]">
+            {roleBadge}
+          </Text>
+        ) : null}
       </View>
       {compact ? null : <TrailingHint text={fullHint} />}
     </>
@@ -562,8 +574,9 @@ export function WorktreeList({
         return activeBucket ? [activeBucket] : [];
       })
     : groups;
+  const supervisor = shown.find((g) => g.isSupervisorLane);
   const main = shown.find((g) => g.isMainCheckout);
-  const rest = shown.filter((g) => !g.isMainCheckout);
+  const rest = shown.filter((g) => !g.isMainCheckout && !g.isSupervisorLane);
   const activeRest = rest.filter(worktreeHasChildren);
   const emptyRest = rest.filter((g) => !worktreeHasChildren(g));
 
@@ -586,11 +599,18 @@ export function WorktreeList({
     onKillSession,
   };
   const identityToneForBucket = (bucket: WorktreeBucket) =>
-    worktreeToneForBucket(bucket, projectPath);
+    bucket.isSupervisorLane ? "#d787d7" : worktreeToneForBucket(bucket, projectPath);
 
   const listClassName = cn("py-3", padded && "px-4");
   const content = (
     <>
+      {supervisor ? (
+        <WorktreeCard
+          bucket={supervisor}
+          identityTone={identityToneForBucket(supervisor)}
+          {...cardProps}
+        />
+      ) : null}
       {main ? (
         <WorktreeCard bucket={main} identityTone={identityToneForBucket(main)} {...cardProps} />
       ) : null}

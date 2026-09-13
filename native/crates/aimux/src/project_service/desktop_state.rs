@@ -6,6 +6,7 @@ use std::path::Path;
 
 use crate::config::default_config;
 use crate::daemon_state::{load_daemon_info, load_daemon_info_async, load_metadata_state};
+use crate::loop_watcher::loop_alert_state_summary;
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
@@ -254,6 +255,10 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
         object.insert(
+            "loopAlertState".into(),
+            loop_alert_state_summary(&project_state_dir, super::scheduler::scheduler_now_ms()),
+        );
+        object.insert(
             "agentRestoreOffer".into(),
             read_displayable_agent_restore_offer(context, &project_state_dir)
                 .unwrap_or(Value::Null),
@@ -311,6 +316,10 @@ pub async fn desktop_state_for_context_async(
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
+        object.insert(
+            "loopAlertState".into(),
+            loop_alert_state_summary(&project_state_dir, super::scheduler::scheduler_now_ms()),
+        );
         object.insert(
             "agentRestoreOffer".into(),
             read_displayable_agent_restore_offer(context, &project_state_dir)

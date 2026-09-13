@@ -39,7 +39,9 @@ use crate::daemon::listener::{
 use crate::daemon::process::handle_daemon_runtime_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
-use crate::daemon::stability_doctor::{StabilityDoctorReport, build_stability_doctor_report};
+use crate::daemon::stability_doctor::{
+    StabilityDoctorReport, build_stability_doctor_report_with_live_scheduler,
+};
 use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
 use crate::daemon::stream::{
     maybe_handle_host_agent_stream_request_with_runtime_mutex_async,
@@ -2943,6 +2945,16 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             Some(Value::Object(loop_body)),
             None,
         )?;
+        self.project_service_json(
+            &project_root,
+            project_routes::agents::WATCH,
+            Some(json!({
+                "overseerSessionId": &overseer_session_id,
+                "watchedSessionId": session_id,
+                "active": true,
+            })),
+            None,
+        )?;
 
         let updated_agents = self.read_project_agents(&project_root)?;
         let updated_target = find_agent(&updated_agents, session_id)
@@ -3167,9 +3179,19 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         let mut resolver = self.resolver.clone();
         let project_root = stability_doctor_project_root(project_root);
         let project_state_dir = resolver.project_state_dir_for(&project_root);
-        Ok(build_stability_doctor_report(
+        let live_scheduler = match self.request_project_service_json(
+            &project_root,
+            project_routes::DIAGNOSTICS,
+            None,
+            None,
+        ) {
+            ProjectServiceJsonResult::Ok { json, .. } => json.get("scheduler").cloned(),
+            ProjectServiceJsonResult::Err { .. } => None,
+        };
+        Ok(build_stability_doctor_report_with_live_scheduler(
             &project_root,
             project_state_dir,
+            live_scheduler,
         ))
     }
 

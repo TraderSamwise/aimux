@@ -290,6 +290,12 @@ pub fn topology_session_to_session_state(session: &Value, topology: &Value) -> V
         lifecycle_from_status(string_field(session, "status")),
     );
     for key in [
+        "role",
+        "lane",
+        "roleState",
+        "overseer",
+        "scribe",
+        "projectControl",
         "createdAt",
         "updatedAt",
         "backendSessionId",
@@ -519,6 +525,8 @@ fn coerce_node(value: &Value, index: usize) -> Result<Value, String> {
             &format!("nodes[{index}].logicalId"),
         )?,
         optional("role", row.get("role")),
+        optional_value("lane", row.get("lane")),
+        optional_value("roleState", row.get("roleState")),
         optional("runtime", row.get("runtime")),
         optional("toolConfigKey", row.get("toolConfigKey")),
         optional("model", row.get("model")),
@@ -584,6 +592,12 @@ fn coerce_session(value: &Value, index: usize) -> Result<Value, String> {
         optional("command", row.get("command")),
         optional_string_array("args", row.get("args")),
         optional("backendSessionId", row.get("backendSessionId")),
+        optional("role", row.get("role")),
+        optional_value("lane", row.get("lane")),
+        optional_value("roleState", row.get("roleState")),
+        optional_bool("overseer", row.get("overseer")),
+        optional_bool("scribe", row.get("scribe")),
+        optional_bool("projectControl", row.get("projectControl")),
         optional("worktreePath", row.get("worktreePath")),
         optional("label", row.get("label")),
         optional("headline", row.get("headline")),
@@ -904,6 +918,13 @@ fn optional_bool(key: &str, value: Option<&Value>) -> Option<(String, Value)> {
     value
         .and_then(Value::as_bool)
         .map(|value| (key.into(), Value::Bool(value)))
+}
+
+fn optional_value(key: &str, value: Option<&Value>) -> Option<(String, Value)> {
+    value
+        .cloned()
+        .filter(|value| !value.is_null())
+        .map(|value| (key.into(), value))
 }
 
 fn optional_string_array(key: &str, value: Option<&Value>) -> Option<(String, Value)> {

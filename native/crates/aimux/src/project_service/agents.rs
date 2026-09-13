@@ -13,6 +13,7 @@ use crate::team_contract::{
 };
 use crate::tool_capabilities::exact_backend_resume_blocked_reason;
 
+use super::agent_roles::{load_agent_role_registry, overlay_agent_role_registry};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
@@ -155,6 +156,10 @@ pub fn route_agent_read_request(
         Ok(exchange) => exchange,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
+    let role_registry = match load_agent_role_registry(&project_state_dir) {
+        Ok(registry) => registry,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let tools = default_config()
         .get("tools")
         .and_then(Value::as_object)
@@ -177,6 +182,7 @@ pub fn route_agent_read_request(
                 &sessions,
                 &metadata_state.sessions,
                 array_field(&exchange, "tasks"),
+                Some(&role_registry),
             ),
         }),
     ))
@@ -210,6 +216,10 @@ pub async fn route_agent_read_request_async(
         Ok(exchange) => exchange,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
+    let role_registry = match load_agent_role_registry(&project_state_dir) {
+        Ok(registry) => registry,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let tools = default_config()
         .get("tools")
         .and_then(Value::as_object)
@@ -241,6 +251,7 @@ pub async fn route_agent_read_request_async(
             &projection.sessions,
             &metadata_state.sessions,
             array_field(&exchange, "tasks"),
+            Some(&role_registry),
         ),
     });
     if let Some(error) = projection.live_window_query_error
@@ -545,6 +556,7 @@ pub fn build_agent_list(
     sessions: &[Value],
     metadata_sessions: &BTreeMap<String, Value>,
     tasks: &[Value],
+    role_registry: Option<&Value>,
 ) -> Vec<Value> {
     sessions
         .iter()
@@ -610,6 +622,7 @@ pub fn build_agent_list(
                         .cloned(),
                 );
             }
+            overlay_agent_role_registry(&mut agent, role_registry);
             if let Some(task) = task {
                 agent.insert(
                     "task".into(),
@@ -809,6 +822,7 @@ mod tests {
             })],
             &metadata,
             &[],
+            None,
         );
 
         assert_eq!(agents.len(), 1);
@@ -830,6 +844,7 @@ mod tests {
             })],
             &BTreeMap::new(),
             &[],
+            None,
         );
 
         assert_eq!(agents.len(), 1);
@@ -851,6 +866,7 @@ mod tests {
             })],
             &metadata,
             &[],
+            None,
         );
 
         assert_eq!(agents.len(), 1);

@@ -1447,11 +1447,39 @@ impl DashboardController {
                 DashboardControllerEffect::Render
             }
             DashboardKey::Enter => self.activate_or_create_overseer_from_overlay(snapshot),
+            DashboardKey::Printable('p') => self.toggle_global_loop_alert_pause(snapshot),
             DashboardKey::Printable('w') => self.open_overseer_watch_instructions(snapshot),
             DashboardKey::Printable('x') => self.stop_live_overseer_from_overlay(snapshot),
             DashboardKey::Printable('u') => self.unwatch_selected_from_overseer_overlay(snapshot),
             _ => DashboardControllerEffect::Ignored,
         }
+    }
+
+    fn toggle_global_loop_alert_pause(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let currently_paused = snapshot
+            .extra
+            .get("loopAlertState")
+            .and_then(|state| state.get("globalPause"))
+            .and_then(|pause| pause.get("enabled"))
+            .and_then(Value::as_bool)
+            == Some(true);
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::LOOP_ALERTS,
+            body: json!({
+                "global": true,
+                "paused": !currently_paused,
+                "updatedBy": "dashboard",
+                "reason": if currently_paused {
+                    "human resumed loop alerts"
+                } else {
+                    "human paused loop alerts"
+                }
+            }),
+        })
     }
 
     fn activate_or_create_overseer_from_overlay(

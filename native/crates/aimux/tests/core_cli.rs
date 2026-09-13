@@ -823,6 +823,31 @@ fn task_and_review_commands_plan_native_text_routes() {
         }
     );
 
+    let cancel = classify_core_cli(
+        &[
+            "task",
+            "cancel",
+            "task-1",
+            "--from=claude-1",
+            "--body=No longer needed.",
+        ],
+        &context(true, true),
+    )
+    .expect("task cancel plan");
+    assert_eq!(cancel.operation, CoreCliOperation::TaskCancel);
+    assert_eq!(
+        cancel.action,
+        CoreCliAction::TextRoute {
+            path: "/core/task/cancel-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "taskId": "task-1",
+                "from": "claude-1",
+                "body": "No longer needed.",
+            })),
+        }
+    );
+
     let review = classify_core_cli(
         &[
             "review",
@@ -1897,6 +1922,49 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
         remove.action,
         CoreCliAction::TextRoute {
             path: "/core/loop/remove-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "human",
+            })),
+        }
+    );
+
+    let pause = classify_core_cli(
+        &[
+            "loop",
+            "pause",
+            "claude-1",
+            "--reason",
+            "human is intervening",
+        ],
+        &context(true, true),
+    )
+    .expect("loop pause plan");
+    assert_eq!(pause.operation, CoreCliOperation::LoopPause);
+    assert_eq!(
+        pause.action,
+        CoreCliAction::TextRoute {
+            path: "/core/loop/pause-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "human",
+                "reason": "human is intervening",
+            })),
+        }
+    );
+
+    let unpause = classify_core_cli(
+        &["loop", "unpause", "claude-1", "--project=/repo"],
+        &context(true, true),
+    )
+    .expect("loop unpause plan");
+    assert_eq!(unpause.operation, CoreCliOperation::LoopUnpause);
+    assert_eq!(
+        unpause.action,
+        CoreCliAction::TextRoute {
+            path: "/core/loop/unpause-text".into(),
             body: Some(json!({
                 "project": "/repo",
                 "sessionId": "claude-1",

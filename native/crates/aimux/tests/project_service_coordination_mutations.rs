@@ -7,6 +7,7 @@ use aimux::project_service::runtime_exchange::{
 };
 use aimux::project_service::team::save_team_config;
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
+use aimux::runtime_topology_state_save::reconcile_runtime_topology_sessions_on_state_save_at;
 use aimux::tmux::CapturePaneOptions;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -516,6 +517,49 @@ fn task_lifecycle_updates_task_thread_and_indexes() {
 }
 
 #[test]
+fn task_cancel_requires_a_reason_before_closing_assignment() {
+    let project = temp_project("task-cancel-reason");
+    let state_dir = project.join("state");
+    let context = support::TestIsolation::new("coordination").project_context(&project, &state_dir);
+    let created = route_project_service_request(
+        &context,
+        "POST",
+        routes::tasks::ASSIGN,
+        Some(&json!({
+            "from": "lead",
+            "to": "worker",
+            "description": "Try the risky path",
+            "prompt": "Check it."
+        })),
+    );
+    assert_eq!(created.status, 200);
+    let task_id = created.body["task"]["id"].as_str().unwrap().to_owned();
+
+    let rejected = route_project_service_request(
+        &context,
+        "POST",
+        routes::tasks::CANCEL,
+        Some(&json!({
+            "taskId": task_id,
+            "from": "lead"
+        })),
+    );
+
+    assert_eq!(rejected.status, 400);
+    assert_eq!(rejected.body["error"], "task cancel requires a reason");
+    let exchange = read_exchange(&state_dir);
+    let task = exchange["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["id"] == task_id)
+        .unwrap();
+    assert_eq!(task["status"], "pending");
+    assert!(task.get("cancellationReason").is_none());
+    cleanup(project);
+}
+
+#[test]
 fn thread_send_delivers_to_each_live_recipient_with_recipient_reply_actions() {
     let project = temp_project("thread-delivery");
     let state_dir = project.join("state");
@@ -808,6 +852,64 @@ fn thread_send_reports_unreadable_topology_not_missing_recipient() {
     assert!(error.contains("runtime topology could not be read"));
     assert!(!error.contains("no live tmux window"));
     assert!(runtime.actions.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn thread_send_reaches_live_recipient_after_targetless_state_save() {
+    let project = temp_project("thread-delivery-preserved-binding");
+    let state_dir = project.join("state");
+    write_delivery_topology(&state_dir, &[("codex-one", "@one")]);
+    reconcile_runtime_topology_sessions_on_state_save_at(
+        &project,
+        &state_dir,
+        &[json!({
+            "id": "codex-one",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "live",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+        })],
+        &[],
+        "2026-01-01T00:01:00.000Z",
+    )
+    .expect("targetless state save preserves existing binding");
+    let isolation = support::TestIsolation::new("coordination-preserved-binding");
+    let context = isolation.project_context(&project, &state_dir);
+    let opened = route_project_service_request(
+        &context,
+        "POST",
+        routes::threads::OPEN,
+        Some(&json!({
+            "from": "claude-lead",
+            "title": "Coordination",
+            "participants": ["codex-one"]
+        })),
+    );
+    assert_eq!(opened.status, 200);
+    let thread_id = opened.body["thread"]["id"].as_str().unwrap().to_owned();
+    let mut runtime = FakeDeliveryRuntime::default();
+
+    let sent = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::threads::SEND,
+        Some(&json!({
+            "threadId": thread_id,
+            "from": "claude-lead",
+            "to": ["codex-one"],
+            "kind": "request",
+            "body": "Please inspect this."
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(sent.status, 200);
+    assert_eq!(sent.body["deliveredTo"], json!(["codex-one"]));
+    assert!(text_sent_to(&runtime, "@one").contains("Please inspect this."));
     cleanup(project);
 }
 
