@@ -1053,6 +1053,30 @@ fn invalid_known_commands_name_the_argument_problem_while_unknown_commands_stay_
         "{invalid_stderr}"
     );
 
+    let invalid_message = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", &node)
+        .env("HOME", root.join("home"))
+        .env("AIMUX_HOME", root.join("aimux-home"))
+        .env("AIMUX_DAEMON_PORT", allocate_daemon_port().to_string())
+        .args(["message", "send", "--from"])
+        .output()
+        .expect("run invalid message send command");
+    assert_eq!(invalid_message.status.code(), Some(2));
+    let invalid_message_stderr = String::from_utf8_lossy(&invalid_message.stderr);
+    assert!(
+        invalid_message_stderr.contains("--from requires a value"),
+        "{invalid_message_stderr}"
+    );
+    assert!(
+        invalid_message_stderr.contains("Usage: aimux message"),
+        "{invalid_message_stderr}"
+    );
+    assert!(
+        !invalid_message_stderr.contains("unsupported or invalid aimux command"),
+        "{invalid_message_stderr}"
+    );
+
     let unknown = Command::new(env!("CARGO_BIN_EXE_aimux"))
         .env("AIMUX_ROOT", &root)
         .env("AIMUX_NODE_BIN", node)

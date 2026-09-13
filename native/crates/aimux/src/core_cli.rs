@@ -3,7 +3,7 @@ use crate::core_cli_routing::{
     core_command_args, is_core_cli_command, parse_core_agent_identity_args,
     parse_core_agent_input_args, parse_core_agent_list_args, parse_core_agent_migrate_args,
     parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_attachment_publish_args,
-    parse_core_collaboration_args, parse_core_daemon_restart_args, parse_core_doctor_args,
+    parse_core_collaboration_args_result, parse_core_daemon_restart_args, parse_core_doctor_args,
     parse_core_graveyard_args, parse_core_host_agent_read_args_result,
     parse_core_host_agent_stream_args_result, parse_core_host_project_stop_args,
     parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
@@ -318,13 +318,8 @@ pub struct CoreCliPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoreCliPlanError {
-    Unsupported {
-        args: Vec<String>,
-    },
-    InvalidArguments {
-        args: Vec<String>,
-        message: &'static str,
-    },
+    Unsupported { args: Vec<String> },
+    InvalidArguments { args: Vec<String>, message: String },
 }
 
 impl CoreCliPlanError {
@@ -395,7 +390,7 @@ fn parse_project_read_options(
             if value.is_empty() || value.starts_with('-') {
                 return Err(CoreCliPlanError::InvalidArguments {
                     args: args.to_vec(),
-                    message: "error: invalid project argument",
+                    message: "error: invalid project argument".into(),
                 });
             }
             project = Some(value.to_owned());
@@ -406,7 +401,7 @@ fn parse_project_read_options(
             if value.is_empty() || value.starts_with('-') {
                 return Err(CoreCliPlanError::InvalidArguments {
                     args: args.to_vec(),
-                    message: "error: invalid project argument",
+                    message: "error: invalid project argument".into(),
                 });
             }
             project = Some(value.to_owned());
@@ -421,7 +416,8 @@ fn parse_project_read_options(
                 "scribe status" => "error: invalid scribe status arguments",
                 "review list" => "error: invalid review list arguments",
                 _ => "error: invalid arguments",
-            },
+            }
+            .into(),
         });
     }
     Ok((project, json))
@@ -487,7 +483,7 @@ where
             let parsed = parse_core_agent_input_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "aimux: input requires non-empty text",
+                    message: "aimux: input requires non-empty text".into(),
                 }
             })?;
             let project_root = parsed
@@ -513,7 +509,7 @@ where
             let parsed = parse_core_agent_list_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid list arguments",
+                    message: "error: invalid list arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -534,7 +530,7 @@ where
             let parsed = parse_core_agent_identity_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid id arguments",
+                    message: "error: invalid id arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -562,7 +558,7 @@ where
             let parsed = parse_core_agent_rename_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid rename arguments",
+                    message: "error: invalid rename arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -587,7 +583,7 @@ where
             let parsed = parse_core_agent_migrate_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid migrate arguments",
+                    message: "error: invalid migrate arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -612,7 +608,7 @@ where
             let parsed = parse_core_lifecycle_spawn_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid spawn arguments",
+                    message: "error: invalid spawn arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -645,7 +641,7 @@ where
             let parsed = parse_core_service_create_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid service create arguments",
+                    message: "error: invalid service create arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -689,7 +685,7 @@ where
                 let parsed = parse_core_lifecycle_status_args(&args, "stop").ok_or_else(|| {
                     CoreCliPlanError::InvalidArguments {
                         args: args.clone(),
-                        message: "error: invalid stop arguments",
+                        message: "error: invalid stop arguments".into(),
                     }
                 })?;
                 let project_root = parsed
@@ -714,7 +710,7 @@ where
             let parsed = parse_core_lifecycle_status_args(&args, "kill").ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid kill arguments",
+                    message: "error: invalid kill arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -738,7 +734,7 @@ where
             let parsed = parse_core_lifecycle_fork_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid fork arguments",
+                    message: "error: invalid fork arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -766,7 +762,7 @@ where
             let parsed = parse_core_loop_mutation_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid loop arguments",
+                    message: "error: invalid loop arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -811,7 +807,7 @@ where
             let parsed = parse_core_loop_exit_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid loop arguments",
+                    message: "error: invalid loop arguments".into(),
                 }
             })?;
             let session_id = parsed
@@ -819,7 +815,7 @@ where
                 .or_else(|| context.loop_actor.session_id.clone())
                 .ok_or_else(|| CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "aimux: pass --session or run inside an aimux agent (AIMUX_SESSION_ID is unset)",
+                    message: "aimux: pass --session or run inside an aimux agent (AIMUX_SESSION_ID is unset)".into(),
                 })?;
             let project_root = parsed
                 .project
@@ -912,7 +908,7 @@ where
             let parsed = parse_core_overseer_start_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid overseer start arguments",
+                    message: "error: invalid overseer start arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -938,7 +934,7 @@ where
             let parsed = parse_core_overseer_clear_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid overseer clear arguments",
+                    message: "error: invalid overseer clear arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -962,7 +958,7 @@ where
             let parsed = parse_core_scribe_start_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid scribe start arguments",
+                    message: "error: invalid scribe start arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -988,7 +984,7 @@ where
             let parsed = parse_core_scribe_clear_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid scribe clear arguments",
+                    message: "error: invalid scribe clear arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -1012,7 +1008,7 @@ where
             let parsed =
                 parse_core_team_args(&args).ok_or_else(|| CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid team arguments",
+                    message: "error: invalid team arguments".into(),
                 })?;
             let project_root = parsed
                 .project
@@ -1079,7 +1075,7 @@ where
             let parsed = parse_core_notification_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid notification arguments",
+                    message: "error: invalid notification arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -1142,7 +1138,7 @@ where
             let parsed = parse_core_notification_test_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid notifications test arguments",
+                    message: "error: invalid notifications test arguments".into(),
                 }
             })?;
             (
@@ -1159,7 +1155,7 @@ where
             let parsed = parse_core_outline_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid outline arguments",
+                    message: "error: invalid outline arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -1222,7 +1218,7 @@ where
             let parsed = parse_core_attachment_publish_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid attachment publish arguments",
+                    message: "error: invalid attachment publish arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -1246,10 +1242,10 @@ where
             )
         }
         ("message", "send") | ("handoff", "send" | "accept" | "complete") => {
-            let parsed = parse_core_collaboration_args(&args).ok_or_else(|| {
+            let parsed = parse_core_collaboration_args_result(&args).map_err(|error| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid collaboration arguments",
+                    message: format!("error: {}", error.message()),
                 }
             })?;
             let project_root = parsed
@@ -1328,7 +1324,7 @@ where
             let parsed =
                 parse_core_task_args(&args).ok_or_else(|| CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid workflow arguments",
+                    message: "error: invalid workflow arguments".into(),
                 })?;
             let project_root = parsed
                 .project
@@ -1462,7 +1458,7 @@ where
             let parsed = parse_core_thread_args(&thread_args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid thread arguments",
+                    message: "error: invalid thread arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -1544,7 +1540,7 @@ where
             let parsed = parse_core_worktree_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid worktree arguments",
+                    message: "error: invalid worktree arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -1608,7 +1604,7 @@ where
             let parsed = parse_core_graveyard_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid graveyard arguments",
+                    message: "error: invalid graveyard arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -1653,7 +1649,7 @@ where
             let parsed = parse_core_agent_ps_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid ps arguments",
+                    message: "error: invalid ps arguments".into(),
                 }
             })?;
             let project_root = parsed
@@ -1720,7 +1716,8 @@ where
                         CoreHostAgentReadArgsError::InvalidArguments => {
                             "error: invalid host agent-read arguments"
                         }
-                    },
+                    }
+                    .into(),
                 }
             })?;
             let project_root = parsed
@@ -1759,7 +1756,8 @@ where
                         CoreHostAgentStreamArgsError::InvalidArguments => {
                             "error: invalid host agent-stream arguments"
                         }
-                    },
+                    }
+                    .into(),
                 }
             })?;
             let project_root = parsed
@@ -1934,7 +1932,7 @@ where
             let parsed = parse_core_project_ensure_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid daemon project-ensure arguments",
+                    message: "error: invalid daemon project-ensure arguments".into(),
                 }
             })?;
             let project_root = resolve_project_root(&parsed.project);
@@ -1951,7 +1949,7 @@ where
             let parsed = parse_core_migration_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid migration arguments",
+                    message: "error: invalid migration arguments".into(),
                 }
             })?;
             match parsed.subcommand.as_str() {
@@ -2296,7 +2294,7 @@ where
             let parsed = parse_security_device_approve_live_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid security device approve arguments",
+                    message: "error: invalid security device approve arguments".into(),
                 }
             })?;
             (
@@ -2312,7 +2310,7 @@ where
             let parsed = parse_security_device_update_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid security device arguments",
+                    message: "error: invalid security device arguments".into(),
                 }
             })?;
             (

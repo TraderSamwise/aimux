@@ -722,6 +722,62 @@ fn collaboration_commands_plan_native_text_routes_with_resolved_project() {
 }
 
 #[test]
+fn collaboration_command_invalid_arguments_name_the_offending_option() {
+    let missing_from_value =
+        classify_core_cli(&["message", "send", "body", "--from"], &context(true, true))
+            .expect_err("missing --from value should be rejected");
+    assert_eq!(
+        missing_from_value,
+        CoreCliPlanError::InvalidArguments {
+            args: vec![
+                "message".into(),
+                "send".into(),
+                "body".into(),
+                "--from".into()
+            ],
+            message: "error: --from requires a value".into(),
+        }
+    );
+
+    let missing_route = classify_core_cli(&["message", "send", "body"], &context(true, true))
+        .expect_err("message send without route should be rejected");
+    assert_eq!(
+        missing_route,
+        CoreCliPlanError::InvalidArguments {
+            args: vec!["message".into(), "send".into(), "body".into()],
+            message: "error: message send requires --to, --assignee, --tool, or --thread".into(),
+        }
+    );
+
+    let unknown_flag = classify_core_cli(
+        &["message", "send", "body", "--bogus"],
+        &context(true, true),
+    )
+    .expect_err("unknown collaboration flag should be rejected");
+    assert_eq!(
+        unknown_flag,
+        CoreCliPlanError::InvalidArguments {
+            args: vec![
+                "message".into(),
+                "send".into(),
+                "body".into(),
+                "--bogus".into()
+            ],
+            message: "error: unknown collaboration option --bogus".into(),
+        }
+    );
+
+    let valid = classify_core_cli(
+        &[
+            "message", "send", "body", "--from", "sam", "--to", "codex-1",
+        ],
+        &context(true, true),
+    )
+    .expect("valid message send should still parse");
+    assert_eq!(valid.operation, CoreCliOperation::MessageSend);
+}
+
+#[test]
 fn task_and_review_commands_plan_native_text_routes() {
     let list = classify_core_cli_with_project_resolver(
         &[
@@ -1887,7 +1943,7 @@ fn lifecycle_commands_plan_native_text_routes() {
         same_tool_fork,
         CoreCliPlanError::InvalidArguments {
             args: vec!["fork".into(), "claude-1".into()],
-            message: "error: invalid fork arguments",
+            message: "error: invalid fork arguments".into(),
         }
     );
 

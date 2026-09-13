@@ -9,8 +9,9 @@ use aimux::core_cli_routing::{
     parse_core_agent_identity_args, parse_core_agent_input_args, parse_core_agent_list_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
     parse_core_attachment_publish_args, parse_core_collaboration_args,
-    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_doctor_args,
-    parse_core_graveyard_args, parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
+    parse_core_collaboration_args_result, parse_core_daemon_restart_args,
+    parse_core_dashboard_reload_args, parse_core_doctor_args, parse_core_graveyard_args,
+    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
     parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
     parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
     parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
@@ -978,6 +979,48 @@ fn collaboration_parser_matches_message_and_handoff_forms() {
     assert!(
         parse_core_collaboration_args(&["message", "send", "please", "--from", "--body"]).is_none()
     );
+}
+
+#[test]
+fn collaboration_parser_names_invalid_argument_reasons() {
+    for (args, expected) in [
+        (
+            vec!["message", "send", "please", "--from"],
+            "--from requires a value",
+        ),
+        (
+            vec!["message", "send", "please", "--from", "--to"],
+            "--from requires a non-flag value",
+        ),
+        (
+            vec!["message", "send", "please", "--bad"],
+            "unknown collaboration option --bad",
+        ),
+        (
+            vec!["message", "send", "please", "again", "--to", "claude-1"],
+            "message send accepts only one message body",
+        ),
+        (
+            vec!["message", "send", "please"],
+            "message send requires --to, --assignee, --tool, or --thread",
+        ),
+        (
+            vec!["handoff", "accept", "--body", "ok"],
+            "handoff accept requires <threadId>",
+        ),
+    ] {
+        let error = parse_core_collaboration_args_result(&args)
+            .expect_err("invalid collaboration args should name the bad argument");
+        assert_eq!(error.message(), expected, "{args:?}");
+    }
+
+    let valid = parse_core_collaboration_args_result(&[
+        "message", "send", "please", "--to", "claude-1", "--from", "sam",
+    ])
+    .expect("valid message send args");
+    assert_eq!(valid.body.as_deref(), Some("please"));
+    assert_eq!(valid.from.as_deref(), Some("sam"));
+    assert_eq!(valid.to.as_deref(), Some("claude-1"));
 }
 
 #[test]

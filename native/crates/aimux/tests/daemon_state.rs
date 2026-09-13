@@ -377,7 +377,10 @@ fn save_metadata_endpoint_prunes_stale_project_state_tmp_files_only() {
     assert!(!stale_json.exists());
     assert!(!stale_text.exists());
     assert!(fresh_json.exists(), "fresh in-progress temp must remain");
-    assert!(!unrelated.exists(), "stale atomic-write temp must be removed");
+    assert!(
+        !unrelated.exists(),
+        "stale atomic-write temp must be removed"
+    );
     assert!(
         fresh_unrelated.exists(),
         "fresh non-endpoint temp must remain"
