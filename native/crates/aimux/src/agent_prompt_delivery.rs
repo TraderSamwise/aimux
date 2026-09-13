@@ -67,7 +67,7 @@ pub fn current_composer_text(pane: &str) -> Option<String> {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     for (index, line) in lines.iter().enumerate().rev() {
-        let Some(rest) = strip_prompt_marker(line) else {
+        let Some(rest) = strip_agent_prompt_marker(line) else {
             continue;
         };
         let rest = rest.trim();
@@ -87,14 +87,29 @@ pub fn current_composer_text(pane: &str) -> Option<String> {
     None
 }
 
-fn strip_prompt_marker(line: &str) -> Option<&str> {
+pub fn strip_agent_prompt_marker(line: &str) -> Option<&str> {
     let mut chars = line.chars();
     let first = chars.next()?;
-    if matches!(first, '›' | '>' | '❯') {
+    if is_agent_prompt_marker(first) {
         Some(chars.as_str())
     } else {
         None
     }
+}
+
+pub fn line_starts_with_agent_prompt_marker(line: &str) -> bool {
+    line.trim_start()
+        .chars()
+        .next()
+        .is_some_and(is_agent_prompt_marker)
+}
+
+pub fn starts_with_agent_prompt_marker(line: &str) -> bool {
+    line.chars().next().is_some_and(is_agent_prompt_marker)
+}
+
+pub fn is_agent_prompt_marker(character: char) -> bool {
+    matches!(character, '›' | '>' | '❯')
 }
 
 fn looks_like_agent_bottom_chrome(line: &str) -> bool {
