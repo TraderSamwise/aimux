@@ -1,46 +1,52 @@
 import React, { type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("react-native", () => {
-  return {
-    Pressable: "div",
-    ScrollView: "div",
-    Text: "span",
-    View: "div",
-  };
-});
-
-vi.mock("lucide-react-native", () => ({
-  GitBranch: "span",
+vi.mock("react-native", () => ({
+  Pressable: "Pressable",
+  ScrollView: "ScrollView",
+  View: "View",
 }));
 
 vi.mock("expo-router", () => ({
-  usePathname: () => "/",
+  usePathname: () => "/project",
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
-vi.mock("@/components/agent-create-panel", () => ({
-  AgentCreatePanel: () => null,
+vi.mock("jotai", () => ({
+  useAtomValue: vi.fn(),
+  useSetAtom: vi.fn(() => vi.fn()),
 }));
 
 vi.mock("@/components/agent-actions", () => ({
-  AgentActions: () => null,
+  AgentActions: () => React.createElement("AgentActions"),
+}));
+
+vi.mock("@/components/agent-create-panel", () => ({
+  AgentCreatePanel: () => React.createElement("AgentCreatePanel"),
 }));
 
 vi.mock("@/components/PageLayout", () => ({
-  PageStateCard: () => null,
+  PageStateCard: () => React.createElement("PageStateCard"),
 }));
 
 vi.mock("@/components/service-actions", () => ({
-  ServiceActions: () => null,
+  ServiceActions: () => React.createElement("ServiceActions"),
+}));
+
+vi.mock("@/components/status-dot", () => ({
+  StatusDotMini: () => React.createElement("StatusDotMini"),
+}));
+
+vi.mock("@/components/ui/text", () => ({
+  Text: "Text",
 }));
 
 vi.mock("@/components/worktree-management-panel", () => ({
-  WorktreeManagementPanel: () => null,
+  WorktreeManagementPanel: () => React.createElement("WorktreeManagementPanel"),
 }));
 
 vi.mock("@/lib/auth", () => ({
-  useAuth: () => ({ getToken: vi.fn() }),
+  useAuth: () => ({ token: null }),
 }));
 
 vi.mock("@/lib/blur-web-active-element", () => ({
@@ -48,21 +54,93 @@ vi.mock("@/lib/blur-web-active-element", () => ({
 }));
 
 vi.mock("@/lib/use-route-project", () => ({
-  useRouteProject: () => ({ projectPath: "/repo", endpoint: null }),
+  useRouteProject: () => ({ projectPath: "/repo" }),
 }));
 
 vi.mock("@/stores/desktopState", () => ({
-  desktopStateErrorFamily: () => ({}),
-  desktopStateFamily: () => ({}),
-  worktreeGroupsFamily: () => ({}),
+  desktopStateErrorFamily: vi.fn(),
+  desktopStateFamily: vi.fn(),
+  worktreeGroupsFamily: vi.fn(),
 }));
 
 vi.mock("@/stores/projects", () => ({
   selectedSessionIdAtom: {},
 }));
 
-import type { DesktopSession } from "@/lib/desktop-state";
-import { AgentRow } from "@/components/WorktreeDashboard";
+import type { DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
+import { AgentRow, WorktreeCard } from "@/components/WorktreeDashboard";
+
+const IPHONE_PRO_MAX_LOGICAL_WIDTH = 430;
+
+interface HostNode {
+  type: unknown;
+  props: Record<string, unknown>;
+  children: HostNode[];
+}
+
+type FunctionComponentNode = (props: unknown) => ReactNode;
+
+function renderNode(node: ReactNode): HostNode[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (typeof node === "string" || typeof node === "number") return [];
+  if (Array.isArray(node)) return node.flatMap(renderNode);
+  if (!React.isValidElement(node)) return [];
+
+  if (node.type === React.Fragment) {
+    return renderNode((node.props as { children?: ReactNode }).children);
+  }
+
+  if (typeof node.type === "function") {
+    return renderNode((node.type as FunctionComponentNode)(node.props));
+  }
+
+  const props = node.props as Record<string, unknown> & { children?: ReactNode };
+  return [
+    {
+      type: node.type,
+      props,
+      children: renderNode(props.children),
+    },
+  ];
+}
+
+function collectText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(collectText).join("");
+  if (!React.isValidElement(node)) return "";
+
+  if (node.type === React.Fragment) {
+    return collectText((node.props as { children?: ReactNode }).children);
+  }
+
+  if (typeof node.type === "function") {
+    return collectText((node.type as FunctionComponentNode)(node.props));
+  }
+
+  return collectText((node.props as { children?: ReactNode }).children);
+}
+
+function findNodes(root: HostNode[], predicate: (node: HostNode) => boolean): HostNode[] {
+  const matches: HostNode[] = [];
+  for (const node of root) {
+    if (predicate(node)) matches.push(node);
+    matches.push(...findNodes(node.children, predicate));
+  }
+  return matches;
+}
+
+function mainCheckoutBucket(): WorktreeBucket {
+  return {
+    key: "__main_checkout__",
+    name: "aimux",
+    branch: "master",
+    path: null,
+    isMainCheckout: true,
+    sessions: [],
+    services: [],
+  };
+}
 
 function session(input: Partial<DesktopSession> & Pick<DesktopSession, "id">): DesktopSession {
   return {
@@ -71,49 +149,63 @@ function session(input: Partial<DesktopSession> & Pick<DesktopSession, "id">): D
   };
 }
 
-function renderAgentRow(input: DesktopSession): string {
-  return collectText(
-    <AgentRow
-      session={input}
-      digit={1}
-      selected={false}
-      projectPath="/repo"
-      endpoint={null}
-      token={null}
-      onPress={vi.fn()}
-      onKilled={vi.fn()}
-    />,
-  );
-}
-
-function collectText(node: ReactNode): string {
-  if (node === null || node === undefined || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(collectText).join("");
-  if (React.isValidElement(node)) {
-    const props = node.props as { children?: ReactNode };
-    if (typeof node.type === "function") {
-      const Component = node.type as (componentProps: typeof props) => ReactNode;
-      return collectText(Component(props));
-    }
-    return collectText(props.children);
-  }
-  return "";
-}
-
-describe("WorktreeList agent rows", () => {
-  it("does not render non-coder roles as GUI badges", () => {
-    const html = renderAgentRow(
-      session({
-        id: "claude-overseer",
-        label: "boss",
-        command: "claude",
-        role: "overseer",
+describe("WorktreeCard", () => {
+  it("renders non-compact worktree cards wider than an iPhone Pro Max viewport", () => {
+    const tree = renderNode(
+      React.createElement(WorktreeCard, {
+        bucket: mainCheckoutBucket(),
+        identityTone: "#78dce8",
+        compact: false,
+        selectedSessionId: null,
+        onPickSession: vi.fn(),
+        onPickService: vi.fn(),
+        onKillSession: vi.fn(),
+        projectPath: "/repo",
+        endpoint: null,
+        token: null,
       }),
     );
 
-    expect(html).toContain("boss");
-    expect(html).toContain("Running");
-    expect(html).not.toContain("overseer");
+    const cardContentViews = findNodes(tree, (node) => {
+      if (node.type !== "View") return false;
+      const style = node.props.style;
+      return (
+        typeof style === "object" &&
+        style !== null &&
+        "minWidth" in style &&
+        typeof (style as { minWidth?: unknown }).minWidth === "number"
+      );
+    });
+
+    expect(cardContentViews).toHaveLength(1);
+    expect((cardContentViews[0]!.props.style as { minWidth: number }).minWidth).toBeGreaterThan(
+      IPHONE_PRO_MAX_LOGICAL_WIDTH,
+    );
+  });
+});
+
+describe("AgentRow", () => {
+  it("does not render non-coder roles as GUI badges", () => {
+    const text = collectText(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-overseer",
+          label: "boss",
+          command: "claude",
+          role: "overseer",
+        }),
+        digit: 1,
+        selected: false,
+        projectPath: "/repo",
+        endpoint: null,
+        token: null,
+        onPress: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+
+    expect(text).toContain("boss");
+    expect(text).toContain("Running");
+    expect(text).not.toContain("overseer");
   });
 });
