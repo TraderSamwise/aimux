@@ -1127,9 +1127,8 @@ impl RealDaemonRuntime {
                 Ok(true) => return Ok(true),
                 Ok(false) => {}
                 Err(error) => {
-                    let message = format!(
-                        "failed to verify metadata endpoint owner before cleanup: {error}"
-                    );
+                    let message =
+                        format!("failed to verify metadata endpoint owner before cleanup: {error}");
                     log_lifecycle_always(
                         "project service metadata endpoint cleanup failed",
                         "project-service",
@@ -1144,6 +1143,47 @@ impl RealDaemonRuntime {
             }
         }
         Ok(false)
+    }
+
+    fn wait_for_project_service_pids_to_exit(
+        &self,
+        project_root: &str,
+        project_id: &str,
+        pids: &BTreeSet<i32>,
+    ) -> Result<(), String> {
+        if pids.is_empty() {
+            return Ok(());
+        }
+        let deadline = current_unix_millis() + u128::from(self.project_service_startup_timeout_ms);
+        loop {
+            let live_pids = pids
+                .iter()
+                .copied()
+                .filter(|pid| self.project_service_process_verifier.is_live(*pid))
+                .collect::<Vec<_>>();
+            if live_pids.is_empty() {
+                return Ok(());
+            }
+            if self.project_service_startup_timeout_ms == 0 || current_unix_millis() >= deadline {
+                let message = format!(
+                    "project service replacement blocked for {project_root} (projectId {project_id}): previous project service pids still live after {}ms: {:?}",
+                    self.project_service_startup_timeout_ms, live_pids
+                );
+                log_lifecycle_always(
+                    "project service replacement wait failed",
+                    "project-service",
+                    Some(json!({
+                        "projectId": project_id,
+                        "projectRoot": project_root,
+                        "pids": live_pids,
+                        "timeoutMs": self.project_service_startup_timeout_ms,
+                        "error": message.clone(),
+                    })),
+                );
+                return Err(message);
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn wait_for_live_project_service(
@@ -2768,7 +2808,6 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             );
             let _ = self.project_service_launcher.terminate(&service, false);
             signaled_pids.insert(service.pid);
-            self.remove_metadata_endpoint_if_owned_by_any(&project_state_dir, [service.pid])?;
         }
         let extra_pids = self.terminate_extra_project_services(
             &project_id,
@@ -2788,11 +2827,12 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                     "pids": signaled_pids.clone(),
                 })),
             );
-            self.remove_metadata_endpoint_if_owned_by_any(
-                &project_state_dir,
-                signaled_pids.iter().copied(),
-            )?;
         }
+        self.wait_for_project_service_pids_to_exit(&project_root, &project_id, &signaled_pids)?;
+        self.remove_metadata_endpoint_if_owned_by_any(
+            &project_state_dir,
+            signaled_pids.iter().copied(),
+        )?;
         let pid = match self.project_service_launcher.launch(
             &project_id,
             &project_root_path,

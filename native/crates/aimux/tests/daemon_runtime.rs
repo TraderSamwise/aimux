@@ -21,8 +21,8 @@ use aimux::daemon::text::auth::DaemonAuthTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, ProjectServiceState,
-    ProjectServiceStatus, load_metadata_endpoint, metadata_endpoint_path, save_daemon_state,
-    save_metadata_endpoint, save_metadata_state,
+    ProjectServiceStatus, load_metadata_endpoint, metadata_endpoint_path, remove_metadata_endpoint,
+    save_daemon_state, save_metadata_endpoint, save_metadata_state,
 };
 use aimux::dashboard_command_spec::get_dashboard_command_spec;
 use aimux::dashboard_readiness::get_runtime_owner_id;
@@ -1344,11 +1344,13 @@ fn ensure_project_replaces_live_legacy_node_service_with_native_launch() {
         .register_project(&project)
         .expect("register project")
         .expect("entry");
+    let old_pid = 87_660;
+    let new_pid = 87_661;
     persist_service(
         &resolver,
         &entry.id,
         &project,
-        std::process::id() as i32,
+        old_pid,
         ProjectServiceStatus::Running,
     );
     save_metadata_endpoint(
@@ -1356,16 +1358,14 @@ fn ensure_project_replaces_live_legacy_node_service_with_native_launch() {
         &MetadataApiEndpoint {
             host: "127.0.0.1".into(),
             port: 45_903,
-            pid: std::process::id() as i32,
+            pid: old_pid,
             updated_at: "now".into(),
         },
     )
     .expect("endpoint");
-    let launcher = Arc::new(FakeLauncher::new(87_661));
-    let verifier = Arc::new(FakeProcessVerifier::legacy_node([
-        std::process::id() as i32,
-        launcher.pid,
-    ]));
+    let race = Arc::new(ReplacementEndpointRace::new(old_pid, new_pid, 1));
+    let launcher = Arc::new(RaceLauncher::new(Arc::clone(&race)));
+    let verifier = Arc::new(RaceVerifier::new(race));
     let mut runtime = fixture.runtime_with_launcher_and_verifier(
         launcher.clone(),
         verifier,
@@ -1380,17 +1380,14 @@ fn ensure_project_replaces_live_legacy_node_service_with_native_launch() {
         launcher.calls(),
         vec![project.to_string_lossy().into_owned()]
     );
-    assert_eq!(
-        launcher.terminations(),
-        vec![(std::process::id() as i32, false)]
-    );
-    assert_eq!(project_json["pid"], json!(87_661));
+    assert_eq!(launcher.terminations(), vec![(old_pid, false)]);
+    assert_eq!(project_json["pid"], json!(new_pid));
     assert_eq!(project_json["status"], "running");
     assert_eq!(
         load_metadata_endpoint(resolver.project_state_dir_for(&project))
             .as_ref()
             .map(|endpoint| endpoint.pid),
-        Some(87_661),
+        Some(new_pid),
         "legacy endpoint must be replaced by the relaunched native endpoint"
     );
     fixture.cleanup();
@@ -1405,11 +1402,13 @@ fn ensure_project_replaces_live_previous_native_build_with_current_launch() {
         .register_project(&project)
         .expect("register project")
         .expect("entry");
+    let old_pid = 87_662;
+    let new_pid = 87_663;
     persist_service(
         &resolver,
         &entry.id,
         &project,
-        std::process::id() as i32,
+        old_pid,
         ProjectServiceStatus::Running,
     );
     save_metadata_endpoint(
@@ -1417,16 +1416,14 @@ fn ensure_project_replaces_live_previous_native_build_with_current_launch() {
         &MetadataApiEndpoint {
             host: "127.0.0.1".into(),
             port: 45_903,
-            pid: std::process::id() as i32,
+            pid: old_pid,
             updated_at: "now".into(),
         },
     )
     .expect("endpoint");
-    let launcher = Arc::new(FakeLauncher::new(87_662));
-    let verifier = Arc::new(FakeProcessVerifier::previous_native_build([
-        std::process::id() as i32,
-        launcher.pid,
-    ]));
+    let race = Arc::new(ReplacementEndpointRace::new(old_pid, new_pid, 1));
+    let launcher = Arc::new(RaceLauncher::new(Arc::clone(&race)));
+    let verifier = Arc::new(RaceVerifier::new(race));
     let mut runtime = fixture.runtime_with_launcher_and_verifier(
         launcher.clone(),
         verifier,
@@ -1441,18 +1438,125 @@ fn ensure_project_replaces_live_previous_native_build_with_current_launch() {
         launcher.calls(),
         vec![project.to_string_lossy().into_owned()]
     );
-    assert_eq!(
-        launcher.terminations(),
-        vec![(std::process::id() as i32, false)]
-    );
-    assert_eq!(project_json["pid"], json!(87_662));
+    assert_eq!(launcher.terminations(), vec![(old_pid, false)]);
+    assert_eq!(project_json["pid"], json!(new_pid));
     assert_eq!(project_json["status"], "running");
     assert_eq!(
         load_metadata_endpoint(resolver.project_state_dir_for(&project))
             .as_ref()
             .map(|endpoint| endpoint.pid),
-        Some(87_662),
+        Some(new_pid),
         "old native endpoint must be replaced by the relaunched endpoint"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn ensure_project_waits_for_replaced_service_exit_before_launching_replacement() {
+    let fixture = RuntimeFixture::new("ensure-wait-replaced-service-exit");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let old_pid = 91_700;
+    let new_pid = 91_701;
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        old_pid,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 45_903,
+            pid: old_pid,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("old endpoint");
+    let race = Arc::new(ReplacementEndpointRace::new(old_pid, new_pid, 2));
+    let launcher = Arc::new(RaceLauncher::new(Arc::clone(&race)));
+    let verifier = Arc::new(RaceVerifier::new(Arc::clone(&race)));
+    let mut runtime = fixture.runtime_with_launcher_and_verifier(launcher.clone(), verifier, 500);
+
+    let project_json = runtime
+        .ensure_project(project.to_str().expect("project path"))
+        .expect("ensure project");
+
+    assert_eq!(
+        launcher.calls(),
+        vec![project.to_string_lossy().into_owned()]
+    );
+    assert_eq!(launcher.terminations(), vec![(old_pid, false)]);
+    assert_eq!(project_json["pid"], json!(new_pid));
+    assert_eq!(project_json["status"], "running");
+    assert_eq!(
+        load_metadata_endpoint(resolver.project_state_dir_for(&project))
+            .as_ref()
+            .map(|endpoint| endpoint.pid),
+        Some(new_pid),
+        "replacement endpoint must survive the replaced process shutdown"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn ensure_project_refuses_replacement_while_old_service_remains_live() {
+    let fixture = RuntimeFixture::new("ensure-replacement-blocked-by-live-old-service");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let old_pid = 91_710;
+    let new_pid = 91_711;
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        old_pid,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 45_903,
+            pid: old_pid,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("old endpoint");
+    let race = Arc::new(ReplacementEndpointRace::new(old_pid, new_pid, usize::MAX));
+    let launcher = Arc::new(RaceLauncher::new(Arc::clone(&race)));
+    let verifier = Arc::new(RaceVerifier::new(race));
+    let mut runtime = fixture.runtime_with_launcher_and_verifier(launcher.clone(), verifier, 0);
+
+    let error = runtime
+        .ensure_project(project.to_str().expect("project path"))
+        .expect_err("old service still live");
+
+    assert!(
+        error.contains("previous project service pids still live after 0ms: [91710]"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(launcher.terminations(), vec![(old_pid, false)]);
+    assert!(
+        launcher.calls().is_empty(),
+        "replacement must not launch while the old endpoint owner can still exit later"
+    );
+    assert_eq!(
+        load_metadata_endpoint(resolver.project_state_dir_for(&project))
+            .as_ref()
+            .map(|endpoint| endpoint.pid),
+        Some(old_pid),
+        "old endpoint should remain the last verified endpoint when replacement is blocked"
     );
     fixture.cleanup();
 }
@@ -2310,23 +2414,6 @@ impl FakeProcessVerifier {
         }
     }
 
-    fn legacy_node(pids: impl IntoIterator<Item = i32>) -> Self {
-        Self {
-            live: pids.into_iter().collect(),
-            current_native: BTreeSet::new(),
-            project_service_pids: Vec::new(),
-        }
-    }
-
-    fn previous_native_build(pids: impl IntoIterator<Item = i32>) -> Self {
-        let native = pids.into_iter().collect::<BTreeSet<_>>();
-        Self {
-            live: native.clone(),
-            current_native: BTreeSet::new(),
-            project_service_pids: Vec::new(),
-        }
-    }
-
     fn native_with_duplicates(
         current_native: impl IntoIterator<Item = i32>,
         project_service_pids: impl IntoIterator<Item = i32>,
@@ -2354,6 +2441,124 @@ impl ProjectServiceProcessVerifier for FakeProcessVerifier {
 
     fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
         self.project_service_pids.clone()
+    }
+}
+
+#[derive(Debug)]
+struct ReplacementEndpointRace {
+    old_pid: i32,
+    new_pid: i32,
+    old_live_checks_before_dead: usize,
+    old_live_checks: Mutex<usize>,
+}
+
+impl ReplacementEndpointRace {
+    fn new(old_pid: i32, new_pid: i32, old_live_checks_before_dead: usize) -> Self {
+        Self {
+            old_pid,
+            new_pid,
+            old_live_checks_before_dead,
+            old_live_checks: Mutex::new(0),
+        }
+    }
+
+    fn old_is_live(&self) -> bool {
+        *self.old_live_checks.lock().expect("old live checks") < self.old_live_checks_before_dead
+    }
+
+    fn observe_old_liveness(&self) -> bool {
+        let mut checks = self.old_live_checks.lock().expect("old live checks");
+        let live = *checks < self.old_live_checks_before_dead;
+        *checks += 1;
+        live
+    }
+}
+
+#[derive(Debug)]
+struct RaceLauncher {
+    race: Arc<ReplacementEndpointRace>,
+    calls: Mutex<Vec<String>>,
+    terminations: Mutex<Vec<(i32, bool)>>,
+}
+
+impl RaceLauncher {
+    fn new(race: Arc<ReplacementEndpointRace>) -> Self {
+        Self {
+            race,
+            calls: Mutex::new(Vec::new()),
+            terminations: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls.lock().expect("calls").clone()
+    }
+
+    fn terminations(&self) -> Vec<(i32, bool)> {
+        self.terminations.lock().expect("terminations").clone()
+    }
+}
+
+impl ProjectServiceLauncher for RaceLauncher {
+    fn launch(
+        &self,
+        _project_id: &str,
+        project_root: &Path,
+        project_state_dir: &Path,
+    ) -> Result<i32, String> {
+        self.calls
+            .lock()
+            .expect("calls")
+            .push(project_root.to_string_lossy().into_owned());
+        save_metadata_endpoint(
+            project_state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".into(),
+                port: 45_900,
+                pid: self.race.new_pid,
+                updated_at: "now".into(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        if self.race.old_is_live() {
+            remove_metadata_endpoint(project_state_dir);
+        }
+        Ok(self.race.new_pid)
+    }
+
+    fn terminate(&self, service: &ProjectServiceState, force: bool) -> Result<(), String> {
+        self.terminations
+            .lock()
+            .expect("terminations")
+            .push((service.pid, force));
+        Ok(())
+    }
+}
+
+struct RaceVerifier {
+    race: Arc<ReplacementEndpointRace>,
+}
+
+impl RaceVerifier {
+    fn new(race: Arc<ReplacementEndpointRace>) -> Self {
+        Self { race }
+    }
+}
+
+impl ProjectServiceProcessVerifier for RaceVerifier {
+    fn is_live(&self, pid: i32) -> bool {
+        if pid == self.race.old_pid {
+            return self.race.observe_old_liveness();
+        }
+        pid == self.race.new_pid
+    }
+
+    fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool {
+        service.pid == self.race.new_pid
+    }
+
+    fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
+        Vec::new()
     }
 }
 
