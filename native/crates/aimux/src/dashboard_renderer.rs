@@ -3,8 +3,8 @@ mod footer;
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
     DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
-    ServiceStatus, SessionStatus, is_dashboard_project_control_session,
-    is_dashboard_scribe_session,
+    ServiceStatus, SessionStatus, is_dashboard_overseer_session,
+    is_dashboard_project_control_session, is_dashboard_scribe_session,
 };
 use crate::project_service::work_outline::{WorkOutlineEntry, WorkOutlineStatus};
 use crate::project_service::worktree_colors_contract::worktree_color_ansi;
@@ -22,7 +22,7 @@ use crate::tui_render::theme::{
     visible_width,
 };
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const RECENT_IDLE_MS: u128 = 2 * 60 * 1000;
@@ -155,6 +155,7 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         }));
         content.push(String::new());
     }
+    render_supervisor_section(input, &mut content, card_width);
     if dashboard_sessions.is_empty() && input.snapshot.worktree_groups.is_empty() {
         content.push(center_in_block("No sessions. Press [n] to create one."));
     } else if has_worktrees(input) {
@@ -645,6 +646,94 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
 
 fn has_worktrees(input: &DashboardRenderInput<'_>) -> bool {
     !input.snapshot.worktree_groups.is_empty()
+}
+
+fn render_supervisor_section(
+    input: &DashboardRenderInput<'_>,
+    lines: &mut Vec<String>,
+    card_width: usize,
+) {
+    let mut seen = BTreeSet::new();
+    let mut sessions = Vec::new();
+    for session in input.overseer_sessions.iter().chain(input.scribe_sessions) {
+        if seen.insert(session.id.as_str()) {
+            sessions.push(session);
+        }
+    }
+    if sessions.is_empty() {
+        return;
+    }
+    let rows = sessions
+        .iter()
+        .map(|session| supervisor_session_row(session))
+        .collect::<Vec<_>>();
+    let summary = match sessions.len() {
+        1 => "1 project-control session".to_owned(),
+        count => format!("{count} project-control sessions"),
+    };
+    lines.extend(card(&CardSpec {
+        tone: Tone::Accent,
+        title: &style("SUPERVISOR", Tone::Accent),
+        summary: Some(&summary),
+        rows: &rows,
+        width: card_width,
+    }));
+    lines.push(String::new());
+}
+
+fn supervisor_session_row(session: &DashboardSession) -> String {
+    let role = style(supervisor_role_label(session), Tone::Strong);
+    let dot = format!("{} ", session_status_dot(session));
+    let identity = agent_identity(session);
+    let status = session_status_cell(session, &derived_status_label(session));
+    let time = session_time_text(session);
+    let location = session
+        .worktree_name
+        .as_deref()
+        .or(session.worktree_branch.as_deref())
+        .or(session.worktree_path.as_deref())
+        .map(|value| style(&truncate(value, 24), Tone::Muted))
+        .unwrap_or_default();
+    grid_cols(&[
+        Column {
+            content: "",
+            width: COL_SELECT,
+        },
+        Column {
+            content: &dot,
+            width: COL_DOT,
+        },
+        Column {
+            content: &role,
+            width: 10,
+        },
+        Column {
+            content: &identity,
+            width: COL_IDENTITY,
+        },
+        Column {
+            content: &status,
+            width: COL_STATUS,
+        },
+        Column {
+            content: &time,
+            width: COL_TIME,
+        },
+        Column {
+            content: &location,
+            width: 24,
+        },
+    ])
+}
+
+fn supervisor_role_label(session: &DashboardSession) -> &'static str {
+    if is_dashboard_overseer_session(session) {
+        "overseer"
+    } else if is_scribe_session(session) {
+        "scribe"
+    } else {
+        "control"
+    }
 }
 
 fn render_worktree_grouped(

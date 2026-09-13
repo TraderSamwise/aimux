@@ -48,7 +48,7 @@ fn renders_empty_dashboard_with_create_hint() {
         overseer_sessions: &[],
         scribe_sessions: &[],
         cols: 100,
-        rows: 24,
+        rows: 50,
         nav_level: DashboardNavLevel::Sessions,
         selected_session_id: None,
         selected_service_id: None,
@@ -816,7 +816,7 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
         overseer_sessions: &[],
         scribe_sessions: &[],
         cols: 140,
-        rows: 24,
+        rows: 50,
         nav_level: DashboardNavLevel::Sessions,
         selected_session_id: Some("claude-08h5sggs"),
         selected_service_id: None,
@@ -859,7 +859,7 @@ fn row_dot_ignores_legacy_direct_attention_without_semantic_state() {
         overseer_sessions: &[],
         scribe_sessions: &[],
         cols: 140,
-        rows: 24,
+        rows: 50,
         nav_level: DashboardNavLevel::Sessions,
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
@@ -890,7 +890,7 @@ fn renders_state_aware_footer_hints_for_session_actions() {
         overseer_sessions: &[],
         scribe_sessions: &[],
         cols: 140,
-        rows: 24,
+        rows: 50,
         nav_level: DashboardNavLevel::Sessions,
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
@@ -938,7 +938,7 @@ fn flat_session_footer_keeps_team_hint_for_selected_parent() {
         overseer_sessions: &[],
         scribe_sessions: &[],
         cols: 140,
-        rows: 24,
+        rows: 50,
         nav_level: DashboardNavLevel::Sessions,
         selected_session_id: Some(&parent_id),
         selected_service_id: None,
@@ -999,7 +999,7 @@ fn renders_selected_session_details_sidebar_when_visible() {
         overseer_sessions: &[],
         scribe_sessions: &[],
         cols: 140,
-        rows: 24,
+        rows: 50,
         nav_level: DashboardNavLevel::Sessions,
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
@@ -1371,13 +1371,13 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
 
     let mut overseer = plain_agent.clone();
     overseer.id = "claude-overseer".into();
-    overseer.label = Some("Project Overseer".into());
+    overseer.label = Some("Boss".into());
     overseer.overseer = Some(true);
     overseer.project_control = Some(true);
 
     let mut scribe = plain_agent.clone();
     scribe.id = "claude-scribe".into();
-    scribe.label = Some("Project Scribe".into());
+    scribe.label = Some("Notes".into());
     scribe.scribe = Some(true);
     scribe.project_control = Some(true);
 
@@ -1481,13 +1481,13 @@ fn flat_session_rows_exclude_project_control_sessions_like_node() {
 
     let mut overseer = plain_agent.clone();
     overseer.id = "claude-overseer".into();
-    overseer.label = Some("Project Overseer".into());
+    overseer.label = Some("Boss".into());
     overseer.overseer = Some(true);
     overseer.project_control = Some(true);
 
     let mut scribe = plain_agent.clone();
     scribe.id = "claude-scribe".into();
-    scribe.label = Some("Project Scribe".into());
+    scribe.label = Some("Notes".into());
     scribe.scribe = Some(true);
     scribe.project_control = Some(true);
 
@@ -1519,6 +1519,117 @@ fn flat_session_rows_exclude_project_control_sessions_like_node() {
     assert!(plain.contains("[1]"));
     assert!(!plain.contains("Project Overseer"));
     assert!(!plain.contains("Project Scribe"));
+}
+
+#[test]
+fn supervisor_section_renders_project_control_sessions() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.worktrees.clear();
+    snapshot.worktree_groups.clear();
+    snapshot.services.clear();
+
+    let mut plain_agent = snapshot.sessions[0].clone();
+    plain_agent.id = "claude-plain".into();
+    plain_agent.label = Some("Plain Agent".into());
+
+    let mut overseer = plain_agent.clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Boss".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+
+    let mut scribe = plain_agent.clone();
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Notes".into());
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+
+    snapshot.sessions = vec![overseer.clone(), plain_agent, scribe.clone()];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[overseer],
+        scribe_sessions: &[scribe],
+        cols: 140,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-plain"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("SUPERVISOR"));
+    assert!(plain.contains("overseer"));
+    assert!(plain.contains("Boss"));
+    assert!(plain.contains("scribe"));
+    assert!(plain.contains("Notes"));
+}
+
+#[test]
+fn supervisor_section_does_not_change_main_session_membership() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.worktrees.clear();
+    snapshot.worktree_groups.clear();
+    snapshot.services.clear();
+
+    let mut plain_agent = snapshot.sessions[0].clone();
+    plain_agent.id = "claude-plain".into();
+    plain_agent.label = Some("Plain Agent".into());
+
+    let mut overseer = plain_agent.clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Boss".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+
+    let mut scribe = plain_agent.clone();
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Notes".into());
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+
+    snapshot.sessions = vec![overseer.clone(), plain_agent, scribe.clone()];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[overseer],
+        scribe_sessions: &[scribe],
+        cols: 140,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-plain"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("Plain Agent"));
+    assert!(plain.contains("[1]"));
+    assert!(!plain.contains("[2]"));
+    assert!(!plain.contains("[3]"));
 }
 
 #[test]

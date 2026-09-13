@@ -643,7 +643,9 @@ fn build_help_overlay_output(cols: usize, rows: usize) -> String {
         "  s  send message",
         "  H  handoff",
         "  T  task",
+        "  Y  make selected agent overseer",
         "  P  scribe",
+        "  O  overseer",
         "  o  open thread",
         "  R  reply",
         "  r  name agent",
@@ -831,6 +833,7 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
     ];
     if live_overseer.is_some() {
         hints.push(("x", "stop overseer"));
+        hints.push(("d", "unset overseer"));
     }
     hints.push(("Esc", "back"));
     body.push(build_service_hints(&hints));

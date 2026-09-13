@@ -483,6 +483,7 @@ impl DashboardController {
                 self.overseer_overlay_open = true;
                 DashboardControllerEffect::Render
             }
+            DashboardKey::Printable('Y') => self.set_selected_overseer(snapshot),
             DashboardKey::Printable('R') => self.reply_to_selected_waiting_thread(snapshot),
             DashboardKey::Printable('m') => self.open_migrate_picker(snapshot),
             DashboardKey::Printable('r') => self.open_label_input(snapshot),
@@ -1450,6 +1451,7 @@ impl DashboardController {
             DashboardKey::Printable('p') => self.toggle_global_loop_alert_pause(snapshot),
             DashboardKey::Printable('w') => self.open_overseer_watch_instructions(snapshot),
             DashboardKey::Printable('x') => self.stop_live_overseer_from_overlay(snapshot),
+            DashboardKey::Printable('d') => self.unset_overseer_from_overlay(snapshot),
             DashboardKey::Printable('u') => self.unwatch_selected_from_overseer_overlay(snapshot),
             _ => DashboardControllerEffect::Ignored,
         }
@@ -1524,6 +1526,21 @@ impl DashboardController {
             }
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
         }
+    }
+
+    fn unset_overseer_from_overlay(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(overseer) = first_overseer_session(snapshot) else {
+            self.footer_message = Some("No overseer configured".into());
+            return DashboardControllerEffect::Render;
+        };
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::OVERSEER,
+            body: json!({ "sessionId": overseer.id, "active": false }),
+        })
     }
 
     fn unwatch_selected_from_overseer_overlay(
@@ -2333,6 +2350,21 @@ impl DashboardController {
         self.handle_action(snapshot, DashboardActionKind::Enter)
     }
 
+    fn set_selected_overseer(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(selected) = self.selected_session_for_tool_action(snapshot) else {
+            self.footer_message = Some("Select an agent first".into());
+            return DashboardControllerEffect::Render;
+        };
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::OVERSEER,
+            body: json!({ "sessionId": selected.id, "active": !is_overseer_session(selected) }),
+        })
+    }
+
     fn handle_dashboard_escape(
         &mut self,
         snapshot: &DesktopStateSnapshot,
@@ -2874,6 +2906,13 @@ fn live_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSe
         .sessions
         .iter()
         .find(|session| is_live_session(session) && is_overseer_session(session))
+}
+
+fn first_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
+    snapshot
+        .sessions
+        .iter()
+        .find(|session| is_overseer_session(session))
 }
 
 fn is_overseer_session(session: &DashboardSession) -> bool {

@@ -1844,6 +1844,58 @@ fn shifted_w_opens_worktree_list_until_escape() {
 }
 
 #[test]
+fn shifted_y_promotes_selected_agent_to_overseer() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 0;
+    let selected_id = match controller.navigation.selected_entry(&snapshot) {
+        Some(DashboardEntryRef::Session(session)) => session.id.clone(),
+        _ => panic!("expected selected session"),
+    };
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('Y'))
+    else {
+        panic!("expected overseer promote request");
+    };
+
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, routes::agents::OVERSEER);
+    assert_eq!(
+        request.body,
+        json!({ "sessionId": selected_id, "active": true })
+    );
+}
+
+#[test]
+fn overseer_overlay_d_demotes_configured_overseer() {
+    let mut snapshot = snapshot();
+    let overseer = overseer_session(&snapshot.sessions[0]);
+    let overseer_id = overseer.id.clone();
+    snapshot.sessions.insert(0, overseer);
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('O')),
+        DashboardControllerEffect::Render
+    );
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('d'))
+    else {
+        panic!("expected overseer demote request");
+    };
+
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, routes::agents::OVERSEER);
+    assert_eq!(
+        request.body,
+        json!({ "sessionId": overseer_id, "active": false })
+    );
+}
+
+#[test]
 fn migrate_key_opens_picker_and_digit_dispatches_selected_session_migrate() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
