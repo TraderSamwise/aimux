@@ -433,7 +433,8 @@ fn evaluate_wedged_tasks(
             }
         } else if integer_field(task, &["runs", "totalRuns", "completedRuns"]) == Some(0)
             && !live_scheduler_task_has_completed(live_scheduler, name)
-            && task_observed_span_ms(name, timed_samples, sample_pid(sample)) >= WEDGED_TASK_MS
+            && task_observed_span_ms(name, timed_samples, sample_process_identity(sample))
+                >= WEDGED_TASK_MS
         {
             reasons.push(failure(
                 "task-never-completed",
@@ -522,13 +523,13 @@ fn recorder_broken_reason(name: &str, task: &Value) -> Option<StabilityReason> {
 fn task_observed_span_ms(
     name: &str,
     timed_samples: &[(u64, &Value)],
-    newest_pid: Option<u64>,
+    newest_identity: Option<ProcessIdentity>,
 ) -> u64 {
     let mut first_seen = None;
     let mut last_seen = None;
     for (sample_ms, sample) in timed_samples {
-        if let Some(newest_pid) = newest_pid
-            && sample_pid(sample) != Some(newest_pid)
+        if let Some(newest_identity) = newest_identity
+            && sample_process_identity(sample) != Some(newest_identity)
         {
             continue;
         }
@@ -549,8 +550,17 @@ fn task_observed_span_ms(
     }
 }
 
-fn sample_pid(sample: &Value) -> Option<u64> {
-    integer_field(sample, &["pid"])
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProcessIdentity {
+    pid: u64,
+    started_at_ms: u64,
+}
+
+fn sample_process_identity(sample: &Value) -> Option<ProcessIdentity> {
+    let pid = integer_field(sample, &["pid"])?;
+    let started_at_ms = integer_path(sample, &["process", "startedAtMs"])
+        .or_else(|| integer_field(sample, &["processStartedAtMs"]))?;
+    Some(ProcessIdentity { pid, started_at_ms })
 }
 
 fn evaluate_buffer_pressure(timed_samples: &[(u64, &Value)], reasons: &mut Vec<StabilityReason>) {
@@ -1203,6 +1213,82 @@ mod tests {
     }
 
     #[test]
+    fn reused_pid_does_not_make_restarted_task_look_never_completed() {
+        let base = 1_000_000_000_u64;
+        let newest_ms = base + MIN_HISTORY_SPAN_MS;
+        let history = vec![
+            completed_task_sample_with_process(base, "agent-input-delivery", 7, base - 60_000, 10),
+            completed_task_sample_with_process(
+                base + MIN_HISTORY_SPAN_MS / 2,
+                "agent-input-delivery",
+                7,
+                base - 60_000,
+                20,
+            ),
+            never_completed_task_sample_with_process(
+                newest_ms,
+                "agent-input-delivery",
+                7,
+                newest_ms - 30_000,
+            ),
+        ];
+
+        let report = build_stability_doctor_report_from_history(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            newest_ms + 60_000,
+            Ok(history),
+        );
+
+        assert!(
+            report
+                .reasons
+                .iter()
+                .all(|reason| reason.kind != "task-never-completed"),
+            "{:#?}",
+            report.reasons
+        );
+        assert_ne!(report.verdict, StabilityVerdict::NotStable);
+    }
+
+    #[test]
+    fn legacy_samples_without_process_identity_do_not_extend_new_zero_window() {
+        let base = 1_000_000_000_u64;
+        let newest_ms = base + MIN_HISTORY_SPAN_MS;
+        let history = vec![
+            completed_task_sample_without_process_identity(base, "agent-input-delivery", 10),
+            completed_task_sample_without_process_identity(
+                base + MIN_HISTORY_SPAN_MS / 2,
+                "agent-input-delivery",
+                20,
+            ),
+            never_completed_task_sample_with_process(
+                newest_ms,
+                "agent-input-delivery",
+                8,
+                newest_ms - 30_000,
+            ),
+        ];
+
+        let report = build_stability_doctor_report_from_history(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            newest_ms + 60_000,
+            Ok(history),
+        );
+
+        assert!(
+            report
+                .reasons
+                .iter()
+                .all(|reason| reason.kind != "task-never-completed"),
+            "{:#?}",
+            report.reasons
+        );
+        assert_ne!(report.verdict, StabilityVerdict::NotStable);
+    }
+
+    #[test]
     fn live_scheduler_completion_contradicts_zeroed_file_sample() {
         let base = 1_000_000_000_u64;
         let newest_ms = base + WEDGED_TASK_MS;
@@ -1415,6 +1501,15 @@ mod tests {
         task_name: &str,
         pid: u64,
     ) -> Value {
+        never_completed_task_sample_with_process(recorded_at_ms, task_name, pid, 1)
+    }
+
+    fn never_completed_task_sample_with_process(
+        recorded_at_ms: u64,
+        task_name: &str,
+        pid: u64,
+        started_at_ms: u64,
+    ) -> Value {
         json!({
             "recordedAtMs": recorded_at_ms,
             "pid": pid,
@@ -1432,14 +1527,56 @@ mod tests {
                 "highWater": 10,
                 "capacity": 512
             }],
-            "process": { "taskCount": 10 }
+            "process": {
+                "startedAtMs": started_at_ms,
+                "taskCount": 10
+            }
         })
     }
 
     fn completed_task_sample(recorded_at_ms: u64, task_name: &str, pid: u64, runs: u64) -> Value {
+        completed_task_sample_with_process(recorded_at_ms, task_name, pid, 1, runs)
+    }
+
+    fn completed_task_sample_with_process(
+        recorded_at_ms: u64,
+        task_name: &str,
+        pid: u64,
+        started_at_ms: u64,
+        runs: u64,
+    ) -> Value {
         json!({
             "recordedAtMs": recorded_at_ms,
             "pid": pid,
+            "scheduler": {
+                "periodicTasks": [{
+                    "name": task_name,
+                    "runs": runs,
+                    "lastCompletedAtMs": recorded_at_ms.saturating_sub(60_000),
+                    "consecutiveFailures": 0,
+                    "consecutiveTimeouts": 0
+                }]
+            },
+            "backlog": [{
+                "name": "relay outbox",
+                "depth": 10,
+                "highWater": 10,
+                "capacity": 512
+            }],
+            "process": {
+                "startedAtMs": started_at_ms,
+                "taskCount": 10
+            }
+        })
+    }
+
+    fn completed_task_sample_without_process_identity(
+        recorded_at_ms: u64,
+        task_name: &str,
+        runs: u64,
+    ) -> Value {
+        json!({
+            "recordedAtMs": recorded_at_ms,
             "scheduler": {
                 "periodicTasks": [{
                     "name": task_name,
