@@ -53,6 +53,7 @@ pub mod scribe_watcher_task;
 pub mod server;
 pub mod session_identity;
 pub mod session_semantics;
+pub mod session_visibility;
 pub mod shell_state;
 pub mod statusline;
 pub mod switchable_agents;
