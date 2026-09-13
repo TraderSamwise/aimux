@@ -170,6 +170,7 @@ fn build_dashboard_footer_hints<'a>(
         ]);
         append_visibility_hint(input, &mut hints);
         append_operation_failure_hint(input, &mut hints);
+        append_loop_alert_hint(&mut hints);
         hints.extend(system);
         return hints;
     }
@@ -298,6 +299,7 @@ fn build_dashboard_footer_hints<'a>(
                 danger: false,
             });
         }
+        append_loop_alert_hint(&mut hints);
         hints.extend(system);
         return hints;
     }
@@ -342,6 +344,7 @@ fn build_dashboard_footer_hints<'a>(
         label: "reply",
         danger: false,
     });
+    append_loop_alert_hint(&mut hints);
     hints.extend(system);
     hints
 }
@@ -370,6 +373,14 @@ fn append_visibility_hint<'a>(
         } else {
             "hide offline"
         },
+        danger: false,
+    });
+}
+
+fn append_loop_alert_hint<'a>(hints: &mut Vec<FooterHint<'a>>) {
+    hints.push(FooterHint {
+        key: "O p",
+        label: "loop alerts",
         danger: false,
     });
 }
