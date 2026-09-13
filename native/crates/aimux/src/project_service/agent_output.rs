@@ -880,6 +880,7 @@ pub(super) fn read_agent_output_payload(
         &mut result,
         &context.output_projection_cache,
         &output,
+        Some(output_ansi),
         tool.as_deref(),
     );
     if pane_state.interrupted_visible {
@@ -1014,6 +1015,7 @@ pub(super) async fn read_agent_output_payload_async(
         &mut result,
         &context.output_projection_cache,
         &output,
+        Some(output_ansi),
         tool.as_deref(),
     );
     if pane_state.interrupted_visible {

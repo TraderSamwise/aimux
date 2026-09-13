@@ -609,7 +609,7 @@ fn expected_attachment_kind(mime_type: Option<&str>) -> &'static str {
 #[test]
 fn output_projection_cache_reuses_projection_for_same_output_version() {
     let cache = AgentOutputProjectionCache::new(Duration::from_secs(1));
-    let key = AgentOutputProjectionCache::key_for("› hi", Some("codex"));
+    let key = AgentOutputProjectionCache::key_for("› hi", None, Some("codex"));
     let mut projections = 0;
 
     let first = cache.project_or_reuse(key.clone(), || {
@@ -925,6 +925,47 @@ fn output_route_captures_live_topology_target_and_shapes_full_payload() {
             include_escapes: true,
         }
     );
+    cleanup(project);
+}
+
+#[test]
+fn output_route_projects_ansi_capture_into_chat_message_spans() {
+    let project = temp_project("ansi-message-spans");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: "› show diff\n\n\u{1b}[32m+added\u{1b}[0m\n\u{1b}[31m-removed\u{1b}[0m".into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&purpose=terminal",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let spans = response.body["messages"]
+        .as_array()
+        .and_then(|messages| {
+            messages
+                .iter()
+                .find(|message| message["role"] == "assistant")
+        })
+        .and_then(|message| message["parts"].as_array())
+        .and_then(|parts| parts.first())
+        .and_then(|part| part["spans"].as_array())
+        .expect("assistant message spans from ANSI capture");
+    assert_eq!(spans[0]["text"], "+added");
+    assert_eq!(spans[0]["foreground"]["value"], "#98c379");
+    assert_eq!(spans[2]["text"], "-removed");
+    assert_eq!(spans[2]["foreground"]["value"], "#e06c75");
     cleanup(project);
 }
 

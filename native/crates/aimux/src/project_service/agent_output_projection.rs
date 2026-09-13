@@ -58,9 +58,19 @@ impl AgentOutputProjectionCache {
         }
     }
 
-    pub fn key_for(raw: &str, tool: Option<&str>) -> AgentOutputProjectionCacheKey {
+    pub fn key_for(
+        raw: &str,
+        ansi: Option<&str>,
+        tool: Option<&str>,
+    ) -> AgentOutputProjectionCacheKey {
+        let mut digest_source = String::with_capacity(raw.len() + ansi.map_or(0, str::len) + 1);
+        digest_source.push_str(raw);
+        digest_source.push('\0');
+        if let Some(ansi) = ansi {
+            digest_source.push_str(ansi);
+        }
         AgentOutputProjectionCacheKey {
-            digest: sha1_hex(raw),
+            digest: sha1_hex(&digest_source),
             tool: normalize_tool(tool).unwrap_or("unknown").to_owned(),
         }
     }
@@ -3224,16 +3234,101 @@ pub fn insert_projection_fields(
     result: &mut Map<String, Value>,
     cache: &AgentOutputProjectionCache,
     raw: &str,
+    ansi: Option<&str>,
     tool: Option<&str>,
 ) {
-    let key = AgentOutputProjectionCache::key_for(raw, tool);
-    let projection = cache.project_or_reuse(key, || project_agent_output(raw, tool));
+    let key = AgentOutputProjectionCache::key_for(raw, ansi, tool);
+    let projection = cache.project_or_reuse(key, || {
+        if let Some(ansi) = ansi {
+            project_agent_output_with_ansi(raw, Some(ansi), tool)
+        } else {
+            project_agent_output(raw, tool)
+        }
+    });
     result.insert("parsed".to_owned(), projection.parsed);
     result.insert("messages".to_owned(), Value::Array(projection.messages));
     if !result.contains_key("activityText") && !projection.activity_text.is_empty() {
         result.insert(
             "activityText".to_owned(),
             Value::String(projection.activity_text),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn first_assistant_text_part(messages: &[Value]) -> &Value {
+        messages
+            .iter()
+            .find(|message| message.get("role").and_then(Value::as_str) == Some("assistant"))
+            .and_then(|message| message.get("parts").and_then(Value::as_array))
+            .and_then(|parts| {
+                parts
+                    .iter()
+                    .find(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+            })
+            .expect("assistant text part")
+    }
+
+    #[test]
+    fn projection_uses_ansi_capture_for_transcript_spans() {
+        let plain = "› show diff\n\n+added\n-removed";
+        let ansi = "› show diff\n\n\u{1b}[32m+added\u{1b}[0m\n\u{1b}[31m-removed\u{1b}[0m";
+
+        let projection = project_agent_output_with_ansi(plain, Some(ansi), Some("codex"));
+        let part = first_assistant_text_part(&projection.messages);
+        let spans = part
+            .get("spans")
+            .and_then(Value::as_array)
+            .expect("colored transcript spans");
+
+        assert_eq!(spans_text(spans), "+added\n-removed");
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.get("text").and_then(Value::as_str) == Some("+added"))
+                .and_then(|span| span.pointer("/foreground/value"))
+                .and_then(Value::as_str),
+            Some("#98c379")
+        );
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.get("text").and_then(Value::as_str) == Some("-removed"))
+                .and_then(|span| span.pointer("/foreground/value"))
+                .and_then(Value::as_str),
+            Some("#e06c75")
+        );
+    }
+
+    #[test]
+    fn projection_cache_key_separates_plain_and_ansi_transcripts() {
+        let plain = "› show diff\n\n+added\n-removed";
+        let ansi = "› show diff\n\n\u{1b}[32m+added\u{1b}[0m\n\u{1b}[31m-removed\u{1b}[0m";
+        let cache = AgentOutputProjectionCache::new(Duration::from_secs(60));
+
+        let mut result = Map::new();
+        insert_projection_fields(&mut result, &cache, plain, None, Some("codex"));
+        let messages = result
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("plain messages");
+        assert!(
+            first_assistant_text_part(messages).get("spans").is_none(),
+            "plain projection should not invent color spans"
+        );
+
+        let mut result = Map::new();
+        insert_projection_fields(&mut result, &cache, plain, Some(ansi), Some("codex"));
+        let messages = result
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("ansi messages");
+        assert!(
+            first_assistant_text_part(messages).get("spans").is_some(),
+            "ansi projection must not reuse the earlier plain cache entry"
         );
     }
 }
