@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use crate::daemon_state::load_metadata_state;
+use crate::daemon_state::try_load_metadata_state;
 use crate::debug_logging::log_lifecycle_always;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
@@ -140,7 +140,9 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                         "agent-restore",
                         Some(json!({ "reason": "topology unreadable", "error": error })),
                     );
-                    return Ok(());
+                    return Err(format!(
+                        "agent restore snapshot topology unavailable: {error}"
+                    ));
                 }
             };
             // Topology status is durable, not live: a session whose window died
@@ -162,10 +164,24 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                         "agent-restore",
                         Some(json!({ "reason": "tmux live windows unavailable", "error": error })),
                     );
-                    return Ok(());
+                    return Err(format!(
+                        "agent restore snapshot tmux live windows unavailable: {error}"
+                    ));
                 }
             };
-            let metadata = load_metadata_state(&project_state_dir);
+            let metadata = match try_load_metadata_state(&project_state_dir) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    log_lifecycle_always(
+                        "agent restore snapshot skipped",
+                        "agent-restore",
+                        Some(json!({ "reason": "metadata unreadable", "error": error })),
+                    );
+                    return Err(format!(
+                        "agent restore snapshot metadata unavailable: {error}"
+                    ));
+                }
+            };
             let sessions = list_topology_session_states(&topology, Some(ONLINE_SESSION_STATUSES))
                 .into_iter()
                 .filter(|session| session_is_backed_by_live_window(session, &live_window_ids))
@@ -184,14 +200,15 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
             let key = serde_json::to_string(&sessions).unwrap_or_default();
             if self.last_recorded_key.as_deref() != Some(key.as_str()) {
                 let now = now_iso();
-                match record_last_online_agents(&project_state_dir, &sessions, &now) {
-                    Ok(_) => self.last_recorded_key = Some(key),
-                    Err(error) => log_lifecycle_always(
+                if let Err(error) = record_last_online_agents(&project_state_dir, &sessions, &now) {
+                    log_lifecycle_always(
                         "agent restore snapshot record failed",
                         "agent-restore",
-                        Some(json!({ "error": error })),
-                    ),
+                        Some(json!({ "error": error.clone() })),
+                    );
+                    return Err(format!("agent restore snapshot record failed: {error}"));
                 }
+                self.last_recorded_key = Some(key);
             }
 
             if let Err(error) = derive_agent_restore_offer(
@@ -203,8 +220,9 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                 log_lifecycle_always(
                     "agent restore offer derive failed",
                     "agent-restore",
-                    Some(json!({ "error": error })),
+                    Some(json!({ "error": error.clone() })),
                 );
+                return Err(format!("agent restore offer derive failed: {error}"));
             }
             Ok(())
         })

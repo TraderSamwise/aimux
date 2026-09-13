@@ -5,6 +5,7 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, agent_input_delivery_queue_path, agent_input_delivery_task,
 };
+use aimux::project_service::agent_restore_task::{AgentRestoreSnapshotTask, LiveWindowSource};
 use aimux::project_service::loop_watcher_task::LoopWatcherTask;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
@@ -13,13 +14,17 @@ use aimux::project_service::scheduler::{
     PeriodicScheduler, PeriodicTask, PeriodicTaskFuture, PeriodicTaskHealthSnapshot,
     ProjectSchedulerHandle, spawn_project_service_scheduler,
 };
+use aimux::project_service::scribe_watcher_task::ScribeWatcherTask;
 use aimux::runtime_topology::{
     empty_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
 use serde_json::json;
+use std::collections::BTreeSet;
 use std::fs;
+use std::future::Future;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, mpsc};
@@ -729,6 +734,227 @@ fn empty_agent_input_delivery_queue_records_completed_run() {
         .into_iter()
         .find(|task| task.name == AGENT_INPUT_DELIVERY_TASK_NAME)
         .expect("agent input delivery health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 0);
+    assert_eq!(health.last_error, None);
+    assert!(health.last_completed_at_ms.is_some());
+}
+
+#[test]
+fn corrupt_restore_topology_records_scheduler_visible_failure() {
+    let root = unique_temp_dir("aimux-agent-restore-health-corrupt-topology");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(runtime_topology_path(&state_dir), "{ not yaml:").expect("corrupt runtime topology");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(AgentRestoreSnapshotTask::with_live_window_source(
+            &context,
+            Box::new(FakeRestoreLiveWindows::none()),
+        ))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 1_000);
+
+    let health = scheduler_health_for(&scheduler, "agent-restore-snapshot");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(error.contains("topology unavailable"), "{error}");
+}
+
+#[test]
+fn corrupt_restore_metadata_records_scheduler_visible_failure() {
+    let root = unique_temp_dir("aimux-agent-restore-health-corrupt-metadata");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+        .expect("write topology");
+    fs::write(metadata_state_path(&state_dir), "{ not json").expect("corrupt metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(AgentRestoreSnapshotTask::with_live_window_source(
+            &context,
+            Box::new(FakeRestoreLiveWindows::none()),
+        ))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 1_000);
+
+    let health = scheduler_health_for(&scheduler, "agent-restore-snapshot");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(error.contains("metadata unavailable"), "{error}");
+    assert!(error.contains("metadata.json"), "{error}");
+}
+
+#[test]
+fn empty_restore_snapshot_inputs_record_completed_run() {
+    let root = unique_temp_dir("aimux-agent-restore-health-empty");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+        .expect("write topology");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(AgentRestoreSnapshotTask::with_live_window_source(
+            &context,
+            Box::new(FakeRestoreLiveWindows::none()),
+        ))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 1_000);
+
+    let health = scheduler_health_for(&scheduler, "agent-restore-snapshot");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 0);
+    assert_eq!(health.last_error, None);
+    assert!(health.last_completed_at_ms.is_some());
+}
+
+fn scheduler_health_for(scheduler: &PeriodicScheduler, name: &str) -> PeriodicTaskHealthSnapshot {
+    scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == name)
+        .expect("task health")
+}
+
+struct FakeRestoreLiveWindows {
+    result: Result<BTreeSet<String>, String>,
+}
+
+impl FakeRestoreLiveWindows {
+    fn none() -> Self {
+        Self {
+            result: Ok(BTreeSet::new()),
+        }
+    }
+}
+
+impl LiveWindowSource for FakeRestoreLiveWindows {
+    fn live_window_ids<'a>(
+        &'a mut self,
+        _surface: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, String>> + Send + 'a>> {
+        Box::pin(async move { self.result.clone() })
+    }
+}
+
+#[test]
+fn corrupt_scribe_topology_records_scheduler_visible_failure() {
+    let root = unique_temp_dir("aimux-scribe-watcher-health-corrupt-topology");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(runtime_topology_path(&state_dir), "{ not yaml:").expect("corrupt runtime topology");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(ScribeWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 1_000);
+
+    let health = scheduler_health_for(&scheduler, "scribe-watcher");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(
+        error.contains("scribe watcher topology unavailable"),
+        "{error}"
+    );
+}
+
+#[test]
+fn corrupt_scribe_metadata_records_scheduler_visible_failure() {
+    let root = unique_temp_dir("aimux-scribe-watcher-health-corrupt-metadata");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+        .expect("write topology");
+    fs::write(metadata_state_path(&state_dir), "{ not json").expect("corrupt metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(ScribeWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 1_000);
+
+    let health = scheduler_health_for(&scheduler, "scribe-watcher");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(
+        error.contains("scribe watcher metadata unavailable"),
+        "{error}"
+    );
+    assert!(error.contains("metadata.json"), "{error}");
+}
+
+#[test]
+fn empty_scribe_watcher_inputs_record_completed_run() {
+    let root = unique_temp_dir("aimux-scribe-watcher-health-empty");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+        .expect("write topology");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(ScribeWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 1_000);
+
+    let health = scheduler_health_for(&scheduler, "scribe-watcher");
     assert_eq!(health.total_runs, 1);
     assert_eq!(health.consecutive_failures, 0);
     assert_eq!(health.last_error, None);
