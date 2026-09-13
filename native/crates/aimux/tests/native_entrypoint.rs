@@ -395,7 +395,7 @@ fn debug_daemon_run_refuses_default_port_before_writing_daemon_info() {
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("refusing to run aimux daemon from a cargo target binary on default port"),
+            .contains("refusing internal cargo-target daemon on default port"),
         "stderr should report default-port debug daemon refusal"
     );
     assert!(

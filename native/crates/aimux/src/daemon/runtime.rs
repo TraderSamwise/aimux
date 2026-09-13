@@ -2170,7 +2170,7 @@ pub fn run_daemon_internal() -> Result<()> {
             })),
         );
         anyhow::bail!(
-            "refusing to run aimux daemon from a cargo target binary on default port {port}; set AIMUX_DAEMON_PORT for isolated tests"
+            "refusing internal cargo-target daemon on default port {port}; set AIMUX_DAEMON_PORT for isolated test or live-drive runs"
         );
     }
     let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
