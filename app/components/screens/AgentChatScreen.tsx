@@ -25,7 +25,7 @@ import {
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import { useColorScheme } from "nativewind";
 import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import Reanimated, {
@@ -193,7 +193,7 @@ import {
   type AgentOutputViewMode,
   type ActiveSharedSession,
 } from "@/stores/settings";
-import { chatChromeVisibleAtom } from "@/stores/ui";
+import { chatChromeVisibleAtom, chatComposerDraftFamily } from "@/stores/ui";
 import type { ChatMessage, HistoryPart } from "@/lib/events";
 
 const MAX_PENDING_ATTACHMENTS = 4;
@@ -352,9 +352,19 @@ type AcceptedComposerMessage = {
 };
 
 const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
+type JotaiStore = ReturnType<typeof useStore>;
 
 function hasComposerDraftContent(text: string): boolean {
   return /\S/.test(text);
+}
+
+function readComposerDraft(store: JotaiStore, key: string | null): string {
+  return key ? store.get(chatComposerDraftFamily(key)) : "";
+}
+
+function writeComposerDraft(store: JotaiStore, key: string | null, draft: string) {
+  if (!key) return;
+  store.set(chatComposerDraftFamily(key), draft);
 }
 
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
@@ -542,6 +552,7 @@ export default function ChatScreen() {
   const activeShare = useRouteShare();
   const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
+  const jotaiStore = useStore();
   const { getToken } = useAuth();
   const { user } = useUser();
   const router = useRouter();
@@ -566,8 +577,6 @@ export default function ChatScreen() {
   const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
   const [shareSummaryCheckedKey, setShareSummaryCheckedKey] = useState<string | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-  const [draftHasContent, setDraftHasContent] = useState(false);
   const [pendingComposerAck, setPendingComposerAck] = useState<PendingComposerAck | null>(null);
   const [acceptedComposerMessages, setAcceptedComposerMessages] = useState<
     AcceptedComposerMessage[]
@@ -703,6 +712,9 @@ export default function ChatScreen() {
     draft: "",
     pendingAttachments: [],
   });
+  const composerDraftTextRef = useRef("");
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
+  const sendErrorRef = useRef<string | null>(null);
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ??
       (activeShareForRoute ? sessionFromActiveShare(activeShareForRoute) : null))
@@ -742,23 +754,32 @@ export default function ChatScreen() {
   }, [activeShareForRoute, sessionId, stateProjectPath]);
 
   useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments;
     composerDraftSnapshotRef.current = {
-      draft,
+      draft: composerDraftTextRef.current,
       pendingAttachments,
     };
-  }, [draft, pendingAttachments]);
+  }, [pendingAttachments]);
+
+  useEffect(() => {
+    sendErrorRef.current = sendError;
+  }, [sendError]);
 
   useEffect(() => {
     const previousKey = activeComposerDraftKeyRef.current;
     if (previousKey && previousKey !== composerDraftKey) {
-      rememberComposerDraft(previousKey, composerDraftSnapshotRef.current);
+      rememberComposerDraft(previousKey, {
+        draft: readComposerDraft(jotaiStore, previousKey),
+        pendingAttachments: pendingAttachmentsRef.current,
+      });
     }
 
     activeComposerDraftKeyRef.current = composerDraftKey;
     const saved = composerDraftKey ? composerDraftsByKey.get(composerDraftKey) : undefined;
+    const nextDraft = saved?.draft ?? "";
+    writeComposerDraft(jotaiStore, composerDraftKey, nextDraft);
+    composerDraftTextRef.current = nextDraft;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the composer is re-seeded from the draft store when the conversation changes
-    setDraft(saved?.draft ?? "");
-    setDraftHasContent(hasComposerDraftContent(saved?.draft ?? ""));
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
     setPendingComposerAck(null);
     setAcceptedComposerMessages([]);
@@ -766,13 +787,17 @@ export default function ChatScreen() {
     composerInputRef.current?.blur();
     sendBusyRef.current = false;
     setSendError(null);
-  }, [composerDraftKey]);
+  }, [composerDraftKey, jotaiStore]);
 
   useEffect(() => {
     return () => {
-      rememberComposerDraft(activeComposerDraftKeyRef.current, composerDraftSnapshotRef.current);
+      const activeKey = activeComposerDraftKeyRef.current;
+      rememberComposerDraft(activeKey, {
+        draft: readComposerDraft(jotaiStore, activeKey),
+        pendingAttachments: pendingAttachmentsRef.current,
+      });
     };
-  }, []);
+  }, [jotaiStore]);
 
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
@@ -1040,7 +1065,8 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!pendingComposerAck) return;
     if (!composerSendAcknowledged) return;
-    const draftStillMatches = draft === pendingComposerAck.text;
+    const draftStillMatches =
+      readComposerDraft(jotaiStore, composerDraftKey) === pendingComposerAck.text;
     const attachmentsStillMatch =
       pendingAttachments.length === pendingComposerAck.attachmentFilenames.length &&
       pendingAttachments.every(
@@ -1050,9 +1076,9 @@ export default function ChatScreen() {
 
     if (draftStillMatches && attachmentsStillMatch) {
       releasePendingAttachmentPreviews(pendingAttachments);
+      writeComposerDraft(jotaiStore, composerDraftKey, "");
+      composerDraftTextRef.current = "";
       // eslint-disable-next-line react-hooks/set-state-in-effect -- terminal transcript ack clears only the matched pending send
-      setDraft("");
-      setDraftHasContent(false);
       setPendingAttachments([]);
     }
     setSendError(null);
@@ -1060,7 +1086,13 @@ export default function ChatScreen() {
     if (draftStillMatches && attachmentsStillMatch && composerDraftKey) {
       composerDraftsByKey.delete(composerDraftKey);
     }
-  }, [composerDraftKey, composerSendAcknowledged, draft, pendingAttachments, pendingComposerAck]);
+  }, [
+    composerDraftKey,
+    composerSendAcknowledged,
+    jotaiStore,
+    pendingAttachments,
+    pendingComposerAck,
+  ]);
 
   useEffect(() => {
     if (!pendingComposerAck) return;
@@ -1125,25 +1157,20 @@ export default function ChatScreen() {
   const sessionSubtitle = routeSessionMissing
     ? `${sessionId} · not found`
     : [headerWorktreeBranch, session?.status ?? "unknown"].filter(Boolean).join(" · ");
-  const composerSendText =
-    draftHasContent && serviceEndpoint && sessionId && !routeSessionMissing && !sendBusy
-      ? draft
-      : null;
   const hasPendingAttachments = pendingAttachments.length > 0;
-  const canSendMessage = Boolean(
+  const canSendMessageBase = Boolean(
     serviceEndpoint &&
     sessionId &&
     session &&
     !sendBusy &&
     !composerAwaitingAck &&
-    !ownerShareStatusPending &&
-    (composerSendText || hasPendingAttachments),
+    !ownerShareStatusPending,
   );
 
   const handleSendMessage = useCallback(
     async (options?: { preserveFocus?: boolean }) => {
       const preserveFocus = options?.preserveFocus === true;
-      const text = normalizeComposerDraft(composerSendText ?? "") ?? "";
+      const text = normalizeComposerDraft(readComposerDraft(jotaiStore, composerDraftKey)) ?? "";
       const attachments = [...pendingAttachments];
       if (
         !serviceEndpoint ||
@@ -1227,8 +1254,8 @@ export default function ChatScreen() {
         }
         if (deliveryNotice) {
           releasePendingAttachmentPreviews(attachments);
-          setDraft("");
-          setDraftHasContent(false);
+          writeComposerDraft(jotaiStore, sendComposerDraftKey, "");
+          composerDraftTextRef.current = "";
           setPendingAttachments([]);
           setPendingComposerAck(null);
           setSendError(deliveryNotice);
@@ -1249,8 +1276,8 @@ export default function ChatScreen() {
             },
           ].slice(-20),
         );
-        setDraft("");
-        setDraftHasContent(false);
+        writeComposerDraft(jotaiStore, sendComposerDraftKey, "");
+        composerDraftTextRef.current = "";
         setPendingAttachments([]);
         setPendingComposerAck(null);
         if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
@@ -1285,8 +1312,8 @@ export default function ChatScreen() {
               }
             : null,
         );
-        setDraft(text);
-        setDraftHasContent(hasComposerDraftContent(text));
+        writeComposerDraft(jotaiStore, sendComposerDraftKey, text);
+        composerDraftTextRef.current = text;
         setPendingAttachments(attachments);
         setSendError(formatComposerSendFailure(err));
       } finally {
@@ -1303,7 +1330,7 @@ export default function ChatScreen() {
       clearLocalInterruptHold,
       composerAwaitingAck,
       composerDraftKey,
-      composerSendText,
+      jotaiStore,
       ownerShareStatusPending,
       pendingAttachments,
       refreshOutputSnapshot,
@@ -1312,8 +1339,6 @@ export default function ChatScreen() {
       sessionId,
       sessionKey,
       setAcceptedComposerMessages,
-      setDraft,
-      setDraftHasContent,
       setPendingAttachments,
       setPendingComposerAck,
       setSendBusy,
@@ -1544,14 +1569,16 @@ export default function ChatScreen() {
     [canUseOwnerControls, handleInterrupt, handleSendMessage],
   );
 
-  const handleDraftChange = useCallback(
+  const handleComposerDraftChange = useCallback(
     (text: string) => {
-      setDraft(text);
-      const nextHasContent = hasComposerDraftContent(text);
-      setDraftHasContent((current) => (current === nextHasContent ? current : nextHasContent));
-      if (sendError) setSendError(null);
+      composerDraftTextRef.current = text;
+      composerDraftSnapshotRef.current = {
+        draft: text,
+        pendingAttachments: pendingAttachmentsRef.current,
+      };
+      if (sendErrorRef.current) setSendError(null);
     },
-    [sendError, setDraft, setDraftHasContent, setSendError],
+    [setSendError],
   );
 
   const composerPasteProps = useMemo(
@@ -1832,48 +1859,15 @@ export default function ChatScreen() {
             >
               {({ onBlur, onFocus }) => (
                 <>
-                  <TextInput
+                  <ComposerDraftTextInput
                     ref={composerInputRef}
-                    accessibilityLabel="Message the agent"
-                    nativeID={CHAT_INPUT_NATIVE_ID}
-                    autoComplete="off"
-                    autoCapitalize="sentences"
-                    importantForAutofill="no"
-                    inputMode="text"
-                    textContentType="none"
+                    draftKey={composerDraftKey ?? ""}
+                    composerKeyboardProps={composerKeyboardProps}
+                    composerPasteProps={composerPasteProps}
+                    disabled={sendBusy || composerAwaitingAck}
                     onFocus={() => setComposerNativeFocus(true, onFocus)}
                     onBlur={() => setComposerNativeFocus(false, onBlur)}
-                    value={draft}
-                    onChangeText={handleDraftChange}
-                    {...composerKeyboardProps}
-                    {...COMPOSER_WEB_INPUT_PROPS}
-                    {...composerPasteProps}
-                    placeholder="Ask the agent…"
-                    placeholderTextColor="#71717a"
-                    multiline
-                    lineBreakStrategyIOS="standard"
-                    editable={!sendBusy && !composerAwaitingAck}
-                    scrollEnabled
-                    textBreakStrategy="balanced"
-                    className="w-full text-sm text-foreground"
-                    style={[
-                      NO_BROWSER_FOCUS_RING,
-                      {
-                        alignSelf: "stretch",
-                        fontSize: COMPOSER_INPUT_FONT_SIZE,
-                        lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
-                        maxWidth: "100%",
-                        maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
-                        minHeight: COMPOSER_INPUT_MIN_HEIGHT,
-                        minWidth: 0,
-                        paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
-                        paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
-                        paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
-                        opacity: sendBusy || composerAwaitingAck ? 0.55 : 1,
-                        width: "100%",
-                      },
-                    ]}
-                    textAlignVertical="top"
+                    onDraftChange={handleComposerDraftChange}
                   />
                   <View className="flex-row items-center gap-2">
                     <ComposerControl
@@ -1927,13 +1921,11 @@ export default function ChatScreen() {
                         onPress={handleInterrupt}
                       />
                     ) : null}
-                    <ComposerControl
+                    <ComposerSendControl
+                      draftKey={composerDraftKey ?? ""}
                       wide={wideControls}
-                      brand
-                      label="Send"
-                      accessibilityLabel="Send the message"
-                      icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
-                      disabled={!canSendMessage}
+                      canSendBase={canSendMessageBase}
+                      hasPendingAttachments={hasPendingAttachments}
                       onPress={handleSendPress}
                     />
                   </View>
@@ -1947,17 +1939,18 @@ export default function ChatScreen() {
     [
       activityLabel,
       activityLabelShimmer,
-      canSendMessage,
+      canSendMessageBase,
       composerAwaitingAck,
+      composerDraftKey,
       composerFooterBottomPadding,
       composerKeyboardProps,
       composerPasteProps,
-      draft,
       handleAttachAttachment,
-      handleDraftChange,
+      handleComposerDraftChange,
       handleDropAttachments,
       handleInterrupt,
       handleSendPress,
+      hasPendingAttachments,
       isSharedSessionView,
       pendingAttachments,
       removePendingAttachment,
@@ -2568,6 +2561,117 @@ export default function ChatScreen() {
     </View>
   );
 }
+
+type ComposerDraftTextInputProps = {
+  composerKeyboardProps: Partial<React.ComponentProps<typeof TextInput>>;
+  composerPasteProps?: Record<string, unknown>;
+  disabled: boolean;
+  draftKey: string;
+  onBlur: () => void;
+  onDraftChange: (text: string) => void;
+  onFocus: () => void;
+};
+
+const ComposerDraftTextInput = React.memo(
+  React.forwardRef<TextInput, ComposerDraftTextInputProps>(function ComposerDraftTextInput(
+    {
+      composerKeyboardProps,
+      composerPasteProps,
+      disabled,
+      draftKey,
+      onBlur,
+      onDraftChange,
+      onFocus,
+    },
+    ref,
+  ) {
+    const [draft, setDraft] = useAtom(chatComposerDraftFamily(draftKey));
+    const handleDraftChange = useCallback(
+      (text: string) => {
+        setDraft(text);
+        onDraftChange(text);
+      },
+      [onDraftChange, setDraft],
+    );
+
+    return (
+      <TextInput
+        ref={ref}
+        accessibilityLabel="Message the agent"
+        nativeID={CHAT_INPUT_NATIVE_ID}
+        autoComplete="off"
+        autoCapitalize="sentences"
+        importantForAutofill="no"
+        inputMode="text"
+        textContentType="none"
+        onFocus={onFocus}
+        onBlur={onBlur}
+        value={draft}
+        onChangeText={handleDraftChange}
+        {...composerKeyboardProps}
+        {...COMPOSER_WEB_INPUT_PROPS}
+        {...composerPasteProps}
+        placeholder="Ask the agent…"
+        placeholderTextColor="#71717a"
+        multiline
+        lineBreakStrategyIOS="standard"
+        editable={!disabled}
+        scrollEnabled
+        textBreakStrategy="balanced"
+        className="w-full text-sm text-foreground"
+        style={[
+          NO_BROWSER_FOCUS_RING,
+          {
+            alignSelf: "stretch",
+            fontSize: COMPOSER_INPUT_FONT_SIZE,
+            lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+            maxWidth: "100%",
+            maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
+            minHeight: COMPOSER_INPUT_MIN_HEIGHT,
+            minWidth: 0,
+            paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
+            paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
+            paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
+            opacity: disabled ? 0.55 : 1,
+            width: "100%",
+          },
+        ]}
+        textAlignVertical="top"
+      />
+    );
+  }),
+);
+ComposerDraftTextInput.displayName = "ComposerDraftTextInput";
+
+const ComposerSendControl = React.memo(function ComposerSendControl({
+  canSendBase,
+  draftKey,
+  hasPendingAttachments,
+  onPress,
+  wide,
+}: {
+  canSendBase: boolean;
+  draftKey: string;
+  hasPendingAttachments: boolean;
+  onPress: () => void;
+  wide: boolean;
+}) {
+  const draft = useAtomValue(chatComposerDraftFamily(draftKey));
+  const canSend = canSendBase && (hasComposerDraftContent(draft) || hasPendingAttachments);
+
+  return (
+    <ComposerControl
+      wide={wide}
+      brand
+      label="Send"
+      accessibilityLabel="Send the message"
+      icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
+      disabled={!canSend}
+      onPress={onPress}
+    />
+  );
+});
+ComposerSendControl.displayName = "ComposerSendControl";
 
 type AgentOutputModeOption = Exclude<AgentOutputViewMode, "split"> | "split";
 
