@@ -1344,11 +1344,9 @@ fn inherited_launch_team(source_session: &Value) -> Option<Value> {
                 .filter(|team_id| !team_id.is_empty())
                 .map(str::to_owned);
             if parent_session_id.is_empty() && team_id.is_none() {
-                let Some(control_role) = role.as_deref().filter(|role| {
+                let control_role = role.as_deref().filter(|role| {
                     is_supervisor_role(role) && is_project_control_session(Some(source_session))
-                }) else {
-                    return None;
-                };
+                })?;
                 team.insert("teamId".into(), Value::String(control_role.to_owned()));
                 team.insert("parentSessionId".into(), Value::String(String::new()));
                 return Some(Value::Object(team));
