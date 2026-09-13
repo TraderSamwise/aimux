@@ -522,6 +522,7 @@
         ["D", "cache cleanup"],
         ["w", "worktree"],
         ["a", "hide offline"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1053,6 +1054,7 @@
         ["m", "migrate"],
         ["r", "name"],
         ["x", "stop", "danger"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1582,6 +1584,7 @@
         ["R", "reply"],
         ["m", "migrate"],
         ["x", "stop", "danger"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1843,6 +1846,7 @@
         ["R", "reply"],
         ["x", "kill", "danger"],
         ["r", "name"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1903,6 +1907,7 @@
         ["O", "overseer"],
         ["P", "scribe"],
         ["R", "reply"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -2424,6 +2429,7 @@
         ["D", "cache cleanup"],
         ["w", "worktree"],
         ["a", "hide offline"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],

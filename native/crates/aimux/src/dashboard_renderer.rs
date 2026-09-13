@@ -239,7 +239,7 @@ fn loop_alert_chrome(snapshot: &DesktopStateSnapshot) -> Option<String> {
         .and_then(Value::as_i64)
         .unwrap_or(0);
     Some(format!(
-        "{} - {} buffered - expires in {} - press O",
+        "{} - {} buffered - expires in {} - press O then p to resume",
         style("LOOP ALERTS PAUSED", Tone::Attention),
         buffered,
         format_duration_hint(remaining)
@@ -2807,6 +2807,7 @@ fn render_help_content() -> Vec<String> {
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
         "    [a] hide/show offline agents  [x] stop/kill".into(),
+        "    [O then p] pause/resume loop alerts".into(),
     ]
 }
 

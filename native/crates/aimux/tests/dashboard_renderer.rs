@@ -1747,7 +1747,71 @@ fn renders_global_loop_alert_pause_chrome() {
     assert!(plain.contains("LOOP ALERTS PAUSED"));
     assert!(plain.contains("3 buffered"));
     assert!(plain.contains("expires in 3m"));
-    assert!(plain.contains("press O"));
+    assert!(plain.contains("press O then p to resume"));
+}
+
+#[test]
+fn unpaused_loop_alert_state_does_not_render_pause_chrome() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full.clone();
+    snapshot.extra.insert(
+        "loopAlertState".into(),
+        json!({
+            "ok": true,
+            "pausedCount": 0,
+            "bufferedCount": 0,
+            "globalPause": {
+                "enabled": false,
+                "bufferedCount": 0
+            }
+        }),
+    );
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: Some("<WORKTREE>"),
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(!plain.contains("LOOP ALERTS PAUSED"));
+    assert!(!plain.contains("press O then p to resume"));
+}
+
+#[test]
+fn help_screen_names_global_loop_alert_pause_shortcut_path() {
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Help,
+        resource: None,
+        error: None,
+        selected_index: 0,
+        cols: 140,
+        rows: 24,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        runtime_label: None,
+        version: None,
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("[O then p] pause/resume loop alerts"));
 }
 
 #[test]
