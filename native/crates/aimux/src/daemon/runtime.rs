@@ -18,8 +18,7 @@ use crate::config::{
     try_load_global_config_with_resolver,
 };
 use crate::core_command_transport::{
-    CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
-    execute_loopback_binary_request, execute_loopback_json_request,
+    DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
 };
 use crate::daemon::access::build_daemon_route_context;
 use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
@@ -32,6 +31,7 @@ use crate::daemon::http::DaemonResponseBody;
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
+    execute_proxy_binary_request, execute_proxy_json_request, route_stateless_proxy_daemon_request,
 };
 use crate::daemon::listener::{
     DaemonListenConfig, serve_daemon_http_with_metadata_and_interceptor_until,
@@ -114,6 +114,7 @@ use crate::recording_cleanup::{
 use crate::release_version_contract::{
     read_aimux_build_profile_from_package_root, read_aimux_runtime_version,
 };
+use crate::remote_access::{RemoteActorRole, parse_remote_actor};
 use crate::remote_credentials;
 use crate::remote_login::{self, LoginAction, LoginFlowWaiter};
 use crate::repair_events::{
@@ -1905,6 +1906,34 @@ pub fn handle_daemon_runtime_request_with_mutex(
             },
         );
     }
+    if request.method == "GET"
+        && pathname.starts_with("/proxy/")
+        && proxy_fast_path_can_skip_runtime_lock(&request.headers)
+    {
+        return handle_daemon_http_request(
+            request,
+            |method, path, body, headers| {
+                build_daemon_route_context(method, path, body, headers.clone(), &[])
+            },
+            |method, path, body, context, _| {
+                if let Some(access) = &context.access_decision
+                    && !access.ok
+                {
+                    return DaemonRouteResponse::json(
+                        access.status.unwrap_or(403),
+                        json!({
+                            "ok": false,
+                            "error": access.error.as_deref().unwrap_or("remote access denied")
+                        }),
+                    );
+                }
+                route_stateless_proxy_daemon_request(method, path, body, &context.headers)
+                    .unwrap_or_else(|| {
+                        DaemonRouteResponse::json(404, json!({ "ok": false, "error": "not found" }))
+                    })
+            },
+        );
+    }
     if request.method == "GET" && pathname == "/projects" {
         return handle_daemon_http_request(
             request,
@@ -1949,6 +1978,12 @@ pub fn handle_daemon_runtime_request_with_mutex(
     }
     let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
     handle_daemon_runtime_request(&mut *runtime, request)
+}
+
+fn proxy_fast_path_can_skip_runtime_lock(headers: &BTreeMap<String, String>) -> bool {
+    !parse_remote_actor(headers)
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Operator)
 }
 
 fn aimux_cli_launch_json(launch: AimuxCliLaunchCommand) -> Value {
@@ -3759,27 +3794,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         body: Option<&Value>,
         timeout_ms: u64,
     ) -> Result<ProxyJsonResponse, String> {
-        let daemon_method = if method.eq_ignore_ascii_case("POST") {
-            DaemonHttpMethod::Post
-        } else {
-            DaemonHttpMethod::Get
-        };
-        let request = DaemonJsonRequest {
-            url: target_url.to_owned(),
-            method: daemon_method,
-            headers: headers.clone(),
-            body: body.map(Value::to_string),
-            timeout_ms: Some(timeout_ms),
-        };
-        execute_loopback_json_request(&request)
-            .map(|response| ProxyJsonResponse {
-                status: response.status,
-                json: response.json,
-            })
-            .map_err(|error| match error {
-                CoreCommandTransportError::DaemonRequest { message, .. } => message,
-                other => other.to_string(),
-            })
+        execute_proxy_json_request(target_url, method, headers, body, timeout_ms)
     }
 
     fn proxy_binary_request(
@@ -3790,28 +3805,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         timeout_ms: u64,
         max_bytes: usize,
     ) -> Result<ProxyBinaryResponse, String> {
-        let daemon_method = if method.eq_ignore_ascii_case("POST") {
-            DaemonHttpMethod::Post
-        } else {
-            DaemonHttpMethod::Get
-        };
-        let request = DaemonJsonRequest {
-            url: target_url.to_owned(),
-            method: daemon_method,
-            headers: headers.clone(),
-            body: None,
-            timeout_ms: Some(timeout_ms),
-        };
-        execute_loopback_binary_request(&request, max_bytes)
-            .map(|response| ProxyBinaryResponse {
-                status: response.status,
-                body: response.body,
-                content_type: response.content_type,
-            })
-            .map_err(|error| match error {
-                CoreCommandTransportError::DaemonRequest { message, .. } => message,
-                other => other.to_string(),
-            })
+        execute_proxy_binary_request(target_url, method, headers, timeout_ms, max_bytes)
     }
 }
 

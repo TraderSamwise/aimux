@@ -221,6 +221,14 @@ function requestSignal(opts?: ApiOpts): { signal: AbortSignal; cleanup: () => vo
   };
 }
 
+function abortedRequestMessage(signal: AbortSignal, url: string): string {
+  const reason = signal.reason;
+  const reasonMessage = reason instanceof Error ? reason.message : String(reason ?? "");
+  const timeout = reasonMessage.match(/^request timed out after (\d+)ms$/);
+  if (timeout) return `Request timed out after ${timeout[1]}ms (${url})`;
+  return `Request was cancelled (${url})`;
+}
+
 async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Promise<T> {
   const headers = new Headers(init.headers);
   if (opts?.token) headers.set("Authorization", `Bearer ${opts.token}`);
@@ -250,7 +258,7 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
     if (err instanceof ApiError) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     const message = signal.aborted
-      ? `Request timed out or was cancelled (${url})`
+      ? abortedRequestMessage(signal, url)
       : `Network request failed (${url}): ${reason}`;
     throw new ApiError(0, null, message);
   } finally {
@@ -268,12 +276,15 @@ async function withRelayRequestTimeout<T>(
   let abortListener: (() => void) | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     const rejectTimedOut = () => {
-      reject(new ApiError(0, null, `Request timed out or was cancelled (${path})`));
+      reject(new ApiError(0, null, `Request timed out after ${timeoutMs}ms (${path})`));
+    };
+    const rejectCancelled = () => {
+      reject(new ApiError(0, null, `Request was cancelled (${path})`));
     };
     timeout = setTimeout(rejectTimedOut, timeoutMs);
-    abortListener = rejectTimedOut;
-    if (opts?.signal?.aborted) rejectTimedOut();
-    else opts?.signal?.addEventListener("abort", rejectTimedOut, { once: true });
+    abortListener = rejectCancelled;
+    if (opts?.signal?.aborted) rejectCancelled();
+    else opts?.signal?.addEventListener("abort", rejectCancelled, { once: true });
   });
   try {
     return await Promise.race([request, timeoutPromise]);
