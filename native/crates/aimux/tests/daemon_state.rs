@@ -320,7 +320,7 @@ fn metadata_endpoint_load_reports_unreadable_paths_instead_of_absent() {
 }
 
 #[test]
-fn save_metadata_endpoint_prunes_stale_endpoint_tmp_files_only() {
+fn save_metadata_endpoint_prunes_stale_project_state_tmp_files_only() {
     let test_dir = TestDir::new();
     let project_state_dir = test_dir.0.join("projects/project-stale-tmp");
     fs::create_dir_all(&project_state_dir).expect("create project state");
@@ -329,7 +329,15 @@ fn save_metadata_endpoint_prunes_stale_endpoint_tmp_files_only() {
     let fresh_json =
         project_state_dir.join("metadata-api.json.333.999999999999999999999.fresh.tmp");
     let unrelated = project_state_dir.join("metadata.json.444.1.dead.tmp");
-    for path in [&stale_json, &stale_text, &fresh_json, &unrelated] {
+    let fresh_unrelated =
+        project_state_dir.join("metadata.json.555.999999999999999999999.fresh.tmp");
+    for path in [
+        &stale_json,
+        &stale_text,
+        &fresh_json,
+        &unrelated,
+        &fresh_unrelated,
+    ] {
         fs::write(path, b"tmp").expect("write tmp");
     }
     let endpoint = MetadataApiEndpoint {
@@ -344,7 +352,11 @@ fn save_metadata_endpoint_prunes_stale_endpoint_tmp_files_only() {
     assert!(!stale_json.exists());
     assert!(!stale_text.exists());
     assert!(fresh_json.exists(), "fresh in-progress temp must remain");
-    assert!(unrelated.exists(), "non-endpoint temp must remain");
+    assert!(!unrelated.exists(), "stale atomic-write temp must be removed");
+    assert!(
+        fresh_unrelated.exists(),
+        "fresh non-endpoint temp must remain"
+    );
     assert_eq!(load_metadata_endpoint(&project_state_dir), Some(endpoint));
 }
 

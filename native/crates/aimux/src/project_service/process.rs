@@ -23,7 +23,9 @@ use crate::daemon::listener::{
     DaemonListenerError, parse_daemon_http_request, prepared_response_bytes, read_http_request,
 };
 use crate::daemon::server::DaemonHttpRequest;
-use crate::daemon_state::{MetadataApiEndpoint, remove_metadata_endpoint, save_metadata_endpoint};
+use crate::daemon_state::{
+    MetadataApiEndpoint, remove_metadata_endpoint_if_owned, save_metadata_endpoint,
+};
 use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 use crate::expose_socket::{
     EXPOSE_SOCKET_HEADER_TIMEOUT_MS, clear_expose_socket_path, expose_socket_path,
@@ -142,6 +144,7 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
     );
     let _endpoint_guard = ProjectServiceEndpointGuard {
         project_state_dir: startup.project_state_dir.clone(),
+        pid: std::process::id() as i32,
     };
     #[cfg(unix)]
     let _expose_socket_guard = start_project_expose_socket_for_service(&startup)?;
@@ -1909,6 +1912,7 @@ impl Drop for ProjectExposeSocketGuard {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::daemon_state::load_metadata_endpoint;
     use crate::project_api_contract::routes;
     use crate::project_service::dispatcher::ProjectServiceStreamPlan;
     use crate::project_service::http::{
@@ -1948,6 +1952,58 @@ mod tests {
 
     fn create_git_checkout(path: &Path) {
         fs::create_dir_all(path.join(".git")).expect("create git checkout");
+    }
+
+    #[test]
+    fn endpoint_guard_preserves_endpoint_owned_by_newer_service() {
+        let state_dir = unique_test_root("endpoint-guard-newer");
+        fs::create_dir_all(&state_dir).expect("create state dir");
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".into(),
+                port: 45_901,
+                pid: 12_002,
+                updated_at: "now".into(),
+            },
+        )
+        .expect("save endpoint");
+
+        drop(ProjectServiceEndpointGuard {
+            project_state_dir: state_dir.clone(),
+            pid: 12_001,
+        });
+
+        let endpoint = load_metadata_endpoint(&state_dir).expect("newer endpoint preserved");
+        assert_eq!(endpoint.pid, 12_002);
+        fs::remove_dir_all(&state_dir).expect("cleanup state dir");
+    }
+
+    #[test]
+    fn endpoint_guard_removes_endpoint_owned_by_exiting_service() {
+        let state_dir = unique_test_root("endpoint-guard-owned");
+        fs::create_dir_all(&state_dir).expect("create state dir");
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".into(),
+                port: 45_901,
+                pid: 12_003,
+                updated_at: "now".into(),
+            },
+        )
+        .expect("save endpoint");
+
+        drop(ProjectServiceEndpointGuard {
+            project_state_dir: state_dir.clone(),
+            pid: 12_003,
+        });
+
+        assert!(
+            load_metadata_endpoint(&state_dir).is_none(),
+            "owned endpoint removed"
+        );
+        fs::remove_dir_all(&state_dir).expect("cleanup state dir");
     }
 
     fn write_running_agent_topology(state_dir: &Path, project_root: &Path) {
@@ -3632,11 +3688,22 @@ fn prepared_project_response_to_daemon(
 
 struct ProjectServiceEndpointGuard {
     project_state_dir: PathBuf,
+    pid: i32,
 }
 
 impl Drop for ProjectServiceEndpointGuard {
     fn drop(&mut self) {
-        remove_metadata_endpoint(&self.project_state_dir);
+        if let Err(error) = remove_metadata_endpoint_if_owned(&self.project_state_dir, self.pid) {
+            log_lifecycle_always(
+                "project service metadata endpoint cleanup failed",
+                "project-service",
+                Some(json!({
+                    "projectStateDir": self.project_state_dir.to_string_lossy(),
+                    "pid": self.pid,
+                    "error": error.to_string(),
+                })),
+            );
+        }
     }
 }
 

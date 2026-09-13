@@ -74,7 +74,8 @@ use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataEndpointLoadError,
     ProjectServiceState, clear_daemon_info_if_owned, get_daemon_host, get_daemon_port,
     is_pid_alive, load_daemon_state, load_metadata_endpoint, load_metadata_endpoint_result,
-    metadata_endpoint_path, remove_metadata_endpoint, save_daemon_info, save_daemon_state,
+    metadata_endpoint_path, remove_metadata_endpoint, remove_metadata_endpoint_if_owned,
+    save_daemon_info, save_daemon_state,
 };
 use crate::daemon_supervisor::RUNTIME_RESTART_LOCK_STALE_MS;
 use crate::dashboard_readiness::get_runtime_owner_id;
@@ -1114,6 +1115,35 @@ impl RealDaemonRuntime {
             }
         }
         terminated
+    }
+
+    fn remove_metadata_endpoint_if_owned_by_any(
+        &self,
+        project_state_dir: &Path,
+        pids: impl IntoIterator<Item = i32>,
+    ) -> Result<bool, String> {
+        for pid in pids {
+            match remove_metadata_endpoint_if_owned(project_state_dir, pid) {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(error) => {
+                    let message = format!(
+                        "failed to verify metadata endpoint owner before cleanup: {error}"
+                    );
+                    log_lifecycle_always(
+                        "project service metadata endpoint cleanup failed",
+                        "project-service",
+                        Some(json!({
+                            "projectStateDir": project_state_dir.to_string_lossy(),
+                            "pid": pid,
+                            "error": message.clone(),
+                        })),
+                    );
+                    return Err(message);
+                }
+            }
+        }
+        Ok(false)
     }
 
     fn wait_for_live_project_service(
@@ -2738,7 +2768,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             );
             let _ = self.project_service_launcher.terminate(&service, false);
             signaled_pids.insert(service.pid);
-            remove_metadata_endpoint(&project_state_dir);
+            self.remove_metadata_endpoint_if_owned_by_any(&project_state_dir, [service.pid])?;
         }
         let extra_pids = self.terminate_extra_project_services(
             &project_id,
@@ -2758,7 +2788,10 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                     "pids": signaled_pids.clone(),
                 })),
             );
-            remove_metadata_endpoint(&project_state_dir);
+            self.remove_metadata_endpoint_if_owned_by_any(
+                &project_state_dir,
+                signaled_pids.iter().copied(),
+            )?;
         }
         let pid = match self.project_service_launcher.launch(
             &project_id,
@@ -2897,7 +2930,10 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             }));
         };
         self.project_service_launcher.terminate(&service, force)?;
-        remove_metadata_endpoint(resolver.project_state_dir_for(&service.project_root));
+        self.remove_metadata_endpoint_if_owned_by_any(
+            &resolver.project_state_dir_for(&service.project_root),
+            [service.pid],
+        )?;
         service.status = Some(crate::daemon_state::ProjectServiceStatus::Stopped);
         service.updated_at = now_iso();
         service.last_exit = Some(crate::daemon_state::ProjectServiceExit {

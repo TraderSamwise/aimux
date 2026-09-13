@@ -1829,6 +1829,47 @@ fn stop_project_marks_service_stopped_and_removes_endpoint() {
     fixture.cleanup();
 }
 
+#[test]
+fn stop_project_preserves_endpoint_published_by_newer_service() {
+    let fixture = RuntimeFixture::new("stop-newer-endpoint");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        87_658,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 45_903,
+            pid: 87_659,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_660));
+    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+
+    let stopped = runtime
+        .stop_project(project.to_str().expect("project path"), false)
+        .expect("stop project");
+
+    assert_eq!(launcher.terminations(), vec![(87_658, false)]);
+    assert_eq!(stopped["status"], "stopped");
+    let endpoint = load_metadata_endpoint(resolver.project_state_dir_for(&project))
+        .expect("newer endpoint preserved");
+    assert_eq!(endpoint.pid, 87_659);
+    fixture.cleanup();
+}
+
 #[cfg(unix)]
 #[test]
 fn stop_project_matches_service_state_by_canonical_project_root() {
