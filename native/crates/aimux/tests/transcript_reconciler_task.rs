@@ -6,6 +6,7 @@
 //! whose `run` did nothing at all would pass.
 
 use aimux::daemon_state::{load_metadata_state, metadata_state_path};
+use aimux::project_service::operation_failures::list_dashboard_operation_failures;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::scheduler::PeriodicTask;
 use aimux::project_service::transcript_reconciler_task::TranscriptReconcilerTask;
@@ -13,6 +14,7 @@ use aimux::runtime_topology::{
     empty_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
 use aimux::runtime_topology_sessions::save_runtime_topology_sessions;
+use aimux::state_update_lock::state_update_lock_path;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -110,6 +112,17 @@ impl TempProject {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned)
     }
+
+    fn operation_failures(&self) -> Vec<Value> {
+        list_dashboard_operation_failures(self.state_dir())
+    }
+
+    fn hold_metadata_update_lock(&self) -> PathBuf {
+        let lock_path = state_update_lock_path(&metadata_state_path(self.state_dir()));
+        fs::create_dir_all(&lock_path).unwrap();
+        fs::write(lock_path.join("owner"), "transcript-reconciler-test").unwrap();
+        lock_path
+    }
 }
 
 /// The two-tick confirmation lives in the task instance, so every tick in one
@@ -131,13 +144,17 @@ impl TickLoop {
 
     fn tick(&mut self, times: usize) {
         for _ in 0..times {
-            // aimux-async-seam: test - transcript reconciler test drives async PeriodicTask body
-            aimux::async_runtime::block_on_named(
-                "transcript-reconciler-task-test",
-                self.task.run(&self.context),
-            )
-            .expect("transcript reconciler task should run");
+            self.tick_once()
+                .expect("transcript reconciler task should run");
         }
+    }
+
+    fn tick_once(&mut self) -> Result<(), String> {
+        // aimux-async-seam: test - transcript reconciler test drives async PeriodicTask body
+        aimux::async_runtime::block_on_named(
+            "transcript-reconciler-task-test",
+            self.task.run(&self.context),
+        )
     }
 }
 
@@ -165,6 +182,10 @@ fn a_stranded_running_session_is_settled_once_the_transcript_is_quiescent() {
         project.derived("activity").as_deref(),
         Some("idle"),
         "a complete, quiescent transcript did not settle the session"
+    );
+    assert!(
+        project.operation_failures().is_empty(),
+        "successful correction should not record an operation failure"
     );
 }
 
@@ -242,5 +263,96 @@ fn a_stranded_needs_response_is_cleared_after_a_second_unbacked_tick() {
         project.derived("attention").as_deref(),
         Some("normal"),
         "an unbacked needs_response was never cleared"
+    );
+}
+
+#[test]
+fn failed_activity_correction_is_reported_and_retried() {
+    let project = TempProject::new("settle-fail");
+    let transcript = project.write_transcript("end_turn");
+    project.write_topology("running");
+    project.write_metadata(running(), &transcript);
+    let mut tick_loop = TickLoop::new(&project);
+
+    tick_loop.tick(1);
+    let lock_path = project.hold_metadata_update_lock();
+    tick_loop.tick(1);
+
+    assert_eq!(
+        project.derived("activity").as_deref(),
+        Some("running"),
+        "failed /set-activity must not pretend the correction landed"
+    );
+    let failures = project.operation_failures();
+    assert_eq!(failures.len(), 1, "expected one visible correction failure");
+    let failure = &failures[0];
+    assert_eq!(
+        failure["operation"],
+        json!("transcript-reconciler:set-activity")
+    );
+    assert_eq!(failure["targetId"], json!("s1"));
+    let message = failure["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("POST /set-activity failed with HTTP 500"),
+        "failure did not name the failed route/status: {message}"
+    );
+    assert!(
+        message.contains("Timed out acquiring state update lock"),
+        "failure did not carry the route error cause: {message}"
+    );
+
+    fs::remove_dir_all(lock_path).unwrap();
+    tick_loop.tick(1);
+    assert_eq!(
+        project.derived("activity").as_deref(),
+        Some("idle"),
+        "the failed correction was not retried after the route became writable"
+    );
+    assert!(
+        project.operation_failures().is_empty(),
+        "successful retry should clear the correction failure"
+    );
+}
+
+#[test]
+fn missing_metadata_is_absence_but_corrupt_metadata_is_reported() {
+    let missing = TempProject::new("missing-metadata");
+    missing.write_topology("running");
+    let mut tick_loop = TickLoop::new(&missing);
+    tick_loop.tick(1);
+    assert!(
+        missing.operation_failures().is_empty(),
+        "a genuinely absent metadata file is not a reconciler failure"
+    );
+
+    let corrupt = TempProject::new("corrupt-metadata");
+    corrupt.write_topology("running");
+    fs::write(metadata_state_path(corrupt.state_dir()), "{").unwrap();
+    let mut tick_loop = TickLoop::new(&corrupt);
+    let message = tick_loop
+        .tick_once()
+        .expect_err("corrupt metadata must fail the task");
+    assert!(
+        message.contains("transcript reconciler metadata unavailable"),
+        "metadata failure did not name the failing input: {message}"
+    );
+    assert!(
+        message.contains("parse metadata state"),
+        "metadata failure did not carry the parse error: {message}"
+    );
+}
+
+#[test]
+fn unreadable_topology_is_reported_not_treated_as_empty() {
+    let project = TempProject::new("bad-topology");
+    fs::write(runtime_topology_path(project.state_dir()), "sessions: [").unwrap();
+    let mut tick_loop = TickLoop::new(&project);
+
+    let message = tick_loop
+        .tick_once()
+        .expect_err("unreadable topology must fail the task");
+    assert!(
+        message.contains("transcript reconciler topology unavailable"),
+        "topology failure did not name the read failure: {message}"
     );
 }

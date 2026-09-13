@@ -127,12 +127,14 @@ impl TranscriptReconcilerDeps for FixtureDeps {
         self.input["pendingInteraction"].as_bool().unwrap_or(false)
     }
 
-    fn settle_activity(&mut self, session_id: &str) {
+    fn settle_activity(&mut self, session_id: &str) -> bool {
         self.settle_activity.push(json!([session_id]));
+        true
     }
 
-    fn clear_stale_response(&mut self, session_id: &str) {
+    fn clear_stale_response(&mut self, session_id: &str) -> bool {
         self.clear_stale_response.push(json!([session_id]));
+        true
     }
 
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
