@@ -16,6 +16,7 @@ const WEDGED_TASK_MS: u64 = 2 * 60 * 60 * 1000;
 const BUFFER_HIGH_WATER_PERCENT: u64 = 90;
 const BUFFER_DEPTH_WARN_PERCENT: u64 = 80;
 const GROWTH_WARN_PERCENT: u64 = 30;
+const RUNTIME_HEALTH_RECORDER_TASK: &str = "runtime-health-recorder";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -345,10 +346,26 @@ fn evaluate_wedged_tasks(sample: &Value, history_span_ms: u64, reasons: &mut Vec
         return;
     };
     for task in tasks {
+        let name = string_field(task, &["name"]).unwrap_or("unknown-task");
+        if name == RUNTIME_HEALTH_RECORDER_TASK {
+            let consecutive_failures = integer_field(task, &["consecutiveFailures"]).unwrap_or(0);
+            let consecutive_timeouts = integer_field(task, &["consecutiveTimeouts"]).unwrap_or(0);
+            if metric_failed(task) || consecutive_failures > 0 || consecutive_timeouts > 0 {
+                let last_error = string_field(task, &["lastError", "error"])
+                    .map(|error| format!(": {error}"))
+                    .unwrap_or_default();
+                reasons.push(failure(
+                    "recorder-broken",
+                    format!(
+                        "{name} could not record stability evidence ({consecutive_failures} consecutive failure(s), {consecutive_timeouts} consecutive timeout(s)){last_error}"
+                    ),
+                ));
+            }
+            continue;
+        }
         if metric_failed(task) {
             continue;
         }
-        let name = string_field(task, &["name"]).unwrap_or("unknown-task");
         if let Some(last_completed_at_ms) = integer_field(
             task,
             &["lastCompletedAtMs", "lastCompletedMs", "completedAtMs"],
@@ -830,6 +847,97 @@ mod tests {
     }
 
     #[test]
+    fn recorder_failure_names_recorder_broken() {
+        let base = 1_000_000_000_u64;
+        let latest = json!({
+            "recordedAtMs": base + MIN_HISTORY_SPAN_MS,
+            "scheduler": {
+                "periodicTasks": [{
+                    "name": RUNTIME_HEALTH_RECORDER_TASK,
+                    "runs": 2,
+                    "lastCompletedAtMs": base + MIN_HISTORY_SPAN_MS - 60_000,
+                    "consecutiveFailures": 1,
+                    "consecutiveTimeouts": 0,
+                    "lastError": "runtime health sample write failed at /repo/.aimux/runtime-health.jsonl: permission denied"
+                }]
+            },
+            "backlog": [{
+                "name": "relay outbox",
+                "depth": 1,
+                "highWater": 1,
+                "capacity": 512
+            }],
+            "process": { "taskCount": 10 }
+        });
+        let history = vec![stable_sample(base, 10, 1, 1, 512), latest];
+
+        let report = build_stability_doctor_report_from_history(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            base + MIN_HISTORY_SPAN_MS,
+            Ok(history),
+        );
+
+        assert_eq!(report.verdict, StabilityVerdict::NotStable);
+        let rendered = render_stability_doctor_report(&report);
+        assert!(
+            report
+                .reasons
+                .iter()
+                .any(|reason| reason.kind == "recorder-broken"
+                    && reason
+                        .message
+                        .contains("could not record stability evidence")
+                    && reason.message.contains("permission denied")),
+            "{:#?}\n{rendered}",
+            report.reasons
+        );
+        assert!(
+            report
+                .reasons
+                .iter()
+                .all(|reason| reason.kind != "task-failures"),
+            "{:#?}\n{rendered}",
+            report.reasons
+        );
+        assert!(rendered.contains("runtime-health-recorder could not record stability evidence"));
+    }
+
+    #[test]
+    fn young_history_without_recorder_failure_still_reports_history_too_short() {
+        let base = 1_000_000_000_u64;
+        let history = vec![
+            healthy_recorder_sample(base, 10, 10, 10, 512),
+            healthy_recorder_sample(base + 6 * 60 * 60 * 1000, 10, 10, 10, 512),
+        ];
+
+        let report = build_stability_doctor_report_from_history(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            base + 6 * 60 * 60 * 1000,
+            Ok(history),
+        );
+
+        assert_eq!(report.verdict, StabilityVerdict::Unknown);
+        assert!(
+            report
+                .reasons
+                .iter()
+                .any(|reason| reason.kind == "history-too-short"),
+            "{:#?}",
+            report.reasons
+        );
+        assert!(
+            report
+                .reasons
+                .iter()
+                .all(|reason| reason.kind != "recorder-broken"),
+            "{:#?}",
+            report.reasons
+        );
+    }
+
+    #[test]
     fn growth_window_detects_real_24h_rise_across_rotation_boundary() {
         let root = unique_temp_dir("stability-growth-rotation");
         fs::create_dir_all(&root).expect("state dir");
@@ -870,6 +978,34 @@ mod tests {
             "scheduler": {
                 "periodicTasks": [{
                     "name": "loop-watcher",
+                    "runs": 42,
+                    "lastCompletedAtMs": recorded_at_ms.saturating_sub(60_000),
+                    "consecutiveFailures": 0,
+                    "consecutiveTimeouts": 0
+                }]
+            },
+            "backlog": [{
+                "name": "relay outbox",
+                "depth": depth,
+                "highWater": high_water,
+                "capacity": capacity
+            }],
+            "process": { "taskCount": task_count }
+        })
+    }
+
+    fn healthy_recorder_sample(
+        recorded_at_ms: u64,
+        task_count: u64,
+        depth: u64,
+        high_water: u64,
+        capacity: u64,
+    ) -> Value {
+        json!({
+            "recordedAtMs": recorded_at_ms,
+            "scheduler": {
+                "periodicTasks": [{
+                    "name": RUNTIME_HEALTH_RECORDER_TASK,
                     "runs": 42,
                     "lastCompletedAtMs": recorded_at_ms.saturating_sub(60_000),
                     "consecutiveFailures": 0,
