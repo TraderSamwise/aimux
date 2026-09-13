@@ -147,12 +147,6 @@ function agentRecencyText(session: DesktopSession): string | null {
   return formatSessionRecency(session);
 }
 
-function agentRoleBadge(session: DesktopSession): string | null {
-  const role = session.role;
-  if (!role || role === "coder") return null;
-  return role;
-}
-
 function serviceRecencyText(service: DesktopService): string | null {
   return formatServiceRecency(service);
 }
@@ -170,7 +164,7 @@ function CompactRecency({ text }: { text?: string | null }) {
   );
 }
 
-function AgentRow({
+export function AgentRow({
   session,
   digit,
   selected,
@@ -194,7 +188,6 @@ function AgentRow({
   onPress: () => void;
 }) {
   const shortName = agentShortName(session);
-  const roleBadge = agentRoleBadge(session);
   const state = deriveAgentState(session);
   const recency = agentRecencyText(session);
   const previewUnavailable = formatPreviewCaptureUnavailable(session.previewCapture);
@@ -222,11 +215,6 @@ function AgentRow({
         >
           {shortName}
         </Text>
-        {roleBadge ? (
-          <Text className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-[#7c7e88]">
-            {roleBadge}
-          </Text>
-        ) : null}
       </View>
       {compact ? null : <TrailingHint text={fullHint} />}
     </>
