@@ -86,6 +86,33 @@ fn isolated_aimux_home_state_dir_refuses_event_delivery() {
 }
 
 #[test]
+fn unmarked_temp_aimux_home_state_dir_does_not_refuse_fixture_delivery() {
+    let isolation = support::TestIsolation::new("notification-unmarked");
+    remove_file(
+        isolation
+            .aimux_home()
+            .join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+    )
+    .expect("remove isolation marker");
+    let project_root = isolation.root().join("repo");
+    let project_state_dir = isolation.root().join("aimux-home/projects/repo-123");
+    let event = json!({
+        "kind": "needs_input",
+        "sessionId": "codex-1",
+        "message": "waiting"
+    });
+
+    assert_eq!(
+        fixture_notification_refusal_reason_for_event(
+            Some(&project_root),
+            Some(&project_state_dir),
+            &event,
+        ),
+        None
+    );
+}
+
+#[test]
 fn cargo_test_process_refuses_external_event_delivery_without_fixture_marker() {
     let event = json!({
         "kind": "needs_input",

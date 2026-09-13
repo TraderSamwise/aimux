@@ -18,6 +18,18 @@ fn git_project(path: &Path) {
     fs::create_dir_all(path.join(".git")).expect("create git marker");
 }
 
+fn mark_test_isolation(path: &Path) {
+    fs::create_dir_all(path).expect("create marked test root");
+    fs::write(
+        path.join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+        format!(
+            r#"{{"ownerPid":{},"kind":"cargo-test"}}"#,
+            std::process::id()
+        ),
+    )
+    .expect("write test isolation marker");
+}
+
 struct CwdGuard {
     previous: PathBuf,
 }
@@ -67,17 +79,21 @@ fn hides_missing_and_tmp_aimux_projects_but_keeps_non_git_and_tmp_prefix_sibling
     let root = std::env::temp_dir().join(format!("aimux-rust-catalog-hide-{}", std::process::id()));
     let tmp_dir = root.join("tmp");
     let tmp_aimux = tmp_dir.join("aimux-agent-tracker-123");
+    let real_tmp_aimux = tmp_dir.join("aimux-realrepo");
     let tmp_sibling =
         PathBuf::from(format!("{}-sibling", tmp_dir.to_string_lossy())).join("aimux-real-project");
     let non_git = root.join("work").join("logs");
     let valid = root.join("work").join("valid");
     git_project(&tmp_aimux);
+    mark_test_isolation(&tmp_aimux);
+    git_project(&real_tmp_aimux);
     git_project(&tmp_sibling);
     git_project(&valid);
     fs::create_dir_all(&non_git).expect("create non-git project");
 
     let entries = vec![
         project_entry("temp", "temp", &tmp_aimux),
+        project_entry("real-temp", "real-temp", &real_tmp_aimux),
         project_entry("tmp-sibling", "tmp-sibling", &tmp_sibling),
         project_entry("missing", "missing", &root.join("missing")),
         project_entry("non-git", "logs", &non_git),
@@ -92,7 +108,7 @@ fn hides_missing_and_tmp_aimux_projects_but_keeps_non_git_and_tmp_prefix_sibling
         .map(|project| project.id.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(ids, vec!["non-git", "tmp-sibling", "valid"]);
+    assert_eq!(ids, vec!["non-git", "real-temp", "tmp-sibling", "valid"]);
 
     fs::remove_dir_all(&root).expect("remove temp catalog root");
 }

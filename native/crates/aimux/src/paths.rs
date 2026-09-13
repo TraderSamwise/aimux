@@ -508,6 +508,13 @@ fn is_ephemeral_temp_project_root_from(repo_root: &Path, process_cwd: &Path) -> 
         && temp_dirs(process_cwd)
             .iter()
             .any(|directory| resolved == *directory || resolved.starts_with(directory))
+        && has_test_isolation_marker(&resolved)
+}
+
+pub fn has_test_isolation_marker(path: impl AsRef<Path>) -> bool {
+    path.as_ref()
+        .join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER)
+        .is_file()
 }
 
 fn log_registry_skip(reason: &str, repo_root: &Path, registry_path: &Path) {

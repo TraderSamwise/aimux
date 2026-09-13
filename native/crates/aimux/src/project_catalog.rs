@@ -1,4 +1,4 @@
-use crate::paths::ProjectEntry;
+use crate::paths::{ProjectEntry, has_test_isolation_marker};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -67,7 +67,7 @@ pub fn should_hide_desktop_project(project_path: impl AsRef<Path>, tmp_dirs: &[P
     let is_tmp_project = tmp_dirs
         .iter()
         .any(|tmp_dir| project_path == tmp_dir || project_path.strip_prefix(tmp_dir).is_ok());
-    is_tmp_project && name.starts_with("aimux-")
+    is_tmp_project && name.starts_with("aimux-") && has_test_isolation_marker(project_path)
 }
 
 pub fn list_registered_desktop_projects(

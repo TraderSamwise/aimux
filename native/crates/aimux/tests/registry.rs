@@ -1,5 +1,7 @@
 use aimux::atomic_write::{quarantine_corrupt_file, write_json_atomic, write_text_atomic};
-use aimux::paths::{MAX_PROJECT_REGISTRY_ENTRIES, PathResolver, ProjectsRegistry};
+use aimux::paths::{
+    MAX_PROJECT_REGISTRY_ENTRIES, PathResolver, ProjectsRegistry, is_ephemeral_temp_project_root,
+};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,6 +37,19 @@ fn git_root(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
     fs::create_dir_all(path.join(".git")).expect("create git marker");
     path.to_path_buf()
+}
+
+fn mark_test_isolation(path: impl AsRef<Path>) {
+    let path = path.as_ref();
+    fs::create_dir_all(path).expect("create marked test root");
+    fs::write(
+        path.join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+        format!(
+            r#"{{"ownerPid":{},"kind":"cargo-test"}}"#,
+            std::process::id()
+        ),
+    )
+    .expect("write test isolation marker");
 }
 
 fn unique_temp_fixture_project_root(label: &str) -> PathBuf {
@@ -114,6 +129,7 @@ fn load_registry_filters_invalid_roots_and_keeps_last_duplicate_value() {
         std::process::id(),
         TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     )));
+    mark_test_isolation(&ephemeral);
     let resolver = resolver(&test_dir);
     fs::create_dir_all(resolver.global_aimux_dir()).expect("create global directory");
     let registry = json!({
@@ -240,12 +256,20 @@ fn registry_cap_is_applied_after_filtering() {
         .expect_err("reject oversized registry");
     assert!(error.to_string().contains("cap is 500"));
 
+    let mut invalid_roots = Vec::new();
     let invalid_projects: Vec<_> = (0..=MAX_PROJECT_REGISTRY_ENTRIES)
         .map(|index| {
+            let invalid_root = std::env::temp_dir().join(format!(
+                "aimux-invalid-{index}-{}-{}",
+                std::process::id(),
+                TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ));
+            mark_test_isolation(&invalid_root);
+            invalid_roots.push(invalid_root.clone());
             json!({
                 "id": format!("invalid-{index}"),
                 "name": "invalid",
-                "repoRoot": std::env::temp_dir().join(format!("aimux-invalid-{index}")),
+                "repoRoot": invalid_root,
                 "lastSeen": "now"
             })
         })
@@ -269,6 +293,9 @@ fn registry_cap_is_applied_after_filtering() {
             .len(),
         1
     );
+    for root in invalid_roots {
+        fs::remove_dir_all(root).expect("remove marked invalid root");
+    }
 }
 
 #[test]
@@ -282,6 +309,7 @@ fn register_project_skips_ineligible_roots_and_updates_existing_entry() {
         std::process::id(),
         TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     )));
+    mark_test_isolation(&ephemeral);
     let mut resolver = resolver(&test_dir);
 
     assert_eq!(
@@ -325,12 +353,13 @@ fn register_project_skips_ineligible_roots_and_updates_existing_entry() {
 fn register_project_allows_legitimate_temp_checkouts() {
     let test_dir = TestDir::new();
     let temp_checkout = git_root(std::env::temp_dir().join(format!(
-        "legit-temp-checkout-{}-{}",
+        "aimux-realrepo-{}-{}",
         std::process::id(),
         TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     )));
     let mut resolver = resolver(&test_dir);
 
+    assert!(!is_ephemeral_temp_project_root(&temp_checkout));
     let registered = resolver
         .register_project(&temp_checkout)
         .expect("register legitimate temp checkout")
@@ -346,8 +375,10 @@ fn register_project_allows_legitimate_temp_checkouts() {
 fn register_project_skips_ephemeral_temp_roots_by_name() {
     let test_dir = TestDir::new();
     let leaked_shape = git_root(unique_temp_fixture_project_root("registry-skip"));
+    mark_test_isolation(&leaked_shape);
     let mut resolver = resolver(&test_dir);
 
+    assert!(is_ephemeral_temp_project_root(&leaked_shape));
     assert_eq!(
         resolver
             .register_project(&leaked_shape)

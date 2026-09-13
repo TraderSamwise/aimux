@@ -415,9 +415,43 @@ fn is_loopback_daemon_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::default_daemon_run_refusal_reason_for_exe;
+    use super::{
+        TEST_ISOLATION_MARKER, default_daemon_run_refusal_reason_for_exe,
+        request_project_refusal_reason,
+    };
+    use crate::daemon::routing::DaemonRouteUrl;
     use crate::daemon_state::DEFAULT_DAEMON_PORT;
-    use std::path::Path;
+    use serde_json::json;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_project_root(name: &str) -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "{name}-{}-{}-{timestamp}",
+            std::process::id(),
+            TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn mark_test_isolation(path: &Path) {
+        fs::create_dir_all(path).expect("create marked project root");
+        fs::write(
+            path.join(TEST_ISOLATION_MARKER),
+            format!(
+                r#"{{"ownerPid":{},"kind":"cargo-test"}}"#,
+                std::process::id()
+            ),
+        )
+        .expect("write test isolation marker");
+    }
 
     #[test]
     fn default_daemon_run_refuses_debug_and_cargo_target_binaries() {
@@ -460,5 +494,33 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn marked_temp_project_root_refuses_daemon_request() {
+        let project_root = temp_project_root("aimux-agent-restore-harness");
+        mark_test_isolation(&project_root);
+        let body = json!({ "projectRoot": project_root.to_string_lossy() });
+
+        assert_eq!(
+            request_project_refusal_reason(&DaemonRouteUrl::parse("/projects/ensure"), Some(&body)),
+            Some("temporary project")
+        );
+
+        fs::remove_dir_all(project_root).expect("remove marked project root");
+    }
+
+    #[test]
+    fn unmarked_temp_project_root_name_does_not_refuse_daemon_request() {
+        let project_root = temp_project_root("aimux-agent-restore-real");
+        fs::create_dir_all(&project_root).expect("create unmarked project root");
+        let body = json!({ "projectRoot": project_root.to_string_lossy() });
+
+        assert_eq!(
+            request_project_refusal_reason(&DaemonRouteUrl::parse("/projects/ensure"), Some(&body)),
+            None
+        );
+
+        fs::remove_dir_all(project_root).expect("remove unmarked project root");
     }
 }
