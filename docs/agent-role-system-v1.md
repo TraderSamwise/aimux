@@ -25,6 +25,10 @@ that seam: `is_project_control_session`, `is_overseer_session`,
 `is_scribe_session`, and `project_control_display_role` remain compatibility
 helpers while the new typed model becomes the source of truth.
 
+Audit note: the AGENTS.md pointer to `src/team.ts` is stale. The implementation
+seam is `team_contract.rs`, plus the Rust and app callers that mirror its
+compatibility rules.
+
 ## Goals
 
 1. Make `coder` the explicit default role for ordinary agents.
@@ -145,6 +149,26 @@ identity, and watch bindings. Runtime topology, tmux metadata, metadata state,
 desktop-state, `/agents`, `/topology`, switchable-agents, and statusline expose
 projections of it.
 
+The registry must have one serialization point. All mutations that can change
+role, lane, durable supervisor slots, or watch bindings must enter the
+project-service lifecycle mutation queue:
+
+- `lifecycle_mutation_queue.rs` is the boundary for role promotion, demotion,
+  lane migration, supervisor slot create/resume/remove, and watch bind/unbind.
+- The role registry write and metadata/topology projection writes are one
+  queued mutation. The registry commit happens first; metadata and topology are
+  derived projections.
+- `update_session_metadata_at` remains a projection helper, not an independent
+  role writer.
+- Existing `/agents/overseer` and `/agents/scribe` routes become compatibility
+  wrappers over the same queued role mutation.
+
+This is the one-overseer-per-watched-agent enforcement point. A unique
+`watchBindings[watchedSessionId]` check is only safe when every writer reaches
+the same queue and registry transaction. Two concurrent binds through two
+routes must serialize; the loser gets a 409 that names the current overseer
+binding.
+
 The existing `overseer`, `scribe`, `projectControl`, legacy `role`, and
 `team.role` fields remain compatibility projections during migration. New code
 should read the typed role/lane fields first, then fall back through
@@ -169,21 +193,55 @@ state remain project-service state.
 The tmux window id is not identity. It is a runtime location that can be
 recreated.
 
-Supervisor roles use `resumePolicy: "always"` by default. If Sam stops a
-supervisor or reboots the machine, the project service should attempt to bring
-the same logical supervisor back. `/clear` is the explicit action that starts a
-fresh conversation for that supervisor slot. `/clear` should create a new
-backend/transcript generation while preserving the role slot and lane, unless
-the command is explicitly "remove supervisor".
+Supervisor roles use `resumePolicy: "always"` by default. That must not be
+implemented as "offer to restore previous agents." The existing restore rails
+are an offer system: prompt/ack gated once per boot, deliberately empty when
+the last online agent is gone, and normalized without `backendSessionId`. That
+is right for optional ordinary-agent restore prompts, but it cannot guarantee
+that the last stopped supervisor comes back after reboot.
 
-Existing agent-restore rails should be reused for launch/resume mechanics:
+The durable mechanism to generalize is the default-scribe identity that already
+works today: `default_scribe.rs` creates a deterministic session id such as
+`{executable}-scribe`, launches it in the main checkout, and stamps
+`AIMUX_SCRIBE=1`.
 
-- `agent_restore_task` already records last-online agents on the scheduler and
-  preserves project-control flags in restore snapshots.
-- That machinery should be extended to include typed `role`, `lane`,
-  `identityKey`, and supervisor resume metadata.
-- It should not become the source of truth for desired supervisors. The role
-  registry is authoritative; restore snapshots are evidence used to resume.
+Generalize that into deterministic supervisor slots:
+
+```text
+supervisor:<role>:<slot> -> deterministic session id
+```
+
+Default slot ids should be stable and human-auditable:
+
+- `supervisor:scribe:default` -> `{executable}-scribe`
+- `supervisor:overseer:default` -> `{executable}-overseer`
+- future slots -> `{executable}-{role}-{slot}`
+
+The role registry owns the mapping from role slot to logical session id and the
+exact resume facts needed to relaunch it:
+
+- tool/config key,
+- command,
+- args and launch override,
+- launch environment,
+- backend session id when exact resume exists,
+- transcript/context generation,
+- main-checkout launch cwd,
+- current role/lane/watch metadata,
+- whether the slot is desired.
+
+The restore rails may still support optional ordinary-agent restore offers, and
+their helpers can be reused where appropriate, but supervisor always-resume must
+read the role registry. If the registry says a desired supervisor exists and
+the tmux window is gone, the reconciler recreates that deterministic session
+id. If exact backend resume is impossible, it surfaces a blocked supervisor
+state naming the missing backend session id instead of silently creating a
+different supervisor.
+
+`/clear` is the explicit action that starts a fresh conversation for that
+supervisor slot. `/clear` should create a new backend/transcript generation
+while preserving the deterministic role slot and lane, unless the command is
+explicitly "remove supervisor".
 
 ## Reconciliation
 
@@ -214,7 +272,8 @@ health diagnostics useful for supervisor recovery.
 ## Migration
 
 Role/lane migration should be a metadata-first mutation with explicit
-validation. It should not kill or relaunch a running agent by default.
+validation, but role changes have a launch-time runtime component that metadata
+cannot change inside an already-running process.
 
 ### Coder To Overseer
 
@@ -225,13 +284,36 @@ validation. It should not kill or relaunch a running agent by default.
 4. Service creates or attaches a supervisor role slot.
 5. Service writes the role registry under one mutation lock.
 6. Service updates metadata/topology projections.
-7. Running process continues in its current tmux pane; dashboard/GUI placement
-   changes on the next state refresh.
+7. If the process is running, dashboard/GUI placement can change on the next
+   state refresh, but the in-process supervisor identity is not effective until
+   relaunch.
 
 If the promoted session is in a worktree, v1 does not `cd` it into the main
-checkout while running. Its next resume/relaunch uses the supervisor launch
-policy and main checkout. The API should expose `runtimeWorkingDirectory` when
-it differs from lane placement so clients do not lie.
+checkout while running. Promotion must therefore clear or override
+`worktreePath` in the supervisor role registry for the next launch, because
+`resume_agent_session` computes launch cwd from `session.worktreePath` and
+would otherwise relaunch the promoted supervisor in the old worktree. The API
+should expose `runtimeWorkingDirectory` and `pendingRelaunchForRole` when
+runtime cwd or launch-time env differs from the declared lane/role so clients
+do not lie.
+
+The launch-time env is part of role identity today:
+
+- spawn with `overseer: true` sets `AIMUX_OVERSEER=1`;
+- spawn/default scribe sets `AIMUX_SCRIBE=1`;
+- `core_cli.rs` reads those env vars to decide whether the running agent is an
+  overseer actor.
+
+So a running coder promoted to overseer has two states until restart:
+
+- declared role/lane: overseer in supervisor lane;
+- effective runtime role: still whatever was launched in that process.
+
+For v1, promotion to a supervisor role should default to a controlled relaunch
+or exact resume into the deterministic supervisor slot. If Sam chooses
+metadata-only migration, the session must be marked `pendingRelaunchForRole`
+and must not be treated as an effective overseer for delivery, watch ownership,
+or privileged actor behavior until the relaunch succeeds.
 
 ### Overseer To Coder
 
@@ -246,6 +328,12 @@ Demotion requires an explicit target worktree. The service:
 If an overseer has active watch bindings, default demotion should fail with a
 409 and list the bindings. The caller can retry with `releaseBindings: true` or
 an explicit transfer plan.
+
+If the demoted process keeps running, the same launch-time caveat applies in
+reverse: metadata can say `coder`, but a process launched with
+`AIMUX_OVERSEER=1` can still self-identify as an overseer until relaunched.
+Effective demotion should therefore either relaunch or mark
+`pendingRelaunchForRole` and remove delivery/watch authority immediately.
 
 ### Coder In Supervisor Lane
 
@@ -348,6 +436,19 @@ compatibility wrappers over `/agents/role`. They should return the new
 `AgentRoleState` as well as the legacy boolean so older clients continue to
 work.
 
+Every role/watch mutation route needs an explicit failure shape. Do not return
+`accepted: true` or `ok: true` when the mutation is queued but not applied. A
+watch bind response should distinguish at least:
+
+- `applied`: binding written and projections updated;
+- `conflict`: watched coder already bound to another overseer, naming it;
+- `blocked`: required topology/metadata/registry read could not be completed;
+- `pendingRelaunch`: role metadata changed but effective runtime role is not
+  active until relaunch.
+
+The error body must include the compared ids, roles, lane values, and existing
+binding that made the mutation fail.
+
 Topology should expose a supervisor lane node:
 
 ```ts
@@ -413,10 +514,33 @@ supervisor domain in the normal contracts and renders it alongside worktrees.
    - explicit demotion flags remain authoritative;
    - no role -> `role: "coder"`, worktree lane if worktree exists.
 3. Update `team_contract` to prefer typed role/lane data, then legacy fields.
-4. Update launch/resume to write typed data and compatibility fields together.
-5. Update clients to render typed data.
-6. Later, remove direct caller reliance on `overseer`, `scribe`, and
+4. Generalize deterministic supervisor slots from the default-scribe mechanism;
+   do not base always-resume semantics on restore offers.
+5. Update launch/resume to write typed data and compatibility fields together,
+   including launch-time env and main-checkout cwd for supervisor roles.
+6. Convert legacy `/agents/overseer` and `/agents/scribe` writes into queued
+   role mutations.
+7. Update clients to render typed data.
+8. Later, remove direct caller reliance on `overseer`, `scribe`, and
    `projectControl` booleans once all supported clients use typed roles.
+
+Before implementation, inventory and convert every current singleton or
+special-case role path:
+
+- launch env: `AIMUX_OVERSEER=1` and `AIMUX_SCRIBE=1`;
+- deterministic default scribe id: `{executable}-scribe`;
+- prefix-`O` overseer jump in tmux control, which currently selects the first
+  live overseer match;
+- first-match singleton lookups in dashboard controller;
+- switchable-agents `includeOverseer` filtering;
+- desktop/app helpers that hide `projectControl` sessions;
+- `AgentListItem.role?: string`, which collides with the new typed role unless
+  narrowed or renamed consistently.
+
+`find_existing_live_scribe` currently treats unreadable topology as an empty
+topology. That can create duplicate supervisors. The generalized supervisor
+creation path must treat unreadable topology as "could not ask" and block or
+surface the error rather than assuming no live supervisor exists.
 
 ## Error Semantics
 
@@ -444,16 +568,25 @@ Implementation should include mutation-proven tests for:
 
 - default spawn creates `role: "coder"` in a worktree lane;
 - default overseer/scribe creation creates supervisor-lane roles;
-- restart/reboot reconciliation resumes the same supervisor session id and
-  transcript identity;
+- restart/reboot reconciliation resumes the same deterministic supervisor
+  session id and transcript identity from the role registry, without relying on
+  restore offers;
+- stopping the last supervisor leaves enough registry evidence to recreate it;
 - `/clear` creates a fresh conversation generation without losing the
   supervisor slot;
 - promoting coder to overseer moves the dashboard/desktop placement without
-  killing the running pane;
+  lying about effective runtime role;
+- promoting coder to overseer clears/overrides worktree launch cwd for the next
+  supervisor relaunch;
+- launch-time env is present after effective promotion and absent after
+  effective demotion;
 - demoting overseer with bindings fails unless release/transfer is explicit;
 - one watched coder cannot be bound to two overseers;
+- two concurrent bind attempts serialize through the lifecycle mutation queue;
 - stopped overseer preserves bindings and blocks competing overseer claims;
 - missing/corrupt role registry surfaces could-not-ask instead of empty lane;
+- unreadable topology during supervisor discovery blocks rather than creating a
+  duplicate supervisor;
 - GUI contract includes supervisor lane and app grouping does not infer from
   labels or paths;
 - legacy `overseer`/`scribe`/`projectControl` sessions backfill correctly.
@@ -492,11 +625,20 @@ Rejected because `team.json` is role vocabulary/config, not per-session runtime
 ownership. It cannot enforce one-overseer-per-watched-agent or preserve a
 specific supervisor identity.
 
-### Kill And Relaunch On Every Migration
+### Pretend Metadata Promotion Changes A Running Process
 
-Rejected for v1 because migration should be safe while Sam is driving. Metadata
-placement can change immediately; launch policy takes effect on the next resume
-when a working-directory change is actually needed.
+Rejected because supervisor identity is partly launch-time state today.
+Metadata can move a tile and establish the durable slot, but it cannot add
+`AIMUX_OVERSEER=1` to an already-running process or change its cwd. Effective
+role changes require controlled relaunch/exact resume or a visible
+`pendingRelaunchForRole` state.
+
+### Use Restore Offers As Always-Resume
+
+Rejected because restore offers are prompt/ack gated, omit
+`backendSessionId`, and intentionally disappear for an empty online set. They
+are evidence for optional ordinary-agent restore, not durable supervisor slot
+state.
 
 ### Release Watch Bindings When Overseer Stops
 
