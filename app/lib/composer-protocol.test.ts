@@ -15,9 +15,9 @@ describe("composer protocol", () => {
     expect(normalizeComposerDraft("  \n\t")).toBeNull();
   });
 
-  it("submits plain Enter and preserves modified Enter keypresses", () => {
+  it("submits plain Enter and Shift+Enter, preserving other modified Enter keypresses", () => {
     expect(shouldSubmitComposerKey({ key: "Enter" })).toBe(true);
-    expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true })).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true })).toBe(true);
     expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true })).toBe(false);
     expect(shouldSubmitComposerKey({ key: "Enter", metaKey: true })).toBe(false);
     expect(shouldSubmitComposerKey({ key: "Enter", altKey: true })).toBe(false);

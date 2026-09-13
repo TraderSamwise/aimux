@@ -124,15 +124,15 @@ class AimuxWindow: UIWindow {
       if isEscapeKey(key) {
         return "chatInterrupt"
       }
-      if AimuxNativeCommands.isChatComposerFocused && isPlainReturnKey(key) {
+      if AimuxNativeCommands.isChatComposerFocused && isSendReturnKey(key) {
         return "chatSend"
       }
     }
     return nil
   }
 
-  private func isPlainReturnKey(_ key: UIKey) -> Bool {
-    let disallowedModifiers: UIKeyModifierFlags = [.shift, .command, .alternate, .control]
+  private func isSendReturnKey(_ key: UIKey) -> Bool {
+    let disallowedModifiers: UIKeyModifierFlags = [.command, .alternate, .control]
     return isReturnKey(key) && key.modifierFlags.intersection(disallowedModifiers).isEmpty
   }
 
