@@ -7,6 +7,7 @@ use aimux::project_service::runtime_exchange::{
 };
 use aimux::project_service::team::save_team_config;
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
+use aimux::runtime_topology_state_save::reconcile_runtime_topology_sessions_on_state_save_at;
 use aimux::tmux::CapturePaneOptions;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -851,6 +852,64 @@ fn thread_send_reports_unreadable_topology_not_missing_recipient() {
     assert!(error.contains("runtime topology could not be read"));
     assert!(!error.contains("no live tmux window"));
     assert!(runtime.actions.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn thread_send_reaches_live_recipient_after_targetless_state_save() {
+    let project = temp_project("thread-delivery-preserved-binding");
+    let state_dir = project.join("state");
+    write_delivery_topology(&state_dir, &[("codex-one", "@one")]);
+    reconcile_runtime_topology_sessions_on_state_save_at(
+        &project,
+        &state_dir,
+        &[json!({
+            "id": "codex-one",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "live",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+        })],
+        &[],
+        "2026-01-01T00:01:00.000Z",
+    )
+    .expect("targetless state save preserves existing binding");
+    let isolation = support::TestIsolation::new("coordination-preserved-binding");
+    let context = isolation.project_context(&project, &state_dir);
+    let opened = route_project_service_request(
+        &context,
+        "POST",
+        routes::threads::OPEN,
+        Some(&json!({
+            "from": "claude-lead",
+            "title": "Coordination",
+            "participants": ["codex-one"]
+        })),
+    );
+    assert_eq!(opened.status, 200);
+    let thread_id = opened.body["thread"]["id"].as_str().unwrap().to_owned();
+    let mut runtime = FakeDeliveryRuntime::default();
+
+    let sent = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::threads::SEND,
+        Some(&json!({
+            "threadId": thread_id,
+            "from": "claude-lead",
+            "to": ["codex-one"],
+            "kind": "request",
+            "body": "Please inspect this."
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(sent.status, 200);
+    assert_eq!(sent.body["deliveredTo"], json!(["codex-one"]));
+    assert!(text_sent_to(&runtime, "@one").contains("Please inspect this."));
     cleanup(project);
 }
 
