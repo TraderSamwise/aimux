@@ -71,10 +71,10 @@ use crate::daemon_projects::{
     ProjectsRouteProject, build_projects_route_projects, count_online_desktop_agents,
 };
 use crate::daemon_state::{
-    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState,
-    clear_daemon_info_if_owned, get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state,
-    load_metadata_endpoint, metadata_endpoint_path, remove_metadata_endpoint, save_daemon_info,
-    save_daemon_state,
+    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataEndpointLoadError,
+    ProjectServiceState, clear_daemon_info_if_owned, get_daemon_host, get_daemon_port,
+    is_pid_alive, load_daemon_state, load_metadata_endpoint, load_metadata_endpoint_result,
+    metadata_endpoint_path, remove_metadata_endpoint, save_daemon_info, save_daemon_state,
 };
 use crate::daemon_supervisor::RUNTIME_RESTART_LOCK_STALE_MS;
 use crate::dashboard_readiness::get_runtime_owner_id;
@@ -283,7 +283,10 @@ pub trait ProjectServiceHealthProbe: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProjectServiceHealthWaitFailure {
-    TimedOut,
+    EndpointMissing { path: PathBuf },
+    EndpointLoadFailed { error: MetadataEndpointLoadError },
+    EndpointPidMismatch { expected_pid: i32, actual_pid: i32 },
+    HealthProbeNotReady { endpoint: MetadataApiEndpoint },
     ProcessExited { exit_status: Option<String> },
 }
 
@@ -1120,12 +1123,24 @@ impl RealDaemonRuntime {
     ) -> ProjectServiceHealthWait {
         let deadline = current_unix_millis() + u128::from(self.project_service_startup_timeout_ms);
         loop {
-            if let Some(endpoint) =
-                load_metadata_endpoint(project_state_dir).filter(|endpoint| endpoint.pid == pid)
-                && self.project_service_health_probe.is_ready(&endpoint, pid)
-            {
-                return ProjectServiceHealthWait::Ready(endpoint);
-            }
+            let observed_failure = match load_metadata_endpoint_result(project_state_dir) {
+                Ok(Some(endpoint)) if endpoint.pid != pid => {
+                    ProjectServiceHealthWaitFailure::EndpointPidMismatch {
+                        expected_pid: pid,
+                        actual_pid: endpoint.pid,
+                    }
+                }
+                Ok(Some(endpoint)) => {
+                    if self.project_service_health_probe.is_ready(&endpoint, pid) {
+                        return ProjectServiceHealthWait::Ready(endpoint);
+                    }
+                    ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint }
+                }
+                Ok(None) => ProjectServiceHealthWaitFailure::EndpointMissing {
+                    path: metadata_endpoint_path(project_state_dir),
+                },
+                Err(error) => ProjectServiceHealthWaitFailure::EndpointLoadFailed { error },
+            };
             if !self.project_service_process_verifier.is_live(pid) {
                 let exit_status = self
                     .project_service_process_verifier
@@ -1135,9 +1150,7 @@ impl RealDaemonRuntime {
                 );
             }
             if self.project_service_startup_timeout_ms == 0 || current_unix_millis() >= deadline {
-                return ProjectServiceHealthWait::NotReady(
-                    ProjectServiceHealthWaitFailure::TimedOut,
-                );
+                return ProjectServiceHealthWait::NotReady(observed_failure);
             }
             thread::sleep(Duration::from_millis(100));
         }
@@ -1151,9 +1164,23 @@ impl RealDaemonRuntime {
         failure: ProjectServiceHealthWaitFailure,
     ) -> String {
         match failure {
-            ProjectServiceHealthWaitFailure::TimedOut => format!(
-                "project service health wait timed out after {}ms for {project_root} (projectId {project_id}, pid {pid})",
+            ProjectServiceHealthWaitFailure::EndpointMissing { path } => format!(
+                "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): metadata endpoint missing at {} after {}ms",
+                path.display(),
                 self.project_service_startup_timeout_ms
+            ),
+            ProjectServiceHealthWaitFailure::EndpointLoadFailed { error } => format!(
+                "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): metadata endpoint unreadable: {error}"
+            ),
+            ProjectServiceHealthWaitFailure::EndpointPidMismatch {
+                expected_pid,
+                actual_pid,
+            } => format!(
+                "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): metadata endpoint pid {actual_pid} != expected {expected_pid}"
+            ),
+            ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint } => format!(
+                "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): /health probe not ready at http://{}:{} after {}ms",
+                endpoint.host, endpoint.port, self.project_service_startup_timeout_ms
             ),
             ProjectServiceHealthWaitFailure::ProcessExited { exit_status } => {
                 let mut resolver = self.resolver.clone();
@@ -6136,9 +6163,135 @@ mod tests {
 
         assert_eq!(
             ready,
-            ProjectServiceHealthWait::NotReady(ProjectServiceHealthWaitFailure::TimedOut)
+            ProjectServiceHealthWait::NotReady(
+                ProjectServiceHealthWaitFailure::HealthProbeNotReady {
+                    endpoint: MetadataApiEndpoint {
+                        host: "127.0.0.1".to_owned(),
+                        port: 45_901,
+                        pid: 91_020,
+                        updated_at: "now".to_owned(),
+                    },
+                }
+            )
         );
         assert_eq!(health.calls(), vec![91_020]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn wait_for_live_project_service_names_missing_endpoint_instead_of_timeout() {
+        let fixture = restart_service_fixture("wait-health-missing-endpoint");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        let runtime = fixture.runtime(
+            Arc::new(RestartTestLauncher::new(91_122)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_122])),
+        );
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_122);
+
+        assert!(matches!(
+            ready,
+            ProjectServiceHealthWait::NotReady(
+                ProjectServiceHealthWaitFailure::EndpointMissing { .. }
+            )
+        ));
+        let ProjectServiceHealthWait::NotReady(failure) = ready else {
+            panic!("expected missing endpoint failure");
+        };
+        let message = runtime.project_service_health_wait_failure_message(
+            &fixture.project_root,
+            "project-a",
+            91_122,
+            failure,
+        );
+        assert!(message.contains("metadata endpoint missing"));
+        assert!(!message.contains("timed out after"));
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn wait_for_live_project_service_names_endpoint_pid_mismatch() {
+        let fixture = restart_service_fixture("wait-health-pid-mismatch");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_904,
+                pid: 91_999,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        let health = Arc::new(RestartTestHealthProbe::ready());
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_123)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_123])),
+            0,
+        )
+        .with_project_service_health_probe(health.clone());
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_123);
+
+        assert_eq!(
+            ready,
+            ProjectServiceHealthWait::NotReady(
+                ProjectServiceHealthWaitFailure::EndpointPidMismatch {
+                    expected_pid: 91_123,
+                    actual_pid: 91_999,
+                }
+            )
+        );
+        assert!(health.calls().is_empty());
+        let ProjectServiceHealthWait::NotReady(failure) = ready else {
+            panic!("expected pid mismatch failure");
+        };
+        let message = runtime.project_service_health_wait_failure_message(
+            &fixture.project_root,
+            "project-a",
+            91_123,
+            failure,
+        );
+        assert!(message.contains("metadata endpoint pid 91999 != expected 91123"));
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn wait_for_live_project_service_succeeds_for_slow_healthy_start() {
+        let fixture = restart_service_fixture("wait-health-slow-ready");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_905,
+                pid: 91_124,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        let health = Arc::new(RestartTestHealthProbe::sequence(vec![false, true]));
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_124)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_124])),
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_124);
+
+        assert!(matches!(
+            ready,
+            ProjectServiceHealthWait::Ready(MetadataApiEndpoint { pid: 91_124, .. })
+        ));
+        assert_eq!(health.calls(), vec![91_124, 91_124]);
         fixture.cleanup();
     }
 
@@ -6197,7 +6350,8 @@ mod tests {
             <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
                 .expect_err("health timeout should be visible");
 
-        assert!(error.contains("project service health wait timed out after 0ms"));
+        assert!(error.contains("/health probe not ready"));
+        assert!(error.contains("after 0ms"));
         assert!(error.contains(&project));
         assert!(error.contains("pid 91022"));
         assert_eq!(launcher.calls(), vec![project]);
@@ -6302,7 +6456,8 @@ mod tests {
 
         let error = result["service"]["error"].as_str().expect("service error");
         assert_eq!(result["service"]["status"], json!("failed"));
-        assert!(error.contains("project service health wait timed out after 0ms"));
+        assert!(error.contains("/health probe not ready"));
+        assert!(error.contains("after 0ms"));
         assert!(error.contains("pid 91024"));
         assert_eq!(result["dashboard"]["status"], json!("skipped"));
         assert_eq!(

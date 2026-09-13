@@ -11,6 +11,7 @@ use std::time::Duration;
 
 pub const DEFAULT_DAEMON_PORT: u16 = 43190;
 pub const DEFAULT_DAEMON_HOST: &str = "127.0.0.1";
+const METADATA_ENDPOINT_TMP_STALE_MS: u128 = 5 * 60 * 1000;
 const EPOCH_ISO: &str = "1970-01-01T00:00:00.000Z";
 const DAEMON_INFO_LOCK_WAIT_MS: u128 = 5_000;
 
@@ -123,6 +124,31 @@ pub struct ProjectServiceEndpoint {
     pub host: String,
     pub port: u16,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetadataEndpointLoadError {
+    Read { path: PathBuf, error: String },
+    Parse { path: PathBuf, error: String },
+    Invalid { path: PathBuf, error: String },
+}
+
+impl std::fmt::Display for MetadataEndpointLoadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MetadataEndpointLoadError::Read { path, error } => {
+                write!(formatter, "read {} failed: {error}", path.display())
+            }
+            MetadataEndpointLoadError::Parse { path, error } => {
+                write!(formatter, "parse {} failed: {error}", path.display())
+            }
+            MetadataEndpointLoadError::Invalid { path, error } => {
+                write!(formatter, "decode {} failed: {error}", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for MetadataEndpointLoadError {}
 
 pub fn get_daemon_host() -> Result<String, String> {
     get_daemon_host_from(std::env::var("AIMUX_DAEMON_HOST").ok().as_deref())
@@ -446,19 +472,51 @@ pub fn save_metadata_state(
 }
 
 pub fn load_metadata_endpoint(project_state_dir: impl AsRef<Path>) -> Option<MetadataApiEndpoint> {
-    read_json(metadata_endpoint_path(project_state_dir))
-        .and_then(|value| serde_json::from_value(value).ok())
+    load_metadata_endpoint_result(project_state_dir)
+        .ok()
+        .flatten()
+}
+
+pub fn load_metadata_endpoint_result(
+    project_state_dir: impl AsRef<Path>,
+) -> Result<Option<MetadataApiEndpoint>, MetadataEndpointLoadError> {
+    let path = metadata_endpoint_path(project_state_dir);
+    load_metadata_endpoint_at_path(&path)
 }
 
 pub fn load_metadata_endpoint_by_project_id(
     global_aimux_dir: impl AsRef<Path>,
     project_id: &str,
 ) -> Option<MetadataApiEndpoint> {
-    read_json(metadata_endpoint_path_by_project_id(
-        global_aimux_dir,
-        project_id,
-    ))
-    .and_then(|value| serde_json::from_value(value).ok())
+    load_metadata_endpoint_by_project_id_result(global_aimux_dir, project_id)
+        .ok()
+        .flatten()
+}
+
+pub fn load_metadata_endpoint_by_project_id_result(
+    global_aimux_dir: impl AsRef<Path>,
+    project_id: &str,
+) -> Result<Option<MetadataApiEndpoint>, MetadataEndpointLoadError> {
+    let path = metadata_endpoint_path_by_project_id(global_aimux_dir, project_id);
+    load_metadata_endpoint_at_path(&path)
+}
+
+fn load_metadata_endpoint_at_path(
+    path: &Path,
+) -> Result<Option<MetadataApiEndpoint>, MetadataEndpointLoadError> {
+    let Some(value) = read_json_result(path).map_err(|error| match error {
+        JsonReadError::Read { path, error } => MetadataEndpointLoadError::Read { path, error },
+        JsonReadError::Parse { path, error } => MetadataEndpointLoadError::Parse { path, error },
+    })?
+    else {
+        return Ok(None);
+    };
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|error| MetadataEndpointLoadError::Invalid {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })
 }
 
 pub fn resolve_project_service_endpoint(
@@ -479,7 +537,8 @@ pub fn save_metadata_endpoint(
     atomic_write(
         metadata_endpoint_text_path(project_state_dir),
         format!("http://{}:{}\n", endpoint.host, endpoint.port).as_bytes(),
-    )
+    )?;
+    cleanup_stale_metadata_endpoint_temp_files(project_state_dir)
 }
 
 pub fn remove_metadata_endpoint(project_state_dir: impl AsRef<Path>) {
@@ -494,7 +553,72 @@ pub fn remove_metadata_endpoint(project_state_dir: impl AsRef<Path>) {
 }
 
 fn read_json(path: impl AsRef<Path>) -> Option<Value> {
-    serde_json::from_slice(&fs::read(path).ok()?).ok()
+    read_json_result(path).ok().flatten()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum JsonReadError {
+    Read { path: PathBuf, error: String },
+    Parse { path: PathBuf, error: String },
+}
+
+fn read_json_result(path: impl AsRef<Path>) -> Result<Option<Value>, JsonReadError> {
+    let path = path.as_ref();
+    let contents = match fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(JsonReadError::Read {
+                path: path.to_path_buf(),
+                error: error.to_string(),
+            });
+        }
+    };
+    serde_json::from_slice(&contents)
+        .map(Some)
+        .map_err(|error| JsonReadError::Parse {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })
+}
+
+fn cleanup_stale_metadata_endpoint_temp_files(project_state_dir: &Path) -> io::Result<()> {
+    let now_ms = current_unix_millis();
+    for entry in fs::read_dir(project_state_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !is_stale_metadata_endpoint_temp_file(file_name, now_ms) {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn is_stale_metadata_endpoint_temp_file(file_name: &str, now_ms: u128) -> bool {
+    if !(file_name.starts_with("metadata-api.json.") || file_name.starts_with("metadata-api.txt."))
+        || !file_name.ends_with(".tmp")
+    {
+        return false;
+    }
+    let parts = file_name.split('.').collect::<Vec<_>>();
+    if parts.len() < 5 {
+        return false;
+    }
+    let Some(timestamp) = parts
+        .get(parts.len().saturating_sub(3))
+        .and_then(|value| value.parse::<u128>().ok())
+    else {
+        return false;
+    };
+    now_ms.saturating_sub(timestamp) >= METADATA_ENDPOINT_TMP_STALE_MS
 }
 
 fn read_json_quarantine_corrupt(path: impl AsRef<Path>) -> Option<Value> {
