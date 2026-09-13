@@ -565,6 +565,91 @@ fn reconciliation_alerts_once_for_visible_unowned_work_and_idle_capacity_then_re
 }
 
 #[test]
+fn reconciliation_uses_worklist_needs_you_not_stale_items() {
+    let (boss, mut boss_meta) = looping_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 60_000,
+            "reconciliationDwellMs": 0,
+            "reconciliationReminderTicks": 1,
+            "reconciliationCooldownMs": 0
+        }),
+    );
+    input["coordinationWorklist"] = json!({
+        "items": [{
+            "key": "t:thread-dl7mi65x48t3",
+            "kind": "thread",
+            "type": "task",
+            "bucket": "awake",
+            "title": "URGENT: cargo test rewrites Sam's live tmux key bindings",
+            "actionable": true,
+            "thread": {
+                "thread": {
+                    "id": "thread-dl7mi65x48t3",
+                    "status": "done",
+                    "waitingOn": []
+                },
+                "messages": [{
+                    "id": "msg-1",
+                    "to": ["claude-gqaapg"],
+                    "deliveredTo": ["claude-gqaapg"]
+                }],
+                "pendingDeliveries": 0
+            }
+        }],
+        "needsYou": [],
+        "tail": []
+    });
+
+    let mut watcher = LoopWatcher::new();
+    assert!(
+        watcher.plan_sends(&input, NOW).is_empty(),
+        "terminal threads cleared from /coordination-worklist needsYou must not reappear as unassigned reconciliation work"
+    );
+}
+
+#[test]
+fn reconciliation_alerts_for_worklist_needs_you_items() {
+    let (boss, mut boss_meta) = looping_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 60_000,
+            "reconciliationDwellMs": 0,
+            "reconciliationReminderTicks": 1,
+            "reconciliationCooldownMs": 0
+        }),
+    );
+    input["coordinationWorklist"] = json!({
+        "items": [],
+        "needsYou": [{
+            "key": "t:thread-open",
+            "kind": "thread",
+            "type": "task",
+            "bucket": "awake",
+            "title": "open handoff",
+            "actionable": true
+        }],
+        "tail": []
+    });
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].kind, LoopSendKind::Reconciliation);
+    assert!(sends[0].text.contains("thread t:thread-open"));
+}
+
+#[test]
 fn reconciliation_condition_persists_across_item_churn_until_reminder_cadence() {
     let (boss, mut boss_meta) = looping_session("boss", "busy");
     boss_meta["overseer"] = json!(true);
