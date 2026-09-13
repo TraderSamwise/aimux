@@ -1773,6 +1773,108 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
 }
 
 #[test]
+fn queued_duplicate_loop_checks_are_delivered_once() {
+    let project = temp_project("duplicate-loop-check-queue");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    let prompt = "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.\n- worklist item\n... and 50 more";
+    write_delivery_queue(
+        &state_dir,
+        json!([
+            {
+                "id": "agent-input-old-1",
+                "sessionId": "codex-1",
+                "windowId": "@1",
+                "prompt": prompt,
+                "createdAtMs": now_ms - 10_000,
+                "maxDeliverAtMs": now_ms + MAX_AGENT_INPUT_HOLD_MS,
+                "holdReason": "active-client-recent-input"
+            },
+            {
+                "id": "agent-input-old-2",
+                "sessionId": "codex-1",
+                "windowId": "@1",
+                "prompt": prompt,
+                "createdAtMs": now_ms - 5_000,
+                "maxDeliverAtMs": now_ms + MAX_AGENT_INPUT_HOLD_MS,
+                "holdReason": "active-client-recent-input"
+            }
+        ]),
+    );
+    let mut runtime = FakeActivityRuntime::default();
+
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms);
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text(
+                "@1".into(),
+                "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.".into()
+            ),
+            FakeRuntimeAction::Key("@1".into(), "C-j".into()),
+            FakeRuntimeAction::Text("@1".into(), "- worklist item".into()),
+            FakeRuntimeAction::Key("@1".into(), "C-j".into()),
+            FakeRuntimeAction::Text("@1".into(), "... and 50 more".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "duplicate generated loop-check prompts must collapse before delivery"
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn queued_duplicate_manual_inputs_remain_distinct() {
+    let project = temp_project("duplicate-manual-input-queue");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    write_delivery_queue(
+        &state_dir,
+        json!([
+            {
+                "id": "agent-input-human-1",
+                "sessionId": "codex-1",
+                "windowId": "@1",
+                "prompt": "repeat this",
+                "createdAtMs": now_ms - 10_000,
+                "maxDeliverAtMs": now_ms + MAX_AGENT_INPUT_HOLD_MS,
+                "holdReason": "active-client-recent-input"
+            },
+            {
+                "id": "agent-input-human-2",
+                "sessionId": "codex-1",
+                "windowId": "@1",
+                "prompt": "repeat this",
+                "createdAtMs": now_ms - 5_000,
+                "maxDeliverAtMs": now_ms + MAX_AGENT_INPUT_HOLD_MS,
+                "holdReason": "active-client-recent-input"
+            }
+        ]),
+    );
+    let mut runtime = FakeActivityRuntime::default();
+
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms);
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "repeat this".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+            FakeRuntimeAction::Text("@1".into(), "repeat this".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "identical manual input can be intentional and must not be deduped"
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
 fn agent_input_holds_visible_draft_even_without_active_client() {
     let project = temp_project("visible-draft-no-client-hold");
     let state_dir = project.join("state");
@@ -2879,6 +2981,18 @@ fn queued_delivery_count(state_dir: &PathBuf) -> usize {
         .as_array()
         .expect("pending deliveries")
         .len()
+}
+
+fn write_delivery_queue(state_dir: &PathBuf, pending: Value) {
+    write(
+        agent_input_delivery_queue_path(state_dir),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "pending": pending
+        }))
+        .expect("serialize delivery queue"),
+    )
+    .expect("write delivery queue");
 }
 
 fn write_attachment(

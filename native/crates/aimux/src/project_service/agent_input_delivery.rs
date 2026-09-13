@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::agent_prompt_delivery::current_composer_text;
 use crate::atomic_write::write_json_atomic;
@@ -30,7 +30,10 @@ pub const ACTIVE_CLIENT_DWELL_MS: i64 = 3_000;
 pub const MAX_AGENT_INPUT_HOLD_MS: i64 = 15_000;
 pub const DELIVERY_TASK_INTERVAL_MS: i64 = 500;
 
-const DELIVERY_TASK_TIMEOUT: Duration = Duration::from_secs(10);
+const DELIVERY_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(2);
+const DELIVERY_SUBMIT_TIMEOUT: Duration = Duration::from_secs(10);
+const DELIVERY_TASK_TIMEOUT: Duration = Duration::from_secs(15);
+const DELIVERY_TASK_COMMIT_MARGIN: Duration = Duration::from_secs(1);
 const MAX_DELIVERIES_PER_TICK: usize = 8;
 pub const AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY: usize = MAX_DELIVERIES_PER_TICK
     * ((MAX_AGENT_INPUT_HOLD_MS as usize / DELIVERY_TASK_INTERVAL_MS as usize) + 1);
@@ -252,6 +255,14 @@ pub fn enqueue_agent_input_delivery(
         max_deliver_at_ms: now_ms.saturating_add(MAX_AGENT_INPUT_HOLD_MS),
         hold_reason: hold_reason.to_owned(),
     };
+    if let Some(existing) = matching_dedupable_delivery(&state.pending, &pending) {
+        backlog_metric(
+            AGENT_INPUT_DELIVERY_BACKLOG,
+            Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+        )
+        .set_depth(state.pending.len());
+        return Ok(existing.clone());
+    }
     state.pending.push(pending.clone());
     let depth = state.pending.len();
     save_delivery_state(&path, state)?;
@@ -310,7 +321,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
     }
 
     let mut remaining = Vec::new();
-    let mut ready = VecDeque::from(state.pending);
+    let mut ready = VecDeque::from(deduplicate_pending_agent_input_deliveries(state.pending));
     let mut delivered = 0usize;
     while let Some(pending) = ready.pop_front() {
         if delivered >= MAX_DELIVERIES_PER_TICK {
@@ -430,6 +441,9 @@ pub async fn run_pending_agent_input_deliveries_async(
     context: &ProjectServiceRequestContext,
     now_ms: i64,
 ) {
+    let task_deadline = Instant::now()
+        .checked_add(DELIVERY_TASK_TIMEOUT.saturating_sub(DELIVERY_TASK_COMMIT_MARGIN))
+        .unwrap_or_else(Instant::now);
     let path = agent_input_delivery_queue_path(context.project_state_dir());
     let state = {
         let _guard = context.agent_input_delivery_queue.lock();
@@ -463,16 +477,17 @@ pub async fn run_pending_agent_input_deliveries_async(
         return;
     }
 
-    let original_ids = state
+    let loaded_ids = state
         .pending
         .iter()
         .map(|pending| pending.id.clone())
         .collect::<BTreeSet<_>>();
+    let pending = deduplicate_pending_agent_input_deliveries(state.pending);
     let mut remaining = Vec::new();
-    let mut ready = VecDeque::from(state.pending);
+    let mut ready = VecDeque::from(pending);
     let mut delivered = 0usize;
     while let Some(pending) = ready.pop_front() {
-        if delivered >= MAX_DELIVERIES_PER_TICK {
+        if delivered >= MAX_DELIVERIES_PER_TICK || Instant::now() >= task_deadline {
             remaining.push(pending);
             remaining.extend(ready);
             break;
@@ -492,7 +507,7 @@ pub async fn run_pending_agent_input_deliveries_async(
         };
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
         let activity =
-            tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await;
+            tmux_agent_input_window_activity_async(&window_id, DELIVERY_ACTIVITY_TIMEOUT).await;
         let persistent_probe_failure = force_due_to_max && activity.is_err();
         let decision = if persistent_probe_failure {
             AgentInputDeliveryDecision::DeliverNow {
@@ -529,7 +544,7 @@ pub async fn run_pending_agent_input_deliveries_async(
                 match deliver_prompt_to_tmux_async(
                     &window_id,
                     &pending.prompt,
-                    DELIVERY_TASK_TIMEOUT,
+                    DELIVERY_SUBMIT_TIMEOUT,
                 )
                 .await
                 {
@@ -572,12 +587,12 @@ pub async fn run_pending_agent_input_deliveries_async(
             current
                 .pending
                 .into_iter()
-                .filter(|entry| !original_ids.contains(&entry.id)),
+                .filter(|entry| !loaded_ids.contains(&entry.id)),
         );
     }
     let state = AgentInputDeliveryState {
         version: 1,
-        pending,
+        pending: deduplicate_pending_agent_input_deliveries(pending),
     };
     let depth = state.pending.len();
     match save_delivery_state(&path, state) {
@@ -744,6 +759,41 @@ fn save_delivery_state(path: &Path, state: AgentInputDeliveryState) -> Result<()
         .map_err(|error| format!("could not save {}: {error}", path.display()))
 }
 
+fn deduplicate_pending_agent_input_deliveries(
+    pending: Vec<PendingAgentInputDelivery>,
+) -> Vec<PendingAgentInputDelivery> {
+    let mut seen = BTreeSet::new();
+    let mut deduped = Vec::with_capacity(pending.len());
+    for entry in pending {
+        if is_dedupable_system_prompt(&entry.prompt) {
+            let key = (entry.session_id.clone(), entry.prompt.clone());
+            if !seen.insert(key) {
+                continue;
+            }
+        }
+        deduped.push(entry);
+    }
+    deduped
+}
+
+fn matching_dedupable_delivery<'a>(
+    pending: &'a [PendingAgentInputDelivery],
+    candidate: &PendingAgentInputDelivery,
+) -> Option<&'a PendingAgentInputDelivery> {
+    if !is_dedupable_system_prompt(&candidate.prompt) {
+        return None;
+    }
+    pending.iter().find(|entry| {
+        entry.session_id == candidate.session_id
+            && entry.prompt == candidate.prompt
+            && is_dedupable_system_prompt(&entry.prompt)
+    })
+}
+
+fn is_dedupable_system_prompt(prompt: &str) -> bool {
+    prompt.starts_with("[aimux loop check]")
+}
+
 fn load_error_for_path(path: &Path) -> String {
     match fs::read_to_string(path) {
         Ok(contents) => serde_json::from_str::<Value>(&contents)
@@ -800,4 +850,20 @@ fn clear_agent_input_delivery_failure(context: &ProjectServiceRequestContext, se
 fn next_delivery_id() -> String {
     let sequence = DELIVERY_SEQUENCE.fetch_add(1, Ordering::SeqCst);
     format!("agent-input-{}-{sequence}", std::process::id())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn async_delivery_task_timeout_covers_probe_submit_and_commit_margin() {
+        assert!(
+            DELIVERY_TASK_TIMEOUT
+                >= DELIVERY_ACTIVITY_TIMEOUT
+                    + DELIVERY_SUBMIT_TIMEOUT
+                    + DELIVERY_TASK_COMMIT_MARGIN,
+            "agent-input-delivery must not let the scheduler cancel after tmux input is written but before the queue removal is saved"
+        );
+    }
 }
