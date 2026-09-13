@@ -145,6 +145,39 @@ impl ProjectSchedulerHandle {
 pub type PeriodicTaskRunResult = Result<(), String>;
 pub type PeriodicTaskFuture<'a> = Pin<Box<dyn Future<Output = PeriodicTaskRunResult> + Send + 'a>>;
 
+// PeriodicTask clean-run audit notes, 2026-09 async-cutover:
+//
+// builtin-metadata-watchers intentionally reports a clean run for partial source
+// scans. It watches best-effort agent-authored plan/status/history/exchange
+// hints and applies only derived metadata effects; a missed file or exhausted
+// per-tick budget means "try again next tick", not "the project state authority
+// was unreadable." This judgment flips if the task becomes an authority for
+// lifecycle, delivery, refusal, or alert absence, or if a missing/partial scan is
+// ever rendered to users as proof that no agent asked for attention.
+//
+// transcript-length is cosmetic statusline decoration. Its transcript byte
+// fallback may show 0b when a transcript cannot be sized, but it does not drive
+// delivery, repair, task state, alerts, or the stability verdict. This judgment
+// flips if transcript length becomes a user-facing health signal, a completion
+// detector, or any other state where "could not measure" and "empty transcript"
+// have different operational meaning.
+//
+// gh-pr-context is settled as enrichment rather than authority. Host/project
+// reads and subprocess transport failures surface as task errors, while "no
+// branch", "no PR", or a non-ok git/gh command produces no PR context because
+// absence of PR context does not drive destructive behavior, delivery, or trust.
+// This judgment flips if PR context becomes required for routing, review gates,
+// refusals, or any UI claim that definitively says there is no PR instead of no
+// context was available.
+//
+// transcript-reconciler is settled because its authority reads now fail the
+// task: topology and metadata unavailability are scheduler-visible errors. The
+// remaining None paths are bounded probe deferrals or absent transcript paths
+// that are re-checked on later ticks. This judgment flips if a skipped probe is
+// used as proof that an agent is idle/done, if reconciliation becomes the only
+// repair path for stuck work, or if transcript lookup failure needs a named user
+// diagnosis rather than another delayed scan.
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PeriodicTaskHealthSnapshot {
