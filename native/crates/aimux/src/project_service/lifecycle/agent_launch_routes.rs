@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+use std::path::Path;
 
 use crate::config::{load_config_for_known_project_root, load_config_for_project};
 use crate::daemon_state::load_metadata_state;
@@ -36,8 +37,9 @@ use super::agent_session_launch::{
     launch_agent_session_async, wrap_agent_launch,
 };
 use super::agent_topology::{
-    agent_window_metadata, apply_agent_window_policy, clear_session_derived_metadata,
-    settle_pending_role_relaunch, settle_running_activity_to_idle, upsert_agent_topology,
+    agent_window_metadata, apply_agent_window_policy, apply_agent_window_policy_async,
+    clear_session_derived_metadata, settle_pending_role_relaunch, settle_running_activity_to_idle,
+    upsert_agent_topology,
 };
 use super::ids::{now_iso, random_id};
 use super::json_helpers::*;
@@ -233,7 +235,26 @@ pub(super) fn route_agent_spawn(
     };
     let backend_session_id = launch_backend_session_id(tool_config, &command, &args);
     let restore_warning = restart_restore_warning(&tool_key, Some(tool_config));
-    let session_id = trimmed_string(body.get("sessionId")).unwrap_or_else(|| {
+    let explicit_session_id = trimmed_string(body.get("sessionId"));
+    let worktree_path = trimmed_string(body.get("worktreePath"));
+    if explicit_session_id.is_none()
+        && let Some(restorable_session_id) = stopped_project_control_session_id_for_spawn(
+            &topology,
+            &context.project_state_dir(),
+            body,
+            &tool_key,
+            worktree_path.as_deref(),
+        )
+    {
+        return resume_agent_session(
+            context,
+            &restorable_session_id,
+            runtime,
+            false,
+            "agent.spawn",
+        );
+    }
+    let session_id = explicit_session_id.unwrap_or_else(|| {
         generated_session_id_for_launch(&topology, &command, backend_session_id.as_deref())
     });
     if let Some(existing) = find_by_id(&topology, "sessions", &session_id)
@@ -250,7 +271,6 @@ pub(super) fn route_agent_spawn(
         );
         return json_error(500, error);
     }
-    let worktree_path = trimmed_string(body.get("worktreePath"));
     clear_agent_create_operation_failure(context.project_state_dir(), worktree_path.as_deref());
     let result = launch_agent_session(
         context,
@@ -389,7 +409,28 @@ pub(super) async fn route_agent_spawn_async(
     };
     let backend_session_id = launch_backend_session_id(tool_config, &command, &args);
     let restore_warning = restart_restore_warning(&tool_key, Some(tool_config));
-    let session_id = trimmed_string(body.get("sessionId")).unwrap_or_else(|| {
+    let explicit_session_id = trimmed_string(body.get("sessionId"));
+    let worktree_path = trimmed_string(body.get("worktreePath"));
+    if explicit_session_id.is_none()
+        && let Some(restorable_session_id) = stopped_project_control_session_id_for_spawn(
+            &topology,
+            &context.project_state_dir(),
+            body,
+            &tool_key,
+            worktree_path.as_deref(),
+        )
+    {
+        return resume_agent_session_async(
+            context,
+            &restorable_session_id,
+            runtime,
+            false,
+            "agent.spawn",
+            progress,
+        )
+        .await;
+    }
+    let session_id = explicit_session_id.unwrap_or_else(|| {
         generated_session_id_for_launch(&topology, &command, backend_session_id.as_deref())
     });
     if let Some(existing) = find_by_id(&topology, "sessions", &session_id)
@@ -406,7 +447,6 @@ pub(super) async fn route_agent_spawn_async(
         );
         return json_error(500, error);
     }
-    let worktree_path = trimmed_string(body.get("worktreePath"));
     clear_agent_create_operation_failure(context.project_state_dir(), worktree_path.as_deref());
     let result = launch_agent_session_async(
         context,
@@ -499,6 +539,67 @@ fn log_agent_spawn_route_failure(
             "error": error,
         })),
     );
+}
+
+fn stopped_project_control_session_id_for_spawn(
+    topology: &Value,
+    project_state_dir: &Path,
+    body: &Value,
+    tool_key: &str,
+    worktree_path: Option<&str>,
+) -> Option<String> {
+    let requested_role = requested_project_control_role_for_spawn(body)?;
+    let metadata_state = load_metadata_state(project_state_dir);
+    let mut candidates = array_field(topology, "sessions")
+        .into_iter()
+        .filter_map(|session| {
+            let session_id = string_field(&session, "id");
+            if session_id.is_empty() {
+                return None;
+            }
+            let status = string_field(&session, "status");
+            if status != "offline" {
+                return None;
+            }
+            let session_state = topology_session_to_session_state(&session, topology);
+            let classified_session = session_with_stored_control_flags(
+                &session_state,
+                metadata_state.sessions.get(&session_id),
+            );
+            if !is_project_control_session(Some(&classified_session)) {
+                return None;
+            }
+            if !project_control_role_matches(&classified_session, requested_role) {
+                return None;
+            }
+            if tool_config_key_for_session(&classified_session).as_deref() != Some(tool_key) {
+                return None;
+            }
+            if trimmed_string(classified_session.get("restoreBlockedReason")).is_some() {
+                return None;
+            }
+            if trimmed_string(classified_session.get("worktreePath")).as_deref() != worktree_path {
+                return None;
+            }
+            Some((string_field(&classified_session, "updatedAt"), session_id))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    candidates.pop().map(|(_, session_id)| session_id)
+}
+
+fn requested_project_control_role_for_spawn(body: &Value) -> Option<&'static str> {
+    if body.get("overseer").and_then(Value::as_bool) == Some(true) {
+        Some("overseer")
+    } else if body.get("scribe").and_then(Value::as_bool) == Some(true) {
+        Some("scribe")
+    } else {
+        None
+    }
+}
+
+fn project_control_role_matches(session: &Value, requested_role: &str) -> bool {
+    project_control_display_role(Some(session)) == Some(requested_role)
 }
 
 fn record_agent_create_operation_failure(
@@ -845,22 +946,25 @@ pub(super) fn resume_agent_session(
     };
     // A row still reading `running` after its window died is the whole reason
     // resume exists; answering "already running" there is a silent failure.
-    let live_windows = LiveWindows::for_context(context, operation);
-    if live_windows.session_is_live(&topology_session, &topology) {
-        return lifecycle_response(
-            json!({ "sessionId": session_id, "status": "running" }),
-            "agent.resume",
-            "agent",
-            Some(&session_id),
-        );
-    }
-    if !live_windows.session_is_restorable(&topology_session, &topology) {
-        return json_error(404, format!("Session \"{session_id}\" not found"));
+    let status = string_field(&topology_session, "status");
+    if status != "offline" {
+        let live_windows = LiveWindows::for_context(context, operation);
+        if live_windows.session_is_live(&topology_session, &topology) {
+            return lifecycle_response(
+                json!({ "sessionId": session_id, "status": "running" }),
+                "agent.resume",
+                "agent",
+                Some(&session_id),
+            );
+        }
+        if !live_windows.session_is_restorable(&topology_session, &topology) {
+            return json_error(404, format!("Session \"{session_id}\" not found"));
+        }
     }
 
     let mut session = topology_session_to_session_state(&topology_session, &topology);
     let project_root = context.project_root().to_string_lossy().into_owned();
-    let config = load_config_for_project(context.project_root());
+    let config = load_config_for_known_project_root(context.project_root());
     let Some(tool_key) = tool_config_key_for_session(&session) else {
         return json_error(400, "unknown agent tool");
     };
@@ -978,6 +1082,167 @@ pub(super) fn resume_agent_session(
         return json_user_facing_error(500, &error);
     }
     if let Err(error) = apply_agent_window_policy(runtime, &target.window_id, &tool_key) {
+        return json_user_facing_error(500, &error);
+    }
+    if let Err(error) =
+        update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+            upsert_agent_topology(
+                topology,
+                &metadata,
+                worktree_path.as_deref(),
+                &target,
+                "running",
+                &project_root,
+            )
+        })
+    {
+        return json_error(500, error);
+    }
+    settle_pending_role_relaunch(&project_state_dir, &session_id);
+    let _ = sync_agent_role_registry_session_from_metadata(&project_state_dir, &session_id);
+    lifecycle_response(
+        json!({ "sessionId": session_id, "status": "running" }),
+        operation,
+        "agent",
+        Some(&session_id),
+    )
+}
+
+async fn resume_agent_session_async(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    runtime: &mut impl AsyncProjectLifecycleRuntime,
+    force_fresh: bool,
+    operation: &str,
+    progress: &LifecycleMutationProgress,
+) -> ProjectServiceDispatchResponse {
+    let session_id = session_id.to_owned();
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(topology_session) = find_by_id(&topology, "sessions", &session_id) else {
+        return json_error(404, format!("Session \"{session_id}\" not found"));
+    };
+    let status = string_field(&topology_session, "status");
+    if status != "offline" {
+        return json_error(404, format!("Session \"{session_id}\" not found"));
+    }
+
+    let mut session = topology_session_to_session_state(&topology_session, &topology);
+    let project_root = context.project_root().to_string_lossy().into_owned();
+    let config = load_config_for_known_project_root(context.project_root());
+    let Some(tool_key) = tool_config_key_for_session(&session) else {
+        return json_error(400, "unknown agent tool");
+    };
+    let Some(tool_config) = config
+        .get("tools")
+        .and_then(Value::as_object)
+        .and_then(|tools| tools.get(&tool_key))
+    else {
+        return json_error(400, "unknown agent tool");
+    };
+    let command = trimmed_string(session.get("command")).unwrap_or_else(|| tool_key.clone());
+    let backend_session_id = trimmed_string(session.get("backendSessionId"));
+    let metadata_state = load_metadata_state(&project_state_dir);
+    if let Some(stored_session) = metadata_state.sessions.get(&session_id) {
+        session = session_with_stored_control_flags(&session, Some(stored_session));
+    }
+    let derived = metadata_state
+        .sessions
+        .get(&session_id)
+        .and_then(|session| session.get("derived"));
+    let relaunch_fresh = force_fresh || should_relaunch_agent_fresh(&session, derived);
+    let use_backend_resume = !relaunch_fresh
+        && can_resume_with_backend_session_id(tool_config, backend_session_id.as_deref());
+    let action_args = if use_backend_resume {
+        resume_args(
+            tool_config,
+            backend_session_id.as_deref().unwrap_or_default(),
+        )
+    } else if relaunch_fresh {
+        Vec::new()
+    } else {
+        return json_error(
+            500,
+            format!(
+                "Cannot restore session \"{session_id}\" without an exact resumable backend session id for \"{tool_key}\""
+            ),
+        );
+    };
+    let saved_args = string_array_field(session.get("args"));
+    let (launch_args, persist_args) = compose_tool_launch(tool_config, &action_args, &saved_args);
+    if relaunch_fresh {
+        clear_session_derived_metadata(&project_state_dir, &session_id);
+    } else if use_backend_resume {
+        settle_running_activity_to_idle(&project_state_dir, &session_id);
+    }
+    let declared_supervisor = is_project_control_session(Some(&session));
+    let worktree_path = if declared_supervisor {
+        if let Some(session) = session.as_object_mut() {
+            session.remove("worktreePath");
+        }
+        None
+    } else {
+        trimmed_string(session.get("worktreePath"))
+    };
+    let launch_cwd = worktree_path
+        .clone()
+        .unwrap_or_else(|| project_root.clone());
+    let label = trimmed_string(session.get("label")).unwrap_or_else(|| command.clone());
+    let launch_env = supervisor_launch_env(&session);
+    let (launch_command, final_args) = match wrap_agent_launch(AgentLaunchWrapInput {
+        project_state_dir: &project_state_dir,
+        session_id: &session_id,
+        tool_key: &tool_key,
+        command: &command,
+        launch_args,
+        backend_session_id: backend_session_id.as_deref().filter(|_| use_backend_resume),
+        tool_config,
+        project_root: &project_root,
+        launch_env,
+    }) {
+        Ok(wrapped) => wrapped,
+        Err(error) => return json_user_facing_error(500, &error),
+    };
+    let session_name = project_session(&project_root, "aimux").session_name;
+    if let Err(error) = runtime.ensure_project_session(context.project_root()).await {
+        return json_user_facing_error(500, &error);
+    }
+    progress.mark_irreversible();
+    let target = match runtime
+        .create_window(
+            &session_name,
+            &label,
+            &launch_cwd,
+            &launch_command,
+            &final_args,
+            true,
+        )
+        .await
+    {
+        Ok(target) => target,
+        Err(error) => return json_user_facing_error(500, &error),
+    };
+    let _ = runtime.clear_history(&target.window_id).await;
+    let metadata = agent_window_metadata(
+        &session,
+        &session_id,
+        &tool_key,
+        &command,
+        persist_args,
+        backend_session_id.as_deref().filter(|_| use_backend_resume),
+    );
+    if let Err(error) = runtime
+        .set_window_metadata(&target.window_id, &metadata)
+        .await
+    {
+        let _ = runtime.kill_window(&target.window_id).await;
+        return json_user_facing_error(500, &error);
+    }
+    if let Err(error) = apply_agent_window_policy_async(runtime, &target.window_id, &tool_key).await
+    {
         return json_user_facing_error(500, &error);
     }
     if let Err(error) =
@@ -1175,7 +1440,22 @@ mod tests {
     use std::path::Path;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    struct FakeAsyncLifecycleRuntime;
+    #[derive(Default)]
+    struct FakeAsyncLifecycleRuntime {
+        created: Vec<FakeAsyncCreateWindow>,
+        metadata: Vec<(String, Value)>,
+        existing_windows: Vec<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct FakeAsyncCreateWindow {
+        session_name: String,
+        name: String,
+        cwd: String,
+        command: String,
+        args: Vec<String>,
+        detached: bool,
+    }
 
     impl AsyncProjectLifecycleRuntime for FakeAsyncLifecycleRuntime {
         async fn ensure_project_session(&mut self, _project_root: &Path) -> Result<(), String> {
@@ -1186,25 +1466,36 @@ mod tests {
             &mut self,
             session_name: &str,
             name: &str,
-            _cwd: &str,
-            _command: &str,
-            _args: &[String],
-            _detached: bool,
+            cwd: &str,
+            command: &str,
+            args: &[String],
+            detached: bool,
         ) -> Result<TmuxTarget, String> {
-            Ok(TmuxTarget {
+            self.created.push(FakeAsyncCreateWindow {
                 session_name: session_name.to_owned(),
-                window_id: "@42".to_owned(),
-                window_index: 1,
+                name: name.to_owned(),
+                cwd: cwd.to_owned(),
+                command: command.to_owned(),
+                args: args.to_owned(),
+                detached,
+            });
+            let target = TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: format!("@{}", self.created.len() + 40),
+                window_index: self.created.len() as i64 + 40,
                 window_name: name.to_owned(),
                 pane_dead: None,
-            })
+            };
+            self.existing_windows.push(target.window_id.clone());
+            Ok(target)
         }
 
         async fn set_window_metadata(
             &mut self,
-            _window_id: &str,
-            _metadata: &Value,
+            window_id: &str,
+            metadata: &Value,
         ) -> Result<(), String> {
+            self.metadata.push((window_id.to_owned(), metadata.clone()));
             Ok(())
         }
 
@@ -1241,8 +1532,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn async_spawn_uses_known_project_root_without_git_reprobe() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_spawn_uses_known_project_root_without_git_reprobe() {
         let root = unique_test_dir("aimux-async-spawn-root");
         let state_dir = unique_test_dir("aimux-async-spawn-state");
         fs::create_dir_all(root.join(".aimux")).expect("create project .aimux dir");
@@ -1262,18 +1553,116 @@ mod tests {
         let progress =
             async_lifecycle_progress_for_request("POST", routes::agents::SPAWN, Some(&body))
                 .expect("spawn lifecycle progress");
-        let mut runtime = FakeAsyncLifecycleRuntime;
+        let mut runtime = FakeAsyncLifecycleRuntime::default();
 
-        // aimux-async-seam: test - agent spawn unit test drives async handler from a sync test case
-        let response = crate::async_runtime::block_on_named(
-            "test:agent-spawn-known-root",
-            route_agent_spawn_async(&context, &body, &mut runtime, &progress),
-        );
+        let response = route_agent_spawn_async(&context, &body, &mut runtime, &progress).await;
 
         assert_eq!(response.status, 200);
         assert_eq!(
             response.body.get("sessionId").and_then(Value::as_str),
             Some("claude-async-spawn")
+        );
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_overseer_spawn_reuses_stopped_project_control_session_identity() {
+        let root = unique_test_dir("aimux-async-overseer-spawn-root");
+        let state_dir = unique_test_dir("aimux-async-overseer-spawn-state");
+        fs::create_dir_all(root.join(".aimux")).expect("create project .aimux dir");
+        fs::create_dir_all(&state_dir).expect("create project state dir");
+        fs::write(
+            root.join(".aimux/config.json"),
+            serde_json::to_string_pretty(&json!({
+                "tools": {
+                    "mock": {
+                        "command": "/bin/mock",
+                        "args": ["--base"],
+                        "enabled": true,
+                        "wrapperEnabled": true,
+                        "resumeArgs": ["--resume", "{sessionId}"],
+                        "resumeByBackendSessionId": true
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .expect("write project config");
+        let topology = crate::runtime_topology::coerce_runtime_topology(&json!({
+            "version": 1,
+            "generatedAt": "2026-01-01T00:00:00.000Z",
+            "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": root.to_string_lossy().as_ref(), "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+            "nodes": [{
+                "id": "agent:mock-overseer",
+                "rigId": "rig-1",
+                "logicalId": "mock-overseer",
+                "runtime": "mock",
+                "toolConfigKey": "mock",
+                "createdAt": "2026-01-01T00:00:00.000Z"
+            }],
+            "edges": [],
+            "bindings": [],
+            "sessions": [{
+                "id": "mock-overseer",
+                "nodeId": "agent:mock-overseer",
+                "status": "offline",
+                "tool": "mock",
+                "toolConfigKey": "mock",
+                "command": "/bin/mock",
+                "args": ["--base"],
+                "backendSessionId": "backend-overseer-async",
+                "label": "Project overseer",
+                "overseer": true,
+                "projectControl": true,
+                "team": {
+                    "teamId": "overseer",
+                    "parentSessionId": "",
+                    "role": "overseer"
+                },
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+            }],
+            "services": [],
+            "worktrees": [],
+            "worktreeGraveyard": [],
+            "teamRoles": [],
+            "remoteClients": [],
+            "lifecycleOperations": [],
+            "exchangeRefs": []
+        }))
+        .expect("coerce topology");
+        crate::runtime_topology::write_runtime_topology(
+            crate::runtime_topology::runtime_topology_path(&state_dir),
+            &topology,
+        )
+        .expect("write topology");
+        let body = json!({ "tool": "mock", "overseer": true, "open": false });
+        let context = ProjectServiceRequestContext::with_project_state_dir(&root, &state_dir)
+            .with_live_window_ids(Vec::<String>::new());
+        let progress =
+            async_lifecycle_progress_for_request("POST", routes::agents::SPAWN, Some(&body))
+                .expect("spawn lifecycle progress");
+        let mut runtime = FakeAsyncLifecycleRuntime::default();
+
+        let response = route_agent_spawn_async(&context, &body, &mut runtime, &progress).await;
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body["sessionId"], "mock-overseer");
+        assert_eq!(response.body["status"], "running");
+        assert_eq!(runtime.created.len(), 1);
+        assert_eq!(runtime.metadata[0].1["sessionId"], "mock-overseer");
+        assert_eq!(
+            runtime.metadata[0].1["backendSessionId"],
+            "backend-overseer-async"
+        );
+        assert_eq!(runtime.metadata[0].1["overseer"], true);
+        assert_eq!(runtime.metadata[0].1["projectControl"], true);
+        let launch_argv = runtime.created[0].args.join(" ");
+        assert!(
+            launch_argv.contains("--resume") && launch_argv.contains("backend-overseer-async"),
+            "stopped overseer should resume its backend session, args: {:?}",
+            runtime.created[0].args
         );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(state_dir);

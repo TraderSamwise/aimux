@@ -692,6 +692,75 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
 }
 
 #[test]
+fn overseer_spawn_reuses_stopped_project_control_session_identity() {
+    let project = temp_project("overseer-spawn-reuses-stopped");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-overseer",
+            "nodeId": "agent:mock-overseer",
+            "status": "offline",
+            "tool": "mock",
+            "toolConfigKey": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "backendSessionId": "backend-overseer-123",
+            "label": "Project overseer",
+            "overseer": true,
+            "projectControl": true,
+            "team": {
+                "teamId": "overseer",
+                "parentSessionId": "",
+                "role": "overseer"
+            },
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(Vec::<String>::new());
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "mock",
+            "overseer": true,
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "mock-overseer");
+    assert_eq!(response.body["status"], "running");
+    assert_eq!(runtime.created.len(), 1);
+    assert_eq!(runtime.metadata[0].1["sessionId"], "mock-overseer");
+    assert_eq!(
+        runtime.metadata[0].1["backendSessionId"],
+        "backend-overseer-123"
+    );
+    assert_eq!(runtime.metadata[0].1["overseer"], true);
+    assert_eq!(runtime.metadata[0].1["projectControl"], true);
+    let launch_argv = runtime.created[0].args.join(" ");
+    assert!(
+        launch_argv.contains("--resume") && launch_argv.contains("backend-overseer-123"),
+        "stopped overseer should resume its backend session, args: {:?}",
+        runtime.created[0].args
+    );
+    let topology = read_topology(&state_dir);
+    let restored = session(&topology, "mock-overseer");
+    assert_eq!(restored["status"], "running");
+    assert_eq!(restored["team"]["role"], "overseer");
+    cleanup(project);
+}
+
+#[test]
 fn agent_spawn_warns_when_tool_lacks_exact_backend_resume() {
     let project = temp_project("agent-spawn-restore-warning");
     write_project_tool_config(&project);

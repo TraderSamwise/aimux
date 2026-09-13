@@ -1,6 +1,7 @@
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
+use crate::daemon_state::load_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::operation_failures::{
@@ -12,6 +13,7 @@ use crate::runtime_topology::{
     read_runtime_topology, runtime_topology_path, topology_session_to_session_state,
     update_runtime_topology,
 };
+use crate::team_contract::{is_project_control_session, session_with_stored_control_flags};
 
 use super::LIVE_STATUSES;
 use super::LifecycleMutationProgress;
@@ -112,10 +114,14 @@ pub(super) fn route_agent_stop(
     if let Err(error) = result {
         return json_error(500, error);
     }
-    // Stopping an agent is the human saying they are done with it, which is
-    // exactly what separates a clean exit from a crash. Forget it here or the
-    // next boot offers to bring back something nobody lost.
-    prune_restore_eligibility(&project_state_dir, &session_id);
+    if should_prune_restore_eligibility_after_stop(&project_state_dir, &session_id, &session_state)
+    {
+        // Stopping an ordinary agent is the human saying they are done with it,
+        // which is exactly what separates a clean exit from a crash. Project
+        // control sessions are durable role occupants, so a stopped supervisor
+        // stays eligible for an explicit later start.
+        prune_restore_eligibility(&project_state_dir, &session_id);
+    }
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "offline" }),
         "agent.stop",
@@ -208,7 +214,10 @@ pub(super) async fn route_agent_stop_async(
     if let Err(error) = result {
         return json_error(500, error);
     }
-    prune_restore_eligibility(&project_state_dir, &session_id);
+    if should_prune_restore_eligibility_after_stop(&project_state_dir, &session_id, &session_state)
+    {
+        prune_restore_eligibility(&project_state_dir, &session_id);
+    }
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "offline" }),
         "agent.stop",
@@ -417,6 +426,17 @@ fn clear_agent_kill_operation_failure(project_state_dir: &Path, session_id: &str
             worktree_path: WorktreePathMatch::Any,
         },
     );
+}
+
+fn should_prune_restore_eligibility_after_stop(
+    project_state_dir: &Path,
+    session_id: &str,
+    session_state: &Value,
+) -> bool {
+    let metadata_state = load_metadata_state(project_state_dir);
+    let classified_session =
+        session_with_stored_control_flags(session_state, metadata_state.sessions.get(session_id));
+    !is_project_control_session(Some(&classified_session))
 }
 
 pub(super) fn route_agent_rename(
