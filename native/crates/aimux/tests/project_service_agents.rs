@@ -74,7 +74,17 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
 
     assert_eq!(agents[0]["id"], "codex-1");
     assert_eq!(agents[0]["tool"], "codex");
-    assert_eq!(agents[0]["role"], "coder");
+    assert_eq!(agents[0]["role"], "overseer");
+    assert_eq!(agents[0]["lane"], json!({ "kind": "supervisor" }));
+    assert_eq!(
+        agents[0]["roleState"],
+        json!({
+            "status": "resolved",
+            "role": "overseer",
+            "lane": { "kind": "supervisor" },
+            "projectControl": true
+        })
+    );
     assert_eq!(agents[0]["activity"], "working");
     assert_eq!(agents[0]["attention"], "normal");
     assert_eq!(agents[0]["loop"]["active"], true);
@@ -86,6 +96,8 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
         json!({ "id": "task-1", "description": "Do it", "status": "in_progress" })
     );
     assert_eq!(agents[1]["restoreState"], "ready");
+    assert_eq!(agents[1]["role"], "coder");
+    assert_eq!(agents[1]["lane"], json!({ "kind": "worktree" }));
     assert!(agents[1].get("overseer").is_none());
     assert!(agents[1].get("scribe").is_none());
     assert!(agents[1]["task"].is_null());
@@ -361,9 +373,14 @@ fn teammate_api_record_uses_team_label_and_shape() {
     assert_eq!(record["tool"], "codex");
     assert_eq!(record["command"], "codex");
     assert_eq!(record["label"], "Review");
-    assert_eq!(record["role"], "reviewer");
+    assert_eq!(record["role"], "coder");
+    assert_eq!(
+        record["lane"],
+        json!({ "kind": "worktree", "worktreePath": "/repo" })
+    );
     assert_eq!(record["worktreePath"], "/repo");
     assert_eq!(record["team"]["parentSessionId"], "parent");
+    assert_eq!(record["team"]["role"], "reviewer");
 }
 
 #[test]

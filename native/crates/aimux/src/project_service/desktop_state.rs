@@ -14,7 +14,8 @@ use crate::runtime_topology::{
     runtime_topology_path,
 };
 use crate::team_contract::{
-    is_project_control_session as team_is_project_control_session, project_control_display_role,
+    agent_lane, agent_role, agent_role_state,
+    is_project_control_session as team_is_project_control_session,
 };
 use crate::tmux::TmuxTarget;
 
@@ -899,9 +900,10 @@ fn dashboard_session(
             unseen_count = integer_field(derived, "unseenCount");
         }
     }
-    if let Some(role) = project_control_display_role(Some(&Value::Object(item.clone()))) {
-        insert_string(&mut item, "role", role);
-    }
+    let role_probe = Value::Object(item.clone());
+    insert_string(&mut item, "role", agent_role(Some(&role_probe)));
+    item.insert("lane".into(), agent_lane(Some(&role_probe)));
+    item.insert("roleState".into(), agent_role_state(Some(&role_probe)));
     let thread = thread_stats.get(id).cloned().unwrap_or_default();
     let workflow = workflow_stats.get(id).cloned().unwrap_or_default();
     let notifications = notification_stats.get(id).cloned().unwrap_or_default();

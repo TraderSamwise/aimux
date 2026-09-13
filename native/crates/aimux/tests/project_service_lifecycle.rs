@@ -880,6 +880,33 @@ fn default_scribe_startup_keeps_existing_live_scribe_without_duplicate_window() 
 }
 
 #[test]
+fn default_scribe_startup_blocks_when_topology_is_unreadable() {
+    let project = temp_project("default-scribe-unreadable-topology");
+    write_project_scribe_config(&project);
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::write(runtime_topology_path(&state_dir), "not: [valid").unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = ensure_default_scribe_agent(&context, &mut runtime);
+
+    assert_eq!(response["created"], false);
+    assert_eq!(response["reason"], "topology-unreadable");
+    assert!(
+        response["error"]
+            .as_str()
+            .is_some_and(|error| !error.trim().is_empty()),
+        "error should name parse failure, got {response}"
+    );
+    assert!(
+        runtime.created.is_empty(),
+        "unreadable topology must not create a duplicate supervisor"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn default_scribe_startup_honors_disabled_configuration() {
     let project = temp_project("default-scribe-disabled");
     let aimux_dir = project.join(".aimux");

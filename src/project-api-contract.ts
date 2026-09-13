@@ -381,6 +381,42 @@ export interface ProjectApiOk {
   ok: boolean;
 }
 
+export type AgentSupervisorRole = "overseer" | "scribe";
+export type AgentRole = "coder" | AgentSupervisorRole;
+
+export type AgentLane =
+  | {
+      kind: "worktree";
+      worktreePath?: string;
+      worktreeName?: string;
+      branch?: string;
+    }
+  | {
+      kind: "supervisor";
+    }
+  | {
+      kind: "unknown";
+      reason: string;
+      error?: string;
+    };
+
+export type AgentRoleState =
+  | {
+      status: "resolved";
+      role: AgentRole;
+      lane: Exclude<AgentLane, { kind: "unknown" }>;
+      projectControl: boolean;
+      supervisorRole?: AgentSupervisorRole;
+    }
+  | {
+      status: "unknown";
+      reason: string;
+      error?: string;
+      role?: AgentRole;
+      lane?: AgentLane;
+      projectControl?: boolean;
+    };
+
 export type DaemonProjectReadError =
   | string
   | {
@@ -1265,7 +1301,10 @@ export interface AgentListItem {
   toolConfigKey?: string;
   command?: string;
   backendSessionId?: string;
-  role?: string;
+  role?: AgentRole;
+  lane?: AgentLane;
+  roleState?: AgentRoleState;
+  projectControl?: boolean;
   status?: string;
   restoreState?: string;
   restoreBlockedReason?: string;
@@ -1292,6 +1331,7 @@ export interface SpawnAgentInput {
   worktreePath?: string;
   open?: boolean;
   launchOverride?: unknown;
+  role?: AgentRole;
   overseer?: boolean;
   scribe?: boolean;
 }
@@ -1532,6 +1572,9 @@ export interface ExposeChatPreview {
 }
 
 export interface SwitchableAgentItem extends Record<string, unknown> {
+  role?: AgentRole;
+  lane?: AgentLane;
+  roleState?: AgentRoleState;
   previewSnapshot?: ExposePreviewSnapshot;
   previewCapture?: PreviewCaptureMarker;
   chatPreview?: ExposeChatPreview;

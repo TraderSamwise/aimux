@@ -381,7 +381,15 @@ fn serialization_and_status_chips_match_fast_control_shapes() {
             "activity": 1,
             "recentRank": 9007199254740991i64,
             "overseer": false,
-            "scribe": false
+            "scribe": false,
+            "role": "coder",
+            "lane": { "kind": "worktree", "worktreePath": "/repo" },
+            "roleState": {
+                "status": "resolved",
+                "role": "coder",
+                "lane": { "kind": "worktree", "worktreePath": "/repo" },
+                "projectControl": false
+            }
         })
     );
     assert_eq!(
