@@ -174,11 +174,11 @@ pub fn read_agent_output_tail(
     })
 }
 
-pub async fn read_agent_output_tail_async(
+pub(super) async fn read_agent_output_tail_async(
     context: Arc<ProjectServiceRequestContext>,
     session_id: &str,
     start_line: i64,
-) -> Option<String> {
+) -> Result<Option<String>, String> {
     read_agent_output_payload_async(
         &context,
         session_id,
@@ -187,8 +187,13 @@ pub async fn read_agent_output_tail_async(
         READ_TIMEOUT,
     )
     .await
-    .ok()
-    .and_then(|read| {
+    .map_err(|error| {
+        format!(
+            "read agent output tail for {session_id} failed with status {}: {}",
+            error.status, error.body
+        )
+    })
+    .map(|read| {
         read.payload
             .get("output")
             .and_then(serde_json::Value::as_str)

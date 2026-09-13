@@ -574,15 +574,17 @@ impl PeriodicTask for PluginTickTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             if self.name == "gh-pr-context" {
-                let _ = refresh_github_pr_context_async(context).await;
-                return Ok(());
+                return refresh_github_pr_context_async(context)
+                    .await
+                    .map_err(|error| format!("{} tick failed: {error}", self.name));
             }
             let mut host = ProjectServicePluginHost::new(context);
             let plugin_name = self.name.clone();
             let mut api = NativePluginApi::new(&plugin_name, &mut host);
             // The builtins do their refresh in on_event; start() would re-subscribe.
-            let _ = self.plugin.on_event(json!({ "type": "tick" }), &mut api);
-            Ok(())
+            self.plugin
+                .on_event(json!({ "type": "tick" }), &mut api)
+                .map_err(|error| format!("{plugin_name} tick failed: {error}"))
         })
     }
 }

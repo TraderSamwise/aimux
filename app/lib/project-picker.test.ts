@@ -17,26 +17,33 @@ function project(
 }
 
 describe("filterProjectPickerProjects", () => {
-  it("defaults to projects with known online agents", () => {
+  it("defaults to projects with a live service", () => {
     const projects = [
-      project({ id: "active", name: "active", onlineAgentCount: 2 }),
-      project({ id: "empty", name: "empty", onlineAgentCount: 0 }),
-      project({ id: "unknown", name: "unknown" }),
+      project({ id: "active", name: "active", onlineAgentCount: 2, serviceAlive: true }),
+      project({ id: "empty", name: "empty", onlineAgentCount: 0, serviceAlive: true }),
+      project({
+        id: "offline-with-stale-count",
+        name: "offline-with-stale-count",
+        onlineAgentCount: 1,
+        serviceAlive: false,
+        serviceEndpoint: null,
+      }),
+      project({ id: "offline", name: "offline", serviceAlive: false, serviceEndpoint: null }),
     ];
 
     expect(
       filterProjectPickerProjects(projects, { showAll: false }).map((entry) => entry.id),
-    ).toEqual(["active"]);
+    ).toEqual(["active", "empty"]);
   });
 
   it("can show every project", () => {
     const projects = [
       project({ id: "active", name: "active", onlineAgentCount: 1 }),
-      project({ id: "empty", name: "empty", onlineAgentCount: 0 }),
+      project({ id: "offline", name: "offline", serviceAlive: false, serviceEndpoint: null }),
     ];
 
     expect(
       filterProjectPickerProjects(projects, { showAll: true }).map((entry) => entry.id),
-    ).toEqual(["active", "empty"]);
+    ).toEqual(["active", "offline"]);
   });
 });

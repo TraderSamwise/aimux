@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::daemon_state::load_metadata_state;
+use crate::daemon_state::try_load_metadata_state;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
@@ -65,12 +65,15 @@ impl PeriodicTask for ScribeWatcherTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             let project_state_dir = context.project_state_dir();
-            let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir))
-            else {
-                return Ok(());
+            let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+                Ok(topology) => topology,
+                Err(error) => return Err(format!("scribe watcher topology unavailable: {error}")),
             };
-            let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
-                .unwrap_or_else(|_| json!({ "sessions": {} }));
+            let metadata = serde_json::to_value(
+                try_load_metadata_state(&project_state_dir)
+                    .map_err(|error| format!("scribe watcher metadata unavailable: {error}"))?,
+            )
+            .unwrap_or_else(|_| json!({ "sessions": {} }));
             let sessions = list_topology_session_states(&topology, Some(READABLE_SESSION_STATUSES));
             let input = json!({
                 "sessions": sessions,
@@ -82,6 +85,7 @@ impl PeriodicTask for ScribeWatcherTask {
             let deliver_context = Arc::clone(&self.context);
             let budget = TickLoopBudget::new(SCAN_BUDGET);
             let mut outputs = BTreeMap::new();
+            let mut failures = Vec::new();
             for session in sessions.iter().take(MAX_SCAN_CANDIDATES as usize) {
                 if budget.spent() {
                     break;
@@ -89,10 +93,13 @@ impl PeriodicTask for ScribeWatcherTask {
                 let Some(session_id) = session.get("id").and_then(serde_json::Value::as_str) else {
                     continue;
                 };
-                if let Some(output) =
-                    read_agent_output_tail_async(Arc::clone(&read_context), session_id, -80).await
+                match read_agent_output_tail_async(Arc::clone(&read_context), session_id, -80).await
                 {
-                    outputs.insert(session_id.to_owned(), output);
+                    Ok(Some(output)) => {
+                        outputs.insert(session_id.to_owned(), output);
+                    }
+                    Ok(None) => {}
+                    Err(error) => failures.push(error),
                 }
             }
             let mut read = |session_id: &str, start_line: i64| {
@@ -105,7 +112,7 @@ impl PeriodicTask for ScribeWatcherTask {
             let mut collect = |_briefing: &ScribeBriefing| false;
             let briefing = self.watcher.scan(&input, now_ms(), &mut read, &mut collect);
             let Some(briefing) = briefing else {
-                return Ok(());
+                return finish_scribe_watcher_task(failures);
             };
             if deliver_agent_input_async(
                 Arc::clone(&deliver_context),
@@ -126,10 +133,25 @@ impl PeriodicTask for ScribeWatcherTask {
                     delivered.contains(&(briefing.scribe_id.clone(), briefing.text.clone()))
                 };
                 self.watcher.scan(&input, now_ms(), &mut read, &mut commit);
+            } else {
+                failures.push(format!(
+                    "scribe watcher could not deliver briefing to {}",
+                    briefing.scribe_id
+                ));
             }
-            Ok(())
+            finish_scribe_watcher_task(failures)
         })
     }
+}
+
+fn finish_scribe_watcher_task(failures: Vec<String>) -> Result<(), String> {
+    if failures.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "scribe watcher could not complete: {}",
+        failures.join("; ")
+    ))
 }
 
 fn now_ms() -> i64 {
