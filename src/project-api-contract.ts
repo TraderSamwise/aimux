@@ -61,6 +61,7 @@ export const PROJECT_API_ROUTES = {
     loop: "/agents/loop",
     overseer: "/agents/overseer",
     scribe: "/agents/scribe",
+    watch: "/agents/watch",
     teammates: "/agents/teammates",
     createTeammate: "/agents/teammates/create",
     createTeammateTask: "/agents/teammates/tasks",
@@ -309,6 +310,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.agents.loop:
     case PROJECT_API_ROUTES.agents.overseer:
     case PROJECT_API_ROUTES.agents.scribe:
+    case PROJECT_API_ROUTES.agents.watch:
     case PROJECT_API_ROUTES.livePane.interrupt:
     case PROJECT_API_ROUTES.agents.createTeammate:
     case PROJECT_API_ROUTES.agents.stopTeammate:
@@ -1423,6 +1425,40 @@ export interface AgentScribeResponse extends ProjectApiOk {
   sessionId: string;
   scribe: boolean;
 }
+
+export interface AgentWatchInput {
+  overseerSessionId: string;
+  watchedSessionId: string;
+  active: boolean;
+}
+
+export type AgentWatchRefusalReason =
+  | "invalid-request"
+  | "session-not-found"
+  | "overseer-required"
+  | "watched-agent-must-be-coder"
+  | "already-watched"
+  | "role-registry-unavailable"
+  | "metadata-unavailable"
+  | "lifecycle-mutation-unavailable";
+
+export type AgentWatchResponse =
+  | {
+      ok: true;
+      active: boolean;
+      overseerSessionId: string;
+      watchedSessionId: string;
+      watchedSessionIds: string[];
+    }
+  | {
+      ok: false;
+      reason: AgentWatchRefusalReason;
+      error: string;
+      overseerSessionId?: string;
+      watchedSessionId?: string;
+      currentOverseerSessionId?: string;
+      details?: unknown;
+    };
 
 export type WorkOutlineStatus = "active" | "done" | "superseded" | "stale";
 export type WorkOutlineSource = "agent" | "scribe" | "system" | "human";

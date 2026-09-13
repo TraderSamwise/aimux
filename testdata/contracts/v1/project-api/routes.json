@@ -56,6 +56,7 @@
     "/agents/loop",
     "/agents/overseer",
     "/agents/scribe",
+    "/agents/watch",
     "/agents/teammates",
     "/agents/teammates/create",
     "/agents/teammates/tasks",

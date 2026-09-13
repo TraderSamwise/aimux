@@ -1585,6 +1585,7 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
             { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
         ]}),
         json!({ "ok": true }),
+        json!({ "ok": true, "active": true, "overseerSessionId": "claude-overseer", "watchedSessionId": "codex-1", "watchedSessionIds": ["codex-1"] }),
         json!({ "agents": [
             { "id": "codex-1", "tool": "codex", "status": "running", "loop": { "active": true, "goal": "keep going" } },
             { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
@@ -1648,9 +1649,18 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
             "goal": "keep going"
         })
     );
-    assert_request_path(&requests[4], "GET", "/agents");
-    assert_request_path(&requests[5], "POST", "/agents/input");
-    let input = request_json_body(&requests[5]);
+    assert_request_path(&requests[4], "POST", "/agents/watch");
+    assert_eq!(
+        request_json_body(&requests[4]),
+        json!({
+            "overseerSessionId": "claude-overseer",
+            "watchedSessionId": "codex-1",
+            "active": true
+        })
+    );
+    assert_request_path(&requests[5], "GET", "/agents");
+    assert_request_path(&requests[6], "POST", "/agents/input");
+    let input = request_json_body(&requests[6]);
     assert_eq!(input["sessionId"], "claude-overseer");
     let text = input["text"].as_str().expect("input text");
     assert!(text.contains("Current watch list:"));

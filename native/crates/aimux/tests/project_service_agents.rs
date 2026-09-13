@@ -70,7 +70,7 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
         json!({ "id": "task-2", "description": "Done", "status": "done", "assignedTo": "codex-1" }),
     ];
 
-    let agents = build_agent_list(&sessions, &metadata, &tasks);
+    let agents = build_agent_list(&sessions, &metadata, &tasks, None);
 
     assert_eq!(agents[0]["id"], "codex-1");
     assert_eq!(agents[0]["tool"], "codex");

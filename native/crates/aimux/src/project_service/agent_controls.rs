@@ -1,11 +1,14 @@
 use serde_json::{Map, Value, json};
 use std::path::Path;
+use std::time::Instant;
 
-use crate::daemon_state::mutate_metadata_state;
+use crate::daemon_state::{load_metadata_state, mutate_metadata_state};
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
 
+use super::agent_roles::{WatchBindingError, bind_watch, set_supervisor_role};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::lifecycle_mutation_queue::{LifecycleMutationError, LifecycleTransitionInput};
 use super::metadata::{update_session_metadata, update_session_metadata_at};
 use super::router::ProjectServiceRequestContext;
 
@@ -35,6 +38,7 @@ pub fn route_agent_control_request(
         routes::agents::LOOP => Some(route_loop(context, body)),
         routes::agents::OVERSEER => Some(route_overseer(context, body)),
         routes::agents::SCRIBE => Some(route_scribe(context, body)),
+        routes::agents::WATCH => Some(route_watch(context, body)),
         _ => None,
     }
 }
@@ -419,7 +423,14 @@ fn set_single_project_flag(
     value: bool,
 ) -> Result<(), String> {
     let now = now_iso();
-    set_project_session_flag_at(context.project_state_dir(), session_id, key, value, &now)
+    let transition = LifecycleTransitionInput::new("agent.role", "agent")
+        .with_target_id(Some(session_id.to_owned()));
+    match context.lifecycle_mutations.enqueue(Some(transition), || {
+        set_supervisor_role(context.project_state_dir(), session_id, key, value, &now).map(|_| ())
+    }) {
+        Ok(result) => result,
+        Err(error) => Err(error.message()),
+    }
 }
 
 fn clear_project_flag(
@@ -428,7 +439,141 @@ fn clear_project_flag(
     key: &str,
 ) -> Result<(), String> {
     let now = now_iso();
-    clear_project_flag_at(context.project_state_dir(), session_id, key, &now)
+    let transition = LifecycleTransitionInput::new("agent.role", "agent")
+        .with_target_id(Some(session_id.to_owned()));
+    match context.lifecycle_mutations.enqueue(Some(transition), || {
+        set_supervisor_role(context.project_state_dir(), session_id, key, false, &now).map(|_| ())
+    }) {
+        Ok(result) => result,
+        Err(error) => Err(error.message()),
+    }
+}
+
+fn route_watch(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(overseer_session_id) =
+        body_trimmed_string(body, "overseerSessionId").filter(|value| !value.is_empty())
+    else {
+        return watch_refusal(
+            400,
+            "overseerSessionId is required",
+            "invalid-request",
+            json!({}),
+        );
+    };
+    let Some(watched_session_id) =
+        body_trimmed_string(body, "watchedSessionId").filter(|value| !value.is_empty())
+    else {
+        return watch_refusal(
+            400,
+            "watchedSessionId is required",
+            "invalid-request",
+            json!({ "overseerSessionId": overseer_session_id }),
+        );
+    };
+    let Some(active) = body.get("active").and_then(Value::as_bool) else {
+        return watch_refusal(
+            400,
+            "active (boolean) is required",
+            "invalid-request",
+            json!({
+                "overseerSessionId": overseer_session_id,
+                "watchedSessionId": watched_session_id
+            }),
+        );
+    };
+    let now = now_iso();
+    let transition = LifecycleTransitionInput::new("agent.watch", "watch-binding")
+        .with_target_id(Some(watched_session_id.clone()));
+    let mut permit = match context.lifecycle_mutations.begin(Some(transition)) {
+        Ok(permit) => permit,
+        Err(error) => return lifecycle_watch_error_response(error),
+    };
+    let started_at = Instant::now();
+    let metadata = load_metadata_state(context.project_state_dir());
+    match bind_watch(
+        context.project_state_dir(),
+        &metadata,
+        &overseer_session_id,
+        &watched_session_id,
+        active,
+        &now,
+    ) {
+        Ok(result) => {
+            permit.succeed(started_at);
+            ProjectServiceDispatchResponse::json(
+                200,
+                json!({
+                    "ok": true,
+                    "active": result.active,
+                    "overseerSessionId": result.overseer_session_id,
+                    "watchedSessionId": result.watched_session_id,
+                    "watchedSessionIds": result.watched_session_ids
+                }),
+            )
+        }
+        Err(error) => {
+            permit.fail(started_at, error.message());
+            watch_binding_error_response(error)
+        }
+    }
+}
+
+fn watch_binding_error_response(error: WatchBindingError) -> ProjectServiceDispatchResponse {
+    let mut body = Map::new();
+    body.insert("ok".into(), Value::Bool(false));
+    body.insert("reason".into(), Value::String(error.reason().into()));
+    body.insert("error".into(), Value::String(error.message()));
+    let details = error.details();
+    if let Some(overseer_session_id) = details
+        .get("overseerSessionId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    {
+        body.insert(
+            "currentOverseerSessionId".into(),
+            Value::String(overseer_session_id),
+        );
+    }
+    if let Some(session_id) = details.get("sessionId").and_then(Value::as_str) {
+        body.insert("sessionId".into(), Value::String(session_id.to_owned()));
+    }
+    if let Some(watched_session_id) = details.get("watchedSessionId").and_then(Value::as_str) {
+        body.insert(
+            "watchedSessionId".into(),
+            Value::String(watched_session_id.to_owned()),
+        );
+    }
+    body.insert("details".into(), details);
+    ProjectServiceDispatchResponse::json(error.status(), Value::Object(body))
+}
+
+fn lifecycle_watch_error_response(error: LifecycleMutationError) -> ProjectServiceDispatchResponse {
+    watch_refusal(
+        error.status(),
+        error.message(),
+        "lifecycle-mutation-unavailable",
+        json!({}),
+    )
+}
+
+fn watch_refusal(
+    status: u16,
+    error: impl Into<String>,
+    reason: impl Into<String>,
+    details: Value,
+) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(
+        status,
+        json!({
+            "ok": false,
+            "reason": reason.into(),
+            "error": error.into(),
+            "details": details
+        }),
+    )
 }
 
 fn provenance(body: &Value) -> Map<String, Value> {

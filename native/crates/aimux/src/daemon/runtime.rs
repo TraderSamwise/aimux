@@ -2943,6 +2943,16 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             Some(Value::Object(loop_body)),
             None,
         )?;
+        self.project_service_json(
+            &project_root,
+            project_routes::agents::WATCH,
+            Some(json!({
+                "overseerSessionId": &overseer_session_id,
+                "watchedSessionId": session_id,
+                "active": true,
+            })),
+            None,
+        )?;
 
         let updated_agents = self.read_project_agents(&project_root)?;
         let updated_target = find_agent(&updated_agents, session_id)
