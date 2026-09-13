@@ -530,6 +530,7 @@ fn reconciliation_alerts_once_for_visible_unowned_work_and_idle_capacity_then_re
         json!({
             "nudgeCooldownMs": 0,
             "stoppedDwellMs": 60_000,
+            "reconciliationDwellMs": 0,
             "reconciliationReminderTicks": 2,
             "reconciliationCooldownMs": 0
         }),
@@ -561,6 +562,130 @@ fn reconciliation_alerts_once_for_visible_unowned_work_and_idle_capacity_then_re
         1,
         "configured reconciliation reminder cadence should eventually re-alert"
     );
+}
+
+#[test]
+fn reconciliation_condition_persists_across_item_churn_until_reminder_cadence() {
+    let (boss, mut boss_meta) = looping_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 60_000,
+            "reconciliationDwellMs": 0,
+            "reconciliationReminderTicks": 3,
+            "reconciliationCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [
+            { "id": "task-1", "status": "pending", "description": "first" },
+            { "id": "task-2", "status": "pending", "description": "second" },
+            { "id": "task-3", "status": "pending", "description": "third" }
+        ]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+
+    input["runtimeExchange"]["tasks"] = json!([
+        { "id": "task-2", "status": "pending", "description": "second" },
+        { "id": "task-3", "status": "pending", "description": "third" }
+    ]);
+    assert!(
+        watcher.plan_sends(&input, NOW + 1).is_empty(),
+        "closing one item is progress under the same reconciliation condition, not a new edge"
+    );
+
+    input["runtimeExchange"]["tasks"] = json!([
+        { "id": "task-3", "status": "pending", "description": "third" },
+        { "id": "task-4", "status": "pending", "description": "new arrival" }
+    ]);
+    assert!(
+        watcher.plan_sends(&input, NOW + 2).is_empty(),
+        "item churn while work and capacity still coexist must respect reminder cadence"
+    );
+
+    assert_eq!(
+        watcher.plan_sends(&input, NOW + 4).len(),
+        1,
+        "the unchanged reconciliation condition still re-alerts on the documented cadence"
+    );
+}
+
+#[test]
+fn reconciliation_alerts_again_after_condition_fully_clears_and_returns() {
+    let (boss, mut boss_meta) = looping_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 60_000,
+            "reconciliationDwellMs": 0,
+            "reconciliationReminderTicks": 10,
+            "reconciliationCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [{ "id": "task-1", "status": "pending", "description": "first" }]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+
+    input["runtimeExchange"]["tasks"] = json!([]);
+    assert!(
+        watcher.plan_sends(&input, NOW + 1).is_empty(),
+        "clearing the work clears the reconciliation condition without sending a progress alert"
+    );
+
+    input["runtimeExchange"]["tasks"] = json!([
+        { "id": "task-2", "status": "pending", "description": "new condition" }
+    ]);
+    assert_eq!(
+        watcher.plan_sends(&input, NOW + 2).len(),
+        1,
+        "after the condition fully clears, a new work-plus-capacity condition is a fresh edge"
+    );
+}
+
+#[test]
+fn reconciliation_requires_condition_dwell_before_alerting() {
+    let (boss, mut boss_meta) = looping_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 60_000,
+            "reconciliationDwellMs": 30_000,
+            "reconciliationReminderTicks": 10,
+            "reconciliationCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [{ "id": "task-1", "status": "pending", "description": "first" }]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    assert!(
+        watcher.plan_sends(&input, NOW).is_empty(),
+        "a brand-new reconciliation condition must dwell before alerting"
+    );
+    assert!(watcher.plan_sends(&input, NOW + 29_999).is_empty());
+    assert_eq!(watcher.plan_sends(&input, NOW + 30_000).len(), 1);
 }
 
 #[test]

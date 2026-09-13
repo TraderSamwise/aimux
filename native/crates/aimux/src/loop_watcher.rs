@@ -113,6 +113,7 @@ pub struct LoopWatcher {
     last_reconciliation_reported_signature: Option<String>,
     last_reconciliation_wake_at: i64,
     unchanged_reconciliation_ticks: u64,
+    reconciliation_condition_since_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -560,6 +561,13 @@ impl LoopWatcher {
             self.last_reconciliation_attempted_signature = None;
             self.last_reconciliation_reported_signature = None;
             self.unchanged_reconciliation_ticks = 0;
+            self.reconciliation_condition_since_ms = None;
+            return None;
+        }
+
+        let condition_since = *self.reconciliation_condition_since_ms.get_or_insert(now_ms);
+        let dwell_ms = config_i64(input, "reconciliationDwellMs", 30_000).max(0);
+        if now_ms.saturating_sub(condition_since) < dwell_ms {
             return None;
         }
 
@@ -699,6 +707,8 @@ struct PersistentLoopWatcherState {
     last_reconciliation_wake_at: i64,
     #[serde(default)]
     unchanged_reconciliation_ticks: u64,
+    #[serde(default)]
+    reconciliation_condition_since_ms: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -748,6 +758,7 @@ impl PersistentLoopWatcherState {
                 .clone(),
             last_reconciliation_wake_at: watcher.last_reconciliation_wake_at,
             unchanged_reconciliation_ticks: watcher.unchanged_reconciliation_ticks,
+            reconciliation_condition_since_ms: watcher.reconciliation_condition_since_ms,
         }
     }
 
@@ -792,6 +803,7 @@ impl PersistentLoopWatcherState {
             last_reconciliation_reported_signature: self.last_reconciliation_reported_signature,
             last_reconciliation_wake_at: self.last_reconciliation_wake_at,
             unchanged_reconciliation_ticks: self.unchanged_reconciliation_ticks,
+            reconciliation_condition_since_ms: self.reconciliation_condition_since_ms,
         })
     }
 }
@@ -1128,36 +1140,10 @@ fn unowned_worklist_item(item: &Value) -> Option<Value> {
 }
 
 fn reconciliation_signature(work: &[Value], available: &[Value]) -> String {
-    let mut work_keys = work
-        .iter()
-        .map(|item| {
-            [
-                str_field(item, "dedupeKey"),
-                str_field(item, "status"),
-                str_field(item, "ownerState"),
-                optional_str(item, "assignedTo").unwrap_or_default(),
-            ]
-            .join("\u{1f}")
-        })
-        .collect::<Vec<_>>();
-    work_keys.sort();
-    let mut capacity_keys = available
-        .iter()
-        .map(|candidate| {
-            [
-                str_field(candidate, "id"),
-                str_field(candidate, "loopSince"),
-                optional_str(candidate, "goal").unwrap_or_default(),
-                optional_str(candidate, "loopSource").unwrap_or_default(),
-            ]
-            .join("\u{1f}")
-        })
-        .collect::<Vec<_>>();
-    capacity_keys.sort();
     format!(
-        "reconciliation:{}\u{1e}{}",
-        work_keys.join("\u{1e}"),
-        capacity_keys.join("\u{1e}")
+        "reconciliation:condition:unowned-work-present:{}:idle-capacity-present:{}",
+        !work.is_empty(),
+        !available.is_empty()
     )
 }
 
