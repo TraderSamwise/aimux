@@ -12,6 +12,7 @@ const ROTATED_HISTORY_FILES: usize = 5;
 const MIN_HISTORY_SPAN_MS: u64 = 24 * 60 * 60 * 1000;
 const GROWTH_WINDOW_MS: u64 = MIN_HISTORY_SPAN_MS;
 const GROWTH_WINDOW_BOUNDARY_TOLERANCE_MS: u64 = (RUNTIME_HEALTH_HISTORY_INTERVAL_MS as u64) * 2;
+const MAX_NEWEST_SAMPLE_AGE_MS: u64 = (RUNTIME_HEALTH_HISTORY_INTERVAL_MS as u64) * 2;
 const WEDGED_TASK_MS: u64 = 2 * 60 * 60 * 1000;
 const BUFFER_HIGH_WATER_PERCENT: u64 = 90;
 const BUFFER_DEPTH_WARN_PERCENT: u64 = 80;
@@ -173,6 +174,7 @@ fn report(
             ),
         ));
     }
+    evaluate_history_freshness(generated_at_ms, &timed_samples, &mut reasons);
 
     if let Some((_, newest)) = timed_samples.last() {
         evaluate_metric_readability(newest, &mut reasons);
@@ -271,6 +273,28 @@ fn timed_samples<'a>(
     }
     timed.sort_by_key(|(recorded_at_ms, _)| *recorded_at_ms);
     timed
+}
+
+fn evaluate_history_freshness(
+    generated_at_ms: u64,
+    timed_samples: &[(u64, &Value)],
+    reasons: &mut Vec<StabilityReason>,
+) {
+    let Some((newest_ms, _)) = timed_samples.last() else {
+        return;
+    };
+    let age_ms = generated_at_ms.saturating_sub(*newest_ms);
+    if age_ms > MAX_NEWEST_SAMPLE_AGE_MS {
+        reasons.push(failure(
+            "history-stale",
+            format!(
+                "newest runtime-health sample is {}, older than allowed {} for the {} recorder cadence",
+                format_duration(age_ms),
+                format_duration(MAX_NEWEST_SAMPLE_AGE_MS),
+                format_duration(RUNTIME_HEALTH_HISTORY_INTERVAL_MS as u64)
+            ),
+        ));
+    }
 }
 
 fn history_span_ms(timed_samples: &[(u64, &Value)]) -> u64 {
@@ -901,6 +925,57 @@ mod tests {
             report.reasons
         );
         assert!(rendered.contains("runtime-health-recorder could not record stability evidence"));
+    }
+
+    #[test]
+    fn stale_history_does_not_report_stable() {
+        let base = 1_000_000_000_u64;
+        let newest_ms = base + MIN_HISTORY_SPAN_MS;
+        let history = vec![
+            healthy_recorder_sample(base, 10, 10, 10, 512),
+            healthy_recorder_sample(newest_ms, 10, 10, 10, 512),
+        ];
+
+        let report = build_stability_doctor_report_from_history(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            newest_ms + MAX_NEWEST_SAMPLE_AGE_MS + 1,
+            Ok(history),
+        );
+
+        assert_eq!(report.verdict, StabilityVerdict::NotStable);
+        let rendered = render_stability_doctor_report(&report);
+        assert!(
+            report
+                .reasons
+                .iter()
+                .any(|reason| reason.kind == "history-stale"
+                    && reason.message.contains("newest runtime-health sample is")
+                    && reason.message.contains("older than allowed")),
+            "{:#?}\n{rendered}",
+            report.reasons
+        );
+        assert!(rendered.contains("newest runtime-health sample"));
+    }
+
+    #[test]
+    fn fresh_healthy_history_still_reports_stable() {
+        let base = 1_000_000_000_u64;
+        let newest_ms = base + MIN_HISTORY_SPAN_MS;
+        let history = vec![
+            healthy_recorder_sample(base, 10, 10, 10, 512),
+            healthy_recorder_sample(newest_ms, 10, 10, 10, 512),
+        ];
+
+        let report = build_stability_doctor_report_from_history(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            newest_ms + 60_000,
+            Ok(history),
+        );
+
+        assert_eq!(report.verdict, StabilityVerdict::Stable);
+        assert!(report.reasons.is_empty(), "{:#?}", report.reasons);
     }
 
     #[test]
