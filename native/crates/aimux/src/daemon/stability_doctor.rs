@@ -73,14 +73,23 @@ pub fn build_stability_doctor_report(
     project_root: &str,
     project_state_dir: impl AsRef<Path>,
 ) -> StabilityDoctorReport {
+    build_stability_doctor_report_with_live_scheduler(project_root, project_state_dir, None)
+}
+
+pub fn build_stability_doctor_report_with_live_scheduler(
+    project_root: &str,
+    project_state_dir: impl AsRef<Path>,
+    live_scheduler: Option<Value>,
+) -> StabilityDoctorReport {
     let history_path = runtime_health_history_path(project_state_dir);
     let generated_at_ms = now_ms();
     let history = read_runtime_health_history(&history_path);
-    build_stability_doctor_report_from_history(
+    build_stability_doctor_report_from_history_with_live_scheduler(
         project_root,
         &history_path,
         generated_at_ms,
         history,
+        live_scheduler,
     )
 }
 
@@ -111,11 +120,28 @@ pub fn render_stability_doctor_report(report: &StabilityDoctorReport) -> String 
     lines.join("\n")
 }
 
+#[cfg(test)]
 fn build_stability_doctor_report_from_history(
     project_root: &str,
     history_path: &Path,
     generated_at_ms: u64,
     history: Result<Vec<Value>, String>,
+) -> StabilityDoctorReport {
+    build_stability_doctor_report_from_history_with_live_scheduler(
+        project_root,
+        history_path,
+        generated_at_ms,
+        history,
+        None,
+    )
+}
+
+fn build_stability_doctor_report_from_history_with_live_scheduler(
+    project_root: &str,
+    history_path: &Path,
+    generated_at_ms: u64,
+    history: Result<Vec<Value>, String>,
+    live_scheduler: Option<Value>,
 ) -> StabilityDoctorReport {
     let mut reasons = Vec::new();
     let samples = match history {
@@ -128,6 +154,7 @@ fn build_stability_doctor_report_from_history(
                 generated_at_ms,
                 Vec::new(),
                 reasons,
+                live_scheduler,
             );
         }
     };
@@ -137,6 +164,7 @@ fn build_stability_doctor_report_from_history(
         generated_at_ms,
         samples,
         reasons,
+        live_scheduler,
     )
 }
 
@@ -146,6 +174,7 @@ fn report(
     generated_at_ms: u64,
     samples: Vec<Value>,
     mut reasons: Vec<StabilityReason>,
+    live_scheduler: Option<Value>,
 ) -> StabilityDoctorReport {
     if samples.is_empty() {
         reasons.push(unknown(
@@ -178,8 +207,9 @@ fn report(
 
     if let Some((_, newest)) = timed_samples.last() {
         evaluate_metric_readability(newest, &mut reasons);
-        evaluate_wedged_tasks(newest, history_span_ms, &mut reasons);
+        evaluate_wedged_tasks(newest, &timed_samples, &mut reasons);
     }
+    evaluate_live_scheduler_health(live_scheduler.as_ref(), &mut reasons);
     evaluate_buffer_pressure(&timed_samples, &mut reasons);
     evaluate_task_count_growth(&timed_samples, &mut reasons);
 
@@ -362,7 +392,11 @@ fn evaluate_metric_readability(sample: &Value, reasons: &mut Vec<StabilityReason
     }
 }
 
-fn evaluate_wedged_tasks(sample: &Value, history_span_ms: u64, reasons: &mut Vec<StabilityReason>) {
+fn evaluate_wedged_tasks(
+    sample: &Value,
+    timed_samples: &[(u64, &Value)],
+    reasons: &mut Vec<StabilityReason>,
+) {
     let Some(recorded_at_ms) = timestamp_ms(sample) else {
         return;
     };
@@ -372,18 +406,8 @@ fn evaluate_wedged_tasks(sample: &Value, history_span_ms: u64, reasons: &mut Vec
     for task in tasks {
         let name = string_field(task, &["name"]).unwrap_or("unknown-task");
         if name == RUNTIME_HEALTH_RECORDER_TASK {
-            let consecutive_failures = integer_field(task, &["consecutiveFailures"]).unwrap_or(0);
-            let consecutive_timeouts = integer_field(task, &["consecutiveTimeouts"]).unwrap_or(0);
-            if metric_failed(task) || consecutive_failures > 0 || consecutive_timeouts > 0 {
-                let last_error = string_field(task, &["lastError", "error"])
-                    .map(|error| format!(": {error}"))
-                    .unwrap_or_default();
-                reasons.push(failure(
-                    "recorder-broken",
-                    format!(
-                        "{name} could not record stability evidence ({consecutive_failures} consecutive failure(s), {consecutive_timeouts} consecutive timeout(s)){last_error}"
-                    ),
-                ));
+            if let Some(reason) = recorder_broken_reason(name, task) {
+                reasons.push(reason);
             }
             continue;
         }
@@ -402,7 +426,7 @@ fn evaluate_wedged_tasks(sample: &Value, history_span_ms: u64, reasons: &mut Vec
                 ));
             }
         } else if integer_field(task, &["runs", "totalRuns", "completedRuns"]) == Some(0)
-            && history_span_ms >= WEDGED_TASK_MS
+            && task_observed_span_ms(name, timed_samples) >= WEDGED_TASK_MS
         {
             reasons.push(failure(
                 "task-never-completed",
@@ -427,6 +451,69 @@ fn evaluate_wedged_tasks(sample: &Value, history_span_ms: u64, reasons: &mut Vec
                 ),
             ));
         }
+    }
+}
+
+fn evaluate_live_scheduler_health(
+    live_scheduler: Option<&Value>,
+    reasons: &mut Vec<StabilityReason>,
+) {
+    let Some(live_scheduler) = live_scheduler else {
+        return;
+    };
+    let Some(tasks) = periodic_tasks(live_scheduler) else {
+        return;
+    };
+    for task in tasks {
+        let name = string_field(task, &["name"]).unwrap_or("unknown-task");
+        if name != RUNTIME_HEALTH_RECORDER_TASK {
+            continue;
+        }
+        if let Some(reason) = recorder_broken_reason(name, task)
+            && !reasons
+                .iter()
+                .any(|existing| existing.kind == "recorder-broken")
+        {
+            reasons.push(reason);
+        }
+    }
+}
+
+fn recorder_broken_reason(name: &str, task: &Value) -> Option<StabilityReason> {
+    let consecutive_failures = integer_field(task, &["consecutiveFailures"]).unwrap_or(0);
+    let consecutive_timeouts = integer_field(task, &["consecutiveTimeouts"]).unwrap_or(0);
+    if !(metric_failed(task) || consecutive_failures > 0 || consecutive_timeouts > 0) {
+        return None;
+    }
+    let last_error = string_field(task, &["lastError", "error"])
+        .map(|error| format!(": {error}"))
+        .unwrap_or_default();
+    Some(failure(
+        "recorder-broken",
+        format!(
+            "{name} could not record stability evidence ({consecutive_failures} consecutive failure(s), {consecutive_timeouts} consecutive timeout(s)){last_error}"
+        ),
+    ))
+}
+
+fn task_observed_span_ms(name: &str, timed_samples: &[(u64, &Value)]) -> u64 {
+    let mut first_seen = None;
+    let mut last_seen = None;
+    for (sample_ms, sample) in timed_samples {
+        let Some(tasks) = sample.get("scheduler").and_then(periodic_tasks) else {
+            continue;
+        };
+        if tasks
+            .iter()
+            .any(|task| string_field(task, &["name"]) == Some(name))
+        {
+            first_seen = first_seen.or(Some(*sample_ms));
+            last_seen = Some(*sample_ms);
+        }
+    }
+    match (first_seen, last_seen) {
+        (Some(first), Some(last)) => last.saturating_sub(first),
+        _ => 0,
     }
 }
 
@@ -928,6 +1015,46 @@ mod tests {
     }
 
     #[test]
+    fn live_scheduler_recorder_failure_names_recorder_broken_without_file_sample() {
+        let base = 1_000_000_000_u64;
+        let newest_ms = base + MIN_HISTORY_SPAN_MS;
+        let history = vec![
+            healthy_recorder_sample(base, 10, 10, 10, 512),
+            healthy_recorder_sample(newest_ms, 10, 10, 10, 512),
+        ];
+        let live_scheduler = json!({
+            "periodicTasks": [{
+                "name": RUNTIME_HEALTH_RECORDER_TASK,
+                "runs": 12,
+                "lastCompletedAtMs": newest_ms - 60_000,
+                "consecutiveFailures": 2,
+                "consecutiveTimeouts": 0,
+                "lastError": "runtime health sample write failed at /repo/.aimux/runtime-health.jsonl: permission denied"
+            }]
+        });
+
+        let report = build_stability_doctor_report_from_history_with_live_scheduler(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            newest_ms + 60_000,
+            Ok(history),
+            Some(live_scheduler),
+        );
+
+        assert_eq!(report.verdict, StabilityVerdict::NotStable);
+        assert!(
+            report
+                .reasons
+                .iter()
+                .any(|reason| reason.kind == "recorder-broken"
+                    && reason.message.contains("2 consecutive failure")
+                    && reason.message.contains("permission denied")),
+            "{:#?}",
+            report.reasons
+        );
+    }
+
+    #[test]
     fn stale_history_does_not_report_stable() {
         let base = 1_000_000_000_u64;
         let newest_ms = base + MIN_HISTORY_SPAN_MS;
@@ -976,6 +1103,62 @@ mod tests {
 
         assert_eq!(report.verdict, StabilityVerdict::Stable);
         assert!(report.reasons.is_empty(), "{:#?}", report.reasons);
+    }
+
+    #[test]
+    fn old_schema_history_does_not_make_new_task_look_never_completed() {
+        let base = 1_000_000_000_u64;
+        let newest_ms = base + MIN_HISTORY_SPAN_MS;
+        let history = vec![
+            old_schema_sample(base, 10, 10, 10, 512),
+            old_schema_sample(base + MIN_HISTORY_SPAN_MS / 2, 10, 10, 10, 512),
+            never_completed_task_sample(newest_ms, "agent-input-delivery"),
+        ];
+
+        let report = build_stability_doctor_report_from_history(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            newest_ms + 60_000,
+            Ok(history),
+        );
+
+        assert!(
+            report
+                .reasons
+                .iter()
+                .all(|reason| reason.kind != "task-never-completed"),
+            "{:#?}",
+            report.reasons
+        );
+        assert_ne!(report.verdict, StabilityVerdict::NotStable);
+    }
+
+    #[test]
+    fn task_visible_without_completion_across_wedge_window_is_still_caught() {
+        let base = 1_000_000_000_u64;
+        let newest_ms = base + WEDGED_TASK_MS;
+        let history = vec![
+            never_completed_task_sample(base, "agent-input-delivery"),
+            never_completed_task_sample(newest_ms, "agent-input-delivery"),
+        ];
+
+        let report = build_stability_doctor_report_from_history(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            newest_ms + 60_000,
+            Ok(history),
+        );
+
+        assert_eq!(report.verdict, StabilityVerdict::NotStable);
+        assert!(
+            report
+                .reasons
+                .iter()
+                .any(|reason| reason.kind == "task-never-completed"
+                    && reason.message.contains("agent-input-delivery")),
+            "{:#?}",
+            report.reasons
+        );
     }
 
     #[test]
@@ -1094,6 +1277,46 @@ mod tests {
                 "capacity": capacity
             }],
             "process": { "taskCount": task_count }
+        })
+    }
+
+    fn old_schema_sample(
+        recorded_at_ms: u64,
+        task_count: u64,
+        depth: u64,
+        high_water: u64,
+        capacity: u64,
+    ) -> Value {
+        json!({
+            "recordedAtMs": recorded_at_ms,
+            "backlog": [{
+                "name": "relay outbox",
+                "depth": depth,
+                "highWater": high_water,
+                "capacity": capacity
+            }],
+            "process": { "taskCount": task_count }
+        })
+    }
+
+    fn never_completed_task_sample(recorded_at_ms: u64, task_name: &str) -> Value {
+        json!({
+            "recordedAtMs": recorded_at_ms,
+            "scheduler": {
+                "periodicTasks": [{
+                    "name": task_name,
+                    "runs": 0,
+                    "consecutiveFailures": 0,
+                    "consecutiveTimeouts": 0
+                }]
+            },
+            "backlog": [{
+                "name": "relay outbox",
+                "depth": 10,
+                "highWater": 10,
+                "capacity": 512
+            }],
+            "process": { "taskCount": 10 }
         })
     }
 
