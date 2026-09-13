@@ -429,7 +429,7 @@ fn publish_project_update_for_response(
         context.scheduler.force_task_next_tick("loop-watcher");
         return;
     }
-    if method == "POST" && pathname == routes::agents::LOOP {
+    if method == "POST" && matches!(pathname, routes::agents::LOOP | routes::agents::LOOP_ALERTS) {
         context.scheduler.force_task_next_tick("loop-watcher");
     }
     if project_api_views_for_mutation_route(method, pathname).is_none() {

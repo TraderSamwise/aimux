@@ -167,18 +167,22 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
             content.push(format!("  {}", agent_row(input, session, selected, digit)));
         }
     }
-    let footer_lines = if let Some(message) = input.footer_message {
-        vec![format!(
+    let mut footer_lines = Vec::new();
+    if let Some(chrome) = loop_alert_chrome(input.snapshot) {
+        footer_lines.push(truncate_ansi(&chrome, input.cols.saturating_sub(2)));
+    }
+    if let Some(message) = input.footer_message {
+        footer_lines.push(format!(
             "{} {}",
             crate::tui_render::theme::footer_key("!", Some(KeyTone::Danger)),
             style(message, Tone::Muted)
-        )]
+        ));
     } else {
-        render_footer_hints(
+        footer_lines.extend(render_footer_hints(
             &build_dashboard_footer_hints(input),
             input.cols.saturating_sub(2),
-        )
-    };
+        ));
+    }
     let focus_line = find_focus_line(&content);
     let right_panel = if two_pane {
         let viewport_height = 1.max(
@@ -207,6 +211,57 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         two_pane,
         right_panel: right_panel.as_deref(),
     })
+}
+
+fn loop_alert_chrome(snapshot: &DesktopStateSnapshot) -> Option<String> {
+    let state = snapshot.extra.get("loopAlertState")?;
+    if state.get("ok").and_then(Value::as_bool) == Some(false) {
+        let error = state
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("state unavailable");
+        return Some(format!(
+            "{} {}",
+            style("LOOP ALERTS UNAVAILABLE", Tone::Danger),
+            style(&truncate(error, 80), Tone::Muted)
+        ));
+    }
+    let global = state.get("globalPause")?;
+    if global.get("enabled").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let buffered = global
+        .get("bufferedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let remaining = global
+        .get("remainingMs")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    Some(format!(
+        "{} - {} buffered - expires in {} - press O",
+        style("LOOP ALERTS PAUSED", Tone::Attention),
+        buffered,
+        format_duration_hint(remaining)
+    ))
+}
+
+fn format_duration_hint(ms: i64) -> String {
+    let seconds = (ms.max(0) + 999) / 1000;
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = (seconds + 59) / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    let hours = minutes / 60;
+    let rem = minutes % 60;
+    if rem == 0 {
+        format!("{hours}h")
+    } else {
+        format!("{hours}h{rem}m")
+    }
 }
 
 fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterHint<'static>> {

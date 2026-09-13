@@ -30,6 +30,7 @@ const SESSION_LOOP_SOURCES: &[&str] = &[
     "unknown",
 ];
 const SESSION_LOOP_ACTIONS: &[&str] = &["add", "remove", "done", "block"];
+const DEFAULT_GLOBAL_LOOP_ALERT_PAUSE_MS: i64 = 30 * 60 * 1000;
 
 pub fn route_agent_control_request(
     context: &ProjectServiceRequestContext,
@@ -56,6 +57,9 @@ fn route_loop_alerts(
     context: &ProjectServiceRequestContext,
     body: &Value,
 ) -> ProjectServiceDispatchResponse {
+    if body.get("global").and_then(Value::as_bool) == Some(true) {
+        return route_global_loop_alerts(context, body);
+    }
     let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
     else {
         return json_error(400, "sessionId is required");
@@ -119,6 +123,59 @@ fn route_loop_alerts(
     ProjectServiceDispatchResponse::json(
         200,
         json!({ "ok": true, "sessionId": session_id, "paused": false, "cleared": cleared.is_some() }),
+    )
+}
+
+fn route_global_loop_alerts(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(paused) = body.get("paused").and_then(Value::as_bool) else {
+        return json_error(400, "paused (boolean) is required");
+    };
+    let now_ms = super::scheduler::scheduler_now_ms();
+    let state_path = loop_watcher_state_path(context.project_state_dir());
+    let mut watcher = match load_loop_watcher_state(&state_path) {
+        Ok(watcher) => watcher,
+        Err(error) => return json_error(500, error),
+    };
+    let pause = if paused {
+        let expires_at_ms = body
+            .get("expiresAtMs")
+            .and_then(Value::as_i64)
+            .unwrap_or_else(|| {
+                let duration_ms = body
+                    .get("durationMs")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(DEFAULT_GLOBAL_LOOP_ALERT_PAUSE_MS);
+                now_ms.saturating_add(duration_ms.max(1))
+            });
+        watcher.set_global_pause(
+            now_ms,
+            expires_at_ms,
+            LoopAlertPauseProvenance {
+                paused_by: body_trimmed_string(body, "updatedBy"),
+                paused_by_session_id: body_trimmed_string(body, "updatedBySessionId"),
+                paused_by_role: body_trimmed_string(body, "updatedByRole"),
+                reason: body_trimmed_string(body, "reason"),
+            },
+        );
+        true
+    } else {
+        watcher.clear_global_pause();
+        false
+    };
+    if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
+        return json_error(500, error);
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({
+            "ok": true,
+            "global": true,
+            "paused": pause,
+            "loopAlertState": watcher.loop_alert_state(now_ms)
+        }),
     )
 }
 

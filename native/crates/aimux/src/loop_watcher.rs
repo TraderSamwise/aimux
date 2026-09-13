@@ -32,6 +32,7 @@ pub enum LoopSendKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoopDeliveryOutcome {
     Delivered,
+    Buffered,
     Failed { error: String },
 }
 
@@ -62,6 +63,33 @@ pub struct LoopAlertPause {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopGlobalPause {
+    pub paused_at_ms: i64,
+    pub expires_at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by_role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BufferedLoopSend {
+    pub first_buffered_at_ms: i64,
+    pub last_seen_at_ms: i64,
+    pub seen_count: u64,
+    pub session_id: String,
+    pub text: String,
+    pub signature: String,
+    pub kind: String,
+}
+
 /// Cross-scan state: who was nudged when, and when the overseer was last woken.
 #[derive(Debug, Default)]
 pub struct LoopWatcher {
@@ -76,6 +104,9 @@ pub struct LoopWatcher {
     paused_loop_alerts: BTreeMap<String, LoopAlertPause>,
     paused_summary_ticks: u64,
     last_paused_summary_signature: Option<String>,
+    global_pause: Option<LoopGlobalPause>,
+    buffered_sends: BTreeMap<String, BufferedLoopSend>,
+    global_pause_reminder_ticks: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -269,21 +300,128 @@ impl LoopWatcher {
         self.paused_loop_alerts.get(session_id)
     }
 
+    pub fn set_global_pause(
+        &mut self,
+        now_ms: i64,
+        expires_at_ms: i64,
+        provenance: LoopAlertPauseProvenance,
+    ) -> LoopGlobalPause {
+        let pause = LoopGlobalPause {
+            paused_at_ms: now_ms,
+            expires_at_ms: expires_at_ms.max(now_ms.saturating_add(1)),
+            paused_by: provenance.paused_by,
+            paused_by_session_id: provenance.paused_by_session_id,
+            paused_by_role: provenance.paused_by_role,
+            reason: provenance.reason,
+        };
+        self.global_pause = Some(pause.clone());
+        self.global_pause_reminder_ticks = 0;
+        pause
+    }
+
+    pub fn clear_global_pause(&mut self) -> Option<LoopGlobalPause> {
+        self.global_pause_reminder_ticks = 0;
+        self.global_pause.take()
+    }
+
+    pub fn expire_global_pause(&mut self, now_ms: i64) -> Option<LoopGlobalPause> {
+        if self
+            .global_pause
+            .as_ref()
+            .is_some_and(|pause| pause.expires_at_ms <= now_ms)
+        {
+            return self.clear_global_pause();
+        }
+        None
+    }
+
+    pub fn is_global_pause_active(&self, now_ms: i64) -> bool {
+        self.global_pause
+            .as_ref()
+            .is_some_and(|pause| pause.expires_at_ms > now_ms)
+    }
+
+    pub fn buffer_send(&mut self, send: &LoopSend, now_ms: i64) {
+        let key = buffered_send_key(send);
+        let entry = self
+            .buffered_sends
+            .entry(key)
+            .or_insert_with(|| BufferedLoopSend {
+                first_buffered_at_ms: now_ms,
+                last_seen_at_ms: now_ms,
+                seen_count: 0,
+                session_id: send.session_id.clone(),
+                text: send.text.clone(),
+                signature: send.signature.clone(),
+                kind: loop_send_kind_name(send.kind).to_owned(),
+            });
+        entry.last_seen_at_ms = now_ms;
+        entry.seen_count = entry.seen_count.saturating_add(1);
+        entry.session_id = send.session_id.clone();
+        entry.text = send.text.clone();
+        entry.signature = send.signature.clone();
+        entry.kind = loop_send_kind_name(send.kind).to_owned();
+    }
+
+    pub fn buffered_sends_to_deliver(&self, limit: usize) -> Vec<LoopSend> {
+        self.buffered_sends
+            .values()
+            .take(limit)
+            .filter_map(buffered_send_to_loop_send)
+            .collect()
+    }
+
+    pub fn remove_buffered_send(&mut self, send: &LoopSend) {
+        self.buffered_sends.remove(&buffered_send_key(send));
+    }
+
+    pub fn buffered_send_count(&self) -> usize {
+        self.buffered_sends.len()
+    }
+
+    pub fn note_global_pause_tick(&mut self) {
+        if self.global_pause.is_some() {
+            self.global_pause_reminder_ticks = self.global_pause_reminder_ticks.saturating_add(1);
+        }
+    }
+
+    pub fn loop_alert_state(&self, now_ms: i64) -> Value {
+        let global_pause = self.global_pause.as_ref().map(|pause| {
+            json!({
+                "enabled": pause.expires_at_ms > now_ms,
+                "pausedAtMs": pause.paused_at_ms,
+                "expiresAtMs": pause.expires_at_ms,
+                "remainingMs": pause.expires_at_ms.saturating_sub(now_ms),
+                "bufferedCount": self.buffered_sends.len(),
+                "pausedBy": pause.paused_by,
+                "pausedBySessionId": pause.paused_by_session_id,
+                "pausedByRole": pause.paused_by_role,
+                "reason": pause.reason,
+                "reminderTicks": self.global_pause_reminder_ticks
+            })
+        });
+        json!({
+            "ok": true,
+            "globalPause": global_pause.unwrap_or_else(|| json!({
+                "enabled": false,
+                "bufferedCount": self.buffered_sends.len()
+            })),
+            "pausedCount": self.paused_loop_alerts.len(),
+            "bufferedCount": self.buffered_sends.len()
+        })
+    }
+
     fn record_delivery(&mut self, send: &LoopSend, now_ms: i64, outcome: LoopDeliveryOutcome) {
         let (outcome, error) = match outcome {
             LoopDeliveryOutcome::Delivered => ("delivered".to_owned(), None),
+            LoopDeliveryOutcome::Buffered => ("buffered".to_owned(), None),
             LoopDeliveryOutcome::Failed { error } => ("failed".to_owned(), Some(error)),
         };
         self.delivery_records.push(LoopDeliveryRecord {
             at_ms: now_ms,
             session_id: send.session_id.clone(),
             signature: send.signature.clone(),
-            kind: match send.kind {
-                LoopSendKind::OverseerBriefing => "overseerBriefing",
-                LoopSendKind::DirectNudge => "directNudge",
-                LoopSendKind::PausedSummary => "pausedSummary",
-            }
-            .to_owned(),
+            kind: loop_send_kind_name(send.kind).to_owned(),
             outcome,
             error,
         });
@@ -424,6 +562,20 @@ pub fn save_loop_watcher_state(
     })
 }
 
+pub fn loop_alert_state_summary(project_state_dir: impl AsRef<Path>, now_ms: i64) -> Value {
+    let path = loop_watcher_state_path(project_state_dir);
+    match load_loop_watcher_state(&path) {
+        Ok(watcher) => watcher.loop_alert_state(now_ms),
+        Err(error) => json!({
+            "ok": false,
+            "error": error,
+            "globalPause": { "enabled": false, "bufferedCount": 0 },
+            "pausedCount": 0,
+            "bufferedCount": 0
+        }),
+    }
+}
+
 pub fn clear_loop_alert_pause_for_work(
     project_state_dir: impl AsRef<Path>,
     session_id: &str,
@@ -456,6 +608,12 @@ struct PersistentLoopWatcherState {
     paused_summary_ticks: u64,
     #[serde(default)]
     last_paused_summary_signature: Option<String>,
+    #[serde(default)]
+    global_pause: Option<LoopGlobalPause>,
+    #[serde(default)]
+    buffered_sends: BTreeMap<String, BufferedLoopSend>,
+    #[serde(default)]
+    global_pause_reminder_ticks: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -493,6 +651,9 @@ impl PersistentLoopWatcherState {
             paused_loop_alerts: watcher.paused_loop_alerts.clone(),
             paused_summary_ticks: watcher.paused_summary_ticks,
             last_paused_summary_signature: watcher.last_paused_summary_signature.clone(),
+            global_pause: watcher.global_pause.clone(),
+            buffered_sends: watcher.buffered_sends.clone(),
+            global_pause_reminder_ticks: watcher.global_pause_reminder_ticks,
         }
     }
 
@@ -529,7 +690,40 @@ impl PersistentLoopWatcherState {
             paused_loop_alerts: self.paused_loop_alerts,
             paused_summary_ticks: self.paused_summary_ticks,
             last_paused_summary_signature: self.last_paused_summary_signature,
+            global_pause: self.global_pause,
+            buffered_sends: self.buffered_sends,
+            global_pause_reminder_ticks: self.global_pause_reminder_ticks,
         })
+    }
+}
+
+fn buffered_send_key(send: &LoopSend) -> String {
+    format!("{}:{}", loop_send_kind_name(send.kind), send.signature)
+}
+
+fn buffered_send_to_loop_send(buffered: &BufferedLoopSend) -> Option<LoopSend> {
+    Some(LoopSend {
+        session_id: buffered.session_id.clone(),
+        text: buffered.text.clone(),
+        signature: buffered.signature.clone(),
+        kind: loop_send_kind_from_name(&buffered.kind)?,
+    })
+}
+
+fn loop_send_kind_name(kind: LoopSendKind) -> &'static str {
+    match kind {
+        LoopSendKind::OverseerBriefing => "overseerBriefing",
+        LoopSendKind::DirectNudge => "directNudge",
+        LoopSendKind::PausedSummary => "pausedSummary",
+    }
+}
+
+fn loop_send_kind_from_name(value: &str) -> Option<LoopSendKind> {
+    match value {
+        "overseerBriefing" => Some(LoopSendKind::OverseerBriefing),
+        "directNudge" => Some(LoopSendKind::DirectNudge),
+        "pausedSummary" => Some(LoopSendKind::PausedSummary),
+        _ => None,
     }
 }
 

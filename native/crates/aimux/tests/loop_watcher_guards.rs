@@ -107,6 +107,29 @@ fn a_reported_stopped_agent_does_not_realert_after_state_reload() {
 }
 
 #[test]
+fn an_accepted_or_queued_overseer_briefing_suppresses_the_same_busy_receiver_level() {
+    let (boss, boss_meta) = looping_session("boss", "busy");
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut boss_meta = boss_meta;
+    boss_meta["overseer"] = json!(true);
+    let input = input(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        false,
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+
+    assert!(
+        watcher.plan_sends(&input, NOW + 1).is_empty(),
+        "a queued/accepted briefing to a busy overseer must not repeat while the stopped-agent level is unchanged"
+    );
+}
+
+#[test]
 fn a_failed_delivery_attempt_survives_reload_without_becoming_a_new_edge() {
     let state_dir = temp_state_dir("failed-delivery");
     let path = loop_watcher_state_path(&state_dir);
@@ -420,6 +443,77 @@ fn paused_loop_agent_is_removed_from_stopped_reminders_but_summarized_by_cadence
     assert_eq!(sends[0].session_id, "boss");
     assert!(sends[0].text.contains("loop alerts paused"));
     assert!(sends[0].text.contains("worker"));
+}
+
+#[test]
+fn global_pause_buffers_planned_alerts_instead_of_dropping_them() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 60_000, LoopAlertPauseProvenance::default());
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    watcher.buffer_send(&sends[0], NOW);
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Buffered);
+
+    assert_eq!(watcher.buffered_send_count(), 1);
+    let record = watcher.last_delivery_record().expect("delivery record");
+    assert_eq!(record.outcome, "buffered");
+    assert_eq!(record.session_id, "boss");
+}
+
+#[test]
+fn clearing_global_pause_exposes_buffered_alert_for_delivery() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 60_000, LoopAlertPauseProvenance::default());
+    let sends = watcher.plan_sends(&input, NOW);
+    watcher.buffer_send(&sends[0], NOW);
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Buffered);
+    watcher.clear_global_pause();
+
+    let buffered = watcher.buffered_sends_to_deliver(8);
+    assert_eq!(buffered.len(), 1);
+    assert_eq!(buffered[0].session_id, "boss");
+    assert_eq!(buffered[0].text, sends[0].text);
+}
+
+#[test]
+fn global_pause_expiry_resumes_without_human_input_and_keeps_buffered_alert() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 10, LoopAlertPauseProvenance::default());
+    let sends = watcher.plan_sends(&input, NOW);
+    watcher.buffer_send(&sends[0], NOW);
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Buffered);
+
+    assert!(watcher.is_global_pause_active(NOW + 9));
+    assert!(watcher.expire_global_pause(NOW + 11).is_some());
+    assert!(!watcher.is_global_pause_active(NOW + 11));
+    assert_eq!(watcher.buffered_sends_to_deliver(8).len(), 1);
 }
 
 #[test]

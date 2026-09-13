@@ -228,6 +228,50 @@ fn loop_alert_pause_reports_metadata_unavailable_instead_of_not_in_loop_when_met
 }
 
 #[test]
+fn global_loop_alert_pause_persists_with_expiry_and_can_resume() {
+    let project = temp_project("global-loop-alert-pause");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let pause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({
+            "global": true,
+            "paused": true,
+            "durationMs": 60000,
+            "updatedBy": "dashboard",
+            "reason": "human intervention"
+        })),
+    );
+
+    assert_eq!(pause.status, 200);
+    assert_eq!(pause.body["global"], true);
+    assert_eq!(pause.body["paused"], true);
+    assert_eq!(pause.body["loopAlertState"]["globalPause"]["enabled"], true);
+    assert_eq!(
+        pause.body["loopAlertState"]["globalPause"]["reason"],
+        "human intervention"
+    );
+
+    let resume = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({ "global": true, "paused": false })),
+    );
+
+    assert_eq!(resume.status, 200);
+    assert_eq!(resume.body["paused"], false);
+    assert_eq!(
+        resume.body["loopAlertState"]["globalPause"]["enabled"],
+        false
+    );
+    cleanup(project);
+}
+
+#[test]
 fn loop_and_control_routes_validate_required_fields() {
     let project = temp_project("validation");
     let state_dir = project.join("state");

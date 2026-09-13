@@ -1518,6 +1518,7 @@ fn render_dashboard_snapshot(
             "dashboardOverseerSessionsCache": &overseer_sessions,
             "dashboardSessionsCache": &snapshot.sessions,
             "dashboardTeammatesCache": &snapshot.teammates,
+            "loopAlertState": snapshot.extra.get("loopAlertState"),
         });
         return dashboard_overlay_frame(
             &frame,

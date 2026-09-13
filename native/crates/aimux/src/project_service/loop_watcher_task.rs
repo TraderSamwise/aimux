@@ -119,8 +119,30 @@ impl PeriodicTask for LoopWatcherTask {
 
             let budget = TickLoopBudget::new(SCAN_BUDGET);
             let planned_at = now_ms();
+            watcher.expire_global_pause(planned_at);
             let sends = watcher.plan_sends(&input, planned_at);
-            for send in sends.into_iter().take(MAX_SENDS_PER_SCAN) {
+            if watcher.is_global_pause_active(planned_at) {
+                watcher.note_global_pause_tick();
+                for send in sends.into_iter().take(MAX_SENDS_PER_SCAN) {
+                    watcher.buffer_send(&send, planned_at);
+                    watcher.commit_send_result(&send, planned_at, LoopDeliveryOutcome::Buffered);
+                }
+                if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
+                    log_at(
+                        LogLevel::Error,
+                        "loop watcher state commit failed",
+                        "loop-watcher",
+                        Some(json!({ "error": error })),
+                    );
+                    return Err(error);
+                }
+                return Ok(());
+            }
+
+            let mut delivery_queue = watcher.buffered_sends_to_deliver(MAX_SENDS_PER_SCAN);
+            let remaining = MAX_SENDS_PER_SCAN.saturating_sub(delivery_queue.len());
+            delivery_queue.extend(sends.into_iter().take(remaining));
+            for send in delivery_queue {
                 if budget.spent() {
                     break;
                 }
@@ -137,6 +159,9 @@ impl PeriodicTask for LoopWatcherTask {
                         error: "deliver_agent_input_async returned false".to_owned(),
                     }
                 };
+                if matches!(delivered, LoopDeliveryOutcome::Delivered) {
+                    watcher.remove_buffered_send(&send);
+                }
                 watcher.commit_send_result(&send, now_ms(), delivered);
             }
             if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
