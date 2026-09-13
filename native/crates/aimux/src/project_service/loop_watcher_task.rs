@@ -18,8 +18,10 @@ use crate::runtime_topology::{
 };
 
 use super::agent_output::AgentOutputResponseMode;
+use super::coordination_worklist::{build_coordination_thread_entries, build_coordination_view};
 use super::interactions::pending_interactions_for_stream;
 use super::router::ProjectServiceRequestContext;
+use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::scheduler::{CachedProjectConfig, PeriodicTask, PeriodicTaskFuture};
 use super::watcher_delivery::{TickLoopBudget, deliver_agent_input_async};
 
@@ -110,11 +112,26 @@ impl PeriodicTask for LoopWatcherTask {
             };
             let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
                 .unwrap_or_else(|_| json!({ "sessions": {} }));
+            let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
             let sessions =
                 list_topology_session_states(&topology, Some(NUDGEABLE_SESSION_STATUSES));
+            let threads = build_coordination_thread_entries(&exchange, "user");
+            let coordination_view =
+                build_coordination_view(&sessions, &[], &[], &[], &threads, "user");
+            let coordination_worklist = coordination_view
+                .get("worklist")
+                .and_then(|worklist| worklist.get("items"))
+                .cloned()
+                .unwrap_or_else(|| json!([]));
             let pending = pending_interactions_for_stream(&project_state_dir);
-            let mut input =
-                build_scan_input(sessions, &metadata, &pending, self.loop_config.clone());
+            let mut input = build_scan_input(
+                sessions,
+                &metadata,
+                &pending,
+                self.loop_config.clone(),
+                exchange,
+                coordination_worklist,
+            );
             apply_live_activity_overrides_for_scan(context, &mut input).await;
 
             let budget = TickLoopBudget::new(SCAN_BUDGET);
@@ -187,6 +204,8 @@ pub fn build_scan_input(
     metadata: &Value,
     pending_interactions: &[Value],
     loop_config: Value,
+    runtime_exchange: Value,
+    coordination_worklist: Value,
 ) -> Value {
     let sessions = sessions
         .into_iter()
@@ -206,6 +225,8 @@ pub fn build_scan_input(
         "metadata": metadata,
         "config": loop_config,
         "pendingInteractions": pending,
+        "runtimeExchange": runtime_exchange,
+        "coordinationWorklist": coordination_worklist,
     })
 }
 

@@ -27,6 +27,7 @@ pub enum LoopSendKind {
     OverseerBriefing,
     DirectNudge,
     PausedSummary,
+    Reconciliation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +108,11 @@ pub struct LoopWatcher {
     global_pause: Option<LoopGlobalPause>,
     buffered_sends: BTreeMap<String, BufferedLoopSend>,
     global_pause_reminder_ticks: u64,
+    last_reconciliation_signature: Option<String>,
+    last_reconciliation_attempted_signature: Option<String>,
+    last_reconciliation_reported_signature: Option<String>,
+    last_reconciliation_wake_at: i64,
+    unchanged_reconciliation_ticks: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -157,6 +163,8 @@ impl LoopWatcher {
         let paused_candidates = self.extract_paused_candidates(&mut raw_candidates);
         let paused_summary =
             self.plan_paused_summary(&paused_candidates, overseer_id.as_deref(), input);
+        let reconciliation =
+            self.plan_reconciliation(overseer_id.as_deref(), &paused_candidates, input, now_ms);
         let candidates = self.dwelled_candidates(
             raw_candidates,
             now_ms,
@@ -168,6 +176,9 @@ impl LoopWatcher {
             self.last_overseer_attempted_signature = None;
             self.unchanged_candidate_ticks = 0;
             if let Some(send) = paused_summary {
+                sends.push(send);
+            }
+            if let Some(send) = reconciliation {
                 sends.push(send);
             }
             return sends;
@@ -215,6 +226,9 @@ impl LoopWatcher {
             if let Some(send) = paused_summary {
                 sends.push(send);
             }
+            if let Some(send) = reconciliation {
+                sends.push(send);
+            }
             return sends;
         }
 
@@ -224,6 +238,9 @@ impl LoopWatcher {
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
+            if let Some(send) = reconciliation {
+                sends.push(send);
+            }
             return sends;
         }
 
@@ -241,6 +258,9 @@ impl LoopWatcher {
             sends.push(send);
         }
         if let Some(send) = paused_summary {
+            sends.push(send);
+        }
+        if let Some(send) = reconciliation {
             sends.push(send);
         }
         sends
@@ -264,6 +284,13 @@ impl LoopWatcher {
                 self.last_nudge_at.insert(send.session_id.clone(), now_ms);
             }
             LoopSendKind::PausedSummary => {}
+            LoopSendKind::Reconciliation => {
+                self.last_reconciliation_wake_at = now_ms;
+                self.last_reconciliation_attempted_signature = Some(send.signature.clone());
+                if matches!(outcome, LoopDeliveryOutcome::Delivered) {
+                    self.last_reconciliation_reported_signature = Some(send.signature.clone());
+                }
+            }
         }
         self.record_delivery(send, now_ms, outcome);
     }
@@ -517,6 +544,54 @@ impl LoopWatcher {
             kind: LoopSendKind::PausedSummary,
         })
     }
+
+    fn plan_reconciliation(
+        &mut self,
+        overseer_id: Option<&str>,
+        paused_candidates: &[Value],
+        input: &Value,
+        now_ms: i64,
+    ) -> Option<LoopSend> {
+        let overseer_id = overseer_id.filter(|id| session_exists(input, id))?;
+        let available = find_idle_loop_capacity(input, Some(overseer_id), paused_candidates);
+        let work = find_visible_unowned_work(input);
+        if available.is_empty() || work.is_empty() {
+            self.last_reconciliation_signature = None;
+            self.last_reconciliation_attempted_signature = None;
+            self.last_reconciliation_reported_signature = None;
+            self.unchanged_reconciliation_ticks = 0;
+            return None;
+        }
+
+        let signature = reconciliation_signature(&work, &available);
+        if self.last_reconciliation_signature.as_deref() == Some(signature.as_str()) {
+            self.unchanged_reconciliation_ticks =
+                self.unchanged_reconciliation_ticks.saturating_add(1);
+        } else {
+            self.last_reconciliation_signature = Some(signature.clone());
+            self.unchanged_reconciliation_ticks = 0;
+        }
+
+        let already_reported =
+            self.last_reconciliation_reported_signature.as_deref() == Some(signature.as_str());
+        let already_attempted =
+            self.last_reconciliation_attempted_signature.as_deref() == Some(signature.as_str());
+        let reminder_due = reconciliation_reminder_due(
+            input,
+            self.unchanged_reconciliation_ticks,
+            now_ms.saturating_sub(self.last_reconciliation_wake_at),
+        );
+        if (already_reported || already_attempted) && !reminder_due {
+            return None;
+        }
+
+        Some(LoopSend {
+            session_id: overseer_id.to_owned(),
+            text: build_reconciliation_briefing(&work, &available),
+            signature,
+            kind: LoopSendKind::Reconciliation,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -614,6 +689,16 @@ struct PersistentLoopWatcherState {
     buffered_sends: BTreeMap<String, BufferedLoopSend>,
     #[serde(default)]
     global_pause_reminder_ticks: u64,
+    #[serde(default)]
+    last_reconciliation_signature: Option<String>,
+    #[serde(default)]
+    last_reconciliation_attempted_signature: Option<String>,
+    #[serde(default)]
+    last_reconciliation_reported_signature: Option<String>,
+    #[serde(default)]
+    last_reconciliation_wake_at: i64,
+    #[serde(default)]
+    unchanged_reconciliation_ticks: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -654,6 +739,15 @@ impl PersistentLoopWatcherState {
             global_pause: watcher.global_pause.clone(),
             buffered_sends: watcher.buffered_sends.clone(),
             global_pause_reminder_ticks: watcher.global_pause_reminder_ticks,
+            last_reconciliation_signature: watcher.last_reconciliation_signature.clone(),
+            last_reconciliation_attempted_signature: watcher
+                .last_reconciliation_attempted_signature
+                .clone(),
+            last_reconciliation_reported_signature: watcher
+                .last_reconciliation_reported_signature
+                .clone(),
+            last_reconciliation_wake_at: watcher.last_reconciliation_wake_at,
+            unchanged_reconciliation_ticks: watcher.unchanged_reconciliation_ticks,
         }
     }
 
@@ -693,6 +787,11 @@ impl PersistentLoopWatcherState {
             global_pause: self.global_pause,
             buffered_sends: self.buffered_sends,
             global_pause_reminder_ticks: self.global_pause_reminder_ticks,
+            last_reconciliation_signature: self.last_reconciliation_signature,
+            last_reconciliation_attempted_signature: self.last_reconciliation_attempted_signature,
+            last_reconciliation_reported_signature: self.last_reconciliation_reported_signature,
+            last_reconciliation_wake_at: self.last_reconciliation_wake_at,
+            unchanged_reconciliation_ticks: self.unchanged_reconciliation_ticks,
         })
     }
 }
@@ -715,6 +814,7 @@ fn loop_send_kind_name(kind: LoopSendKind) -> &'static str {
         LoopSendKind::OverseerBriefing => "overseerBriefing",
         LoopSendKind::DirectNudge => "directNudge",
         LoopSendKind::PausedSummary => "pausedSummary",
+        LoopSendKind::Reconciliation => "reconciliation",
     }
 }
 
@@ -723,6 +823,7 @@ fn loop_send_kind_from_name(value: &str) -> Option<LoopSendKind> {
         "overseerBriefing" => Some(LoopSendKind::OverseerBriefing),
         "directNudge" => Some(LoopSendKind::DirectNudge),
         "pausedSummary" => Some(LoopSendKind::PausedSummary),
+        "reconciliation" => Some(LoopSendKind::Reconciliation),
         _ => None,
     }
 }
@@ -866,6 +967,37 @@ fn build_paused_summary(candidates: &[Value]) -> String {
     lines.join("\n")
 }
 
+fn build_reconciliation_briefing(work: &[Value], available: &[Value]) -> String {
+    let mut lines = Vec::from([String::from(
+        "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.",
+    )]);
+    lines.push(String::from(
+        "This does not include external queue files such as Sam's gqaapg queue unless they are imported into runtime exchange.",
+    ));
+    lines.push(String::new());
+    lines.push(String::from("Visible unowned work:"));
+    lines.extend(work.iter().take(8).map(describe_reconciliation_work));
+    if work.len() > 8 {
+        lines.push(format!("- ... and {} more", work.len() - 8));
+    }
+    lines.push(String::new());
+    lines.push(String::from("Available watched loop capacity:"));
+    lines.extend(
+        available
+            .iter()
+            .take(8)
+            .map(describe_reconciliation_capacity),
+    );
+    if available.len() > 8 {
+        lines.push(format!("- ... and {} more", available.len() - 8));
+    }
+    lines.push(String::new());
+    lines.push(String::from(
+        "Assign or pause agents intentionally. If these runtime-exchange/worklist items are no longer real, close or update them so the worklist matches the work.",
+    ));
+    lines.join("\n")
+}
+
 fn render_overseer_briefing_template(template: &str, candidates: &[Value]) -> String {
     replace_template_token(
         &replace_template_token(template, "count", &candidates.len().to_string()),
@@ -905,6 +1037,168 @@ fn replace_template_token(template: &str, token: &str, replacement: &str) -> Str
         index += 1;
     }
     output
+}
+
+fn find_idle_loop_capacity(
+    input: &Value,
+    overseer_id: Option<&str>,
+    paused_candidates: &[Value],
+) -> Vec<Value> {
+    let paused_ids = paused_candidates
+        .iter()
+        .map(|candidate| str_field(candidate, "id").to_owned())
+        .collect::<BTreeSet<_>>();
+    find_loop_candidates_with_overseer(input, overseer_id)
+        .into_iter()
+        .filter(|candidate| !paused_ids.contains(str_field(candidate, "id")))
+        .collect()
+}
+
+fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
+    let live_sessions = array_field(input, "sessions")
+        .iter()
+        .filter_map(|session| optional_str(session, "id").map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    let mut work = Vec::new();
+    let exchange = input.get("runtimeExchange").unwrap_or(&Value::Null);
+    for task in array_field(exchange, "tasks") {
+        if let Some(item) = unowned_task_item(task, &live_sessions) {
+            work.push(item);
+        }
+    }
+    for item in array_field(input, "coordinationWorklist") {
+        if let Some(item) = unowned_worklist_item(item) {
+            work.push(item);
+        }
+    }
+    work.sort_by(|left, right| {
+        str_field(left, "sortKey")
+            .cmp(str_field(right, "sortKey"))
+            .then_with(|| str_field(left, "id").cmp(str_field(right, "id")))
+    });
+    work.dedup_by(|left, right| str_field(left, "dedupeKey") == str_field(right, "dedupeKey"));
+    work
+}
+
+fn unowned_task_item(task: &Value, live_sessions: &BTreeSet<String>) -> Option<Value> {
+    if str_field(task, "status") != "pending" {
+        return None;
+    }
+    let assigned_to = optional_str(task, "assignedTo");
+    let owner_state = match assigned_to {
+        None => "unassigned",
+        Some(owner) if !live_sessions.contains(owner) => "assigned-owner-unreachable",
+        Some(_) => return None,
+    };
+    let id = optional_str(task, "id")?;
+    Some(json!({
+        "id": id,
+        "kind": "task",
+        "dedupeKey": format!("task:{id}"),
+        "sortKey": format!("task:{id}"),
+        "status": str_field(task, "status"),
+        "ownerState": owner_state,
+        "assignedTo": assigned_to,
+        "title": optional_str(task, "description").unwrap_or("task")
+    }))
+}
+
+fn unowned_worklist_item(item: &Value) -> Option<Value> {
+    if !item
+        .get("actionable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    if optional_str(item, "sessionId").is_some() {
+        return None;
+    }
+    let key = optional_str(item, "key")?;
+    let kind = optional_str(item, "kind").unwrap_or("worklist");
+    Some(json!({
+        "id": key,
+        "kind": kind,
+        "dedupeKey": format!("worklist:{key}"),
+        "sortKey": format!("worklist:{key}"),
+        "status": optional_str(item, "bucket").unwrap_or("actionable"),
+        "ownerState": "unassigned-worklist",
+        "title": optional_str(item, "title").unwrap_or("worklist item")
+    }))
+}
+
+fn reconciliation_signature(work: &[Value], available: &[Value]) -> String {
+    let mut work_keys = work
+        .iter()
+        .map(|item| {
+            [
+                str_field(item, "dedupeKey"),
+                str_field(item, "status"),
+                str_field(item, "ownerState"),
+                optional_str(item, "assignedTo").unwrap_or_default(),
+            ]
+            .join("\u{1f}")
+        })
+        .collect::<Vec<_>>();
+    work_keys.sort();
+    let mut capacity_keys = available
+        .iter()
+        .map(|candidate| {
+            [
+                str_field(candidate, "id"),
+                str_field(candidate, "loopSince"),
+                optional_str(candidate, "goal").unwrap_or_default(),
+                optional_str(candidate, "loopSource").unwrap_or_default(),
+            ]
+            .join("\u{1f}")
+        })
+        .collect::<Vec<_>>();
+    capacity_keys.sort();
+    format!(
+        "reconciliation:{}\u{1e}{}",
+        work_keys.join("\u{1e}"),
+        capacity_keys.join("\u{1e}")
+    )
+}
+
+fn reconciliation_reminder_due(
+    input: &Value,
+    unchanged_ticks: u64,
+    elapsed_since_last_wake_ms: i64,
+) -> bool {
+    let ticks = input
+        .get("config")
+        .and_then(|config| config.get("reconciliationReminderTicks"))
+        .and_then(Value::as_u64)
+        .unwrap_or(6)
+        .max(1);
+    let cooldown = config_i64(input, "reconciliationCooldownMs", 15 * 60 * 1000).max(0);
+    unchanged_ticks > 0
+        && unchanged_ticks.is_multiple_of(ticks)
+        && elapsed_since_last_wake_ms >= cooldown
+}
+
+fn describe_reconciliation_work(item: &Value) -> String {
+    let title = optional_str(item, "title").unwrap_or("");
+    let title = if title.is_empty() {
+        String::new()
+    } else {
+        format!(" — {title}")
+    };
+    format!(
+        "- {} {} ({}){}",
+        str_field(item, "kind"),
+        str_field(item, "id"),
+        str_field(item, "ownerState"),
+        title
+    )
+}
+
+fn describe_reconciliation_capacity(candidate: &Value) -> String {
+    let goal = optional_str(candidate, "goal")
+        .map(|goal| format!(" — goal: {goal}"))
+        .unwrap_or_default();
+    format!("- {}{}", str_field(candidate, "id"), goal)
 }
 
 pub fn describe_candidate(candidate: &Value) -> String {
