@@ -443,6 +443,37 @@ pub fn load_metadata_state_at_unix_millis(
     let Some(Value::Object(raw)) = read_json_quarantine_corrupt(path) else {
         return MetadataState::empty();
     };
+    metadata_state_from_raw(raw, now)
+}
+
+pub fn try_load_metadata_state(
+    project_state_dir: impl AsRef<Path>,
+) -> Result<MetadataState, String> {
+    try_load_metadata_state_at_unix_millis(project_state_dir, current_unix_millis())
+}
+
+fn try_load_metadata_state_at_unix_millis(
+    project_state_dir: impl AsRef<Path>,
+    now: u128,
+) -> Result<MetadataState, String> {
+    let path = metadata_state_path(project_state_dir);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(MetadataState::empty()),
+        Err(error) => return Err(format!("read metadata state {}: {error}", path.display())),
+    };
+    let value = serde_json::from_str::<Value>(&text)
+        .map_err(|error| format!("parse metadata state {}: {error}", path.display()))?;
+    let Value::Object(raw) = value else {
+        return Err(format!(
+            "parse metadata state {}: expected object",
+            path.display()
+        ));
+    };
+    Ok(metadata_state_from_raw(raw, now))
+}
+
+fn metadata_state_from_raw(raw: Map<String, Value>, now: u128) -> MetadataState {
     let sessions = raw
         .get("sessions")
         .and_then(Value::as_object)

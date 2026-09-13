@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::daemon_state::load_metadata_state;
+use crate::daemon_state::try_load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
@@ -71,10 +71,8 @@ impl PeriodicTask for TranscriptReconcilerTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             let project_state_dir = context.project_state_dir();
-            let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir))
-            else {
-                return Ok(());
-            };
+            let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
+                .map_err(|error| format!("transcript reconciler topology unavailable: {error}"))?;
             let sessions = list_topology_session_states(&topology, Some(LIVE_SESSION_STATUSES))
                 .iter()
                 .filter_map(SessionView::from_value)
@@ -82,8 +80,12 @@ impl PeriodicTask for TranscriptReconcilerTask {
             if sessions.is_empty() {
                 return Ok(());
             }
-            let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
-                .unwrap_or_else(|_| json!({ "sessions": {} }));
+            let metadata = serde_json::to_value(
+                try_load_metadata_state(&project_state_dir).map_err(|error| {
+                    format!("transcript reconciler metadata unavailable: {error}")
+                })?,
+            )
+            .map_err(|error| format!("transcript reconciler metadata encode failed: {error}"))?;
             let pending = pending_interactions_for_stream(&project_state_dir)
                 .iter()
                 .filter_map(|request| {
