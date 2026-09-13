@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::agent_prompt_delivery::current_composer_text;
 use crate::atomic_write::write_json_atomic;
 use crate::backlog_metrics::{
     AGENT_INPUT_DELIVERY_BACKLOG, BacklogMetricSnapshot, backlog_metric, record_backlog_error,
@@ -689,42 +690,7 @@ pub fn active_client_count_for_window(
 }
 
 pub fn pane_has_unsubmitted_agent_input(pane: &str) -> bool {
-    let visible_lines = pane
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !looks_like_agent_bottom_chrome(line))
-        .collect::<Vec<_>>();
-    for (index, trimmed) in visible_lines.iter().enumerate().rev() {
-        if trimmed.is_empty() || looks_like_agent_bottom_chrome(trimmed) {
-            continue;
-        }
-        let Some(rest) = strip_agent_prompt_marker(trimmed) else {
-            if index > 0
-                && strip_agent_prompt_marker(visible_lines[index - 1])
-                    .is_some_and(|rest| rest.trim().is_empty())
-            {
-                return has_user_composer_text(trimmed);
-            }
-            return false;
-        };
-        return has_user_composer_text(rest);
-    }
-    false
-}
-
-fn strip_agent_prompt_marker(line: &str) -> Option<&str> {
-    let mut chars = line.chars();
-    let first = chars.next()?;
-    if matches!(first, '›' | '>' | '❯') {
-        Some(chars.as_str())
-    } else {
-        None
-    }
-}
-
-fn looks_like_agent_bottom_chrome(line: &str) -> bool {
-    (line.starts_with("gpt-") || line.starts_with("claude-"))
-        && (line.contains(" · ~/") || line.contains(" · /"))
+    current_composer_text(pane).is_some_and(|composer| has_user_composer_text(&composer))
 }
 
 fn has_user_composer_text(value: &str) -> bool {

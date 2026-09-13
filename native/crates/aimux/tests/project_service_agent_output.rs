@@ -1858,10 +1858,56 @@ fn active_client_with_visible_draft_holds_instead_of_idle_delivery() {
 }
 
 #[test]
+fn active_client_with_claude_visible_draft_above_footer_holds() {
+    let panes = "@1\t1\n";
+    let clients = "client-1\t1000\t@1\n";
+    let pane = "❯ Sam paused with a Claude draft\n──────────────────────────────\nsam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context) [[aimux] overseer]\n⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents\n⧉  port-gap-closure · rail-hardening · async-cutover";
+
+    let activity = classify_agent_input_window_activity("@1", panes, pane, Some(clients)).unwrap();
+    let decision = aimux::project_service::agent_input_delivery::decide_agent_input_delivery(
+        false,
+        Ok(activity),
+        10_000,
+        10_000,
+    );
+
+    assert_eq!(
+        decision,
+        aimux::project_service::agent_input_delivery::AgentInputDeliveryDecision::Hold {
+            reason: "visible-unsubmitted-input".into(),
+            quiet_for_ms: None,
+            retry_after_ms: aimux::project_service::agent_input_delivery::DELIVERY_TASK_INTERVAL_MS,
+        }
+    );
+}
+
+#[test]
 fn active_client_with_empty_composer_can_deliver_after_dwell() {
     let panes = "@1\t1\n";
     let clients = "client-1\t1\t@1\n";
     let pane = "Ready\n› Ask Codex to do anything\n\n  gpt-5.5 medium · ~/workspace/project";
+
+    let activity = classify_agent_input_window_activity("@1", panes, pane, Some(clients)).unwrap();
+    let decision = aimux::project_service::agent_input_delivery::decide_agent_input_delivery(
+        false,
+        Ok(activity),
+        5_000,
+        5_000,
+    );
+
+    assert_eq!(
+        decision,
+        aimux::project_service::agent_input_delivery::AgentInputDeliveryDecision::DeliverNow {
+            reason: "active-client-idle".into(),
+        }
+    );
+}
+
+#[test]
+fn active_client_with_empty_claude_composer_can_deliver_after_dwell() {
+    let panes = "@1\t1\n";
+    let clients = "client-1\t1\t@1\n";
+    let pane = "❯\n──────────────────────────────\nsam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context) [[aimux] overseer]\n⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents\n⧉  port-gap-closure · rail-hardening · async-cutover";
 
     let activity = classify_agent_input_window_activity("@1", panes, pane, Some(clients)).unwrap();
     let decision = aimux::project_service::agent_input_delivery::decide_agent_input_delivery(

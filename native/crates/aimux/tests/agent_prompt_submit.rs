@@ -3,8 +3,8 @@
 //! by a newer submit.
 
 use aimux::agent_prompt_delivery::{
-    PromptSubmitRuntime, composer_still_contains_prompt_draft, pane_still_contains_prompt_draft,
-    prompt_draft_signature, wait_for_prompt_submit,
+    PromptSubmitRuntime, composer_still_contains_prompt_draft, current_composer_text,
+    pane_still_contains_prompt_draft, prompt_draft_signature, wait_for_prompt_submit,
 };
 
 /// Replays a scripted sequence of pane captures and records what it was sent.
@@ -217,6 +217,23 @@ fn only_the_current_composer_region_verifies_submit_clearance() {
         &stuck_in_composer,
         DRAFT
     ));
+}
+
+#[test]
+fn composer_extraction_finds_codex_and_claude_prompt_regions() {
+    let codex = "Ready\n› Sam paused with a draft\n\n  gpt-5.5 medium · ~/workspace/project";
+    let claude = "❯\n──────────────────────────────\nsam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context) [[aimux] overseer]\n⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents\n⧉  port-gap-closure · rail-hardening · async-cutover";
+    let claude_with_draft = "❯ Sam paused with a Claude draft\n──────────────────────────────\nsam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context) [[aimux] overseer]\n⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents\n⧉  port-gap-closure · rail-hardening · async-cutover";
+
+    assert_eq!(
+        current_composer_text(codex).as_deref(),
+        Some("Sam paused with a draft")
+    );
+    assert_eq!(current_composer_text(claude).as_deref(), Some(""));
+    assert_eq!(
+        current_composer_text(claude_with_draft).as_deref(),
+        Some("Sam paused with a Claude draft")
+    );
 }
 
 #[test]
