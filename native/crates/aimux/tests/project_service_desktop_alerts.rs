@@ -133,9 +133,12 @@ fn desktop_alert_role_gate_applies_project_control_defaults_and_overrides() {
         "onComplete": true
     });
     let scribe_needs_input = json!({ "kind": "needs_input", "sessionId": "scribe-1" });
+    let scribe_blocked = json!({ "kind": "blocked", "sessionId": "scribe-1" });
     let overseer_needs_input = json!({ "kind": "needs_input", "sessionId": "overseer-1" });
+    let overseer_blocked = json!({ "kind": "blocked", "sessionId": "overseer-1" });
     let overseer_next_step = json!({ "kind": "next_step", "sessionId": "overseer-1" });
     let worker_next_step = json!({ "kind": "next_step", "sessionId": "worker-1" });
+    let worker_blocked = json!({ "kind": "blocked", "sessionId": "worker-1" });
 
     assert!(!should_deliver_desktop_alert_with_config(
         &state_dir,
@@ -145,7 +148,19 @@ fn desktop_alert_role_gate_applies_project_control_defaults_and_overrides() {
     ));
     assert!(should_deliver_desktop_alert_with_config(
         &state_dir,
+        &scribe_blocked,
+        &enabled,
+        false
+    ));
+    assert!(should_deliver_desktop_alert_with_config(
+        &state_dir,
         &overseer_needs_input,
+        &enabled,
+        false
+    ));
+    assert!(!should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &overseer_blocked,
         &enabled,
         false
     ));
@@ -161,15 +176,23 @@ fn desktop_alert_role_gate_applies_project_control_defaults_and_overrides() {
         &enabled,
         false
     ));
+    assert!(should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &worker_blocked,
+        &enabled,
+        false
+    ));
 
     let overrides = json!({
         "enabled": true,
         "onPrompt": true,
+        "onError": true,
         "deliveryRoles": {
             "ordinary": false,
             "overseerNeedsInput": false,
             "overseerOther": true,
-            "scribe": true
+            "scribe": true,
+            "scribeStuck": false
         }
     });
     assert!(should_deliver_desktop_alert_with_config(
@@ -184,6 +207,12 @@ fn desktop_alert_role_gate_applies_project_control_defaults_and_overrides() {
         &overrides,
         false
     ));
+    assert!(!should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &scribe_blocked,
+        &overrides,
+        false
+    ));
     assert!(should_deliver_desktop_alert_with_config(
         &state_dir,
         &overseer_next_step,
@@ -193,6 +222,12 @@ fn desktop_alert_role_gate_applies_project_control_defaults_and_overrides() {
     assert!(!should_deliver_desktop_alert_with_config(
         &state_dir,
         &worker_next_step,
+        &overrides,
+        false
+    ));
+    assert!(!should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &worker_blocked,
         &overrides,
         false
     ));

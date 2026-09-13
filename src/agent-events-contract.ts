@@ -2,7 +2,13 @@ export type MetadataTone = "neutral" | "info" | "success" | "warn" | "error";
 
 export type AgentActivityState = "idle" | "running" | "done" | "error" | "waiting" | "interrupted";
 
-export type AgentAttentionState = "normal" | "needs_input" | "blocked" | "error" | "needs_response";
+export type AgentAttentionState =
+  | "normal"
+  | "needs_input"
+  | "blocked"
+  | "error"
+  | "needs_response"
+  | "waiting_on_peers";
 
 export type AgentEventKind =
   | "prompt"

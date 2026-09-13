@@ -17,6 +17,7 @@ describe("status-tone", () => {
   it("uses attention above raw running status", () => {
     expect(agentStatusKind({ status: "running", attention: "needs_input" })).toBe("needs");
     expect(agentStatusKind({ status: "running", attention: "blocked" })).toBe("blocked");
+    expect(agentStatusKind({ activity: "waiting", attention: "waiting_on_peers" })).toBe("idle");
     expect(agentStatusKind({ status: "running", attention: "error" })).toBe("error");
   });
 

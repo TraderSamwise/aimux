@@ -63,7 +63,8 @@ pub fn default_config() -> Value {
                 "ordinary": true,
                 "overseerNeedsInput": true,
                 "overseerOther": false,
-                "scribe": false
+                "scribe": false,
+                "scribeStuck": true
             }
         },
         "statusline": {

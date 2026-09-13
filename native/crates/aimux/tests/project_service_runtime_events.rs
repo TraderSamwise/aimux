@@ -58,23 +58,23 @@ fn runtime_event_status_messages_drive_derived_state() {
     assert_eq!(derived["unseenCount"], 1);
     assert!(derived["becameIdleAt"].is_null());
 
-    let blocked = route_runtime_event(
+    let peer_wait = route_runtime_event(
         &state_dir,
         "codex-1",
         json!({
             "kind": "status",
-            "message": "waiting on credentials",
+            "message": "waiting on other agents",
             "ts": "2026-01-01T00:00:20.000Z"
         }),
     )
     .expect("event route");
-    assert_eq!(blocked.status, 200);
+    assert_eq!(peer_wait.status, 200);
 
     let state = load_metadata_state(&state_dir);
     let derived = &state.sessions["codex-1"]["derived"];
     assert_eq!(derived["activity"], "waiting");
-    assert_eq!(derived["attention"], "blocked");
-    assert_eq!(derived["unseenCount"], 2);
+    assert_eq!(derived["attention"], "waiting_on_peers");
+    assert_eq!(derived["unseenCount"], 1);
     assert_eq!(derived["becameIdleAt"], "2026-01-01T00:00:20.000Z");
     cleanup(project);
 }
@@ -94,11 +94,19 @@ fn runtime_event_status_messages_emit_matching_alert_records() {
             }),
         ),
         (
+            "peer-wait",
+            json!({
+                "kind": "status",
+                "message": "waiting on other agents",
+                "ts": "2026-01-01T00:00:11.000Z"
+            }),
+        ),
+        (
             "blocked",
             json!({
                 "kind": "status",
                 "message": "blocked on credentials",
-                "ts": "2026-01-01T00:00:11.000Z"
+                "ts": "2026-01-01T00:00:12.000Z"
             }),
         ),
         (
@@ -106,7 +114,7 @@ fn runtime_event_status_messages_emit_matching_alert_records() {
             json!({
                 "kind": "status",
                 "message": "finished parser work",
-                "ts": "2026-01-01T00:00:12.000Z"
+                "ts": "2026-01-01T00:00:13.000Z"
             }),
         ),
         (
@@ -115,7 +123,7 @@ fn runtime_event_status_messages_emit_matching_alert_records() {
                 "kind": "status",
                 "tone": "success",
                 "message": "ready",
-                "ts": "2026-01-01T00:00:13.000Z"
+                "ts": "2026-01-01T00:00:14.000Z"
             }),
         ),
         (
@@ -124,7 +132,7 @@ fn runtime_event_status_messages_emit_matching_alert_records() {
                 "kind": "status",
                 "tone": "error",
                 "message": "crashed",
-                "ts": "2026-01-01T00:00:14.000Z"
+                "ts": "2026-01-01T00:00:15.000Z"
             }),
         ),
         (
@@ -132,7 +140,7 @@ fn runtime_event_status_messages_emit_matching_alert_records() {
             json!({
                 "kind": "task_done",
                 "message": "completed",
-                "ts": "2026-01-01T00:00:15.000Z"
+                "ts": "2026-01-01T00:00:16.000Z"
             }),
         ),
     ] {
@@ -160,6 +168,133 @@ fn runtime_event_status_messages_emit_matching_alert_records() {
         by_session["needs-input"]["dedupeKey"],
         "needs_input:needs-input"
     );
+    assert!(!by_session.contains_key("peer-wait"));
+    cleanup(project);
+}
+
+#[test]
+fn overseer_waiting_on_peers_is_quiet_but_needs_user_alerts() {
+    let project = temp_project("overseer-peer-wait");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_session_metadata(&state_dir, "overseer-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert("overseer".into(), json!(true));
+        object.insert("projectControl".into(), json!(true));
+        object.insert("team".into(), json!({ "role": "overseer" }));
+        json!(object)
+    })
+    .expect("seed overseer metadata");
+
+    let peer_wait = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "overseer-1",
+            "event": {
+                "kind": "status",
+                "message": "waiting on other agents",
+                "ts": "2026-01-01T00:00:20.000Z"
+            }
+        })),
+    )
+    .expect("runtime event route");
+    assert_eq!(peer_wait.status, 200);
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(
+        state.sessions["overseer-1"]["derived"]["attention"],
+        "waiting_on_peers"
+    );
+    assert_eq!(
+        list_notification_snapshot(
+            &state_dir,
+            NotificationQuery {
+                unread_only: false,
+                include_cleared: false,
+                session_id: Some("overseer-1".into()),
+                limit: Some(10),
+            },
+        )
+        .total,
+        0
+    );
+    assert!(context.project_events.events_since(0, None).is_empty());
+
+    let needs_user = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "overseer-1",
+            "event": {
+                "kind": "status",
+                "message": "waiting for you to confirm",
+                "ts": "2026-01-01T00:00:30.000Z"
+            }
+        })),
+    )
+    .expect("runtime event route");
+    assert_eq!(needs_user.status, 200);
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("overseer-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.notifications[0]["kind"], "needs_input");
+    assert_eq!(
+        snapshot.notifications[0]["dedupeKey"],
+        "needs_input:overseer-1"
+    );
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].event["type"], "alert");
+    assert_eq!(events[0].event["kind"], "needs_input");
+    cleanup(project);
+}
+
+#[test]
+fn ordinary_coder_needs_input_alert_shape_stays_stable() {
+    let project = temp_project("coder-alert-shape");
+    let state_dir = project.join("state");
+
+    let response = route_runtime_event(
+        &state_dir,
+        "codex-1",
+        json!({
+            "kind": "status",
+            "message": "waiting for you to confirm",
+            "ts": "2026-01-01T00:00:10.000Z"
+        }),
+    )
+    .expect("event route");
+    assert_eq!(response.status, 200);
+
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    let notification = &snapshot.notifications[0];
+    assert_eq!(notification["kind"], "needs_input");
+    assert_eq!(notification["sessionId"], "codex-1");
+    assert_eq!(notification["title"], "state");
+    assert_eq!(
+        notification["body"],
+        "Needs input: codex-1 - waiting for you to confirm"
+    );
+    assert_eq!(notification["dedupeKey"], "needs_input:codex-1");
+    assert_eq!(notification["unread"], true);
     cleanup(project);
 }
 

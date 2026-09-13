@@ -160,6 +160,22 @@ fn mobile_push_role_gate_matches_desktop_delivery_policy() {
             Some(&state_dir),
             &json!({
                 "title": "aimux / Main Checkout (master)",
+                "message": "Blocked: scribe @ Main Checkout - Stuck writing summary",
+                "kind": "blocked",
+                "sessionId": "scribe-1",
+                "projectRoot": project.to_string_lossy()
+            }),
+            &enabled,
+            false
+        )
+        .is_some()
+    );
+    assert!(
+        push_payload_for_alert_with_config(
+            Some(&project),
+            Some(&state_dir),
+            &json!({
+                "title": "aimux / Main Checkout (master)",
                 "message": "Needs input: claude @ Main Checkout - Claude is waiting for your input",
                 "kind": "needs_input",
                 "sessionId": "overseer-1",
@@ -169,6 +185,22 @@ fn mobile_push_role_gate_matches_desktop_delivery_policy() {
             false
         )
         .is_some()
+    );
+    assert!(
+        push_payload_for_alert_with_config(
+            Some(&project),
+            Some(&state_dir),
+            &json!({
+                "title": "aimux / Main Checkout (master)",
+                "message": "Blocked: overseer @ Main Checkout - Waiting on other agents",
+                "kind": "blocked",
+                "sessionId": "overseer-1",
+                "projectRoot": project.to_string_lossy()
+            }),
+            &enabled,
+            false
+        )
+        .is_none()
     );
     assert!(
         push_payload_for_alert_with_config(
@@ -194,6 +226,22 @@ fn mobile_push_role_gate_matches_desktop_delivery_policy() {
                 "title": "[Next step] aimux / Main Checkout (master)",
                 "message": "Agent stopped after a turn: codex @ Main Checkout",
                 "kind": "next_step",
+                "sessionId": "worker-1",
+                "projectRoot": project.to_string_lossy()
+            }),
+            &enabled,
+            false
+        )
+        .is_some()
+    );
+    assert!(
+        push_payload_for_alert_with_config(
+            Some(&project),
+            Some(&state_dir),
+            &json!({
+                "title": "aimux / Main Checkout (master)",
+                "message": "Blocked: codex @ Main Checkout - Stuck on tests",
+                "kind": "blocked",
                 "sessionId": "worker-1",
                 "projectRoot": project.to_string_lossy()
             }),

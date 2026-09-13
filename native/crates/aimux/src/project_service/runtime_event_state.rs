@@ -151,6 +151,9 @@ fn derive_from_event(current: &Value, event: &Value, suppress_unseen: bool) -> D
                 activity = Some("waiting".to_owned());
                 attention = Some("needs_input".to_owned());
                 unseen_count = increment_unseen(unseen_count, suppress_unseen);
+            } else if status_message_waiting_on_peers(&message) {
+                activity = Some("waiting".to_owned());
+                attention = Some("waiting_on_peers".to_owned());
             } else if status_message_blocked(&message) {
                 activity = Some("waiting".to_owned());
                 attention = Some("blocked".to_owned());
@@ -215,7 +218,24 @@ fn status_message_needs_input(message: &str) -> bool {
 }
 
 fn status_message_blocked(message: &str) -> bool {
-    message.contains("blocked") || message.contains("waiting on") || message.contains("stuck")
+    message.contains("blocked") || message.contains("stuck")
+}
+
+fn status_message_waiting_on_peers(message: &str) -> bool {
+    message.contains("waiting on other agent")
+        || message.contains("waiting on other agents")
+        || message.contains("waiting on another agent")
+        || message.contains("waiting on peer")
+        || message.contains("waiting on peers")
+        || message.contains("waiting on teammate")
+        || message.contains("waiting on teammates")
+        || message.contains("waiting for other agent")
+        || message.contains("waiting for other agents")
+        || message.contains("waiting for another agent")
+        || message.contains("waiting for peer")
+        || message.contains("waiting for peers")
+        || message.contains("waiting for teammate")
+        || message.contains("waiting for teammates")
 }
 
 fn status_message_done(message: &str) -> bool {

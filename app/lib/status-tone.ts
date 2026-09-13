@@ -156,6 +156,8 @@ export function normalizeAppStatusKind(value: string | null | undefined): AppSta
     case "needs_response":
     case "next_step":
       return "needs";
+    case "waiting_on_peers":
+      return "idle";
     case "exited":
     case "graveyarding":
       return "offline";

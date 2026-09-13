@@ -149,6 +149,9 @@ fn should_deliver_for_session_role(
     notifications: &Value,
 ) -> bool {
     match notification_target_role(project_state_dir, event) {
+        NotificationTargetRole::Scribe if is_stuck_kind(string_field(event, "kind")) => {
+            role_delivery_field(notifications, "scribeStuck", true)
+        }
         NotificationTargetRole::Scribe => role_delivery_field(notifications, "scribe", false),
         NotificationTargetRole::Overseer if string_field(event, "kind") == "needs_input" => {
             role_delivery_field(notifications, "overseerNeedsInput", true)
@@ -215,6 +218,10 @@ fn is_prompt_kind(kind: &str) -> bool {
             | "review_waiting"
             | "interaction_request"
     )
+}
+
+fn is_stuck_kind(kind: &str) -> bool {
+    matches!(kind, "blocked" | "task_failed")
 }
 
 fn bool_field(value: &Value, key: &str, fallback: bool) -> bool {
