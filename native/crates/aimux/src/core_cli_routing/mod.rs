@@ -16,7 +16,7 @@ pub use agents::{
     parse_core_host_project_stop_args, parse_core_project_stop_args,
 };
 pub use args::*;
-pub use collaboration::parse_core_collaboration_args;
+pub use collaboration::{parse_core_collaboration_args, parse_core_collaboration_args_result};
 pub use common::{
     core_command_args, has_core_global_logging_args, parse_core_projects_remove_args,
 };

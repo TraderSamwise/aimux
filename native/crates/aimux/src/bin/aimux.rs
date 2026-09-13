@@ -1005,13 +1005,13 @@ fn handle_known_native_command_fallback(args: &[String]) -> Option<ExitCode> {
     Some(ExitCode::from(2))
 }
 
-fn invalid_known_command_help(args: &[String]) -> Option<(&'static str, Option<&'static str>)> {
+fn invalid_known_command_help(args: &[String]) -> Option<(String, Option<&'static str>)> {
     match args {
         [command] if command == "task" => {
-            Some(("error: aimux task requires a subcommand", Some(TASK_HELP)))
+            Some(("error: aimux task requires a subcommand".into(), Some(TASK_HELP)))
         }
         [command] if command == "projects" => Some((
-            "error: aimux projects requires a subcommand",
+            "error: aimux projects requires a subcommand".into(),
             Some(PROJECTS_HELP),
         )),
         [command, subcommand, rest @ ..]
@@ -1022,7 +1022,7 @@ fn invalid_known_command_help(args: &[String]) -> Option<(&'static str, Option<&
                     .any(|arg| arg == "--project" || arg.starts_with("--project=")) =>
         {
             Some((
-                "error: aimux projects remove requires <path> as a positional argument; --project is not accepted here",
+                "error: aimux projects remove requires <path> as a positional argument; --project is not accepted here".into(),
                 Some(PROJECTS_REMOVE_HELP),
             ))
         }
@@ -1030,29 +1030,99 @@ fn invalid_known_command_help(args: &[String]) -> Option<(&'static str, Option<&
             if command == "projects" && matches!(subcommand.as_str(), "remove" | "unregister") =>
         {
             Some((
-                "error: aimux projects remove requires <path>",
+                "error: aimux projects remove requires <path>".into(),
                 Some(PROJECTS_REMOVE_HELP),
             ))
         }
+        [command, subcommand, rest @ ..] if command == "message" && subcommand == "send" => Some((
+            invalid_collaboration_fallback_message("message", "send", rest),
+            Some(MESSAGE_HELP),
+        )),
+        [command, subcommand, rest @ ..]
+            if command == "handoff" && matches!(subcommand.as_str(), "send" | "accept" | "complete") =>
+        {
+            Some((
+                invalid_collaboration_fallback_message("handoff", subcommand, rest),
+                Some(HANDOFF_HELP),
+            ))
+        }
         [command, ..] if command == "metadata" => Some((
-            "error: invalid aimux metadata arguments",
+            "error: invalid aimux metadata arguments".into(),
             Some(METADATA_HELP),
         )),
         [command, ..] if command == "logs" => {
-            Some(("error: invalid aimux logs arguments", Some(LOGS_HELP)))
+            Some(("error: invalid aimux logs arguments".into(), Some(LOGS_HELP)))
         }
         [command, ..] if command == "team" => {
-            Some(("error: invalid aimux team arguments", Some(TEAM_HELP)))
+            Some(("error: invalid aimux team arguments".into(), Some(TEAM_HELP)))
         }
         [command, ..] if command == "outline" => {
-            Some(("error: invalid aimux outline arguments", Some(OUTLINE_HELP)))
+            Some(("error: invalid aimux outline arguments".into(), Some(OUTLINE_HELP)))
         }
         [command, ..] if command == "attachment" => Some((
-            "error: invalid aimux attachment arguments",
+            "error: invalid aimux attachment arguments".into(),
             Some(ATTACHMENT_HELP),
         )),
         _ => None,
     }
+}
+
+fn invalid_collaboration_fallback_message(
+    command: &str,
+    subcommand: &str,
+    args: &[String],
+) -> String {
+    for (index, arg) in args.iter().enumerate() {
+        if arg == "--json" {
+            continue;
+        }
+        if collaboration_option_takes_value(arg) {
+            let value = args.get(index + 1).map(String::as_str).unwrap_or("");
+            if value.is_empty() {
+                return format!("error: {arg} requires a value");
+            }
+            if value.starts_with('-') {
+                return format!("error: {arg} requires a non-flag value");
+            }
+        } else if let Some((option, value)) = collaboration_inline_option(arg) {
+            if value.is_empty() {
+                return format!("error: {option} requires a non-flag value");
+            }
+            if value.starts_with('-') {
+                return format!("error: {option} requires a non-flag value");
+            }
+        } else if arg.starts_with('-') {
+            return format!("error: unknown {command} {subcommand} option {arg}");
+        }
+    }
+    match (command, subcommand) {
+        ("message", "send") => "error: message send requires a message body".to_owned(),
+        ("handoff", "send") => "error: handoff send requires a message body".to_owned(),
+        ("handoff", "accept") => "error: handoff accept requires <threadId>".to_owned(),
+        ("handoff", "complete") => "error: handoff complete requires <threadId>".to_owned(),
+        _ => format!("error: invalid {command} {subcommand} arguments"),
+    }
+}
+
+fn collaboration_option_takes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--project"
+            | "--from"
+            | "--to"
+            | "--assignee"
+            | "--tool"
+            | "--worktree"
+            | "--title"
+            | "--kind"
+            | "--thread"
+            | "--body"
+    )
+}
+
+fn collaboration_inline_option(arg: &str) -> Option<(&str, &str)> {
+    let (option, value) = arg.split_once('=')?;
+    collaboration_option_takes_value(option).then_some((option, value))
 }
 
 fn run_local_ui_command(

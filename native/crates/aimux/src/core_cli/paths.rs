@@ -23,7 +23,7 @@ pub(super) fn dashboard_reload_payload(
     let parsed = parse_core_dashboard_reload_args(args).ok_or_else(|| {
         CoreCliPlanError::InvalidArguments {
             args: args.to_vec(),
-            message: "error: invalid dashboard-reload arguments",
+            message: "error: invalid dashboard-reload arguments".into(),
         }
     })?;
     Ok((
@@ -45,13 +45,13 @@ pub(super) fn runtime_restart_payload(
     let parsed = parse_core_runtime_restart_args(args).ok_or_else(|| {
         CoreCliPlanError::InvalidArguments {
             args: args.to_vec(),
-            message: "error: invalid restart-runtime arguments",
+            message: "error: invalid restart-runtime arguments".into(),
         }
     })?;
     if parsed.open && parsed.json {
         return Err(CoreCliPlanError::InvalidArguments {
             args: args.to_vec(),
-            message: "Error: restart-runtime --open cannot be combined with --json",
+            message: "Error: restart-runtime --open cannot be combined with --json".into(),
         });
     }
     let project_root = parsed
