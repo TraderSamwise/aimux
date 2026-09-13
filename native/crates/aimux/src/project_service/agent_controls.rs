@@ -538,8 +538,16 @@ fn route_single_project_flag(
     let Some(active) = body.get("active").and_then(Value::as_bool) else {
         return json_error(400, "active (boolean) is required");
     };
+    let worktree_path = if active {
+        body_trimmed_string(body, "worktreePath")
+    } else {
+        match supervisor_demotion_worktree_path(context, body, &session_id) {
+            Ok(worktree_path) => Some(worktree_path),
+            Err(error) => return role_error_response(error, &session_id, key),
+        }
+    };
     let options = SupervisorRoleOptions {
-        worktree_path: body_trimmed_string(body, "worktreePath"),
+        worktree_path,
         release_bindings: body
             .get("releaseBindings")
             .and_then(Value::as_bool)
@@ -557,6 +565,43 @@ fn route_single_project_flag(
         200,
         json!({ "ok": true, "sessionId": session_id, key: active }),
     )
+}
+
+fn supervisor_demotion_worktree_path(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    session_id: &str,
+) -> Result<String, SupervisorRoleError> {
+    if let Some(path) = body_trimmed_string(body, "worktreePath").filter(|value| !value.is_empty())
+    {
+        return Ok(path);
+    }
+    let metadata = load_metadata_state_strict(&context.project_state_dir())
+        .map_err(SupervisorRoleError::Metadata)?;
+    if let Some(path) = metadata
+        .sessions
+        .get(session_id)
+        .and_then(session_demotion_worktree_path)
+    {
+        return Ok(path);
+    }
+    Ok(context.project_root().to_string_lossy().into_owned())
+}
+
+fn session_demotion_worktree_path(session: &Value) -> Option<String> {
+    trimmed_json_string(session.get("worktreePath"))
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let lane = session.get("effectiveLane")?;
+            if lane.get("kind").and_then(Value::as_str) != Some("worktree") {
+                return None;
+            }
+            trimmed_json_string(lane.get("worktreePath")).filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            trimmed_json_string(session.get("runtimeWorkingDirectory"))
+                .filter(|value| !value.is_empty())
+        })
 }
 
 fn set_single_project_flag(
@@ -842,8 +887,11 @@ fn session_loop_action(value: Option<&Value>, fallback: &str) -> String {
 }
 
 fn body_trimmed_string(value: &Value, key: &str) -> Option<String> {
+    trimmed_json_string(value.get(key))
+}
+
+fn trimmed_json_string(value: Option<&Value>) -> Option<String> {
     value
-        .get(key)
         .and_then(Value::as_str)
         .map(str::trim)
         .map(str::to_owned)
