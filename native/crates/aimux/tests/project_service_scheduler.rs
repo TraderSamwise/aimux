@@ -2,6 +2,9 @@ use aimux::async_runtime::init_process_runtime;
 use aimux::daemon_state::metadata_state_path;
 use aimux::loop_watcher::loop_watcher_state_path;
 use aimux::project_api_contract::routes;
+use aimux::project_service::agent_input_delivery::{
+    AGENT_INPUT_DELIVERY_TASK_NAME, agent_input_delivery_queue_path, agent_input_delivery_task,
+};
 use aimux::project_service::loop_watcher_task::LoopWatcherTask;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
@@ -661,6 +664,71 @@ fn normal_loop_watcher_tick_records_completed_run() {
         .into_iter()
         .find(|task| task.name == "loop-watcher")
         .expect("loop watcher health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 0);
+    assert_eq!(health.last_error, None);
+    assert!(health.last_completed_at_ms.is_some());
+}
+
+#[test]
+fn corrupt_agent_input_delivery_queue_records_scheduler_visible_failure() {
+    let root = unique_temp_dir("aimux-agent-input-delivery-health-corrupt");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(agent_input_delivery_queue_path(&state_dir), "{ not json")
+        .expect("corrupt delivery queue");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler =
+        PeriodicScheduler::with_handle(vec![agent_input_delivery_task(&context)], 0, handle);
+
+    run_due_at(&mut scheduler, &context, 1_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == AGENT_INPUT_DELIVERY_TASK_NAME)
+        .expect("agent input delivery health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    assert_eq!(health.consecutive_timeouts, 0);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(
+        error.contains("agent input delivery queue unavailable"),
+        "{error}"
+    );
+    assert!(error.contains("could not be parsed"), "{error}");
+}
+
+#[test]
+fn empty_agent_input_delivery_queue_records_completed_run() {
+    let root = unique_temp_dir("aimux-agent-input-delivery-health-empty");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler =
+        PeriodicScheduler::with_handle(vec![agent_input_delivery_task(&context)], 0, handle);
+
+    run_due_at(&mut scheduler, &context, 1_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == AGENT_INPUT_DELIVERY_TASK_NAME)
+        .expect("agent input delivery health");
     assert_eq!(health.total_runs, 1);
     assert_eq!(health.consecutive_failures, 0);
     assert_eq!(health.last_error, None);

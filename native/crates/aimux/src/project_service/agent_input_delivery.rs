@@ -440,7 +440,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
 pub async fn run_pending_agent_input_deliveries_async(
     context: &ProjectServiceRequestContext,
     now_ms: i64,
-) {
+) -> Result<(), String> {
     let task_deadline = Instant::now()
         .checked_add(DELIVERY_TASK_TIMEOUT.saturating_sub(DELIVERY_TASK_COMMIT_MARGIN))
         .unwrap_or_else(Instant::now);
@@ -450,21 +450,19 @@ pub async fn run_pending_agent_input_deliveries_async(
         match load_delivery_state(&path) {
             Ok(state) => state,
             Err(_) => {
+                let error = load_error_for_path(&path);
                 record_backlog_error(
                     AGENT_INPUT_DELIVERY_BACKLOG,
                     Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
-                    load_error_for_path(&path),
+                    error.clone(),
                 );
                 record_agent_input_delivery_failure(
                     context,
                     None,
                     "Agent input delivery queue unavailable",
-                    format!(
-                        "Skipped queued agent input delivery because {}",
-                        load_error_for_path(&path)
-                    ),
+                    format!("Skipped queued agent input delivery because {error}"),
                 );
-                return;
+                return Err(format!("agent input delivery queue unavailable: {error}"));
             }
         }
     };
@@ -474,7 +472,7 @@ pub async fn run_pending_agent_input_deliveries_async(
             Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
         )
         .set_depth(0);
-        return;
+        return Ok(());
     }
 
     let loaded_ids = state
@@ -486,6 +484,7 @@ pub async fn run_pending_agent_input_deliveries_async(
     let mut remaining = Vec::new();
     let mut ready = VecDeque::from(pending);
     let mut delivery_attempts = 0usize;
+    let mut failures = Vec::new();
     while let Some(pending) = ready.pop_front() {
         if delivery_attempts >= MAX_DELIVERY_ATTEMPTS_PER_TICK
             || !has_budget_for_delivery_attempt(Instant::now(), task_deadline)
@@ -501,8 +500,9 @@ pub async fn run_pending_agent_input_deliveries_async(
                     context,
                     Some(&pending.session_id),
                     "Agent input delivery blocked",
-                    reason,
+                    reason.clone(),
                 );
+                failures.push(reason);
                 remaining.push(pending);
                 continue;
             }
@@ -524,8 +524,9 @@ pub async fn run_pending_agent_input_deliveries_async(
                         context,
                         Some(&pending.session_id),
                         "Agent input delivery held",
-                        reason,
+                        reason.clone(),
                     );
+                    failures.push(reason);
                 }
                 remaining.push(pending);
             }
@@ -570,8 +571,9 @@ pub async fn run_pending_agent_input_deliveries_async(
                             context,
                             Some(&pending.session_id),
                             "Agent input delivery failed",
-                            error,
+                            error.clone(),
                         );
+                        failures.push(error);
                         if now_ms < pending.max_deliver_at_ms {
                             remaining.push(pending);
                         }
@@ -583,13 +585,29 @@ pub async fn run_pending_agent_input_deliveries_async(
 
     let _guard = context.agent_input_delivery_queue.lock();
     let mut pending = remaining;
-    if let Ok(current) = load_delivery_state(&path) {
-        pending.extend(
-            current
-                .pending
-                .into_iter()
-                .filter(|entry| !loaded_ids.contains(&entry.id)),
-        );
+    match load_delivery_state(&path) {
+        Ok(current) => {
+            pending.extend(
+                current
+                    .pending
+                    .into_iter()
+                    .filter(|entry| !loaded_ids.contains(&entry.id)),
+            );
+        }
+        Err(error) => {
+            record_backlog_error(
+                AGENT_INPUT_DELIVERY_BACKLOG,
+                Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+                error.clone(),
+            );
+            record_agent_input_delivery_failure(
+                context,
+                None,
+                "Agent input delivery queue unavailable",
+                format!("Could not merge queued agent input delivery state: {error}"),
+            );
+            failures.push(error);
+        }
     }
     let state = AgentInputDeliveryState {
         version: 1,
@@ -614,8 +632,10 @@ pub async fn run_pending_agent_input_deliveries_async(
                 "Agent input delivery queue unavailable",
                 format!("Could not save queued agent input delivery state: {error}"),
             );
+            failures.push(error);
         }
     }
+    finish_agent_input_delivery_task(failures)
 }
 
 pub fn agent_input_delivery_backlog_snapshot(
@@ -677,10 +697,19 @@ impl PeriodicTask for AgentInputDeliveryTask {
 
     fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
-            run_pending_agent_input_deliveries_async(&self.context, scheduler_now_ms()).await;
-            Ok(())
+            run_pending_agent_input_deliveries_async(&self.context, scheduler_now_ms()).await
         })
     }
+}
+
+fn finish_agent_input_delivery_task(failures: Vec<String>) -> Result<(), String> {
+    if failures.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "agent input delivery could not complete: {}",
+        failures.join("; ")
+    ))
 }
 
 pub fn active_client_count_for_window(
