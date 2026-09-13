@@ -1,4 +1,5 @@
 use aimux::async_runtime::init_process_runtime;
+use aimux::daemon_state::metadata_state_path;
 use aimux::loop_watcher::loop_watcher_state_path;
 use aimux::project_api_contract::routes;
 use aimux::project_service::loop_watcher_task::LoopWatcherTask;
@@ -502,6 +503,110 @@ fn corrupt_runtime_exchange_records_loop_watcher_failure_instead_of_empty_work()
     let error = health.last_error.as_deref().expect("last error");
     assert!(error.contains("runtime exchange"), "{error}");
     assert!(error.contains("runtime-exchange.yaml"), "{error}");
+}
+
+#[test]
+fn corrupt_runtime_topology_records_loop_watcher_failure_instead_of_completed_run() {
+    let root = unique_temp_dir("aimux-loop-watcher-health-corrupt-topology");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(runtime_topology_path(&state_dir), "{ not yaml:").expect("corrupt topology");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == "loop-watcher")
+        .expect("loop watcher health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(error.contains("runtime topology"), "{error}");
+    assert!(error.contains("runtime-topology.yaml"), "{error}");
+}
+
+#[test]
+fn corrupt_metadata_state_records_loop_watcher_failure_instead_of_empty_metadata() {
+    let root = unique_temp_dir("aimux-loop-watcher-health-corrupt-metadata");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+        .expect("write topology");
+    fs::write(metadata_state_path(&state_dir), "{ not json").expect("corrupt metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == "loop-watcher")
+        .expect("loop watcher health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(error.contains("metadata state"), "{error}");
+    assert!(error.contains("metadata.json"), "{error}");
+}
+
+#[test]
+fn normal_loop_watcher_tick_records_completed_run() {
+    let root = unique_temp_dir("aimux-loop-watcher-health-normal");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+        .expect("write topology");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == "loop-watcher")
+        .expect("loop watcher health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 0);
+    assert_eq!(health.last_error, None);
+    assert!(health.last_completed_at_ms.is_some());
 }
 
 impl PeriodicTask for SlowTask {

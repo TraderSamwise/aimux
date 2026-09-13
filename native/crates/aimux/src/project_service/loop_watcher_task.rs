@@ -4,11 +4,12 @@
 //! real inputs, delivers over the agent input route, and is the only place that
 //! decides which sessions the watcher is even allowed to see.
 
+use std::fs;
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use crate::daemon_state::load_metadata_state;
+use crate::daemon_state::{MetadataState, metadata_state_path};
 use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::{
     LoopDeliveryOutcome, load_loop_watcher_state, loop_watcher_state_path, save_loop_watcher_state,
@@ -106,12 +107,15 @@ impl PeriodicTask for LoopWatcherTask {
                 }
             };
             let delivery_context = Arc::clone(&self.context);
-            let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir))
-            else {
-                return Ok(());
-            };
-            let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
-                .unwrap_or_else(|_| json!({ "sessions": {} }));
+            let topology_path = runtime_topology_path(&project_state_dir);
+            let topology = read_runtime_topology(&topology_path).map_err(|error| {
+                format!("read runtime topology {}: {error}", topology_path.display())
+            })?;
+            let metadata =
+                serde_json::to_value(load_metadata_state_for_loop_watcher(&project_state_dir)?)
+                    .map_err(|error| {
+                        format!("serialize metadata state for loop watcher: {error}")
+                    })?;
             let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
             let sessions =
                 list_topology_session_states(&topology, Some(NUDGEABLE_SESSION_STATUSES));
@@ -228,6 +232,21 @@ pub fn build_scan_input(
         "runtimeExchange": runtime_exchange,
         "coordinationWorklist": coordination_worklist,
     })
+}
+
+fn load_metadata_state_for_loop_watcher(
+    project_state_dir: impl AsRef<std::path::Path>,
+) -> Result<MetadataState, String> {
+    let path = metadata_state_path(project_state_dir);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(MetadataState::empty());
+        }
+        Err(error) => return Err(format!("read metadata state {}: {error}", path.display())),
+    };
+    serde_json::from_str(&text)
+        .map_err(|error| format!("parse metadata state {}: {error}", path.display()))
 }
 
 async fn apply_live_activity_overrides_for_scan(
