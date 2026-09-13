@@ -32,6 +32,7 @@ pub const DELIVERY_TASK_INTERVAL_MS: i64 = 500;
 
 const DELIVERY_TASK_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_DELIVERIES_PER_TICK: usize = 8;
+const MAX_DELIVERY_ATTEMPTS_PER_TICK: usize = 1;
 pub const AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY: usize = MAX_DELIVERIES_PER_TICK
     * ((MAX_AGENT_INPUT_HOLD_MS as usize / DELIVERY_TASK_INTERVAL_MS as usize) + 1);
 
@@ -311,9 +312,9 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
 
     let mut remaining = Vec::new();
     let mut ready = VecDeque::from(state.pending);
-    let mut delivered = 0usize;
+    let mut delivery_attempts = 0usize;
     while let Some(pending) = ready.pop_front() {
-        if delivered >= MAX_DELIVERIES_PER_TICK {
+        if delivery_attempts >= MAX_DELIVERY_ATTEMPTS_PER_TICK {
             remaining.push(pending);
             remaining.extend(ready);
             break;
@@ -332,13 +333,12 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             }
         };
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
-        let activity = runtime.agent_input_window_activity(&window_id);
-        let persistent_probe_failure = force_due_to_max && activity.is_err();
-        let decision = if persistent_probe_failure {
+        let decision = if force_due_to_max {
             AgentInputDeliveryDecision::DeliverNow {
                 reason: "max-hold-elapsed".into(),
             }
         } else {
+            let activity = runtime.agent_input_window_activity(&window_id);
             decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
         };
         match decision {
@@ -354,6 +354,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
                 remaining.push(pending);
             }
             AgentInputDeliveryDecision::DeliverNow { reason } => {
+                delivery_attempts += 1;
                 if force_due_to_max {
                     record_agent_input_delivery_failure(
                         context,
@@ -381,7 +382,6 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
                                 "reason": reason,
                             })),
                         );
-                        delivered += 1;
                     }
                     Err(error) => {
                         record_agent_input_delivery_failure(
@@ -470,9 +470,9 @@ pub async fn run_pending_agent_input_deliveries_async(
         .collect::<BTreeSet<_>>();
     let mut remaining = Vec::new();
     let mut ready = VecDeque::from(state.pending);
-    let mut delivered = 0usize;
+    let mut delivery_attempts = 0usize;
     while let Some(pending) = ready.pop_front() {
-        if delivered >= MAX_DELIVERIES_PER_TICK {
+        if delivery_attempts >= MAX_DELIVERY_ATTEMPTS_PER_TICK {
             remaining.push(pending);
             remaining.extend(ready);
             break;
@@ -491,14 +491,13 @@ pub async fn run_pending_agent_input_deliveries_async(
             }
         };
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
-        let activity =
-            tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await;
-        let persistent_probe_failure = force_due_to_max && activity.is_err();
-        let decision = if persistent_probe_failure {
+        let decision = if force_due_to_max {
             AgentInputDeliveryDecision::DeliverNow {
                 reason: "max-hold-elapsed".into(),
             }
         } else {
+            let activity =
+                tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await;
             decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
         };
         match decision {
@@ -514,6 +513,7 @@ pub async fn run_pending_agent_input_deliveries_async(
                 remaining.push(pending);
             }
             AgentInputDeliveryDecision::DeliverNow { reason } => {
+                delivery_attempts += 1;
                 if force_due_to_max {
                     record_agent_input_delivery_failure(
                         context,
@@ -547,7 +547,6 @@ pub async fn run_pending_agent_input_deliveries_async(
                                 "reason": reason,
                             })),
                         );
-                        delivered += 1;
                     }
                     Err(error) => {
                         record_agent_input_delivery_failure(
@@ -656,7 +655,7 @@ impl PeriodicTask for AgentInputDeliveryTask {
     }
 
     fn timeout(&self) -> Duration {
-        DELIVERY_TASK_TIMEOUT + Duration::from_secs(1)
+        DELIVERY_TASK_TIMEOUT + Duration::from_secs(5)
     }
 
     fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
