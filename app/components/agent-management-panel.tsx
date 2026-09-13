@@ -150,6 +150,7 @@ export function AgentManagementPanel({
   const canMigrate =
     canAct && Boolean(selectedWorktreePath) && selectedWorktreePath !== currentWorktreePath;
   const canSaveLoop = canAct && (!loopActive || trimmedGoal !== currentLoopGoal);
+  const canClearOverseer = canAct && overseerActive && Boolean(selectedWorktreePath);
   const fieldIdPrefix = `agent-${session.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
   const visibleError = error && !isTransientRequestError(error) ? error : null;
 
@@ -326,17 +327,27 @@ export function AgentManagementPanel({
             <Button
               variant="ghost"
               size="sm"
-              disabled={!canAct || !overseerActive}
+              disabled={!canClearOverseer}
               onPress={() =>
-                runAction("overseer", () =>
-                  setAgentOverseer(endpoint, { sessionId: session.id, active: false }, { token }),
-                )
+                selectedWorktreePath
+                  ? runAction("overseer", () =>
+                      setAgentOverseer(
+                        endpoint,
+                        {
+                          sessionId: session.id,
+                          active: false,
+                          worktreePath: selectedWorktreePath,
+                        },
+                        { token },
+                      ),
+                    )
+                  : undefined
               }
             >
               <Text
                 className={cn(
                   "text-sm",
-                  overseerActive ? "text-muted-foreground" : "text-muted-foreground/60",
+                  canClearOverseer ? "text-muted-foreground" : "text-muted-foreground/60",
                 )}
               >
                 Off
