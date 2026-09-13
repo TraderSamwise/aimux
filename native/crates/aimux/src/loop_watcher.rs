@@ -1078,7 +1078,7 @@ fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
             work.push(item);
         }
     }
-    for item in array_field(input, "coordinationWorklist") {
+    for item in coordination_worklist_needs_you(input) {
         if let Some(item) = unowned_worklist_item(item) {
             work.push(item);
         }
@@ -1090,6 +1090,17 @@ fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
     });
     work.dedup_by(|left, right| str_field(left, "dedupeKey") == str_field(right, "dedupeKey"));
     work
+}
+
+fn coordination_worklist_needs_you(input: &Value) -> Vec<&Value> {
+    let worklist = input.get("coordinationWorklist").unwrap_or(&Value::Null);
+    if let Some(needs_you) = worklist.get("needsYou").and_then(Value::as_array) {
+        return needs_you.iter().collect();
+    }
+    match worklist.as_array() {
+        Some(items) => items.iter().collect(),
+        None => Vec::new(),
+    }
 }
 
 fn unowned_task_item(task: &Value, live_sessions: &BTreeSet<String>) -> Option<Value> {
