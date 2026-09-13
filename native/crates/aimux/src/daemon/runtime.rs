@@ -4273,6 +4273,34 @@ fn cleanup_stale_dashboard_links(
 
 fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &HashSet<String>) {
     let mut tmux = TmuxRuntimeManager::new();
+    stop_pre_restart_dashboard_repair_windows_with_tmux(before, project_roots, &mut tmux);
+}
+
+trait PreRestartDashboardTmux {
+    fn is_available(&mut self) -> bool;
+    fn has_window(&mut self, target: &TmuxTarget) -> bool;
+    fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String>;
+}
+
+impl PreRestartDashboardTmux for TmuxRuntimeManager {
+    fn is_available(&mut self) -> bool {
+        TmuxRuntimeManager::is_available(self)
+    }
+
+    fn has_window(&mut self, target: &TmuxTarget) -> bool {
+        TmuxRuntimeManager::has_window(self, target)
+    }
+
+    fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        TmuxRuntimeManager::kill_window(self, target)
+    }
+}
+
+fn stop_pre_restart_dashboard_repair_windows_with_tmux(
+    before: &Value,
+    project_roots: &HashSet<String>,
+    tmux: &mut impl PreRestartDashboardTmux,
+) {
     if !tmux.is_available() {
         return;
     }
@@ -4296,6 +4324,9 @@ fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &Has
             .flatten()
         {
             if dashboard.get("status").and_then(Value::as_str) == Some("ok") {
+                continue;
+            }
+            if !pre_restart_dashboard_is_noop_placeholder(dashboard) {
                 continue;
             }
             let Some(window_id) = dashboard.get("windowId").and_then(Value::as_str) else {
@@ -4327,6 +4358,26 @@ fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &Has
             }
         }
     }
+}
+
+fn pre_restart_dashboard_is_noop_placeholder(dashboard: &Value) -> bool {
+    let build_missing = dashboard
+        .get("buildStamp")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .is_none();
+    let owner_missing = dashboard
+        .get("owner")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .is_none();
+    if !build_missing || !owner_missing {
+        return false;
+    }
+    dashboard
+        .pointer("/process/argsPreview")
+        .and_then(Value::as_str)
+        .is_some_and(|args| args.contains("tail -f /dev/null"))
 }
 
 fn dashboard_payload_from_target(
@@ -6439,6 +6490,95 @@ mod tests {
         assert_eq!(refreshed.into_inner(), vec![project]);
         assert!(launcher.calls().is_empty());
         fixture.cleanup();
+    }
+
+    #[test]
+    fn pre_restart_dashboard_cleanup_does_not_kill_stale_real_dashboard() {
+        let project_root = "/repo/stale-real-dashboard";
+        let before = json!({
+            "projects": [{
+                "projectRoot": project_root,
+                "dashboards": [{
+                    "status": "mismatch",
+                    "sessionName": "aimux-real",
+                    "windowId": "@real",
+                    "windowIndex": 0,
+                    "windowName": "dashboard",
+                    "buildStamp": "old-build",
+                    "owner": "owner-current",
+                    "process": { "argsPreview": "aimux __dashboard-internal-native" }
+                }]
+            }]
+        });
+        let mut tmux = PreRestartDashboardCleanupFake::new(["@real"]);
+
+        stop_pre_restart_dashboard_repair_windows_with_tmux(
+            &before,
+            &HashSet::from([project_root.to_owned()]),
+            &mut tmux,
+        );
+
+        assert!(tmux.killed.is_empty(), "{:?}", tmux.killed);
+    }
+
+    #[test]
+    fn pre_restart_dashboard_cleanup_still_kills_noop_placeholder() {
+        let project_root = "/repo/placeholder-dashboard";
+        let before = json!({
+            "projects": [{
+                "projectRoot": project_root,
+                "dashboards": [{
+                    "status": "mismatch",
+                    "sessionName": "aimux-placeholder",
+                    "windowId": "@22",
+                    "windowIndex": 0,
+                    "windowName": "dashboard",
+                    "buildStamp": null,
+                    "owner": null,
+                    "process": { "argsPreview": "sh -lc 'tail -f /dev/null'" }
+                }]
+            }]
+        });
+        let mut tmux = PreRestartDashboardCleanupFake::new(["@22"]);
+
+        stop_pre_restart_dashboard_repair_windows_with_tmux(
+            &before,
+            &HashSet::from([project_root.to_owned()]),
+            &mut tmux,
+        );
+
+        assert_eq!(tmux.killed, vec!["@22"]);
+    }
+
+    struct PreRestartDashboardCleanupFake {
+        available: bool,
+        windows: HashSet<String>,
+        killed: Vec<String>,
+    }
+
+    impl PreRestartDashboardCleanupFake {
+        fn new(windows: impl IntoIterator<Item = &'static str>) -> Self {
+            Self {
+                available: true,
+                windows: windows.into_iter().map(str::to_owned).collect(),
+                killed: Vec::new(),
+            }
+        }
+    }
+
+    impl PreRestartDashboardTmux for PreRestartDashboardCleanupFake {
+        fn is_available(&mut self) -> bool {
+            self.available
+        }
+
+        fn has_window(&mut self, target: &TmuxTarget) -> bool {
+            self.windows.contains(&target.window_id)
+        }
+
+        fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+            self.killed.push(target.window_id.clone());
+            Ok(())
+        }
     }
 
     #[test]
