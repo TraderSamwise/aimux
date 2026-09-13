@@ -644,6 +644,64 @@ fn unavailable_live_activity_probe_records_loop_watcher_failure_instead_of_stale
 }
 
 #[test]
+fn running_metadata_skips_live_activity_probe_and_records_clean_run() {
+    let root = unique_temp_dir("aimux-loop-watcher-live-probe-running");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_with_live_session(),
+    )
+    .expect("write topology");
+    fs::write(
+        metadata_state_path(&state_dir),
+        serde_json::to_string(&json!({
+            "version": 1,
+            "sessions": {
+                "worker": {
+                    "loop": {
+                        "active": true,
+                        "goal": "ship it",
+                        "since": "2026-09-13T00:00:00.000Z"
+                    },
+                    "derived": {
+                        "activity": "running",
+                        "attention": "normal"
+                    }
+                }
+            }
+        }))
+        .expect("metadata json"),
+    )
+    .expect("write metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == "loop-watcher")
+        .expect("loop watcher health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 0);
+    assert_eq!(health.last_error, None);
+    assert!(health.last_completed_at_ms.is_some());
+}
+
+#[test]
 fn normal_loop_watcher_tick_records_completed_run() {
     let root = unique_temp_dir("aimux-loop-watcher-health-normal");
     let project_root = root.join("project");
