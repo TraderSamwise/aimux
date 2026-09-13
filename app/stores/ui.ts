@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import { atomFamily } from "jotai/utils";
 
 // Ephemeral — not persisted across reloads.
 export const sidebarOpenAtom = atom<boolean>(true);
@@ -16,3 +17,5 @@ export const sidebarShowProjectPickerAtom = atom<boolean>(false);
 export const sidebarProjectPickerShowAllAtom = atom<boolean>(false);
 
 export const chatChromeVisibleAtom = atom<boolean>(true);
+
+export const chatComposerDraftFamily = atomFamily((_key: string) => atom<string>(""));
