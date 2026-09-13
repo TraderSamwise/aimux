@@ -2,7 +2,7 @@
 //! corpus. Only the scenario driver lives here; every parser, dedupe and effect
 //! below is the code the project service runs.
 
-use aimux::builtin_metadata_watchers::{BuiltinMetadataWatchers, MetadataEffects};
+use aimux::builtin_metadata_watchers::{BuiltinMetadataWatchers, MetadataEffects, scan_tasks};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -124,4 +124,42 @@ fn builtin_metadata_watchers_contract_matches_typescript() {
     }
 
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+#[test]
+fn canceled_tasks_do_not_render_as_failed_task_events() {
+    let exchange = json!({
+        "tasks": [{
+            "id": "task-1",
+            "assignedTo": "worker",
+            "description": "Drop obsolete work",
+            "status": "canceled"
+        }]
+    });
+    let mut state = BuiltinMetadataWatchers::new();
+    state.scan(&json!({ "exchange": { "tasks": [] } }));
+    let mut effects = MetadataEffects::default();
+
+    scan_tasks(&exchange, &mut state, &mut effects);
+
+    assert_eq!(
+        effects.logs,
+        vec![json!([
+            "worker",
+            "Canceled: Drop obsolete work",
+            "tasks",
+            "info"
+        ])]
+    );
+    assert_eq!(
+        effects.events,
+        vec![json!([
+            "worker",
+            "task_canceled",
+            "Canceled: Drop obsolete work",
+            "tasks",
+            "info",
+            null
+        ])]
+    );
 }

@@ -57,4 +57,21 @@ describe("project observability model", () => {
     expect(model.artifactHints.map((item) => item.id)).toContain("notification:n1");
     expect(model.verificationHints.map((item) => item.id)).toContain("notification:n2");
   });
+
+  it("keeps cancelled tasks distinct from completed tasks", () => {
+    const tasks: TaskSummaryResponse[] = [
+      { id: "t1", description: "Ship it", status: "done" },
+      { id: "t2", description: "Drop it", status: "canceled" },
+    ];
+
+    const model = buildProjectObservability({
+      desktopState: null,
+      tasks,
+      notifications: [],
+    });
+
+    expect(model.openTasks.map((task) => task.id)).toEqual([]);
+    expect(model.completedTasks.map((task) => task.id)).toEqual(["t1"]);
+    expect(model.cancelledTasks.map((task) => task.id)).toEqual(["t2"]);
+  });
 });

@@ -671,15 +671,23 @@ fn route_task_complete(
 }
 
 fn route_task_cancel(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
+    let Some(reason) = trimmed_string(body.get("body")) else {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "task cancel requires a reason" }),
+        );
+    };
+    let mut body = body.clone();
+    object_insert_mut(&mut body, "body", Value::String(reason));
     task_lifecycle(
         project_state_dir,
-        body,
+        &body,
         |mut task, actor, body| {
             object_insert_mut(&mut task, "status", Value::String("canceled".into()));
             if !actor.is_empty() {
                 object_insert_mut(&mut task, "canceledBy", Value::String(actor));
             }
-            if let Some(body) = body.filter(|body| !body.is_empty()) {
+            if let Some(body) = body {
                 object_insert_mut(&mut task, "cancellationReason", Value::String(body));
             }
             object_insert_mut(&mut task, "notifiedAt", Value::String(now_iso()));

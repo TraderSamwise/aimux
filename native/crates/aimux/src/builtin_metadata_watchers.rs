@@ -136,28 +136,35 @@ pub fn scan_tasks(
             continue;
         };
         let status = string_field(task, "status");
-        let tone = if status == "failed" {
-            "error"
-        } else if status == "done" {
-            "success"
-        } else {
-            "warn"
+        let tone = match status.as_str() {
+            "failed" => "error",
+            "done" => "success",
+            "canceled" | "cancelled" | "abandoned" => "info",
+            _ => "warn",
         };
         let prefix = match status.as_str() {
             "assigned" => "Task",
             "pending" => "Queued",
             "done" => "Done",
+            "canceled" | "cancelled" | "abandoned" => "Canceled",
             _ => "Failed",
+        };
+        let kind = match status.as_str() {
+            "failed" => "task_failed",
+            "done" => "task_done",
+            "canceled" | "cancelled" | "abandoned" => "task_canceled",
+            _ => "task_assigned",
         };
         latest_by_session.insert(
             session_id,
             (
                 format!("{prefix}: {}", string_field(task, "description")),
                 tone,
+                kind,
             ),
         );
     }
-    for (session_id, (message, tone)) in latest_by_session {
+    for (session_id, (message, tone, kind)) in latest_by_session {
         if state.last_task_by_session.get(&session_id) == Some(&message) {
             continue;
         }
@@ -168,13 +175,6 @@ pub fn scan_tasks(
             continue;
         }
         calls.logs.push(json!([session_id, message, "tasks", tone]));
-        let kind = if tone == "error" {
-            "task_failed"
-        } else if tone == "success" {
-            "task_done"
-        } else {
-            "task_assigned"
-        };
         calls.events.push(json!([
             session_id,
             kind,

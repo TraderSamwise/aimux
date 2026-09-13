@@ -363,6 +363,23 @@ fn task_routes_round_trip_through_daemon_http_to_project_service() {
     assert_eq!(canceled.status, 200);
     assert_eq!(text_body(&canceled), "task task-1\nthread thread-1\n");
 
+    let cancel_without_reason = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.task_cancel_text,
+            Some(json!({
+                "project": project_text,
+                "taskId": "task-1"
+            })),
+        ),
+    );
+    assert_eq!(cancel_without_reason.status, 400);
+    assert_eq!(
+        text_body(&cancel_without_reason),
+        "Error: task cancel requires a reason\n"
+    );
+
     let reopened = handle_daemon_runtime_request(
         &mut runtime,
         request(

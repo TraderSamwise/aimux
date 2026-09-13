@@ -823,6 +823,31 @@ fn task_and_review_commands_plan_native_text_routes() {
         }
     );
 
+    let cancel = classify_core_cli(
+        &[
+            "task",
+            "cancel",
+            "task-1",
+            "--from=claude-1",
+            "--body=No longer needed.",
+        ],
+        &context(true, true),
+    )
+    .expect("task cancel plan");
+    assert_eq!(cancel.operation, CoreCliOperation::TaskCancel);
+    assert_eq!(
+        cancel.action,
+        CoreCliAction::TextRoute {
+            path: "/core/task/cancel-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "taskId": "task-1",
+                "from": "claude-1",
+                "body": "No longer needed.",
+            })),
+        }
+    );
+
     let review = classify_core_cli(
         &[
             "review",

@@ -8,6 +8,7 @@ import {
   MessageSquareReply,
   RotateCcw,
   ThumbsUp,
+  XCircle,
 } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,7 @@ import {
   acceptTask,
   approveReview,
   blockTask,
+  cancelTask,
   completeTask,
   markThreadSeen,
   reopenTask,
@@ -30,7 +32,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
-type WorkflowAction = "accept" | "block" | "complete" | "reopen" | "approve" | "changes";
+type WorkflowAction = "accept" | "block" | "cancel" | "complete" | "reopen" | "approve" | "changes";
 
 export function TaskWorkflowActions({
   endpoint,
@@ -151,6 +153,20 @@ export function TaskWorkflowActions({
                 }
               />
             ) : null}
+            <WorkflowButton
+              icon={XCircle}
+              label={busyAction === "cancel" ? "Cancelling" : "Cancel"}
+              disabled={!canAct}
+              onPress={() =>
+                runAction("cancel", (token) =>
+                  cancelTask(
+                    endpoint,
+                    { taskId: task.id, from: "user", body: "Canceled from web." },
+                    { token },
+                  ),
+                )
+              }
+            />
             <WorkflowButton
               icon={CheckCircle2}
               label={busyAction === "complete" ? "Completing" : "Done"}
