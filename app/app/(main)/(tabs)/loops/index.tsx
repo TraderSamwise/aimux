@@ -98,6 +98,12 @@ export default function LoopsScreen() {
     [activeCandidates],
   );
   const canMutate = Boolean(endpoint) && !busyAction;
+  const defaultDemotionWorktreePath = useMemo(
+    () =>
+      groups.find((group) => group.isMainCheckout)?.path ??
+      groups.find((group) => group.path)?.path,
+    [groups],
+  );
 
   async function runAction(action: BusyAction, fn: () => Promise<void>, success: string) {
     if (!endpoint || busyAction) return;
@@ -210,7 +216,7 @@ export default function LoopsScreen() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={!canMutate}
+                    disabled={!canMutate || !defaultDemotionWorktreePath}
                     onPress={() =>
                       runAction(
                         `overseer:off:${overseer.session.id}`,
@@ -218,7 +224,11 @@ export default function LoopsScreen() {
                           const token = await getToken();
                           await setAgentOverseer(
                             endpoint,
-                            { sessionId: overseer.session.id, active: false },
+                            {
+                              sessionId: overseer.session.id,
+                              active: false,
+                              worktreePath: defaultDemotionWorktreePath ?? undefined,
+                            },
                             { token },
                           );
                         },
