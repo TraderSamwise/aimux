@@ -4,6 +4,7 @@ use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
 use aimux::daemon::process::handle_daemon_runtime_request;
+use aimux::daemon::runtime::{RealDaemonRuntime, handle_daemon_runtime_request_with_mutex};
 use aimux::daemon::server::DaemonHttpRequest;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
@@ -938,6 +939,45 @@ impl Drop for CountingWebhookServer {
     }
 }
 
+struct JsonOnceServer {
+    port: u16,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl JsonOnceServer {
+    fn spawn(body: &'static str) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind json upstream");
+        let port = listener.local_addr().expect("json upstream addr").port();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept json upstream");
+            let _request = read_webhook_request(&mut stream);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write json upstream response");
+        });
+        Self {
+            port,
+            worker: Mutex::new(Some(worker)),
+        }
+    }
+
+    fn join(&self) {
+        if let Some(worker) = self.worker.lock().expect("json worker lock").take() {
+            worker.join().expect("json upstream worker");
+        }
+    }
+}
+
+impl Drop for JsonOnceServer {
+    fn drop(&mut self) {
+        self.join();
+    }
+}
+
 fn accept_one(
     listener: &TcpListener,
     stop: &mpsc::Receiver<()>,
@@ -1222,6 +1262,81 @@ fn runtime_processor_parses_body_and_dispatches_json_routes() {
     assert_eq!(response.status, 200);
     assert_eq!(json_body(&response), json!({ "ok": true }));
     assert_eq!(runtime.calls, vec![r#"push:{"title":"Hello"}"#]);
+}
+
+#[test]
+fn runtime_mutex_wrapper_routes_owner_get_proxy_without_head_of_line_blocking() {
+    let fixture = HostedFixture::new("owner-get-proxy-no-head-of-line");
+    let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(
+        fixture.resolver.clone(),
+        AimuxDaemonInfo {
+            pid: 123,
+            port: 43191,
+            started_at: "started".into(),
+            updated_at: "updated".into(),
+        },
+    )));
+    let upstream = JsonOnceServer::spawn(r#"{"ok":true,"project":"glyde"}"#);
+    let mut request = FakeRuntime::request(
+        "GET",
+        &format!("/proxy/127.0.0.1/{}/desktop-state", upstream.port),
+    );
+    request
+        .headers
+        .insert("x-aimux-actor-role".into(), "owner".into());
+    let held = runtime.lock().expect("hold runtime lock");
+    let (response_tx, response_rx) = mpsc::channel();
+    let request_runtime = Arc::clone(&runtime);
+    let request_thread = thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(&request_runtime, request);
+        response_tx
+            .send(response)
+            .expect("send proxy response before lock release");
+    });
+
+    let response = match response_rx.recv_timeout(Duration::from_millis(500)) {
+        Ok(response) => response,
+        Err(error) => {
+            drop(held);
+            request_thread.join().expect("request thread");
+            panic!("GET proxy waited behind the daemon runtime mutex: {error}");
+        }
+    };
+    drop(held);
+    request_thread.join().expect("request thread");
+    upstream.join();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        json_body(&response),
+        json!({ "ok": true, "project": "glyde" })
+    );
+}
+
+#[test]
+fn runtime_mutex_wrapper_still_denies_guest_desktop_state_proxy_fast_path() {
+    let fixture = HostedFixture::new("guest-get-proxy-still-denied");
+    let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(
+        fixture.resolver.clone(),
+        AimuxDaemonInfo {
+            pid: 123,
+            port: 43191,
+            started_at: "started".into(),
+            updated_at: "updated".into(),
+        },
+    )));
+    let mut request = FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/desktop-state");
+    request
+        .headers
+        .insert("x-aimux-actor-role".into(), "guest".into());
+
+    let response = handle_daemon_runtime_request_with_mutex(&runtime, request);
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        json_body(&response)["error"],
+        "shared guests can only read shared session output and attachments"
+    );
 }
 
 #[test]
