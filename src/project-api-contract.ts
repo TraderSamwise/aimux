@@ -1046,6 +1046,24 @@ export interface TaskLifecycleInput {
   body?: string;
 }
 
+export interface TaskCancelInput extends TaskLifecycleInput {
+  body: string;
+}
+
+export type TaskStatus =
+  | "pending"
+  | "assigned"
+  | "in_progress"
+  | "blocked"
+  | "done"
+  | "complete"
+  | "completed"
+  | "closed"
+  | "failed"
+  | "canceled"
+  | "cancelled"
+  | "abandoned";
+
 export interface ThreadSummaryResponse {
   thread: { id: string; title?: string; status?: string; kind?: string };
   latestMessage?: { body?: string; ts?: string; from?: string; kind?: string };
@@ -1055,7 +1073,7 @@ export interface ThreadSummaryResponse {
 export interface TaskSummaryResponse {
   id: string;
   description?: string;
-  status?: string;
+  status?: TaskStatus;
   assignedTo?: string;
   assignedBy?: string;
   assignee?: string;

@@ -97,6 +97,7 @@ import {
   type SwitchableAgentsResponse,
   type SwitchAgentRequest,
   type TaskAssignInput,
+  type TaskCancelInput,
   type TaskDetailResponse,
   type TaskLifecycleInput,
   type TaskListResponse,
@@ -144,6 +145,7 @@ export type {
   ProjectTopologyResponse,
   TeammateListResponse,
   ProjectWorktreeSummary,
+  TaskCancelInput,
   TaskDetailResponse,
   TaskListResponse,
   TaskSummaryResponse,
@@ -1676,7 +1678,7 @@ export async function blockTask(
 
 export async function cancelTask(
   endpoint: ServiceEndpoint,
-  input: TaskLifecycleInput,
+  input: TaskCancelInput,
   opts?: ApiOpts,
 ): Promise<WorkflowMutationResponse> {
   return callProjectJson<WorkflowMutationResponse>(

@@ -516,6 +516,49 @@ fn task_lifecycle_updates_task_thread_and_indexes() {
 }
 
 #[test]
+fn task_cancel_requires_a_reason_before_closing_assignment() {
+    let project = temp_project("task-cancel-reason");
+    let state_dir = project.join("state");
+    let context = support::TestIsolation::new("coordination").project_context(&project, &state_dir);
+    let created = route_project_service_request(
+        &context,
+        "POST",
+        routes::tasks::ASSIGN,
+        Some(&json!({
+            "from": "lead",
+            "to": "worker",
+            "description": "Try the risky path",
+            "prompt": "Check it."
+        })),
+    );
+    assert_eq!(created.status, 200);
+    let task_id = created.body["task"]["id"].as_str().unwrap().to_owned();
+
+    let rejected = route_project_service_request(
+        &context,
+        "POST",
+        routes::tasks::CANCEL,
+        Some(&json!({
+            "taskId": task_id,
+            "from": "lead"
+        })),
+    );
+
+    assert_eq!(rejected.status, 400);
+    assert_eq!(rejected.body["error"], "task cancel requires a reason");
+    let exchange = read_exchange(&state_dir);
+    let task = exchange["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["id"] == task_id)
+        .unwrap();
+    assert_eq!(task["status"], "pending");
+    assert!(task.get("cancellationReason").is_none());
+    cleanup(project);
+}
+
+#[test]
 fn thread_send_delivers_to_each_live_recipient_with_recipient_reply_actions() {
     let project = temp_project("thread-delivery");
     let state_dir = project.join("state");

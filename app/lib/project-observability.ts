@@ -26,6 +26,7 @@ export interface ProjectObservability {
   story: ProjectStoryItem[];
   openTasks: TaskSummaryResponse[];
   completedTasks: TaskSummaryResponse[];
+  cancelledTasks: TaskSummaryResponse[];
   artifactHints: ProjectStoryItem[];
   verificationHints: ProjectStoryItem[];
 }
@@ -36,7 +37,23 @@ function normalize(value?: string): string {
 
 function isOpenTask(task: TaskSummaryResponse): boolean {
   const status = normalize(task.status);
-  return !["done", "complete", "completed", "closed", "cancelled", "canceled"].includes(status);
+  return ![
+    "done",
+    "complete",
+    "completed",
+    "closed",
+    "cancelled",
+    "canceled",
+    "abandoned",
+  ].includes(status);
+}
+
+function isCompletedTask(task: TaskSummaryResponse): boolean {
+  return ["done", "complete", "completed", "closed"].includes(normalize(task.status));
+}
+
+function isCancelledTask(task: TaskSummaryResponse): boolean {
+  return ["cancelled", "canceled", "abandoned"].includes(normalize(task.status));
 }
 
 function taskTitle(task: TaskSummaryResponse): string {
@@ -67,7 +84,8 @@ export function buildProjectObservability(input: {
   const worktrees = input.desktopState?.worktrees ?? [];
   const runtimeStatuses = [...sessions, ...services].map((item) => normalize(item.status));
   const openTasks = input.tasks.filter(isOpenTask);
-  const completedTasks = input.tasks.filter((task) => !isOpenTask(task));
+  const completedTasks = input.tasks.filter(isCompletedTask);
+  const cancelledTasks = input.tasks.filter(isCancelledTask);
 
   const notificationStory = input.notifications.slice(0, 8).map(storyFromNotification);
   const taskStory = openTasks.slice(0, 6).map<ProjectStoryItem>((task) => ({
@@ -113,6 +131,7 @@ export function buildProjectObservability(input: {
     story: [...taskStory, ...notificationStory].slice(0, 12),
     openTasks,
     completedTasks,
+    cancelledTasks,
     artifactHints,
     verificationHints,
   };
