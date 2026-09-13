@@ -6,6 +6,7 @@ use std::path::Path;
 
 use crate::config::default_config;
 use crate::daemon_state::{load_daemon_info, load_daemon_info_async, load_metadata_state};
+use crate::loop_watcher::loop_alert_state_summary;
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
@@ -14,7 +15,8 @@ use crate::runtime_topology::{
     runtime_topology_path,
 };
 use crate::team_contract::{
-    is_project_control_session as team_is_project_control_session, project_control_display_role,
+    agent_lane, agent_role, agent_role_state,
+    is_project_control_session as team_is_project_control_session,
 };
 use crate::tmux::TmuxTarget;
 
@@ -253,6 +255,10 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
         object.insert(
+            "loopAlertState".into(),
+            loop_alert_state_summary(&project_state_dir, super::scheduler::scheduler_now_ms()),
+        );
+        object.insert(
             "agentRestoreOffer".into(),
             read_displayable_agent_restore_offer(context, &project_state_dir)
                 .unwrap_or(Value::Null),
@@ -310,6 +316,10 @@ pub async fn desktop_state_for_context_async(
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
+        object.insert(
+            "loopAlertState".into(),
+            loop_alert_state_summary(&project_state_dir, super::scheduler::scheduler_now_ms()),
+        );
         object.insert(
             "agentRestoreOffer".into(),
             read_displayable_agent_restore_offer(context, &project_state_dir)
@@ -899,9 +909,10 @@ fn dashboard_session(
             unseen_count = integer_field(derived, "unseenCount");
         }
     }
-    if let Some(role) = project_control_display_role(Some(&Value::Object(item.clone()))) {
-        insert_string(&mut item, "role", role);
-    }
+    let role_probe = Value::Object(item.clone());
+    insert_string(&mut item, "role", agent_role(Some(&role_probe)));
+    item.insert("lane".into(), agent_lane(Some(&role_probe)));
+    item.insert("roleState".into(), agent_role_state(Some(&role_probe)));
     let thread = thread_stats.get(id).cloned().unwrap_or_default();
     let workflow = workflow_stats.get(id).cloned().unwrap_or_default();
     let notifications = notification_stats.get(id).cloned().unwrap_or_default();

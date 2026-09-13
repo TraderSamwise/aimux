@@ -8,9 +8,12 @@ use crate::project_api_contract::routes;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
-use crate::team_contract::{project_control_display_role, session_with_stored_control_flags};
+use crate::team_contract::{
+    agent_lane, agent_role, agent_role_state, session_with_stored_control_flags,
+};
 use crate::tool_capabilities::exact_backend_resume_blocked_reason;
 
+use super::agent_roles::{load_agent_role_registry, overlay_agent_role_registry};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
@@ -153,6 +156,10 @@ pub fn route_agent_read_request(
         Ok(exchange) => exchange,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
+    let role_registry = match load_agent_role_registry(&project_state_dir) {
+        Ok(registry) => registry,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let tools = default_config()
         .get("tools")
         .and_then(Value::as_object)
@@ -175,6 +182,7 @@ pub fn route_agent_read_request(
                 &sessions,
                 &metadata_state.sessions,
                 array_field(&exchange, "tasks"),
+                Some(&role_registry),
             ),
         }),
     ))
@@ -208,6 +216,10 @@ pub async fn route_agent_read_request_async(
         Ok(exchange) => exchange,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
+    let role_registry = match load_agent_role_registry(&project_state_dir) {
+        Ok(registry) => registry,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let tools = default_config()
         .get("tools")
         .and_then(Value::as_object)
@@ -239,6 +251,7 @@ pub async fn route_agent_read_request_async(
             &projection.sessions,
             &metadata_state.sessions,
             array_field(&exchange, "tasks"),
+            Some(&role_registry),
         ),
     });
     if let Some(error) = projection.live_window_query_error
@@ -520,11 +533,9 @@ pub fn teammate_api_record(session: &Value) -> Value {
         "label",
         team_string_field(session, "label").or_else(|| string_field(session, "label")),
     );
-    insert_optional(
-        &mut record,
-        "role",
-        project_control_display_role(Some(session)),
-    );
+    insert_optional(&mut record, "role", Some(agent_role(Some(session))));
+    record.insert("lane".into(), agent_lane(Some(session)));
+    record.insert("roleState".into(), agent_role_state(Some(session)));
     for key in [
         "status",
         "worktreePath",
@@ -545,6 +556,7 @@ pub fn build_agent_list(
     sessions: &[Value],
     metadata_sessions: &BTreeMap<String, Value>,
     tasks: &[Value],
+    role_registry: Option<&Value>,
 ) -> Vec<Value> {
     sessions
         .iter()
@@ -573,11 +585,10 @@ pub fn build_agent_list(
             ] {
                 insert_value(&mut agent, key, session.get(key).cloned());
             }
-            insert_optional(
-                &mut agent,
-                "role",
-                active_display_role(session, metadata).as_deref(),
-            );
+            let control_probe = session_with_stored_control_flags(session, metadata);
+            insert_optional(&mut agent, "role", Some(agent_role(Some(&control_probe))));
+            agent.insert("lane".into(), agent_lane(Some(&control_probe)));
+            agent.insert("roleState".into(), agent_role_state(Some(&control_probe)));
             insert_value(
                 &mut agent,
                 "activity",
@@ -601,7 +612,6 @@ pub fn build_agent_list(
                     metadata.and_then(|metadata| metadata.get(key)).cloned(),
                 );
             }
-            let control_probe = session_with_stored_control_flags(session, metadata);
             for key in ["overseer", "scribe", "projectControl"] {
                 insert_value(
                     &mut agent,
@@ -612,6 +622,7 @@ pub fn build_agent_list(
                         .cloned(),
                 );
             }
+            overlay_agent_role_registry(&mut agent, role_registry);
             if let Some(task) = task {
                 agent.insert(
                     "task".into(),
@@ -625,11 +636,6 @@ pub fn build_agent_list(
             Value::Object(agent)
         })
         .collect()
-}
-
-fn active_display_role(session: &Value, metadata: Option<&Value>) -> Option<String> {
-    let probe = session_with_stored_control_flags(session, metadata);
-    project_control_display_role(Some(&probe)).map(str::to_owned)
 }
 
 pub fn describe_session_restorability(
@@ -816,10 +822,12 @@ mod tests {
             })],
             &metadata,
             &[],
+            None,
         );
 
         assert_eq!(agents.len(), 1);
-        assert_eq!(agents[0].get("role"), None);
+        assert_eq!(agents[0]["role"], "coder");
+        assert_eq!(agents[0]["lane"], json!({ "kind": "worktree" }));
         assert_eq!(
             agents[0].get("scribe").and_then(Value::as_bool),
             Some(false)
@@ -836,10 +844,12 @@ mod tests {
             })],
             &BTreeMap::new(),
             &[],
+            None,
         );
 
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0]["role"], "scribe");
+        assert_eq!(agents[0]["lane"], json!({ "kind": "supervisor" }));
         assert_eq!(agents[0].get("scribe"), None);
     }
 
@@ -856,10 +866,12 @@ mod tests {
             })],
             &metadata,
             &[],
+            None,
         );
 
         assert_eq!(agents.len(), 1);
-        assert_eq!(agents[0].get("role"), None);
+        assert_eq!(agents[0]["role"], "coder");
+        assert_eq!(agents[0]["lane"], json!({ "kind": "worktree" }));
         assert_eq!(
             agents[0].get("scribe").and_then(Value::as_bool),
             Some(false)

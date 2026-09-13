@@ -4,19 +4,25 @@
 //! real inputs, delivers over the agent input route, and is the only place that
 //! decides which sessions the watcher is even allowed to see.
 
+use std::fs;
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use crate::daemon_state::load_metadata_state;
-use crate::loop_watcher::{LoopSend, LoopWatcher};
+use crate::daemon_state::{MetadataState, metadata_state_path};
+use crate::debug_logging::{LogLevel, log_at};
+use crate::loop_watcher::{
+    LoopDeliveryOutcome, load_loop_watcher_state, loop_watcher_state_path, save_loop_watcher_state,
+};
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
 
 use super::agent_output::AgentOutputResponseMode;
+use super::coordination_worklist::{build_coordination_thread_entries, build_coordination_view};
 use super::interactions::pending_interactions_for_stream;
 use super::router::ProjectServiceRequestContext;
+use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::scheduler::{CachedProjectConfig, PeriodicTask, PeriodicTaskFuture};
 use super::watcher_delivery::{TickLoopBudget, deliver_agent_input_async};
 
@@ -41,7 +47,6 @@ pub struct LoopWatcherTask {
     loop_config: Value,
     scan_interval_ms: i64,
     scan_every_ticks: u64,
-    watcher: LoopWatcher,
 }
 
 impl LoopWatcherTask {
@@ -56,7 +61,6 @@ impl LoopWatcherTask {
             loop_config,
             scan_interval_ms,
             scan_every_ticks,
-            watcher: LoopWatcher::new(),
         }
     }
 
@@ -89,44 +93,112 @@ impl PeriodicTask for LoopWatcherTask {
         Box::pin(async move {
             self.refresh_config_if_changed();
             let project_state_dir = context.project_state_dir();
-            let delivery_context = Arc::clone(&self.context);
-            let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir))
-            else {
-                return;
+            let state_path = loop_watcher_state_path(&project_state_dir);
+            let mut watcher = match load_loop_watcher_state(&state_path) {
+                Ok(watcher) => watcher,
+                Err(error) => {
+                    log_at(
+                        LogLevel::Error,
+                        "loop watcher state unavailable",
+                        "loop-watcher",
+                        Some(json!({ "error": error })),
+                    );
+                    return Err(error);
+                }
             };
-            let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
-                .unwrap_or_else(|_| json!({ "sessions": {} }));
+            let delivery_context = Arc::clone(&self.context);
+            let topology_path = runtime_topology_path(&project_state_dir);
+            let topology = read_runtime_topology(&topology_path).map_err(|error| {
+                format!("read runtime topology {}: {error}", topology_path.display())
+            })?;
+            let metadata =
+                serde_json::to_value(load_metadata_state_for_loop_watcher(&project_state_dir)?)
+                    .map_err(|error| {
+                        format!("serialize metadata state for loop watcher: {error}")
+                    })?;
+            let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
             let sessions =
                 list_topology_session_states(&topology, Some(NUDGEABLE_SESSION_STATUSES));
+            let threads = build_coordination_thread_entries(&exchange, "user");
+            let coordination_view =
+                build_coordination_view(&sessions, &[], &[], &[], &threads, "user");
+            let coordination_worklist =
+                coordination_view
+                    .get("worklist")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        json!({
+                            "error": "coordination view missing worklist for loop watcher scan"
+                        })
+                    });
             let pending = pending_interactions_for_stream(&project_state_dir);
-            let mut input =
-                build_scan_input(sessions, &metadata, &pending, self.loop_config.clone());
-            apply_live_activity_overrides_for_scan(context, &mut input).await;
+            let mut input = build_scan_input(
+                sessions,
+                &metadata,
+                &pending,
+                self.loop_config.clone(),
+                exchange,
+                coordination_worklist,
+            );
+            apply_live_activity_overrides_for_scan(context, &mut input).await?;
 
             let budget = TickLoopBudget::new(SCAN_BUDGET);
-            let mut collect = |_send: &LoopSend| false;
-            let sends = self.watcher.scan(&input, now_ms(), &mut collect);
-            let mut delivered = std::collections::BTreeSet::new();
-            for send in sends.into_iter().take(MAX_SENDS_PER_SCAN) {
+            let planned_at = now_ms();
+            watcher.expire_global_pause(planned_at);
+            let sends = watcher.plan_sends(&input, planned_at);
+            if watcher.is_global_pause_active(planned_at) {
+                watcher.note_global_pause_tick();
+                for send in sends.into_iter().take(MAX_SENDS_PER_SCAN) {
+                    watcher.buffer_send(&send, planned_at);
+                    watcher.commit_send_result(&send, planned_at, LoopDeliveryOutcome::Buffered);
+                }
+                if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
+                    log_at(
+                        LogLevel::Error,
+                        "loop watcher state commit failed",
+                        "loop-watcher",
+                        Some(json!({ "error": error })),
+                    );
+                    return Err(error);
+                }
+                return Ok(());
+            }
+
+            let mut delivery_queue = watcher.buffered_sends_to_deliver(MAX_SENDS_PER_SCAN);
+            let remaining = MAX_SENDS_PER_SCAN.saturating_sub(delivery_queue.len());
+            delivery_queue.extend(sends.into_iter().take(remaining));
+            for send in delivery_queue {
                 if budget.spent() {
                     break;
                 }
-                if deliver_agent_input_async(
+                let delivered = if deliver_agent_input_async(
                     Arc::clone(&delivery_context),
                     &send.session_id,
                     &send.text,
                 )
                 .await
                 {
-                    delivered.insert((send.session_id, send.text));
-                }
-            }
-            if !delivered.is_empty() {
-                let mut commit = |send: &LoopSend| {
-                    delivered.contains(&(send.session_id.clone(), send.text.clone()))
+                    LoopDeliveryOutcome::Delivered
+                } else {
+                    LoopDeliveryOutcome::Failed {
+                        error: "deliver_agent_input_async returned false".to_owned(),
+                    }
                 };
-                self.watcher.scan(&input, now_ms(), &mut commit);
+                if matches!(delivered, LoopDeliveryOutcome::Delivered) {
+                    watcher.remove_buffered_send(&send);
+                }
+                watcher.commit_send_result(&send, now_ms(), delivered);
             }
+            if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
+                log_at(
+                    LogLevel::Error,
+                    "loop watcher state commit failed",
+                    "loop-watcher",
+                    Some(json!({ "error": error })),
+                );
+                return Err(error);
+            }
+            Ok(())
         })
     }
 }
@@ -140,6 +212,8 @@ pub fn build_scan_input(
     metadata: &Value,
     pending_interactions: &[Value],
     loop_config: Value,
+    runtime_exchange: Value,
+    coordination_worklist: Value,
 ) -> Value {
     let sessions = sessions
         .into_iter()
@@ -159,28 +233,46 @@ pub fn build_scan_input(
         "metadata": metadata,
         "config": loop_config,
         "pendingInteractions": pending,
+        "runtimeExchange": runtime_exchange,
+        "coordinationWorklist": coordination_worklist,
     })
+}
+
+fn load_metadata_state_for_loop_watcher(
+    project_state_dir: impl AsRef<std::path::Path>,
+) -> Result<MetadataState, String> {
+    let path = metadata_state_path(project_state_dir);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(MetadataState::empty());
+        }
+        Err(error) => return Err(format!("read metadata state {}: {error}", path.display())),
+    };
+    serde_json::from_str(&text)
+        .map_err(|error| format!("parse metadata state {}: {error}", path.display()))
 }
 
 async fn apply_live_activity_overrides_for_scan(
     context: &ProjectServiceRequestContext,
     input: &mut Value,
-) {
+) -> Result<(), String> {
     let candidate_ids = stopped_metadata_session_ids(input);
     if candidate_ids.is_empty() {
-        return;
+        return Ok(());
     }
     for session_id in candidate_ids {
-        if let Some(live) = live_activity_override(context, &session_id).await {
+        if let Some(live) = live_activity_override(context, &session_id).await? {
             apply_live_activity_override(input, &session_id, &live);
         }
     }
+    Ok(())
 }
 
 async fn live_activity_override(
     context: &ProjectServiceRequestContext,
     session_id: &str,
-) -> Option<Value> {
+) -> Result<Option<Value>, String> {
     let payload = super::agent_output::read_agent_output_payload_async(
         context,
         session_id,
@@ -189,17 +281,27 @@ async fn live_activity_override(
         std::time::Duration::from_secs(3),
     )
     .await
-    .ok()?
+    .map_err(|response| {
+        let body = &response.body;
+        let error = body
+            .get("error")
+            .and_then(Value::as_str)
+            .or_else(|| body.get("message").and_then(Value::as_str))
+            .unwrap_or("unknown error");
+        format!("read live activity for {session_id}: {error}")
+    })?
     .payload;
-    let activity = payload.get("activity").and_then(Value::as_str)?;
+    let Some(activity) = payload.get("activity").and_then(Value::as_str) else {
+        return Ok(None);
+    };
     if matches!(activity, "idle" | "done") {
-        return None;
+        return Ok(None);
     }
     let mut live = Map::new();
     live.insert("activity".to_owned(), Value::String(activity.to_owned()));
     insert_value(&mut live, "activityText", payload.get("activityText"));
     insert_value(&mut live, "attention", payload.get("attention"));
-    Some(Value::Object(live))
+    Ok(Some(Value::Object(live)))
 }
 
 fn stopped_metadata_session_ids(input: &Value) -> Vec<String> {

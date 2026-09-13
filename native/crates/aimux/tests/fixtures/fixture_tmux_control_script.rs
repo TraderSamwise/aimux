@@ -36,6 +36,12 @@ fn dashboard_reload_failure_names_endpoint_not_service_availability() {
     assert_dashboard_reload_failure_names_endpoint(TmuxControlRunner::Native);
 }
 
+#[test]
+fn dashboard_reload_failure_names_missing_dashboard_window() {
+    assert_dashboard_reload_failure_names_missing_dashboard_window(TmuxControlRunner::ShellScript);
+    assert_dashboard_reload_failure_names_missing_dashboard_window(TmuxControlRunner::Native);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TmuxControlRunner {
     ShellScript,
@@ -135,10 +141,47 @@ fn assert_dashboard_reload_failure_names_endpoint(runner: TmuxControlRunner) {
     );
 }
 
+fn assert_dashboard_reload_failure_names_missing_dashboard_window(runner: TmuxControlRunner) {
+    let actual = run_case(
+        &dashboard_reload_missing_window_case(json!({
+            "TMUX_FAKE_CURL_EXIT": "28",
+        })),
+        runner,
+    );
+    let root = &actual["roots"].as_array().expect("roots")[1];
+    let tmux_log = serde_json::to_string(&root["tmuxLog"]).expect("tmux log");
+    assert!(
+        tmux_log.contains("dashboard reload failed - dashboard window missing"),
+        "{actual:#}"
+    );
+    assert!(
+        !tmux_log.contains("couldn't contact project service endpoint"),
+        "{actual:#}"
+    );
+}
+
 fn dashboard_reload_case(
     env: Value,
     expected_curl_calls: usize,
     expected_tmux_calls: usize,
+) -> Value {
+    dashboard_reload_case_with_state(
+        env,
+        expected_curl_calls,
+        expected_tmux_calls,
+        dashboard_reload_tmux_state(),
+    )
+}
+
+fn dashboard_reload_missing_window_case(env: Value) -> Value {
+    dashboard_reload_case_with_state(env, 2, 10, dashboard_reload_missing_window_tmux_state())
+}
+
+fn dashboard_reload_case_with_state(
+    env: Value,
+    expected_curl_calls: usize,
+    expected_tmux_calls: usize,
+    tmux_state: Value,
 ) -> Value {
     let mut env_map = Map::new();
     env_map.insert(
@@ -190,7 +233,7 @@ fn dashboard_reload_case(
                     "tmuxLog": [],
                     "curlLog": [],
                     "aimuxLog": [],
-                    "state": dashboard_reload_tmux_state(),
+                    "state": tmux_state,
                     "rootFiles": {},
                     "projectFiles": {
                         "metadata-api.txt": "http://127.0.0.1:43444",
@@ -252,6 +295,15 @@ fn dashboard_reload_tmux_state() -> Value {
             }
         }
     })
+}
+
+fn dashboard_reload_missing_window_tmux_state() -> Value {
+    let mut state = dashboard_reload_tmux_state();
+    state["windows"]["aimux-proj-client-1234abcd"] =
+        json!([{ "id": "@shell", "index": 3, "name": "shell" }]);
+    state["windowOptions"] = json!({});
+    state["panes"] = json!({});
+    state
 }
 
 fn expected_output(case: &Value, runner: TmuxControlRunner) -> Value {

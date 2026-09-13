@@ -3,7 +3,13 @@
 // Canonical server-side shapes live in src/dashboard/index.ts and src/multiplexer/dashboard-model.ts.
 
 import type { AgentTranscriptMessage } from "@/lib/events";
-import type { PreviewCaptureMarker, ProjectOperationFailure } from "../../src/project-api-contract";
+import type {
+  AgentLane,
+  AgentRole,
+  AgentRoleState,
+  PreviewCaptureMarker,
+  ProjectOperationFailure,
+} from "../../src/project-api-contract";
 
 export type DesktopSessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
 export type DesktopServiceStatus = "running" | "exited" | "offline";
@@ -49,7 +55,9 @@ export interface DesktopSession {
   createdAt?: string;
   restoreState?: "ready" | "blocked";
   restoreBlockedReason?: string;
-  role?: string;
+  role?: AgentRole;
+  lane?: AgentLane;
+  roleState?: AgentRoleState;
   activity?: string;
   attention?: string;
   lastUsedAt?: string;
@@ -118,6 +126,11 @@ export interface DesktopWorktreeGroup {
 export interface DesktopState {
   ok: boolean;
   sessions: DesktopSession[];
+  supervisorLane?: {
+    sessions: DesktopSession[];
+    health?: "active" | "attention" | "idle" | "offline" | "unknown";
+    unavailable?: { reason?: string; error?: string };
+  };
   teammates?: DesktopSession[];
   services: DesktopService[];
   worktrees: DesktopWorktree[];
@@ -133,6 +146,7 @@ export interface WorktreeBucket {
   branch: string;
   path: string | null;
   isMainCheckout: boolean;
+  isSupervisorLane?: boolean;
   pending?: boolean;
   removing?: boolean;
   sessions: DesktopSession[];
@@ -140,6 +154,7 @@ export interface WorktreeBucket {
 }
 
 const MAIN_CHECKOUT_KEY = "__main_checkout__";
+const SUPERVISOR_LANE_KEY = "__supervisor_lane__";
 
 export function isDesktopSessionOffline(
   session: Pick<DesktopSession, "pendingAction" | "status">,
@@ -164,6 +179,11 @@ export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): Wor
 }
 
 function isDashboardHiddenSession(session: DesktopSession): boolean {
+  return isSupervisorLaneSession(session);
+}
+
+export function isSupervisorLaneSession(session: DesktopSession): boolean {
+  if (session.lane?.kind === "supervisor") return true;
   return isDesktopProjectControlSession(session);
 }
 
@@ -200,12 +220,36 @@ function bucketFromServerGroup(group: DesktopWorktreeGroup): WorktreeBucket {
   };
 }
 
+function supervisorLaneSessions(state: DesktopState): DesktopSession[] {
+  if (Array.isArray(state.supervisorLane?.sessions)) {
+    return state.supervisorLane.sessions;
+  }
+  return state.sessions.filter(isSupervisorLaneSession);
+}
+
+function supervisorLaneBucket(state: DesktopState): WorktreeBucket | null {
+  const sessions = supervisorLaneSessions(state);
+  if (sessions.length === 0) return null;
+  return {
+    key: SUPERVISOR_LANE_KEY,
+    name: "Supervisor Lane",
+    branch: "",
+    path: null,
+    isMainCheckout: false,
+    isSupervisorLane: true,
+    sessions,
+    services: [],
+  };
+}
+
 // Prefer the server-composed worktree groups: they are the same dashboard model
 // the TUI renders. The regrouping path below is only for older desktop-state
 // payloads that do not include worktreeGroups.
 export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
+  const supervisor = supervisorLaneBucket(state);
   if (Array.isArray(state.worktreeGroups)) {
-    return state.worktreeGroups.map(bucketFromServerGroup);
+    const groups = state.worktreeGroups.map(bucketFromServerGroup);
+    return supervisor ? [supervisor, ...groups] : groups;
   }
 
   const buckets = new Map<string, WorktreeBucket>();
@@ -265,6 +309,7 @@ export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
   }
 
   const ordered: WorktreeBucket[] = [];
+  if (supervisor) ordered.push(supervisor);
   ordered.push(mainBucket);
   for (const wt of state.worktrees) {
     if (mainPath && wt.path === mainPath) continue;

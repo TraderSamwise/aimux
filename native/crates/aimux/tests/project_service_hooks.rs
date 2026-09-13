@@ -231,7 +231,6 @@ fn claude_hook_backend_id_updates_the_topology_session_row() {
         focused_worktree_path: Some(project.to_string_lossy().as_ref()),
         runtime_label: Some("native"),
         version: Some("local"),
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,

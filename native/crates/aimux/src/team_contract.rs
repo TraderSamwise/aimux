@@ -1,4 +1,4 @@
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub fn select_orphan_teammate_ids(sessions: &[Value], known_parent_ids: &[String]) -> Vec<String> {
@@ -121,6 +121,64 @@ pub fn project_control_display_role(session: Option<&Value>) -> Option<&str> {
         "scribe" => is_scribe_session(Some(session)).then_some(role),
         _ => Some(role),
     }
+}
+
+pub fn agent_role(session: Option<&Value>) -> &'static str {
+    if is_overseer_session(session) {
+        "overseer"
+    } else if is_scribe_session(session) {
+        "scribe"
+    } else {
+        "coder"
+    }
+}
+
+pub fn agent_lane(session: Option<&Value>) -> Value {
+    let Some(session) = session else {
+        return json!({ "kind": "unknown", "reason": "session-unavailable" });
+    };
+    if is_project_control_session(Some(session)) {
+        return json!({ "kind": "supervisor" });
+    }
+    match string_field(session, "worktreePath") {
+        Some(worktree_path) => json!({ "kind": "worktree", "worktreePath": worktree_path }),
+        None => json!({ "kind": "worktree" }),
+    }
+}
+
+pub fn agent_role_state(session: Option<&Value>) -> Value {
+    let Some(session) = session else {
+        return json!({
+            "status": "unknown",
+            "reason": "session-unavailable",
+        });
+    };
+    let role = agent_role(Some(session));
+    let lane = agent_lane(Some(session));
+    if bool_field(session, "pendingRelaunchForRole") == Some(true) {
+        let effective_role = string_field(session, "effectiveRole").unwrap_or(role);
+        let effective_lane = session
+            .get("effectiveLane")
+            .cloned()
+            .unwrap_or_else(|| lane.clone());
+        return json!({
+            "status": "pending-relaunch",
+            "role": role,
+            "lane": lane,
+            "projectControl": is_project_control_session(Some(session)),
+            "declaredRole": role,
+            "declaredLane": lane,
+            "effectiveRole": effective_role,
+            "effectiveLane": effective_lane,
+            "runtimeWorkingDirectory": string_field(session, "runtimeWorkingDirectory"),
+        });
+    }
+    json!({
+        "status": "resolved",
+        "role": role,
+        "lane": lane,
+        "projectControl": is_project_control_session(Some(session)),
+    })
 }
 
 fn bool_field(session: &Value, key: &str) -> Option<bool> {
@@ -318,5 +376,49 @@ mod tests {
         assert!(is_overseer_session(Some(&probe)));
         assert!(is_project_control_session(Some(&probe)));
         assert_eq!(probe.get("projectControl"), None);
+    }
+
+    #[test]
+    fn ordinary_agent_defaults_to_coder_worktree_lane() {
+        let session = json!({
+            "id": "codex-1",
+            "worktreePath": "/repo/wt"
+        });
+
+        assert_eq!(agent_role(Some(&session)), "coder");
+        assert_eq!(
+            agent_lane(Some(&session)),
+            json!({ "kind": "worktree", "worktreePath": "/repo/wt" })
+        );
+        assert_eq!(
+            agent_role_state(Some(&session)),
+            json!({
+                "status": "resolved",
+                "role": "coder",
+                "lane": { "kind": "worktree", "worktreePath": "/repo/wt" },
+                "projectControl": false
+            })
+        );
+    }
+
+    #[test]
+    fn supervisor_agent_projects_to_supervisor_lane() {
+        let session = json!({
+            "id": "scribe-1",
+            "scribe": true,
+            "worktreePath": "/repo/wt"
+        });
+
+        assert_eq!(agent_role(Some(&session)), "scribe");
+        assert_eq!(agent_lane(Some(&session)), json!({ "kind": "supervisor" }));
+        assert_eq!(
+            agent_role_state(Some(&session)),
+            json!({
+                "status": "resolved",
+                "role": "scribe",
+                "lane": { "kind": "supervisor" },
+                "projectControl": true
+            })
+        );
     }
 }

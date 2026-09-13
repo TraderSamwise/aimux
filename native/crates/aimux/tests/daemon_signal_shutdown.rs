@@ -75,6 +75,68 @@ fn daemon_sigterm_cleans_registration_and_project_service_children() {
     }
 }
 
+#[test]
+fn daemon_sighup_preserves_project_service_children_for_restart() {
+    let isolation = TestIsolation::new("daemon-sighup-preserve-services");
+    let project_root = isolation.root().join("repo");
+    fs::create_dir_all(&project_root).expect("create project root");
+    let git_init = Command::new("git")
+        .arg("init")
+        .arg("--quiet")
+        .arg(&project_root)
+        .output()
+        .expect("run git init");
+    assert!(
+        git_init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&git_init.stderr)
+    );
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_aimux"));
+    let mut daemon = isolation
+        .apply_to_command(&mut daemon)
+        .args(["daemon", "run"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_daemon_health(isolation.daemon_port());
+
+    let mut ps = Command::new(env!("CARGO_BIN_EXE_aimux"));
+    let ps = isolation
+        .apply_to_command(&mut ps)
+        .args(["ps", "--project"])
+        .arg(&project_root)
+        .arg("--json")
+        .output()
+        .expect("run aimux ps");
+    assert!(
+        ps.status.success(),
+        "aimux ps failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&ps.stdout),
+        String::from_utf8_lossy(&ps.stderr)
+    );
+    let service_pids = wait_for_project_service_pids(&isolation);
+    assert!(
+        !service_pids.is_empty(),
+        "daemon should materialize a project service before restart signal shutdown"
+    );
+
+    signal_pid(daemon.id(), libc::SIGHUP);
+    wait_for_child_exit(&mut daemon, "daemon");
+
+    assert_daemon_info_cleared(isolation.aimux_home().join("daemon/daemon.json"));
+    for pid in &service_pids {
+        assert!(
+            pid_alive(*pid),
+            "daemon SIGHUP restart handoff must leave project service pid {pid} alive"
+        );
+    }
+    for pid in service_pids {
+        signal_pid(pid, libc::SIGTERM);
+    }
+}
+
 fn wait_for_daemon_health(port: u16) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {

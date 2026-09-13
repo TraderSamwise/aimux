@@ -8,6 +8,7 @@ use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::daemon_state::load_metadata_state;
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::expose_pane_output_tap::EXPOSE_PANE_TAP_MAX_BYTES;
+use crate::loop_watcher::clear_loop_alert_pause_for_work;
 use crate::osc_notifications::{OscNotificationOutput, has_osc_start};
 use crate::project_api_contract::routes;
 use crate::remote_access::{RemoteActor, RemoteActorRole, parse_remote_actor};
@@ -1406,6 +1407,12 @@ fn input_live_pane_route(
         runtime.agent_input_window_activity(&window_id)
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
+        return json_error(
+            500,
+            format!("could not auto-unpause loop alerts for {session_id}: {error}"),
+        );
+    }
     if let AgentInputDeliveryDecision::Hold {
         reason,
         quiet_for_ms,
@@ -1724,6 +1731,12 @@ async fn input_live_pane_route_async(
         tmux_agent_input_window_activity_async(&window_id, TMUX_COMMAND_TIMEOUT).await
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
+        return json_error(
+            500,
+            format!("could not auto-unpause loop alerts for {session_id}: {error}"),
+        );
+    }
     if let AgentInputDeliveryDecision::Hold {
         reason,
         quiet_for_ms,

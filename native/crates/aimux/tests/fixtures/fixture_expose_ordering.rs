@@ -140,6 +140,23 @@ fn item(value: &Value) -> SwitchableAgentItem {
         recent_rank: value["recentRank"]
             .as_i64()
             .unwrap_or(9_007_199_254_740_991),
+        role: value
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("coder")
+            .to_owned(),
+        lane: value
+            .get("lane")
+            .cloned()
+            .unwrap_or_else(|| json!({ "kind": "worktree" })),
+        role_state: value.get("roleState").cloned().unwrap_or_else(|| {
+            json!({
+                "status": "resolved",
+                "role": value.get("role").and_then(Value::as_str).unwrap_or("coder"),
+                "lane": value.get("lane").cloned().unwrap_or_else(|| json!({ "kind": "worktree" })),
+                "projectControl": value.get("projectControl").and_then(Value::as_bool).unwrap_or(false)
+            })
+        }),
         overseer: value["overseer"].as_bool().unwrap_or_default(),
         scribe: value["scribe"].as_bool().unwrap_or_default(),
         alive: value["alive"].as_bool().unwrap_or_default(),

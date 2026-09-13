@@ -67,6 +67,8 @@ pub enum CoreCliOperation {
     LifecycleFork,
     LoopAdd,
     LoopRemove,
+    LoopPause,
+    LoopUnpause,
     LoopList,
     LoopDone,
     LoopBlock,
@@ -757,7 +759,7 @@ where
                 CoreCliFallback::None,
             )
         }
-        ("loop", "add" | "remove") => {
+        ("loop", "add" | "remove" | "pause" | "unpause") => {
             let parsed = parse_core_loop_mutation_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
@@ -777,13 +779,21 @@ where
             if let Some(goal) = parsed.goal {
                 body.insert("goal".into(), Value::String(goal));
             }
-            let (operation, route) = if parsed.subcommand == "add" {
-                (CoreCliOperation::LoopAdd, CORE_API_ROUTES.loop_add_text)
-            } else {
-                (
+            if let Some(reason) = parsed.reason {
+                body.insert("reason".into(), Value::String(reason));
+            }
+            let (operation, route) = match parsed.subcommand.as_str() {
+                "add" => (CoreCliOperation::LoopAdd, CORE_API_ROUTES.loop_add_text),
+                "remove" => (
                     CoreCliOperation::LoopRemove,
                     CORE_API_ROUTES.loop_remove_text,
-                )
+                ),
+                "pause" => (CoreCliOperation::LoopPause, CORE_API_ROUTES.loop_pause_text),
+                "unpause" => (
+                    CoreCliOperation::LoopUnpause,
+                    CORE_API_ROUTES.loop_unpause_text,
+                ),
+                _ => unreachable!("parser only accepts known loop mutation subcommands"),
             };
             (
                 operation,

@@ -34,7 +34,6 @@
     "dev:gui:android": "aimux daemon ensure && yarn --cwd app dev:android:local",
     "dev:gui:android:relay": "aimux daemon ensure && yarn --cwd app dev:android:relay",
     "dev:gui:relay": "yarn dev:gui:web:relay",
-    "dev:daemon": "aimux daemon restart",
     "start": "./bin/aimux",
     "test": "./scripts/captest.mjs vitest run",
     "test:watch": "./scripts/captest.mjs vitest",

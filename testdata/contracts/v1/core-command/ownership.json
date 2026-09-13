@@ -331,6 +331,7 @@
           { "command": "task assign <description>", "shimNeedle": "/core/task/assign-text" },
           { "command": "task accept <taskId>", "shimNeedle": "/core/task/accept-text" },
           { "command": "task block <taskId>", "shimNeedle": "/core/task/block-text" },
+          { "command": "task cancel <taskId>", "shimNeedle": "/core/task/cancel-text" },
           { "command": "task complete <taskId>", "shimNeedle": "/core/task/complete-text" },
           { "command": "task reopen <taskId>", "shimNeedle": "/core/task/reopen-text" },
           { "command": "review approve <taskId>", "shimNeedle": "/core/review/approve-text" },

@@ -804,6 +804,9 @@ pub fn task_mutation_text_route(
             .then(|| optional_string(route_url, body, "result"))
             .flatten()
     });
+    if input.action == "task cancel" && body_text.is_none() {
+        return text_error(400, "Error: task cancel requires a reason");
+    }
     let mut payload = Map::new();
     payload.insert("taskId".into(), Value::String(task_id));
     payload.insert(

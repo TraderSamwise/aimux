@@ -205,7 +205,8 @@ fn agent_stop_reports_tmux_kill_failure_without_taking_session_offline() {
     let project = temp_project("agent-stop-kill-failure");
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@agent"]);
     let mut runtime = FakeLifecycleRuntime {
         kill_window_result: Some(Err("tmux server refused kill-window".into())),
         ..Default::default()
@@ -228,6 +229,70 @@ fn agent_stop_reports_tmux_kill_failure_without_taking_session_offline() {
     assert_eq!(runtime.killed, vec!["@agent"]);
     let topology = read_topology(&state_dir);
     assert_eq!(session(&topology, "codex-live")["status"], "running");
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["targetKind"], "agent");
+    assert_eq!(failures[0]["operation"], "agent.stop");
+    assert_eq!(failures[0]["targetId"], "codex-live");
+    assert_eq!(failures[0]["title"], "Failed to stop agent");
+    assert_eq!(
+        failures[0]["message"],
+        "tmux kill-window failed for session \"codex-live\": tmux server refused kill-window"
+    );
+    let desktop_state = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+    assert_eq!(desktop_state.status, 200);
+    let desktop_failures = desktop_state.body["operationFailures"]
+        .as_array()
+        .expect("desktop-state operation failures");
+    assert!(
+        desktop_failures.iter().any(|failure| {
+            failure["operation"] == "agent.stop" && failure["targetId"] == "codex-live"
+        }),
+        "stop failure must reach desktop-state operationFailures: {desktop_failures:#?}"
+    );
+    let desktop_session = desktop_state.body["sessions"]
+        .as_array()
+        .expect("desktop-state sessions")
+        .iter()
+        .find(|session| session["id"] == "codex-live")
+        .expect("desktop-state session");
+    assert_eq!(desktop_session["status"], "running");
+    let snapshot: DesktopStateSnapshot =
+        serde_json::from_value(desktop_state.body).expect("desktop-state snapshot");
+    let rendered = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("codex-live"),
+        selected_service_id: None,
+        focused_worktree_path: Some(project.to_string_lossy().as_ref()),
+        runtime_label: Some("native"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&rendered.frame);
+    assert!(plain.contains("FAILED OPERATIONS"));
+    assert!(plain.contains("Failed to stop agent"));
+    let diagnostics = context
+        .lifecycle_mutations
+        .diagnostics(&project.to_string_lossy());
+    assert_eq!(diagnostics["telemetry"]["failed"], 1);
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 0);
+    assert!(
+        diagnostics["telemetry"]["lastError"]
+            .as_str()
+            .unwrap()
+            .contains("tmux kill-window failed for session \"codex-live\"")
+    );
     assert_eq!(
         get_prompt_context_text(&state_dir, "codex-live"),
         Some("form=event".to_owned())
@@ -441,7 +506,6 @@ fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
         focused_worktree_path: Some(project.to_string_lossy().as_ref()),
         runtime_label: Some("native"),
         version: Some("local"),
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -877,6 +941,33 @@ fn default_scribe_startup_keeps_existing_live_scribe_without_duplicate_window() 
     assert!(runtime.created.is_empty());
     let saved = load_metadata_state(&state_dir);
     assert_eq!(saved.sessions["existing-scribe"]["scribe"], true);
+    cleanup(project);
+}
+
+#[test]
+fn default_scribe_startup_blocks_when_topology_is_unreadable() {
+    let project = temp_project("default-scribe-unreadable-topology");
+    write_project_scribe_config(&project);
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::write(runtime_topology_path(&state_dir), "not: [valid").unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = ensure_default_scribe_agent(&context, &mut runtime);
+
+    assert_eq!(response["created"], false);
+    assert_eq!(response["reason"], "topology-unreadable");
+    assert!(
+        response["error"]
+            .as_str()
+            .is_some_and(|error| !error.trim().is_empty()),
+        "error should name parse failure, got {response}"
+    );
+    assert!(
+        runtime.created.is_empty(),
+        "unreadable topology must not create a duplicate supervisor"
+    );
     cleanup(project);
 }
 
@@ -1700,6 +1791,14 @@ fn agent_resume_launches_exact_backend_resume_and_updates_topology_metadata() {
             .any(|arg| arg == "AIMUX_SESSION_ID=mock-offline")
     );
     assert!(
+        !created
+            .args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "AIMUX_OVERSEER=1" | "AIMUX_SCRIBE=1")),
+        "ordinary coder resume should not carry supervisor env: {:?}",
+        created.args
+    );
+    assert!(
         created
             .args
             .last()
@@ -1742,6 +1841,85 @@ fn agent_resume_launches_exact_backend_resume_and_updates_topology_metadata() {
         metadata["sessions"]["mock-offline"]["derived"]["activity"],
         "idle"
     );
+    cleanup(project);
+}
+
+#[test]
+fn agent_resume_relaunches_declared_overseer_in_supervisor_lane() {
+    let project = temp_project("agent-resume-overseer");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-overseer",
+            "nodeId": "agent:mock-overseer",
+            "status": "offline",
+            "tool": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "backendSessionId": "backend-123",
+            "worktreePath": "/repo/worktree",
+            "label": "mock overseer",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    std::fs::write(
+        state_dir.join("metadata.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "sessions": {
+                "mock-overseer": {
+                    "overseer": true,
+                    "role": "overseer",
+                    "team": { "role": "overseer", "teamId": "overseer" },
+                    "pendingRelaunchForRole": true,
+                    "effectiveRole": "coder",
+                    "effectiveLane": {
+                        "kind": "worktree",
+                        "worktreePath": "/repo/worktree"
+                    },
+                    "runtimeWorkingDirectory": "/repo/worktree"
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-overseer" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(runtime.created.len(), 1);
+    let created = &runtime.created[0];
+    assert_eq!(created.cwd, project.to_string_lossy());
+    assert!(
+        created.args.iter().any(|arg| arg == "AIMUX_OVERSEER=1"),
+        "missing overseer launch env in {:?}",
+        created.args
+    );
+    let metadata = &runtime.metadata[0].1;
+    assert_eq!(metadata["overseer"], true);
+    assert!(metadata.get("worktreePath").is_none());
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-overseer");
+    assert_eq!(session["role"], "overseer");
+    assert_eq!(session["lane"], json!({ "kind": "supervisor" }));
+    assert!(session.get("worktreePath").is_none());
+    let metadata_state = load_metadata_state(&state_dir);
+    let stored = &metadata_state.sessions["mock-overseer"];
+    assert!(stored.get("pendingRelaunchForRole").is_none());
+    assert!(stored.get("effectiveRole").is_none());
     cleanup(project);
 }
 

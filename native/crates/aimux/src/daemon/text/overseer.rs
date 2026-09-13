@@ -105,11 +105,16 @@ pub fn overseer_clear_text_route(
         Ok(session_id) => session_id,
         Err(response) => return response,
     };
-    let result = runtime.post_project_service_json(
-        &project,
-        project_routes::agents::OVERSEER,
-        json!({ "sessionId": session_id, "active": false }),
-    );
+    let worktree_path =
+        string_param(route_url, body, "worktreePath").filter(|value| !value.is_empty());
+    let mut request = json!({ "sessionId": session_id, "active": false });
+    if let Some(worktree_path) = worktree_path
+        && let Some(request) = request.as_object_mut()
+    {
+        request.insert("worktreePath".into(), Value::String(worktree_path));
+    }
+    let result =
+        runtime.post_project_service_json(&project, project_routes::agents::OVERSEER, request);
     let (json, project_root) = match unwrap_project_result(result) {
         Ok(result) => result,
         Err(response) => return response,

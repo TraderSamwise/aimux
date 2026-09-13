@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    104,
+    106,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -60,7 +60,9 @@ define_string_contract!(
         loop_add_text => ("loopAddText", "/core/loop/add-text"),
         loop_block_text => ("loopBlockText", "/core/loop/block-text"),
         loop_done_text => ("loopDoneText", "/core/loop/done-text"),
+        loop_pause_text => ("loopPauseText", "/core/loop/pause-text"),
         loop_remove_text => ("loopRemoveText", "/core/loop/remove-text"),
+        loop_unpause_text => ("loopUnpauseText", "/core/loop/unpause-text"),
         handoff_accept_text => ("handoffAcceptText", "/core/handoff/accept-text"),
         handoff_complete_text => ("handoffCompleteText", "/core/handoff/complete-text"),
         handoff_send_text => ("handoffSendText", "/core/handoff/send-text"),

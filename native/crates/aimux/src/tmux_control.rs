@@ -170,6 +170,7 @@ struct TmuxControl {
     dashboard_session: String,
     dashboard_index: String,
     dashboard_window_id: String,
+    dashboard_candidate_missing: bool,
     control_failure_reason: Option<String>,
     control_failure_exits_nonzero: bool,
     debug_log: PathBuf,
@@ -186,6 +187,7 @@ impl TmuxControl {
             dashboard_session: String::new(),
             dashboard_index: String::new(),
             dashboard_window_id: String::new(),
+            dashboard_candidate_missing: false,
             control_failure_reason: None,
             control_failure_exits_nonzero: false,
             debug_log: debug_root.join("aimux-debug.log"),
@@ -493,9 +495,15 @@ impl TmuxControl {
             ));
         }
         if attempted_endpoint {
-            self.show_local_message(
-                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't contact project service endpoint",
-            );
+            if self.dashboard_candidate_missing {
+                self.show_local_message(
+                    "#[fg=colour203,bold]aimux#[default] dashboard reload failed - dashboard window missing",
+                );
+            } else {
+                self.show_local_message(
+                    "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't contact project service endpoint",
+                );
+            }
         } else {
             self.show_local_message(
                 "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service endpoint unavailable",
@@ -1414,8 +1422,10 @@ impl TmuxControl {
 
     fn dashboard_candidate_needs_reload(&mut self) -> bool {
         if !self.find_dashboard_candidate() {
+            self.dashboard_candidate_missing = true;
             return true;
         }
+        self.dashboard_candidate_missing = false;
         let session = self.dashboard_session.clone();
         let index = self.dashboard_index.clone();
         let Some(row) = self.dashboard_row(&session, &index) else {

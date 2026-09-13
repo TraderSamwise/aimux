@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use crate::config::{load_config_for_known_project_root, load_config_for_project};
 use crate::daemon_state::load_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
+use crate::project_service::agent_roles::sync_agent_role_registry_session_from_metadata;
 use crate::project_service::coordination_mutations::derive_runtime_exchange_indexes;
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::operation_failures::{
@@ -20,7 +21,9 @@ use crate::session_bootstrap::{
     build_tool_switch_continuity_preamble, overseer_team, read_fork_source_snapshot, scribe_team,
     seed_fork_artifacts,
 };
-use crate::team_contract::{is_overseer_session, is_scribe_session};
+use crate::team_contract::{
+    is_overseer_session, is_scribe_session, session_with_stored_control_flags,
+};
 use crate::tmux::project_session;
 use crate::tool_capabilities::restart_restore_warning;
 use crate::user_facing_errors::user_facing_error_message;
@@ -34,7 +37,7 @@ use super::agent_session_launch::{
 };
 use super::agent_topology::{
     agent_window_metadata, apply_agent_window_policy, clear_session_derived_metadata,
-    settle_running_activity_to_idle, upsert_agent_topology,
+    settle_pending_role_relaunch, settle_running_activity_to_idle, upsert_agent_topology,
 };
 use super::ids::{now_iso, random_id};
 use super::json_helpers::*;
@@ -866,7 +869,7 @@ pub(super) fn resume_agent_session(
         return json_error(404, format!("Session \"{session_id}\" not found"));
     }
 
-    let session = topology_session_to_session_state(&topology_session, &topology);
+    let mut session = topology_session_to_session_state(&topology_session, &topology);
     let project_root = context.project_root().to_string_lossy().into_owned();
     let config = load_config_for_project(context.project_root());
     let Some(tool_key) = tool_config_key_for_session(&session) else {
@@ -882,6 +885,24 @@ pub(super) fn resume_agent_session(
     let command = trimmed_string(session.get("command")).unwrap_or_else(|| tool_key.clone());
     let backend_session_id = trimmed_string(session.get("backendSessionId"));
     let metadata_state = load_metadata_state(&project_state_dir);
+    if let Some(stored_session) = metadata_state.sessions.get(&session_id) {
+        session = session_with_stored_control_flags(&session, Some(stored_session));
+        if let (Some(session), Some(stored)) = (session.as_object_mut(), stored_session.as_object())
+        {
+            for key in [
+                "team",
+                "role",
+                "pendingRelaunchForRole",
+                "effectiveRole",
+                "effectiveLane",
+                "runtimeWorkingDirectory",
+            ] {
+                if let Some(value) = stored.get(key).cloned() {
+                    session.insert(key.into(), value);
+                }
+            }
+        }
+    }
     let derived = metadata_state
         .sessions
         .get(&session_id)
@@ -911,11 +932,21 @@ pub(super) fn resume_agent_session(
     } else if use_backend_resume {
         settle_running_activity_to_idle(&project_state_dir, &session_id);
     }
-    let worktree_path = trimmed_string(session.get("worktreePath"));
+    let declared_supervisor =
+        is_overseer_session(Some(&session)) || is_scribe_session(Some(&session));
+    let worktree_path = if declared_supervisor {
+        if let Some(session) = session.as_object_mut() {
+            session.remove("worktreePath");
+        }
+        None
+    } else {
+        trimmed_string(session.get("worktreePath"))
+    };
     let launch_cwd = worktree_path
         .clone()
         .unwrap_or_else(|| project_root.clone());
     let label = trimmed_string(session.get("label")).unwrap_or_else(|| command.clone());
+    let launch_env = supervisor_launch_env(&session);
     let (launch_command, final_args) = match wrap_agent_launch(AgentLaunchWrapInput {
         project_state_dir: &project_state_dir,
         session_id: &session_id,
@@ -925,7 +956,7 @@ pub(super) fn resume_agent_session(
         backend_session_id: backend_session_id.as_deref().filter(|_| use_backend_resume),
         tool_config,
         project_root: &project_root,
-        launch_env: Vec::new(),
+        launch_env,
     }) {
         Ok(wrapped) => wrapped,
         Err(error) => return json_user_facing_error(500, &error),
@@ -975,12 +1006,24 @@ pub(super) fn resume_agent_session(
     {
         return json_error(500, error);
     }
+    settle_pending_role_relaunch(&project_state_dir, &session_id);
+    let _ = sync_agent_role_registry_session_from_metadata(&project_state_dir, &session_id);
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "running" }),
         operation,
         "agent",
         Some(&session_id),
     )
+}
+
+fn supervisor_launch_env(session: &Value) -> Vec<(String, String)> {
+    if is_overseer_session(Some(session)) {
+        vec![("AIMUX_OVERSEER".into(), "1".into())]
+    } else if is_scribe_session(Some(session)) {
+        vec![("AIMUX_SCRIBE".into(), "1".into())]
+    } else {
+        Vec::new()
+    }
 }
 
 fn json_user_facing_error(status: u16, error: &str) -> ProjectServiceDispatchResponse {

@@ -141,6 +141,7 @@ import {
 } from "@/lib/chat-loading";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import {
+  terminalScrollStateAfterUserScroll,
   terminalVisibleOutputForLiveChange,
   terminalVisibleOutputForPinned,
 } from "@/lib/terminal-visible-output";
@@ -2552,6 +2553,7 @@ export default function ChatScreen() {
                     <AgentTerminalOutputPane
                       bottomContentInset={chatBottomContentReserve}
                       dividerWidth={chatDividerWidth}
+                      onChromeVisibleChange={handleChatChromeVisibleChange}
                       sessionKey={sessionKey}
                       topContentInset={chatTopContentReserve}
                     />
@@ -2639,6 +2641,7 @@ const TERMINAL_OUTPUT_MAX_LINES = 500;
 type AgentTerminalOutputPaneProps = {
   bottomContentInset: number;
   dividerWidth: number;
+  onChromeVisibleChange: (visible: boolean) => void;
   sessionKey: string;
   topContentInset: number;
 };
@@ -2646,6 +2649,7 @@ type AgentTerminalOutputPaneProps = {
 const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   bottomContentInset,
   dividerWidth,
+  onChromeVisibleChange,
   sessionKey,
   topContentInset,
 }: AgentTerminalOutputPaneProps) {
@@ -2677,6 +2681,7 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   );
   const [visibleOutput, setVisibleOutput] = useState(liveOutput);
   const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+  const terminalScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
   const terminalScrollFrameRef = useRef<number | null>(null);
   const terminalInitialLayoutKeyRef = useRef<string | null>(null);
   const visibleLines = visibleOutput.sessionKey === sessionKey ? visibleOutput.lines : liveLines;
@@ -2717,9 +2722,11 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
 
   useEffect(() => {
     terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+    terminalScrollChromeRef.current = createChatScrollChromeState();
     terminalInitialLayoutKeyRef.current = null;
+    onChromeVisibleChange(true);
     executeTerminalScrollCommand(chatCommandForNavigationFocus());
-  }, [executeTerminalScrollCommand, sessionKey]);
+  }, [executeTerminalScrollCommand, onChromeVisibleChange, sessionKey]);
 
   useEffect(() => {
     const next = terminalVisibleOutputForLiveChange(visibleOutput, {
@@ -2756,16 +2763,25 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
         viewportHeight: event.nativeEvent.layoutMeasurement.height,
       };
       const previousIntent = terminalScrollPolicyRef.current.intent;
-      const nextPolicy = chatPolicyAfterUserScroll(terminalScrollPolicyRef.current, metrics);
+      const nextScroll = terminalScrollStateAfterUserScroll({
+        chrome: terminalScrollChromeRef.current,
+        metrics,
+        policy: terminalScrollPolicyRef.current,
+      });
+      const nextPolicy = nextScroll.policy;
       if (nextPolicy.intent === "reading") {
         cancelPendingTerminalScroll();
       }
       terminalScrollPolicyRef.current = nextPolicy;
+      if (nextScroll.chrome !== terminalScrollChromeRef.current) {
+        terminalScrollChromeRef.current = nextScroll.chrome;
+        onChromeVisibleChange(nextScroll.chrome.visible);
+      }
       if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
         setVisibleOutput(liveOutput);
       }
     },
-    [cancelPendingTerminalScroll, liveOutput],
+    [cancelPendingTerminalScroll, liveOutput, onChromeVisibleChange],
   );
 
   return (

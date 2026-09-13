@@ -59,8 +59,10 @@ export const PROJECT_API_ROUTES = {
     migrate: "/agents/migrate",
     recordBackendSession: "/agents/record-backend-session",
     loop: "/agents/loop",
+    loopAlerts: "/agents/loop-alerts",
     overseer: "/agents/overseer",
     scribe: "/agents/scribe",
+    watch: "/agents/watch",
     teammates: "/agents/teammates",
     createTeammate: "/agents/teammates/create",
     createTeammateTask: "/agents/teammates/tasks",
@@ -307,8 +309,10 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.agents.migrate:
     case PROJECT_API_ROUTES.agents.recordBackendSession:
     case PROJECT_API_ROUTES.agents.loop:
+    case PROJECT_API_ROUTES.agents.loopAlerts:
     case PROJECT_API_ROUTES.agents.overseer:
     case PROJECT_API_ROUTES.agents.scribe:
+    case PROJECT_API_ROUTES.agents.watch:
     case PROJECT_API_ROUTES.livePane.interrupt:
     case PROJECT_API_ROUTES.agents.createTeammate:
     case PROJECT_API_ROUTES.agents.stopTeammate:
@@ -380,6 +384,53 @@ export interface ProjectUpdateEvent {
 export interface ProjectApiOk {
   ok: boolean;
 }
+
+export type AgentSupervisorRole = "overseer" | "scribe";
+export type AgentRole = "coder" | AgentSupervisorRole;
+
+export type AgentLane =
+  | {
+      kind: "worktree";
+      worktreePath?: string;
+      worktreeName?: string;
+      branch?: string;
+    }
+  | {
+      kind: "supervisor";
+    }
+  | {
+      kind: "unknown";
+      reason: string;
+      error?: string;
+    };
+
+export type AgentRoleState =
+  | {
+      status: "resolved";
+      role: AgentRole;
+      lane: Exclude<AgentLane, { kind: "unknown" }>;
+      projectControl: boolean;
+      supervisorRole?: AgentSupervisorRole;
+    }
+  | {
+      status: "pending-relaunch";
+      role: AgentRole;
+      lane: Exclude<AgentLane, { kind: "unknown" }>;
+      projectControl: boolean;
+      declaredRole: AgentRole;
+      declaredLane: Exclude<AgentLane, { kind: "unknown" }>;
+      effectiveRole: AgentRole;
+      effectiveLane: AgentLane;
+      runtimeWorkingDirectory?: string;
+    }
+  | {
+      status: "unknown";
+      reason: string;
+      error?: string;
+      role?: AgentRole;
+      lane?: AgentLane;
+      projectControl?: boolean;
+    };
 
 export type DaemonProjectReadError =
   | string
@@ -1010,6 +1061,24 @@ export interface TaskLifecycleInput {
   body?: string;
 }
 
+export interface TaskCancelInput extends TaskLifecycleInput {
+  body: string;
+}
+
+export type TaskStatus =
+  | "pending"
+  | "assigned"
+  | "in_progress"
+  | "blocked"
+  | "done"
+  | "complete"
+  | "completed"
+  | "closed"
+  | "failed"
+  | "canceled"
+  | "cancelled"
+  | "abandoned";
+
 export interface ThreadSummaryResponse {
   thread: { id: string; title?: string; status?: string; kind?: string };
   latestMessage?: { body?: string; ts?: string; from?: string; kind?: string };
@@ -1019,7 +1088,7 @@ export interface ThreadSummaryResponse {
 export interface TaskSummaryResponse {
   id: string;
   description?: string;
-  status?: string;
+  status?: TaskStatus;
   assignedTo?: string;
   assignedBy?: string;
   assignee?: string;
@@ -1247,7 +1316,14 @@ export interface AgentListItem {
   toolConfigKey?: string;
   command?: string;
   backendSessionId?: string;
-  role?: string;
+  role?: AgentRole;
+  lane?: AgentLane;
+  roleState?: AgentRoleState;
+  pendingRelaunchForRole?: boolean;
+  effectiveRole?: AgentRole;
+  effectiveLane?: AgentLane;
+  runtimeWorkingDirectory?: string;
+  projectControl?: boolean;
   status?: string;
   restoreState?: string;
   restoreBlockedReason?: string;
@@ -1274,6 +1350,7 @@ export interface SpawnAgentInput {
   worktreePath?: string;
   open?: boolean;
   launchOverride?: unknown;
+  role?: AgentRole;
   overseer?: boolean;
   scribe?: boolean;
 }
@@ -1350,21 +1427,86 @@ export interface AgentLoopResponse extends ProjectApiOk {
 
 export interface AgentOverseerInput extends AgentSessionInput {
   active: boolean;
+  worktreePath?: string;
+  releaseBindings?: boolean;
 }
 
-export interface AgentOverseerResponse extends ProjectApiOk {
-  sessionId: string;
-  overseer: boolean;
-}
+export type AgentRoleMutationRefusalReason =
+  | "unsupported-role"
+  | "target-worktree-required"
+  | "active-watch-bindings"
+  | "metadata-unavailable"
+  | "role-registry-unavailable";
+
+export type AgentOverseerResponse =
+  | (ProjectApiOk & {
+      ok: true;
+      sessionId: string;
+      overseer: boolean;
+    })
+  | {
+      ok: false;
+      sessionId: string;
+      role: "overseer";
+      reason: AgentRoleMutationRefusalReason;
+      error: string;
+      details?: unknown;
+    };
 
 export interface AgentScribeInput extends AgentSessionInput {
   active: boolean;
+  worktreePath?: string;
+  releaseBindings?: boolean;
 }
 
-export interface AgentScribeResponse extends ProjectApiOk {
-  sessionId: string;
-  scribe: boolean;
+export type AgentScribeResponse =
+  | (ProjectApiOk & {
+      ok: true;
+      sessionId: string;
+      scribe: boolean;
+    })
+  | {
+      ok: false;
+      sessionId: string;
+      role: "scribe";
+      reason: AgentRoleMutationRefusalReason;
+      error: string;
+      details?: unknown;
+    };
+
+export interface AgentWatchInput {
+  overseerSessionId: string;
+  watchedSessionId: string;
+  active: boolean;
 }
+
+export type AgentWatchRefusalReason =
+  | "invalid-request"
+  | "session-not-found"
+  | "overseer-required"
+  | "watched-agent-must-be-coder"
+  | "already-watched"
+  | "role-registry-unavailable"
+  | "metadata-unavailable"
+  | "lifecycle-mutation-unavailable";
+
+export type AgentWatchResponse =
+  | {
+      ok: true;
+      active: boolean;
+      overseerSessionId: string;
+      watchedSessionId: string;
+      watchedSessionIds: string[];
+    }
+  | {
+      ok: false;
+      reason: AgentWatchRefusalReason;
+      error: string;
+      overseerSessionId?: string;
+      watchedSessionId?: string;
+      currentOverseerSessionId?: string;
+      details?: unknown;
+    };
 
 export type WorkOutlineStatus = "active" | "done" | "superseded" | "stale";
 export type WorkOutlineSource = "agent" | "scribe" | "system" | "human";
@@ -1514,6 +1656,9 @@ export interface ExposeChatPreview {
 }
 
 export interface SwitchableAgentItem extends Record<string, unknown> {
+  role?: AgentRole;
+  lane?: AgentLane;
+  roleState?: AgentRoleState;
   previewSnapshot?: ExposePreviewSnapshot;
   previewCapture?: PreviewCaptureMarker;
   chatPreview?: ExposeChatPreview;

@@ -1009,7 +1009,6 @@ fn enter_from_worktree_level_renders_agent_details_rail() {
         focused_worktree_path: controller.navigation.focused_worktree_path(&snapshot),
         runtime_label: Some("native"),
         version: Some("local"),
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1160,6 +1159,22 @@ fn shifted_o_opens_overseer_overlay_and_overlay_keys_follow_node_actions() {
             "action": "remove",
             "source": "dashboard",
             "updatedBy": "dashboard",
+        })
+    );
+
+    let DashboardControllerEffect::Request(pause_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('p'))
+    else {
+        panic!("expected global loop alert pause request");
+    };
+    assert_eq!(pause_request.path, routes::agents::LOOP_ALERTS);
+    assert_eq!(
+        pause_request.body,
+        json!({
+            "global": true,
+            "paused": true,
+            "updatedBy": "dashboard",
+            "reason": "human paused loop alerts"
         })
     );
 

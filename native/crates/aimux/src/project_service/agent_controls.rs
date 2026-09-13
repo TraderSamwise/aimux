@@ -1,11 +1,22 @@
 use serde_json::{Map, Value, json};
+use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
-use crate::daemon_state::mutate_metadata_state;
+use crate::daemon_state::{MetadataState, metadata_state_path, mutate_metadata_state};
+use crate::loop_watcher::{
+    LoopAlertPauseProvenance, load_loop_watcher_state, loop_pause_key_from_loop_metadata,
+    loop_watcher_state_path, save_loop_watcher_state,
+};
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
 
+use super::agent_roles::{
+    SupervisorRoleError, SupervisorRoleOptions, WatchBindingError, bind_watch,
+    set_supervisor_role_with_options,
+};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::lifecycle_mutation_queue::{LifecycleMutationError, LifecycleTransitionInput};
 use super::metadata::{update_session_metadata, update_session_metadata_at};
 use super::router::ProjectServiceRequestContext;
 
@@ -19,6 +30,7 @@ const SESSION_LOOP_SOURCES: &[&str] = &[
     "unknown",
 ];
 const SESSION_LOOP_ACTIONS: &[&str] = &["add", "remove", "done", "block"];
+const DEFAULT_GLOBAL_LOOP_ALERT_PAUSE_MS: i64 = 30 * 60 * 1000;
 
 pub fn route_agent_control_request(
     context: &ProjectServiceRequestContext,
@@ -33,10 +45,138 @@ pub fn route_agent_control_request(
     let body = body.unwrap_or(&Value::Null);
     match pathname {
         routes::agents::LOOP => Some(route_loop(context, body)),
+        routes::agents::LOOP_ALERTS => Some(route_loop_alerts(context, body)),
         routes::agents::OVERSEER => Some(route_overseer(context, body)),
         routes::agents::SCRIBE => Some(route_scribe(context, body)),
+        routes::agents::WATCH => Some(route_watch(context, body)),
         _ => None,
     }
+}
+
+fn route_loop_alerts(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    if body.get("global").and_then(Value::as_bool) == Some(true) {
+        return route_global_loop_alerts(context, body);
+    }
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let Some(paused) = body.get("paused").and_then(Value::as_bool) else {
+        return json_error(400, "paused (boolean) is required");
+    };
+    let state_path = loop_watcher_state_path(context.project_state_dir());
+    let mut watcher = match load_loop_watcher_state(&state_path) {
+        Ok(watcher) => watcher,
+        Err(error) => return json_error(500, error),
+    };
+
+    if paused {
+        let metadata = match load_metadata_state_strict(&context.project_state_dir()) {
+            Ok(metadata) => metadata,
+            Err(error) => return metadata_unavailable_error(error),
+        };
+        let Some(loop_meta) = metadata
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.get("loop"))
+        else {
+            return json_error(
+                409,
+                format!("cannot pause loop alerts for {session_id}: session is not in a loop"),
+            );
+        };
+        let Some(loop_key) = loop_pause_key_from_loop_metadata(loop_meta) else {
+            return json_error(
+                409,
+                format!("cannot pause loop alerts for {session_id}: loop is not active"),
+            );
+        };
+        let pause = watcher.pause_loop_alerts(
+            &session_id,
+            loop_key,
+            super::scheduler::scheduler_now_ms(),
+            LoopAlertPauseProvenance {
+                paused_by: body_trimmed_string(body, "updatedBy"),
+                paused_by_session_id: body_trimmed_string(body, "updatedBySessionId"),
+                paused_by_role: body_trimmed_string(body, "updatedByRole"),
+                reason: body_trimmed_string(body, "reason"),
+            },
+        );
+        if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
+            return json_error(500, error);
+        }
+        return ProjectServiceDispatchResponse::json(
+            200,
+            json!({ "ok": true, "sessionId": session_id, "paused": true, "pause": pause }),
+        );
+    }
+
+    let cleared = watcher.unpause_loop_alerts(&session_id);
+    if cleared.is_some()
+        && let Err(error) = save_loop_watcher_state(&state_path, &watcher)
+    {
+        return json_error(500, error);
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({ "ok": true, "sessionId": session_id, "paused": false, "cleared": cleared.is_some() }),
+    )
+}
+
+fn route_global_loop_alerts(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(paused) = body.get("paused").and_then(Value::as_bool) else {
+        return json_error(400, "paused (boolean) is required");
+    };
+    let now_ms = super::scheduler::scheduler_now_ms();
+    let state_path = loop_watcher_state_path(context.project_state_dir());
+    let mut watcher = match load_loop_watcher_state(&state_path) {
+        Ok(watcher) => watcher,
+        Err(error) => return json_error(500, error),
+    };
+    let pause = if paused {
+        let expires_at_ms = body
+            .get("expiresAtMs")
+            .and_then(Value::as_i64)
+            .unwrap_or_else(|| {
+                let duration_ms = body
+                    .get("durationMs")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(DEFAULT_GLOBAL_LOOP_ALERT_PAUSE_MS);
+                now_ms.saturating_add(duration_ms.max(1))
+            });
+        watcher.set_global_pause(
+            now_ms,
+            expires_at_ms,
+            LoopAlertPauseProvenance {
+                paused_by: body_trimmed_string(body, "updatedBy"),
+                paused_by_session_id: body_trimmed_string(body, "updatedBySessionId"),
+                paused_by_role: body_trimmed_string(body, "updatedByRole"),
+                reason: body_trimmed_string(body, "reason"),
+            },
+        );
+        true
+    } else {
+        watcher.clear_global_pause();
+        false
+    };
+    if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
+        return json_error(500, error);
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({
+            "ok": true,
+            "global": true,
+            "paused": pause,
+            "loopAlertState": watcher.loop_alert_state(now_ms)
+        }),
+    )
 }
 
 pub fn set_session_loop_metadata_at(
@@ -398,13 +538,28 @@ fn route_single_project_flag(
     let Some(active) = body.get("active").and_then(Value::as_bool) else {
         return json_error(400, "active (boolean) is required");
     };
-    let result = if active {
-        set_single_project_flag(context, &session_id, key, true)
+    let worktree_path = if active {
+        body_trimmed_string(body, "worktreePath")
     } else {
-        clear_project_flag(context, &session_id, key)
+        match supervisor_demotion_worktree_path(context, body, &session_id) {
+            Ok(worktree_path) => Some(worktree_path),
+            Err(error) => return role_error_response(error, &session_id, key),
+        }
+    };
+    let options = SupervisorRoleOptions {
+        worktree_path,
+        release_bindings: body
+            .get("releaseBindings")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    };
+    let result = if active {
+        set_single_project_flag(context, &session_id, key, true, options)
+    } else {
+        clear_project_flag(context, &session_id, key, options)
     };
     if let Err(error) = result {
-        return json_error(500, error);
+        return role_error_response(error, &session_id, key);
     }
     ProjectServiceDispatchResponse::json(
         200,
@@ -412,23 +567,277 @@ fn route_single_project_flag(
     )
 }
 
+fn supervisor_demotion_worktree_path(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    session_id: &str,
+) -> Result<String, SupervisorRoleError> {
+    if let Some(path) = body_trimmed_string(body, "worktreePath").filter(|value| !value.is_empty())
+    {
+        return Ok(path);
+    }
+    let metadata = load_metadata_state_strict(&context.project_state_dir())
+        .map_err(SupervisorRoleError::Metadata)?;
+    if let Some(path) = metadata
+        .sessions
+        .get(session_id)
+        .and_then(session_demotion_worktree_path)
+    {
+        return Ok(path);
+    }
+    Ok(context.project_root().to_string_lossy().into_owned())
+}
+
+fn session_demotion_worktree_path(session: &Value) -> Option<String> {
+    trimmed_json_string(session.get("worktreePath"))
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let lane = session.get("effectiveLane")?;
+            if lane.get("kind").and_then(Value::as_str) != Some("worktree") {
+                return None;
+            }
+            trimmed_json_string(lane.get("worktreePath")).filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            trimmed_json_string(session.get("runtimeWorkingDirectory"))
+                .filter(|value| !value.is_empty())
+        })
+}
+
 fn set_single_project_flag(
     context: &ProjectServiceRequestContext,
     session_id: &str,
     key: &str,
     value: bool,
-) -> Result<(), String> {
+    options: SupervisorRoleOptions,
+) -> Result<(), SupervisorRoleError> {
     let now = now_iso();
-    set_project_session_flag_at(context.project_state_dir(), session_id, key, value, &now)
+    let transition = LifecycleTransitionInput::new("agent.role", "agent")
+        .with_target_id(Some(session_id.to_owned()));
+    let mut role_error: Option<SupervisorRoleError> = None;
+    match context.lifecycle_mutations.enqueue(Some(transition), || {
+        set_supervisor_role_with_options(
+            context.project_state_dir(),
+            session_id,
+            key,
+            value,
+            &now,
+            options,
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            let message = error.message();
+            role_error = Some(error);
+            message
+        })
+    }) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(role_error.unwrap_or(SupervisorRoleError::Registry(error))),
+        Err(error) => Err(SupervisorRoleError::Registry(error.message())),
+    }
 }
 
 fn clear_project_flag(
     context: &ProjectServiceRequestContext,
     session_id: &str,
     key: &str,
-) -> Result<(), String> {
+    options: SupervisorRoleOptions,
+) -> Result<(), SupervisorRoleError> {
     let now = now_iso();
-    clear_project_flag_at(context.project_state_dir(), session_id, key, &now)
+    let transition = LifecycleTransitionInput::new("agent.role", "agent")
+        .with_target_id(Some(session_id.to_owned()));
+    let mut role_error: Option<SupervisorRoleError> = None;
+    match context.lifecycle_mutations.enqueue(Some(transition), || {
+        set_supervisor_role_with_options(
+            context.project_state_dir(),
+            session_id,
+            key,
+            false,
+            &now,
+            options,
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            let message = error.message();
+            role_error = Some(error);
+            message
+        })
+    }) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(role_error.unwrap_or(SupervisorRoleError::Registry(error))),
+        Err(error) => Err(SupervisorRoleError::Registry(error.message())),
+    }
+}
+
+fn role_error_response(
+    error: SupervisorRoleError,
+    session_id: &str,
+    key: &str,
+) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(
+        error.status(),
+        json!({
+            "ok": false,
+            "sessionId": session_id,
+            "role": key,
+            "reason": error.reason(),
+            "error": error.message(),
+            "details": error.details(),
+        }),
+    )
+}
+
+fn route_watch(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(overseer_session_id) =
+        body_trimmed_string(body, "overseerSessionId").filter(|value| !value.is_empty())
+    else {
+        return watch_refusal(
+            400,
+            "overseerSessionId is required",
+            "invalid-request",
+            json!({}),
+        );
+    };
+    let Some(watched_session_id) =
+        body_trimmed_string(body, "watchedSessionId").filter(|value| !value.is_empty())
+    else {
+        return watch_refusal(
+            400,
+            "watchedSessionId is required",
+            "invalid-request",
+            json!({ "overseerSessionId": overseer_session_id }),
+        );
+    };
+    let Some(active) = body.get("active").and_then(Value::as_bool) else {
+        return watch_refusal(
+            400,
+            "active (boolean) is required",
+            "invalid-request",
+            json!({
+                "overseerSessionId": overseer_session_id,
+                "watchedSessionId": watched_session_id
+            }),
+        );
+    };
+    let now = now_iso();
+    let transition = LifecycleTransitionInput::new("agent.watch", "watch-binding")
+        .with_target_id(Some(watched_session_id.clone()));
+    let mut permit = match context.lifecycle_mutations.begin(Some(transition)) {
+        Ok(permit) => permit,
+        Err(error) => return lifecycle_watch_error_response(error),
+    };
+    let started_at = Instant::now();
+    let metadata = match load_metadata_state_strict(&context.project_state_dir()) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            let error = WatchBindingError::Metadata(error);
+            permit.fail(started_at, error.message());
+            return watch_binding_error_response(error);
+        }
+    };
+    match bind_watch(
+        context.project_state_dir(),
+        &metadata,
+        &overseer_session_id,
+        &watched_session_id,
+        active,
+        &now,
+    ) {
+        Ok(result) => {
+            permit.succeed(started_at);
+            ProjectServiceDispatchResponse::json(
+                200,
+                json!({
+                    "ok": true,
+                    "active": result.active,
+                    "overseerSessionId": result.overseer_session_id,
+                    "watchedSessionId": result.watched_session_id,
+                    "watchedSessionIds": result.watched_session_ids
+                }),
+            )
+        }
+        Err(error) => {
+            permit.fail(started_at, error.message());
+            watch_binding_error_response(error)
+        }
+    }
+}
+
+fn watch_binding_error_response(error: WatchBindingError) -> ProjectServiceDispatchResponse {
+    let mut body = Map::new();
+    body.insert("ok".into(), Value::Bool(false));
+    body.insert("reason".into(), Value::String(error.reason().into()));
+    body.insert("error".into(), Value::String(error.message()));
+    let details = error.details();
+    if let Some(overseer_session_id) = details
+        .get("overseerSessionId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    {
+        body.insert(
+            "currentOverseerSessionId".into(),
+            Value::String(overseer_session_id),
+        );
+    }
+    if let Some(session_id) = details.get("sessionId").and_then(Value::as_str) {
+        body.insert("sessionId".into(), Value::String(session_id.to_owned()));
+    }
+    if let Some(watched_session_id) = details.get("watchedSessionId").and_then(Value::as_str) {
+        body.insert(
+            "watchedSessionId".into(),
+            Value::String(watched_session_id.to_owned()),
+        );
+    }
+    body.insert("details".into(), details);
+    ProjectServiceDispatchResponse::json(error.status(), Value::Object(body))
+}
+
+fn metadata_unavailable_error(error: impl Into<String>) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(
+        500,
+        json!({
+            "ok": false,
+            "reason": "metadata-unavailable",
+            "error": error.into()
+        }),
+    )
+}
+
+fn load_metadata_state_strict(project_state_dir: &Path) -> Result<MetadataState, String> {
+    let path = metadata_state_path(project_state_dir);
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("read metadata state {}: {error}", path.display()))?;
+    serde_json::from_str(&text)
+        .map_err(|error| format!("parse metadata state {}: {error}", path.display()))
+}
+
+fn lifecycle_watch_error_response(error: LifecycleMutationError) -> ProjectServiceDispatchResponse {
+    watch_refusal(
+        error.status(),
+        error.message(),
+        "lifecycle-mutation-unavailable",
+        json!({}),
+    )
+}
+
+fn watch_refusal(
+    status: u16,
+    error: impl Into<String>,
+    reason: impl Into<String>,
+    details: Value,
+) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(
+        status,
+        json!({
+            "ok": false,
+            "reason": reason.into(),
+            "error": error.into(),
+            "details": details
+        }),
+    )
 }
 
 fn provenance(body: &Value) -> Map<String, Value> {
@@ -478,8 +887,11 @@ fn session_loop_action(value: Option<&Value>, fallback: &str) -> String {
 }
 
 fn body_trimmed_string(value: &Value, key: &str) -> Option<String> {
+    trimmed_json_string(value.get(key))
+}
+
+fn trimmed_json_string(value: Option<&Value>) -> Option<String> {
     value
-        .get(key)
         .and_then(Value::as_str)
         .map(str::trim)
         .map(str::to_owned)

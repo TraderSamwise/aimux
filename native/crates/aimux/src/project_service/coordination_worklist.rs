@@ -329,16 +329,20 @@ pub fn build_coordination_thread_entries(
                     .cmp(string_field(right, "ts").unwrap_or(""))
             });
             let latest_message = messages.last().cloned();
-            let pending_deliveries = messages
+            let pending_recipient_groups = if thread_is_terminal(thread) {
+                Vec::new()
+            } else {
+                messages.iter().map(pending_recipients).collect::<Vec<_>>()
+            };
+            let pending_deliveries = pending_recipient_groups
                 .iter()
-                .map(pending_recipients)
                 .map(|recipients| recipients.len())
                 .sum::<usize>();
-            let latest_pending_recipients = messages
+            let latest_pending_recipients = pending_recipient_groups
                 .iter()
                 .rev()
-                .map(pending_recipients)
                 .find(|recipients| !recipients.is_empty())
+                .cloned()
                 .unwrap_or_default();
             let task = string_field(thread, "taskId").and_then(|task_id| {
                 tasks
@@ -898,6 +902,10 @@ fn pending_recipients(message: &Value) -> Vec<String> {
         .into_iter()
         .filter(|recipient| !delivered.iter().any(|delivered| delivered == recipient))
         .collect()
+}
+
+fn thread_is_terminal(thread: &Value) -> bool {
+    matches!(string_field(thread, "status"), Some("done" | "abandoned"))
 }
 
 fn notification_bucket(item: &Value) -> &'static str {

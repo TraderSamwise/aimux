@@ -1505,7 +1505,6 @@ fn render_dashboard_snapshot(
         focused_worktree_path,
         runtime_label: Some("tmux"),
         version: Some(&runtime_version),
-        is_dev_runtime: cfg!(debug_assertions),
         hide_offline_agents: controller.hide_offline_agents,
         hidden_offline_agent_count: context.hidden_offline_agent_count,
         scroll_offset: context.scroll_offset,
@@ -1519,6 +1518,7 @@ fn render_dashboard_snapshot(
             "dashboardOverseerSessionsCache": &overseer_sessions,
             "dashboardSessionsCache": &snapshot.sessions,
             "dashboardTeammatesCache": &snapshot.teammates,
+            "loopAlertState": snapshot.extra.get("loopAlertState"),
         });
         return dashboard_overlay_frame(
             &frame,
@@ -1746,7 +1746,6 @@ fn render_dashboard_subscreen_snapshot(
         details_sidebar_visible: controller.details_sidebar_visible,
         runtime_label: Some("tmux"),
         version: Some(&dashboard_runtime_version()),
-        is_dev_runtime: cfg!(debug_assertions),
     });
     if let Some(reply) = controller.thread_reply.as_ref() {
         let mut output = frame.frame;

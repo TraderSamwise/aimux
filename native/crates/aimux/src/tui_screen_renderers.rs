@@ -777,6 +777,7 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
             )
         },
     );
+    let loop_alert_state = loop_alert_overlay_line(ctx);
     let mut body = vec![
         format!(
             "  {} {}",
@@ -788,6 +789,11 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
             }
         ),
         format!("  {} {overseer_line}", style("Overseer:", Tone::Muted)),
+    ];
+    if let Some(line) = loop_alert_state {
+        body.push(format!("  {} {line}", style("Loop alerts:", Tone::Muted)));
+    }
+    body.extend([
         format!(
             "  {} {} {}",
             style("Watching:", Tone::Muted),
@@ -800,7 +806,7 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
         ),
         format!("  {} {selected_line}", style("Selected:", Tone::Muted)),
         String::new(),
-    ];
+    ]);
     if watched_rows.is_empty() {
         body.push(format!(
             "  {}",
@@ -821,6 +827,7 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
         ),
         ("w", "watch selected"),
         ("u", "unwatch selected"),
+        ("p", "pause alerts"),
     ];
     if live_overseer.is_some() {
         hints.push(("x", "stop overseer"));
@@ -828,6 +835,55 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
     hints.push(("Esc", "back"));
     body.push(build_service_hints(&hints));
     overlay_box("Overseer", body, cols, rows, OverlayVariant::Blue)
+}
+
+fn loop_alert_overlay_line(ctx: &Value) -> Option<String> {
+    let state = ctx.get("loopAlertState")?;
+    if state.get("ok").and_then(Value::as_bool) == Some(false) {
+        return Some(style("unavailable", Tone::Danger));
+    }
+    let global = state.get("globalPause")?;
+    if global.get("enabled").and_then(Value::as_bool) != Some(true) {
+        let paused = state
+            .get("pausedCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if paused > 0 {
+            return Some(format!("{paused} per-agent paused"));
+        }
+        return Some(style("active", Tone::Done));
+    }
+    let buffered = global
+        .get("bufferedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let remaining = global
+        .get("remainingMs")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    Some(format!(
+        "{} - {buffered} buffered - expires in {}",
+        style("paused", Tone::Attention),
+        format_loop_alert_duration_hint(remaining)
+    ))
+}
+
+fn format_loop_alert_duration_hint(ms: i64) -> String {
+    let seconds = (ms.max(0) + 999) / 1000;
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = (seconds + 59) / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    let hours = minutes / 60;
+    let rem = minutes % 60;
+    if rem == 0 {
+        format!("{hours}h")
+    } else {
+        format!("{hours}h{rem}m")
+    }
 }
 
 fn build_overseer_watch_instructions_overlay_output(

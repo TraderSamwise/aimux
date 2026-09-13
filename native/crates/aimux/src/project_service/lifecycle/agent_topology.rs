@@ -2,7 +2,9 @@ use serde_json::{Map, Value, json};
 use std::path::Path;
 
 use crate::daemon_state::mutate_metadata_state;
-use crate::team_contract::project_control_display_role;
+use crate::team_contract::{
+    agent_lane, agent_role, agent_role_state, project_control_display_role,
+};
 use crate::tmux::{MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget};
 
 use super::json_helpers::*;
@@ -37,6 +39,24 @@ pub(super) fn settle_running_activity_to_idle(project_state_dir: &Path, session_
     });
 }
 
+pub(super) fn settle_pending_role_relaunch(project_state_dir: &Path, session_id: &str) {
+    let _ = mutate_metadata_state(project_state_dir, |state| {
+        let Some(Value::Object(session)) = state.sessions.get_mut(session_id) else {
+            return false;
+        };
+        let mut changed = false;
+        for key in [
+            "pendingRelaunchForRole",
+            "effectiveRole",
+            "effectiveLane",
+            "runtimeWorkingDirectory",
+        ] {
+            changed |= session.remove(key).is_some();
+        }
+        changed
+    });
+}
+
 pub(super) fn agent_window_metadata(
     session: &Value,
     session_id: &str,
@@ -60,7 +80,17 @@ pub(super) fn agent_window_metadata(
             Value::String(backend_session_id.to_owned()),
         );
     }
-    for key in ["team", "worktreePath", "label", "headline", "createdAt"] {
+    for key in [
+        "team",
+        "worktreePath",
+        "label",
+        "headline",
+        "createdAt",
+        "role",
+        "overseer",
+        "scribe",
+        "projectControl",
+    ] {
         if let Some(value) = session.get(key).cloned().filter(|value| !value.is_null()) {
             metadata.insert(key.into(), value);
         }
@@ -129,9 +159,12 @@ pub(super) fn upsert_agent_topology(
     node.insert("id".into(), Value::String(node_id.clone()));
     node.insert("rigId".into(), Value::String(rig_id.clone()));
     node.insert("logicalId".into(), Value::String(session_id.clone()));
-    if let Some(role) = project_control_display_role(Some(metadata)) {
-        node.insert("role".into(), Value::String(role.to_owned()));
-    }
+    node.insert(
+        "role".into(),
+        Value::String(agent_role(Some(metadata)).to_owned()),
+    );
+    node.insert("lane".into(), agent_lane(Some(metadata)));
+    node.insert("roleState".into(), agent_role_state(Some(metadata)));
     node.insert(
         "runtime".into(),
         Value::String(
@@ -170,6 +203,12 @@ pub(super) fn upsert_agent_topology(
     session.insert("toolConfigKey".into(), metadata["toolConfigKey"].clone());
     session.insert("command".into(), metadata["command"].clone());
     session.insert("args".into(), metadata["args"].clone());
+    session.insert(
+        "role".into(),
+        Value::String(agent_role(Some(metadata)).to_owned()),
+    );
+    session.insert("lane".into(), agent_lane(Some(metadata)));
+    session.insert("roleState".into(), agent_role_state(Some(metadata)));
     if let Some(backend_session_id) = metadata
         .get("backendSessionId")
         .cloned()

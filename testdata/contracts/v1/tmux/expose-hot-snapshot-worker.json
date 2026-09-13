@@ -15,15 +15,23 @@
       "input": {
         "name": "builds global view from project hot snapshots",
         "projects": [
-          { "id": "proj-a", "name": "a", "path": "/repo/a", "serviceAlive": true },
-          { "id": "proj-b", "name": "b", "path": "/repo/b", "serviceAlive": true }
+          {
+            "id": "proj-a",
+            "name": "a",
+            "path": "/repo/a",
+            "serviceAlive": true
+          },
+          {
+            "id": "proj-b",
+            "name": "b",
+            "path": "/repo/b",
+            "serviceAlive": true
+          }
         ]
       },
       "output": {
         "view": {
           "scope": "global",
-          "scopeLabel": "all projects",
-          "sublabel": "project-worktree",
           "items": [
             {
               "id": "agent-a",
@@ -31,8 +39,18 @@
               "urgency": 0,
               "activity": 0,
               "recentRank": 0,
-              "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "agent-a" },
-              "metadata": { "kind": "agent", "sessionId": "agent-a", "command": "codex", "worktreePath": "/repo" },
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@1",
+                "windowIndex": 1,
+                "windowName": "agent-a"
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-a",
+                "command": "codex",
+                "worktreePath": "/repo"
+              },
               "previewSnapshot": {
                 "output": "agent-a preview\n",
                 "capturedAt": "<iso>",
@@ -45,7 +63,9 @@
               "projectRoot": "/repo/a",
               "projectName": "a"
             }
-          ]
+          ],
+          "scopeLabel": "all projects",
+          "sublabel": "project-worktree"
         }
       },
       "inputSha256": "9680da4ecc8dc8a92e5a773188b4a13d129e10a127c401f40b484c7b390eb3c8"
@@ -58,16 +78,29 @@
       "input": {
         "name": "mirrors active project snapshots into every active project global cache",
         "projects": [
-          { "id": "proj-a", "name": "a", "path": "/repo/a", "serviceAlive": true },
-          { "id": "proj-b", "name": "b", "path": "/repo/b", "serviceAlive": false },
-          { "id": "proj-c", "name": "c", "path": "/repo/c", "serviceAlive": true }
+          {
+            "id": "proj-a",
+            "name": "a",
+            "path": "/repo/a",
+            "serviceAlive": true
+          },
+          {
+            "id": "proj-b",
+            "name": "b",
+            "path": "/repo/b",
+            "serviceAlive": false
+          },
+          {
+            "id": "proj-c",
+            "name": "c",
+            "path": "/repo/c",
+            "serviceAlive": true
+          }
         ]
       },
       "output": {
         "projA": {
           "scope": "global",
-          "scopeLabel": "all projects",
-          "sublabel": "project-worktree",
           "items": [
             {
               "id": "agent-a",
@@ -75,8 +108,18 @@
               "urgency": 0,
               "activity": 0,
               "recentRank": 0,
-              "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "agent-a" },
-              "metadata": { "kind": "agent", "sessionId": "agent-a", "command": "codex", "worktreePath": "/repo" },
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@1",
+                "windowIndex": 1,
+                "windowName": "agent-a"
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-a",
+                "command": "codex",
+                "worktreePath": "/repo"
+              },
               "previewSnapshot": {
                 "output": "agent-a preview\n",
                 "capturedAt": "<iso>",
@@ -89,13 +132,13 @@
               "projectRoot": "/repo/a",
               "projectName": "a"
             }
-          ]
+          ],
+          "scopeLabel": "all projects",
+          "sublabel": "project-worktree"
         },
         "projB": null,
         "projC": {
           "scope": "global",
-          "scopeLabel": "all projects",
-          "sublabel": "project-worktree",
           "items": [
             {
               "id": "agent-a",
@@ -103,8 +146,18 @@
               "urgency": 0,
               "activity": 0,
               "recentRank": 0,
-              "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "agent-a" },
-              "metadata": { "kind": "agent", "sessionId": "agent-a", "command": "codex", "worktreePath": "/repo" },
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@1",
+                "windowIndex": 1,
+                "windowName": "agent-a"
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-a",
+                "command": "codex",
+                "worktreePath": "/repo"
+              },
               "previewSnapshot": {
                 "output": "agent-a preview\n",
                 "capturedAt": "<iso>",
@@ -117,7 +170,9 @@
               "projectRoot": "/repo/a",
               "projectName": "a"
             }
-          ]
+          ],
+          "scopeLabel": "all projects",
+          "sublabel": "project-worktree"
         }
       },
       "inputSha256": "ba01e7a752a350f1ea0d1445a3f5a2533ee6820ce5749cc6cffd3b9b836ae982"
@@ -129,9 +184,20 @@
       "api": "global hot snapshot worker helpers",
       "input": {
         "name": "clears active global caches when no project snapshots remain",
-        "projects": [{ "id": "proj-a", "name": "a", "path": "/repo/a", "serviceAlive": true }]
+        "projects": [
+          {
+            "id": "proj-a",
+            "name": "a",
+            "path": "/repo/a",
+            "serviceAlive": true
+          }
+        ]
       },
-      "output": { "beforeExists": true, "afterExists": false, "global": null },
+      "output": {
+        "beforeExists": true,
+        "afterExists": false,
+        "global": null
+      },
       "inputSha256": "4d52b92a5840d7728fbcbedc8e37094905d636909d6788b96f2615a02b68d113"
     },
     {
@@ -216,6 +282,20 @@
                 "windowId": "@11",
                 "startLine": -40,
                 "lineCount": 40
+              },
+              "role": "coder",
+              "lane": {
+                "kind": "worktree",
+                "worktreePath": "/repo"
+              },
+              "roleState": {
+                "status": "resolved",
+                "role": "coder",
+                "lane": {
+                  "kind": "worktree",
+                  "worktreePath": "/repo"
+                },
+                "projectControl": false
               }
             },
             {
@@ -249,6 +329,20 @@
                 "windowId": "@12",
                 "startLine": -40,
                 "lineCount": 40
+              },
+              "role": "coder",
+              "lane": {
+                "kind": "worktree",
+                "worktreePath": "/repo"
+              },
+              "roleState": {
+                "status": "resolved",
+                "role": "coder",
+                "lane": {
+                  "kind": "worktree",
+                  "worktreePath": "/repo"
+                },
+                "projectControl": false
               }
             }
           ]
@@ -289,6 +383,20 @@
                 "windowId": "@11",
                 "startLine": -40,
                 "lineCount": 40
+              },
+              "role": "coder",
+              "lane": {
+                "kind": "worktree",
+                "worktreePath": "/repo"
+              },
+              "roleState": {
+                "status": "resolved",
+                "role": "coder",
+                "lane": {
+                  "kind": "worktree",
+                  "worktreePath": "/repo"
+                },
+                "projectControl": false
               }
             },
             {
@@ -322,6 +430,20 @@
                 "windowId": "@12",
                 "startLine": -40,
                 "lineCount": 40
+              },
+              "role": "coder",
+              "lane": {
+                "kind": "worktree",
+                "worktreePath": "/repo"
+              },
+              "roleState": {
+                "status": "resolved",
+                "role": "coder",
+                "lane": {
+                  "kind": "worktree",
+                  "worktreePath": "/repo"
+                },
+                "projectControl": false
               }
             }
           ]
@@ -362,6 +484,20 @@
                 "windowId": "@11",
                 "startLine": -40,
                 "lineCount": 40
+              },
+              "role": "coder",
+              "lane": {
+                "kind": "worktree",
+                "worktreePath": "/repo"
+              },
+              "roleState": {
+                "status": "resolved",
+                "role": "coder",
+                "lane": {
+                  "kind": "worktree",
+                  "worktreePath": "/repo"
+                },
+                "projectControl": false
               }
             },
             {
@@ -395,12 +531,29 @@
                 "windowId": "@12",
                 "startLine": -40,
                 "lineCount": 40
+              },
+              "role": "coder",
+              "lane": {
+                "kind": "worktree",
+                "worktreePath": "/repo"
+              },
+              "roleState": {
+                "status": "resolved",
+                "role": "coder",
+                "lane": {
+                  "kind": "worktree",
+                  "worktreePath": "/repo"
+                },
+                "projectControl": false
               }
             }
           ]
         },
         "stale99": null,
-        "captureCalls": ["@11", "@12"]
+        "captureCalls": [
+          "@11",
+          "@12"
+        ]
       },
       "inputSha256": "1e14fbf4e8fc70c2af56749e325c19152d74301ad6e32276d0b70f5f46eac1f1"
     },
@@ -537,8 +690,6 @@
       "output": {
         "worktree7": {
           "scope": "worktree",
-          "scopeLabel": "this worktree",
-          "sublabel": "none",
           "items": [
             {
               "id": "agent-7",
@@ -546,8 +697,18 @@
               "urgency": 0,
               "activity": 0,
               "recentRank": 0,
-              "target": { "sessionName": "aimux-test", "windowId": "@7", "windowIndex": 1, "windowName": "agent-7" },
-              "metadata": { "kind": "agent", "sessionId": "agent-7", "command": "codex", "worktreePath": "/repo" },
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@7",
+                "windowIndex": 1,
+                "windowName": "agent-7"
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-7",
+                "command": "codex",
+                "worktreePath": "/repo"
+              },
               "previewSnapshot": {
                 "output": "agent-7 preview\n",
                 "capturedAt": "<iso>",
@@ -557,9 +718,19 @@
                 "lineCount": 40
               }
             }
-          ]
+          ],
+          "scopeLabel": "this worktree",
+          "sublabel": "none"
         },
-        "captureCalls": ["@1", "@2", "@3", "@4", "@5", "@6", "@7"]
+        "captureCalls": [
+          "@1",
+          "@2",
+          "@3",
+          "@4",
+          "@5",
+          "@6",
+          "@7"
+        ]
       },
       "inputSha256": "34a0067596c13fa7b6625b45a1d49d70a9c339f0a29c6952773cd21e5e2cf1a0"
     }

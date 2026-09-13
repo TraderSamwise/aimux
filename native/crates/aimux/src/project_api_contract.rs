@@ -62,8 +62,10 @@ pub mod routes {
         pub const MIGRATE: &str = "/agents/migrate";
         pub const RECORD_BACKEND_SESSION: &str = "/agents/record-backend-session";
         pub const LOOP: &str = "/agents/loop";
+        pub const LOOP_ALERTS: &str = "/agents/loop-alerts";
         pub const OVERSEER: &str = "/agents/overseer";
         pub const SCRIBE: &str = "/agents/scribe";
+        pub const WATCH: &str = "/agents/watch";
         pub const TEAMMATES: &str = "/agents/teammates";
         pub const CREATE_TEAMMATE: &str = "/agents/teammates/create";
         pub const CREATE_TEAMMATE_TASK: &str = "/agents/teammates/tasks";
@@ -340,6 +342,7 @@ pub fn project_api_views_for_mutation_route(
         | agents::LOOP
         | agents::OVERSEER
         | agents::SCRIBE
+        | agents::WATCH
         | live_pane::INTERRUPT
         | agents::CREATE_TEAMMATE
         | agents::STOP_TEAMMATE
@@ -378,6 +381,7 @@ pub fn project_api_views_for_mutation_route(
         | agents::INTERACTION_REQUEST
         | agents::INTERACTION_RESPOND
         | agents::INPUT
+        | agents::LOOP_ALERTS
         | agents::PROMPT_CONTEXT
         | live_pane::INPUT => invalidations::RUNTIME,
 
@@ -440,8 +444,10 @@ pub fn collect_project_api_routes() -> Vec<&'static str> {
         agents::MIGRATE,
         agents::RECORD_BACKEND_SESSION,
         agents::LOOP,
+        agents::LOOP_ALERTS,
         agents::OVERSEER,
         agents::SCRIBE,
+        agents::WATCH,
         agents::TEAMMATES,
         agents::CREATE_TEAMMATE,
         agents::CREATE_TEAMMATE_TASK,

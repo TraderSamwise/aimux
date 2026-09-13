@@ -812,7 +812,7 @@ where
     }
     send_signal_to_pid(info.pid, signal)?;
     let mut exited = wait_daemon_exit(info, 1_500);
-    if !exited && signal == "SIGTERM" {
+    if !exited && matches!(signal, "SIGTERM" | "SIGHUP") {
         let _ = send_signal_to_pid(info.pid, "SIGKILL");
         exited = wait_daemon_exit(info, 1_500);
     }

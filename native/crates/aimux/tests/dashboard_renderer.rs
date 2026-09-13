@@ -55,7 +55,6 @@ fn renders_empty_dashboard_with_create_hint() {
         focused_worktree_path: None,
         runtime_label: Some("tmux"),
         version: Some("local"),
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -90,7 +89,6 @@ fn matches_node_dashboard_full_frame_for_populated_agent_selection() {
         focused_worktree_path: Some("<WORKTREE>"),
         runtime_label: Some("tmux"),
         version: Some("local-node"),
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -169,7 +167,6 @@ fn matches_node_dashboard_full_frame_with_project_controls_and_scribe_preview() 
         focused_worktree_path: None,
         runtime_label: Some("tmux"),
         version: Some("local-node"),
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -247,7 +244,6 @@ fn matches_node_coordination_subscreen_full_frame() {
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
-        is_dev_runtime: false,
     });
 
     assert_same_frame(NODE_SUBSCREEN_COORDINATION_FRAME, &result.frame);
@@ -306,7 +302,6 @@ fn matches_node_topology_subscreen_full_frame() {
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
-        is_dev_runtime: false,
     });
 
     assert_same_frame(NODE_SUBSCREEN_TOPOLOGY_FRAME, &result.frame);
@@ -445,7 +440,6 @@ fn matches_node_graveyard_subscreen_full_frame() {
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
-        is_dev_runtime: false,
     });
 
     assert_same_frame(NODE_SUBSCREEN_GRAVEYARD_FRAME, &result.frame);
@@ -506,7 +500,6 @@ fn matches_node_project_subscreen_full_frame() {
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
-        is_dev_runtime: false,
     });
 
     assert_same_frame(NODE_SUBSCREEN_PROJECT_FRAME, &result.frame);
@@ -548,7 +541,6 @@ fn matches_node_library_subscreen_full_frame() {
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
-        is_dev_runtime: false,
     });
 
     assert_same_frame(NODE_SUBSCREEN_LIBRARY_FRAME, &result.frame);
@@ -609,7 +601,6 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
         focused_worktree_path: Some("<WORKTREE>"),
         runtime_label: Some("tmux"),
         version: Some("local"),
-        is_dev_runtime: true,
         hide_offline_agents: true,
         hidden_offline_agent_count: 7,
         scroll_offset: 0,
@@ -620,7 +611,7 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     });
     let plain = strip_ansi(&result.frame);
 
-    assert!(plain.contains("DEV"));
+    assert!(!plain.contains("DEV"));
     assert!(plain.contains("aimux vlocal · 7 hidden — agent multiplexer"));
     assert!(plain.contains("Main Checkout"));
     assert!(plain.contains("feature-a"));
@@ -655,7 +646,6 @@ fn populated_dashboard_frame_fits_common_viewports() {
             focused_worktree_path: Some("<WORKTREE>"),
             runtime_label: Some("tmux"),
             version: Some("local"),
-            is_dev_runtime: false,
             hide_offline_agents: true,
             hidden_offline_agent_count: 7,
             scroll_offset: 0,
@@ -714,7 +704,6 @@ fn orphan_worktrees_keep_node_first_seen_order() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -775,7 +764,6 @@ fn a_session_naming_the_main_path_stays_in_the_main_checkout_card() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -835,7 +823,6 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -879,7 +866,6 @@ fn row_dot_ignores_legacy_direct_attention_without_semantic_state() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -911,7 +897,6 @@ fn renders_state_aware_footer_hints_for_session_actions() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -960,7 +945,6 @@ fn flat_session_footer_keeps_team_hint_for_selected_parent() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1022,7 +1006,6 @@ fn renders_selected_session_details_sidebar_when_visible() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1127,7 +1110,6 @@ fn renders_selected_teammates_in_node_order() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1193,7 +1175,6 @@ fn renders_typed_scribe_preview_rows_for_selected_session() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1250,7 +1231,6 @@ fn explicit_scribe_sessions_drive_scribe_preview_like_node_view_model() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1299,7 +1279,6 @@ fn teammate_scribe_does_not_enable_project_scribe_preview() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1334,7 +1313,6 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1355,7 +1333,6 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1419,7 +1396,6 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1474,7 +1450,6 @@ fn selected_project_control_session_keeps_worktree_details_like_node() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1530,7 +1505,6 @@ fn flat_session_rows_exclude_project_control_sessions_like_node() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1575,7 +1549,6 @@ fn flat_footer_uses_no_session_hints_when_only_project_control_sessions_exist() 
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1623,7 +1596,6 @@ fn worktree_details_show_active_removal_status_and_progress() {
         focused_worktree_path: Some(&worktree_path),
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1666,7 +1638,6 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
         focused_worktree_path: None,
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1716,7 +1687,6 @@ fn renders_service_and_failure_footer_hints() {
         focused_worktree_path: Some("<WORKTREE>"),
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: true,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
@@ -1731,6 +1701,53 @@ fn renders_service_and_failure_footer_hints() {
     assert!(plain.contains("Enter/→/l open"));
     assert!(plain.contains("X clear failures"));
     assert!(plain.contains("x stop"));
+}
+
+#[test]
+fn renders_global_loop_alert_pause_chrome() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full.clone();
+    snapshot.extra.insert(
+        "loopAlertState".into(),
+        json!({
+            "ok": true,
+            "pausedCount": 0,
+            "bufferedCount": 3,
+            "globalPause": {
+                "enabled": true,
+                "bufferedCount": 3,
+                "remainingMs": 125_000
+            }
+        }),
+    );
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: Some("<WORKTREE>"),
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("LOOP ALERTS PAUSED"));
+    assert!(plain.contains("3 buffered"));
+    assert!(plain.contains("expires in 3m"));
+    assert!(plain.contains("press O"));
 }
 
 #[test]
@@ -1769,7 +1786,6 @@ fn renders_typed_operation_failures_in_banner_and_worktree_details() {
         focused_worktree_path: Some(&worktree_path),
         runtime_label: None,
         version: None,
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,

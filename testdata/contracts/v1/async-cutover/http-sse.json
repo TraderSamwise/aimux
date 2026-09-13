@@ -249,6 +249,15 @@
           "tasks": {
             "pending": 0,
             "assigned": 0
+          },
+          "loopAlertState": {
+            "ok": true,
+            "globalPause": {
+              "enabled": false,
+              "bufferedCount": 0
+            },
+            "pausedCount": 0,
+            "bufferedCount": 0
           }
         },
         "framing": {

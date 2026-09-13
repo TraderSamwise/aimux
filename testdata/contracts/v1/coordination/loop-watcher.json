@@ -1,6 +1,8 @@
 {
   "version": 1,
-  "source": ["src/loop-watcher.test.ts"],
+  "source": [
+    "src/loop-watcher.test.ts"
+  ],
   "generatedBy": "scripts/capture-loop-watcher-contract.mjs",
   "description": "Loop watcher candidate selection, overseer briefing rendering, scan cooldown, auto-nudge, and failed-send retry behavior captured by running TypeScript loop-watcher helpers.",
   "cases": [
@@ -13,7 +15,14 @@
         "name": "flags in-loop idle agents with normal attention",
         "source": "src/loop-watcher.test.ts",
         "api": "findLoopCandidates",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -26,7 +35,10 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "normal" }
+              "derived": {
+                "activity": "idle",
+                "attention": "normal"
+              }
             }
           }
         }
@@ -53,7 +65,14 @@
         "name": "flags in-loop done agents",
         "source": "src/loop-watcher.test.ts",
         "api": "findLoopCandidates",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -66,7 +85,10 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "done", "attention": "normal" }
+              "derived": {
+                "activity": "done",
+                "attention": "normal"
+              }
             }
           }
         }
@@ -93,7 +115,14 @@
         "name": "ignores agents that are still working",
         "source": "src/loop-watcher.test.ts",
         "api": "findLoopCandidates",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -106,7 +135,10 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "running", "attention": "normal" }
+              "derived": {
+                "activity": "running",
+                "attention": "normal"
+              }
             }
           }
         }
@@ -123,7 +155,14 @@
         "name": "ignores agents waiting on a human",
         "source": "src/loop-watcher.test.ts",
         "api": "findLoopCandidates",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -136,7 +175,10 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "needs_response" }
+              "derived": {
+                "activity": "idle",
+                "attention": "needs_response"
+              }
             }
           }
         }
@@ -153,10 +195,24 @@
         "name": "ignores agents not marked in a loop",
         "source": "src/loop-watcher.test.ts",
         "api": "findLoopCandidates",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
-          "sessions": { "a": { "updatedAt": "2026-06-13T00:00:00.000Z", "derived": { "activity": "idle" } } }
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "derived": {
+                "activity": "idle"
+              }
+            }
+          }
         }
       },
       "output": [],
@@ -171,7 +227,14 @@
         "name": "ignores the overseer itself",
         "source": "src/loop-watcher.test.ts",
         "api": "findLoopCandidates",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -184,7 +247,10 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "normal" }
+              "derived": {
+                "activity": "idle",
+                "attention": "normal"
+              }
             }
           }
         },
@@ -202,7 +268,14 @@
         "name": "ignores agents with pending interactions",
         "source": "src/loop-watcher.test.ts",
         "api": "findLoopCandidates",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -215,11 +288,16 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "normal" }
+              "derived": {
+                "activity": "idle",
+                "attention": "normal"
+              }
             }
           }
         },
-        "pendingInteractions": ["a"]
+        "pendingInteractions": [
+          "a"
+        ]
       },
       "output": [],
       "inputSha256": "d3891f7f2f8f4fcad34f0a055f911f031ee6dcf8c952ab37c5d71468596270fa"
@@ -281,8 +359,16 @@
         "source": "src/loop-watcher.test.ts",
         "api": "LoopWatcher.scan",
         "sessions": [
-          { "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" },
-          { "id": "boss", "status": "running" }
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          },
+          {
+            "id": "boss",
+            "status": "running"
+          }
         ],
         "metadata": {
           "version": 1,
@@ -296,12 +382,32 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "normal" }
+              "derived": {
+                "activity": "idle",
+                "attention": "normal"
+              }
             },
-            "boss": { "updatedAt": "2026-06-13T00:00:00.000Z", "overseer": true }
+            "boss": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "overseer": true
+            }
           }
         },
-        "ops": [{ "kind": "scan" }, { "kind": "scan" }, { "kind": "advance", "ms": 60001 }, { "kind": "scan" }]
+        "ops": [
+          {
+            "kind": "scan"
+          },
+          {
+            "kind": "scan"
+          },
+          {
+            "kind": "advance",
+            "ms": 60001
+          },
+          {
+            "kind": "scan"
+          }
+        ]
       },
       "output": [
         {
@@ -322,7 +428,10 @@
             }
           ]
         },
-        { "kind": "advance", "now": 1060001 },
+        {
+          "kind": "advance",
+          "now": 1060001
+        },
         {
           "kind": "scan",
           "sends": [
@@ -333,6 +442,10 @@
             {
               "sessionId": "boss",
               "text": "[aimux loop check] These agents are in a managed loop but appear to have stopped:\n- a (claude) @ /wt/a — loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard — goal: ship it\n\nCurrent loop membership is authoritative. If a listed agent was previously removed, the shown loop-since/source is newer state; do not remove it merely because you remember an older removal.\nFor each: read its recent output with `aimux host agent-read <id>`, then decide whether it stopped prematurely.\nIf it should keep going, send a specific next instruction with `aimux input <id> \"…\"`.\nIf it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back."
+            },
+            {
+              "sessionId": "boss",
+              "text": "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.\nThis does not include external queue files such as Sam's gqaapg queue unless they are imported into runtime exchange.\n\nVisible unowned work:\n- worklist-contract coordination-worklist-contract (unassigned-worklist) — coordinationWorklist missing from loop watcher input\n\nAvailable watched loop capacity:\n- a — goal: ship it\n\nAssign or pause agents intentionally. If these runtime-exchange/worklist items are no longer real, close or update them so the worklist matches the work."
             }
           ]
         }
@@ -349,8 +462,16 @@
         "source": "src/loop-watcher.test.ts",
         "api": "LoopWatcher.scan",
         "sessions": [
-          { "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" },
-          { "id": "boss", "status": "running" }
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          },
+          {
+            "id": "boss",
+            "status": "running"
+          }
         ],
         "metadata": {
           "version": 1,
@@ -364,9 +485,15 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "normal" }
+              "derived": {
+                "activity": "idle",
+                "attention": "normal"
+              }
             },
-            "boss": { "updatedAt": "2026-06-13T00:00:00.000Z", "overseer": true }
+            "boss": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "overseer": true
+            }
           }
         },
         "config": {
@@ -398,7 +525,14 @@
         "name": "does nothing without overseer when auto-nudge is off",
         "source": "src/loop-watcher.test.ts",
         "api": "LoopWatcher.scan",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -411,12 +545,20 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "normal" }
+              "derived": {
+                "activity": "idle",
+                "attention": "normal"
+              }
             }
           }
         }
       },
-      "output": [{ "kind": "scan", "sends": [] }],
+      "output": [
+        {
+          "kind": "scan",
+          "sends": []
+        }
+      ],
       "inputSha256": "12fd3dad21fc17297acd6559ecaf0ae7de48d6d43de677369be3024fa376c268"
     },
     {
@@ -428,7 +570,14 @@
         "name": "auto-nudges when overseer metadata is offline and auto-nudge is on",
         "source": "src/loop-watcher.test.ts",
         "api": "LoopWatcher.scan",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -441,12 +590,22 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "normal" }
+              "derived": {
+                "activity": "idle",
+                "attention": "normal"
+              }
             },
-            "boss": { "updatedAt": "2026-06-13T00:00:00.000Z", "overseer": true }
+            "boss": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "overseer": true
+            }
           }
         },
-        "config": { "scanIntervalMs": 15000, "nudgeCooldownMs": 60000, "autoNudgeWithoutOverseer": true }
+        "config": {
+          "scanIntervalMs": 15000,
+          "nudgeCooldownMs": 60000,
+          "autoNudgeWithoutOverseer": true
+        }
       },
       "output": [
         {
@@ -470,7 +629,14 @@
         "name": "sends canned nudge respecting cooldown",
         "source": "src/loop-watcher.test.ts",
         "api": "LoopWatcher.scan",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -483,12 +649,33 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "normal" }
+              "derived": {
+                "activity": "idle",
+                "attention": "normal"
+              }
             }
           }
         },
-        "config": { "scanIntervalMs": 15000, "nudgeCooldownMs": 60000, "autoNudgeWithoutOverseer": true },
-        "ops": [{ "kind": "scan" }, { "kind": "scan" }, { "kind": "advance", "ms": 60001 }, { "kind": "scan" }]
+        "config": {
+          "scanIntervalMs": 15000,
+          "nudgeCooldownMs": 60000,
+          "autoNudgeWithoutOverseer": true
+        },
+        "ops": [
+          {
+            "kind": "scan"
+          },
+          {
+            "kind": "scan"
+          },
+          {
+            "kind": "advance",
+            "ms": 60001
+          },
+          {
+            "kind": "scan"
+          }
+        ]
       },
       "output": [
         {
@@ -509,7 +696,10 @@
             }
           ]
         },
-        { "kind": "advance", "now": 1060001 },
+        {
+          "kind": "advance",
+          "now": 1060001
+        },
         {
           "kind": "scan",
           "sends": [
@@ -528,14 +718,21 @@
     },
     {
       "id": "loop-watcher-015",
-      "name": "does not consume cooldown when nudge send fails",
+      "name": "records failed nudge attempt until cooldown",
       "source": "src/loop-watcher.test.ts",
       "api": "LoopWatcher.scan",
       "input": {
-        "name": "does not consume cooldown when nudge send fails",
+        "name": "records failed nudge attempt until cooldown",
         "source": "src/loop-watcher.test.ts",
         "api": "LoopWatcher.scan",
-        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "sessions": [
+          {
+            "id": "a",
+            "status": "running",
+            "tool": "claude",
+            "worktreePath": "/wt/a"
+          }
+        ],
         "metadata": {
           "version": 1,
           "sessions": {
@@ -548,13 +745,29 @@
                 "source": "dashboard",
                 "updatedBy": "dashboard"
               },
-              "derived": { "activity": "idle", "attention": "normal" }
+              "derived": {
+                "activity": "idle",
+                "attention": "normal"
+              }
             }
           }
         },
-        "config": { "scanIntervalMs": 15000, "nudgeCooldownMs": 60000, "autoNudgeWithoutOverseer": true },
-        "sendFailures": ["a"],
-        "ops": [{ "kind": "scan" }, { "kind": "scan" }]
+        "config": {
+          "scanIntervalMs": 15000,
+          "nudgeCooldownMs": 60000,
+          "autoNudgeWithoutOverseer": true
+        },
+        "sendFailures": [
+          "a"
+        ],
+        "ops": [
+          {
+            "kind": "scan"
+          },
+          {
+            "kind": "scan"
+          }
+        ]
       },
       "output": [
         {
@@ -569,10 +782,6 @@
         {
           "kind": "scan",
           "sends": [
-            {
-              "sessionId": "a",
-              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
-            },
             {
               "sessionId": "a",
               "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."

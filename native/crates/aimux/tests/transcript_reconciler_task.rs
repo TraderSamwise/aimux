@@ -135,7 +135,8 @@ impl TickLoop {
             aimux::async_runtime::block_on_named(
                 "transcript-reconciler-task-test",
                 self.task.run(&self.context),
-            );
+            )
+            .expect("transcript reconciler task should run");
         }
     }
 }

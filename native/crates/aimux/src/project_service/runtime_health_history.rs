@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -21,6 +22,7 @@ use super::scheduler::{PeriodicTask, PeriodicTaskFuture, scheduler_now_ms};
 pub const RUNTIME_HEALTH_HISTORY_FILE: &str = "runtime-health.jsonl";
 pub const RUNTIME_HEALTH_HISTORY_INTERVAL_MS: i64 = 300_000;
 pub const RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES: usize = 8 * 1024;
+static PROCESS_STARTED_AT_MS: OnceLock<i64> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,9 +92,7 @@ impl PeriodicTask for RuntimeHealthRecorderTask {
     }
 
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
-        Box::pin(async move {
-            record_runtime_health_sample_at(context, scheduler_now_ms());
-        })
+        Box::pin(async move { record_runtime_health_sample_at(context, scheduler_now_ms()) })
     }
 }
 
@@ -121,6 +121,7 @@ pub fn runtime_health_sample(context: &ProjectServiceRequestContext, now_ms: i64
         "recordedAtMs": now_ms,
         "pid": std::process::id(),
         "process": {
+            "startedAtMs": process_started_at_ms(now_ms),
             "taskCount": process_task_count,
         },
         "scheduler": {
@@ -132,6 +133,10 @@ pub fn runtime_health_sample(context: &ProjectServiceRequestContext, now_ms: i64
         "backlogReadErrorPresent": backlog_read_error_present,
         "backlog": backlog,
     })
+}
+
+fn process_started_at_ms(now_ms: i64) -> i64 {
+    *PROCESS_STARTED_AT_MS.get_or_init(|| now_ms)
 }
 
 fn runtime_backlog_health_snapshots(
@@ -165,26 +170,37 @@ fn runtime_backlog_health_snapshots(
     snapshots.into_values().collect()
 }
 
-pub fn record_runtime_health_sample_at(context: &ProjectServiceRequestContext, now_ms: i64) {
+pub fn record_runtime_health_sample_at(
+    context: &ProjectServiceRequestContext,
+    now_ms: i64,
+) -> Result<(), String> {
     let path = runtime_health_history_path(context);
     let sample = runtime_health_sample(context, now_ms);
     record_runtime_health_value_to_path(sample, now_ms, &path, |path, line| {
         append_rotating_jsonl(path, line)
-    });
+    })
 }
 
-fn record_runtime_health_value_to_path<F>(sample: Value, now_ms: i64, path: &Path, append: F)
+fn record_runtime_health_value_to_path<F>(
+    sample: Value,
+    now_ms: i64,
+    path: &Path,
+    append: F,
+) -> Result<(), String>
 where
     F: FnOnce(&Path, &str) -> std::io::Result<()>,
 {
-    let Ok(mut line) = serde_json::to_string(&sample) else {
+    let mut line = serde_json::to_string(&sample).map_err(|error| {
+        let message = format!("runtime health sample serialization failed: {error}");
         log_lifecycle_always(
             "runtime health sample serialization failed",
             "runtime-health",
-            None,
+            Some(json!({
+                "error": error.to_string(),
+            })),
         );
-        return;
-    };
+        message
+    })?;
     line.push('\n');
     if line.len() > RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES {
         log_lifecycle_always(
@@ -197,24 +213,31 @@ where
         );
         let Some(truncated_line) = truncated_runtime_health_line(&sample, now_ms, line.len())
         else {
+            let message = "runtime health truncated sample serialization failed".to_owned();
             log_lifecycle_always(
                 "runtime health truncated sample serialization failed",
                 "runtime-health",
                 None,
             );
-            return;
+            return Err(message);
         };
         line = truncated_line;
     }
-    if let Err(error) = append(path, &line) {
+    append(path, &line).map_err(|error| {
+        let message = format!(
+            "runtime health sample write failed at {}: {error}",
+            path.display()
+        );
         log_lifecycle_always(
             "runtime health sample write failed",
             "runtime-health",
             Some(json!({
+                "path": path.to_string_lossy(),
                 "error": error.to_string(),
             })),
         );
-    }
+        message
+    })
 }
 
 fn truncated_runtime_health_line(
@@ -229,6 +252,11 @@ fn truncated_runtime_health_line(
             .and_then(Value::as_i64)
             .unwrap_or(now_ms),
         "pid": std::process::id(),
+        "processStartedAtMs": sample
+            .get("process")
+            .and_then(|process| process.get("startedAtMs"))
+            .cloned()
+            .unwrap_or_else(|| json!(process_started_at_ms(now_ms))),
         "truncated": true,
         "truncation": {
             "reason": "runtime-health-sample-too-large",
@@ -236,6 +264,11 @@ fn truncated_runtime_health_line(
             "maxBytes": RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES,
         },
         "process": {
+            "startedAtMs": sample
+                .get("process")
+                .and_then(|process| process.get("startedAtMs"))
+                .cloned()
+                .unwrap_or_else(|| json!(process_started_at_ms(now_ms))),
             "taskCount": sample
                 .get("process")
                 .and_then(|process| process.get("taskCount"))
@@ -266,11 +299,11 @@ pub fn record_runtime_health_sample_with_limits_for_tests(
     path: &Path,
     max_bytes: u64,
     max_files: u64,
-) {
+) -> Result<(), String> {
     let sample = runtime_health_sample(context, now_ms);
     record_runtime_health_value_to_path(sample, now_ms, path, |path, line| {
         append_rotating_jsonl_with_limits(path, line, max_bytes, max_files)
-    });
+    })
 }
 
 pub fn runtime_health_history_retention_days_at_max_sample() -> f64 {
@@ -287,7 +320,9 @@ mod tests {
         StabilityVerdict, build_stability_doctor_report, render_stability_doctor_report,
     };
     use crate::project_service::router::ProjectServiceRequestContext;
-    use crate::project_service::scheduler::{PeriodicTaskHealthSnapshot, ProjectSchedulerHandle};
+    use crate::project_service::scheduler::{
+        PeriodicScheduler, PeriodicTaskHealthSnapshot, ProjectSchedulerHandle,
+    };
     use std::fs;
     use time::OffsetDateTime;
 
@@ -323,6 +358,7 @@ mod tests {
         assert_eq!(sample["v"], 1);
         assert_eq!(sample["recordedAtMs"], 1_800_000_000_000_i64);
         assert!(sample["process"]["taskCount"].is_number());
+        assert!(sample["process"]["startedAtMs"].is_number());
         assert_eq!(sample["scheduler"]["readErrorPresent"], false);
         assert_eq!(sample["scheduler"]["errorPresent"], false);
         assert_eq!(sample["scheduler"]["taskCount"], 1);
@@ -369,6 +405,40 @@ mod tests {
     fn runtime_health_recorder_runs_immediately_for_fresh_readiness_probe() {
         let task = runtime_health_recorder_task();
         assert!(task.run_immediately());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn runtime_health_recorder_write_failure_is_scheduler_visible() {
+        let root = unique_temp_dir("runtime-health-recorder-write-failure");
+        fs::create_dir_all(&root).expect("root dir");
+        let state_file = root.join("state-file");
+        fs::write(&state_file, "not a directory").expect("state file");
+        let scheduler = ProjectSchedulerHandle::default();
+        let context = ProjectServiceRequestContext::with_project_state_dir(&root, &state_file)
+            .with_scheduler(scheduler.clone());
+        let now_ms = 1_800_000_000_000_i64;
+        let mut periodic =
+            PeriodicScheduler::with_handle(vec![runtime_health_recorder_task()], now_ms, scheduler);
+
+        let ran = periodic.run_due_at(&context, now_ms).await;
+
+        assert_eq!(ran, ["runtime-health-recorder"]);
+        let health = periodic
+            .try_health_snapshot()
+            .expect("scheduler health snapshot");
+        let recorder = health
+            .iter()
+            .find(|task| task.name == "runtime-health-recorder")
+            .expect("runtime-health-recorder health");
+        assert_eq!(recorder.total_runs, 1);
+        assert_eq!(recorder.consecutive_failures, 1);
+        let error = recorder.last_error.as_deref().expect("last recorder error");
+        assert!(
+            error.contains("runtime health sample write failed"),
+            "{error}"
+        );
+        assert!(error.contains("state-file/runtime-health.jsonl"), "{error}");
+        assert!(!state_file.join(RUNTIME_HEALTH_HISTORY_FILE).exists());
     }
 
     #[test]
@@ -420,7 +490,8 @@ mod tests {
                 &history_path,
                 1,
                 2,
-            );
+            )
+            .expect("record runtime health sample");
         }
 
         assert!(history_path.exists());
@@ -491,7 +562,8 @@ mod tests {
             recorded_at_ms,
             &history_path,
             |path, line| append_rotating_jsonl_with_limits(path, line, 1_000_000, 2),
-        );
+        )
+        .expect("record truncated runtime health sample");
 
         let text = fs::read_to_string(&history_path).expect("history");
         assert!(text.len() <= RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES);

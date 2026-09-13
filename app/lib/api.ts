@@ -26,6 +26,8 @@ import {
   type AgentOverseerResponse,
   type AgentScribeInput,
   type AgentScribeResponse,
+  type AgentWatchInput,
+  type AgentWatchResponse,
   type AgentOutputStreamInput,
   type AgentSessionInput,
   type ControlActionResponse,
@@ -97,6 +99,7 @@ import {
   type SwitchableAgentsResponse,
   type SwitchAgentRequest,
   type TaskAssignInput,
+  type TaskCancelInput,
   type TaskDetailResponse,
   type TaskLifecycleInput,
   type TaskListResponse,
@@ -124,6 +127,14 @@ import {
 import { CORE_API_ROUTES } from "../../src/core-command-contract";
 
 export type {
+  AgentLane,
+  AgentRole,
+  AgentRoleMutationRefusalReason,
+  AgentRoleState,
+  AgentSupervisorRole,
+  AgentWatchInput,
+  AgentWatchRefusalReason,
+  AgentWatchResponse,
   CoordinationBucket,
   CoordinationReachability,
   CoordinationWorklistItem,
@@ -140,6 +151,7 @@ export type {
   ProjectTopologyResponse,
   TeammateListResponse,
   ProjectWorktreeSummary,
+  TaskCancelInput,
   TaskDetailResponse,
   TaskListResponse,
   TaskSummaryResponse,
@@ -209,6 +221,14 @@ function requestSignal(opts?: ApiOpts): { signal: AbortSignal; cleanup: () => vo
   };
 }
 
+function abortedRequestMessage(signal: AbortSignal, url: string): string {
+  const reason = signal.reason;
+  const reasonMessage = reason instanceof Error ? reason.message : String(reason ?? "");
+  const timeout = reasonMessage.match(/^request timed out after (\d+)ms$/);
+  if (timeout) return `Request timed out after ${timeout[1]}ms (${url})`;
+  return `Request was cancelled (${url})`;
+}
+
 async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Promise<T> {
   const headers = new Headers(init.headers);
   if (opts?.token) headers.set("Authorization", `Bearer ${opts.token}`);
@@ -238,7 +258,7 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
     if (err instanceof ApiError) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     const message = signal.aborted
-      ? `Request timed out or was cancelled (${url})`
+      ? abortedRequestMessage(signal, url)
       : `Network request failed (${url}): ${reason}`;
     throw new ApiError(0, null, message);
   } finally {
@@ -256,12 +276,15 @@ async function withRelayRequestTimeout<T>(
   let abortListener: (() => void) | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     const rejectTimedOut = () => {
-      reject(new ApiError(0, null, `Request timed out or was cancelled (${path})`));
+      reject(new ApiError(0, null, `Request timed out after ${timeoutMs}ms (${path})`));
+    };
+    const rejectCancelled = () => {
+      reject(new ApiError(0, null, `Request was cancelled (${path})`));
     };
     timeout = setTimeout(rejectTimedOut, timeoutMs);
-    abortListener = rejectTimedOut;
-    if (opts?.signal?.aborted) rejectTimedOut();
-    else opts?.signal?.addEventListener("abort", rejectTimedOut, { once: true });
+    abortListener = rejectCancelled;
+    if (opts?.signal?.aborted) rejectCancelled();
+    else opts?.signal?.addEventListener("abort", rejectCancelled, { once: true });
   });
   try {
     return await Promise.race([request, timeoutPromise]);
@@ -769,6 +792,14 @@ export async function setAgentScribe(
   opts?: ApiOpts,
 ): Promise<AgentScribeResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.scribe, opts, input);
+}
+
+export async function setAgentWatch(
+  endpoint: ServiceEndpoint,
+  input: AgentWatchInput,
+  opts?: ApiOpts,
+): Promise<AgentWatchResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.watch, opts, input);
 }
 
 function workOutlineQueryPath(query?: WorkOutlineQuery & { entryId?: string }): string {
@@ -1672,7 +1703,7 @@ export async function blockTask(
 
 export async function cancelTask(
   endpoint: ServiceEndpoint,
-  input: TaskLifecycleInput,
+  input: TaskCancelInput,
   opts?: ApiOpts,
 ): Promise<WorkflowMutationResponse> {
   return callProjectJson<WorkflowMutationResponse>(

@@ -1,4 +1,11 @@
-import type { ChatScrollIntent } from "@/lib/chat-scroll-policy";
+import {
+  chatChromeAfterUserScroll,
+  chatPolicyAfterUserScroll,
+  type ChatScrollChromeState,
+  type ChatScrollIntent,
+  type ChatScrollMetrics,
+  type ChatScrollPolicy,
+} from "@/lib/chat-scroll-policy";
 
 export type TerminalVisibleOutput<TLine> = {
   lines: readonly TLine[];
@@ -28,4 +35,23 @@ export function terminalVisibleOutputForLiveChange<TLine>(
 ): TerminalVisibleOutput<TLine> {
   if (current.sessionKey !== liveOutput.sessionKey || intent === "pinned") return liveOutput;
   return current;
+}
+
+export function terminalScrollStateAfterUserScroll({
+  chrome,
+  metrics,
+  policy,
+}: {
+  chrome: ChatScrollChromeState;
+  metrics: ChatScrollMetrics;
+  policy: ChatScrollPolicy;
+}): {
+  chrome: ChatScrollChromeState;
+  policy: ChatScrollPolicy;
+} {
+  const nextPolicy = chatPolicyAfterUserScroll(policy, metrics);
+  return {
+    chrome: chatChromeAfterUserScroll(chrome, nextPolicy, metrics),
+    policy: nextPolicy,
+  };
 }

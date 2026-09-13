@@ -18,8 +18,7 @@ use crate::config::{
     try_load_global_config_with_resolver,
 };
 use crate::core_command_transport::{
-    CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
-    execute_loopback_binary_request, execute_loopback_json_request,
+    DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
 };
 use crate::daemon::access::build_daemon_route_context;
 use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
@@ -32,6 +31,7 @@ use crate::daemon::http::DaemonResponseBody;
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
+    execute_proxy_binary_request, execute_proxy_json_request, route_stateless_proxy_daemon_request,
 };
 use crate::daemon::listener::{
     DaemonListenConfig, serve_daemon_http_with_metadata_and_interceptor_until,
@@ -39,7 +39,9 @@ use crate::daemon::listener::{
 use crate::daemon::process::handle_daemon_runtime_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
-use crate::daemon::stability_doctor::{StabilityDoctorReport, build_stability_doctor_report};
+use crate::daemon::stability_doctor::{
+    StabilityDoctorReport, build_stability_doctor_report_with_live_scheduler,
+};
 use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
 use crate::daemon::stream::{
     maybe_handle_host_agent_stream_request_with_runtime_mutex_async,
@@ -69,10 +71,10 @@ use crate::daemon_projects::{
     ProjectsRouteProject, build_projects_route_projects, count_online_desktop_agents,
 };
 use crate::daemon_state::{
-    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState,
-    clear_daemon_info_if_owned, get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state,
-    load_metadata_endpoint, metadata_endpoint_path, remove_metadata_endpoint, save_daemon_info,
-    save_daemon_state,
+    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataEndpointLoadError,
+    ProjectServiceState, clear_daemon_info_if_owned, get_daemon_host, get_daemon_port,
+    is_pid_alive, load_daemon_state, load_metadata_endpoint, load_metadata_endpoint_result,
+    metadata_endpoint_path, remove_metadata_endpoint, save_daemon_info, save_daemon_state,
 };
 use crate::daemon_supervisor::RUNTIME_RESTART_LOCK_STALE_MS;
 use crate::dashboard_readiness::get_runtime_owner_id;
@@ -112,6 +114,7 @@ use crate::recording_cleanup::{
 use crate::release_version_contract::{
     read_aimux_build_profile_from_package_root, read_aimux_runtime_version,
 };
+use crate::remote_access::{RemoteActorRole, parse_remote_actor};
 use crate::remote_credentials;
 use crate::remote_login::{self, LoginAction, LoginFlowWaiter};
 use crate::repair_events::{
@@ -280,7 +283,10 @@ pub trait ProjectServiceHealthProbe: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProjectServiceHealthWaitFailure {
-    TimedOut,
+    EndpointMissing { path: PathBuf },
+    EndpointLoadFailed { error: MetadataEndpointLoadError },
+    EndpointPidMismatch { expected_pid: i32, actual_pid: i32 },
+    HealthProbeNotReady { endpoint: MetadataApiEndpoint },
     ProcessExited { exit_status: Option<String> },
 }
 
@@ -472,6 +478,16 @@ impl RealDaemonRuntime {
     }
 
     fn stop_project_services_for_signal_shutdown(&mut self, signal_name: &str) {
+        if !daemon_signal_shutdown_stops_project_services(signal_name) {
+            log_lifecycle_always(
+                "daemon restart signal shutdown preserving project services",
+                "daemon",
+                Some(json!({
+                    "signal": signal_name,
+                })),
+            );
+            return;
+        }
         let state = load_daemon_state(self.resolver.daemon_state_path());
         let project_services = state
             .projects
@@ -1107,12 +1123,24 @@ impl RealDaemonRuntime {
     ) -> ProjectServiceHealthWait {
         let deadline = current_unix_millis() + u128::from(self.project_service_startup_timeout_ms);
         loop {
-            if let Some(endpoint) =
-                load_metadata_endpoint(project_state_dir).filter(|endpoint| endpoint.pid == pid)
-                && self.project_service_health_probe.is_ready(&endpoint, pid)
-            {
-                return ProjectServiceHealthWait::Ready(endpoint);
-            }
+            let observed_failure = match load_metadata_endpoint_result(project_state_dir) {
+                Ok(Some(endpoint)) if endpoint.pid != pid => {
+                    ProjectServiceHealthWaitFailure::EndpointPidMismatch {
+                        expected_pid: pid,
+                        actual_pid: endpoint.pid,
+                    }
+                }
+                Ok(Some(endpoint)) => {
+                    if self.project_service_health_probe.is_ready(&endpoint, pid) {
+                        return ProjectServiceHealthWait::Ready(endpoint);
+                    }
+                    ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint }
+                }
+                Ok(None) => ProjectServiceHealthWaitFailure::EndpointMissing {
+                    path: metadata_endpoint_path(project_state_dir),
+                },
+                Err(error) => ProjectServiceHealthWaitFailure::EndpointLoadFailed { error },
+            };
             if !self.project_service_process_verifier.is_live(pid) {
                 let exit_status = self
                     .project_service_process_verifier
@@ -1122,9 +1150,7 @@ impl RealDaemonRuntime {
                 );
             }
             if self.project_service_startup_timeout_ms == 0 || current_unix_millis() >= deadline {
-                return ProjectServiceHealthWait::NotReady(
-                    ProjectServiceHealthWaitFailure::TimedOut,
-                );
+                return ProjectServiceHealthWait::NotReady(observed_failure);
             }
             thread::sleep(Duration::from_millis(100));
         }
@@ -1138,9 +1164,23 @@ impl RealDaemonRuntime {
         failure: ProjectServiceHealthWaitFailure,
     ) -> String {
         match failure {
-            ProjectServiceHealthWaitFailure::TimedOut => format!(
-                "project service health wait timed out after {}ms for {project_root} (projectId {project_id}, pid {pid})",
+            ProjectServiceHealthWaitFailure::EndpointMissing { path } => format!(
+                "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): metadata endpoint missing at {} after {}ms",
+                path.display(),
                 self.project_service_startup_timeout_ms
+            ),
+            ProjectServiceHealthWaitFailure::EndpointLoadFailed { error } => format!(
+                "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): metadata endpoint unreadable: {error}"
+            ),
+            ProjectServiceHealthWaitFailure::EndpointPidMismatch {
+                expected_pid,
+                actual_pid,
+            } => format!(
+                "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): metadata endpoint pid {actual_pid} != expected {expected_pid}"
+            ),
+            ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint } => format!(
+                "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): /health probe not ready at http://{}:{} after {}ms",
+                endpoint.host, endpoint.port, self.project_service_startup_timeout_ms
             ),
             ProjectServiceHealthWaitFailure::ProcessExited { exit_status } => {
                 let mut resolver = self.resolver.clone();
@@ -1684,6 +1724,10 @@ impl RealDaemonRuntime {
     }
 }
 
+fn daemon_signal_shutdown_stops_project_services(signal_name: &str) -> bool {
+    signal_name != "SIGHUP"
+}
+
 fn daemon_project_read_snapshot(
     runtime: &Arc<Mutex<RealDaemonRuntime>>,
 ) -> DaemonProjectReadSnapshot {
@@ -1889,6 +1933,31 @@ pub fn handle_daemon_runtime_request_with_mutex(
             },
         );
     }
+    if pathname.starts_with("/proxy/") && proxy_fast_path_can_skip_runtime_lock(&request.headers) {
+        return handle_daemon_http_request(
+            request,
+            |method, path, body, headers| {
+                build_daemon_route_context(method, path, body, headers.clone(), &[])
+            },
+            |method, path, body, context, _| {
+                if let Some(access) = &context.access_decision
+                    && !access.ok
+                {
+                    return DaemonRouteResponse::json(
+                        access.status.unwrap_or(403),
+                        json!({
+                            "ok": false,
+                            "error": access.error.as_deref().unwrap_or("remote access denied")
+                        }),
+                    );
+                }
+                route_stateless_proxy_daemon_request(method, path, body, &context.headers)
+                    .unwrap_or_else(|| {
+                        DaemonRouteResponse::json(404, json!({ "ok": false, "error": "not found" }))
+                    })
+            },
+        );
+    }
     if request.method == "GET" && pathname == "/projects" {
         return handle_daemon_http_request(
             request,
@@ -1933,6 +2002,12 @@ pub fn handle_daemon_runtime_request_with_mutex(
     }
     let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
     handle_daemon_runtime_request(&mut *runtime, request)
+}
+
+fn proxy_fast_path_can_skip_runtime_lock(headers: &BTreeMap<String, String>) -> bool {
+    !parse_remote_actor(headers)
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Operator)
 }
 
 fn aimux_cli_launch_json(launch: AimuxCliLaunchCommand) -> Value {
@@ -2156,7 +2231,7 @@ pub fn run_daemon_internal() -> Result<()> {
             })),
         );
         anyhow::bail!(
-            "refusing to run aimux daemon from a cargo target binary on default port {port}; set AIMUX_DAEMON_PORT for isolated tests"
+            "refusing internal cargo-target daemon on default port {port}; set AIMUX_DAEMON_PORT for isolated test or live-drive runs"
         );
     }
     let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
@@ -2929,6 +3004,16 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             Some(Value::Object(loop_body)),
             None,
         )?;
+        self.project_service_json(
+            &project_root,
+            project_routes::agents::WATCH,
+            Some(json!({
+                "overseerSessionId": &overseer_session_id,
+                "watchedSessionId": session_id,
+                "active": true,
+            })),
+            None,
+        )?;
 
         let updated_agents = self.read_project_agents(&project_root)?;
         let updated_target = find_agent(&updated_agents, session_id)
@@ -3153,9 +3238,19 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         let mut resolver = self.resolver.clone();
         let project_root = stability_doctor_project_root(project_root);
         let project_state_dir = resolver.project_state_dir_for(&project_root);
-        Ok(build_stability_doctor_report(
+        let live_scheduler = match self.request_project_service_json(
+            &project_root,
+            project_routes::DIAGNOSTICS,
+            None,
+            None,
+        ) {
+            ProjectServiceJsonResult::Ok { json, .. } => json.get("scheduler").cloned(),
+            ProjectServiceJsonResult::Err { .. } => None,
+        };
+        Ok(build_stability_doctor_report_with_live_scheduler(
             &project_root,
             project_state_dir,
+            live_scheduler,
         ))
     }
 
@@ -3723,27 +3818,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         body: Option<&Value>,
         timeout_ms: u64,
     ) -> Result<ProxyJsonResponse, String> {
-        let daemon_method = if method.eq_ignore_ascii_case("POST") {
-            DaemonHttpMethod::Post
-        } else {
-            DaemonHttpMethod::Get
-        };
-        let request = DaemonJsonRequest {
-            url: target_url.to_owned(),
-            method: daemon_method,
-            headers: headers.clone(),
-            body: body.map(Value::to_string),
-            timeout_ms: Some(timeout_ms),
-        };
-        execute_loopback_json_request(&request)
-            .map(|response| ProxyJsonResponse {
-                status: response.status,
-                json: response.json,
-            })
-            .map_err(|error| match error {
-                CoreCommandTransportError::DaemonRequest { message, .. } => message,
-                other => other.to_string(),
-            })
+        execute_proxy_json_request(target_url, method, headers, body, timeout_ms)
     }
 
     fn proxy_binary_request(
@@ -3754,28 +3829,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         timeout_ms: u64,
         max_bytes: usize,
     ) -> Result<ProxyBinaryResponse, String> {
-        let daemon_method = if method.eq_ignore_ascii_case("POST") {
-            DaemonHttpMethod::Post
-        } else {
-            DaemonHttpMethod::Get
-        };
-        let request = DaemonJsonRequest {
-            url: target_url.to_owned(),
-            method: daemon_method,
-            headers: headers.clone(),
-            body: None,
-            timeout_ms: Some(timeout_ms),
-        };
-        execute_loopback_binary_request(&request, max_bytes)
-            .map(|response| ProxyBinaryResponse {
-                status: response.status,
-                body: response.body,
-                content_type: response.content_type,
-            })
-            .map_err(|error| match error {
-                CoreCommandTransportError::DaemonRequest { message, .. } => message,
-                other => other.to_string(),
-            })
+        execute_proxy_binary_request(target_url, method, headers, timeout_ms, max_bytes)
     }
 }
 
@@ -4273,6 +4327,34 @@ fn cleanup_stale_dashboard_links(
 
 fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &HashSet<String>) {
     let mut tmux = TmuxRuntimeManager::new();
+    stop_pre_restart_dashboard_repair_windows_with_tmux(before, project_roots, &mut tmux);
+}
+
+trait PreRestartDashboardTmux {
+    fn is_available(&mut self) -> bool;
+    fn has_window(&mut self, target: &TmuxTarget) -> bool;
+    fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String>;
+}
+
+impl PreRestartDashboardTmux for TmuxRuntimeManager {
+    fn is_available(&mut self) -> bool {
+        TmuxRuntimeManager::is_available(self)
+    }
+
+    fn has_window(&mut self, target: &TmuxTarget) -> bool {
+        TmuxRuntimeManager::has_window(self, target)
+    }
+
+    fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        TmuxRuntimeManager::kill_window(self, target)
+    }
+}
+
+fn stop_pre_restart_dashboard_repair_windows_with_tmux(
+    before: &Value,
+    project_roots: &HashSet<String>,
+    tmux: &mut impl PreRestartDashboardTmux,
+) {
     if !tmux.is_available() {
         return;
     }
@@ -4296,6 +4378,9 @@ fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &Has
             .flatten()
         {
             if dashboard.get("status").and_then(Value::as_str) == Some("ok") {
+                continue;
+            }
+            if !pre_restart_dashboard_is_noop_placeholder(dashboard) {
                 continue;
             }
             let Some(window_id) = dashboard.get("windowId").and_then(Value::as_str) else {
@@ -4327,6 +4412,26 @@ fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &Has
             }
         }
     }
+}
+
+fn pre_restart_dashboard_is_noop_placeholder(dashboard: &Value) -> bool {
+    let build_missing = dashboard
+        .get("buildStamp")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .is_none();
+    let owner_missing = dashboard
+        .get("owner")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .is_none();
+    if !build_missing || !owner_missing {
+        return false;
+    }
+    dashboard
+        .pointer("/process/argsPreview")
+        .and_then(Value::as_str)
+        .is_some_and(|args| args.contains("tail -f /dev/null"))
 }
 
 fn dashboard_payload_from_target(
@@ -5202,6 +5307,148 @@ mod tests {
     }
 
     #[test]
+    fn control_plane_scoped_restart_does_not_cycle_other_project_service() {
+        let fixture = restart_service_fixture("restart-scoped-leaves-other");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        let other_project_path = fixture.root.join("other-repo");
+        fs::create_dir_all(other_project_path.join(".git")).expect("other project git");
+        let other_project = other_project_path.to_string_lossy().into_owned();
+        let other_project_id = {
+            let mut resolver = fixture.resolver.clone();
+            resolver
+                .register_project(&other_project)
+                .expect("register other project")
+                .expect("other project entry")
+                .id
+        };
+        fixture.persist_service(&project_id, 91_011, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_011);
+        fixture.persist_service_for(
+            &other_project,
+            &other_project_id,
+            91_012,
+            ProjectServiceStatus::Running,
+        );
+        fixture.persist_endpoint_for(&other_project, 91_012, 45_912);
+        let launcher = Arc::new(RestartTestLauncher::new(91_211).with_endpoint(45_911));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::previous_build([91_011, 91_012, 91_211])
+                .with_project_service_pids(&project_id, [91_011])
+                .with_project_service_pids(&other_project_id, [91_012]),
+        );
+        let mut runtime = fixture.runtime(launcher.clone(), verifier.clone());
+
+        let result = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "issued",
+                Some(&project),
+                restart_test_dashboard,
+                |_runtime, project_roots| {
+                    assert_eq!(project_roots, std::slice::from_ref(&project));
+                    json!({
+                        "processPids": [],
+                        "tmuxSessions": [],
+                        "failedProcessPids": [],
+                        "failedTmuxSessions": [],
+                        "errors": [],
+                    })
+                },
+            )
+            .expect("scoped restart");
+        let state = load_daemon_state(fixture.resolver.daemon_state_path());
+        let other_service = state
+            .projects
+            .get(&other_project_id)
+            .and_then(|value| serde_json::from_value::<ProjectServiceState>(value.clone()).ok())
+            .expect("other service state");
+
+        assert_eq!(result.restart["summary"]["projects"], json!(1));
+        assert_eq!(result.restart["projects"][0]["projectRoot"], project);
+        assert_eq!(launcher.calls(), vec![project]);
+        assert_eq!(launcher.terminations(), vec![(91_011, false)]);
+        assert_eq!(other_service.pid, 91_012);
+        assert_eq!(other_service.status, Some(ProjectServiceStatus::Running));
+        assert_eq!(verifier.batch_project_counts(), vec![1]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_all_cycles_every_active_project_service() {
+        let fixture = restart_service_fixture("restart-all-cycles-everything");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        let other_project_path = fixture.root.join("other-repo");
+        fs::create_dir_all(other_project_path.join(".git")).expect("other project git");
+        let other_project = other_project_path.to_string_lossy().into_owned();
+        let other_project_id = {
+            let mut resolver = fixture.resolver.clone();
+            resolver
+                .register_project(&other_project)
+                .expect("register other project")
+                .expect("other project entry")
+                .id
+        };
+        fixture.persist_service(&project_id, 91_021, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_021);
+        fixture.persist_service_for(
+            &other_project,
+            &other_project_id,
+            91_022,
+            ProjectServiceStatus::Running,
+        );
+        fixture.persist_endpoint_for(&other_project, 91_022, 45_922);
+        let launcher = Arc::new(RestartTestLauncher::new(91_221).with_endpoint(45_921));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::previous_build([91_021, 91_022, 91_221])
+                .with_project_service_pids(&project_id, [91_021])
+                .with_project_service_pids(&other_project_id, [91_022]),
+        );
+        let mut runtime = fixture.runtime(launcher.clone(), verifier.clone());
+
+        let result = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "issued",
+                None,
+                restart_test_dashboard,
+                |_runtime, project_roots| {
+                    assert_eq!(
+                        project_roots,
+                        &[project.clone(), other_project.clone()]
+                            .into_iter()
+                            .collect::<BTreeSet<_>>()
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                    );
+                    json!({
+                        "processPids": [],
+                        "tmuxSessions": [],
+                        "failedProcessPids": [],
+                        "failedTmuxSessions": [],
+                        "errors": [],
+                    })
+                },
+            )
+            .expect("all restart");
+
+        assert_eq!(result.restart["summary"]["projects"], json!(2));
+        assert_eq!(
+            launcher.calls().into_iter().collect::<BTreeSet<_>>(),
+            [project, other_project]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            launcher.terminations().into_iter().collect::<BTreeSet<_>>(),
+            [(91_021, false), (91_022, false)]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(verifier.batch_project_counts(), vec![2]);
+        fixture.cleanup();
+    }
+
+    #[test]
     fn control_plane_restart_ignores_stale_non_checkout_daemon_state_roots() {
         let fixture = restart_service_fixture("restart-skip-non-checkout-state");
         let project = fixture.project_root.clone();
@@ -5916,9 +6163,135 @@ mod tests {
 
         assert_eq!(
             ready,
-            ProjectServiceHealthWait::NotReady(ProjectServiceHealthWaitFailure::TimedOut)
+            ProjectServiceHealthWait::NotReady(
+                ProjectServiceHealthWaitFailure::HealthProbeNotReady {
+                    endpoint: MetadataApiEndpoint {
+                        host: "127.0.0.1".to_owned(),
+                        port: 45_901,
+                        pid: 91_020,
+                        updated_at: "now".to_owned(),
+                    },
+                }
+            )
         );
         assert_eq!(health.calls(), vec![91_020]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn wait_for_live_project_service_names_missing_endpoint_instead_of_timeout() {
+        let fixture = restart_service_fixture("wait-health-missing-endpoint");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        let runtime = fixture.runtime(
+            Arc::new(RestartTestLauncher::new(91_122)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_122])),
+        );
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_122);
+
+        assert!(matches!(
+            ready,
+            ProjectServiceHealthWait::NotReady(
+                ProjectServiceHealthWaitFailure::EndpointMissing { .. }
+            )
+        ));
+        let ProjectServiceHealthWait::NotReady(failure) = ready else {
+            panic!("expected missing endpoint failure");
+        };
+        let message = runtime.project_service_health_wait_failure_message(
+            &fixture.project_root,
+            "project-a",
+            91_122,
+            failure,
+        );
+        assert!(message.contains("metadata endpoint missing"));
+        assert!(!message.contains("timed out after"));
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn wait_for_live_project_service_names_endpoint_pid_mismatch() {
+        let fixture = restart_service_fixture("wait-health-pid-mismatch");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_904,
+                pid: 91_999,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        let health = Arc::new(RestartTestHealthProbe::ready());
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_123)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_123])),
+            0,
+        )
+        .with_project_service_health_probe(health.clone());
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_123);
+
+        assert_eq!(
+            ready,
+            ProjectServiceHealthWait::NotReady(
+                ProjectServiceHealthWaitFailure::EndpointPidMismatch {
+                    expected_pid: 91_123,
+                    actual_pid: 91_999,
+                }
+            )
+        );
+        assert!(health.calls().is_empty());
+        let ProjectServiceHealthWait::NotReady(failure) = ready else {
+            panic!("expected pid mismatch failure");
+        };
+        let message = runtime.project_service_health_wait_failure_message(
+            &fixture.project_root,
+            "project-a",
+            91_123,
+            failure,
+        );
+        assert!(message.contains("metadata endpoint pid 91999 != expected 91123"));
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn wait_for_live_project_service_succeeds_for_slow_healthy_start() {
+        let fixture = restart_service_fixture("wait-health-slow-ready");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_905,
+                pid: 91_124,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        let health = Arc::new(RestartTestHealthProbe::sequence(vec![false, true]));
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_124)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_124])),
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_124);
+
+        assert!(matches!(
+            ready,
+            ProjectServiceHealthWait::Ready(MetadataApiEndpoint { pid: 91_124, .. })
+        ));
+        assert_eq!(health.calls(), vec![91_124, 91_124]);
         fixture.cleanup();
     }
 
@@ -5977,7 +6350,8 @@ mod tests {
             <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
                 .expect_err("health timeout should be visible");
 
-        assert!(error.contains("project service health wait timed out after 0ms"));
+        assert!(error.contains("/health probe not ready"));
+        assert!(error.contains("after 0ms"));
         assert!(error.contains(&project));
         assert!(error.contains("pid 91022"));
         assert_eq!(launcher.calls(), vec![project]);
@@ -6082,7 +6456,8 @@ mod tests {
 
         let error = result["service"]["error"].as_str().expect("service error");
         assert_eq!(result["service"]["status"], json!("failed"));
-        assert!(error.contains("project service health wait timed out after 0ms"));
+        assert!(error.contains("/health probe not ready"));
+        assert!(error.contains("after 0ms"));
         assert!(error.contains("pid 91024"));
         assert_eq!(result["dashboard"]["status"], json!("skipped"));
         assert_eq!(
@@ -6439,6 +6814,95 @@ mod tests {
         assert_eq!(refreshed.into_inner(), vec![project]);
         assert!(launcher.calls().is_empty());
         fixture.cleanup();
+    }
+
+    #[test]
+    fn pre_restart_dashboard_cleanup_does_not_kill_stale_real_dashboard() {
+        let project_root = "/repo/stale-real-dashboard";
+        let before = json!({
+            "projects": [{
+                "projectRoot": project_root,
+                "dashboards": [{
+                    "status": "mismatch",
+                    "sessionName": "aimux-real",
+                    "windowId": "@real",
+                    "windowIndex": 0,
+                    "windowName": "dashboard",
+                    "buildStamp": "old-build",
+                    "owner": "owner-current",
+                    "process": { "argsPreview": "aimux __dashboard-internal-native" }
+                }]
+            }]
+        });
+        let mut tmux = PreRestartDashboardCleanupFake::new(["@real"]);
+
+        stop_pre_restart_dashboard_repair_windows_with_tmux(
+            &before,
+            &HashSet::from([project_root.to_owned()]),
+            &mut tmux,
+        );
+
+        assert!(tmux.killed.is_empty(), "{:?}", tmux.killed);
+    }
+
+    #[test]
+    fn pre_restart_dashboard_cleanup_still_kills_noop_placeholder() {
+        let project_root = "/repo/placeholder-dashboard";
+        let before = json!({
+            "projects": [{
+                "projectRoot": project_root,
+                "dashboards": [{
+                    "status": "mismatch",
+                    "sessionName": "aimux-placeholder",
+                    "windowId": "@22",
+                    "windowIndex": 0,
+                    "windowName": "dashboard",
+                    "buildStamp": null,
+                    "owner": null,
+                    "process": { "argsPreview": "sh -lc 'tail -f /dev/null'" }
+                }]
+            }]
+        });
+        let mut tmux = PreRestartDashboardCleanupFake::new(["@22"]);
+
+        stop_pre_restart_dashboard_repair_windows_with_tmux(
+            &before,
+            &HashSet::from([project_root.to_owned()]),
+            &mut tmux,
+        );
+
+        assert_eq!(tmux.killed, vec!["@22"]);
+    }
+
+    struct PreRestartDashboardCleanupFake {
+        available: bool,
+        windows: HashSet<String>,
+        killed: Vec<String>,
+    }
+
+    impl PreRestartDashboardCleanupFake {
+        fn new(windows: impl IntoIterator<Item = &'static str>) -> Self {
+            Self {
+                available: true,
+                windows: windows.into_iter().map(str::to_owned).collect(),
+                killed: Vec::new(),
+            }
+        }
+    }
+
+    impl PreRestartDashboardTmux for PreRestartDashboardCleanupFake {
+        fn is_available(&mut self) -> bool {
+            self.available
+        }
+
+        fn has_window(&mut self, target: &TmuxTarget) -> bool {
+            self.windows.contains(&target.window_id)
+        }
+
+        fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+            self.killed.push(target.window_id.clone());
+            Ok(())
+        }
     }
 
     #[test]

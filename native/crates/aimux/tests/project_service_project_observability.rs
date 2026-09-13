@@ -64,6 +64,7 @@ fn counts_task_progress_by_status() {
             json!({ "id": "assigned", "status": "assigned" }),
             json!({ "id": "in-progress", "status": "in_progress" }),
             json!({ "id": "blocked", "status": "blocked" }),
+            json!({ "id": "canceled", "status": "canceled" }),
             json!({ "id": "done", "status": "done" }),
             json!({ "id": "failed", "status": "failed" }),
             json!({ "id": "other", "status": "other" }),
@@ -80,12 +81,13 @@ fn counts_task_progress_by_status() {
             "assigned": 1,
             "in_progress": 1,
             "blocked": 1,
-            "canceled": 0,
+            "canceled": 1,
             "done": 1,
             "failed": 1,
-            "total": 7,
+            "total": 8,
         })
     );
+    assert_eq!(project["summary"]["doneTasks"], 1);
     assert_eq!(project["summary"]["unreadNotifications"], 7);
 }
 

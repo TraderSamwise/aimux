@@ -1,4 +1,8 @@
 use crate::core_command_contract::CORE_API_ROUTES;
+use crate::core_command_transport::{
+    CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
+    execute_loopback_binary_request, execute_loopback_json_request,
+};
 use crate::daemon::core_commands::DaemonCoreCommandRuntime;
 use crate::daemon::http::DaemonResponseBody;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
@@ -238,6 +242,45 @@ pub fn route_json_daemon_request(
     )
 }
 
+pub fn route_stateless_proxy_daemon_request(
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    headers: &BTreeMap<String, String>,
+) -> Option<DaemonRouteResponse> {
+    let route_url = DaemonRouteUrl::parse(path);
+    let pathname = route_url.pathname();
+    let proxy = parse_proxy_target(pathname)?;
+    if !proxy_host_allowed(&proxy.host) {
+        return Some(DaemonRouteResponse::json(
+            403,
+            json!({ "ok": false, "error": "proxy host not allowed" }),
+        ));
+    }
+    let target_url = format!(
+        "http://{}:{}{}{}",
+        proxy.host,
+        proxy.port,
+        proxy.sub_path,
+        route_url.search()
+    );
+    if method == "GET" && is_binary_project_route(&proxy.sub_path) {
+        return Some(route_binary_proxy_response(execute_proxy_binary_request(
+            &target_url,
+            method,
+            headers,
+            PROXY_TIMEOUT_MS,
+            PROXY_MAX_BINARY_BYTES,
+        )));
+    }
+    Some(
+        match execute_proxy_json_request(&target_url, method, headers, body, PROXY_TIMEOUT_MS) {
+            Ok(response) => DaemonRouteResponse::json(response.status, response.json),
+            Err(error) => proxy_error_response(error),
+        },
+    )
+}
+
 pub fn resolve_project_event_stream(
     path: &str,
     headers: &BTreeMap<String, String>,
@@ -288,13 +331,19 @@ fn route_binary_proxy(
     method: &str,
     headers: &BTreeMap<String, String>,
 ) -> DaemonRouteResponse {
-    match runtime.proxy_binary_request(
+    route_binary_proxy_response(runtime.proxy_binary_request(
         target_url,
         method,
         headers,
         PROXY_TIMEOUT_MS,
         PROXY_MAX_BINARY_BYTES,
-    ) {
+    ))
+}
+
+fn route_binary_proxy_response(
+    response: Result<ProxyBinaryResponse, String>,
+) -> DaemonRouteResponse {
+    match response {
         Ok(response) => {
             let upstream_type = response.content_type.unwrap_or_default();
             if !upstream_type.starts_with("image/") {
@@ -320,6 +369,68 @@ fn route_binary_proxy(
             }
         }
         Err(error) => proxy_error_response(error),
+    }
+}
+
+pub fn execute_proxy_json_request(
+    target_url: &str,
+    method: &str,
+    headers: &BTreeMap<String, String>,
+    body: Option<&Value>,
+    timeout_ms: u64,
+) -> Result<ProxyJsonResponse, String> {
+    let daemon_method = if method.eq_ignore_ascii_case("POST") {
+        DaemonHttpMethod::Post
+    } else {
+        DaemonHttpMethod::Get
+    };
+    let request = DaemonJsonRequest {
+        url: target_url.to_owned(),
+        method: daemon_method,
+        headers: headers.clone(),
+        body: body.map(Value::to_string),
+        timeout_ms: Some(timeout_ms),
+    };
+    execute_loopback_json_request(&request)
+        .map(|response| ProxyJsonResponse {
+            status: response.status,
+            json: response.json,
+        })
+        .map_err(proxy_transport_error_text)
+}
+
+pub fn execute_proxy_binary_request(
+    target_url: &str,
+    method: &str,
+    headers: &BTreeMap<String, String>,
+    timeout_ms: u64,
+    max_bytes: usize,
+) -> Result<ProxyBinaryResponse, String> {
+    let daemon_method = if method.eq_ignore_ascii_case("POST") {
+        DaemonHttpMethod::Post
+    } else {
+        DaemonHttpMethod::Get
+    };
+    let request = DaemonJsonRequest {
+        url: target_url.to_owned(),
+        method: daemon_method,
+        headers: headers.clone(),
+        body: None,
+        timeout_ms: Some(timeout_ms),
+    };
+    execute_loopback_binary_request(&request, max_bytes)
+        .map(|response| ProxyBinaryResponse {
+            status: response.status,
+            body: response.body,
+            content_type: response.content_type,
+        })
+        .map_err(proxy_transport_error_text)
+}
+
+fn proxy_transport_error_text(error: CoreCommandTransportError) -> String {
+    match error {
+        CoreCommandTransportError::DaemonRequest { message, .. } => message,
+        other => other.to_string(),
     }
 }
 

@@ -42,6 +42,8 @@ SSE_CLIENT_COUNT = 8
 DEFAULT_DAEMON_PORT = 43190
 RESIDUAL_DAEMON_PORT_MIN = 45000
 RESIDUAL_DAEMON_PORT_MAX = 45999
+RESTORE_QUIT_MARKER_MIN_TIMEOUT = 20.0
+RESTORE_QUIT_MARKER_MAX_TIMEOUT = 90.0
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 DASHBOARD_SELECTION_MARKERS = ("▸ ●", "▸ ◆", "▸ ◇", "> ●", "> ◆", "> ◇")
 TMUX_SESSION_ENV_KEYS = [
@@ -2920,11 +2922,15 @@ def run_top_level_tool_restore(
     mutation: str | None,
 ) -> str:
     launcher_session = f"phase8-restore-{tool}-{int(time.time() * 1000)}"
+    restore_tool = "__phase8_missing_restore_tool__" if mutation == "graveyard-restore-command-fails" else tool
+    marker_delay = "sleep 6; " if mutation == "graveyard-restore-slow-success" else ""
     command = (
         f"cd {shlex.quote(str(project_root))} && "
-        f"{shlex.quote(str(aimux_bin))} --restore {shlex.quote(tool)}; "
-        f"code=$?; printf '\\n__AIMUX_RESTORE_{tool}_EXIT:%s\\n' \"$code\"; sleep 30"
+        f"{shlex.quote(str(aimux_bin))} --restore {shlex.quote(restore_tool)}; "
+        f"code=$?; {marker_delay}printf '\\n__AIMUX_RESTORE_{tool}_EXIT:%s\\n' \"$code\"; sleep 30"
     )
+    timing_started = time.monotonic()
+    timings: dict[str, float] = {}
     proc = subprocess.Popen(
         script_pty_argv([
             tmux,
@@ -2953,22 +2959,72 @@ def run_top_level_tool_restore(
     scope.procs.append(proc)
     deadline = time.monotonic() + 20
     output = ""
+    ps_payload: dict[str, Any] | None = None
     while time.monotonic() < deadline:
         try:
             output = capture_all_tmux(scope)
         except LiveResidualFailure:
             output = ""
         if has_unsupported_command_error(output) or "tool is required" in output:
-            raise LiveResidualFailure(f"{tool} restore dispatch failed:\n{output}")
-        if ps_contains_session(scope, aimux_bin, session_id):
+            raise LiveResidualFailure(
+                f"{tool} restore dispatch failed before session was restored:\n"
+                + json.dumps(
+                    restore_observation_snapshot(
+                        scope,
+                        aimux_bin,
+                        launcher_session,
+                        session_id,
+                        proc,
+                        "restore-dispatch",
+                        False,
+                        timings,
+                        restore_frame=output,
+                    ),
+                    indent=2,
+                )
+            )
+        if re.search(rf"__AIMUX_RESTORE_{re.escape(tool)}_EXIT:[1-9]\d*", output):
+            raise LiveResidualFailure(
+                f"{tool} restore command exited before session was restored:\n"
+                + json.dumps(
+                    restore_observation_snapshot(
+                        scope,
+                        aimux_bin,
+                        launcher_session,
+                        session_id,
+                        proc,
+                        "restore-command-failed",
+                        False,
+                        timings,
+                        restore_frame=output,
+                    ),
+                    indent=2,
+                )
+            )
+        ps_payload = ps_contains_session(scope, aimux_bin, session_id)
+        if ps_payload:
+            timings["restoreObservedAfterSec"] = time.monotonic() - timing_started
             break
         time.sleep(0.05)
     else:
         raise LiveResidualFailure(
-            f"timed out waiting for restored {tool} session {session_id}:\n"
-            f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
+            f"{tool} restore did not reappear in aimux ps before dashboard quit observation:\n"
+            + json.dumps(
+                restore_observation_snapshot(
+                    scope,
+                    aimux_bin,
+                    launcher_session,
+                    session_id,
+                    proc,
+                    "restore-wait",
+                    False,
+                    timings,
+                    restore_frame=output,
+                ),
+                indent=2,
+            )
         )
-    wait_until(
+    dashboard_frame = wait_until(
         lambda: (
             frame
             if "agent multiplexer" in (frame := capture_tmux(scope, launcher_session)) and "q quit" in frame
@@ -2977,27 +3033,40 @@ def run_top_level_tool_restore(
         timeout=10,
         label=f"{tool} restore dashboard rendered before quit",
     )
+    timings["dashboardRenderedAfterSec"] = time.monotonic() - timing_started
     quit_key = "x" if mutation == "graveyard-restore-dashboard-no-quit" else "q"
     tmux_cmd(scope, ["send-keys", "-t", f"{launcher_session}:0", quit_key])
+    timings["quitSentAfterSec"] = time.monotonic() - timing_started
+    timeout = restore_quit_marker_timeout(timings)
     wait_for_restore_exit_marker(
         scope,
+        aimux_bin,
         launcher_session,
+        session_id,
         tool,
         proc,
         sent_key=quit_key,
-        timeout=20,
+        timeout=timeout,
+        timings=timings,
+        dashboard_frame=dashboard_frame,
+        ps_payload=ps_payload,
     )
     return session_id
 
 
 def wait_for_restore_exit_marker(
     scope: Scope,
+    aimux_bin: Path,
     launcher_session: str,
+    session_id: str,
     tool: str,
     proc: subprocess.Popen[Any],
     *,
     sent_key: str,
     timeout: float,
+    timings: dict[str, float],
+    dashboard_frame: str,
+    ps_payload: dict[str, Any] | None,
 ) -> None:
     marker = f"__AIMUX_RESTORE_{tool}_EXIT:0"
     started = time.monotonic()
@@ -3008,24 +3077,83 @@ def wait_for_restore_exit_marker(
         except LiveResidualFailure as error:
             restore_output = f"<restore session unavailable: {error}>"
         if marker in restore_output:
+            timings["quitObservedAfterSec"] = timings.get("quitSentAfterSec", 0.0) + (
+                time.monotonic() - started
+            )
             return
         time.sleep(0.05)
     waited = time.monotonic() - started
+    timings["quitObservationWaitedSec"] = waited
     raise LiveResidualFailure(
         f"{tool} restore dashboard quit marker absent after {waited:.1f}s:\n"
         + json.dumps(
-            {
-                "dashboardRendered": True,
-                "quitSent": sent_key == "q",
-                "sentKey": sent_key,
-                "expectedMarker": marker,
-                "processReturncode": proc.poll(),
-                "restoreSession": restore_output,
-                "allSessions": capture_all_tmux(scope),
-            },
+            restore_observation_snapshot(
+                scope,
+                aimux_bin,
+                launcher_session,
+                session_id,
+                proc,
+                "quit-observation-after-restore",
+                True,
+                timings,
+                restore_frame=restore_output,
+                dashboard_frame=dashboard_frame,
+                ps_payload=ps_payload,
+                expected_marker=marker,
+                sent_key=sent_key,
+                timeout=timeout,
+            ),
             indent=2,
         )
     )
+
+
+def restore_quit_marker_timeout(timings: dict[str, float]) -> float:
+    observed_setup = max(
+        timings.get("restoreObservedAfterSec", 0.0),
+        timings.get("dashboardRenderedAfterSec", 0.0),
+    )
+    scaled = observed_setup * 3.0 + 5.0
+    return min(max(RESTORE_QUIT_MARKER_MIN_TIMEOUT, scaled), RESTORE_QUIT_MARKER_MAX_TIMEOUT)
+
+
+def restore_observation_snapshot(
+    scope: Scope,
+    aimux_bin: Path,
+    launcher_session: str,
+    session_id: str,
+    proc: subprocess.Popen[Any],
+    phase: str,
+    restore_succeeded: bool,
+    timings: dict[str, float],
+    *,
+    restore_frame: str | None = None,
+    dashboard_frame: str | None = None,
+    ps_payload: dict[str, Any] | None = None,
+    expected_marker: str | None = None,
+    sent_key: str | None = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    returncode = proc.poll()
+    snapshot: dict[str, Any] = {
+        "phase": phase,
+        "restoreSucceeded": restore_succeeded,
+        "sessionId": session_id,
+        "launcherSession": launcher_session,
+        "expectedMarker": expected_marker,
+        "sentKey": sent_key,
+        "timeoutSec": timeout,
+        "processReturncode": returncode,
+        "timingsSec": {key: round(value, 3) for key, value in timings.items()},
+        "ps": ps_payload or ps_snapshot(scope, aimux_bin),
+        "restoreSession": restore_frame,
+        "dashboardFrameBeforeQuit": dashboard_frame,
+        "allSessions": capture_all_tmux(scope),
+    }
+    if returncode is not None:
+        snapshot["processStdout"] = read_pipe(proc.stdout)
+        snapshot["processStderr"] = read_pipe(proc.stderr)
+    return snapshot
 
 
 def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
@@ -3720,6 +3848,20 @@ def ps_contains_session(scope: Scope, aimux_bin: Path, session_id: str) -> dict[
                 return None
             return payload if isinstance(payload, dict) else {"sessions": payload}
     return None
+
+
+def ps_snapshot(scope: Scope, aimux_bin: Path) -> dict[str, Any]:
+    result = run([str(aimux_bin), "ps", "--json"], cwd=scope.project, env=scope.env, timeout=15, check=False)
+    snapshot: dict[str, Any] = {
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+    try:
+        snapshot["parsed"] = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        snapshot["parseError"] = str(error)
+    return snapshot
 
 
 def ps_session_by_id(scope: Scope, aimux_bin: Path, session_id: str) -> dict[str, Any] | None:
@@ -4520,6 +4662,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("shell-service", "shell-service-missing-window"),
         ("graveyard", "graveyard-kill-missing-entry"),
         ("graveyard", "graveyard-fork-missing-session"),
+        ("graveyard", "graveyard-restore-command-fails"),
         ("graveyard", "graveyard-restore-dashboard-no-quit"),
         ("top-level-agent", "top-level-agent-missing-session"),
         ("lazy-read", "lazy-read-service-unavailable"),
@@ -4550,7 +4693,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
             "--skip-build",
         ]
         try:
-            result = run(command, timeout=90, check=False)
+            result = run(command, timeout=mutation_proof_timeout(suite), check=False)
         except subprocess.TimeoutExpired as error:
             proof.append({
                 "suite": suite,
@@ -4568,6 +4711,12 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
             "failureExcerpt": first_failure_excerpt(result.stdout, result.stderr),
         })
     return proof
+
+
+def mutation_proof_timeout(suite: str) -> float:
+    if suite == "graveyard":
+        return 180
+    return 90
 
 
 def first_failure_excerpt(stdout: str, stderr: str) -> str:
@@ -4637,7 +4786,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "shell-service-missing-window",
         "graveyard-kill-missing-entry",
         "graveyard-fork-missing-session",
+        "graveyard-restore-command-fails",
         "graveyard-restore-dashboard-no-quit",
+        "graveyard-restore-slow-success",
         "top-level-agent-missing-session",
         "lazy-read-service-unavailable",
         "restart-current-zero-projects",

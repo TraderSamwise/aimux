@@ -60,37 +60,73 @@ fn text_contains_prompt_draft(text: &str, draft: &str) -> bool {
         .any(|fragment| normalized_pane.contains(fragment))
 }
 
-fn current_composer_text(pane: &str) -> Option<String> {
+pub fn current_composer_text(pane: &str) -> Option<String> {
     let lines = pane
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !looks_like_agent_bottom_chrome(line))
+        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    let last = lines.last()?;
-    if let Some(rest) = strip_prompt_marker(last) {
-        return Some(rest.trim().to_owned());
-    }
-    if lines.len() >= 2
-        && strip_prompt_marker(lines[lines.len() - 2]).is_some_and(|rest| rest.trim().is_empty())
-    {
-        return Some((*last).to_owned());
+    for (index, line) in lines.iter().enumerate().rev() {
+        let Some(rest) = strip_agent_prompt_marker(line) else {
+            continue;
+        };
+        let rest = rest.trim();
+        if !rest.is_empty() {
+            return Some(rest.to_owned());
+        }
+        let following = lines[index + 1..]
+            .iter()
+            .copied()
+            .filter(|line| !looks_like_agent_bottom_chrome(line))
+            .collect::<Vec<_>>();
+        return following
+            .first()
+            .map(|line| (*line).to_owned())
+            .or_else(|| Some(String::new()));
     }
     None
 }
 
-fn strip_prompt_marker(line: &str) -> Option<&str> {
+pub fn strip_agent_prompt_marker(line: &str) -> Option<&str> {
     let mut chars = line.chars();
     let first = chars.next()?;
-    if matches!(first, '›' | '>' | '❯') {
+    if is_agent_prompt_marker(first) {
         Some(chars.as_str())
     } else {
         None
     }
 }
 
+pub fn line_starts_with_agent_prompt_marker(line: &str) -> bool {
+    line.trim_start()
+        .chars()
+        .next()
+        .is_some_and(is_agent_prompt_marker)
+}
+
+pub fn starts_with_agent_prompt_marker(line: &str) -> bool {
+    line.chars().next().is_some_and(is_agent_prompt_marker)
+}
+
+pub fn is_agent_prompt_marker(character: char) -> bool {
+    matches!(character, '›' | '>' | '❯')
+}
+
 fn looks_like_agent_bottom_chrome(line: &str) -> bool {
-    (line.starts_with("gpt-") || line.starts_with("claude-"))
-        && (line.contains(" · ~/") || line.contains(" · /"))
+    is_horizontal_rule(line)
+        || line.starts_with('⏵')
+        || line.starts_with('⧉')
+        || line.contains("[[aimux]")
+        || ((line.starts_with("gpt-") || line.starts_with("claude-"))
+            && (line.contains(" · ~/") || line.contains(" · /")))
+}
+
+fn is_horizontal_rule(line: &str) -> bool {
+    let mut chars = line.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    matches!(first, '─' | '-') && chars.all(|character| character == first)
 }
 
 /// The tail of the pane, whitespace-collapsed — two identical readings mean the
