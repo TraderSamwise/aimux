@@ -99,6 +99,34 @@ fn builds_read_only_thread_entries_with_task_family_and_pending_delivery_parity(
 }
 
 #[test]
+fn terminal_threads_do_not_reopen_worklist_from_stale_pending_delivery() {
+    let mut exchange = exchange_fixture();
+    let thread = exchange["threads"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|thread| thread["id"] == "task-thread")
+        .unwrap();
+    thread["status"] = json!("done");
+    thread["waitingOn"] = json!([]);
+    thread["unreadBy"] = json!([]);
+    exchange["tasks"][0]["status"] = json!("done");
+
+    let entries = build_coordination_thread_entries(&exchange, "sam");
+    let entry = &entries[0];
+    assert_eq!(entry["thread"]["status"], "done");
+    assert_eq!(entry["pendingDeliveries"], 0);
+    assert_eq!(entry["latestPendingRecipients"], json!([]));
+
+    let view = build_coordination_view(&[], &[], &[], &[], &entries, "sam");
+    let items = view["worklist"]["items"].as_array().unwrap();
+    let item = find(items, "t:task-thread");
+    assert_eq!(item["actionable"], false);
+    assert_eq!(item["bucket"], "handled");
+    assert!(view["worklist"]["needsYou"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn route_keeps_live_cold_teammate_service_and_missing_targets_visible() {
     let project = temp_project("route");
     let state_dir = project.join("state");
