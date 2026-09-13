@@ -1865,10 +1865,25 @@ fn queued_duplicate_manual_inputs_remain_distinct() {
         vec![
             FakeRuntimeAction::Text("@1".into(), "repeat this".into()),
             FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "the first manual input should deliver on the first budgeted tick"
+    );
+    assert_eq!(
+        queued_delivery_count(&state_dir),
+        1,
+        "identical manual input can be intentional and must remain queued for the next tick"
+    );
+
+    runtime.inner.actions.clear();
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms + 1);
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
             FakeRuntimeAction::Text("@1".into(), "repeat this".into()),
             FakeRuntimeAction::CarriageReturn("@1".into()),
         ],
-        "identical manual input can be intentional and must not be deduped"
+        "the second manual input should deliver on the next budgeted tick"
     );
     assert!(!agent_input_delivery_queue_path(&state_dir).exists());
     cleanup(project);
