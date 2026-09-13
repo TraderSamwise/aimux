@@ -1,9 +1,10 @@
 use aimux::process_inspector::{
-    ProjectServiceProcessIdentity, command_arg_value_matches, is_aimux_daemon_process_args,
-    is_aimux_project_service_process_args, is_current_native_aimux_project_service_process_args,
-    is_exited_process_state, is_native_aimux_daemon_process_args,
-    is_native_aimux_project_service_process_args, is_pid_alive, list_process_args,
-    list_process_parents, read_process_args,
+    ProcessArgsEntry, ProjectServiceProcessIdentity, command_arg_value_matches,
+    is_aimux_daemon_process_args, is_aimux_project_service_process_args,
+    is_current_native_aimux_project_service_process_args, is_exited_process_state,
+    is_native_aimux_daemon_process_args, is_native_aimux_project_service_process_args,
+    is_pid_alive, list_process_args, list_process_parents, process_ancestry_contains_executable,
+    read_process_args,
 };
 
 #[test]
@@ -156,4 +157,44 @@ fn process_lists_parse_real_ps_output() {
             .iter()
             .any(|(entry_pid, _)| *entry_pid == pid)
     );
+}
+
+#[test]
+fn process_ancestry_detects_mosh_without_marking_plain_shells() {
+    let processes = vec![
+        ProcessArgsEntry {
+            pid: 10,
+            args: "/usr/libexec/sshd: sam".into(),
+        },
+        ProcessArgsEntry {
+            pid: 20,
+            args: "/opt/homebrew/bin/mosh-server new -s".into(),
+        },
+        ProcessArgsEntry {
+            pid: 30,
+            args: "-zsh".into(),
+        },
+        ProcessArgsEntry {
+            pid: 40,
+            args: "tmux attach-session -t aimux".into(),
+        },
+        ProcessArgsEntry {
+            pid: 50,
+            args: "tmux attach-session -t aimux".into(),
+        },
+    ];
+    let parents = vec![(20, 10), (30, 20), (40, 30), (50, 10)];
+
+    assert!(process_ancestry_contains_executable(
+        40,
+        "mosh-server",
+        &processes,
+        &parents
+    ));
+    assert!(!process_ancestry_contains_executable(
+        50,
+        "mosh-server",
+        &processes,
+        &parents
+    ));
 }

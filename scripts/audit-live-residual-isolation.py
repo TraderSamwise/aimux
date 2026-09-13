@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,17 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 PHASE8_PATH = ROOT / "scripts" / "phase8-live-residuals.py"
 REMOTE_PATH = ROOT / "scripts" / "live-drive-remote.py"
+PACKAGE_PATH = ROOT / "package.json"
+CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+PHASE8_CI_LANES = [
+    "tmux",
+    "command-resolution",
+    "agent-shell",
+    "graveyard",
+    "expose-interaction",
+    "sse",
+    "process",
+]
 
 
 def load_module(path: Path, name: str) -> Any:
@@ -31,9 +43,27 @@ def assert_raises(label: str, fn: Any) -> None:
     raise AssertionError(f"{label} unexpectedly succeeded")
 
 
+def assert_ci_runs_phase8_lanes() -> None:
+    package = json.loads(PACKAGE_PATH.read_text())
+    scripts = package.get("scripts")
+    if not isinstance(scripts, dict):
+        raise AssertionError("package.json scripts must be an object")
+    workflow = CI_PATH.read_text()
+    for lane in PHASE8_CI_LANES:
+        script_name = f"audit:phase8-live-residuals:{lane}"
+        expected_script = f"python3 scripts/phase8-live-residuals.py --only {lane}"
+        if scripts.get(script_name) != expected_script:
+            raise AssertionError(f"missing package script for Phase 8 residual lane {lane}")
+        if f"yarn {script_name}" not in workflow:
+            raise AssertionError(f"CI does not run Phase 8 residual lane {lane}")
+        if f"aimux-home-phase8-{lane}" not in workflow:
+            raise AssertionError(f"CI residual lane {lane} lacks its own isolated AIMUX_HOME")
+
+
 def main() -> int:
     compile(PHASE8_PATH.read_text(), str(PHASE8_PATH), "exec")
     compile(REMOTE_PATH.read_text(), str(REMOTE_PATH), "exec")
+    assert_ci_runs_phase8_lanes()
     phase8 = load_module(PHASE8_PATH, "phase8_live_residuals_audit")
     remote = load_module(REMOTE_PATH, "live_drive_remote_audit")
     compile(remote.REMOTE_DRIVER, "<live-drive-remote REMOTE_DRIVER>", "exec")
