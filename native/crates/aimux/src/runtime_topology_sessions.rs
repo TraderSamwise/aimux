@@ -13,6 +13,8 @@ pub fn upsert_topology_session(
     project_root: &str,
     now: &str,
 ) -> Value {
+    let existing_sessions_by_id = sessions_by_id(topology);
+    let existing_bindings_by_node_id = bindings_by_node_id(topology);
     topology["generatedAt"] = Value::String(now.into());
     let rig_id = ensure_rig(topology, project_root, now);
     let node = upsert_node(topology, session, &rig_id, now);
@@ -37,7 +39,17 @@ pub fn upsert_topology_session(
     let should_bind = matches!(status, "running" | "idle" | "starting");
     let binding = should_bind
         .then(|| session_to_binding(session, &node_id, now))
-        .flatten();
+        .flatten()
+        .or_else(|| {
+            preserve_existing_session_binding(
+                session,
+                Some(status),
+                &node_id,
+                &existing_sessions_by_id,
+                &existing_bindings_by_node_id,
+                now,
+            )
+        });
     if let Some(binding) = binding {
         replace_array_item(
             topology,
@@ -285,6 +297,8 @@ fn replace_runtime_topology_sessions(
                 && string_field(session, "id").is_some_and(|id| !next_session_ids.contains(&id))
         })
         .collect::<Vec<_>>();
+    let existing_sessions_by_id = sessions_by_id(topology);
+    let existing_bindings_by_node_id = bindings_by_node_id(topology);
     let mut next_nodes = Vec::new();
     let mut next_bindings = Vec::new();
     let mut next_sessions = Vec::new();
@@ -292,7 +306,16 @@ fn replace_runtime_topology_sessions(
         let node = upsert_node(topology, session, &rig_id, now);
         let node_id = string_field(&node, "id").unwrap_or_default();
         next_nodes.push(node);
-        if let Some(binding) = session_to_binding(session, &node_id, now) {
+        if let Some(binding) = session_to_binding(session, &node_id, now).or_else(|| {
+            preserve_existing_session_binding(
+                session,
+                None,
+                &node_id,
+                &existing_sessions_by_id,
+                &existing_bindings_by_node_id,
+                now,
+            )
+        }) {
             next_bindings.push(binding);
         }
         next_sessions.push(session_to_topology_session(session, &node_id, now));
@@ -468,6 +491,71 @@ fn session_to_binding(session: &Value, node_id: &str, now: &str) -> Option<Value
         "tmuxWindowName": target["windowName"],
         "updatedAt": now,
     }))
+}
+
+fn preserve_existing_session_binding(
+    session: &Value,
+    explicit_status: Option<&str>,
+    node_id: &str,
+    existing_sessions_by_id: &BTreeMap<String, Value>,
+    existing_bindings_by_node_id: &BTreeMap<String, Value>,
+    now: &str,
+) -> Option<Value> {
+    if session.get("tmuxTarget").is_some() || !session_claims_live_binding(session, explicit_status)
+    {
+        return None;
+    }
+    let session_id = string_field(session, "id")?;
+    let existing_session = existing_sessions_by_id.get(&session_id)?;
+    if !session_claims_live_binding(existing_session, None)
+        || !backend_ids_compatible(session, existing_session)
+    {
+        return None;
+    }
+    let existing_node_id = string_field(existing_session, "nodeId")?;
+    let mut binding = existing_bindings_by_node_id.get(&existing_node_id)?.clone();
+    string_field(&binding, "tmuxWindowId")?;
+    if let Value::Object(map) = &mut binding {
+        map.insert("id".into(), Value::String(format!("tmux:{session_id}")));
+        map.insert("nodeId".into(), Value::String(node_id.into()));
+        map.insert("updatedAt".into(), Value::String(now.into()));
+    }
+    Some(binding)
+}
+
+fn sessions_by_id(topology: &Value) -> BTreeMap<String, Value> {
+    array_field(topology, "sessions")
+        .into_iter()
+        .filter_map(|session| string_field(&session, "id").map(|id| (id, session)))
+        .collect()
+}
+
+fn bindings_by_node_id(topology: &Value) -> BTreeMap<String, Value> {
+    array_field(topology, "bindings")
+        .into_iter()
+        .filter_map(|binding| string_field(&binding, "nodeId").map(|id| (id, binding)))
+        .collect()
+}
+
+fn session_claims_live_binding(session: &Value, explicit_status: Option<&str>) -> bool {
+    if string_field(session, "lifecycle").as_deref() == Some("offline") {
+        return false;
+    }
+    let status = explicit_status
+        .map(str::to_owned)
+        .or_else(|| string_field(session, "status"))
+        .unwrap_or_else(|| "running".into());
+    matches!(status.as_str(), "starting" | "running" | "idle")
+}
+
+fn backend_ids_compatible(incoming: &Value, existing: &Value) -> bool {
+    match (
+        string_field(incoming, "backendSessionId"),
+        string_field(existing, "backendSessionId"),
+    ) {
+        (Some(incoming), Some(existing)) => incoming == existing,
+        _ => true,
+    }
 }
 
 fn dedupe_session_states(sessions: &[Value]) -> Vec<Value> {
