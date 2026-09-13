@@ -1528,7 +1528,9 @@ fn ensure_project_reports_existing_live_pid_without_endpoint_as_unhealthy() {
         .expect_err("missing endpoint should fail health wait");
 
     assert!(launcher.calls().is_empty());
-    assert!(error.contains("project service health wait timed out after 0ms"));
+    assert!(error.contains("metadata endpoint missing"));
+    assert!(error.contains("after 0ms"));
+    assert!(!error.contains("project service health wait timed out after"));
     assert!(error.contains(&format!("pid {}", std::process::id())));
     fixture.cleanup();
 }
