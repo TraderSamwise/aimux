@@ -1314,6 +1314,61 @@ fn runtime_mutex_wrapper_routes_owner_get_proxy_without_head_of_line_blocking() 
 }
 
 #[test]
+fn runtime_mutex_wrapper_routes_owner_post_proxy_without_head_of_line_blocking() {
+    let fixture = HostedFixture::new("owner-post-proxy-no-head-of-line");
+    let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(
+        fixture.resolver.clone(),
+        AimuxDaemonInfo {
+            pid: 123,
+            port: 43191,
+            started_at: "started".into(),
+            updated_at: "updated".into(),
+        },
+    )));
+    let upstream = JsonOnceServer::spawn(r#"{"ok":true,"accepted":true}"#);
+    let mut request = FakeRuntime::request(
+        "POST",
+        &format!("/proxy/127.0.0.1/{}/live-pane/input", upstream.port),
+    );
+    request
+        .headers
+        .insert("x-aimux-actor-role".into(), "owner".into());
+    request
+        .headers
+        .insert("content-type".into(), "application/json".into());
+    request
+        .body_chunks
+        .push(br#"{"sessionId":"s","text":"hello"}"#.to_vec());
+    let held = runtime.lock().expect("hold runtime lock");
+    let (response_tx, response_rx) = mpsc::channel();
+    let request_runtime = Arc::clone(&runtime);
+    let request_thread = thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(&request_runtime, request);
+        response_tx
+            .send(response)
+            .expect("send proxy response before lock release");
+    });
+
+    let response = match response_rx.recv_timeout(Duration::from_millis(500)) {
+        Ok(response) => response,
+        Err(error) => {
+            drop(held);
+            request_thread.join().expect("request thread");
+            panic!("POST proxy waited behind the daemon runtime mutex: {error}");
+        }
+    };
+    drop(held);
+    request_thread.join().expect("request thread");
+    upstream.join();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        json_body(&response),
+        json!({ "ok": true, "accepted": true })
+    );
+}
+
+#[test]
 fn runtime_mutex_wrapper_still_denies_guest_desktop_state_proxy_fast_path() {
     let fixture = HostedFixture::new("guest-get-proxy-still-denied");
     let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(
@@ -1337,6 +1392,100 @@ fn runtime_mutex_wrapper_still_denies_guest_desktop_state_proxy_fast_path() {
         json_body(&response)["error"],
         "shared guests can only read shared session output and attachments"
     );
+}
+
+#[test]
+fn runtime_mutex_wrapper_still_denies_guest_live_pane_input_proxy_fast_path() {
+    let fixture = HostedFixture::new("guest-post-proxy-still-denied");
+    let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(
+        fixture.resolver.clone(),
+        AimuxDaemonInfo {
+            pid: 123,
+            port: 43191,
+            started_at: "started".into(),
+            updated_at: "updated".into(),
+        },
+    )));
+    let mut request = FakeRuntime::request("POST", "/proxy/127.0.0.1/43210/live-pane/input");
+    request
+        .headers
+        .insert("x-aimux-actor-role".into(), "guest".into());
+    request
+        .headers
+        .insert("content-type".into(), "application/json".into());
+    request
+        .body_chunks
+        .push(br#"{"sessionId":"s","text":"hello"}"#.to_vec());
+
+    let response = handle_daemon_runtime_request_with_mutex(&runtime, request);
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        json_body(&response)["error"],
+        "shared guest route requires an authorized share session"
+    );
+}
+
+#[test]
+fn hosted_operator_post_proxy_still_waits_for_project_binding_runtime_lock() {
+    let fixture = HostedFixture::new("operator-post-proxy-still-bound");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let port = unused_loopback_port();
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+    let held = runtime.lock().expect("hold runtime lock");
+    let (response_tx, response_rx) = mpsc::channel();
+    let request_thread = thread::spawn(move || {
+        let mut client = connect_loopback_port(port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("client timeout");
+        let body = r#"{"sessionId":"s","text":"hello"}"#;
+        write!(
+            client,
+            "POST /proxy/127.0.0.1/43210/agents/input HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("write hosted operator request");
+        response_tx
+            .send(read_socket_text(&mut client))
+            .expect("send hosted response");
+    });
+
+    assert!(
+        response_rx
+            .recv_timeout(Duration::from_millis(500))
+            .is_err(),
+        "operator proxy completed while runtime lock was held"
+    );
+    drop(held);
+    let response = response_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("hosted operator response after lock release");
+    request_thread.join().expect("request thread");
+    handle.abort();
+
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected hosted operator response: {response}"
+    );
+    assert!(response.contains(r#""ok":true"#), "response: {response}");
+    assert!(runtime.lock().expect("runtime").calls.contains(
+        &"proxy-json:POST:http://127.0.0.1:43210/agents/input:{\"sessionId\":\"s\",\"text\":\"hello\"}".to_owned()
+    ));
 }
 
 #[test]

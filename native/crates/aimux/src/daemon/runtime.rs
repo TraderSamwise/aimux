@@ -1906,10 +1906,7 @@ pub fn handle_daemon_runtime_request_with_mutex(
             },
         );
     }
-    if request.method == "GET"
-        && pathname.starts_with("/proxy/")
-        && proxy_fast_path_can_skip_runtime_lock(&request.headers)
-    {
+    if pathname.starts_with("/proxy/") && proxy_fast_path_can_skip_runtime_lock(&request.headers) {
         return handle_daemon_http_request(
             request,
             |method, path, body, headers| {
