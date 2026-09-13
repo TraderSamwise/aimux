@@ -96,11 +96,8 @@ pub struct BufferedLoopSend {
 pub struct LoopWatcher {
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
-    stopped_since: BTreeMap<LoopDwellKey, i64>,
-    last_candidate_signature: Option<String>,
-    last_overseer_reported_signature: Option<String>,
-    last_overseer_attempted_signature: Option<String>,
-    unchanged_candidate_ticks: u64,
+    stopped_since: BTreeMap<LoopDwellKey, LoopStoppedState>,
+    pending_send_keys: BTreeMap<String, Vec<LoopDwellKey>>,
     delivery_records: Vec<LoopDeliveryRecord>,
     paused_loop_alerts: BTreeMap<String, LoopAlertPause>,
     paused_summary_ticks: u64,
@@ -122,6 +119,40 @@ struct LoopDwellKey {
     loop_since: String,
     goal: String,
     loop_source: String,
+}
+
+#[derive(Debug, Clone)]
+struct LoopStoppedState {
+    first_seen_ms: i64,
+    last_attempted_ms: Option<i64>,
+    last_reported_ms: Option<i64>,
+    unchanged_candidate_ticks: u64,
+    last_instruction_signature: Option<String>,
+}
+
+impl LoopStoppedState {
+    fn new(now_ms: i64, instruction_signature: Option<String>) -> Self {
+        Self {
+            first_seen_ms: now_ms,
+            last_attempted_ms: None,
+            last_reported_ms: None,
+            unchanged_candidate_ticks: 0,
+            last_instruction_signature: instruction_signature,
+        }
+    }
+
+    fn reset_after_instruction(&mut self, now_ms: i64, instruction_signature: Option<String>) {
+        self.first_seen_ms = now_ms;
+        self.last_attempted_ms = None;
+        self.last_reported_ms = None;
+        self.unchanged_candidate_ticks = 0;
+        self.last_instruction_signature = instruction_signature;
+    }
+}
+
+struct DwelledCandidate {
+    key: LoopDwellKey,
+    value: Value,
 }
 
 impl LoopWatcher {
@@ -170,12 +201,10 @@ impl LoopWatcher {
             raw_candidates,
             now_ms,
             config_i64(input, "stoppedDwellMs", 0),
+            config_i64(input, "nudgeCooldownMs", 60_000),
+            config_u64(input, "unchangedReminderTicks"),
         );
         if candidates.is_empty() {
-            self.last_candidate_signature = None;
-            self.last_overseer_reported_signature = None;
-            self.last_overseer_attempted_signature = None;
-            self.unchanged_candidate_ticks = 0;
             if let Some(send) = paused_summary {
                 sends.push(send);
             }
@@ -184,13 +213,6 @@ impl LoopWatcher {
             }
             return sends;
         }
-        let candidate_sig = candidate_signature(&candidates);
-        if self.last_candidate_signature.as_deref() == Some(candidate_sig.as_str()) {
-            self.unchanged_candidate_ticks = self.unchanged_candidate_ticks.saturating_add(1);
-        } else {
-            self.last_candidate_signature = Some(candidate_sig.clone());
-            self.unchanged_candidate_ticks = 0;
-        }
 
         let cooldown = config_i64(input, "nudgeCooldownMs", 60_000);
         let overseer_running = overseer_id
@@ -198,31 +220,27 @@ impl LoopWatcher {
             .is_some_and(|id| session_exists(input, id));
 
         if let Some(overseer_id) = overseer_id.filter(|_| overseer_running) {
-            let already_reported =
-                self.last_overseer_reported_signature.as_deref() == Some(candidate_sig.as_str());
-            let already_attempted =
-                self.last_overseer_attempted_signature.as_deref() == Some(candidate_sig.as_str());
-            let reminder_due = overseer_reminder_due(
-                input,
-                self.unchanged_candidate_ticks,
-                now_ms.saturating_sub(self.last_overseer_wake_at),
-                cooldown,
-            );
-            if (already_reported || already_attempted) && !reminder_due {
-                if let Some(send) = paused_summary {
-                    sends.push(send);
-                }
-                return sends;
-            }
+            let values = candidates
+                .iter()
+                .map(|candidate| candidate.value.clone())
+                .collect::<Vec<_>>();
+            let candidate_sig = candidate_signature(&values);
             let send = LoopSend {
                 session_id: overseer_id,
                 text: build_overseer_briefing(
-                    &candidates,
+                    &values,
                     config_string(input, "overseerBriefingTemplate"),
                 ),
-                signature: candidate_sig,
+                signature: candidate_sig.clone(),
                 kind: LoopSendKind::OverseerBriefing,
             };
+            self.pending_send_keys.insert(
+                candidate_sig,
+                candidates
+                    .into_iter()
+                    .map(|candidate| candidate.key)
+                    .collect::<Vec<_>>(),
+            );
             sends.push(send);
             if let Some(send) = paused_summary {
                 sends.push(send);
@@ -246,16 +264,19 @@ impl LoopWatcher {
         }
 
         for candidate in candidates {
-            let id = str_field(&candidate, "id").to_owned();
+            let id = str_field(&candidate.value, "id").to_owned();
             if now_ms - self.last_nudge_at.get(&id).copied().unwrap_or(0) < cooldown {
                 continue;
             }
+            let signature = candidate_signature(std::slice::from_ref(&candidate.value));
             let send = LoopSend {
                 session_id: id.clone(),
-                text: build_canned_nudge(&candidate),
-                signature: candidate_signature(&[candidate]),
+                text: build_canned_nudge(&candidate.value),
+                signature: signature.clone(),
                 kind: LoopSendKind::DirectNudge,
             };
+            self.pending_send_keys
+                .insert(signature, vec![candidate.key]);
             sends.push(send);
         }
         if let Some(send) = paused_summary {
@@ -276,10 +297,6 @@ impl LoopWatcher {
         match send.kind {
             LoopSendKind::OverseerBriefing => {
                 self.last_overseer_wake_at = now_ms;
-                self.last_overseer_attempted_signature = Some(send.signature.clone());
-                if matches!(outcome, LoopDeliveryOutcome::Delivered) {
-                    self.last_overseer_reported_signature = Some(send.signature.clone());
-                }
             }
             LoopSendKind::DirectNudge => {
                 self.last_nudge_at.insert(send.session_id.clone(), now_ms);
@@ -290,6 +307,18 @@ impl LoopWatcher {
                 self.last_reconciliation_attempted_signature = Some(send.signature.clone());
                 if matches!(outcome, LoopDeliveryOutcome::Delivered) {
                     self.last_reconciliation_reported_signature = Some(send.signature.clone());
+                }
+            }
+        }
+        let delivered = matches!(outcome, LoopDeliveryOutcome::Delivered);
+        if let Some(keys) = self.pending_send_keys.remove(&send.signature) {
+            for key in keys {
+                if let Some(state) = self.stopped_since.get_mut(&key) {
+                    state.last_attempted_ms = Some(now_ms);
+                    if delivered {
+                        state.last_reported_ms = Some(now_ms);
+                    }
+                    state.unchanged_candidate_ticks = 0;
                 }
             }
         }
@@ -464,8 +493,11 @@ impl LoopWatcher {
         candidates: Vec<Value>,
         now_ms: i64,
         dwell_ms: i64,
-    ) -> Vec<Value> {
+        cooldown_ms: i64,
+        reminder_ticks: Option<u64>,
+    ) -> Vec<DwelledCandidate> {
         let dwell_ms = dwell_ms.max(0);
+        let cooldown_ms = cooldown_ms.max(0);
         let keyed_candidates = candidates
             .into_iter()
             .filter_map(|candidate| dwell_key(&candidate).map(|key| (key, candidate)))
@@ -479,8 +511,30 @@ impl LoopWatcher {
         keyed_candidates
             .into_iter()
             .filter_map(|(key, candidate)| {
-                let first_seen = self.stopped_since.entry(key).or_insert(now_ms);
-                (now_ms.saturating_sub(*first_seen) >= dwell_ms).then_some(candidate)
+                let instruction_signature = instruction_cadence_signature(&candidate);
+                let state = self.stopped_since.entry(key.clone()).or_insert_with(|| {
+                    LoopStoppedState::new(now_ms, instruction_signature.clone())
+                });
+                if state.last_instruction_signature != instruction_signature
+                    && instruction_signature.is_some()
+                {
+                    state.reset_after_instruction(now_ms, instruction_signature);
+                } else {
+                    state.last_instruction_signature = instruction_signature;
+                    if state.last_attempted_ms.is_some() {
+                        state.unchanged_candidate_ticks =
+                            state.unchanged_candidate_ticks.saturating_add(1);
+                    }
+                }
+                if now_ms.saturating_sub(state.first_seen_ms) < dwell_ms {
+                    return None;
+                }
+                stopped_candidate_due(state, now_ms, cooldown_ms, reminder_ticks).then_some(
+                    DwelledCandidate {
+                        key,
+                        value: candidate,
+                    },
+                )
             })
             .collect()
     }
@@ -679,9 +733,13 @@ struct PersistentLoopWatcherState {
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
     stopped_since: Vec<PersistentStoppedSince>,
+    #[serde(default)]
     last_candidate_signature: Option<String>,
+    #[serde(default)]
     last_overseer_reported_signature: Option<String>,
+    #[serde(default)]
     last_overseer_attempted_signature: Option<String>,
+    #[serde(default)]
     unchanged_candidate_ticks: u64,
     #[serde(default)]
     delivery_records: Vec<LoopDeliveryRecord>,
@@ -719,6 +777,14 @@ struct PersistentStoppedSince {
     goal: String,
     loop_source: String,
     first_seen_ms: i64,
+    #[serde(default)]
+    last_attempted_ms: Option<i64>,
+    #[serde(default)]
+    last_reported_ms: Option<i64>,
+    #[serde(default)]
+    unchanged_candidate_ticks: u64,
+    #[serde(default)]
+    last_instruction_signature: Option<String>,
 }
 
 impl PersistentLoopWatcherState {
@@ -730,18 +796,22 @@ impl PersistentLoopWatcherState {
             stopped_since: watcher
                 .stopped_since
                 .iter()
-                .map(|(key, first_seen_ms)| PersistentStoppedSince {
+                .map(|(key, state)| PersistentStoppedSince {
                     session_id: key.session_id.clone(),
                     loop_since: key.loop_since.clone(),
                     goal: key.goal.clone(),
                     loop_source: key.loop_source.clone(),
-                    first_seen_ms: *first_seen_ms,
+                    first_seen_ms: state.first_seen_ms,
+                    last_attempted_ms: state.last_attempted_ms,
+                    last_reported_ms: state.last_reported_ms,
+                    unchanged_candidate_ticks: state.unchanged_candidate_ticks,
+                    last_instruction_signature: state.last_instruction_signature.clone(),
                 })
                 .collect(),
-            last_candidate_signature: watcher.last_candidate_signature.clone(),
-            last_overseer_reported_signature: watcher.last_overseer_reported_signature.clone(),
-            last_overseer_attempted_signature: watcher.last_overseer_attempted_signature.clone(),
-            unchanged_candidate_ticks: watcher.unchanged_candidate_ticks,
+            last_candidate_signature: None,
+            last_overseer_reported_signature: None,
+            last_overseer_attempted_signature: None,
+            unchanged_candidate_ticks: 0,
             delivery_records: watcher.delivery_records.clone(),
             paused_loop_alerts: watcher.paused_loop_alerts.clone(),
             paused_summary_ticks: watcher.paused_summary_ticks,
@@ -769,6 +839,16 @@ impl PersistentLoopWatcherState {
                 self.version
             ));
         }
+        let legacy_attempted_ms = self
+            .last_overseer_attempted_signature
+            .as_ref()
+            .map(|_| self.last_overseer_wake_at)
+            .filter(|at_ms| *at_ms > 0);
+        let legacy_reported_ms = self
+            .last_overseer_reported_signature
+            .as_ref()
+            .map(|_| self.last_overseer_wake_at)
+            .filter(|at_ms| *at_ms > 0);
         Ok(LoopWatcher {
             last_nudge_at: self.last_nudge_at,
             last_overseer_wake_at: self.last_overseer_wake_at,
@@ -783,14 +863,19 @@ impl PersistentLoopWatcherState {
                             goal: record.goal,
                             loop_source: record.loop_source,
                         },
-                        record.first_seen_ms,
+                        LoopStoppedState {
+                            first_seen_ms: record.first_seen_ms,
+                            last_attempted_ms: record.last_attempted_ms.or(legacy_attempted_ms),
+                            last_reported_ms: record.last_reported_ms.or(legacy_reported_ms),
+                            unchanged_candidate_ticks: record
+                                .unchanged_candidate_ticks
+                                .max(self.unchanged_candidate_ticks),
+                            last_instruction_signature: record.last_instruction_signature,
+                        },
                     )
                 })
                 .collect(),
-            last_candidate_signature: self.last_candidate_signature,
-            last_overseer_reported_signature: self.last_overseer_reported_signature,
-            last_overseer_attempted_signature: self.last_overseer_attempted_signature,
-            unchanged_candidate_ticks: self.unchanged_candidate_ticks,
+            pending_send_keys: BTreeMap::new(),
             delivery_records: self.delivery_records,
             paused_loop_alerts: self.paused_loop_alerts,
             paused_summary_ticks: self.paused_summary_ticks,
@@ -1296,23 +1381,32 @@ fn session_exists(input: &Value, id: &str) -> bool {
         .any(|session| str_field(session, "id") == id)
 }
 
-fn overseer_reminder_due(
-    input: &Value,
-    unchanged_ticks: u64,
-    elapsed_since_last_wake_ms: i64,
+fn stopped_candidate_due(
+    state: &LoopStoppedState,
+    now_ms: i64,
     cooldown_ms: i64,
+    reminder_ticks: Option<u64>,
 ) -> bool {
-    if let Some(ticks) = input
-        .get("config")
-        .and_then(|config| config.get("unchangedReminderTicks"))
-        .and_then(Value::as_u64)
-    {
-        let ticks = ticks.max(1);
-        return unchanged_ticks > 0
-            && unchanged_ticks.is_multiple_of(ticks)
-            && elapsed_since_last_wake_ms >= cooldown_ms;
+    let Some(last_attempted_ms) = state.last_attempted_ms else {
+        return true;
+    };
+    if now_ms.saturating_sub(last_attempted_ms) < cooldown_ms {
+        return false;
     }
-    elapsed_since_last_wake_ms >= cooldown_ms
+    if let Some(ticks) = reminder_ticks {
+        let ticks = ticks.max(1);
+        return state.unchanged_candidate_ticks > 0
+            && state.unchanged_candidate_ticks.is_multiple_of(ticks);
+    }
+    true
+}
+
+fn instruction_cadence_signature(candidate: &Value) -> Option<String> {
+    let action = candidate.get("loopLastAction")?;
+    if str_field(action, "action") == "add" {
+        return None;
+    }
+    serde_json::to_string(action).ok()
 }
 
 fn candidate_signature(candidates: &[Value]) -> String {
@@ -1365,6 +1459,13 @@ fn config_i64(input: &Value, field: &str, fallback: i64) -> i64 {
         .and_then(|config| config.get(field))
         .and_then(Value::as_i64)
         .unwrap_or(fallback)
+}
+
+fn config_u64(input: &Value, field: &str) -> Option<u64> {
+    input
+        .get("config")
+        .and_then(|config| config.get(field))
+        .and_then(Value::as_u64)
 }
 
 fn config_string<'a>(input: &'a Value, field: &str) -> Option<&'a str> {
