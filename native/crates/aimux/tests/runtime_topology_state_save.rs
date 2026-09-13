@@ -191,16 +191,198 @@ fn runtime_event_state_save_reconciles_removed_session_ids() {
     assert_eq!(status(&topology, "live-1"), Some("running"));
 }
 
+#[test]
+fn state_save_preserves_live_binding_when_snapshot_omits_tmux_target() {
+    let temp = TempDir::new("aimux-runtime-topology-preserve-binding");
+    let project_root = temp.path().join("repo");
+    let project_state_dir = temp.path().join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&project_state_dir).expect("project state");
+
+    let mut topology = aimux::runtime_topology::empty_runtime_topology();
+    upsert_topology_session(
+        &mut topology,
+        &json!({
+            "id": "codex-live",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "live",
+            "backendSessionId": "backend-live",
+            "createdAt": NOW,
+            "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": "@7",
+                "windowIndex": 7,
+                "windowName": "codex"
+            },
+        }),
+        "running",
+        &project_root.to_string_lossy(),
+        NOW,
+    );
+    write_runtime_topology(runtime_topology_path(&project_state_dir), &topology)
+        .expect("write topology");
+
+    let topology = reconcile_runtime_topology_sessions_on_state_save_at(
+        &project_root,
+        &project_state_dir,
+        &[json!({
+            "id": "codex-live",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "live",
+            "backendSessionId": "backend-live",
+            "createdAt": NOW,
+        })],
+        &[],
+        LATER,
+    )
+    .expect("reconcile topology");
+
+    let session = session_state(&topology, "codex-live").expect("live session");
+    assert_eq!(session["status"], "running");
+    assert_eq!(session["tmuxTarget"]["sessionName"], "aimux-repo");
+    assert_eq!(session["tmuxTarget"]["windowId"], "@7");
+    assert_eq!(session["tmuxTarget"]["windowIndex"], 7);
+}
+
+#[test]
+fn state_save_does_not_preserve_binding_for_replaced_backend_session() {
+    let temp = TempDir::new("aimux-runtime-topology-replaced-backend");
+    let project_root = temp.path().join("repo");
+    let project_state_dir = temp.path().join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&project_state_dir).expect("project state");
+
+    let mut topology = aimux::runtime_topology::empty_runtime_topology();
+    upsert_topology_session(
+        &mut topology,
+        &json!({
+            "id": "codex-live",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "live",
+            "backendSessionId": "backend-old",
+            "createdAt": NOW,
+            "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": "@7",
+                "windowIndex": 7,
+                "windowName": "codex"
+            },
+        }),
+        "running",
+        &project_root.to_string_lossy(),
+        NOW,
+    );
+    write_runtime_topology(runtime_topology_path(&project_state_dir), &topology)
+        .expect("write topology");
+
+    let topology = reconcile_runtime_topology_sessions_on_state_save_at(
+        &project_root,
+        &project_state_dir,
+        &[json!({
+            "id": "codex-live",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "live",
+            "backendSessionId": "backend-new",
+            "createdAt": LATER,
+        })],
+        &[],
+        LATER,
+    )
+    .expect("reconcile topology");
+
+    let session = session_state(&topology, "codex-live").expect("replacement session");
+    assert_eq!(session["status"], "running");
+    assert!(
+        session.get("tmuxTarget").is_none(),
+        "a new backend session must not inherit the old window binding"
+    );
+}
+
+#[test]
+fn state_save_removes_binding_when_session_goes_offline() {
+    let temp = TempDir::new("aimux-runtime-topology-offline-binding");
+    let project_root = temp.path().join("repo");
+    let project_state_dir = temp.path().join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&project_state_dir).expect("project state");
+
+    let mut topology = aimux::runtime_topology::empty_runtime_topology();
+    upsert_topology_session(
+        &mut topology,
+        &json!({
+            "id": "codex-live",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "live",
+            "backendSessionId": "backend-live",
+            "createdAt": NOW,
+            "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": "@7",
+                "windowIndex": 7,
+                "windowName": "codex"
+            },
+        }),
+        "running",
+        &project_root.to_string_lossy(),
+        NOW,
+    );
+    write_runtime_topology(runtime_topology_path(&project_state_dir), &topology)
+        .expect("write topology");
+
+    let topology = reconcile_runtime_topology_sessions_on_state_save_at(
+        &project_root,
+        &project_state_dir,
+        &[json!({
+            "id": "codex-live",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "offline",
+            "backendSessionId": "backend-live",
+            "createdAt": NOW,
+        })],
+        &[],
+        LATER,
+    )
+    .expect("reconcile topology");
+
+    let session = session_state(&topology, "codex-live").expect("offline session");
+    assert_eq!(session["status"], "offline");
+    assert!(
+        session.get("tmuxTarget").is_none(),
+        "offline sessions must not keep a stale window binding"
+    );
+}
+
 fn status(topology: &Value, session_id: &str) -> Option<&'static str> {
+    session_state(topology, session_id).and_then(|session| match session["status"].as_str() {
+        Some("running") => Some("running"),
+        Some("offline") => Some("offline"),
+        Some("graveyard") => Some("graveyard"),
+        _ => None,
+    })
+}
+
+fn session_state(topology: &Value, session_id: &str) -> Option<Value> {
     list_topology_session_states(topology, None)
         .into_iter()
         .find(|session| session["id"].as_str() == Some(session_id))
-        .and_then(|session| match session["status"].as_str() {
-            Some("running") => Some("running"),
-            Some("offline") => Some("offline"),
-            Some("graveyard") => Some("graveyard"),
-            _ => None,
-        })
 }
 
 struct TempDir {
