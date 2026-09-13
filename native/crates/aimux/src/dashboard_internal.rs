@@ -194,6 +194,7 @@ struct DashboardSnapshotRenderContext<'a> {
     hidden_offline_agent_count: usize,
     scroll_offset: usize,
     runtime_guard: Option<&'a DashboardRuntimeGuardStatus>,
+    pending_now_ms: i64,
 }
 
 impl DashboardViewport {
@@ -639,12 +640,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     &options,
                     controller,
                     snapshot,
+                    &mut pending_actions,
                     DashboardSnapshotRenderContext {
                         viewport,
                         endpoint: latest_endpoint.as_ref(),
                         hidden_offline_agent_count: 0,
                         scroll_offset,
                         runtime_guard: Some(&runtime_guard),
+                        pending_now_ms: pending_action_now_ms(clock_start),
                     },
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
@@ -731,12 +734,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     &options,
                     controller,
                     &visible_model.snapshot,
+                    &mut pending_actions,
                     DashboardSnapshotRenderContext {
                         viewport,
                         endpoint: loaded.endpoint.as_ref(),
                         hidden_offline_agent_count: visible_model.hidden_offline_agent_count,
                         scroll_offset,
                         runtime_guard: Some(&runtime_guard),
+                        pending_now_ms: pending_action_now_ms(clock_start),
                     },
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
@@ -1459,6 +1464,7 @@ fn render_dashboard_snapshot(
     options: &NativeDashboardOptions,
     controller: &mut DashboardController,
     snapshot: &DesktopStateSnapshot,
+    pending_actions: &mut DashboardPendingActions,
     context: DashboardSnapshotRenderContext<'_>,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
     let viewport = context.viewport;
@@ -1468,6 +1474,8 @@ fn render_dashboard_snapshot(
             controller,
             context.endpoint,
             context.scroll_offset,
+            pending_actions,
+            context.pending_now_ms,
         );
     }
     controller.navigation.clamp(snapshot);
@@ -1719,8 +1727,10 @@ fn render_dashboard_subscreen_snapshot(
     controller: &mut DashboardController,
     endpoint: Option<&ProjectServiceEndpoint>,
     scroll_offset: usize,
+    pending_actions: &mut DashboardPendingActions,
+    pending_now_ms: i64,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
-    let (resource, error) = match dashboard_screen_resource_path(controller.screen) {
+    let (mut resource, error) = match dashboard_screen_resource_path(controller.screen) {
         Some(path) => match endpoint {
             Some(endpoint) => match fetch_dashboard_resource(endpoint, path) {
                 Ok(resource) => (Some(resource), None),
@@ -1730,6 +1740,12 @@ fn render_dashboard_subscreen_snapshot(
         },
         None => (None, None),
     };
+    if controller.screen == DashboardScreen::Graveyard
+        && let Some(resource) = resource.as_mut()
+    {
+        pending_actions.reconcile_graveyard_resource(resource, pending_now_ms);
+        pending_actions.apply_to_graveyard_resource(resource);
+    }
     controller.set_subscreen_actions(dashboard_screen_actions(
         controller.screen,
         resource.as_ref(),
@@ -2551,17 +2567,31 @@ mod tests {
             hidden_offline_agent_count: 0,
             scroll_offset: 0,
             runtime_guard: None,
+            pending_now_ms: 0,
         };
+        let mut pending_actions = DashboardPendingActions::new();
 
         let mut plain_controller = DashboardController::new(&snapshot);
-        let plain =
-            render_dashboard_snapshot(&options, &mut plain_controller, &snapshot, context).frame;
+        let plain = render_dashboard_snapshot(
+            &options,
+            &mut plain_controller,
+            &snapshot,
+            &mut pending_actions,
+            context,
+        )
+        .frame;
         assert!(!plain.starts_with("\x1b[2;38;5;240m"));
 
         let mut overlay_controller = DashboardController::new(&snapshot);
         overlay_controller.overseer_overlay_open = true;
-        let overlay =
-            render_dashboard_snapshot(&options, &mut overlay_controller, &snapshot, context).frame;
+        let overlay = render_dashboard_snapshot(
+            &options,
+            &mut overlay_controller,
+            &snapshot,
+            &mut pending_actions,
+            context,
+        )
+        .frame;
         assert!(overlay.starts_with("\x1b[2;38;5;240m"));
         assert!(overlay.contains("OVERSEER"));
     }

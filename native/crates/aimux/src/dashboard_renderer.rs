@@ -3300,14 +3300,15 @@ fn render_graveyard_content(
                     .map(|branch| format!(" {}", style(&format!("· {branch}"), Tone::Muted)))
                     .unwrap_or_default();
                 let title = format!(
-                    "{}{} {}{}",
+                    "{}{} {}{}{}",
                     selected_marker(selected),
                     keycap_hint(&action_number_label(row), "", None),
                     style(
                         string_at(entry, &["name"]).unwrap_or(""),
                         if selected { Tone::Accent } else { Tone::Strong }
                     ),
-                    branch
+                    branch,
+                    graveyard_pending_suffix(row)
                 );
                 let service_count = array_at(row, &["attachedServices"]).len();
                 let service_text = if service_count > 0 {
@@ -3466,7 +3467,7 @@ fn render_graveyard_content(
                     String::new()
                 };
                 let text = format!(
-                    "{}{} {} {}{}",
+                    "{}{} {} {}{}{}",
                     selected_marker(selected),
                     keycap_hint(&action_number_label(row), "", None),
                     status_dot(StatusKind::Offline),
@@ -3481,7 +3482,8 @@ fn render_graveyard_content(
                         ),
                         Tone::Muted
                     ),
-                    unrecoverable
+                    unrecoverable,
+                    graveyard_pending_suffix(row)
                 );
                 let text = recency_chip(string_at(row, &["lastUsedAt"]))
                     .map_or(text.clone(), |chip| format!("{text} {chip}"));
@@ -3503,6 +3505,19 @@ fn render_graveyard_content(
         card_width,
     );
     lines
+}
+
+fn graveyard_pending_suffix(row: &Value) -> String {
+    let Some(action) = string_at(row, &["pendingAction"]) else {
+        return String::new();
+    };
+    format!(
+        " {}",
+        style(
+            &format!("({}...)", row_state_label(action).to_lowercase()),
+            Tone::Attention
+        )
+    )
 }
 
 #[derive(Debug)]

@@ -4,6 +4,7 @@ use aimux::dashboard_model::{
     DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus, SessionTeamMetadata,
     WorktreeGroup, WorktreeStatus,
 };
+use aimux::dashboard_pending_actions::DashboardPendingActions;
 use aimux::dashboard_renderer::{
     DashboardNavLevel, DashboardRenderInput, DashboardSubscreenRenderInput, render_dashboard_frame,
     render_dashboard_subscreen_frame,
@@ -443,6 +444,92 @@ fn matches_node_graveyard_subscreen_full_frame() {
     });
 
     assert_same_frame(NODE_SUBSCREEN_GRAVEYARD_FRAME, &result.frame);
+}
+
+#[test]
+fn graveyard_subscreen_renders_pending_action_overlays_from_pending_model() {
+    let mut resource = json!({
+        "viewModel": {
+            "rows": [
+                { "kind": "section", "label": "Worktrees" },
+                {
+                    "kind": "worktree",
+                    "actionIndex": 0,
+                    "actionNumber": 1,
+                    "entry": {
+                        "path": "/repo/feature-a",
+                        "name": "feature-a",
+                        "branch": "feature/a",
+                        "graveyardedAt": "2999-01-01T00:00:00.000Z"
+                    },
+                    "attachedAgents": [],
+                    "visibleAttachedAgents": [],
+                    "hiddenAttachedAgentCount": 0,
+                    "attachedServices": []
+                },
+                { "kind": "section", "label": "Orphaned Agents" },
+                {
+                    "kind": "orphan-agent",
+                    "actionIndex": 1,
+                    "actionNumber": 2,
+                    "entry": {
+                        "id": "codex-orphan",
+                        "command": "codex",
+                        "tool": "codex",
+                        "worktreePath": "/repo/old"
+                    }
+                }
+            ],
+            "selectableRows": [
+                {
+                    "kind": "worktree",
+                    "entry": {
+                        "path": "/repo/feature-a",
+                        "name": "feature-a",
+                        "branch": "feature/a",
+                        "graveyardedAt": "2999-01-01T00:00:00.000Z"
+                    },
+                    "attachedAgents": [],
+                    "visibleAttachedAgents": [],
+                    "hiddenAttachedAgentCount": 0,
+                    "attachedServices": []
+                },
+                {
+                    "kind": "orphan-agent",
+                    "entry": {
+                        "id": "codex-orphan",
+                        "command": "codex",
+                        "tool": "codex",
+                        "worktreePath": "/repo/old"
+                    }
+                }
+            ]
+        }
+    });
+    let mut pending = DashboardPendingActions::new();
+    pending.set_worktree_action(Some("/repo/feature-a"), "deleting", None, 0);
+    pending.set_session_action("codex-orphan", "resurrecting", None, 0);
+    pending.apply_to_graveyard_resource(&mut resource);
+
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Graveyard,
+        resource: Some(&resource),
+        error: None,
+        selected_index: 0,
+        cols: 140,
+        rows: 30,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        runtime_label: Some("tmux"),
+        version: Some("0.1.34"),
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("feature-a"));
+    assert!(plain.contains("(deleting...)"));
+    assert!(plain.contains("codex:codex-orphan"));
+    assert!(plain.contains("(resurrecting...)"));
 }
 
 #[test]

@@ -13,6 +13,7 @@ use crate::dashboard_model::{
     DashboardService, DashboardSession, DesktopStateSnapshot, ServiceStatus, SessionStatus,
     WorktreeGroup,
 };
+use serde_json::Value;
 
 /// Longest a pending overlay may survive without the model agreeing.
 const PENDING_ACTION_TIMEOUT_MS: i64 = 15_000;
@@ -214,6 +215,77 @@ impl DashboardPendingActions {
         self.apply_to_worktrees(&mut snapshot.worktree_groups);
     }
 
+    pub fn reconcile_graveyard_resource(&mut self, resource: &Value, now_ms: i64) {
+        let before = self.entries.len();
+        let graveyard_agent_ids = graveyard_selectable_rows(resource)
+            .filter_map(graveyard_agent_row_id)
+            .collect::<Vec<_>>();
+        let graveyard_worktree_keys = graveyard_selectable_rows(resource)
+            .filter_map(graveyard_worktree_row_key)
+            .collect::<Vec<_>>();
+        self.entries.retain(|(target, id), entry| {
+            let age_ms = now_ms.saturating_sub(entry.started_at_ms);
+            if age_ms >= PENDING_ACTION_TIMEOUT_MS {
+                return false;
+            }
+            if age_ms < MIN_VISIBLE_MS {
+                return true;
+            }
+            entry.visible_floor_reconciled = true;
+            let settled = match target {
+                PendingTarget::Session if entry.kind == "resurrecting" => {
+                    !graveyard_agent_ids.iter().any(|candidate| candidate == id)
+                }
+                PendingTarget::Worktree if entry.kind == "resurrecting" => !graveyard_worktree_keys
+                    .iter()
+                    .any(|candidate| candidate == id),
+                PendingTarget::Worktree if entry.kind == "deleting" => !graveyard_worktree_keys
+                    .iter()
+                    .any(|candidate| candidate == id),
+                _ => false,
+            };
+            !settled
+        });
+        if self.entries.len() != before {
+            self.version += 1;
+        }
+    }
+
+    pub fn apply_to_graveyard_resource(&self, resource: &mut Value) {
+        self.apply_to_graveyard_rows(resource, "rows");
+        self.apply_to_graveyard_rows(resource, "selectableRows");
+    }
+
+    fn apply_to_graveyard_rows(&self, resource: &mut Value, key: &str) {
+        let Some(rows) = resource
+            .get_mut("viewModel")
+            .and_then(Value::as_object_mut)
+            .and_then(|view_model| view_model.get_mut(key))
+            .and_then(Value::as_array_mut)
+        else {
+            return;
+        };
+        for row in rows {
+            let pending = match row.get("kind").and_then(Value::as_str).unwrap_or_default() {
+                "worktree" => graveyard_worktree_row_key(row)
+                    .and_then(|key| self.entry(PendingTarget::Worktree, &key)),
+                "standalone-agent" | "orphan-agent" => graveyard_agent_row_id(row)
+                    .and_then(|id| self.entry(PendingTarget::Session, &id)),
+                _ => None,
+            };
+            let Some(entry) = pending else {
+                continue;
+            };
+            row_object_insert(row, "pending", Value::Bool(true));
+            row_object_insert(row, "pendingAction", Value::String(entry.kind.clone()));
+            row_object_insert(
+                row,
+                "pendingStartedAt",
+                Value::String(entry.started_at_iso.clone()),
+            );
+        }
+    }
+
     fn entry(&self, target: PendingTarget, id: &str) -> Option<&PendingEntry> {
         self.entries.get(&(target, id.to_owned()))
     }
@@ -316,6 +388,7 @@ fn can_synthesize_session(kind: &str) -> bool {
             | "starting"
             | "stopping"
             | "graveyarding"
+            | "resurrecting"
             | "renaming"
     )
 }
@@ -334,6 +407,7 @@ fn session_settled(kind: &str, id: &str, sessions: &[DashboardSession], age_ms: 
         "starting" => session.is_some_and(|session| {
             session.status == SessionStatus::Running || age_ms >= STARTING_SETTLE_AGE_MS
         }),
+        "resurrecting" => session.is_some(),
         "stopping" => session.is_none_or(|session| session.status != SessionStatus::Running),
         "graveyarding" => session.is_none(),
         _ => false,
@@ -358,9 +432,42 @@ fn worktree_settled(kind: &str, key: &str, worktree_keys: &[String]) -> bool {
     let present = worktree_keys.iter().any(|candidate| candidate == key);
     match kind {
         "creating" => present,
+        "resurrecting" => present,
         "removing" | "graveyarding" => !present,
         _ => false,
     }
+}
+
+fn graveyard_selectable_rows(resource: &Value) -> impl Iterator<Item = &Value> {
+    resource
+        .get("viewModel")
+        .and_then(|view_model| view_model.get("selectableRows"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+}
+
+fn graveyard_agent_row_id(row: &Value) -> Option<String> {
+    row.get("entry")
+        .and_then(|entry| entry.get("id"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn graveyard_worktree_row_key(row: &Value) -> Option<String> {
+    row.get("entry")
+        .and_then(|entry| entry.get("path"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(|path| worktree_key(Some(path)))
+}
+
+fn row_object_insert(row: &mut Value, key: &str, value: Value) {
+    let Some(object) = row.as_object_mut() else {
+        return;
+    };
+    object.insert(key.to_owned(), value);
 }
 
 /// What overlay, if any, a dashboard mutation should paint while it is in flight.
@@ -413,6 +520,19 @@ pub fn pending_action_for_request(
             PendingTarget::Worktree,
             worktree_key(body.get("path").and_then(serde_json::Value::as_str)),
             "graveyarding",
+        ),
+        routes::graveyard_actions::RESURRECT_AGENT => {
+            (PendingTarget::Session, id("sessionId")?, "resurrecting")
+        }
+        routes::graveyard_actions::RESURRECT_WORKTREE => (
+            PendingTarget::Worktree,
+            worktree_key(body.get("path").and_then(serde_json::Value::as_str)),
+            "resurrecting",
+        ),
+        routes::graveyard_actions::DELETE_WORKTREE => (
+            PendingTarget::Worktree,
+            worktree_key(body.get("path").and_then(serde_json::Value::as_str)),
+            "deleting",
         ),
         _ => return None,
     };

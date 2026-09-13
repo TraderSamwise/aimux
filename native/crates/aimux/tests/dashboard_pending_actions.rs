@@ -24,6 +24,34 @@ fn snapshot_with(status: &str) -> DesktopStateSnapshot {
     .expect("snapshot")
 }
 
+fn empty_snapshot() -> DesktopStateSnapshot {
+    serde_json::from_value(json!({
+        "sessions": [],
+        "teammates": [],
+        "services": [],
+        "worktrees": [],
+        "worktreeGroups": [],
+        "mainCheckoutInfo": { "name": "main", "branch": "master" },
+        "agentRestoreOffer": null
+    }))
+    .expect("snapshot")
+}
+
+fn graveyard_resource_with_worktree() -> serde_json::Value {
+    json!({
+        "viewModel": {
+            "rows": [{
+                "kind": "worktree",
+                "entry": { "path": "/repo/wt", "name": "wt", "branch": "feature" }
+            }],
+            "selectableRows": [{
+                "kind": "worktree",
+                "entry": { "path": "/repo/wt", "name": "wt", "branch": "feature" }
+            }]
+        }
+    })
+}
+
 #[test]
 fn stop_paints_a_stopping_overlay_before_the_model_catches_up() {
     let mut pending = DashboardPendingActions::new();
@@ -196,6 +224,55 @@ fn resume_paints_starting_and_shows_the_row_as_running() {
 }
 
 #[test]
+fn resurrecting_session_settles_when_the_restored_session_reappears_offline() {
+    let mut pending = DashboardPendingActions::new();
+    pending.set_session_action("claude-a1", "resurrecting", None, 0);
+    let snapshot = snapshot_with("offline");
+
+    pending.reconcile(&snapshot, 400);
+
+    assert!(pending.is_empty());
+}
+
+#[test]
+fn resurrecting_session_can_synthesize_the_seed_before_the_model_refreshes() {
+    let mut seed_snapshot = snapshot_with("offline");
+    let seed = seed_snapshot.sessions.remove(0);
+    let mut pending = DashboardPendingActions::new();
+    pending.set_session_action("claude-a1", "resurrecting", Some(seed), 0);
+    let mut snapshot = empty_snapshot();
+
+    pending.apply(&mut snapshot);
+
+    assert_eq!(snapshot.sessions.len(), 1);
+    assert_eq!(
+        snapshot.sessions[0].pending_action.as_deref(),
+        Some("resurrecting")
+    );
+}
+
+#[test]
+fn deleting_graveyard_worktree_does_not_settle_just_because_active_groups_lack_it() {
+    let mut pending = DashboardPendingActions::new();
+    pending.set_worktree_action(Some("/repo/wt"), "deleting", None, 0);
+    let snapshot = empty_snapshot();
+
+    pending.reconcile(&snapshot, 400);
+
+    assert!(!pending.is_empty());
+
+    let resource = graveyard_resource_with_worktree();
+    pending.reconcile_graveyard_resource(&resource, 400);
+
+    assert!(!pending.is_empty());
+
+    let removed = json!({ "viewModel": { "rows": [], "selectableRows": [] } });
+    pending.reconcile_graveyard_resource(&removed, 500);
+
+    assert!(pending.is_empty());
+}
+
+#[test]
 fn rename_overlay_clears_after_a_refreshed_model_reaches_the_visible_floor() {
     let mut pending = DashboardPendingActions::new();
     pending.set_session_action("claude-a1", "renaming", None, 0);
@@ -238,52 +315,82 @@ fn dashboard_mutations_map_to_the_overlay_they_should_paint() {
             routes::agents::STOP,
             json!({ "sessionId": "a" }),
             PendingTarget::Session,
+            "a",
             "stopping",
         ),
         (
             routes::agents::KILL,
             json!({ "sessionId": "a" }),
             PendingTarget::Session,
+            "a",
             "graveyarding",
         ),
         (
             routes::agents::RESUME,
             json!({ "sessionId": "a" }),
             PendingTarget::Session,
+            "a",
             "starting",
         ),
         (
             routes::agents::MIGRATE,
             json!({ "sessionId": "a" }),
             PendingTarget::Session,
+            "a",
             "migrating",
         ),
         (
             routes::services::STOP,
             json!({ "serviceId": "s" }),
             PendingTarget::Service,
+            "s",
             "stopping",
         ),
         (
             routes::services::REMOVE,
             json!({ "serviceId": "s" }),
             PendingTarget::Service,
+            "s",
             "removing",
         ),
         (
             routes::worktree_actions::GRAVEYARD,
             json!({ "path": "/wt" }),
             PendingTarget::Worktree,
+            "/wt",
             "graveyarding",
         ),
+        (
+            routes::graveyard_actions::RESURRECT_AGENT,
+            json!({ "sessionId": "a" }),
+            PendingTarget::Session,
+            "a",
+            "resurrecting",
+        ),
+        (
+            routes::graveyard_actions::RESURRECT_WORKTREE,
+            json!({ "path": "/wt" }),
+            PendingTarget::Worktree,
+            "/wt",
+            "resurrecting",
+        ),
+        (
+            routes::graveyard_actions::DELETE_WORKTREE,
+            json!({ "path": "/wt" }),
+            PendingTarget::Worktree,
+            "/wt",
+            "deleting",
+        ),
     ];
-    for (path, body, target, kind) in cases {
+    for (path, body, target, id, kind) in cases {
         let resolved = pending_action_for_request(path, &body)
             .unwrap_or_else(|| panic!("no pending action for {path}"));
         assert_eq!(resolved.0, target, "target for {path}");
+        assert_eq!(resolved.1, id, "id for {path}");
         assert_eq!(resolved.2, kind, "kind for {path}");
     }
     assert!(pending_action_for_request(routes::controls::FOCUS_WINDOW, &json!({})).is_none());
+    assert!(pending_action_for_request(routes::graveyard_actions::CLEANUP, &json!({})).is_none());
 }
 
 #[test]
