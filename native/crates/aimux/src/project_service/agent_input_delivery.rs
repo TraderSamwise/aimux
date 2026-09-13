@@ -487,7 +487,9 @@ pub async fn run_pending_agent_input_deliveries_async(
     let mut ready = VecDeque::from(pending);
     let mut delivered = 0usize;
     while let Some(pending) = ready.pop_front() {
-        if delivered >= MAX_DELIVERIES_PER_TICK || Instant::now() >= task_deadline {
+        if delivered >= MAX_DELIVERIES_PER_TICK
+            || !has_budget_for_delivery_attempt(Instant::now(), task_deadline)
+        {
             remaining.push(pending);
             remaining.extend(ready);
             break;
@@ -794,6 +796,11 @@ fn is_dedupable_system_prompt(prompt: &str) -> bool {
     prompt.starts_with("[aimux loop check]")
 }
 
+fn has_budget_for_delivery_attempt(now: Instant, task_deadline: Instant) -> bool {
+    now.checked_add(DELIVERY_SUBMIT_TIMEOUT)
+        .is_some_and(|latest_finish| latest_finish <= task_deadline)
+}
+
 fn load_error_for_path(path: &Path) -> String {
     match fs::read_to_string(path) {
         Ok(contents) => serde_json::from_str::<Value>(&contents)
@@ -864,6 +871,28 @@ mod tests {
                     + DELIVERY_SUBMIT_TIMEOUT
                     + DELIVERY_TASK_COMMIT_MARGIN,
             "agent-input-delivery must not let the scheduler cancel after tmux input is written but before the queue removal is saved"
+        );
+    }
+
+    #[test]
+    fn delivery_attempt_is_deferred_when_submit_timeout_would_cross_tick_deadline() {
+        let now = Instant::now();
+        let deadline = now + DELIVERY_SUBMIT_TIMEOUT - Duration::from_millis(1);
+
+        assert!(
+            !has_budget_for_delivery_attempt(now, deadline),
+            "a delivery that could overrun the tick must be deferred before it writes to tmux"
+        );
+    }
+
+    #[test]
+    fn delivery_attempt_starts_when_submit_timeout_fits_before_tick_deadline() {
+        let now = Instant::now();
+        let deadline = now + DELIVERY_SUBMIT_TIMEOUT;
+
+        assert!(
+            has_budget_for_delivery_attempt(now, deadline),
+            "a delivery with enough remaining tick budget must not be deferred"
         );
     }
 }
