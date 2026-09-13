@@ -72,6 +72,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+const DAEMON_RESTART_SIGNAL: &str = "SIGHUP";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreCliExecution {
     pub code: i32,
@@ -555,11 +557,11 @@ fn restart_control_plane_from_cli(
             assert_not_stopping_newer_daemon: || {
                 assert_not_stopping_newer_daemon().map_err(|error| error.to_string())
             },
-            stop_daemon_process: || {
+            stop_daemon_process: |signal| {
                 let info = daemon_info
                     .as_ref()
                     .ok_or_else(|| "daemon info missing".to_owned())?;
-                stop_daemon_process_info(&resolver, info, "SIGTERM")
+                stop_daemon_process_info(&resolver, info, signal)
                     .map(|_| ())
                     .map_err(|error| error.to_string())
             },
@@ -613,7 +615,7 @@ pub fn restart_control_plane_from_cli_with<
 ) -> Result<RestartControlPlaneTextResult, String>
 where
     AssertNewer: FnMut() -> Result<(), String>,
-    StopDaemon: FnMut() -> Result<(), String>,
+    StopDaemon: FnMut(&'static str) -> Result<(), String>,
     EnsureDaemon: FnMut() -> Result<(), String>,
     RequestRestart: FnMut(
         &'static str,
@@ -646,7 +648,7 @@ pub fn restart_control_plane_from_cli_with_lock_owner<
 ) -> Result<RestartControlPlaneTextResult, String>
 where
     AssertNewer: FnMut() -> Result<(), String>,
-    StopDaemon: FnMut() -> Result<(), String>,
+    StopDaemon: FnMut(&'static str) -> Result<(), String>,
     EnsureDaemon: FnMut() -> Result<(), String>,
     RequestRestart: FnMut(
         &'static str,
@@ -666,7 +668,7 @@ where
 
     if should_stop_daemon {
         assert_not_stopping_newer_daemon()?;
-        stop_daemon_process()?;
+        stop_daemon_process(DAEMON_RESTART_SIGNAL)?;
     }
     ensure_daemon_running()?;
     let mut payload = Map::new();
@@ -1934,10 +1936,10 @@ mod tests {
                     calls.borrow_mut().push(json!({ "fn": "assert-not-stale" }));
                     Ok(())
                 },
-                stop_daemon_process: || {
+                stop_daemon_process: |signal| {
                     calls
                         .borrow_mut()
-                        .push(json!({ "fn": "stop-daemon-process" }));
+                        .push(json!({ "fn": "stop-daemon-process", "signal": signal }));
                     Ok(())
                 },
                 ensure_daemon_running: || {
@@ -1983,7 +1985,7 @@ mod tests {
             calls.into_inner(),
             vec![
                 json!({ "fn": "assert-not-stale" }),
-                json!({ "fn": "stop-daemon-process" }),
+                json!({ "fn": "stop-daemon-process", "signal": "SIGHUP" }),
                 json!({ "fn": "ensure-daemon fresh" }),
                 json!({
                     "fn": "request",
@@ -2015,7 +2017,7 @@ mod tests {
                     calls.borrow_mut().push("assert");
                     Ok(())
                 },
-                stop_daemon_process: || {
+                stop_daemon_process: |_signal| {
                     calls.borrow_mut().push("stop");
                     Ok(())
                 },

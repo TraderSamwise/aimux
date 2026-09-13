@@ -16,6 +16,7 @@ use aimux::project_service_manifest::{
     ProjectServiceManifest, project_service_capabilities, should_keep_unresponsive_daemon,
 };
 use serde_json::{Map, Value, json};
+use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -501,6 +502,43 @@ fn stop_daemon_process_info_escalates_when_sigterm_does_not_exit() {
         vec![(9_999_991, "SIGTERM".into()), (9_999_991, "SIGKILL".into())]
     );
     assert_eq!(waits, vec![(9_999_991, 1_500), (9_999_991, 1_500)]);
+    assert_eq!(
+        fs::read_to_string(resolver.daemon_info_path()).expect("read daemon info"),
+        ""
+    );
+}
+
+#[test]
+fn stop_daemon_process_info_escalates_when_sighup_does_not_exit() {
+    let test_dir = TestDir::new();
+    let resolver = test_dir.resolver();
+    let info = AimuxDaemonInfo {
+        pid: 9_999_991,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    save_daemon_info(resolver.daemon_info_path(), &info).expect("save daemon info");
+
+    let signaled = RefCell::new(Vec::new());
+    let stopped = stop_daemon_process_info_with(
+        &resolver,
+        &info,
+        "SIGHUP",
+        |_| true,
+        |pid, signal| {
+            signaled.borrow_mut().push((pid, signal.to_owned()));
+            Ok(())
+        },
+        |_info, _timeout_ms| signaled.borrow().len() >= 2,
+    )
+    .expect("stop daemon process");
+
+    assert_eq!(stopped.daemon, info);
+    assert_eq!(
+        signaled.into_inner(),
+        vec![(9_999_991, "SIGHUP".into()), (9_999_991, "SIGKILL".into())]
+    );
     assert_eq!(
         fs::read_to_string(resolver.daemon_info_path()).expect("read daemon info"),
         ""

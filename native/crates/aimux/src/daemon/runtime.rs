@@ -472,6 +472,16 @@ impl RealDaemonRuntime {
     }
 
     fn stop_project_services_for_signal_shutdown(&mut self, signal_name: &str) {
+        if !daemon_signal_shutdown_stops_project_services(signal_name) {
+            log_lifecycle_always(
+                "daemon restart signal shutdown preserving project services",
+                "daemon",
+                Some(json!({
+                    "signal": signal_name,
+                })),
+            );
+            return;
+        }
         let state = load_daemon_state(self.resolver.daemon_state_path());
         let project_services = state
             .projects
@@ -1682,6 +1692,10 @@ impl RealDaemonRuntime {
         );
         result
     }
+}
+
+fn daemon_signal_shutdown_stops_project_services(signal_name: &str) -> bool {
+    signal_name != "SIGHUP"
 }
 
 fn daemon_project_read_snapshot(
@@ -5249,6 +5263,148 @@ mod tests {
         assert_eq!(result["service"]["state"]["pid"], json!(91_202));
         assert_eq!(launcher.calls(), vec![project]);
         assert_eq!(launcher.terminations(), vec![(91_002, false)]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_scoped_restart_does_not_cycle_other_project_service() {
+        let fixture = restart_service_fixture("restart-scoped-leaves-other");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        let other_project_path = fixture.root.join("other-repo");
+        fs::create_dir_all(other_project_path.join(".git")).expect("other project git");
+        let other_project = other_project_path.to_string_lossy().into_owned();
+        let other_project_id = {
+            let mut resolver = fixture.resolver.clone();
+            resolver
+                .register_project(&other_project)
+                .expect("register other project")
+                .expect("other project entry")
+                .id
+        };
+        fixture.persist_service(&project_id, 91_011, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_011);
+        fixture.persist_service_for(
+            &other_project,
+            &other_project_id,
+            91_012,
+            ProjectServiceStatus::Running,
+        );
+        fixture.persist_endpoint_for(&other_project, 91_012, 45_912);
+        let launcher = Arc::new(RestartTestLauncher::new(91_211).with_endpoint(45_911));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::previous_build([91_011, 91_012, 91_211])
+                .with_project_service_pids(&project_id, [91_011])
+                .with_project_service_pids(&other_project_id, [91_012]),
+        );
+        let mut runtime = fixture.runtime(launcher.clone(), verifier.clone());
+
+        let result = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "issued",
+                Some(&project),
+                restart_test_dashboard,
+                |_runtime, project_roots| {
+                    assert_eq!(project_roots, std::slice::from_ref(&project));
+                    json!({
+                        "processPids": [],
+                        "tmuxSessions": [],
+                        "failedProcessPids": [],
+                        "failedTmuxSessions": [],
+                        "errors": [],
+                    })
+                },
+            )
+            .expect("scoped restart");
+        let state = load_daemon_state(fixture.resolver.daemon_state_path());
+        let other_service = state
+            .projects
+            .get(&other_project_id)
+            .and_then(|value| serde_json::from_value::<ProjectServiceState>(value.clone()).ok())
+            .expect("other service state");
+
+        assert_eq!(result.restart["summary"]["projects"], json!(1));
+        assert_eq!(result.restart["projects"][0]["projectRoot"], project);
+        assert_eq!(launcher.calls(), vec![project]);
+        assert_eq!(launcher.terminations(), vec![(91_011, false)]);
+        assert_eq!(other_service.pid, 91_012);
+        assert_eq!(other_service.status, Some(ProjectServiceStatus::Running));
+        assert_eq!(verifier.batch_project_counts(), vec![1]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_all_cycles_every_active_project_service() {
+        let fixture = restart_service_fixture("restart-all-cycles-everything");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        let other_project_path = fixture.root.join("other-repo");
+        fs::create_dir_all(other_project_path.join(".git")).expect("other project git");
+        let other_project = other_project_path.to_string_lossy().into_owned();
+        let other_project_id = {
+            let mut resolver = fixture.resolver.clone();
+            resolver
+                .register_project(&other_project)
+                .expect("register other project")
+                .expect("other project entry")
+                .id
+        };
+        fixture.persist_service(&project_id, 91_021, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_021);
+        fixture.persist_service_for(
+            &other_project,
+            &other_project_id,
+            91_022,
+            ProjectServiceStatus::Running,
+        );
+        fixture.persist_endpoint_for(&other_project, 91_022, 45_922);
+        let launcher = Arc::new(RestartTestLauncher::new(91_221).with_endpoint(45_921));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::previous_build([91_021, 91_022, 91_221])
+                .with_project_service_pids(&project_id, [91_021])
+                .with_project_service_pids(&other_project_id, [91_022]),
+        );
+        let mut runtime = fixture.runtime(launcher.clone(), verifier.clone());
+
+        let result = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "issued",
+                None,
+                restart_test_dashboard,
+                |_runtime, project_roots| {
+                    assert_eq!(
+                        project_roots,
+                        &[project.clone(), other_project.clone()]
+                            .into_iter()
+                            .collect::<BTreeSet<_>>()
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                    );
+                    json!({
+                        "processPids": [],
+                        "tmuxSessions": [],
+                        "failedProcessPids": [],
+                        "failedTmuxSessions": [],
+                        "errors": [],
+                    })
+                },
+            )
+            .expect("all restart");
+
+        assert_eq!(result.restart["summary"]["projects"], json!(2));
+        assert_eq!(
+            launcher.calls().into_iter().collect::<BTreeSet<_>>(),
+            [project, other_project]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            launcher.terminations().into_iter().collect::<BTreeSet<_>>(),
+            [(91_021, false), (91_022, false)]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(verifier.batch_project_counts(), vec![2]);
         fixture.cleanup();
     }
 

@@ -59,7 +59,7 @@ fn restart_contract_reaches_production_cli_restart_sequence() {
                 calls.borrow_mut().push("assert");
                 Ok(())
             },
-            stop_daemon_process: || {
+            stop_daemon_process: |_signal| {
                 calls.borrow_mut().push("stop");
                 Ok(())
             },
@@ -256,11 +256,12 @@ fn restart_control_plane_from_cli(input: &Value) -> Value {
                     .push(json!({ "fn": "assertNotStoppingNewerDaemon" }));
                 Ok(())
             },
-            stop_daemon_process: || {
+            stop_daemon_process: |signal| {
                 calls.borrow_mut().push(json!({
                     "fn": "stopDaemonInfo",
                     "daemon": daemon_info_value,
                     "state": daemon_state,
+                    "signal": signal,
                 }));
                 Ok(())
             },
