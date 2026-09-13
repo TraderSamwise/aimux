@@ -1,3 +1,7 @@
+use crate::agent_prompt_delivery::{
+    is_agent_prompt_marker, line_starts_with_agent_prompt_marker, starts_with_agent_prompt_marker,
+    strip_agent_prompt_marker,
+};
 use crate::ansi_sgr_spans::parse_ansi_rich_text_spans;
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
@@ -801,16 +805,12 @@ fn starts_with_spinner_marker(trimmed: &str) -> bool {
 }
 
 fn is_prompt_line(line: &str) -> bool {
-    line.starts_with('›') || line.starts_with('>') || line.starts_with('❯')
+    starts_with_agent_prompt_marker(line)
 }
 
 fn is_indented_marker_line(line: &str) -> bool {
     line.chars().next().is_some_and(char::is_whitespace)
-        && line
-            .trim_start()
-            .chars()
-            .next()
-            .is_some_and(|ch| matches!(ch, '›' | '>' | '❯'))
+        && line_starts_with_agent_prompt_marker(line)
 }
 
 fn is_tool_result_line(line: &str) -> bool {
@@ -819,7 +819,10 @@ fn is_tool_result_line(line: &str) -> bool {
 }
 
 fn strip_prompt_marker(line: &str) -> String {
-    strip_one_marker(line.trim_start(), &['›', '>', '❯'])
+    strip_agent_prompt_marker(line.trim_start())
+        .map(str::trim_start)
+        .unwrap_or(line.trim_start())
+        .to_owned()
 }
 
 fn strip_response_marker(line: &str) -> String {
@@ -973,7 +976,9 @@ fn trailing_composer_block_start(lines: &[String], tool: &str) -> Option<usize> 
             cursor -= 1;
             continue;
         }
-        if matches!(trimmed, "❯" | "›" | ">") {
+        if trimmed.chars().next().is_some_and(is_agent_prompt_marker)
+            && trimmed.chars().count() == 1
+        {
             saw_prompt_marker = true;
             if cursor == 0 {
                 break;

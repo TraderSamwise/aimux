@@ -441,7 +441,6 @@ fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
         focused_worktree_path: Some(project.to_string_lossy().as_ref()),
         runtime_label: Some("native"),
         version: Some("local"),
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,

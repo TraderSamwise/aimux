@@ -61,7 +61,6 @@ fn run_case(case: &Value) -> Value {
             focused_worktree_path: None,
             runtime_label: None,
             version: None,
-            is_dev_runtime: false,
             hide_offline_agents: state
                 .get("hideOfflineAgents")
                 .and_then(Value::as_bool)

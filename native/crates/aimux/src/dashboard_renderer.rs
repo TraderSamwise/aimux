@@ -53,7 +53,6 @@ pub struct DashboardRenderInput<'a> {
     pub focused_worktree_path: Option<&'a str>,
     pub runtime_label: Option<&'a str>,
     pub version: Option<&'a str>,
-    pub is_dev_runtime: bool,
     pub hide_offline_agents: bool,
     pub hidden_offline_agent_count: usize,
     pub scroll_offset: usize,
@@ -88,23 +87,14 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         .runtime_label
         .map(|label| format!("  {}", style(&format!("● {label}"), Tone::Done)))
         .unwrap_or_default();
-    let dev_badge = if input.is_dev_runtime {
-        "\x1b[1;30;43m DEV \x1b[0m "
-    } else {
-        ""
-    };
     let title = format!(
-        "{dev_badge}{}{}{} — agent multiplexer{}",
+        "{}{}{} — agent multiplexer{}",
         style("aimux", Tone::Strong),
         version_tag,
         hidden_tag,
         runtime_tag
     );
-    let divider = if input.is_dev_runtime {
-        format!("\x1b[33m{}\x1b[0m", "─".repeat(input.cols))
-    } else {
-        "─".repeat(input.cols)
-    };
+    let divider = "─".repeat(input.cols);
     let header = vec![
         String::new(),
         center_in_block(&title),
@@ -2661,7 +2651,6 @@ pub struct DashboardSubscreenRenderInput<'a> {
     pub details_sidebar_visible: bool,
     pub runtime_label: Option<&'a str>,
     pub version: Option<&'a str>,
-    pub is_dev_runtime: bool,
 }
 
 pub fn render_dashboard_subscreen_frame(
@@ -2674,20 +2663,11 @@ pub fn render_dashboard_subscreen_frame(
     } else {
         input.cols.saturating_sub(2).max(40)
     };
-    let title = subscreen_title(
-        input.screen.as_str(),
-        input.version,
-        input.runtime_label,
-        input.is_dev_runtime,
-    );
+    let title = subscreen_title(input.screen.as_str(), input.version, input.runtime_label);
     let header = vec![
         String::new(),
         center(&title, content_width),
-        if input.is_dev_runtime {
-            format!("\x1b[33m{}\x1b[0m", "─".repeat(input.cols))
-        } else {
-            "─".repeat(input.cols)
-        },
+        "─".repeat(input.cols),
         String::new(),
     ];
     let mut content = match input.screen {
@@ -2775,17 +2755,7 @@ fn render_help_content() -> Vec<String> {
     ]
 }
 
-fn subscreen_title(
-    screen: &str,
-    version: Option<&str>,
-    runtime_label: Option<&str>,
-    is_dev_runtime: bool,
-) -> String {
-    let dev_badge = if is_dev_runtime {
-        "\x1b[1;30;43m DEV \x1b[0m "
-    } else {
-        ""
-    };
+fn subscreen_title(screen: &str, version: Option<&str>, runtime_label: Option<&str>) -> String {
     let version_tag = version
         .map(|version| format!("{} ", style(&format!("v{version}"), Tone::Muted)))
         .unwrap_or_default();
@@ -2793,7 +2763,7 @@ fn subscreen_title(
         .map(|label| format!("  {}", style(&format!("● {label}"), Tone::Done)))
         .unwrap_or_default();
     format!(
-        "{dev_badge}{} {version_tag}— {screen}{runtime}",
+        "{} {version_tag}— {screen}{runtime}",
         style("aimux", Tone::Strong)
     )
 }

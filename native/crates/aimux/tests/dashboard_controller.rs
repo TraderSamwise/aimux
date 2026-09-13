@@ -1009,7 +1009,6 @@ fn enter_from_worktree_level_renders_agent_details_rail() {
         focused_worktree_path: controller.navigation.focused_worktree_path(&snapshot),
         runtime_label: Some("native"),
         version: Some("local"),
-        is_dev_runtime: false,
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
