@@ -528,11 +528,11 @@
     },
     {
       "id": "loop-watcher-015",
-      "name": "does not consume cooldown when nudge send fails",
+      "name": "records failed nudge attempt until cooldown",
       "source": "src/loop-watcher.test.ts",
       "api": "LoopWatcher.scan",
       "input": {
-        "name": "does not consume cooldown when nudge send fails",
+        "name": "records failed nudge attempt until cooldown",
         "source": "src/loop-watcher.test.ts",
         "api": "LoopWatcher.scan",
         "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
@@ -569,10 +569,6 @@
         {
           "kind": "scan",
           "sends": [
-            {
-              "sessionId": "a",
-              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
-            },
             {
               "sessionId": "a",
               "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."

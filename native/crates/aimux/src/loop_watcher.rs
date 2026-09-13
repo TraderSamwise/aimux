@@ -6,14 +6,44 @@
 //! `loop.autoNudgeWithoutOverseer` is set. waiting/error/interrupted states are
 //! deliberately excluded — those are genuine pauses we must not steamroll.
 
+use crate::atomic_write::write_json_atomic;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// One nudge the watcher wants delivered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoopSend {
     pub session_id: String,
     pub text: String,
+    pub signature: String,
+    pub kind: LoopSendKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopSendKind {
+    OverseerBriefing,
+    DirectNudge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopDeliveryOutcome {
+    Delivered,
+    Failed { error: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopDeliveryRecord {
+    pub at_ms: i64,
+    pub session_id: String,
+    pub signature: String,
+    pub kind: String,
+    pub outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Cross-scan state: who was nudged when, and when the overseer was last woken.
@@ -24,7 +54,9 @@ pub struct LoopWatcher {
     stopped_since: BTreeMap<LoopDwellKey, i64>,
     last_candidate_signature: Option<String>,
     last_overseer_reported_signature: Option<String>,
+    last_overseer_attempted_signature: Option<String>,
     unchanged_candidate_ticks: u64,
+    delivery_records: Vec<LoopDeliveryRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -43,15 +75,30 @@ impl LoopWatcher {
     /// Scan once and deliver.
     ///
     /// `input` carries `sessions`, `metadata`, `config` and `pendingInteractions`.
-    /// `deliver` reports whether the send landed: a cooldown only starts once a
-    /// message actually arrives, so a failed send must not silence the overseer
-    /// for a whole window.
+    /// `deliver` reports whether the send landed. Failed sends are recorded as
+    /// attempts so the same unchanged alert does not look brand new on the next
+    /// tick.
     pub fn scan(
         &mut self,
         input: &Value,
         now_ms: i64,
         deliver: &mut dyn FnMut(&LoopSend) -> bool,
     ) -> Vec<LoopSend> {
+        let sends = self.plan_sends(input, now_ms);
+        for send in &sends {
+            let outcome = if deliver(send) {
+                LoopDeliveryOutcome::Delivered
+            } else {
+                LoopDeliveryOutcome::Failed {
+                    error: "delivery callback returned false".to_owned(),
+                }
+            };
+            self.commit_send_result(send, now_ms, outcome);
+        }
+        sends
+    }
+
+    pub fn plan_sends(&mut self, input: &Value, now_ms: i64) -> Vec<LoopSend> {
         let mut sends = Vec::new();
         let metadata = input.get("metadata").unwrap_or(&Value::Null);
         let overseer_id = find_overseer_session_id(metadata);
@@ -64,14 +111,15 @@ impl LoopWatcher {
         if candidates.is_empty() {
             self.last_candidate_signature = None;
             self.last_overseer_reported_signature = None;
+            self.last_overseer_attempted_signature = None;
             self.unchanged_candidate_ticks = 0;
             return sends;
         }
-        let candidate_signature = candidate_signature(&candidates);
-        if self.last_candidate_signature.as_deref() == Some(candidate_signature.as_str()) {
+        let candidate_sig = candidate_signature(&candidates);
+        if self.last_candidate_signature.as_deref() == Some(candidate_sig.as_str()) {
             self.unchanged_candidate_ticks = self.unchanged_candidate_ticks.saturating_add(1);
         } else {
-            self.last_candidate_signature = Some(candidate_signature.clone());
+            self.last_candidate_signature = Some(candidate_sig.clone());
             self.unchanged_candidate_ticks = 0;
         }
 
@@ -81,15 +129,17 @@ impl LoopWatcher {
             .is_some_and(|id| session_exists(input, id));
 
         if let Some(overseer_id) = overseer_id.filter(|_| overseer_running) {
-            let already_reported = self.last_overseer_reported_signature.as_deref()
-                == Some(candidate_signature.as_str());
+            let already_reported =
+                self.last_overseer_reported_signature.as_deref() == Some(candidate_sig.as_str());
+            let already_attempted =
+                self.last_overseer_attempted_signature.as_deref() == Some(candidate_sig.as_str());
             let reminder_due = overseer_reminder_due(
                 input,
                 self.unchanged_candidate_ticks,
                 now_ms.saturating_sub(self.last_overseer_wake_at),
                 cooldown,
             );
-            if already_reported && !reminder_due {
+            if (already_reported || already_attempted) && !reminder_due {
                 return sends;
             }
             let send = LoopSend {
@@ -98,11 +148,9 @@ impl LoopWatcher {
                     &candidates,
                     config_string(input, "overseerBriefingTemplate"),
                 ),
+                signature: candidate_sig,
+                kind: LoopSendKind::OverseerBriefing,
             };
-            if deliver(&send) {
-                self.last_overseer_wake_at = now_ms;
-                self.last_overseer_reported_signature = Some(candidate_signature);
-            }
             sends.push(send);
             return sends;
         }
@@ -124,13 +172,60 @@ impl LoopWatcher {
             let send = LoopSend {
                 session_id: id.clone(),
                 text: build_canned_nudge(&candidate),
+                signature: candidate_signature(&[candidate]),
+                kind: LoopSendKind::DirectNudge,
             };
-            if deliver(&send) {
-                self.last_nudge_at.insert(id, now_ms);
-            }
             sends.push(send);
         }
         sends
+    }
+
+    pub fn commit_send_result(
+        &mut self,
+        send: &LoopSend,
+        now_ms: i64,
+        outcome: LoopDeliveryOutcome,
+    ) {
+        match send.kind {
+            LoopSendKind::OverseerBriefing => {
+                self.last_overseer_wake_at = now_ms;
+                self.last_overseer_attempted_signature = Some(send.signature.clone());
+                if matches!(outcome, LoopDeliveryOutcome::Delivered) {
+                    self.last_overseer_reported_signature = Some(send.signature.clone());
+                }
+            }
+            LoopSendKind::DirectNudge => {
+                self.last_nudge_at.insert(send.session_id.clone(), now_ms);
+            }
+        }
+        self.record_delivery(send, now_ms, outcome);
+    }
+
+    pub fn last_delivery_record(&self) -> Option<&LoopDeliveryRecord> {
+        self.delivery_records.last()
+    }
+
+    fn record_delivery(&mut self, send: &LoopSend, now_ms: i64, outcome: LoopDeliveryOutcome) {
+        let (outcome, error) = match outcome {
+            LoopDeliveryOutcome::Delivered => ("delivered".to_owned(), None),
+            LoopDeliveryOutcome::Failed { error } => ("failed".to_owned(), Some(error)),
+        };
+        self.delivery_records.push(LoopDeliveryRecord {
+            at_ms: now_ms,
+            session_id: send.session_id.clone(),
+            signature: send.signature.clone(),
+            kind: match send.kind {
+                LoopSendKind::OverseerBriefing => "overseerBriefing",
+                LoopSendKind::DirectNudge => "directNudge",
+            }
+            .to_owned(),
+            outcome,
+            error,
+        });
+        if self.delivery_records.len() > 32 {
+            let excess = self.delivery_records.len().saturating_sub(32);
+            self.delivery_records.drain(0..excess);
+        }
     }
 
     fn dwelled_candidates(
@@ -157,6 +252,123 @@ impl LoopWatcher {
                 (now_ms.saturating_sub(*first_seen) >= dwell_ms).then_some(candidate)
             })
             .collect()
+    }
+}
+
+pub fn loop_watcher_state_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
+    project_state_dir.as_ref().join("loop-watcher-state.json")
+}
+
+pub fn load_loop_watcher_state(path: impl AsRef<Path>) -> Result<LoopWatcher, String> {
+    let path = path.as_ref();
+    match fs::read_to_string(path) {
+        Ok(raw) => {
+            let state: PersistentLoopWatcherState = serde_json::from_str(&raw)
+                .map_err(|error| format!("read loop watcher state {}: {error}", path.display()))?;
+            state.into_watcher()
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(LoopWatcher::new()),
+        Err(error) => Err(format!(
+            "read loop watcher state {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+pub fn save_loop_watcher_state(
+    path: impl AsRef<Path>,
+    watcher: &LoopWatcher,
+) -> Result<(), String> {
+    let state = PersistentLoopWatcherState::from_watcher(watcher);
+    write_json_atomic(path.as_ref(), &state).map_err(|error| {
+        format!(
+            "write loop watcher state {}: {error}",
+            path.as_ref().display()
+        )
+    })
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistentLoopWatcherState {
+    version: u32,
+    last_nudge_at: BTreeMap<String, i64>,
+    last_overseer_wake_at: i64,
+    stopped_since: Vec<PersistentStoppedSince>,
+    last_candidate_signature: Option<String>,
+    last_overseer_reported_signature: Option<String>,
+    last_overseer_attempted_signature: Option<String>,
+    unchanged_candidate_ticks: u64,
+    #[serde(default)]
+    delivery_records: Vec<LoopDeliveryRecord>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistentStoppedSince {
+    session_id: String,
+    loop_since: String,
+    goal: String,
+    loop_source: String,
+    first_seen_ms: i64,
+}
+
+impl PersistentLoopWatcherState {
+    fn from_watcher(watcher: &LoopWatcher) -> Self {
+        Self {
+            version: 1,
+            last_nudge_at: watcher.last_nudge_at.clone(),
+            last_overseer_wake_at: watcher.last_overseer_wake_at,
+            stopped_since: watcher
+                .stopped_since
+                .iter()
+                .map(|(key, first_seen_ms)| PersistentStoppedSince {
+                    session_id: key.session_id.clone(),
+                    loop_since: key.loop_since.clone(),
+                    goal: key.goal.clone(),
+                    loop_source: key.loop_source.clone(),
+                    first_seen_ms: *first_seen_ms,
+                })
+                .collect(),
+            last_candidate_signature: watcher.last_candidate_signature.clone(),
+            last_overseer_reported_signature: watcher.last_overseer_reported_signature.clone(),
+            last_overseer_attempted_signature: watcher.last_overseer_attempted_signature.clone(),
+            unchanged_candidate_ticks: watcher.unchanged_candidate_ticks,
+            delivery_records: watcher.delivery_records.clone(),
+        }
+    }
+
+    fn into_watcher(self) -> Result<LoopWatcher, String> {
+        if self.version != 1 {
+            return Err(format!(
+                "unsupported loop watcher state version {}",
+                self.version
+            ));
+        }
+        Ok(LoopWatcher {
+            last_nudge_at: self.last_nudge_at,
+            last_overseer_wake_at: self.last_overseer_wake_at,
+            stopped_since: self
+                .stopped_since
+                .into_iter()
+                .map(|record| {
+                    (
+                        LoopDwellKey {
+                            session_id: record.session_id,
+                            loop_since: record.loop_since,
+                            goal: record.goal,
+                            loop_source: record.loop_source,
+                        },
+                        record.first_seen_ms,
+                    )
+                })
+                .collect(),
+            last_candidate_signature: self.last_candidate_signature,
+            last_overseer_reported_signature: self.last_overseer_reported_signature,
+            last_overseer_attempted_signature: self.last_overseer_attempted_signature,
+            unchanged_candidate_ticks: self.unchanged_candidate_ticks,
+            delivery_records: self.delivery_records,
+        })
     }
 }
 

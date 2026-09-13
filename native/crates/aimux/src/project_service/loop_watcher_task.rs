@@ -9,7 +9,10 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 
 use crate::daemon_state::load_metadata_state;
-use crate::loop_watcher::{LoopSend, LoopWatcher};
+use crate::debug_logging::{LogLevel, log_at};
+use crate::loop_watcher::{
+    LoopDeliveryOutcome, load_loop_watcher_state, loop_watcher_state_path, save_loop_watcher_state,
+};
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
@@ -41,7 +44,6 @@ pub struct LoopWatcherTask {
     loop_config: Value,
     scan_interval_ms: i64,
     scan_every_ticks: u64,
-    watcher: LoopWatcher,
 }
 
 impl LoopWatcherTask {
@@ -56,7 +58,6 @@ impl LoopWatcherTask {
             loop_config,
             scan_interval_ms,
             scan_every_ticks,
-            watcher: LoopWatcher::new(),
         }
     }
 
@@ -89,6 +90,19 @@ impl PeriodicTask for LoopWatcherTask {
         Box::pin(async move {
             self.refresh_config_if_changed();
             let project_state_dir = context.project_state_dir();
+            let state_path = loop_watcher_state_path(&project_state_dir);
+            let mut watcher = match load_loop_watcher_state(&state_path) {
+                Ok(watcher) => watcher,
+                Err(error) => {
+                    log_at(
+                        LogLevel::Error,
+                        "loop watcher state unavailable",
+                        "loop-watcher",
+                        Some(json!({ "error": error })),
+                    );
+                    return;
+                }
+            };
             let delivery_context = Arc::clone(&self.context);
             let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir))
             else {
@@ -104,28 +118,34 @@ impl PeriodicTask for LoopWatcherTask {
             apply_live_activity_overrides_for_scan(context, &mut input).await;
 
             let budget = TickLoopBudget::new(SCAN_BUDGET);
-            let mut collect = |_send: &LoopSend| false;
-            let sends = self.watcher.scan(&input, now_ms(), &mut collect);
-            let mut delivered = std::collections::BTreeSet::new();
+            let planned_at = now_ms();
+            let sends = watcher.plan_sends(&input, planned_at);
             for send in sends.into_iter().take(MAX_SENDS_PER_SCAN) {
                 if budget.spent() {
                     break;
                 }
-                if deliver_agent_input_async(
+                let delivered = if deliver_agent_input_async(
                     Arc::clone(&delivery_context),
                     &send.session_id,
                     &send.text,
                 )
                 .await
                 {
-                    delivered.insert((send.session_id, send.text));
-                }
-            }
-            if !delivered.is_empty() {
-                let mut commit = |send: &LoopSend| {
-                    delivered.contains(&(send.session_id.clone(), send.text.clone()))
+                    LoopDeliveryOutcome::Delivered
+                } else {
+                    LoopDeliveryOutcome::Failed {
+                        error: "deliver_agent_input_async returned false".to_owned(),
+                    }
                 };
-                self.watcher.scan(&input, now_ms(), &mut commit);
+                watcher.commit_send_result(&send, now_ms(), delivered);
+            }
+            if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
+                log_at(
+                    LogLevel::Error,
+                    "loop watcher state commit failed",
+                    "loop-watcher",
+                    Some(json!({ "error": error })),
+                );
             }
         })
     }

@@ -1,5 +1,10 @@
-use aimux::loop_watcher::{LoopSend, LoopWatcher};
+use aimux::loop_watcher::{
+    LoopDeliveryOutcome, LoopSend, LoopWatcher, load_loop_watcher_state, loop_watcher_state_path,
+    save_loop_watcher_state,
+};
 use serde_json::{Value, json};
+use std::fs;
+use std::path::PathBuf;
 
 /// Unix-millis, because the cooldown is measured against the epoch.
 const NOW: i64 = 1_788_000_000_000;
@@ -31,8 +36,19 @@ fn input_with_config(sessions: Vec<Value>, metadata: Value, config: Value) -> Va
     })
 }
 
+fn temp_state_dir(name: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "aimux-loop-watcher-{name}-{}-{}",
+        std::process::id(),
+        NOW
+    ));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).expect("create temp state dir");
+    path
+}
+
 #[test]
-fn a_failed_send_does_not_consume_the_overseer_cooldown() {
+fn a_failed_send_is_recorded_and_backed_off_until_reminder() {
     let (boss, boss_meta) = looping_session("boss", "idle");
     let (worker, worker_meta) = looping_session("worker", "idle");
     let mut boss_meta = boss_meta;
@@ -46,15 +62,134 @@ fn a_failed_send_does_not_consume_the_overseer_cooldown() {
     let mut watcher = LoopWatcher::new();
     let mut fail = |_: &LoopSend| false;
     assert_eq!(watcher.scan(&input, NOW, &mut fail).len(), 1);
+    let record = watcher.last_delivery_record().expect("delivery record");
+    assert_eq!(record.outcome, "failed");
+    assert_eq!(record.session_id, "boss");
 
-    // one millisecond later, well inside the cooldown: it must try again,
-    // because a briefing that never landed cannot silence the overseer
-    assert_eq!(watcher.scan(&input, NOW + 1, &mut fail).len(), 1);
+    assert!(
+        watcher.scan(&input, NOW + 1, &mut fail).is_empty(),
+        "a failed attempt must not make the same unchanged briefing look new on the next tick"
+    );
 
     let mut ok = |_: &LoopSend| true;
-    assert_eq!(watcher.scan(&input, NOW + 2, &mut ok).len(), 1);
-    // now it landed, so the cooldown holds
-    assert!(watcher.scan(&input, NOW + 3, &mut ok).is_empty());
+    assert_eq!(
+        watcher.scan(&input, NOW + 60_000, &mut ok).len(),
+        1,
+        "the normal reminder/cooldown path still retries after a failed attempt"
+    );
+    assert!(watcher.scan(&input, NOW + 60_001, &mut ok).is_empty());
+}
+
+#[test]
+fn a_reported_stopped_agent_does_not_realert_after_state_reload() {
+    let state_dir = temp_state_dir("restart");
+    let path = loop_watcher_state_path(&state_dir);
+    let (boss, boss_meta) = looping_session("boss", "idle");
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut boss_meta = boss_meta;
+    boss_meta["overseer"] = json!(true);
+    let input = input(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        false,
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert_eq!(watcher.scan(&input, NOW, &mut ok).len(), 1);
+    save_loop_watcher_state(&path, &watcher).expect("save loop watcher state");
+
+    let mut restarted = load_loop_watcher_state(&path).expect("load loop watcher state");
+    assert!(
+        restarted.scan(&input, NOW + 1, &mut ok).is_empty(),
+        "the durable state must remember that this unchanged candidate was already reported"
+    );
+}
+
+#[test]
+fn a_failed_delivery_attempt_survives_reload_without_becoming_a_new_edge() {
+    let state_dir = temp_state_dir("failed-delivery");
+    let path = loop_watcher_state_path(&state_dir);
+    let (boss, boss_meta) = looping_session("boss", "idle");
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut boss_meta = boss_meta;
+    boss_meta["overseer"] = json!(true);
+    let input = input(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        false,
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    watcher.commit_send_result(
+        &sends[0],
+        NOW,
+        LoopDeliveryOutcome::Failed {
+            error: "forced delivery failure".to_owned(),
+        },
+    );
+    save_loop_watcher_state(&path, &watcher).expect("save failed attempt");
+
+    let mut restarted = load_loop_watcher_state(&path).expect("load failed attempt");
+    let record = restarted.last_delivery_record().expect("delivery record");
+    assert_eq!(record.outcome, "failed");
+    assert_eq!(record.error.as_deref(), Some("forced delivery failure"));
+    assert!(
+        restarted.plan_sends(&input, NOW + 1).is_empty(),
+        "a saved failed attempt must suppress the unchanged level until the reminder cadence"
+    );
+}
+
+#[test]
+fn a_new_stopped_agent_still_alerts_immediately_after_a_failed_attempt() {
+    let (boss, boss_meta) = looping_session("boss", "idle");
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let (second, second_meta) = looping_session("second", "idle");
+    let mut boss_meta = boss_meta;
+    boss_meta["overseer"] = json!(true);
+    let mut input = input(
+        vec![boss.clone(), worker],
+        json!({ "sessions": { "boss": boss_meta.clone(), "worker": worker_meta } }),
+        false,
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    watcher.commit_send_result(
+        &sends[0],
+        NOW,
+        LoopDeliveryOutcome::Failed {
+            error: "forced delivery failure".to_owned(),
+        },
+    );
+    assert!(watcher.plan_sends(&input, NOW + 1).is_empty());
+
+    input["sessions"] = json!([
+        boss,
+        { "id": "worker", "tool": "claude", "worktreePath": "/repo" },
+        second
+    ]);
+    input["metadata"]["sessions"]["boss"] = boss_meta;
+    input["metadata"]["sessions"]["second"] = second_meta;
+    assert_eq!(
+        watcher.plan_sends(&input, NOW + 2).len(),
+        1,
+        "a genuinely changed candidate set must bypass the failed-attempt backoff"
+    );
+}
+
+#[test]
+fn corrupt_loop_watcher_state_fails_loud_instead_of_defaulting() {
+    let state_dir = temp_state_dir("corrupt");
+    let path = loop_watcher_state_path(&state_dir);
+    fs::write(&path, "{ not json").expect("write corrupt state");
+
+    let error = load_loop_watcher_state(&path).expect_err("corrupt state must fail");
+    assert!(error.contains("read loop watcher state"));
+    assert!(error.contains(path.to_string_lossy().as_ref()));
 }
 
 #[test]
