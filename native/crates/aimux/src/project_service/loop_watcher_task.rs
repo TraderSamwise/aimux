@@ -136,7 +136,7 @@ impl PeriodicTask for LoopWatcherTask {
                 exchange,
                 coordination_worklist,
             );
-            apply_live_activity_overrides_for_scan(context, &mut input).await;
+            apply_live_activity_overrides_for_scan(context, &mut input).await?;
 
             let budget = TickLoopBudget::new(SCAN_BUDGET);
             let planned_at = now_ms();
@@ -252,22 +252,23 @@ fn load_metadata_state_for_loop_watcher(
 async fn apply_live_activity_overrides_for_scan(
     context: &ProjectServiceRequestContext,
     input: &mut Value,
-) {
+) -> Result<(), String> {
     let candidate_ids = stopped_metadata_session_ids(input);
     if candidate_ids.is_empty() {
-        return;
+        return Ok(());
     }
     for session_id in candidate_ids {
-        if let Some(live) = live_activity_override(context, &session_id).await {
+        if let Some(live) = live_activity_override(context, &session_id).await? {
             apply_live_activity_override(input, &session_id, &live);
         }
     }
+    Ok(())
 }
 
 async fn live_activity_override(
     context: &ProjectServiceRequestContext,
     session_id: &str,
-) -> Option<Value> {
+) -> Result<Option<Value>, String> {
     let payload = super::agent_output::read_agent_output_payload_async(
         context,
         session_id,
@@ -276,17 +277,27 @@ async fn live_activity_override(
         std::time::Duration::from_secs(3),
     )
     .await
-    .ok()?
+    .map_err(|response| {
+        let body = &response.body;
+        let error = body
+            .get("error")
+            .and_then(Value::as_str)
+            .or_else(|| body.get("message").and_then(Value::as_str))
+            .unwrap_or("unknown error");
+        format!("read live activity for {session_id}: {error}")
+    })?
     .payload;
-    let activity = payload.get("activity").and_then(Value::as_str)?;
+    let Some(activity) = payload.get("activity").and_then(Value::as_str) else {
+        return Ok(None);
+    };
     if matches!(activity, "idle" | "done") {
-        return None;
+        return Ok(None);
     }
     let mut live = Map::new();
     live.insert("activity".to_owned(), Value::String(activity.to_owned()));
     insert_value(&mut live, "activityText", payload.get("activityText"));
     insert_value(&mut live, "attention", payload.get("attention"));
-    Some(Value::Object(live))
+    Ok(Some(Value::Object(live)))
 }
 
 fn stopped_metadata_session_ids(input: &Value) -> Vec<String> {

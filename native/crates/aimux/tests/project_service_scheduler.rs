@@ -576,6 +576,64 @@ fn corrupt_metadata_state_records_loop_watcher_failure_instead_of_empty_metadata
 }
 
 #[test]
+fn unavailable_live_activity_probe_records_loop_watcher_failure_instead_of_stale_alert() {
+    let root = unique_temp_dir("aimux-loop-watcher-live-probe-unavailable");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_with_live_session(),
+    )
+    .expect("write topology");
+    fs::write(
+        metadata_state_path(&state_dir),
+        serde_json::to_string(&json!({
+            "version": 1,
+            "sessions": {
+                "worker": {
+                    "loop": {
+                        "active": true,
+                        "goal": "ship it",
+                        "since": "2026-09-13T00:00:00.000Z"
+                    },
+                    "derived": {
+                        "activity": "idle",
+                        "attention": "normal"
+                    }
+                }
+            }
+        }))
+        .expect("metadata json"),
+    )
+    .expect("write metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == "loop-watcher")
+        .expect("loop watcher health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(error.contains("read live activity for worker"), "{error}");
+}
+
+#[test]
 fn normal_loop_watcher_tick_records_completed_run() {
     let root = unique_temp_dir("aimux-loop-watcher-health-normal");
     let project_root = root.join("project");
@@ -958,6 +1016,51 @@ fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
         std::process::id(),
         SEQ.fetch_add(1, Ordering::SeqCst)
     ))
+}
+
+fn topology_with_live_session() -> serde_json::Value {
+    json!({
+        "version": 1,
+        "generatedAt": "2026-09-13T00:00:00.000Z",
+        "rigs": [{
+            "id": "rig-1",
+            "name": "local",
+            "projectRoot": "/repo",
+            "createdAt": "2026-09-13T00:00:00.000Z",
+            "updatedAt": "2026-09-13T00:00:00.000Z",
+        }],
+        "nodes": [{
+            "id": "agent:worker",
+            "rigId": "rig-1",
+            "logicalId": "worker",
+            "createdAt": "2026-09-13T00:00:00.000Z",
+        }],
+        "edges": [],
+        "bindings": [{
+            "id": "binding-worker",
+            "nodeId": "agent:worker",
+            "tmuxSession": "aimux-test",
+            "tmuxWindowId": "@1",
+            "tmuxWindowIndex": 1,
+            "tmuxWindowName": "worker",
+            "updatedAt": "2026-09-13T00:00:00.000Z",
+        }],
+        "sessions": [{
+            "id": "worker",
+            "nodeId": "agent:worker",
+            "status": "running",
+            "tool": "codex",
+            "createdAt": "2026-09-13T00:00:00.000Z",
+            "updatedAt": "2026-09-13T00:00:00.000Z",
+        }],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": [],
+    })
 }
 
 fn shell_quote(path: &Path) -> String {
