@@ -1792,6 +1792,7 @@ fn outline_and_attachment_commands_execute_native_text_routes_without_core_comma
 #[test]
 fn collaboration_commands_execute_native_text_routes_without_core_command_fallback() {
     let mut runtime = FakeRuntime::default();
+    let long_body = "- first paragraph\n\nSecond paragraph — with unicode arrows → and ←.";
 
     let message = run_core_cli_with(
         &args(&[
@@ -1813,6 +1814,10 @@ fn collaboration_commands_execute_native_text_routes_without_core_command_fallba
     );
     let message_json = run_core_cli_with(
         &args(&["message", "send", "please", "--to=claude-1", "--json"]),
+        &mut runtime,
+    );
+    let long_message = run_core_cli_with(
+        &args(&["message", "send", long_body, "--to=codex-1", "--from=user"]),
         &mut runtime,
     );
     let handoff = run_core_cli_with(
@@ -1851,6 +1856,7 @@ fn collaboration_commands_execute_native_text_routes_without_core_command_fallba
 
     assert_eq!(message.stdout, ["task task-1\nthread thread-1"]);
     assert_eq!(message_json.stdout, ["task task-1\nthread thread-1"]);
+    assert_eq!(long_message.stdout, ["task task-1\nthread thread-1"]);
     assert_eq!(handoff.stdout, ["task task-1\nthread thread-1"]);
     assert_eq!(accept.stdout, ["task task-1\nthread thread-1"]);
     assert_eq!(complete.stdout, ["task task-1\nthread thread-1"]);
@@ -1884,6 +1890,21 @@ fn collaboration_commands_execute_native_text_routes_without_core_command_fallba
                     "worktree": null,
                     "kind": null,
                     "body": "please",
+                    "title": null,
+                })),
+            ),
+            (
+                "/core/message/send-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "thread": null,
+                    "from": "user",
+                    "to": "codex-1",
+                    "assignee": null,
+                    "tool": null,
+                    "worktree": null,
+                    "kind": null,
+                    "body": long_body,
                     "title": null,
                 })),
             ),

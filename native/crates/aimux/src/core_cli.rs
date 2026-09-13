@@ -3,7 +3,7 @@ use crate::core_cli_routing::{
     core_command_args, is_core_cli_command, parse_core_agent_identity_args,
     parse_core_agent_input_args, parse_core_agent_list_args, parse_core_agent_migrate_args,
     parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_attachment_publish_args,
-    parse_core_collaboration_args, parse_core_daemon_restart_args, parse_core_doctor_args,
+    parse_core_collaboration_args_result, parse_core_daemon_restart_args, parse_core_doctor_args,
     parse_core_graveyard_args, parse_core_host_agent_read_args_result,
     parse_core_host_agent_stream_args_result, parse_core_host_project_stop_args,
     parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
@@ -13,8 +13,8 @@ use crate::core_cli_routing::{
     parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
     parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_projects_remove_args,
     parse_core_repair_args, parse_core_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
-    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args_result,
+    parse_core_team_args, parse_core_thread_args_result, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::native_cli_dispatch::{
@@ -323,13 +323,17 @@ pub enum CoreCliPlanError {
         args: Vec<String>,
         message: &'static str,
     },
+    InvalidArgumentsDetailed {
+        args: Vec<String>,
+        message: String,
+    },
 }
 
 impl CoreCliPlanError {
     pub const fn exit_code(&self) -> i32 {
         match self {
             Self::Unsupported { .. } => 2,
-            Self::InvalidArguments { .. } => 1,
+            Self::InvalidArguments { .. } | Self::InvalidArgumentsDetailed { .. } => 1,
         }
     }
 }
@@ -341,6 +345,7 @@ impl Display for CoreCliPlanError {
                 write!(formatter, "unsupported core command: {}", args.join(" "))
             }
             Self::InvalidArguments { message, .. } => formatter.write_str(message),
+            Self::InvalidArgumentsDetailed { message, .. } => formatter.write_str(message),
         }
     }
 }
@@ -1233,10 +1238,10 @@ where
             )
         }
         ("message", "send") | ("handoff", "send" | "accept" | "complete") => {
-            let parsed = parse_core_collaboration_args(&args).ok_or_else(|| {
-                CoreCliPlanError::InvalidArguments {
+            let parsed = parse_core_collaboration_args_result(&args).map_err(|reason| {
+                CoreCliPlanError::InvalidArgumentsDetailed {
                     args: args.clone(),
-                    message: "error: invalid collaboration arguments",
+                    message: format!("error: invalid collaboration arguments: {reason}"),
                 }
             })?;
             let project_root = parsed
@@ -1312,11 +1317,12 @@ where
             "list" | "show" | "assign" | "accept" | "block" | "cancel" | "complete" | "reopen",
         )
         | ("review", "approve" | "request-changes") => {
-            let parsed =
-                parse_core_task_args(&args).ok_or_else(|| CoreCliPlanError::InvalidArguments {
+            let parsed = parse_core_task_args_result(&args).map_err(|reason| {
+                CoreCliPlanError::InvalidArgumentsDetailed {
                     args: args.clone(),
-                    message: "error: invalid workflow arguments",
-                })?;
+                    message: format!("error: invalid workflow arguments: {reason}"),
+                }
+            })?;
             let project_root = parsed
                 .project
                 .as_deref()
@@ -1446,10 +1452,10 @@ where
             } else {
                 args.clone()
             };
-            let parsed = parse_core_thread_args(&thread_args).ok_or_else(|| {
-                CoreCliPlanError::InvalidArguments {
+            let parsed = parse_core_thread_args_result(&thread_args).map_err(|reason| {
+                CoreCliPlanError::InvalidArgumentsDetailed {
                     args: args.clone(),
-                    message: "error: invalid thread arguments",
+                    message: format!("error: invalid thread arguments: {reason}"),
                 }
             })?;
             let project_root = parsed

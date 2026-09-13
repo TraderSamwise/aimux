@@ -351,12 +351,28 @@ fn record_agent_kill_operation_failure(
     session_id: &str,
     message: &str,
 ) -> String {
+    record_agent_destructive_operation_failure(
+        project_state_dir,
+        "agent.kill",
+        &format!("Failed to kill {session_id}"),
+        session_id,
+        message,
+    )
+}
+
+fn record_agent_destructive_operation_failure(
+    project_state_dir: &Path,
+    operation: &str,
+    title: &str,
+    session_id: &str,
+    message: &str,
+) -> String {
     log_always_at(
         LogLevel::Warn,
-        "agent kill lifecycle operation failed",
+        "agent destructive lifecycle operation failed",
         "lifecycle",
         Some(json!({
-            "operation": "agent.kill",
+            "operation": operation,
             "sessionId": session_id,
             "error": message,
         })),
@@ -365,8 +381,8 @@ fn record_agent_kill_operation_failure(
         project_state_dir,
         OperationFailureInput {
             target_kind: "agent".into(),
-            operation: "agent.kill".into(),
-            title: format!("Failed to kill {session_id}"),
+            operation: operation.into(),
+            title: title.into(),
             message: message.into(),
             target_id: Some(session_id.into()),
             worktree_path: None,
@@ -381,7 +397,7 @@ fn record_agent_kill_operation_failure(
                 "failed to record agent destructive lifecycle operation failure",
                 "lifecycle",
                 Some(json!({
-                    "operation": "agent.kill",
+                    "operation": operation,
                     "sessionId": session_id,
                     "error": error.to_string(),
                 })),

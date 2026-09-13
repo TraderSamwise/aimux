@@ -644,6 +644,41 @@ fn collaboration_commands_plan_native_text_routes_with_resolved_project() {
         }
     );
 
+    let long_body = "- first paragraph\n\nSecond paragraph — with unicode arrows → and ←.";
+    let long_message = classify_core_cli(
+        &["message", "send", long_body, "--to=codex-1", "--from=user"],
+        &context(true, true),
+    )
+    .expect("message send accepts multiline hyphen-leading body");
+    assert_eq!(
+        long_message.action,
+        CoreCliAction::TextRoute {
+            path: "/core/message/send-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "thread": null,
+                "from": "user",
+                "to": "codex-1",
+                "assignee": null,
+                "tool": null,
+                "worktree": null,
+                "kind": null,
+                "body": long_body,
+                "title": null,
+            })),
+        }
+    );
+
+    let invalid_message = classify_core_cli(
+        &["message", "send", "please", "--from", "--body"],
+        &context(true, true),
+    )
+    .expect_err("invalid collaboration args");
+    assert_eq!(
+        invalid_message.to_string(),
+        "error: invalid collaboration arguments: --from requires a value before --body"
+    );
+
     let handoff = classify_core_cli(
         &[
             "handoff",
@@ -859,6 +894,16 @@ fn task_and_review_commands_plan_native_text_routes() {
             body: None,
         }
     );
+
+    let invalid_task = classify_core_cli(
+        &["review", "approve", "task-1", "--from", "--body=ok"],
+        &context(true, true),
+    )
+    .expect_err("invalid task args");
+    assert_eq!(
+        invalid_task.to_string(),
+        "error: invalid workflow arguments: --from requires a value before --body=ok"
+    );
 }
 
 #[test]
@@ -997,6 +1042,16 @@ fn thread_commands_plan_native_text_routes() {
                 "waitingOn": "claude-1,codex-1",
             })),
         }
+    );
+
+    let invalid_thread = classify_core_cli(
+        &["thread", "send", "thread-1", "--from=user"],
+        &context(true, true),
+    )
+    .expect_err("invalid thread args");
+    assert_eq!(
+        invalid_thread.to_string(),
+        "error: invalid thread arguments: thread send body is required"
     );
 }
 

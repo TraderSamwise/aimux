@@ -9,8 +9,9 @@ use aimux::core_cli_routing::{
     parse_core_agent_identity_args, parse_core_agent_input_args, parse_core_agent_list_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
     parse_core_attachment_publish_args, parse_core_collaboration_args,
-    parse_core_daemon_restart_args, parse_core_dashboard_reload_args, parse_core_doctor_args,
-    parse_core_graveyard_args, parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
+    parse_core_collaboration_args_result, parse_core_daemon_restart_args,
+    parse_core_dashboard_reload_args, parse_core_doctor_args, parse_core_graveyard_args,
+    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
     parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
     parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
     parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
@@ -18,7 +19,8 @@ use aimux::core_cli_routing::{
     parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_project_stop_args,
     parse_core_repair_args, parse_core_restart_args, parse_core_runtime_restart_args,
     parse_core_scribe_clear_args, parse_core_scribe_start_args, parse_core_service_create_args,
-    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_task_args, parse_core_task_args_result, parse_core_team_args,
+    parse_core_thread_args, parse_core_thread_args_result, parse_core_worktree_args,
 };
 
 #[test]
@@ -952,11 +954,38 @@ fn collaboration_parser_matches_message_and_handoff_forms() {
     assert_eq!(accept.from.as_deref(), Some("claude-1"));
     assert_eq!(accept.body.as_deref(), Some("ok"));
 
+    let long_body = "- first paragraph\n\nSecond paragraph — with unicode arrows → and ←.";
+    let long_message = parse_core_collaboration_args(&[
+        "message",
+        "send",
+        long_body,
+        "--to=codex-1",
+        "--from=user",
+    ])
+    .expect("message body may begin with a hyphen");
+    assert_eq!(long_message.body.as_deref(), Some(long_body));
+    assert_eq!(long_message.to.as_deref(), Some("codex-1"));
+
     assert!(parse_core_collaboration_args(&["message", "send", "please"]).is_none());
     assert!(parse_core_collaboration_args(&["handoff", "send", "please"]).is_none());
     assert!(parse_core_collaboration_args(&["handoff", "accept", "thread-1", "--body"]).is_none());
     assert!(
         parse_core_collaboration_args(&["message", "send", "please", "--from", "--body"]).is_none()
+    );
+    assert_eq!(
+        parse_core_collaboration_args_result(&["message", "send", "please"])
+            .expect_err("missing message target must be named"),
+        "message send requires --to, --assignee, --tool, or --thread"
+    );
+    assert_eq!(
+        parse_core_collaboration_args_result(&["message", "send", "please", "--from", "--body"])
+            .expect_err("missing --from value must be named"),
+        "--from requires a value before --body"
+    );
+    assert_eq!(
+        parse_core_collaboration_args_result(&["handoff", "accept", "thread-1", "--body"])
+            .expect_err("missing --body value must be named"),
+        "--body requires a value"
     );
 }
 
@@ -1057,6 +1086,16 @@ fn task_parser_matches_workflow_forms() {
     assert!(
         parse_core_task_args(&["review", "approve", "task-1", "--from", "--body=ok"]).is_none()
     );
+    assert_eq!(
+        parse_core_task_args_result(&["task", "assign", "--to", "codex-1"])
+            .expect_err("missing description must be named"),
+        "task assign description is required"
+    );
+    assert_eq!(
+        parse_core_task_args_result(&["review", "approve", "task-1", "--from", "--body=ok"])
+            .expect_err("missing --from value must be named"),
+        "--from requires a value before --body=ok"
+    );
 }
 
 #[test]
@@ -1136,6 +1175,16 @@ fn thread_parser_matches_orchestration_forms() {
     assert!(parse_core_thread_args(&["thread", "send", "thread-1", "--from=user"]).is_none());
     assert!(parse_core_thread_args(&["thread", "mark-seen", "thread-1"]).is_none());
     assert!(parse_core_thread_args(&["thread", "status", "thread-1"]).is_none());
+    assert_eq!(
+        parse_core_thread_args_result(&["thread", "send", "thread-1", "--from=user"])
+            .expect_err("missing body must be named"),
+        "thread send body is required"
+    );
+    assert_eq!(
+        parse_core_thread_args_result(&["thread", "open", "--title", "Plan"])
+            .expect_err("missing --from must be named"),
+        "thread open requires --from"
+    );
 }
 
 #[test]
@@ -1514,6 +1563,12 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["security", "unblock", "dev-1"],
         // Core intentionally claims malformed project-ensure to reject it safely.
         vec!["daemon", "project-ensure", "--dry-run"],
+        // Core claims malformed coordination commands so it can name the bad argument.
+        vec!["handoff", "accept"],
+        vec!["task", "assign", "--to", "codex-1"],
+        vec!["review", "approve"],
+        vec!["thread", "show"],
+        vec!["thread", "send", "thread-1", "--from", "user"],
     ];
     for args in accepted {
         assert!(is_core_cli_command(&args), "rejected {args:?}");
@@ -1552,12 +1607,7 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["remote", "enable", "--help"],
         vec!["message", "send", "--help"],
         vec!["handoff", "send", "--help"],
-        vec!["handoff", "accept"],
-        vec!["task", "assign", "--to", "codex-1"],
         vec!["task", "assign", "--help"],
-        vec!["review", "approve"],
-        vec!["thread", "show"],
-        vec!["thread", "send", "thread-1", "--from", "user"],
         vec!["threads", "thread-1"],
         vec!["list", "extra"],
         vec!["id"],
