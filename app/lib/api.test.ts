@@ -217,11 +217,31 @@ describe("api relay routing", () => {
     const promise = sendLivePaneInput(endpoint, "agent-1", "hello", { timeoutMs: 5 });
     const expectation = expect(promise).rejects.toMatchObject({
       status: 0,
-      message: expect.stringContaining("Request timed out or was cancelled"),
+      message: expect.stringContaining("Request timed out after 5ms"),
     });
     await vi.advanceTimersByTimeAsync(5);
     await expectation;
     vi.useRealTimers();
+  });
+
+  it("distinguishes relay-routed caller cancellation from request timeout", async () => {
+    const controller = new AbortController();
+    const request = vi.fn(() => new Promise(() => {}));
+    setApiRelay({ wsConnected: true, request } as unknown as RelayTransport);
+
+    const promise = sendLivePaneInput(endpoint, "agent-1", "hello", {
+      signal: controller.signal,
+      timeoutMs: 5_000,
+    });
+    controller.abort(new Error("screen changed"));
+
+    await expect(promise).rejects.toMatchObject({
+      status: 0,
+      message: expect.stringContaining("Request was cancelled"),
+    });
+    await expect(promise).rejects.not.toMatchObject({
+      message: expect.stringContaining("timed out"),
+    });
   });
 
   it("rejects ok-false direct HTTP responses", async () => {
@@ -256,6 +276,7 @@ describe("api relay routing", () => {
       expect(requestSignal?.aborted).toBe(true);
       const error = await request;
       expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("Request timed out after 25ms");
     } finally {
       vi.useRealTimers();
     }
