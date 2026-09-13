@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -21,6 +22,7 @@ use super::scheduler::{PeriodicTask, PeriodicTaskFuture, scheduler_now_ms};
 pub const RUNTIME_HEALTH_HISTORY_FILE: &str = "runtime-health.jsonl";
 pub const RUNTIME_HEALTH_HISTORY_INTERVAL_MS: i64 = 300_000;
 pub const RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES: usize = 8 * 1024;
+static PROCESS_STARTED_AT_MS: OnceLock<i64> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,6 +121,7 @@ pub fn runtime_health_sample(context: &ProjectServiceRequestContext, now_ms: i64
         "recordedAtMs": now_ms,
         "pid": std::process::id(),
         "process": {
+            "startedAtMs": process_started_at_ms(now_ms),
             "taskCount": process_task_count,
         },
         "scheduler": {
@@ -130,6 +133,10 @@ pub fn runtime_health_sample(context: &ProjectServiceRequestContext, now_ms: i64
         "backlogReadErrorPresent": backlog_read_error_present,
         "backlog": backlog,
     })
+}
+
+fn process_started_at_ms(now_ms: i64) -> i64 {
+    *PROCESS_STARTED_AT_MS.get_or_init(|| now_ms)
 }
 
 fn runtime_backlog_health_snapshots(
@@ -245,6 +252,11 @@ fn truncated_runtime_health_line(
             .and_then(Value::as_i64)
             .unwrap_or(now_ms),
         "pid": std::process::id(),
+        "processStartedAtMs": sample
+            .get("process")
+            .and_then(|process| process.get("startedAtMs"))
+            .cloned()
+            .unwrap_or_else(|| json!(process_started_at_ms(now_ms))),
         "truncated": true,
         "truncation": {
             "reason": "runtime-health-sample-too-large",
@@ -252,6 +264,11 @@ fn truncated_runtime_health_line(
             "maxBytes": RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES,
         },
         "process": {
+            "startedAtMs": sample
+                .get("process")
+                .and_then(|process| process.get("startedAtMs"))
+                .cloned()
+                .unwrap_or_else(|| json!(process_started_at_ms(now_ms))),
             "taskCount": sample
                 .get("process")
                 .and_then(|process| process.get("taskCount"))
@@ -341,6 +358,7 @@ mod tests {
         assert_eq!(sample["v"], 1);
         assert_eq!(sample["recordedAtMs"], 1_800_000_000_000_i64);
         assert!(sample["process"]["taskCount"].is_number());
+        assert!(sample["process"]["startedAtMs"].is_number());
         assert_eq!(sample["scheduler"]["readErrorPresent"], false);
         assert_eq!(sample["scheduler"]["errorPresent"], false);
         assert_eq!(sample["scheduler"]["taskCount"], 1);
