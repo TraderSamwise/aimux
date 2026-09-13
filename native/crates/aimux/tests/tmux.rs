@@ -1,18 +1,19 @@
 use aimux::tmux::{
     AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_MODIFIED_ENTER_FILTER, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
     CapturePaneOptions, MANAGED_TMUX_AGENT_WINDOW_OPTIONS, MANAGED_TMUX_SESSION_OPTIONS,
-    MANAGED_TMUX_TERMINAL_FEATURES, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxCommandSpec,
-    append_session_option_argv, attach_session_argv, build_default_root_mouse_bindings_config,
-    build_default_root_mouse_bindings_install_config, capture_pane_argv, clear_history_argv,
-    is_dashboard_window_name, is_meta_dashboard_window_name, is_tmux_client_session_for_host,
-    is_tmux_client_session_name, kill_session_argv, kill_window_argv, legacy_project_session_name,
-    link_window_argv, list_clients_argv, list_windows_argv, modified_enter_binding_argv,
-    move_window_argv, new_dashboard_window_argv, new_session_argv, new_window_argv,
-    packed_argv_bytes, project_client_session_name, project_session, refresh_status_argv,
-    rename_session_argv, resize_window_argv, respawn_window_argv, select_window_argv,
-    send_carriage_return_argv, send_client_carriage_return_argv, send_client_enter_argv,
-    send_enter_argv, send_escape_argv, send_focus_in_argv, send_key_argv, send_modified_enter_argv,
-    send_text_argv, session_window_id_target, session_window_target, set_session_option_argv,
+    MANAGED_TMUX_TERMINAL_FEATURES, MOSH_CLIPBOARD_WARNING_MESSAGE, TMUX_SEND_TEXT_CHUNK_BYTES,
+    TmuxCommandSpec, append_session_option_argv, attach_session_argv,
+    build_default_root_mouse_bindings_config, build_default_root_mouse_bindings_install_config,
+    capture_pane_argv, clear_history_argv, is_dashboard_window_name, is_meta_dashboard_window_name,
+    is_tmux_client_session_for_host, is_tmux_client_session_name, kill_session_argv,
+    kill_window_argv, legacy_project_session_name, link_window_argv, list_clients_argv,
+    list_windows_argv, modified_enter_binding_argv, move_window_argv, new_dashboard_window_argv,
+    new_session_argv, new_window_argv, packed_argv_bytes, project_client_session_name,
+    project_session, refresh_status_argv, rename_session_argv, resize_window_argv,
+    respawn_window_argv, select_window_argv, send_carriage_return_argv,
+    send_client_carriage_return_argv, send_client_enter_argv, send_enter_argv, send_escape_argv,
+    send_focus_in_argv, send_key_argv, send_modified_enter_argv, send_text_argv,
+    session_window_id_target, session_window_target, set_session_option_argv,
     should_install_modified_enter_binding, split_text_for_tmux_send_keys, start_pane_pipe_argv,
     stop_pane_pipe_argv, swap_window_argv, switch_client_argv, switch_client_to_target_argv,
     unlink_window_argv,
@@ -239,29 +240,31 @@ fn mirrors_text_chunking_options_and_mouse_bindings() {
     assert_eq!(MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allow_passthrough, "on");
     assert_eq!(MANAGED_TMUX_TERMINAL_FEATURES[4], "xterm*:hyperlinks");
 
-    let config = build_default_root_mouse_bindings_config("open-pane-link", "open-status-pr");
-    assert_eq!(
-        config,
-        [
-            "bind-key -T root MouseDown1Pane if-shell \"open-pane-link\" \"\" \"select-pane -t = \\; send-keys -M\"",
-            "bind-key -T root MouseDrag1Pane if-shell -F \"#{||:#{pane_in_mode},#{mouse_any_flag}}\" { send-keys -M } { copy-mode -M }",
-            "bind-key -T root WheelUpPane if-shell -F \"#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}\" \"copy-mode -e \\; send-keys -X -N 1 scroll-up\" \"send-keys -M\"",
-            "bind-key -T root WheelDownPane if-shell -F \"#{||:#{alternate_on},#{mouse_any_flag}}\" { send-keys -M } { send-keys -M }",
-            "bind-key -T root DoubleClick1Pane if-shell \"open-pane-link\" \"\" \"send-keys -M\"",
-            "bind-key -T root MouseDown1Status if-shell \"open-status-pr\" \"\" \"\"",
-            "bind-key -T root DoubleClick1Status if-shell \"open-status-pr\" \"\" \"\"",
-            "bind-key -T root MouseDown1StatusDefault if-shell \"open-status-pr\" \"\" \"\"",
-            "bind-key -T root DoubleClick1StatusDefault if-shell \"open-status-pr\" \"\" \"\"",
-            "bind-key -T copy-mode WheelUpPane send-keys -X -N 1 scroll-up",
-            "bind-key -T copy-mode WheelDownPane send-keys -X -N 1 scroll-down",
-            "bind-key -T copy-mode-vi WheelUpPane send-keys -X -N 1 scroll-up",
-            "bind-key -T copy-mode-vi WheelDownPane send-keys -X -N 1 scroll-down",
-            "bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
-            "bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
-            "",
-        ]
-        .join("\n")
+    let config = build_default_root_mouse_bindings_config(
+        "open-pane-link",
+        "open-status-pr",
+        "client-is-mosh",
     );
+    let expected = [
+        "bind-key -T root MouseDown1Pane if-shell \"open-pane-link\" \"\" \"select-pane -t = \\; send-keys -M\"".to_owned(),
+        "bind-key -T root MouseDrag1Pane if-shell -F \"#{||:#{pane_in_mode},#{mouse_any_flag}}\" { send-keys -M } { copy-mode -M }".to_owned(),
+        "bind-key -T root WheelUpPane if-shell -F \"#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}\" \"copy-mode -e \\; send-keys -X -N 1 scroll-up\" \"send-keys -M\"".to_owned(),
+        "bind-key -T root WheelDownPane if-shell -F \"#{||:#{alternate_on},#{mouse_any_flag}}\" { send-keys -M } { send-keys -M }".to_owned(),
+        "bind-key -T root DoubleClick1Pane if-shell \"open-pane-link\" \"\" \"send-keys -M\"".to_owned(),
+        "bind-key -T root MouseDown1Status if-shell \"open-status-pr\" \"\" \"\"".to_owned(),
+        "bind-key -T root DoubleClick1Status if-shell \"open-status-pr\" \"\" \"\"".to_owned(),
+        "bind-key -T root MouseDown1StatusDefault if-shell \"open-status-pr\" \"\" \"\"".to_owned(),
+        "bind-key -T root DoubleClick1StatusDefault if-shell \"open-status-pr\" \"\" \"\"".to_owned(),
+        "bind-key -T copy-mode WheelUpPane send-keys -X -N 1 scroll-up".to_owned(),
+        "bind-key -T copy-mode WheelDownPane send-keys -X -N 1 scroll-down".to_owned(),
+        "bind-key -T copy-mode-vi WheelUpPane send-keys -X -N 1 scroll-up".to_owned(),
+        "bind-key -T copy-mode-vi WheelDownPane send-keys -X -N 1 scroll-down".to_owned(),
+        format!("bind-key -T copy-mode MouseDragEnd1Pane if-shell \"client-is-mosh\" \"display-message \\\"{MOSH_CLIPBOARD_WARNING_MESSAGE}\\\"\" \"\" \\; send-keys -X copy-pipe-and-cancel"),
+        format!("bind-key -T copy-mode-vi MouseDragEnd1Pane if-shell \"client-is-mosh\" \"display-message \\\"{MOSH_CLIPBOARD_WARNING_MESSAGE}\\\"\" \"\" \\; send-keys -X copy-pipe-and-cancel"),
+        String::new(),
+    ]
+    .join("\n");
+    assert_eq!(config, expected);
 }
 
 #[test]
@@ -274,13 +277,15 @@ fn mouse_bindings_install_config_matches_typescript_contract() {
     );
     for case in cases {
         let input = &case["input"];
-        let actual = build_default_root_mouse_bindings_install_config(
-            input["projectStateDir"]
-                .as_str()
-                .expect("project state dir"),
-            input["openHyperlinkScript"]
-                .as_str()
-                .expect("open hyperlink script"),
+        let actual = normalize_mouse_bindings_install_config(
+            &build_default_root_mouse_bindings_install_config(
+                input["projectStateDir"]
+                    .as_str()
+                    .expect("project state dir"),
+                input["openHyperlinkScript"]
+                    .as_str()
+                    .expect("open hyperlink script"),
+            ),
         );
         assert_eq!(
             actual,
@@ -289,6 +294,14 @@ fn mouse_bindings_install_config_matches_typescript_contract() {
             case["name"].as_str().expect("case name")
         );
     }
+}
+
+fn normalize_mouse_bindings_install_config(config: &str) -> String {
+    let current_exe = std::env::current_exe().expect("current test binary");
+    config.replace(
+        &format!("'{}'", current_exe.to_string_lossy()),
+        "'<AIMUX_BIN>'",
+    )
 }
 
 #[test]

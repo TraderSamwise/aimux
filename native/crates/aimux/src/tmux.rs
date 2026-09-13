@@ -29,6 +29,8 @@ pub const MANAGED_TMUX_TERMINAL_FEATURES: [&str; 5] = [
     "xterm*:extkeys",
     "xterm*:hyperlinks",
 ];
+pub const MOSH_CLIPBOARD_WARNING_MESSAGE: &str =
+    "aimux copy: mosh cannot copy to this client clipboard; copied on host only";
 pub const TMUX_RUNTIME_OWNER_OPTION: &str = "@aimux-runtime-owner";
 pub const TMUX_DASHBOARD_OWNER_OPTION: &str = "@aimux-dashboard-owner";
 pub const TMUX_DASHBOARD_READY_OPTION: &str = "@aimux-dashboard-ready";
@@ -2313,6 +2315,7 @@ pub fn packed_argv_bytes(argv: &[String]) -> usize {
 pub fn build_default_root_mouse_bindings_config(
     open_pane_link_command: &str,
     open_status_pr_command: &str,
+    mosh_clipboard_warning_command: &str,
 ) -> String {
     [
         format!(r#"bind-key -T root MouseDown1Pane if-shell "{open_pane_link_command}" "" "select-pane -t = \; send-keys -M""#),
@@ -2328,11 +2331,17 @@ pub fn build_default_root_mouse_bindings_config(
         "bind-key -T copy-mode WheelDownPane send-keys -X -N 1 scroll-down".to_owned(),
         "bind-key -T copy-mode-vi WheelUpPane send-keys -X -N 1 scroll-up".to_owned(),
         "bind-key -T copy-mode-vi WheelDownPane send-keys -X -N 1 scroll-down".to_owned(),
-        "bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel".to_owned(),
-        "bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel".to_owned(),
+        copy_drag_end_binding("copy-mode", mosh_clipboard_warning_command),
+        copy_drag_end_binding("copy-mode-vi", mosh_clipboard_warning_command),
         String::new(),
     ]
     .join("\n")
+}
+
+fn copy_drag_end_binding(table: &str, mosh_clipboard_warning_command: &str) -> String {
+    format!(
+        "bind-key -T {table} MouseDragEnd1Pane if-shell \"{mosh_clipboard_warning_command}\" \"display-message \\\"{MOSH_CLIPBOARD_WARNING_MESSAGE}\\\"\" \"\" \\; send-keys -X copy-pipe-and-cancel"
+    )
 }
 
 pub fn build_default_root_mouse_bindings_install_config(
@@ -2347,7 +2356,11 @@ pub fn build_default_root_mouse_bindings_install_config(
         "AIMUX_STATUS_LINE=#{{q:mouse_status_line}} AIMUX_PROJECT_STATE_DIR={} AIMUX_CURRENT_WINDOW_ID=#{{q:window_id}} sh {open_hyperlink_script} >/dev/null 2>&1",
         shell_quote(project_state_dir)
     );
-    build_default_root_mouse_bindings_config(&open_pane_link_command, &open_status_pr_command)
+    build_default_root_mouse_bindings_config(
+        &open_pane_link_command,
+        &open_status_pr_command,
+        &default_mosh_clipboard_warning_command(),
+    )
 }
 
 pub fn build_default_root_mouse_bindings_install_config_for_command(
@@ -2361,7 +2374,11 @@ pub fn build_default_root_mouse_bindings_install_config_for_command(
         "AIMUX_STATUS_LINE=#{{q:mouse_status_line}} AIMUX_PROJECT_STATE_DIR={} AIMUX_CURRENT_WINDOW_ID=#{{q:window_id}} {open_hyperlink_command} >/dev/null 2>&1",
         shell_quote(project_state_dir)
     );
-    build_default_root_mouse_bindings_config(&open_pane_link_command, &open_status_pr_command)
+    build_default_root_mouse_bindings_config(
+        &open_pane_link_command,
+        &open_status_pr_command,
+        &default_mosh_clipboard_warning_command(),
+    )
 }
 
 pub fn new_session_argv(
@@ -2957,6 +2974,13 @@ fn repo_script_path(name: &str) -> String {
 fn default_open_hyperlink_command() -> String {
     format!(
         "{} __tmux-open-hyperlink-internal",
+        shell_quote(&persistent_aimux_executable())
+    )
+}
+
+fn default_mosh_clipboard_warning_command() -> String {
+    format!(
+        "{} __tmux-client-is-mosh-internal --pid #{{client_pid}}",
         shell_quote(&persistent_aimux_executable())
     )
 }
