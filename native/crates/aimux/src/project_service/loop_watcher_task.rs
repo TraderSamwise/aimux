@@ -122,10 +122,15 @@ impl PeriodicTask for LoopWatcherTask {
             let threads = build_coordination_thread_entries(&exchange, "user");
             let coordination_view =
                 build_coordination_view(&sessions, &[], &[], &[], &threads, "user");
-            let coordination_worklist = coordination_view
-                .get("worklist")
-                .cloned()
-                .unwrap_or_else(|| json!({ "items": [], "needsYou": [], "tail": [] }));
+            let coordination_worklist =
+                coordination_view
+                    .get("worklist")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        json!({
+                            "error": "coordination view missing worklist for loop watcher scan"
+                        })
+                    });
             let pending = pending_interactions_for_stream(&project_state_dir);
             let mut input = build_scan_input(
                 sessions,

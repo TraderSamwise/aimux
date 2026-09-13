@@ -1079,7 +1079,7 @@ fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
         }
     }
     for item in coordination_worklist_needs_you(input) {
-        if let Some(item) = unowned_worklist_item(item) {
+        if let Some(item) = unowned_worklist_item(&item) {
             work.push(item);
         }
     }
@@ -1092,15 +1092,33 @@ fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
     work
 }
 
-fn coordination_worklist_needs_you(input: &Value) -> Vec<&Value> {
-    let worklist = input.get("coordinationWorklist").unwrap_or(&Value::Null);
+fn coordination_worklist_needs_you(input: &Value) -> Vec<Value> {
+    let Some(worklist) = input.get("coordinationWorklist") else {
+        return vec![coordination_worklist_contract_break(
+            "coordinationWorklist missing from loop watcher input",
+        )];
+    };
     if let Some(needs_you) = worklist.get("needsYou").and_then(Value::as_array) {
-        return needs_you.iter().collect();
+        return needs_you.clone();
     }
     match worklist.as_array() {
-        Some(items) => items.iter().collect(),
-        None => Vec::new(),
+        Some(items) => items.clone(),
+        None => {
+            let reason = optional_str(worklist, "error")
+                .unwrap_or("coordinationWorklist object missing needsYou");
+            vec![coordination_worklist_contract_break(reason)]
+        }
     }
+}
+
+fn coordination_worklist_contract_break(reason: &str) -> Value {
+    json!({
+        "key": "coordination-worklist-contract",
+        "kind": "worklist-contract",
+        "bucket": "error",
+        "title": reason,
+        "actionable": true
+    })
 }
 
 fn unowned_task_item(task: &Value, live_sessions: &BTreeSet<String>) -> Option<Value> {

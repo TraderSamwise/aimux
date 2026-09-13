@@ -614,6 +614,39 @@ fn reconciliation_uses_worklist_needs_you_not_stale_items() {
 }
 
 #[test]
+fn reconciliation_surfaces_worklist_object_missing_needs_you() {
+    let (boss, mut boss_meta) = looping_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 60_000,
+            "reconciliationDwellMs": 0,
+            "reconciliationReminderTicks": 1,
+            "reconciliationCooldownMs": 0
+        }),
+    );
+    input["coordinationWorklist"] = json!({
+        "items": [],
+        "tail": []
+    });
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].kind, LoopSendKind::Reconciliation);
+    assert!(sends[0].text.contains("worklist-contract"));
+    assert!(
+        sends[0]
+            .text
+            .contains("coordinationWorklist object missing needsYou")
+    );
+}
+
+#[test]
 fn reconciliation_alerts_for_worklist_needs_you_items() {
     let (boss, mut boss_meta) = looping_session("boss", "busy");
     boss_meta["overseer"] = json!(true);
