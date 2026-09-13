@@ -1,7 +1,7 @@
 import type { DaemonProject } from "@/lib/api";
 
-export function hasKnownOnlineAgents(project: Pick<DaemonProject, "onlineAgentCount">): boolean {
-  return typeof project.onlineAgentCount === "number" && project.onlineAgentCount > 0;
+export function hasLiveProjectService(project: Pick<DaemonProject, "serviceAlive">): boolean {
+  return project.serviceAlive;
 }
 
 export function filterProjectPickerProjects(
@@ -9,5 +9,5 @@ export function filterProjectPickerProjects(
   options: { showAll: boolean },
 ): DaemonProject[] {
   if (options.showAll) return [...projects];
-  return projects.filter(hasKnownOnlineAgents);
+  return projects.filter(hasLiveProjectService);
 }
