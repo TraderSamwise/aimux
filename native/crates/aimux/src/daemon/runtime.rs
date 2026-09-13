@@ -39,6 +39,7 @@ use crate::daemon::listener::{
 use crate::daemon::process::handle_daemon_runtime_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
+use crate::daemon::stability_doctor::{StabilityDoctorReport, build_stability_doctor_report};
 use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
 use crate::daemon::stream::{
     maybe_handle_host_agent_stream_request_with_runtime_mutex_async,
@@ -471,6 +472,16 @@ impl RealDaemonRuntime {
     }
 
     fn stop_project_services_for_signal_shutdown(&mut self, signal_name: &str) {
+        if !daemon_signal_shutdown_stops_project_services(signal_name) {
+            log_lifecycle_always(
+                "daemon restart signal shutdown preserving project services",
+                "daemon",
+                Some(json!({
+                    "signal": signal_name,
+                })),
+            );
+            return;
+        }
         let state = load_daemon_state(self.resolver.daemon_state_path());
         let project_services = state
             .projects
@@ -1681,6 +1692,10 @@ impl RealDaemonRuntime {
         );
         result
     }
+}
+
+fn daemon_signal_shutdown_stops_project_services(signal_name: &str) -> bool {
+    signal_name != "SIGHUP"
 }
 
 fn daemon_project_read_snapshot(
@@ -3145,6 +3160,19 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         system_tmux_doctor_report(&mut self.resolver, project_root, session_name, window_id)
     }
 
+    fn doctor_stability_report(
+        &mut self,
+        project_root: &str,
+    ) -> Result<StabilityDoctorReport, String> {
+        let mut resolver = self.resolver.clone();
+        let project_root = stability_doctor_project_root(project_root);
+        let project_state_dir = resolver.project_state_dir_for(&project_root);
+        Ok(build_stability_doctor_report(
+            &project_root,
+            project_state_dir,
+        ))
+    }
+
     fn repair_tmux_runtime(
         &mut self,
         project_root: &str,
@@ -3687,7 +3715,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
     }
 
     fn expose_items(&mut self, path: &str) -> Result<Value, String> {
-        let projects = self.list_projects_for_route();
+        let projects = self.try_list_projects_for_route()?;
         expose_items_route(
             &mut self.resolver,
             session_prefix_for_project,
@@ -4259,6 +4287,34 @@ fn cleanup_stale_dashboard_links(
 
 fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &HashSet<String>) {
     let mut tmux = TmuxRuntimeManager::new();
+    stop_pre_restart_dashboard_repair_windows_with_tmux(before, project_roots, &mut tmux);
+}
+
+trait PreRestartDashboardTmux {
+    fn is_available(&mut self) -> bool;
+    fn has_window(&mut self, target: &TmuxTarget) -> bool;
+    fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String>;
+}
+
+impl PreRestartDashboardTmux for TmuxRuntimeManager {
+    fn is_available(&mut self) -> bool {
+        TmuxRuntimeManager::is_available(self)
+    }
+
+    fn has_window(&mut self, target: &TmuxTarget) -> bool {
+        TmuxRuntimeManager::has_window(self, target)
+    }
+
+    fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        TmuxRuntimeManager::kill_window(self, target)
+    }
+}
+
+fn stop_pre_restart_dashboard_repair_windows_with_tmux(
+    before: &Value,
+    project_roots: &HashSet<String>,
+    tmux: &mut impl PreRestartDashboardTmux,
+) {
     if !tmux.is_available() {
         return;
     }
@@ -4282,6 +4338,9 @@ fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &Has
             .flatten()
         {
             if dashboard.get("status").and_then(Value::as_str) == Some("ok") {
+                continue;
+            }
+            if !pre_restart_dashboard_is_noop_placeholder(dashboard) {
                 continue;
             }
             let Some(window_id) = dashboard.get("windowId").and_then(Value::as_str) else {
@@ -4313,6 +4372,26 @@ fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &Has
             }
         }
     }
+}
+
+fn pre_restart_dashboard_is_noop_placeholder(dashboard: &Value) -> bool {
+    let build_missing = dashboard
+        .get("buildStamp")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .is_none();
+    let owner_missing = dashboard
+        .get("owner")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .is_none();
+    if !build_missing || !owner_missing {
+        return false;
+    }
+    dashboard
+        .pointer("/process/argsPreview")
+        .and_then(Value::as_str)
+        .is_some_and(|args| args.contains("tail -f /dev/null"))
 }
 
 fn dashboard_payload_from_target(
@@ -4350,11 +4429,15 @@ fn tmux_target_json(target: &TmuxTarget) -> Value {
 }
 
 fn restart_before_report(runtime: &impl DaemonStatusRuntime, issued_at: &str) -> Value {
-    let projects = runtime.list_projects_for_route();
+    let (projects, project_read_error) = match runtime.try_list_projects_for_route() {
+        Ok(projects) => (projects, Value::Null),
+        Err(error) => (Vec::new(), Value::String(error)),
+    };
     json!({
         "generatedAt": issued_at,
         "daemon": runtime.current_daemon_info(issued_at),
         "expectedServiceManifest": runtime.project_service_info(),
+        "projectReadError": project_read_error,
         "projectCount": projects.len(),
         "serviceAliveCount": projects.iter().filter(|project| project.service_alive).count(),
         "daemonStateProjectCount": runtime.daemon_state().projects.len(),
@@ -4882,6 +4965,13 @@ fn project_roots_equivalent(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn stability_doctor_project_root(project_root: &str) -> String {
+    fs::canonicalize(project_root)
+        .unwrap_or_else(|_| PathBuf::from(project_root))
+        .to_string_lossy()
+        .into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4915,6 +5005,39 @@ mod tests {
                 std::process::id()
             ))
             .join("repo")
+    }
+
+    #[test]
+    fn doctor_stability_canonicalizes_project_root_before_state_dir_lookup() {
+        let project_root = unique_temp_fixture_project_root("stability-canonical");
+        fs::create_dir_all(&project_root).expect("project root");
+        let alias_root = project_root
+            .parent()
+            .expect("fixture parent")
+            .join("repo-alias");
+        std::os::unix::fs::symlink(&project_root, &alias_root).expect("alias root");
+
+        let canonical_root = fs::canonicalize(&project_root).expect("canonical project root");
+        let resolved = stability_doctor_project_root(&alias_root.to_string_lossy());
+        assert_eq!(PathBuf::from(&resolved), canonical_root);
+
+        let aimux_home = project_root
+            .parent()
+            .expect("fixture parent")
+            .join("aimux-home");
+        let mut alias_resolver =
+            PathResolver::new("/", "/", Some(aimux_home.to_string_lossy().into_owned()));
+        let mut canonical_resolver =
+            PathResolver::new("/", "/", Some(aimux_home.to_string_lossy().into_owned()));
+        let mut resolved_resolver =
+            PathResolver::new("/", "/", Some(aimux_home.to_string_lossy().into_owned()));
+
+        let alias_state_dir = alias_resolver.project_state_dir_for(&alias_root);
+        let canonical_state_dir = canonical_resolver.project_state_dir_for(&canonical_root);
+        let resolved_state_dir = resolved_resolver.project_state_dir_for(&resolved);
+
+        assert_ne!(alias_state_dir, canonical_state_dir);
+        assert_eq!(resolved_state_dir, canonical_state_dir);
     }
 
     #[test]
@@ -5140,6 +5263,148 @@ mod tests {
         assert_eq!(result["service"]["state"]["pid"], json!(91_202));
         assert_eq!(launcher.calls(), vec![project]);
         assert_eq!(launcher.terminations(), vec![(91_002, false)]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_scoped_restart_does_not_cycle_other_project_service() {
+        let fixture = restart_service_fixture("restart-scoped-leaves-other");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        let other_project_path = fixture.root.join("other-repo");
+        fs::create_dir_all(other_project_path.join(".git")).expect("other project git");
+        let other_project = other_project_path.to_string_lossy().into_owned();
+        let other_project_id = {
+            let mut resolver = fixture.resolver.clone();
+            resolver
+                .register_project(&other_project)
+                .expect("register other project")
+                .expect("other project entry")
+                .id
+        };
+        fixture.persist_service(&project_id, 91_011, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_011);
+        fixture.persist_service_for(
+            &other_project,
+            &other_project_id,
+            91_012,
+            ProjectServiceStatus::Running,
+        );
+        fixture.persist_endpoint_for(&other_project, 91_012, 45_912);
+        let launcher = Arc::new(RestartTestLauncher::new(91_211).with_endpoint(45_911));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::previous_build([91_011, 91_012, 91_211])
+                .with_project_service_pids(&project_id, [91_011])
+                .with_project_service_pids(&other_project_id, [91_012]),
+        );
+        let mut runtime = fixture.runtime(launcher.clone(), verifier.clone());
+
+        let result = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "issued",
+                Some(&project),
+                restart_test_dashboard,
+                |_runtime, project_roots| {
+                    assert_eq!(project_roots, std::slice::from_ref(&project));
+                    json!({
+                        "processPids": [],
+                        "tmuxSessions": [],
+                        "failedProcessPids": [],
+                        "failedTmuxSessions": [],
+                        "errors": [],
+                    })
+                },
+            )
+            .expect("scoped restart");
+        let state = load_daemon_state(fixture.resolver.daemon_state_path());
+        let other_service = state
+            .projects
+            .get(&other_project_id)
+            .and_then(|value| serde_json::from_value::<ProjectServiceState>(value.clone()).ok())
+            .expect("other service state");
+
+        assert_eq!(result.restart["summary"]["projects"], json!(1));
+        assert_eq!(result.restart["projects"][0]["projectRoot"], project);
+        assert_eq!(launcher.calls(), vec![project]);
+        assert_eq!(launcher.terminations(), vec![(91_011, false)]);
+        assert_eq!(other_service.pid, 91_012);
+        assert_eq!(other_service.status, Some(ProjectServiceStatus::Running));
+        assert_eq!(verifier.batch_project_counts(), vec![1]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_all_cycles_every_active_project_service() {
+        let fixture = restart_service_fixture("restart-all-cycles-everything");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        let other_project_path = fixture.root.join("other-repo");
+        fs::create_dir_all(other_project_path.join(".git")).expect("other project git");
+        let other_project = other_project_path.to_string_lossy().into_owned();
+        let other_project_id = {
+            let mut resolver = fixture.resolver.clone();
+            resolver
+                .register_project(&other_project)
+                .expect("register other project")
+                .expect("other project entry")
+                .id
+        };
+        fixture.persist_service(&project_id, 91_021, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_021);
+        fixture.persist_service_for(
+            &other_project,
+            &other_project_id,
+            91_022,
+            ProjectServiceStatus::Running,
+        );
+        fixture.persist_endpoint_for(&other_project, 91_022, 45_922);
+        let launcher = Arc::new(RestartTestLauncher::new(91_221).with_endpoint(45_921));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::previous_build([91_021, 91_022, 91_221])
+                .with_project_service_pids(&project_id, [91_021])
+                .with_project_service_pids(&other_project_id, [91_022]),
+        );
+        let mut runtime = fixture.runtime(launcher.clone(), verifier.clone());
+
+        let result = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "issued",
+                None,
+                restart_test_dashboard,
+                |_runtime, project_roots| {
+                    assert_eq!(
+                        project_roots,
+                        &[project.clone(), other_project.clone()]
+                            .into_iter()
+                            .collect::<BTreeSet<_>>()
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                    );
+                    json!({
+                        "processPids": [],
+                        "tmuxSessions": [],
+                        "failedProcessPids": [],
+                        "failedTmuxSessions": [],
+                        "errors": [],
+                    })
+                },
+            )
+            .expect("all restart");
+
+        assert_eq!(result.restart["summary"]["projects"], json!(2));
+        assert_eq!(
+            launcher.calls().into_iter().collect::<BTreeSet<_>>(),
+            [project, other_project]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            launcher.terminations().into_iter().collect::<BTreeSet<_>>(),
+            [(91_021, false), (91_022, false)]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(verifier.batch_project_counts(), vec![2]);
         fixture.cleanup();
     }
 
@@ -6381,6 +6646,95 @@ mod tests {
         assert_eq!(refreshed.into_inner(), vec![project]);
         assert!(launcher.calls().is_empty());
         fixture.cleanup();
+    }
+
+    #[test]
+    fn pre_restart_dashboard_cleanup_does_not_kill_stale_real_dashboard() {
+        let project_root = "/repo/stale-real-dashboard";
+        let before = json!({
+            "projects": [{
+                "projectRoot": project_root,
+                "dashboards": [{
+                    "status": "mismatch",
+                    "sessionName": "aimux-real",
+                    "windowId": "@real",
+                    "windowIndex": 0,
+                    "windowName": "dashboard",
+                    "buildStamp": "old-build",
+                    "owner": "owner-current",
+                    "process": { "argsPreview": "aimux __dashboard-internal-native" }
+                }]
+            }]
+        });
+        let mut tmux = PreRestartDashboardCleanupFake::new(["@real"]);
+
+        stop_pre_restart_dashboard_repair_windows_with_tmux(
+            &before,
+            &HashSet::from([project_root.to_owned()]),
+            &mut tmux,
+        );
+
+        assert!(tmux.killed.is_empty(), "{:?}", tmux.killed);
+    }
+
+    #[test]
+    fn pre_restart_dashboard_cleanup_still_kills_noop_placeholder() {
+        let project_root = "/repo/placeholder-dashboard";
+        let before = json!({
+            "projects": [{
+                "projectRoot": project_root,
+                "dashboards": [{
+                    "status": "mismatch",
+                    "sessionName": "aimux-placeholder",
+                    "windowId": "@22",
+                    "windowIndex": 0,
+                    "windowName": "dashboard",
+                    "buildStamp": null,
+                    "owner": null,
+                    "process": { "argsPreview": "sh -lc 'tail -f /dev/null'" }
+                }]
+            }]
+        });
+        let mut tmux = PreRestartDashboardCleanupFake::new(["@22"]);
+
+        stop_pre_restart_dashboard_repair_windows_with_tmux(
+            &before,
+            &HashSet::from([project_root.to_owned()]),
+            &mut tmux,
+        );
+
+        assert_eq!(tmux.killed, vec!["@22"]);
+    }
+
+    struct PreRestartDashboardCleanupFake {
+        available: bool,
+        windows: HashSet<String>,
+        killed: Vec<String>,
+    }
+
+    impl PreRestartDashboardCleanupFake {
+        fn new(windows: impl IntoIterator<Item = &'static str>) -> Self {
+            Self {
+                available: true,
+                windows: windows.into_iter().map(str::to_owned).collect(),
+                killed: Vec::new(),
+            }
+        }
+    }
+
+    impl PreRestartDashboardTmux for PreRestartDashboardCleanupFake {
+        fn is_available(&mut self) -> bool {
+            self.available
+        }
+
+        fn has_window(&mut self, target: &TmuxTarget) -> bool {
+            self.windows.contains(&target.window_id)
+        }
+
+        fn kill_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+            self.killed.push(target.window_id.clone());
+            Ok(())
+        }
     }
 
     #[test]

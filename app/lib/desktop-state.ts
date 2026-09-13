@@ -3,6 +3,7 @@
 // Canonical server-side shapes live in src/dashboard/index.ts and src/multiplexer/dashboard-model.ts.
 
 import type { AgentTranscriptMessage } from "@/lib/events";
+import type { PreviewCaptureMarker, ProjectOperationFailure } from "../../src/project-api-contract";
 
 export type DesktopSessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
 export type DesktopServiceStatus = "running" | "exited" | "offline";
@@ -67,6 +68,7 @@ export interface DesktopSession {
   scribe?: boolean;
   team?: { role?: string };
   previewSnapshot?: ExposePreviewSnapshot;
+  previewCapture?: PreviewCaptureMarker;
   chatPreview?: ExposeChatPreview;
   optimistic?: boolean;
 }
@@ -120,6 +122,7 @@ export interface DesktopState {
   services: DesktopService[];
   worktrees: DesktopWorktree[];
   worktreeGroups?: DesktopWorktreeGroup[];
+  operationFailures?: ProjectOperationFailure[];
   mainCheckoutInfo?: { name: string; branch: string };
   mainCheckoutPath?: string;
 }

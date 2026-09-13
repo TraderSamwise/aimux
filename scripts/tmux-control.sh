@@ -15,6 +15,7 @@ item_index=""
 aimux_home=""
 daemon_host=""
 daemon_port=""
+dashboard_candidate_missing=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -305,7 +306,11 @@ find_dashboard_candidate() {
 }
 
 dashboard_candidate_needs_reload() {
-  find_dashboard_candidate || return 0
+  if ! find_dashboard_candidate; then
+    dashboard_candidate_missing=1
+    return 0
+  fi
+  dashboard_candidate_missing=0
   dashboard_row=$(tmux list-windows -t "$dashboard_session" -F '#{window_index}|#{window_id}|#{window_name}|#{pane_dead}' 2>/dev/null | awk -F '|' -v idx="$dashboard_index" '$1 == idx { print; exit }')
   dashboard_window_id=$(printf '%s' "$dashboard_row" | cut -d '|' -f2)
   dashboard_pane_dead=$(printf '%s' "$dashboard_row" | cut -d '|' -f4)
@@ -464,7 +469,9 @@ PY
       fi
       debug_log_line "dashboard reload api failed daemon_resolved_endpoint=$daemon_metadata_api"
     fi
-    if [ "$attempted_endpoint" = "1" ]; then
+    if [ "${dashboard_candidate_missing-0}" = "1" ]; then
+      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - dashboard window missing"
+    elif [ "$attempted_endpoint" = "1" ]; then
       show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't contact project service endpoint"
     else
       show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service endpoint unavailable"

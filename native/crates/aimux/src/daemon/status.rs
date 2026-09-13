@@ -75,7 +75,12 @@ pub fn route_status_request(
             ));
         };
         runtime.ensure_project_paths(project);
-        let (payload, known_project) = host_status_payload(runtime, project, issued_at);
+        let (payload, known_project) = match host_status_payload(runtime, project, issued_at) {
+            Ok(payload) => payload,
+            Err(error) => {
+                return Some(DaemonRouteResponse::text(500, format!("Error: {error}\n")));
+            }
+        };
         return Some(text_or_json_lines(
             &route_url,
             payload.clone(),
@@ -228,9 +233,9 @@ pub fn host_status_payload(
     runtime: &impl DaemonStatusRuntime,
     cwd: &str,
     issued_at: &str,
-) -> (Value, bool) {
+) -> Result<(Value, bool), String> {
     let project_root = runtime.resolve_project_root(cwd);
-    let projects = runtime.list_projects_for_route();
+    let projects = runtime.try_list_projects_for_route()?;
     let project = find_project_for_root(&projects, &project_root);
     let daemon = daemon_info_json(
         runtime.current_daemon_info(issued_at),
@@ -245,7 +250,7 @@ pub fn host_status_payload(
         "metadataEndpoint": project.and_then(|project| project.service_endpoint.clone()),
         "expectedServiceManifest": daemon["serviceInfo"].clone(),
     });
-    (payload, project.is_some())
+    Ok((payload, project.is_some()))
 }
 
 fn daemon_info_json(info: AimuxDaemonInfo, service_info: Value) -> Value {

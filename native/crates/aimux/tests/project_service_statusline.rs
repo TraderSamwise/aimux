@@ -1,6 +1,7 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_api_contract::routes;
 use aimux::project_service::router::route_project_service_request;
+use aimux::project_service::runtime_exchange::runtime_exchange_path;
 use aimux::project_service::statusline::{
     StatuslineRefreshInput, refresh_project_statusline_with_tmux_refresh,
     refresh_project_statusline_with_tmux_refresh_async, route_statusline_refresh_request_async,
@@ -156,6 +157,38 @@ fn statusline_refresh_requests_tmux_refresh_after_writing_artifacts() {
     .expect("refresh statusline");
 
     assert_eq!(calls, vec![vec!["refresh-client", "-S"]]);
+    cleanup(project);
+}
+
+#[test]
+fn statusline_refresh_reports_corrupt_runtime_exchange() {
+    let project = temp_project("corrupt-exchange");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    write(runtime_exchange_path(&state_dir), "version: [").expect("corrupt exchange");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_fixture(&project),
+    )
+    .expect("topology");
+    let isolation = support::TestIsolation::new("statusline-corrupt-exchange");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::STATUSLINE_REFRESH,
+        Some(&json!({ "force": true })),
+    );
+
+    assert_eq!(response.status, 500);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("failed to parse runtime exchange")),
+        "statusline must report unreadable exchange, not publish empty tasks: {}",
+        response.body
+    );
     cleanup(project);
 }
 

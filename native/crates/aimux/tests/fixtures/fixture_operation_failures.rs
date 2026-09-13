@@ -92,7 +92,8 @@ fn run_case(project: &TestProject, scenario: &str) -> Value {
                     worktree_path: WorktreePathMatch::Exact("/repo/.aimux/worktrees/demo".into()),
                     ..OperationFailureMatch::default()
                 },
-            );
+            )
+            .expect("clear operation failures");
             json!({
                 "failure": failure,
                 "beforeClear": before_clear,
@@ -120,7 +121,8 @@ fn run_case(project: &TestProject, scenario: &str) -> Value {
                     worktree_path: WorktreePathMatch::Exact("/repo/.aimux/worktrees/demo".into()),
                     ..OperationFailureMatch::default()
                 },
-            );
+            )
+            .expect("clear operation failures");
             json!({
                 "failure": failure,
                 "cleared": cleared,
@@ -155,7 +157,8 @@ fn run_case(project: &TestProject, scenario: &str) -> Value {
                     worktree_path: WorktreePathMatch::OnlyMissing,
                     ..OperationFailureMatch::default()
                 },
-            );
+            )
+            .expect("clear operation failures");
             json!({
                 "main": main,
                 "worktree": worktree,
@@ -217,7 +220,8 @@ fn run_case(project: &TestProject, scenario: &str) -> Value {
                     operation: Some("render".into()),
                     ..OperationFailureMatch::default()
                 },
-            );
+            )
+            .expect("clear operation failures");
             json!({
                 "stale": stale,
                 "fresh": fresh,

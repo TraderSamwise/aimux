@@ -52,6 +52,7 @@ project_service_switchable_agents	switchable-agent projection over tmux/runtime 
 release_zero_node	release/shim scripts and shell subprocess portability
 root_session_launch	session launch command construction with environment/runtime edges
 runtime_migration	mutates AIMUX_HOME process environment
+runtime_health_composition	process runtime initialization and global backlog metrics registry composition
 service_state_snapshot	tmux runtime stop/snapshot sequencing
 tmux	real tmux manager behavior and runtime command boundaries
 tmux_expose_signal_shutdown	real expose subprocess signal/cursor teardown

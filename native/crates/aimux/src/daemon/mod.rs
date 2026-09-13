@@ -11,6 +11,7 @@ pub mod router;
 pub mod routing;
 pub mod runtime;
 pub mod server;
+pub mod stability_doctor;
 pub mod status;
 pub mod stream;
 pub mod text;

@@ -197,7 +197,7 @@ pub fn hot_preview_snapshot(
     None
 }
 
-fn trailing_chars(value: &str, max_chars: usize) -> String {
+pub(crate) fn trailing_chars(value: &str, max_chars: usize) -> String {
     let char_count = value.chars().count();
     if char_count <= max_chars {
         return value.to_owned();

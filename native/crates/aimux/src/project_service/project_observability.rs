@@ -5,9 +5,9 @@ use crate::project_service_manifest::get_project_service_manifest;
 
 use super::desktop_state::desktop_state_for_context;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
-use super::notifications::{NotificationQuery, list_notification_snapshot};
+use super::notifications::{NotificationQuery, try_list_notification_snapshot};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
+use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 
 const DEFAULT_PROJECT_LIST_LIMIT: usize = 200;
 const DEFAULT_STORY_LIMIT: usize = 30;
@@ -26,14 +26,21 @@ pub fn route_project_observability_request(
         Ok(state) => state,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
-    let notification_snapshot = list_notification_snapshot(
+    let notification_snapshot = match try_list_notification_snapshot(
         context.project_state_dir(),
         NotificationQuery {
             limit: Some(DEFAULT_PROJECT_LIST_LIMIT),
             ..NotificationQuery::default()
         },
-    );
-    let exchange = read_runtime_exchange(runtime_exchange_path(context.project_state_dir()));
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
+    let exchange =
+        match try_read_runtime_exchange(runtime_exchange_path(context.project_state_dir())) {
+            Ok(exchange) => exchange,
+            Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+        };
     let mut sessions = array_field(&state, "sessions").to_vec();
     sessions.extend_from_slice(array_field(&state, "teammates"));
     let service_info = get_project_service_manifest()

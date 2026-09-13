@@ -61,6 +61,7 @@ struct FakeRuntime {
     proxy_binary: ProxyBinaryResponse,
     proxy_json_gate: Option<Arc<BlockingProxyGate>>,
     list_projects_gate: Option<Arc<BlockingProxyGate>>,
+    project_read_error: Option<String>,
 }
 
 impl FakeRuntime {
@@ -79,6 +80,7 @@ impl FakeRuntime {
             },
             proxy_json_gate: None,
             list_projects_gate: None,
+            project_read_error: None,
         }
     }
 
@@ -213,6 +215,16 @@ impl DaemonStatusRuntime for FakeRuntime {
             gate.wait();
         }
         self.projects.clone()
+    }
+
+    fn try_list_projects_for_route(&self) -> Result<Vec<ProjectsRouteProject>, String> {
+        if let Some(gate) = &self.list_projects_gate {
+            gate.wait();
+        }
+        if let Some(error) = &self.project_read_error {
+            return Err(error.clone());
+        }
+        Ok(self.projects.clone())
     }
 
     fn daemon_state(&self) -> DaemonState {
@@ -1495,6 +1507,51 @@ fn hosted_server_routes_with_minted_operator_and_body_caps() {
 
     assert_eq!(refused.status, 413);
     assert_eq!(runtime.calls.len(), 1);
+}
+
+#[test]
+fn hosted_operator_route_reports_project_read_failure_not_empty_world() {
+    let fixture = HostedFixture::new("route-project-read-error");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.project_read_error = Some("registry snapshot unreadable".into());
+    let state = fixture.state(HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    });
+
+    let mut request = FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output");
+    request.headers = bearer(&token);
+    let response = handle_hosted_daemon_request(&mut runtime, &state, request);
+
+    assert_eq!(response.status, 500);
+    assert_eq!(
+        json_body(&response),
+        json!({ "ok": false, "error": "registry snapshot unreadable" })
+    );
+    assert!(runtime.calls.is_empty());
+}
+
+#[test]
+fn hosted_operator_route_preserves_genuine_empty_project_list_denial() {
+    let fixture = HostedFixture::new("route-empty-projects");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    let state = fixture.state(HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    });
+
+    let mut request = FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output");
+    request.headers = bearer(&token);
+    let response = handle_hosted_daemon_request(&mut runtime, &state, request);
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        json_body(&response),
+        json!({ "ok": false, "error": "operator request could not be bound to a project" })
+    );
+    assert!(runtime.calls.is_empty());
 }
 
 #[test]

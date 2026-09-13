@@ -42,6 +42,7 @@ import {
   listProjectLibrary,
   leaveShare,
   listPendingInteractions,
+  listGlobalExposeItems,
   listTeammates,
   listShares,
   listProjects,
@@ -169,6 +170,42 @@ describe("api relay routing", () => {
       sessionId: "agent-1",
       text: "hello",
       sharedChatActor: { role: "owner", displayName: "Sam", email: "sam@example.com" },
+    });
+  });
+
+  it("preserves global expose project read errors", async () => {
+    installFetchMock({
+      ok: true,
+      items: [],
+      projectReadErrors: ["failed to parse project service endpoint /tmp/repo"],
+    });
+
+    const response = await listGlobalExposeItems({ includeChatPreview: true });
+
+    expect(response.projectReadErrors).toEqual([
+      "failed to parse project service endpoint /tmp/repo",
+    ]);
+  });
+
+  it("includes tmux query markers in project HTTP error messages", async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: "window not found",
+            tmuxLiveWindowQuery: { ok: false, error: "tmux list-windows timed out" },
+          }),
+          { status: 404 },
+        ),
+    ) as unknown as typeof fetch;
+
+    await expect(focusWindow(endpoint, { windowId: "@missing" })).rejects.toMatchObject({
+      name: "ApiError",
+      status: 404,
+      message: expect.stringContaining(
+        "window not found: tmux window query failed: tmux list-windows timed out",
+      ),
     });
   });
 

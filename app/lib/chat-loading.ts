@@ -5,6 +5,7 @@ export type PaneOutputSnapshotContent = {
   output?: string | null;
   outputAnsi?: string | null;
   outputAvailable?: boolean | null;
+  tmuxUnavailable?: unknown;
 };
 
 export type ChatTranscriptPlaceholderState =
@@ -26,7 +27,11 @@ export function paneOutputSnapshotHasVisibleTranscript(result: PaneOutputSnapsho
 export function paneOutputSnapshotSettlesInitialTranscript(
   result: PaneOutputSnapshotContent,
 ): boolean {
-  return Array.isArray(result.messages) || paneOutputSnapshotHasVisibleTranscript(result);
+  return (
+    Array.isArray(result.messages) ||
+    Boolean(result.tmuxUnavailable) ||
+    paneOutputSnapshotHasVisibleTranscript(result)
+  );
 }
 
 export function chatTranscriptPlaceholderState({

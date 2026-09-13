@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const allowlistPath = resolve(repoRoot, "scripts/rust-fixture-dispatcher-allowlist.json");
@@ -22,8 +22,18 @@ function loadAllowlist() {
 }
 
 describe("audit-rust-orphans fixture dispatcher gate", () => {
+  let audit;
+  let enforcedAudit;
+
+  beforeAll(() => {
+    audit = runAudit();
+    enforcedAudit = runAudit(["--json", "--enforce-fixture-twins"]);
+    // The uncached test file measured 12.01s in a focused run and can exceed
+    // Vitest's 10s per-test default under load; run the expensive audits once
+    // with explicit headroom instead of repeating them in every assertion.
+  }, 30_000);
+
   it("tracks protected contract modules whose only production reference is their module declaration", () => {
-    const audit = runAudit();
     const stranded = audit.fixtureDispatcherGate.stranded;
 
     expect(stranded).toEqual(
@@ -40,7 +50,6 @@ describe("audit-rust-orphans fixture dispatcher gate", () => {
   });
 
   it("separates production, twin, and test references for stranded dispatcher modules", () => {
-    const audit = runAudit();
     const attachmentStore = audit.fixtureDispatcherGate.stranded.find(
       (entry) => entry.file === "native/crates/aimux/src/attachment_store_contract.rs",
     );
@@ -66,7 +75,6 @@ describe("audit-rust-orphans fixture dispatcher gate", () => {
   });
 
   it("uses the allowlist as a typed debt register", () => {
-    const audit = runAudit();
     const allowlist = loadAllowlist();
     const allowlistFiles = Object.keys(allowlist).sort();
     const trackedDebt = audit.fixtureDispatcherGate.stranded.filter((entry) => entry.reason);
@@ -81,9 +89,7 @@ describe("audit-rust-orphans fixture dispatcher gate", () => {
   });
 
   it("passes the enforced fixture-twin gate when tracked debt is registered", () => {
-    const audit = runAudit(["--json", "--enforce-fixture-twins"]);
-
-    expect(audit.fixtureDispatcherGate.untracked).toHaveLength(0);
-    expect(audit.fixtureDispatcherGate.stale).toHaveLength(0);
+    expect(enforcedAudit.fixtureDispatcherGate.untracked).toHaveLength(0);
+    expect(enforcedAudit.fixtureDispatcherGate.stale).toHaveLength(0);
   });
 });

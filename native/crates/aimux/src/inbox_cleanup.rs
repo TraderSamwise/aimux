@@ -36,7 +36,8 @@ pub fn run_inbox_cleanup_runtime_contract_case(case: &Value) -> Value {
                     id: Some(id.to_owned()),
                     ..NotificationMutation::default()
                 },
-            );
+            )
+            .expect("mark seeded notification read");
         }
     } else {
         seed_notification(project_state_dir, None);
@@ -321,15 +322,26 @@ fn run_inbox_cleanup_project(project_state_dir: &Path, plan: &Value, dry_run: bo
                     ..NotificationMutation::default()
                 },
             );
-            if cleared > 0 {
-                results.push(json!({ "id": id, "reason": reason, "status": "cleared" }));
-            } else {
-                results.push(json!({
-                    "id": id,
-                    "reason": reason,
-                    "status": "failed",
-                    "error": "notification not found",
-                }));
+            match cleared {
+                Ok(cleared) if cleared > 0 => {
+                    results.push(json!({ "id": id, "reason": reason, "status": "cleared" }));
+                }
+                Ok(_) => {
+                    results.push(json!({
+                        "id": id,
+                        "reason": reason,
+                        "status": "failed",
+                        "error": "notification not found",
+                    }));
+                }
+                Err(error) => {
+                    results.push(json!({
+                        "id": id,
+                        "reason": reason,
+                        "status": "failed",
+                        "error": error,
+                    }));
+                }
             }
         }
     }

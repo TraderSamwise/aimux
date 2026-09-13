@@ -17,6 +17,10 @@ import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/deskt
 import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
 import { formatServiceRecency, formatSessionRecency } from "@/lib/recency";
 import {
+  formatPreviewCaptureUnavailable,
+  summarizeOperationFailures,
+} from "@/lib/unavailable-state";
+import {
   agentStatusKind,
   appStatusClasses,
   serviceStatusKind,
@@ -186,7 +190,11 @@ function AgentRow({
   const shortName = agentShortName(session);
   const state = deriveAgentState(session);
   const recency = agentRecencyText(session);
-  const fullHint = joinHints(recency, session.headline || session.previewLine);
+  const previewUnavailable = formatPreviewCaptureUnavailable(session.previewCapture);
+  const fullHint = joinHints(
+    recency,
+    previewUnavailable || session.headline || session.previewLine,
+  );
   const identity = (
     <>
       <SelectMark selected={selected} />
@@ -221,7 +229,7 @@ function AgentRow({
         className={cn("rounded-md px-2.5 py-2", selected ? "bg-[#232733]" : PRESS)}
       >
         <View className="flex-row items-center gap-2">{identity}</View>
-        <CompactRecency text={recency} />
+        <CompactRecency text={fullHint} />
       </Pressable>
     );
   }
@@ -687,6 +695,7 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
   }
 
   const statePad = padded ? "p-6" : "py-6";
+  const operationFailureSummary = summarizeOperationFailures(desktopState?.operationFailures);
 
   if (!endpoint && desktopState === null) {
     return (
@@ -728,13 +737,29 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
   if (groups.length === 0) {
     return (
       <View className={statePad}>
-        <PageStateCard title="No worktrees yet" body="Worktrees will appear here." />
+        {operationFailureSummary ? (
+          <PageStateCard
+            title={operationFailureSummary.title}
+            body={operationFailureSummary.detail}
+            tone="warning"
+          />
+        ) : (
+          <PageStateCard title="No worktrees yet" body="Worktrees will appear here." />
+        )}
       </View>
     );
   }
 
   return (
     <View className={cn(padded && "px-4")}>
+      {operationFailureSummary ? (
+        <PageStateCard
+          className="mb-4"
+          title={operationFailureSummary.title}
+          body={operationFailureSummary.detail}
+          tone="warning"
+        />
+      ) : null}
       <WorktreeManagementPanel
         projectPath={stateProjectPath}
         endpoint={endpoint}

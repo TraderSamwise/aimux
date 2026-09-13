@@ -152,6 +152,10 @@ def build_tests() -> list[TestExecutable]:
 
 def run_executable(test: TestExecutable) -> TestResult:
     command = [str(test.path)]
+    if not test.integration:
+        # Unit/bin test binaries share process-wide globals such as the async
+        # runtime; the runner already provides cross-target parallelism.
+        command.append("--test-threads=1")
     started = time.monotonic()
     process = subprocess.run(
         command,

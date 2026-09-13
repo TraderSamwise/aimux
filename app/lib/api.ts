@@ -16,6 +16,7 @@ import type { DesktopState } from "@/lib/desktop-state";
 import type { ParsedAgentOutput } from "@/lib/events";
 import {
   PROJECT_API_ROUTES,
+  type GlobalExposeItemsResponse,
   type TeamConfigResponse,
   type ActiveWindowRequest,
   type AgentListResponse,
@@ -175,6 +176,17 @@ export class ApiError extends Error {
 
 const DEFAULT_API_TIMEOUT_MS = 10_000;
 
+function apiErrorMessageFromBody(body: unknown, fallback: string): string {
+  if (!body || typeof body !== "object") return fallback;
+  const record = body as Record<string, unknown>;
+  const base = typeof record.error === "string" ? record.error : fallback;
+  const tmuxQuery = record.tmuxLiveWindowQuery;
+  if (!tmuxQuery || typeof tmuxQuery !== "object") return base;
+  const tmuxError = (tmuxQuery as Record<string, unknown>).error;
+  if (typeof tmuxError !== "string" || !tmuxError.trim()) return base;
+  return `${base}: tmux window query failed: ${tmuxError}`;
+}
+
 function apiTimeoutMs(opts?: ApiOpts): number {
   return Math.max(1, opts?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
 }
@@ -208,10 +220,7 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
     const res = await fetch(url, { ...init, headers, signal });
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      const msg =
-        body && typeof body === "object" && "error" in body
-          ? String((body as { error: unknown }).error)
-          : `HTTP ${res.status}`;
+      const msg = apiErrorMessageFromBody(body, `HTTP ${res.status}`);
       throw new ApiError(res.status, body, `${msg} (${url})`);
     }
     const body = await res.json();
@@ -221,8 +230,7 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
       "ok" in body &&
       (body as { ok?: unknown }).ok === false
     ) {
-      const message =
-        "error" in body ? String((body as { error: unknown }).error) : "Request failed";
+      const message = apiErrorMessageFromBody(body, "Request failed");
       throw new ApiError(res.status, body, `${message} (${url})`);
     }
     return body as T;
@@ -273,8 +281,11 @@ async function callDaemonViaRelay<T>(
   if (!relay) throw new ApiError(0, null, "Relay not connected");
   const result = await withRelayRequestTimeout(path, relay.request(method, path, body), opts);
   if (result.status >= 400) {
-    const b = result.body as { error?: string } | null;
-    throw new ApiError(result.status, result.body, b?.error ?? `HTTP ${result.status}`);
+    throw new ApiError(
+      result.status,
+      result.body,
+      apiErrorMessageFromBody(result.body, `HTTP ${result.status}`),
+    );
   }
   return result.body as T;
 }
@@ -400,7 +411,7 @@ export async function listGlobalExposeItems(
     clientKind?: "web" | "mobile" | "expose";
     clientId?: string;
   },
-): Promise<{ ok: boolean; items: unknown[] }> {
+): Promise<GlobalExposeItemsResponse> {
   const { includeChatPreview, clientKind, clientId, ...apiOpts } = opts ?? {};
   const params = new URLSearchParams({ includePreview: "1" });
   if (includeChatPreview) params.set("includeChatPreview", "1");
@@ -408,8 +419,8 @@ export async function listGlobalExposeItems(
   if (clientId) params.set("clientId", clientId);
   const path = `${CORE_API_ROUTES.exposeItems}?${params.toString()}`;
   if (shouldRouteViaRelay())
-    return callDaemonViaRelay<{ ok: boolean; items: unknown[] }>("GET", path, undefined, apiOpts);
-  return callJson<{ ok: boolean; items: unknown[] }>(
+    return callDaemonViaRelay<GlobalExposeItemsResponse>("GET", path, undefined, apiOpts);
+  return callJson<GlobalExposeItemsResponse>(
     `${getDaemonUrl()}${path}`,
     { method: "GET" },
     apiOpts,

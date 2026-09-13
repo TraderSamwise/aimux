@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::agent_prompt_delivery::current_composer_text;
 use crate::atomic_write::write_json_atomic;
 use crate::backlog_metrics::{
     AGENT_INPUT_DELIVERY_BACKLOG, BacklogMetricSnapshot, backlog_metric, record_backlog_error,
@@ -31,6 +32,8 @@ pub const DELIVERY_TASK_INTERVAL_MS: i64 = 500;
 
 const DELIVERY_TASK_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_DELIVERIES_PER_TICK: usize = 8;
+pub const AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY: usize = MAX_DELIVERIES_PER_TICK
+    * ((MAX_AGENT_INPUT_HOLD_MS as usize / DELIVERY_TASK_INTERVAL_MS as usize) + 1);
 
 static DELIVERY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -50,6 +53,7 @@ impl AgentInputDeliveryQueue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentInputWindowActivity {
     Unattended,
+    UnsubmittedInputVisible,
     Attended {
         active_clients: usize,
         latest_activity_ms: i64,
@@ -85,6 +89,11 @@ pub struct PendingAgentInputDelivery {
 struct AgentInputDeliveryState {
     version: u64,
     pending: Vec<PendingAgentInputDelivery>,
+}
+
+enum QueuedDeliveryTarget {
+    Deliverable(String),
+    Blocked(String),
 }
 
 pub fn agent_input_delivery_queue_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
@@ -136,6 +145,27 @@ pub fn parse_agent_input_window_activity(
     })
 }
 
+pub fn classify_agent_input_window_activity(
+    window_id: &str,
+    panes_output: &str,
+    pane_output: &str,
+    clients_output: Option<&str>,
+) -> Result<AgentInputWindowActivity, String> {
+    let active_clients = active_client_count_for_window(window_id, panes_output)?;
+    if pane_has_unsubmitted_agent_input(pane_output) {
+        return Ok(AgentInputWindowActivity::UnsubmittedInputVisible);
+    }
+    if active_clients == 0 {
+        return Ok(AgentInputWindowActivity::Unattended);
+    }
+    let Some(clients_output) = clients_output else {
+        return Err(format!(
+            "tmux reported {active_clients} active client(s) for {window_id}, but client activity was not queried"
+        ));
+    };
+    parse_agent_input_window_activity(window_id, panes_output, clients_output)
+}
+
 pub fn decide_agent_input_delivery(
     force: bool,
     activity: Result<AgentInputWindowActivity, String>,
@@ -148,15 +178,30 @@ pub fn decide_agent_input_delivery(
         };
     }
     let max_deliver_at_ms = created_at_ms.saturating_add(MAX_AGENT_INPUT_HOLD_MS);
-    if now_ms >= max_deliver_at_ms {
-        return AgentInputDeliveryDecision::DeliverNow {
-            reason: "max-hold-elapsed".into(),
-        };
-    }
     match activity {
-        Ok(AgentInputWindowActivity::Unattended) => AgentInputDeliveryDecision::DeliverNow {
-            reason: "unattended-window".into(),
-        },
+        Ok(AgentInputWindowActivity::Unattended) => {
+            let reason = if now_ms >= max_deliver_at_ms {
+                "max-hold-elapsed"
+            } else {
+                "unattended-window"
+            };
+            AgentInputDeliveryDecision::DeliverNow {
+                reason: reason.into(),
+            }
+        }
+        Ok(AgentInputWindowActivity::UnsubmittedInputVisible) => {
+            if now_ms >= max_deliver_at_ms {
+                AgentInputDeliveryDecision::DeliverNow {
+                    reason: "max-hold-elapsed".into(),
+                }
+            } else {
+                AgentInputDeliveryDecision::Hold {
+                    reason: "visible-unsubmitted-input".into(),
+                    quiet_for_ms: None,
+                    retry_after_ms: DELIVERY_TASK_INTERVAL_MS,
+                }
+            }
+        }
         Ok(AgentInputWindowActivity::Attended {
             latest_activity_ms, ..
         }) => {
@@ -192,7 +237,11 @@ pub fn enqueue_agent_input_delivery(
     let _guard = context.agent_input_delivery_queue.lock();
     let path = agent_input_delivery_queue_path(context.project_state_dir());
     let mut state = load_delivery_state(&path).inspect_err(|error| {
-        record_backlog_error(AGENT_INPUT_DELIVERY_BACKLOG, None, error.clone());
+        record_backlog_error(
+            AGENT_INPUT_DELIVERY_BACKLOG,
+            Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+            error.clone(),
+        );
     })?;
     let pending = PendingAgentInputDelivery {
         id: next_delivery_id(),
@@ -206,7 +255,11 @@ pub fn enqueue_agent_input_delivery(
     state.pending.push(pending.clone());
     let depth = state.pending.len();
     save_delivery_state(&path, state)?;
-    backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(depth);
+    backlog_metric(
+        AGENT_INPUT_DELIVERY_BACKLOG,
+        Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+    )
+    .set_depth(depth);
     Ok(pending)
 }
 
@@ -233,7 +286,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
     let Ok(state) = load_delivery_state(&path) else {
         record_backlog_error(
             AGENT_INPUT_DELIVERY_BACKLOG,
-            None,
+            Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
             load_error_for_path(&path),
         );
         record_agent_input_delivery_failure(
@@ -248,7 +301,11 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         return;
     };
     if state.pending.is_empty() {
-        backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(0);
+        backlog_metric(
+            AGENT_INPUT_DELIVERY_BACKLOG,
+            Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+        )
+        .set_depth(0);
         return;
     }
 
@@ -261,16 +318,29 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             remaining.extend(ready);
             break;
         }
-        let window_id = resolve_live_window_id(context, &pending.session_id)
-            .unwrap_or_else(|| pending.window_id.clone());
-        let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
-        let activity = if force_due_to_max {
-            Ok(AgentInputWindowActivity::Unattended)
-        } else {
-            runtime.agent_input_window_activity(&window_id)
+        let window_id = match resolve_queued_delivery_target(context, &pending) {
+            QueuedDeliveryTarget::Deliverable(window_id) => window_id,
+            QueuedDeliveryTarget::Blocked(reason) => {
+                record_agent_input_delivery_failure(
+                    context,
+                    Some(&pending.session_id),
+                    "Agent input delivery blocked",
+                    reason,
+                );
+                remaining.push(pending);
+                continue;
+            }
         };
-        let decision =
-            decide_agent_input_delivery(force_due_to_max, activity, now_ms, pending.created_at_ms);
+        let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
+        let activity = runtime.agent_input_window_activity(&window_id);
+        let persistent_probe_failure = force_due_to_max && activity.is_err();
+        let decision = if persistent_probe_failure {
+            AgentInputDeliveryDecision::DeliverNow {
+                reason: "max-hold-elapsed".into(),
+            }
+        } else {
+            decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
+        };
         match decision {
             AgentInputDeliveryDecision::Hold { reason, .. } => {
                 if reason.starts_with("tmux client activity probe failed") {
@@ -335,9 +405,17 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
     };
     let depth = state.pending.len();
     match save_delivery_state(&path, state) {
-        Ok(()) => backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(depth),
+        Ok(()) => backlog_metric(
+            AGENT_INPUT_DELIVERY_BACKLOG,
+            Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+        )
+        .set_depth(depth),
         Err(error) => {
-            record_backlog_error(AGENT_INPUT_DELIVERY_BACKLOG, None, error.clone());
+            record_backlog_error(
+                AGENT_INPUT_DELIVERY_BACKLOG,
+                Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+                error.clone(),
+            );
             record_agent_input_delivery_failure(
                 context,
                 None,
@@ -360,7 +438,7 @@ pub async fn run_pending_agent_input_deliveries_async(
             Err(_) => {
                 record_backlog_error(
                     AGENT_INPUT_DELIVERY_BACKLOG,
-                    None,
+                    Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
                     load_error_for_path(&path),
                 );
                 record_agent_input_delivery_failure(
@@ -377,7 +455,11 @@ pub async fn run_pending_agent_input_deliveries_async(
         }
     };
     if state.pending.is_empty() {
-        backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(0);
+        backlog_metric(
+            AGENT_INPUT_DELIVERY_BACKLOG,
+            Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+        )
+        .set_depth(0);
         return;
     }
 
@@ -395,16 +477,30 @@ pub async fn run_pending_agent_input_deliveries_async(
             remaining.extend(ready);
             break;
         }
-        let window_id = resolve_live_window_id(context, &pending.session_id)
-            .unwrap_or_else(|| pending.window_id.clone());
-        let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
-        let activity = if force_due_to_max {
-            Ok(AgentInputWindowActivity::Unattended)
-        } else {
-            tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await
+        let window_id = match resolve_queued_delivery_target(context, &pending) {
+            QueuedDeliveryTarget::Deliverable(window_id) => window_id,
+            QueuedDeliveryTarget::Blocked(reason) => {
+                record_agent_input_delivery_failure(
+                    context,
+                    Some(&pending.session_id),
+                    "Agent input delivery blocked",
+                    reason,
+                );
+                remaining.push(pending);
+                continue;
+            }
         };
-        let decision =
-            decide_agent_input_delivery(force_due_to_max, activity, now_ms, pending.created_at_ms);
+        let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
+        let activity =
+            tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await;
+        let persistent_probe_failure = force_due_to_max && activity.is_err();
+        let decision = if persistent_probe_failure {
+            AgentInputDeliveryDecision::DeliverNow {
+                reason: "max-hold-elapsed".into(),
+            }
+        } else {
+            decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
+        };
         match decision {
             AgentInputDeliveryDecision::Hold { reason, .. } => {
                 if reason.starts_with("tmux client activity probe failed") {
@@ -485,9 +581,17 @@ pub async fn run_pending_agent_input_deliveries_async(
     };
     let depth = state.pending.len();
     match save_delivery_state(&path, state) {
-        Ok(()) => backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(depth),
+        Ok(()) => backlog_metric(
+            AGENT_INPUT_DELIVERY_BACKLOG,
+            Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+        )
+        .set_depth(depth),
         Err(error) => {
-            record_backlog_error(AGENT_INPUT_DELIVERY_BACKLOG, None, error.clone());
+            record_backlog_error(
+                AGENT_INPUT_DELIVERY_BACKLOG,
+                Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+                error.clone(),
+            );
             record_agent_input_delivery_failure(
                 context,
                 None,
@@ -502,12 +606,32 @@ pub fn agent_input_delivery_backlog_snapshot(
     project_state_dir: impl AsRef<Path>,
 ) -> BacklogMetricSnapshot {
     let path = agent_input_delivery_queue_path(project_state_dir);
-    let metric = backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None);
+    let metric = backlog_metric(
+        AGENT_INPUT_DELIVERY_BACKLOG,
+        Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+    );
     match load_delivery_state(&path) {
         Ok(state) => metric.set_depth(state.pending.len()),
         Err(error) => metric.set_error(error),
     }
     metric.snapshot()
+}
+
+fn resolve_queued_delivery_target(
+    context: &ProjectServiceRequestContext,
+    pending: &PendingAgentInputDelivery,
+) -> QueuedDeliveryTarget {
+    match resolve_live_window_id(context, &pending.session_id) {
+        Ok(Some(window_id)) => QueuedDeliveryTarget::Deliverable(window_id),
+        Ok(None) => QueuedDeliveryTarget::Blocked(format!(
+            "Kept queued input for {} because runtime topology has no live tmux window for that session; refused stale queued tmux target {}",
+            pending.session_id, pending.window_id
+        )),
+        Err(error) => QueuedDeliveryTarget::Blocked(format!(
+            "Kept queued input for {} because {error}; refused stale queued tmux target {}",
+            pending.session_id, pending.window_id
+        )),
+    }
 }
 
 pub fn agent_input_delivery_task(
@@ -563,6 +687,23 @@ pub fn active_client_count_for_window(
         });
     }
     Ok(0)
+}
+
+pub fn pane_has_unsubmitted_agent_input(pane: &str) -> bool {
+    current_composer_text(pane).is_some_and(|composer| has_user_composer_text(&composer))
+}
+
+fn has_user_composer_text(value: &str) -> bool {
+    let text = value.trim();
+    !text.is_empty() && !is_empty_composer_placeholder(text)
+}
+
+fn is_empty_composer_placeholder(text: &str) -> bool {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    matches!(
+        normalized.as_str(),
+        "Ask Codex to do anything" | "Ask Claude to do anything"
+    )
 }
 
 fn load_delivery_state(path: &Path) -> Result<AgentInputDeliveryState, String> {

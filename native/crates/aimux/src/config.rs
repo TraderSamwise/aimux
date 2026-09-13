@@ -101,6 +101,10 @@ pub fn default_config() -> Value {
             "nudgeCooldownMs": 60_000,
             "autoNudgeWithoutOverseer": false
         },
+        "agentRestore": {
+            "scanIntervalMs": 2_000,
+            "scanEveryTicks": 8
+        },
         "scribe": {
             "defaultAgent": null
         },

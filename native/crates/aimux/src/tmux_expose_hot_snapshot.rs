@@ -223,6 +223,7 @@ fn is_expose_scope_item(value: &Value) -> bool {
         || !optional_value_string(object.get("projectRoot"))
         || !optional_value_string(object.get("projectName"))
         || !is_preview_snapshot(object.get("previewSnapshot"))
+        || !is_preview_capture(object.get("previewCapture"))
     {
         return false;
     }
@@ -252,6 +253,17 @@ fn is_preview_snapshot(value: Option<&Value>) -> bool {
         && optional_value_string(object.get("windowId"))
         && optional_finite_number(object.get("startLine"))
         && optional_finite_number(object.get("lineCount"))
+}
+
+fn is_preview_capture(value: Option<&Value>) -> bool {
+    let Some(value) = value else {
+        return true;
+    };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object.get("ok").and_then(Value::as_bool) == Some(false)
+        && object.get("error").and_then(Value::as_str).is_some()
 }
 
 fn prune_views(

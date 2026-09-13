@@ -279,6 +279,25 @@ describe("expose model", () => {
     expect(previewText(tile?.terminalPreviewLines ?? [])).toEqual(["heading", "", "body"]);
   });
 
+  it("distinguishes failed preview capture from a quiet pane", () => {
+    const [failed, quiet] = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...item("1", "main", 0),
+            previewCapture: { ok: false, error: "tmux capture-pane timed out" },
+          },
+          item("2", "main", 0),
+        ],
+      },
+    ]);
+
+    expect(failed?.previewCaptureError).toBe("tmux capture-pane timed out");
+    expect(failed?.terminalPreviewLines).toEqual([]);
+    expect(quiet?.previewCaptureError).toBeNull();
+  });
+
   it("slides terminal preview above the footer when the Expose tile is short", () => {
     const lines = ["content 1", "content 2", "content 3", "footer 1", "footer 2", "footer 3"].map(
       (text) => [{ text, style: {} }],

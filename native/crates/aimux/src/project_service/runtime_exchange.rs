@@ -37,14 +37,31 @@ pub fn empty_runtime_exchange() -> Value {
 }
 
 pub fn read_runtime_exchange(path: impl AsRef<Path>) -> Value {
+    try_read_runtime_exchange(path).unwrap_or_else(|_| empty_runtime_exchange())
+}
+
+pub fn try_read_runtime_exchange(path: impl AsRef<Path>) -> Result<Value, String> {
     let path = path.as_ref();
-    let Ok(contents) = fs::read_to_string(path) else {
-        return empty_runtime_exchange();
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(empty_runtime_exchange());
+        }
+        Err(error) => {
+            return Err(format!(
+                "failed to read runtime exchange at {}: {error}",
+                path.display()
+            ));
+        }
     };
-    let Ok(value) = serde_yaml::from_str::<Value>(&contents) else {
-        return empty_runtime_exchange();
-    };
-    normalize_runtime_exchange(value).unwrap_or_else(|_| empty_runtime_exchange())
+    let value = serde_yaml::from_str::<Value>(&contents).map_err(|error| {
+        format!(
+            "failed to parse runtime exchange at {}: {error}",
+            path.display()
+        )
+    })?;
+    normalize_runtime_exchange(value)
+        .map_err(|error| format!("invalid runtime exchange at {}: {error}", path.display()))
 }
 
 pub fn write_runtime_exchange(path: impl AsRef<Path>, exchange: &Value) -> std::io::Result<()> {
@@ -56,7 +73,7 @@ pub fn write_runtime_exchange(path: impl AsRef<Path>, exchange: &Value) -> std::
 pub fn compact_runtime_exchange_file(path: impl AsRef<Path>) -> Result<Value, String> {
     let path = path.as_ref();
     let _lock = RuntimeExchangeLock::acquire(path)?;
-    let current = read_runtime_exchange(path);
+    let current = try_read_runtime_exchange(path)?;
     let before_text = serialize_runtime_exchange(&current);
     let compaction = compact_runtime_exchange(&current);
     let retained = compaction
@@ -90,7 +107,14 @@ pub fn inspect_runtime_exchange_store(path: impl AsRef<Path>) -> Value {
     let bytes = fs::metadata(path)
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let exchange = read_runtime_exchange(path);
+    let exchange = try_read_runtime_exchange(path).unwrap_or_else(|error| {
+        let mut exchange = empty_runtime_exchange();
+        if let Value::Object(record) = &mut exchange {
+            record.insert("unavailable".into(), Value::Bool(true));
+            record.insert("error".into(), Value::String(error));
+        }
+        exchange
+    });
     let report = compact_runtime_exchange(&exchange);
     let retained = report
         .get("retained")

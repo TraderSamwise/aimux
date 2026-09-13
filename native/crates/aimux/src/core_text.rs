@@ -726,6 +726,17 @@ fn js_string_or_undefined(value: Option<&Value>) -> String {
 }
 
 pub fn render_core_agent_input_lines(payload: &Value) -> Vec<String> {
+    if payload
+        .get("delivery")
+        .and_then(|delivery| delivery.get("state"))
+        .and_then(Value::as_str)
+        == Some("held")
+    {
+        return vec![format!(
+            "queued for {}",
+            js_string(field(payload, "sessionId"))
+        )];
+    }
     vec![format!(
         "delivered to {}",
         js_string(field(payload, "sessionId"))

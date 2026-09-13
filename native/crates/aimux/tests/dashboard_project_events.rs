@@ -1,5 +1,6 @@
 use aimux::dashboard_project_events::{
-    DashboardProjectEvent, DashboardProjectRefreshState, ProjectEventsSseDecoder,
+    DEFAULT_PROJECT_EVENT_BUFFER_LIMIT, DashboardProjectEvent,
+    DashboardProjectEventAdapterContract, DashboardProjectRefreshState, ProjectEventsSseDecoder,
     event_requests_desktop_state, event_requests_refresh,
 };
 use serde_json::json;
@@ -129,4 +130,56 @@ fn handles_crlf_and_ignores_invalid_payload_shapes() {
 
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].payload()["title"], "kept");
+}
+
+#[test]
+fn adapter_surfaces_event_stream_decode_failure() {
+    let oversized = format!(
+        "data: {}\n",
+        "x".repeat(DEFAULT_PROJECT_EVENT_BUFFER_LIMIT + 1)
+    );
+    let output = DashboardProjectEventAdapterContract::run_input(&json!({
+        "endpointResponses": [
+            { "type": "endpoint", "endpoint": { "host": "127.0.0.1", "port": 45000 } }
+        ],
+        "fetchResponses": [
+            { "type": "stream", "label": "events" }
+        ],
+        "ops": [
+            { "op": "start" },
+            { "op": "advance", "ms": 0 },
+            { "op": "enqueue", "label": "events", "text": oversized }
+        ]
+    }));
+
+    let footer = output["host"]["footerFlash"]
+        .as_str()
+        .expect("visible stream failure");
+    assert!(footer.contains("Dashboard event stream failed"));
+    assert!(footer.contains("project event SSE frame exceeded"));
+    assert_eq!(output["host"]["renders"], 1);
+    assert_eq!(
+        output["calls"]["control"][1]["fn"],
+        "invalidateDashboardProjectServiceEndpointHealth"
+    );
+}
+
+#[test]
+fn adapter_keeps_empty_event_stream_chunks_quiet() {
+    let output = DashboardProjectEventAdapterContract::run_input(&json!({
+        "endpointResponses": [
+            { "type": "endpoint", "endpoint": { "host": "127.0.0.1", "port": 45000 } }
+        ],
+        "fetchResponses": [
+            { "type": "stream", "label": "events" }
+        ],
+        "ops": [
+            { "op": "start" },
+            { "op": "advance", "ms": 0 },
+            { "op": "enqueue", "label": "events", "text": ": heartbeat\n" }
+        ]
+    }));
+
+    assert!(output["host"]["footerFlash"].is_null());
+    assert_eq!(output["host"]["renders"], 0);
 }

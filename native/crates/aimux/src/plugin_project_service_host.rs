@@ -160,18 +160,19 @@ impl NativePluginHost for ProjectServicePluginHost<'_> {
                     .cloned()
                     .unwrap_or_else(|| json!([])))
             }
-            NativePluginApiRequest::ReadCoordinationState => Ok(
-                crate::project_service::runtime_exchange::read_runtime_exchange(
+            NativePluginApiRequest::ReadCoordinationState => {
+                crate::project_service::runtime_exchange::try_read_runtime_exchange(
                     crate::project_service::runtime_exchange::runtime_exchange_path(
                         self.project_state_dir(),
                     ),
-                ),
-            ),
+                )
+            }
             NativePluginApiRequest::ReadNotificationFeed => {
-                let snapshot = crate::project_service::notifications::list_notification_snapshot(
-                    self.project_state_dir(),
-                    crate::project_service::notifications::NotificationQuery::default(),
-                );
+                let snapshot =
+                    crate::project_service::notifications::try_list_notification_snapshot(
+                        self.project_state_dir(),
+                        crate::project_service::notifications::NotificationQuery::default(),
+                    )?;
                 Ok(json!({
                     "notifications": snapshot.notifications,
                     "total": snapshot.total,

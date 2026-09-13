@@ -8,7 +8,7 @@ use super::desktop_state::desktop_state_for_context;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
+use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 
 const NOTIFICATION_TAG: &str = "notification";
 const NEEDS_INPUT_KIND: &str = "needs_input";
@@ -27,7 +27,15 @@ pub fn route_coordination_worklist_request(
     }
 
     let project_state_dir = context.project_state_dir();
-    let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
+    let exchange = match try_read_runtime_exchange(runtime_exchange_path(&project_state_dir)) {
+        Ok(exchange) => exchange,
+        Err(error) => {
+            return Some(ProjectServiceDispatchResponse::json(
+                500,
+                json!({ "ok": false, "error": error }),
+            ));
+        }
+    };
     let desktop_state = match desktop_state_for_context(context) {
         Ok(state) => state,
         Err(error) => {

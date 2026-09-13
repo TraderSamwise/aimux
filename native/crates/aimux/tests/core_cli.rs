@@ -1389,6 +1389,22 @@ fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
         }
     );
 
+    let stability = classify_core_cli_with_project_resolver(
+        &["doctor", "stability", "--project=./child", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("doctor stability plan");
+    assert_eq!(stability.operation, CoreCliOperation::DoctorStability);
+    assert_eq!(stability.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(
+        stability.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/stability-text?projectRoot=%2Fresolved%2F.%2Fchild&json=1".into(),
+            body: None,
+        }
+    );
+
     let project_tasks = classify_core_cli_with_project_resolver(
         &["doctor", "tasks", "--project=./child", "--json"],
         &context(true, true),

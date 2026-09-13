@@ -1,6 +1,9 @@
 use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::routing::DaemonRouteResponse;
+use aimux::daemon::stability_doctor::{
+    StabilityDoctorReport, StabilityReason, StabilityReasonSeverity, StabilityVerdict,
+};
 use aimux::daemon::text::operations::{
     DaemonOperationsTextRuntime, DashboardOpenRequest, RestartBackendIdGuardNotice,
     RestartControlPlaneTextResult, route_operations_text_request,
@@ -135,6 +138,31 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
             json!({ "ok": true, "projectRoot": project_root }),
             "Tmux Doctor\n  ok".into(),
         ))
+    }
+
+    fn doctor_stability_report(
+        &mut self,
+        project_root: &str,
+    ) -> Result<StabilityDoctorReport, String> {
+        self.calls.push(Call {
+            name: "stability",
+            project_root: Some(project_root.into()),
+            ..Call::simple("stability")
+        });
+        Ok(StabilityDoctorReport {
+            version: 1,
+            generated_at_ms: 123,
+            project_root: project_root.into(),
+            history_path: "/tmp/runtime-health.jsonl".into(),
+            sample_count: 2,
+            history_span_ms: 86_400_000,
+            verdict: StabilityVerdict::NotStable,
+            reasons: vec![StabilityReason {
+                kind: "task-wedged".into(),
+                severity: StabilityReasonSeverity::Failure,
+                message: "loop-watcher has not completed in 2h".into(),
+            }],
+        })
     }
 
     fn repair_tmux_runtime(
@@ -674,6 +702,45 @@ fn doctor_tasks_text_and_json_routes_render_runtime_task_registry() {
             .any(|task| task["name"] == task_name)
     );
     handle.abort();
+}
+
+#[test]
+fn doctor_stability_text_and_json_routes_render_history_verdict() {
+    let mut runtime = FakeOperationsRuntime::default();
+    let text = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!(
+            "{}?projectRoot=/repo",
+            CORE_API_ROUTES.doctor_stability_text
+        ),
+        None,
+    )
+    .expect("stability route");
+    assert_eq!(text.status, 200);
+    let body = text_body(text);
+    assert!(body.contains("Aimux Stability Doctor\n"));
+    assert!(body.contains("verdict: not stable"));
+    assert!(body.contains("loop-watcher has not completed in 2h"));
+    assert_eq!(runtime.calls[0].name, "stability");
+    assert_eq!(runtime.calls[0].project_root.as_deref(), Some("/repo"));
+
+    let json = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!(
+            "{}?projectRoot=/repo&json=1",
+            CORE_API_ROUTES.doctor_stability_text
+        ),
+        None,
+    )
+    .expect("stability json route");
+    let report = json_text(json);
+    assert_eq!(report["verdict"], json!("not_stable"));
+    assert_eq!(
+        report["reasons"][0]["message"],
+        json!("loop-watcher has not completed in 2h")
+    );
 }
 
 #[test]

@@ -121,6 +121,17 @@ fn renders_agent_and_team_details() {
         ]
     );
     assert_eq!(
+        render_core_agent_input_lines(&json!({
+            "sessionId": "codex-1",
+            "delivery": { "state": "held", "reason": "visible-unsubmitted-input" }
+        })),
+        vec!["queued for codex-1"]
+    );
+    assert_eq!(
+        render_core_agent_input_lines(&json!({ "sessionId": "codex-1" })),
+        vec!["delivered to codex-1"]
+    );
+    assert_eq!(
         render_core_team_show_lines(&json!({ "config": {
             "roles": { "builder": { "description": "Writes code", "reviewedBy": "lead", "canEdit": true } },
             "defaultRole": "builder"

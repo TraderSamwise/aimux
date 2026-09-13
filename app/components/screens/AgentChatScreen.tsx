@@ -106,6 +106,11 @@ import {
   userMessageAcknowledgesComposerSend,
 } from "@/lib/composer-protocol";
 import {
+  formatLivePaneInputDeliveryNotice,
+  formatLivePaneInputResponseRefusal,
+  formatPostActionTranscriptRefreshResult,
+} from "@/lib/input-delivery";
+import {
   chatCommandForContentChange,
   chatCommandForInitialLayout,
   chatCommandForNavigationFocus,
@@ -1183,13 +1188,18 @@ export default function ChatScreen() {
             uploadedAttachmentId: uploaded.attachment.id,
           };
         }
-        await sendLivePaneInput(serviceEndpoint, sessionId, text, {
+        const sendResponse = await sendLivePaneInput(serviceEndpoint, sessionId, text, {
           token,
           attachmentIds: attachments
             .map((attachment) => attachment.uploadedAttachmentId)
             .filter((id): id is string => Boolean(id)),
           ...(sharedChatActor ? { sharedChatActor } : {}),
         });
+        const refusalNotice = formatLivePaneInputResponseRefusal(sendResponse);
+        if (refusalNotice) {
+          throw new Error(refusalNotice);
+        }
+        const deliveryNotice = formatLivePaneInputDeliveryNotice(sendResponse.delivery);
         const acceptedPending: PendingComposerAck = {
           attachmentCount: attachments.length,
           attachmentIds: attachments
@@ -1214,6 +1224,19 @@ export default function ChatScreen() {
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
           return;
         }
+        if (deliveryNotice) {
+          releasePendingAttachmentPreviews(attachments);
+          setDraft("");
+          setDraftHasContent(false);
+          setPendingAttachments([]);
+          setPendingComposerAck(null);
+          setSendError(deliveryNotice);
+          if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+          void refreshOutputSnapshot().catch((error) => {
+            setSendError(formatPostActionTranscriptRefreshResult("Input accepted", error));
+          });
+          return;
+        }
         setAcceptedComposerMessages((current) =>
           [
             ...current,
@@ -1230,7 +1253,9 @@ export default function ChatScreen() {
         setPendingAttachments([]);
         setPendingComposerAck(null);
         if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
-        void refreshOutputSnapshot().catch(() => {});
+        void refreshOutputSnapshot().catch((error) => {
+          setSendError(formatPostActionTranscriptRefreshResult("Input sent", error));
+        });
       } catch (err) {
         if (!sendStillOwnsActiveComposer()) {
           if (sendComposerDraftKey) {
@@ -1405,7 +1430,9 @@ export default function ChatScreen() {
     setSendError(null);
     try {
       await interruptLivePane({ host: endpointHost, port: endpointPort }, sessionId, { token });
-      void refreshOutputSnapshot("interrupt").catch(() => {});
+      void refreshOutputSnapshot("interrupt").catch((error) => {
+        setSendError(formatPostActionTranscriptRefreshResult("Interrupt sent", error));
+      });
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Could not interrupt the agent.");
     } finally {

@@ -125,7 +125,8 @@ fn run_case(project: &TestProject, input: &Value) -> Value {
                     session_id: Some("codex-2".into()),
                     ..NotificationMutation::default()
                 },
-            );
+            )
+            .expect("mark notification read");
             let exchange = read_runtime_exchange(runtime_exchange_path(&project.state_dir));
             json!({
                 "updated": updated,
@@ -140,7 +141,8 @@ fn run_case(project: &TestProject, input: &Value) -> Value {
                     ids: Some(vec!["record-1".into(), "record-2".into()]),
                     ..NotificationMutation::default()
                 },
-            );
+            )
+            .expect("clear notifications");
             let exchange = read_runtime_exchange(runtime_exchange_path(&project.state_dir));
             json!({
                 "cleared": cleared,

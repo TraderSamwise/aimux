@@ -60,10 +60,15 @@ def load_phase8(path: Path) -> Any:
     return module
 
 
-def free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def free_port(exclude: set[int] | None = None) -> int:
+    excluded = exclude or set()
+    for _ in range(100):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+        if port not in excluded:
+            return port
+    raise LiveDriveFailure(f"could not allocate loopback port outside {sorted(excluded)}")
 
 
 def run(args: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None, timeout: float = 30, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -438,15 +443,14 @@ console.log(JSON.stringify(result));
 
 
 def check_hosted_proxy(phase8: Any, aimux_bin: Path, attempts: int) -> dict[str, Any]:
-    hosted_port = free_port()
-    daemon_port = free_port()
     tmux = phase8.find_tmux()
     with phase8.Scope("live-drive-hosted", aimux_bin) as scope:
+        daemon_port = scope.daemon_port()
+        hosted_port = free_port({daemon_port})
         socket_name = f"aimux-live-hosted-{os.getpid()}-{time.time_ns()}"
         scope.tmux_socket_name = socket_name
         phase8.install_tmux_socket_wrapper(scope, tmux, socket_name)
         phase8.run([tmux, "-L", socket_name, "kill-server"], env=phase8.without_tmux(os.environ.copy()), timeout=10, check=False)
-        scope.env["AIMUX_DAEMON_PORT"] = str(daemon_port)
         scope.init_git_project()
         (scope.aimux_home / "config.json").write_text(
             json.dumps(

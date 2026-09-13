@@ -27,6 +27,7 @@ import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopState } from "@/lib/desktop-state";
+import { summarizeOperationFailures } from "@/lib/unavailable-state";
 import { buildMainTabHref, MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
 import { shouldDismissSidebarOnNavigate } from "@/lib/app-shell-layout";
 import { filterProjectPickerProjects } from "@/lib/project-picker";
@@ -292,6 +293,7 @@ function WorktreeTree({
   onKillSession: (sessionId: string) => void;
 }) {
   const groups = useAtomValue(worktreeGroupsFamily(projectPath));
+  const operationFailureSummary = summarizeOperationFailures(desktopState?.operationFailures);
 
   if (!endpoint && desktopState === null) {
     return (
@@ -318,7 +320,15 @@ function WorktreeTree({
   if (groups.length === 0) {
     return (
       <View className="px-4 py-4">
-        <Text className="text-xs text-[#787a83]">No worktrees yet</Text>
+        {operationFailureSummary ? (
+          <SidebarStateCard
+            title={operationFailureSummary.title}
+            detail={operationFailureSummary.detail}
+            tone="warning"
+          />
+        ) : (
+          <Text className="text-xs text-[#787a83]">No worktrees yet</Text>
+        )}
       </View>
     );
   }
@@ -327,6 +337,13 @@ function WorktreeTree({
   // same cards in their compact (navigation-only) variant.
   return (
     <View className="px-2 pb-2">
+      {operationFailureSummary ? (
+        <SidebarStateCard
+          title={operationFailureSummary.title}
+          detail={operationFailureSummary.detail}
+          tone="warning"
+        />
+      ) : null}
       <WorktreeList
         groups={groups}
         projectPath={projectPath}

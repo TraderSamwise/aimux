@@ -443,17 +443,39 @@ fn wait_for_dashboard_target_ready(
             return Ok(());
         }
         if !tmux.is_window_alive(target)? {
-            return Err(format!(
-                "Dashboard window {} exited before becoming ready",
-                target.window_id
+            return Err(dashboard_target_not_ready_error(
+                tmux,
+                target,
+                format!(
+                    "Dashboard window {} exited before becoming ready",
+                    target.window_id
+                ),
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    Err(format!(
-        "Timed out waiting {}ms for tmux window {} readiness option {}={}",
-        timeout_ms, target.window_id, TMUX_DASHBOARD_READY_OPTION, readiness_value
+    Err(dashboard_target_not_ready_error(
+        tmux,
+        target,
+        format!(
+            "Timed out waiting {}ms for tmux window {} readiness option {}={}",
+            timeout_ms, target.window_id, TMUX_DASHBOARD_READY_OPTION, readiness_value
+        ),
     ))
+}
+
+fn dashboard_target_not_ready_error(
+    tmux: &mut impl DashboardTargetTmux,
+    target: &TmuxTarget,
+    message: String,
+) -> String {
+    let output = tmux.capture_target(target, -80).unwrap_or_default();
+    let output = output.trim();
+    if output.is_empty() {
+        message
+    } else {
+        format!("{message}:\n{output}")
+    }
 }
 
 pub fn is_usable_dashboard_target(

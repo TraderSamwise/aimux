@@ -122,6 +122,24 @@ impl ProjectSchedulerHandle {
             }),
         }
     }
+
+    #[doc(hidden)]
+    pub fn replace_health_snapshot_for_tests(&self, snapshots: Vec<PeriodicTaskHealthSnapshot>) {
+        match self.inner.health.lock() {
+            Ok(mut health) => {
+                *health = snapshots
+                    .into_iter()
+                    .map(|snapshot| {
+                        (
+                            snapshot.name.clone(),
+                            PeriodicTaskHealthRecord::from_snapshot(snapshot),
+                        )
+                    })
+                    .collect();
+            }
+            Err(_) => log_scheduler_health_error("replace", "scheduler health lock poisoned"),
+        }
+    }
 }
 
 pub type PeriodicTaskFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
@@ -160,6 +178,25 @@ enum PeriodicTaskRunOutcome {
 }
 
 impl PeriodicTaskHealthRecord {
+    fn from_snapshot(snapshot: PeriodicTaskHealthSnapshot) -> Self {
+        let mut duration_samples_ms = VecDeque::new();
+        if let Some(p95_duration_ms) = snapshot.p95_duration_ms {
+            duration_samples_ms.push_back(p95_duration_ms);
+        } else if let Some(last_duration_ms) = snapshot.last_duration_ms {
+            duration_samples_ms.push_back(last_duration_ms);
+        }
+        Self {
+            total_runs: snapshot.total_runs,
+            last_completed_at_ms: snapshot.last_completed_at_ms,
+            last_duration_ms: snapshot.last_duration_ms,
+            duration_samples_ms,
+            consecutive_failures: snapshot.consecutive_failures,
+            consecutive_timeouts: snapshot.consecutive_timeouts,
+            total_timeouts: snapshot.total_timeouts,
+            last_error: snapshot.last_error,
+        }
+    }
+
     fn record(&mut self, outcome: PeriodicTaskRunOutcome, duration_ms: i64, completed_at_ms: i64) {
         self.total_runs = self.total_runs.saturating_add(1);
         match outcome {

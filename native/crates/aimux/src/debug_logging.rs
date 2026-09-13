@@ -3,13 +3,14 @@ use crate::paths::PathResolver;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-const DEFAULT_MAX_BYTES: u64 = 10_000_000;
-const DEFAULT_MAX_FILES: u64 = 5;
+pub const DEFAULT_MAX_BYTES: u64 = 10_000_000;
+pub const DEFAULT_MAX_FILES: u64 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -396,6 +397,29 @@ pub fn parse_log_categories(value: Option<&str>) -> Option<Vec<String>> {
     })
 }
 
+pub fn append_rotating_jsonl(path: impl AsRef<Path>, line: &str) -> io::Result<()> {
+    append_rotating_jsonl_with_limits(path, line, DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES)
+}
+
+#[doc(hidden)]
+pub fn append_rotating_jsonl_with_limits(
+    path: impl AsRef<Path>,
+    line: &str,
+    max_bytes: u64,
+    max_files: u64,
+) -> io::Result<()> {
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    rotate_if_needed(path, line.len() as u64, max_bytes, max_files);
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?
+        .write_all(line.as_bytes())
+}
+
 fn write_record(
     config: &LoggingRuntimeConfig,
     level: LogLevel,
@@ -434,7 +458,7 @@ fn write_record(
         .create(true)
         .append(true)
         .open(&config.path)
-        .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()));
+        .and_then(|mut file| file.write_all(line.as_bytes()));
 }
 
 fn rotate_if_needed(path: &Path, incoming_bytes: u64, max_bytes: u64, max_files: u64) {

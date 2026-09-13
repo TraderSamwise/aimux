@@ -7,6 +7,8 @@ import type {
   AgentTranscriptMessage,
   StreamEvent,
 } from "@/lib/events";
+import { formatTmuxUnavailable } from "@/lib/unavailable-state";
+import type { TmuxUnavailableMarker } from "../../src/project-api-contract";
 
 // ─── Per-session base families ─────────────────────────────────────────────
 
@@ -74,6 +76,7 @@ export type AgentOutputPayload = {
   activity?: AgentActivityState;
   activityText?: string;
   attention?: AgentAttentionState;
+  tmuxUnavailable?: TmuxUnavailableMarker;
 };
 
 function mergeTranscriptMessages(
@@ -191,7 +194,10 @@ function applyAgentOutputPayload(
   if (!options.sparseActivity || payload.attention !== undefined) {
     set(attentionFamily(payload.sessionId), payload.attention);
   }
-  set(lastErrorFamily(payload.sessionId), null);
+  set(
+    lastErrorFamily(payload.sessionId),
+    formatTmuxUnavailable(payload.tmuxUnavailable, "tmux pane output unavailable"),
+  );
 }
 
 export const applyOutputSnapshotAtom = atom(null, (get, set, snapshot: AgentOutputPayload) => {
@@ -224,6 +230,7 @@ function agentOutputEventPayload(event: AgentOutputEvent): AgentOutputPayload {
     activity: event.activity,
     activityText: event.activityText,
     attention: event.attention,
+    tmuxUnavailable: event.tmuxUnavailable,
   };
 }
 

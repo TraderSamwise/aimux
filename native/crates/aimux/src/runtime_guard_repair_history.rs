@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
@@ -17,15 +18,15 @@ pub fn load_attempts(
     project_root: &str,
     window_ms: i64,
     now: i64,
-) -> Vec<i64> {
-    let history = read_history(home);
-    history
+) -> Result<Vec<i64>, String> {
+    let history = read_history(home)?;
+    Ok(history
         .get(&key_for(project_root))
         .cloned()
         .unwrap_or_default()
         .into_iter()
         .filter(|at| now - at < window_ms)
-        .collect()
+        .collect())
 }
 
 pub fn record_attempt(
@@ -33,9 +34,9 @@ pub fn record_attempt(
     project_root: &str,
     window_ms: i64,
     now: i64,
-) -> Vec<i64> {
+) -> Result<Vec<i64>, String> {
     let home = home.as_ref();
-    let mut history = read_history(home);
+    let mut history = read_history(home)?;
     let key = key_for(project_root);
     let mut kept = history
         .get(&key)
@@ -64,48 +65,84 @@ pub fn record_attempt(
             history.insert(other_key, alive);
         }
     }
-    write_history(home, &history);
-    kept
+    write_history(home, &history)?;
+    Ok(kept)
 }
 
-pub fn clear_attempts(home: impl AsRef<Path>, project_root: &str) {
+pub fn clear_attempts(home: impl AsRef<Path>, project_root: &str) -> Result<(), String> {
     let home = home.as_ref();
-    let mut history = read_history(home);
+    let mut history = read_history(home)?;
     history.remove(&key_for(project_root));
-    write_history(home, &history);
+    write_history(home, &history)
 }
 
-fn read_history(home: impl AsRef<Path>) -> History {
-    let Ok(text) = fs::read_to_string(history_path(home)) else {
-        return History::new();
+fn read_history(home: impl AsRef<Path>) -> Result<History, String> {
+    let path = history_path(home);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(History::new());
+        }
+        Err(error) => {
+            return Err(format!(
+                "could not read runtime guard repair history {}: {error}",
+                path.display()
+            ));
+        }
     };
-    let Ok(value) = serde_json::from_str::<Value>(&text) else {
-        return History::new();
-    };
-    let Some(object) = value.as_object() else {
-        return History::new();
-    };
-    object
-        .iter()
-        .filter_map(|(key, value)| {
-            let attempts = value
-                .as_array()?
-                .iter()
-                .filter_map(Value::as_i64)
-                .collect::<Vec<_>>();
-            Some((key.clone(), attempts))
-        })
-        .collect()
+    let value = serde_json::from_str::<Value>(&text).map_err(|error| {
+        format!(
+            "could not parse runtime guard repair history {}: {error}",
+            path.display()
+        )
+    })?;
+    let object = value.as_object().ok_or_else(|| {
+        format!(
+            "runtime guard repair history {} must be a JSON object",
+            path.display()
+        )
+    })?;
+    let mut history = History::new();
+    for (key, value) in object {
+        let attempts = value.as_array().ok_or_else(|| {
+            format!(
+                "runtime guard repair history {} has non-array attempts for {key}",
+                path.display()
+            )
+        })?;
+        let mut parsed_attempts = Vec::with_capacity(attempts.len());
+        for attempt in attempts {
+            let Some(attempt) = attempt.as_i64() else {
+                return Err(format!(
+                    "runtime guard repair history {} has non-integer attempt for {key}",
+                    path.display()
+                ));
+            };
+            parsed_attempts.push(attempt);
+        }
+        history.insert(key.clone(), parsed_attempts);
+    }
+    Ok(history)
 }
 
-fn write_history(home: impl AsRef<Path>, history: &History) {
+fn write_history(home: impl AsRef<Path>, history: &History) -> Result<(), String> {
     let path = history_path(home);
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "could not create runtime guard repair history directory {}: {error}",
+                parent.display()
+            )
+        })?;
     }
-    if let Ok(text) = serde_json::to_string(history) {
-        let _ = fs::write(path, format!("{text}\n"));
-    }
+    let text = serde_json::to_string(history)
+        .map_err(|error| format!("could not encode runtime guard repair history: {error}"))?;
+    fs::write(&path, format!("{text}\n")).map_err(|error| {
+        format!(
+            "could not write runtime guard repair history {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn key_for(project_root: &str) -> String {

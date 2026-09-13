@@ -217,15 +217,14 @@ pub fn build_tmux_window_metadata(
             .and_then(|status| string_field(status, "text")),
     );
     out.insert("userLabel".into(), Value::String(user_label.clone()));
-    if let Some(anchor) = recency_anchor(project_state_dir, &session_id, derived, &user_label)
-        && let Some(anchor_object) = anchor.as_object()
-    {
-        insert_optional_value(&mut out, "recencyAt", anchor_object.get("value").cloned());
-        insert_optional_value(
-            &mut out,
-            "recencyLabel",
-            anchor_object.get("label").cloned(),
-        );
+    if let Some((recency_at, recency_label)) = derive_recency_fields_for_window_metadata(
+        project_state_dir,
+        &session_id,
+        &Value::Object(out.clone()),
+        stored_session,
+    ) {
+        insert_optional_value(&mut out, "recencyAt", Some(recency_at));
+        insert_optional_value(&mut out, "recencyLabel", Some(recency_label));
     }
     insert_optional_value(
         &mut out,
@@ -236,6 +235,49 @@ pub fn build_tmux_window_metadata(
             .or_else(|| session.get("createdAt").cloned()),
     );
     Value::Object(out)
+}
+
+pub fn derive_recency_fields_for_window_metadata(
+    project_state_dir: &Path,
+    session_id: &str,
+    metadata: &Value,
+    stored_session: Option<&Value>,
+) -> Option<(Value, Value)> {
+    let derived = stored_session
+        .and_then(|value| value.get("derived"))
+        .unwrap_or(&Value::Null);
+    let user_label = string_field(metadata, "userLabel")
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            let status = string_field(metadata, "status").unwrap_or("running");
+            let activity = string_field(derived, "activity").map(str::to_owned);
+            let attention = string_field(derived, "attention").map(str::to_owned);
+            let unseen_count = derived
+                .get("unseenCount")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            let semantic = derive_session_semantics(SessionSemanticsInput {
+                status: status.to_owned(),
+                pending_action: None,
+                activity,
+                attention,
+                unseen_count,
+                ..SessionSemanticsInput::default()
+            });
+            semantic
+                .get("user")
+                .and_then(|user| string_field(user, "label"))
+                .unwrap_or("ready")
+                .to_owned()
+        });
+    let anchor = recency_anchor(project_state_dir, session_id, derived, &user_label)?;
+    let anchor_object = anchor.as_object()?;
+    let recency_at = anchor_object.get("value")?.clone();
+    let recency_label = anchor_object.get("label")?.clone();
+    if recency_at.is_null() || recency_label.is_null() {
+        return None;
+    }
+    Some((recency_at, recency_label))
 }
 
 fn topology_session(topology: &Value, session_id: &str) -> Option<Value> {

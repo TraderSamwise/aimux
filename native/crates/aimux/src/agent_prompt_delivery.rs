@@ -36,7 +36,15 @@ pub trait PromptSubmitRuntime {
 /// Codex collapses a long paste to `› [Pasted Content 3434 chars]`, so the text
 /// itself is never on screen — the marker stands in for it.
 pub fn pane_still_contains_prompt_draft(pane: &str, draft: &str) -> bool {
-    let normalized_pane = normalize_words(pane);
+    text_contains_prompt_draft(pane, draft)
+}
+
+pub fn composer_still_contains_prompt_draft(pane: &str, draft: &str) -> bool {
+    current_composer_text(pane).is_some_and(|composer| text_contains_prompt_draft(&composer, draft))
+}
+
+fn text_contains_prompt_draft(text: &str, draft: &str) -> bool {
+    let normalized_pane = normalize_words(text);
     let normalized_draft = normalize_words(draft);
     if normalized_draft.is_empty() {
         return false;
@@ -50,6 +58,60 @@ pub fn pane_still_contains_prompt_draft(pane: &str, draft: &str) -> bool {
         .filter(|fragment| fragment.len() >= 24)
         .take(3)
         .any(|fragment| normalized_pane.contains(fragment))
+}
+
+pub fn current_composer_text(pane: &str) -> Option<String> {
+    let lines = pane
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    for (index, line) in lines.iter().enumerate().rev() {
+        let Some(rest) = strip_prompt_marker(line) else {
+            continue;
+        };
+        let rest = rest.trim();
+        if !rest.is_empty() {
+            return Some(rest.to_owned());
+        }
+        let following = lines[index + 1..]
+            .iter()
+            .copied()
+            .filter(|line| !looks_like_agent_bottom_chrome(line))
+            .collect::<Vec<_>>();
+        return following
+            .first()
+            .map(|line| (*line).to_owned())
+            .or_else(|| Some(String::new()));
+    }
+    None
+}
+
+fn strip_prompt_marker(line: &str) -> Option<&str> {
+    let mut chars = line.chars();
+    let first = chars.next()?;
+    if matches!(first, '›' | '>' | '❯') {
+        Some(chars.as_str())
+    } else {
+        None
+    }
+}
+
+fn looks_like_agent_bottom_chrome(line: &str) -> bool {
+    is_horizontal_rule(line)
+        || line.starts_with('⏵')
+        || line.starts_with('⧉')
+        || line.contains("[[aimux]")
+        || ((line.starts_with("gpt-") || line.starts_with("claude-"))
+            && (line.contains(" · ~/") || line.contains(" · /")))
+}
+
+fn is_horizontal_rule(line: &str) -> bool {
+    let mut chars = line.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    matches!(first, '─' | '-') && chars.all(|character| character == first)
 }
 
 /// The tail of the pane, whitespace-collapsed — two identical readings mean the
@@ -80,7 +142,7 @@ pub fn wait_for_prompt_submit(runtime: &mut dyn PromptSubmitRuntime, draft: &str
         let pane = runtime
             .capture(DRAFT_CAPTURE_START_LINE)
             .unwrap_or_default();
-        let still_draft = pane_still_contains_prompt_draft(&pane, draft);
+        let still_draft = composer_still_contains_prompt_draft(&pane, draft);
         let signature = if still_draft {
             runtime
                 .capture(SIGNATURE_CAPTURE_START_LINE)
@@ -115,7 +177,7 @@ fn submit(runtime: &mut dyn PromptSubmitRuntime, draft: &str) -> bool {
     let pane = runtime
         .capture(DRAFT_CAPTURE_START_LINE)
         .unwrap_or_default();
-    !pane_still_contains_prompt_draft(&pane, draft)
+    !composer_still_contains_prompt_draft(&pane, draft)
 }
 
 fn normalize_words(value: &str) -> String {

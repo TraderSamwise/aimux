@@ -4,7 +4,8 @@ use std::path::Path;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::operation_failures::{
-    OperationFailureInput, try_add_dashboard_operation_failure,
+    OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
+    clear_dashboard_operation_failures, try_add_dashboard_operation_failure,
 };
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{
@@ -245,13 +246,7 @@ pub(super) fn route_agent_kill(
         let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
         return json_error(
             500,
-            record_agent_destructive_operation_failure(
-                &project_state_dir,
-                "agent.kill",
-                "Failed to kill agent",
-                &session_id,
-                &message,
-            ),
+            record_agent_kill_operation_failure(&project_state_dir, &session_id, &message),
         );
     }
     clear_prompt_context(&project_state_dir, &session_id);
@@ -276,6 +271,7 @@ pub(super) fn route_agent_kill(
         return json_error(500, error);
     }
     prune_restore_eligibility(&project_state_dir, &session_id);
+    clear_agent_kill_operation_failure(&project_state_dir, &session_id);
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
         "agent.kill",
@@ -313,13 +309,7 @@ pub(super) async fn route_agent_kill_async(
             let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
             return json_error(
                 500,
-                record_agent_destructive_operation_failure(
-                    &project_state_dir,
-                    "agent.kill",
-                    "Failed to kill agent",
-                    &session_id,
-                    &message,
-                ),
+                record_agent_kill_operation_failure(&project_state_dir, &session_id, &message),
             );
         }
     } else {
@@ -347,6 +337,7 @@ pub(super) async fn route_agent_kill_async(
         return json_error(500, error);
     }
     prune_restore_eligibility(&project_state_dir, &session_id);
+    clear_agent_kill_operation_failure(&project_state_dir, &session_id);
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
         "agent.kill",
@@ -355,19 +346,17 @@ pub(super) async fn route_agent_kill_async(
     )
 }
 
-fn record_agent_destructive_operation_failure(
+fn record_agent_kill_operation_failure(
     project_state_dir: &Path,
-    operation: &str,
-    title: &str,
     session_id: &str,
     message: &str,
 ) -> String {
     log_always_at(
         LogLevel::Warn,
-        "agent destructive lifecycle operation failed",
+        "agent kill lifecycle operation failed",
         "lifecycle",
         Some(json!({
-            "operation": operation,
+            "operation": "agent.kill",
             "sessionId": session_id,
             "error": message,
         })),
@@ -376,8 +365,8 @@ fn record_agent_destructive_operation_failure(
         project_state_dir,
         OperationFailureInput {
             target_kind: "agent".into(),
-            operation: operation.into(),
-            title: title.into(),
+            operation: "agent.kill".into(),
+            title: format!("Failed to kill {session_id}"),
             message: message.into(),
             target_id: Some(session_id.into()),
             worktree_path: None,
@@ -392,7 +381,7 @@ fn record_agent_destructive_operation_failure(
                 "failed to record agent destructive lifecycle operation failure",
                 "lifecycle",
                 Some(json!({
-                    "operation": operation,
+                    "operation": "agent.kill",
                     "sessionId": session_id,
                     "error": error.to_string(),
                 })),
@@ -400,6 +389,18 @@ fn record_agent_destructive_operation_failure(
             format!("{message}; additionally failed to record dashboard operation failure: {error}")
         }
     }
+}
+
+fn clear_agent_kill_operation_failure(project_state_dir: &Path, session_id: &str) {
+    let _ = clear_dashboard_operation_failures(
+        project_state_dir,
+        OperationFailureMatch {
+            target_kind: Some("agent".into()),
+            operation: Some("agent.kill".into()),
+            target_id: Some(session_id.to_owned()),
+            worktree_path: WorktreePathMatch::Any,
+        },
+    );
 }
 
 pub(super) fn route_agent_rename(

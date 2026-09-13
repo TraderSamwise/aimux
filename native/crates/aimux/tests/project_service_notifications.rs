@@ -8,7 +8,8 @@ use aimux::project_service::runtime_exchange::{
     read_runtime_exchange, runtime_exchange_path, write_runtime_exchange,
 };
 use serde_json::json;
-use std::fs::remove_dir_all;
+use std::fs::{create_dir_all, remove_dir_all, set_permissions, write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -80,7 +81,8 @@ fn mark_read_updates_matching_thread_inbox_entries() {
             ids: None,
             session_id: Some("codex-2".into()),
         },
-    );
+    )
+    .expect("mark notifications read");
     assert_eq!(updated, 1);
     let exchange = read_runtime_exchange(runtime_exchange_path(&state_dir));
     let inbox = exchange["inbox"].as_array().unwrap();
@@ -105,7 +107,8 @@ fn clear_marks_matching_messages_cleared_and_inbox_done() {
             ids: Some(vec!["record-1".into(), "record-2".into()]),
             session_id: None,
         },
-    );
+    )
+    .expect("clear notifications");
     assert_eq!(cleared, 2);
     let exchange = read_runtime_exchange(runtime_exchange_path(&state_dir));
     for message in exchange["messages"].as_array().unwrap() {
@@ -155,6 +158,92 @@ fn mutation_routes_validate_ids_shape() {
     );
     assert_eq!(clear.status, 200);
     assert_eq!(clear.body, json!({ "ok": true, "cleared": 1 }));
+    cleanup(project);
+}
+
+#[test]
+fn missing_exchange_lists_empty_notifications_quietly() {
+    let project = temp_project("missing-list");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", "/notifications", None);
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["notifications"], json!([]));
+    assert_eq!(response.body["unreadCount"], 0);
+    assert_eq!(response.body["total"], 0);
+    cleanup(project);
+}
+
+#[test]
+fn corrupt_exchange_makes_notification_routes_fail_instead_of_empty() {
+    let project = temp_project("corrupt-routes");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    write(runtime_exchange_path(&state_dir), "version: [").expect("corrupt exchange");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let list = route_project_service_request(&context, "GET", "/notifications", None);
+    assert_eq!(list.status, 500);
+    assert!(
+        list.body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("notification store unavailable")),
+        "list must name unreadable notification store: {}",
+        list.body
+    );
+
+    let read = route_project_service_request(
+        &context,
+        "POST",
+        routes::notifications::READ,
+        Some(&json!({ "id": "record-2" })),
+    );
+    assert_eq!(read.status, 500);
+    assert!(
+        read.body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("notification store unavailable")),
+        "read must not report success over an unreadable store: {}",
+        read.body
+    );
+    cleanup(project);
+}
+
+#[test]
+fn notification_write_failure_is_reported_not_counted_successful() {
+    let project = temp_project("write-failure");
+    let state_dir = project.join("state");
+    seed_exchange(&state_dir);
+    set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).expect("lock state dir");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::notifications::CLEAR,
+        Some(&json!({ "id": "record-1" })),
+    );
+
+    set_permissions(&state_dir, std::fs::Permissions::from_mode(0o700)).expect("unlock state dir");
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["ok"], false);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("failed to update notification store")),
+        "write failure must be visible, not counted as cleared: {}",
+        response.body
+    );
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            include_cleared: true,
+            ..NotificationQuery::default()
+        },
+    );
+    assert_eq!(snapshot.total, 2);
     cleanup(project);
 }
 

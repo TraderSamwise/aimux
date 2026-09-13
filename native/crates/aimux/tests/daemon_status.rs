@@ -180,7 +180,7 @@ fn daemon_status_uses_persisted_state_but_live_flags_from_route_projects() {
 
 #[test]
 fn host_status_resolves_current_project_without_service_requirement() {
-    let (payload, known) = host_status_payload(&runtime(), ".", "issued");
+    let (payload, known) = host_status_payload(&runtime(), ".", "issued").expect("host status");
     assert!(known);
     assert_eq!(payload["projectRoot"], "/repo");
     assert_eq!(payload["sessionName"], "aimux-repo-id");

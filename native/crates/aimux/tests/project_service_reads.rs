@@ -1,3 +1,4 @@
+use aimux::plugin_api::{NativePluginApiRequest, NativePluginHost};
 use aimux::plugin_project_service_host::ProjectServicePluginHost;
 use aimux::plugin_project_service_host::native_plugin_statuses_for_context;
 use aimux::plugin_registry::NativePluginRegistry;
@@ -5,6 +6,7 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::reads::route_read_request;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
+use aimux::project_service::runtime_exchange::runtime_exchange_path;
 use serde_json::Value;
 use serde_json::json;
 use std::fs::{create_dir_all, remove_dir_all, write};
@@ -187,6 +189,53 @@ fn native_builtin_plugin_receives_event_and_writes_through_project_service_host(
         updated["sessions"]["codex-1"]["statusline"]["top"][0]["text"],
         "120b"
     );
+    cleanup(project);
+}
+
+#[test]
+fn plugin_host_reports_corrupt_coordination_state_instead_of_empty() {
+    let project = temp_project("plugin-corrupt-exchange");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("create state dir");
+    write(runtime_exchange_path(&state_dir), "version: [").expect("corrupt exchange");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut host = ProjectServicePluginHost::new(&context);
+
+    let coordination = host.execute("test", NativePluginApiRequest::ReadCoordinationState);
+    assert!(
+        coordination
+            .unwrap_err()
+            .contains("failed to parse runtime exchange"),
+        "plugin coordination read must surface corrupt exchange"
+    );
+
+    let notifications = host.execute("test", NativePluginApiRequest::ReadNotificationFeed);
+    assert!(
+        notifications
+            .unwrap_err()
+            .contains("notification store unavailable"),
+        "plugin notification feed must surface corrupt exchange"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn plugin_host_treats_missing_coordination_state_as_empty_first_run() {
+    let project = temp_project("plugin-missing-exchange");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut host = ProjectServicePluginHost::new(&context);
+
+    let coordination = host
+        .execute("test", NativePluginApiRequest::ReadCoordinationState)
+        .expect("missing coordination state");
+    assert_eq!(coordination["threads"], json!([]));
+
+    let notifications = host
+        .execute("test", NativePluginApiRequest::ReadNotificationFeed)
+        .expect("missing notification feed");
+    assert_eq!(notifications["notifications"], json!([]));
+    assert_eq!(notifications["total"], 0);
     cleanup(project);
 }
 

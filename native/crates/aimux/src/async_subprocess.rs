@@ -407,10 +407,7 @@ mod tests {
         assert_eq!(pid, child_id as i32);
         assert!(pid_alive(pid), "detached child died when helper returned");
 
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-        wait_until_not_alive(pid);
+        terminate_child_and_wait(pid);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -430,6 +427,25 @@ mod tests {
     fn wait_until_not_alive(pid: i32) {
         let deadline = Instant::now() + Duration::from_secs(2);
         while pid_alive(pid) {
+            assert!(Instant::now() < deadline, "process {pid} survived timeout");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn terminate_child_and_wait(pid: i32) {
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let mut status = 0;
+            let waited = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if waited == pid {
+                return;
+            }
+            if waited == -1 && !pid_alive(pid) {
+                return;
+            }
             assert!(Instant::now() < deadline, "process {pid} survived timeout");
             thread::sleep(Duration::from_millis(10));
         }

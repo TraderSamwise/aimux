@@ -14,7 +14,7 @@ use crate::tool_capabilities::exact_backend_resume_blocked_reason;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
+use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 
 const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
 
@@ -149,7 +149,10 @@ pub fn route_agent_read_request(
         Ok(topology) => topology,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
-    let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
+    let exchange = match try_read_runtime_exchange(runtime_exchange_path(&project_state_dir)) {
+        Ok(exchange) => exchange,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let tools = default_config()
         .get("tools")
         .and_then(Value::as_object)
@@ -201,7 +204,10 @@ pub async fn route_agent_read_request_async(
         Ok(topology) => topology,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
-    let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
+    let exchange = match try_read_runtime_exchange(runtime_exchange_path(&project_state_dir)) {
+        Ok(exchange) => exchange,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let tools = default_config()
         .get("tools")
         .and_then(Value::as_object)

@@ -27,6 +27,7 @@ import {
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
 import { appStatusClasses, appStatusColors } from "@/lib/status-tone";
+import { formatDaemonProjectReadError, formatTmuxUnavailable } from "@/lib/unavailable-state";
 import { cn } from "@/lib/utils";
 import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-location";
 import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
@@ -145,7 +146,12 @@ async function loadExposeData({
       tiles: buildExposeTiles(
         sourcesForGlobalExposeItems(projects, response.items as ExposeSourceItem[]),
       ),
-      results: [{ projectName: "all projects", error: null }],
+      results: response.projectReadErrors?.length
+        ? response.projectReadErrors.map((error) => ({
+            projectName: "all projects",
+            error: formatDaemonProjectReadError(error),
+          }))
+        : [{ projectName: "all projects", error: null }],
     };
   }
 
@@ -178,7 +184,15 @@ async function loadExposeData({
   );
   return {
     tiles: buildExposeTiles([{ project, items: response.items as ExposeSourceItem[] }]),
-    results: [{ projectName: project.name, error: null }],
+    results: [
+      {
+        projectName: project.name,
+        error: formatTmuxUnavailable(
+          response.tmuxLiveWindowQuery,
+          "tmux window inventory unavailable",
+        ),
+      },
+    ],
   };
 }
 
@@ -205,14 +219,16 @@ function ExposeTileCard({
     6,
     Math.floor((tileHeight - previewChromeHeight) / terminalLineHeight),
   );
-  const terminalPreview =
-    tile.terminalPreviewLines.length > 0
+  const terminalPreview = tile.previewCaptureError
+    ? [[{ text: `Could not read pane: ${tile.previewCaptureError}`, style: { color: "#f59e0b" } }]]
+    : tile.terminalPreviewLines.length > 0
       ? cropExposeTerminalPreviewFooter(tile.terminalPreviewLines, previewLineCount)
       : [[{ text: "No recent pane output.", style: {} }]];
   const chatPreview = tile.chatPreviewMessages;
   const chatPreviewTail = chatPreview.slice(-4);
-  const hasPreview =
-    previewMode === "terminal"
+  const hasPreview = tile.previewCaptureError
+    ? true
+    : previewMode === "terminal"
       ? tile.terminalPreviewLines.length > 0
       : tile.chatPreviewMessages.length > 0;
   const chatDividerWidth = Math.max(24, Math.floor((tileWidth * 0.9 - 24) / 8.5) - 2);
@@ -326,20 +342,26 @@ function ExposeTileCard({
                 </Text>
               ))
             ) : hasPreview && chatEndpoint ? (
-              <View className="min-h-full justify-end">
-                {chatPreviewTail.map((message, index) => (
-                  <View
-                    key={message.id ?? message.clientMessageId ?? `${tile.id}:${index}`}
-                    style={{ flexShrink: 0 }}
-                  >
-                    <MessageBlock
-                      dividerWidth={chatDividerWidth}
-                      message={message}
-                      serviceEndpoint={chatEndpoint}
-                    />
-                  </View>
-                ))}
-              </View>
+              tile.previewCaptureError ? (
+                <Text className="text-[12px] leading-5 text-amber-500" numberOfLines={2}>
+                  Could not read pane: {tile.previewCaptureError}
+                </Text>
+              ) : (
+                <View className="min-h-full justify-end">
+                  {chatPreviewTail.map((message, index) => (
+                    <View
+                      key={message.id ?? message.clientMessageId ?? `${tile.id}:${index}`}
+                      style={{ flexShrink: 0 }}
+                    >
+                      <MessageBlock
+                        dividerWidth={chatDividerWidth}
+                        message={message}
+                        serviceEndpoint={chatEndpoint}
+                      />
+                    </View>
+                  ))}
+                </View>
+              )
             ) : (
               <Text className="text-[12px] leading-5 text-[#666872]" numberOfLines={1}>
                 No recent chat output.

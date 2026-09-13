@@ -47,7 +47,8 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
     }
     let subcommand = match args.get(1).map(AsRef::as_ref) {
         Some(
-            "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "installs" | "notifications",
+            "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "stability" | "installs"
+            | "notifications",
         ) => args[1].as_ref().to_owned(),
         _ => return None,
     };
@@ -107,7 +108,7 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
         }
         if matches!(
             parsed.subcommand.as_str(),
-            "disk" | "exchange" | "lifecycle" | "tasks"
+            "disk" | "exchange" | "lifecycle" | "stability" | "tasks"
         ) && arg == "--project"
         {
             parsed.project = Some(required_non_flag_value(args, index)?.to_owned());
@@ -116,7 +117,7 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
         }
         if matches!(
             parsed.subcommand.as_str(),
-            "disk" | "exchange" | "lifecycle" | "tasks"
+            "disk" | "exchange" | "lifecycle" | "stability" | "tasks"
         ) && let Some(value) = arg.strip_prefix("--project=")
         {
             parsed.project = Some(non_flag_inline_value(value)?.to_owned());
@@ -770,7 +771,8 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (
             Some("doctor"),
             Some(
-                "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "installs" | "notifications",
+                "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "stability" | "installs"
+                | "notifications",
             ),
         ) => parse_core_doctor_args(args).is_some(),
         (Some("metadata"), _) => parse_core_metadata_args(args).is_some(),
