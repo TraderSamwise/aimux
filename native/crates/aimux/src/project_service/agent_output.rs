@@ -25,6 +25,7 @@ use crate::tmux::{
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
+use std::collections::BTreeMap;
 use std::fs;
 use std::future::Future;
 use std::path::Path;
@@ -45,7 +46,7 @@ use super::agent_input_delivery::{
     record_agent_input_delivery_probe_failure,
 };
 use super::agent_output_projection::insert_projection_fields;
-use super::attachments::get_attachment_record;
+use super::attachments::{get_attachment, get_attachment_record};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{
     parse_integer_value, parse_optional_integer, parse_positive_integer_value, query_params,
@@ -634,6 +635,53 @@ pub fn parse_agent_output_read_purpose(raw: Option<&str>) -> Result<Option<Strin
     }
 }
 
+fn enrich_projected_attachment_urls(
+    result: &mut Map<String, Value>,
+    project_root: &Path,
+    session_id: &str,
+) {
+    let Some(Value::Array(messages)) = result.get_mut("messages") else {
+        return;
+    };
+    let mut attachments_by_id = BTreeMap::<String, Value>::new();
+    for message in messages {
+        let Some(parts) = message.get_mut("parts").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for part in parts {
+            if !matches!(
+                part.get("type").and_then(Value::as_str),
+                Some("image_reference" | "attachment_reference")
+            ) {
+                continue;
+            }
+            let Some(attachment_id) = part
+                .get("attachmentId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            if !attachments_by_id.contains_key(&attachment_id)
+                && let Some(attachment) =
+                    get_attachment(project_root, &attachment_id, Some(session_id))
+            {
+                attachments_by_id.insert(attachment_id.clone(), attachment);
+            }
+            let Some(attachment) = attachments_by_id.get(&attachment_id) else {
+                continue;
+            };
+            if let Value::Object(part_object) = part {
+                for key in ["contentUrl", "hostedContentUrl", "hostedExpiresAt"] {
+                    if let Some(value) = attachment.get(key).and_then(Value::as_str) {
+                        part_object.insert(key.to_owned(), Value::String(value.to_owned()));
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn strip_sgr(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut output = Vec::with_capacity(bytes.len());
@@ -883,6 +931,7 @@ pub(super) fn read_agent_output_payload(
         Some(output_ansi),
         tool.as_deref(),
     );
+    enrich_projected_attachment_urls(&mut result, context.project_root(), session_id);
     if pane_state.interrupted_visible {
         result.insert("activityText".into(), Value::String(String::new()));
     }
@@ -1018,6 +1067,7 @@ pub(super) async fn read_agent_output_payload_async(
         Some(output_ansi),
         tool.as_deref(),
     );
+    enrich_projected_attachment_urls(&mut result, context.project_root(), session_id);
     if pane_state.interrupted_visible {
         result.insert("activityText".into(), Value::String(String::new()));
     }
