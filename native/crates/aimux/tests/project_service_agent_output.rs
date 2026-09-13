@@ -2251,18 +2251,15 @@ fn queued_agent_input_releases_after_hold_budget_even_with_fresh_typing() {
     .unwrap();
     assert_eq!(held.status, 200);
     assert_eq!(held.body["delivery"]["state"], "held");
+    let deliver_at_ms = queued_max_deliver_at_ms(&state_dir);
 
     runtime
         .input_activity
         .push_back(Ok(AgentInputWindowActivity::Attended {
             active_clients: 1,
-            latest_activity_ms: now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+            latest_activity_ms: deliver_at_ms + 1,
         }));
-    run_pending_agent_input_deliveries_with_runtime(
-        &context,
-        &mut runtime,
-        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
-    );
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
 
     assert_eq!(
         runtime.inner.actions,
@@ -2281,7 +2278,6 @@ fn expired_queued_input_does_not_probe_activity_before_forced_delivery() {
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
-    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
     let mut runtime = FakeActivityRuntime {
         input_activity: VecDeque::from([Ok(AgentInputWindowActivity::UnsubmittedInputVisible)]),
         ..Default::default()
@@ -2297,15 +2293,12 @@ fn expired_queued_input_does_not_probe_activity_before_forced_delivery() {
     .unwrap();
     assert_eq!(held.status, 200);
     assert_eq!(held.body["delivery"]["state"], "held");
+    let deliver_at_ms = queued_max_deliver_at_ms(&state_dir);
 
     runtime.input_activity.push_back(Err(
         "activity probe should not run after maxDeliverAtMs".into()
     ));
-    run_pending_agent_input_deliveries_with_runtime(
-        &context,
-        &mut runtime,
-        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
-    );
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
 
     assert_eq!(
         runtime.inner.actions,
