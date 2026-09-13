@@ -1055,6 +1055,101 @@ fn output_route_reads_same_runtime_target_after_ownership_check() {
 }
 
 #[test]
+fn output_route_enriches_uploaded_image_reference_with_hosted_content_url() {
+    let project = temp_project("hosted-image-output");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let content_path = write_attachment_with_hosted_url(
+        &project,
+        "att_screen",
+        "codex-1",
+        "IMG_0558.png",
+        "image/png",
+        360_251,
+        Some("https://relay.aimux.app/attachments/hosted/ha_screen/content"),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: format!(
+            "› Attached image files:\n- IMG_0558.png (image/png, 360251 bytes): {}",
+            content_path.display()
+        ),
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&mode=chat",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let part = &response.body["messages"][0]["parts"][0];
+    assert_eq!(part["type"], "image_reference");
+    assert_eq!(part["attachmentId"], "att_screen");
+    assert_eq!(
+        part["contentUrl"],
+        "/attachments/att_screen/content?sessionId=codex-1"
+    );
+    assert_eq!(
+        part["hostedContentUrl"],
+        "https://relay.aimux.app/attachments/hosted/ha_screen/content"
+    );
+    assert_eq!(part["hostedExpiresAt"], "2026-09-20T00:00:00.000Z");
+    cleanup(project);
+}
+
+#[test]
+fn output_route_preserves_uploaded_local_only_image_reference_without_hosted_url() {
+    let project = temp_project("local-image-output");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let content_path = write_attachment_with_hosted_url(
+        &project,
+        "att_local",
+        "codex-1",
+        "IMG_0559.png",
+        "image/png",
+        123_456,
+        None,
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: format!(
+            "› Attached image files:\n- IMG_0559.png (image/png, 123456 bytes): {}",
+            content_path.display()
+        ),
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&mode=chat",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let part = &response.body["messages"][0]["parts"][0];
+    assert_eq!(part["type"], "image_reference");
+    assert_eq!(part["attachmentId"], "att_local");
+    assert_eq!(
+        part["contentUrl"],
+        "/attachments/att_local/content?sessionId=codex-1"
+    );
+    assert!(
+        part.get("hostedContentUrl").is_none(),
+        "local-only attachment must not invent a hosted URL"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn output_route_projects_parsed_status_and_activity_text_from_capture() {
     let project = temp_project("parsed");
     let state_dir = project.join("state");
@@ -3119,6 +3214,57 @@ fn write_attachment(
         .unwrap(),
     )
     .unwrap();
+}
+
+fn write_attachment_with_hosted_url(
+    project: &std::path::Path,
+    id: &str,
+    session_id: &str,
+    filename: &str,
+    mime_type: &str,
+    size_bytes: i64,
+    hosted_url: Option<&str>,
+) -> std::path::PathBuf {
+    let attachments_dir = project.join(".aimux").join("attachments");
+    create_dir_all(&attachments_dir).unwrap();
+    let extension = std::path::Path::new(filename)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| format!(".{extension}"))
+        .unwrap_or_default();
+    let content_path = attachments_dir.join(format!("{id}{extension}"));
+    write(&content_path, b"attachment").unwrap();
+    let mut record = json!({
+        "id": id,
+        "kind": "image",
+        "filename": filename,
+        "mimeType": mime_type,
+        "sizeBytes": size_bytes,
+        "sha256": "abc123",
+        "contentPath": content_path,
+        "sessionId": session_id,
+        "createdAt": "2026-09-05T00:00:00.000Z",
+        "source": "upload"
+    });
+    if let Some(hosted_url) = hosted_url
+        && let Some(record) = record.as_object_mut()
+    {
+        record.insert(
+            "hostedAttachment".into(),
+            json!({
+                "contentUrl": hosted_url,
+                "expiresAt": "2026-09-20T00:00:00.000Z",
+                "sha256": "abc123",
+                "sizeBytes": size_bytes
+            }),
+        );
+    }
+    write(
+        attachments_dir.join(format!("{id}.json")),
+        serde_json::to_string(&record).unwrap(),
+    )
+    .unwrap();
+    content_path
 }
 
 fn topology_fixture() -> Value {
