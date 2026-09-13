@@ -656,6 +656,8 @@ fn global_pause_buffers_planned_alerts_instead_of_dropping_them() {
 
 #[test]
 fn clearing_global_pause_exposes_buffered_alert_for_delivery() {
+    let state_dir = temp_state_dir("global-pause-buffered-delivery");
+    let path = loop_watcher_state_path(&state_dir);
     let (boss, mut boss_meta) = looping_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
@@ -670,12 +672,25 @@ fn clearing_global_pause_exposes_buffered_alert_for_delivery() {
     let sends = watcher.plan_sends(&input, NOW);
     watcher.buffer_send(&sends[0], NOW);
     watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Buffered);
+    save_loop_watcher_state(&path, &watcher).expect("save buffered pause state");
+
+    let mut watcher = load_loop_watcher_state(&path).expect("load buffered pause state");
     watcher.clear_global_pause();
 
     let buffered = watcher.buffered_sends_to_deliver(8);
     assert_eq!(buffered.len(), 1);
     assert_eq!(buffered[0].session_id, "boss");
     assert_eq!(buffered[0].text, sends[0].text);
+    watcher.commit_send_result(&buffered[0], NOW + 1, LoopDeliveryOutcome::Delivered);
+    watcher.remove_buffered_send(&buffered[0]);
+    save_loop_watcher_state(&path, &watcher).expect("save delivered pause state");
+
+    let saved: Value =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read watcher state"))
+            .expect("watcher state json");
+    assert_eq!(saved["stoppedSince"][0]["lastAttemptedMs"], json!(NOW + 1));
+    assert_eq!(saved["stoppedSince"][0]["lastReportedMs"], json!(NOW + 1));
+    assert_eq!(saved["bufferedSends"], json!({}));
 }
 
 #[test]
@@ -699,6 +714,33 @@ fn global_pause_expiry_resumes_without_human_input_and_keeps_buffered_alert() {
     assert!(watcher.expire_global_pause(NOW + 11).is_some());
     assert!(!watcher.is_global_pause_active(NOW + 11));
     assert_eq!(watcher.buffered_sends_to_deliver(8).len(), 1);
+}
+
+#[test]
+fn global_pause_with_no_due_alerts_releases_nothing() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "running");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 60_000, LoopAlertPauseProvenance::default());
+    assert!(watcher.plan_sends(&input, NOW).is_empty());
+    watcher.clear_global_pause();
+
+    assert!(
+        watcher.buffered_sends_to_deliver(8).is_empty(),
+        "an empty pause window must not manufacture a phantom delivery"
+    );
+    assert_eq!(watcher.buffered_send_count(), 0);
+    assert!(
+        watcher.last_delivery_record().is_none(),
+        "no delivery record should exist when no alert was buffered"
+    );
 }
 
 #[test]

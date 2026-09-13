@@ -89,6 +89,17 @@ pub struct BufferedLoopSend {
     pub text: String,
     pub signature: String,
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_keys: Vec<BufferedLoopCandidateKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BufferedLoopCandidateKey {
+    pub session_id: String,
+    pub loop_since: String,
+    pub goal: String,
+    pub loop_source: String,
 }
 
 /// Cross-scan state: who was nudged when, and when the overseer was last woken.
@@ -321,6 +332,26 @@ impl LoopWatcher {
                     state.unchanged_candidate_ticks = 0;
                 }
             }
+        } else if let Some(keys) =
+            self.buffered_sends
+                .get(&buffered_send_key(send))
+                .map(|buffered| {
+                    buffered
+                        .candidate_keys
+                        .iter()
+                        .map(BufferedLoopCandidateKey::to_dwell_key)
+                        .collect::<Vec<_>>()
+                })
+        {
+            for key in keys {
+                if let Some(state) = self.stopped_since.get_mut(&key) {
+                    state.last_attempted_ms = Some(now_ms);
+                    if delivered {
+                        state.last_reported_ms = Some(now_ms);
+                    }
+                    state.unchanged_candidate_ticks = 0;
+                }
+            }
         }
         self.record_delivery(send, now_ms, outcome);
     }
@@ -400,6 +431,16 @@ impl LoopWatcher {
 
     pub fn buffer_send(&mut self, send: &LoopSend, now_ms: i64) {
         let key = buffered_send_key(send);
+        let candidate_keys = self
+            .pending_send_keys
+            .remove(&send.signature)
+            .unwrap_or_default();
+        for key in &candidate_keys {
+            if let Some(state) = self.stopped_since.get_mut(key) {
+                state.last_attempted_ms = Some(now_ms);
+                state.unchanged_candidate_ticks = 0;
+            }
+        }
         let entry = self
             .buffered_sends
             .entry(key)
@@ -411,6 +452,7 @@ impl LoopWatcher {
                 text: send.text.clone(),
                 signature: send.signature.clone(),
                 kind: loop_send_kind_name(send.kind).to_owned(),
+                candidate_keys: Vec::new(),
             });
         entry.last_seen_at_ms = now_ms;
         entry.seen_count = entry.seen_count.saturating_add(1);
@@ -418,6 +460,10 @@ impl LoopWatcher {
         entry.text = send.text.clone();
         entry.signature = send.signature.clone();
         entry.kind = loop_send_kind_name(send.kind).to_owned();
+        entry.candidate_keys = candidate_keys
+            .iter()
+            .map(BufferedLoopCandidateKey::from_dwell_key)
+            .collect();
     }
 
     pub fn buffered_sends_to_deliver(&self, limit: usize) -> Vec<LoopSend> {
@@ -904,6 +950,26 @@ fn buffered_send_to_loop_send(buffered: &BufferedLoopSend) -> Option<LoopSend> {
         signature: buffered.signature.clone(),
         kind: loop_send_kind_from_name(&buffered.kind)?,
     })
+}
+
+impl BufferedLoopCandidateKey {
+    fn from_dwell_key(key: &LoopDwellKey) -> Self {
+        Self {
+            session_id: key.session_id.clone(),
+            loop_since: key.loop_since.clone(),
+            goal: key.goal.clone(),
+            loop_source: key.loop_source.clone(),
+        }
+    }
+
+    fn to_dwell_key(&self) -> LoopDwellKey {
+        LoopDwellKey {
+            session_id: self.session_id.clone(),
+            loop_since: self.loop_since.clone(),
+            goal: self.goal.clone(),
+            loop_source: self.loop_source.clone(),
+        }
+    }
 }
 
 fn loop_send_kind_name(kind: LoopSendKind) -> &'static str {

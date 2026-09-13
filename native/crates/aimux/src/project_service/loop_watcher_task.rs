@@ -184,10 +184,11 @@ impl PeriodicTask for LoopWatcherTask {
                         error: "deliver_agent_input_async returned false".to_owned(),
                     }
                 };
-                if matches!(delivered, LoopDeliveryOutcome::Delivered) {
+                let delivered_ok = matches!(delivered, LoopDeliveryOutcome::Delivered);
+                watcher.commit_send_result(&send, now_ms(), delivered);
+                if delivered_ok {
                     watcher.remove_buffered_send(&send);
                 }
-                watcher.commit_send_result(&send, now_ms(), delivered);
             }
             if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
                 log_at(
