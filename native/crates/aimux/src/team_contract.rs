@@ -127,10 +127,10 @@ pub fn agent_role(session: Option<&Value>) -> String {
     let Some(session) = session else {
         return "coder".to_owned();
     };
-    if is_project_control_session(Some(session)) {
-        if let Some(role) = project_control_display_role(Some(session)) {
-            return role.to_owned();
-        }
+    if is_project_control_session(Some(session))
+        && let Some(role) = project_control_display_role(Some(session))
+    {
+        return role.to_owned();
     }
     if is_overseer_session(Some(session)) {
         "overseer".to_owned()

@@ -87,6 +87,24 @@ fn clean_exit_leaves_no_snapshot_and_no_restore_offer() {
 }
 
 #[test]
+fn stopped_supervisor_stays_restore_eligible_while_stopped_coder_prunes() {
+    let project = TestProject::new("stopped-supervisor");
+    project.mark_overseer("claude-one");
+    project.move_session_to_worktree("codex-two", "coder-worktree");
+    project.run_task();
+
+    project.stop_agent("claude-one");
+    project.stop_agent("codex-two");
+
+    let snapshot = project
+        .snapshot()
+        .expect("stopped supervisor remains restore-eligible");
+    assert_eq!(session_ids(&snapshot), vec!["claude-one".to_owned()]);
+    assert_eq!(snapshot["sessions"][0]["overseer"], true);
+    assert_eq!(snapshot["sessions"][0]["projectControl"], true);
+}
+
+#[test]
 fn a_snapshot_from_this_same_run_is_never_offered_back() {
     let project = TestProject::new("same-run");
     project.run_task();
@@ -392,6 +410,54 @@ impl TestProject {
         // A round trip keeps the fixture honest: the task reads the file, not
         // the value built above.
         read_runtime_topology(runtime_topology_path(&self.state_dir)).expect("topology readable");
+    }
+
+    fn mark_overseer(&self, session_id: &str) {
+        let mut topology =
+            read_runtime_topology(runtime_topology_path(&self.state_dir)).expect("read topology");
+        let Some(sessions) = topology.get_mut("sessions").and_then(Value::as_array_mut) else {
+            panic!("sessions array");
+        };
+        let Some(Value::Object(session)) = sessions
+            .iter_mut()
+            .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+        else {
+            panic!("session {session_id} exists");
+        };
+        session.insert("overseer".into(), Value::Bool(true));
+        session.insert("projectControl".into(), Value::Bool(true));
+        session.insert(
+            "team".into(),
+            json!({
+                "teamId": "overseer",
+                "parentSessionId": "",
+                "role": "overseer"
+            }),
+        );
+        write_runtime_topology(runtime_topology_path(&self.state_dir), &topology)
+            .expect("write topology");
+    }
+
+    fn move_session_to_worktree(&self, session_id: &str, worktree_name: &str) {
+        let worktree = self.project_root.join(worktree_name);
+        fs::create_dir_all(&worktree).expect("worktree dir");
+        let mut topology =
+            read_runtime_topology(runtime_topology_path(&self.state_dir)).expect("read topology");
+        let Some(sessions) = topology.get_mut("sessions").and_then(Value::as_array_mut) else {
+            panic!("sessions array");
+        };
+        let Some(Value::Object(session)) = sessions
+            .iter_mut()
+            .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+        else {
+            panic!("session {session_id} exists");
+        };
+        session.insert(
+            "worktreePath".into(),
+            Value::String(worktree.to_string_lossy().into_owned()),
+        );
+        write_runtime_topology(runtime_topology_path(&self.state_dir), &topology)
+            .expect("write topology");
     }
 }
 
