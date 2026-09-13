@@ -441,6 +441,40 @@ mod tests {
         assert!(!state_file.join(RUNTIME_HEALTH_HISTORY_FILE).exists());
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn runtime_health_recorder_successful_write_records_clean_run() {
+        let root = unique_temp_dir("runtime-health-recorder-success");
+        let state_dir = root.join(".aimux");
+        fs::create_dir_all(&state_dir).expect("state dir");
+        let scheduler = ProjectSchedulerHandle::default();
+        let context = ProjectServiceRequestContext::with_project_state_dir(&root, &state_dir)
+            .with_scheduler(scheduler.clone());
+        let now_ms = 1_800_000_000_000_i64;
+        let mut periodic =
+            PeriodicScheduler::with_handle(vec![runtime_health_recorder_task()], now_ms, scheduler);
+
+        let ran = periodic.run_due_at(&context, now_ms).await;
+
+        assert_eq!(ran, ["runtime-health-recorder"]);
+        let health = periodic
+            .try_health_snapshot()
+            .expect("scheduler health snapshot");
+        let recorder = health
+            .iter()
+            .find(|task| task.name == "runtime-health-recorder")
+            .expect("runtime-health-recorder health");
+        assert_eq!(recorder.total_runs, 1);
+        assert_eq!(recorder.consecutive_failures, 0);
+        assert_eq!(recorder.last_error, None);
+        assert!(recorder.last_completed_at_ms.is_some());
+
+        let history_path = runtime_health_history_path(&context);
+        let history = fs::read_to_string(&history_path).expect("runtime health history");
+        let sample: Value = serde_json::from_str(history.trim()).expect("parse history sample");
+        assert_eq!(sample["v"], 1);
+        assert!(sample["recordedAtMs"].as_i64().is_some());
+    }
+
     #[test]
     fn runtime_health_sample_reads_global_backlog_metric_registry() {
         let root = unique_temp_dir("runtime-health-global-backlog");
