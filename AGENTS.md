@@ -73,6 +73,11 @@ change, apply these rules before it ships:
   catch. Include foreign `AIMUX_HOME`, non-default daemon ports, legacy metadata
   fallbacks, registry-only or transiently unavailable projects, and legitimate
   checkouts under temporary directories when they are in the blast radius.
+- Prefer proving the route or user-visible path over a helper in isolation.
+  Helper-level tests are useful for edge math, but tonight's weak proofs most
+  often missed an un-updated caller or skipped the second direction. If the
+  claim is about what a user, CLI, TUI, daemon route, or scheduler observes,
+  make that path fail under mutation too.
 - Do not let wrappers lie. A wait, launcher, restart, reload, or repair wrapper
   must report the child error or compared values that caused failure. Never
   convert a child crash into a readiness timeout, a truncated response into a
