@@ -1,6 +1,7 @@
 use aimux::loop_watcher::{
-    LoopAlertPauseProvenance, LoopDeliveryOutcome, LoopSend, LoopWatcher, load_loop_watcher_state,
-    loop_pause_key_from_loop_metadata, loop_watcher_state_path, save_loop_watcher_state,
+    LoopAlertPauseProvenance, LoopDeliveryOutcome, LoopSend, LoopSendKind, LoopWatcher,
+    load_loop_watcher_state, loop_pause_key_from_loop_metadata, loop_watcher_state_path,
+    save_loop_watcher_state,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -32,7 +33,9 @@ fn input_with_config(sessions: Vec<Value>, metadata: Value, config: Value) -> Va
         "sessions": sessions,
         "metadata": metadata,
         "config": config,
-        "pendingInteractions": []
+        "pendingInteractions": [],
+        "runtimeExchange": { "tasks": [] },
+        "coordinationWorklist": []
     })
 }
 
@@ -517,6 +520,81 @@ fn global_pause_expiry_resumes_without_human_input_and_keeps_buffered_alert() {
 }
 
 #[test]
+fn reconciliation_alerts_once_for_visible_unowned_work_and_idle_capacity_then_respects_cadence() {
+    let (boss, mut boss_meta) = looping_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 60_000,
+            "reconciliationReminderTicks": 2,
+            "reconciliationCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [{
+            "id": "task-1",
+            "status": "pending",
+            "description": "wire the widget"
+        }]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].kind, LoopSendKind::Reconciliation);
+    assert!(sends[0].text.contains("Runtime-exchange/worklist work"));
+    assert!(sends[0].text.contains("external queue files"));
+    assert!(sends[0].text.contains("task task-1"));
+    assert!(sends[0].text.contains("worker"));
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+
+    assert!(
+        watcher.plan_sends(&input, NOW + 1).is_empty(),
+        "unchanged visible work and unchanged idle capacity must not alert every tick"
+    );
+    assert_eq!(
+        watcher.plan_sends(&input, NOW + 2).len(),
+        1,
+        "configured reconciliation reminder cadence should eventually re-alert"
+    );
+}
+
+#[test]
+fn reconciliation_does_not_alert_for_unowned_work_without_idle_capacity() {
+    let (boss, mut boss_meta) = looping_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) = looping_session("worker", "running");
+    worker_meta["derived"] = json!({ "activity": "running", "attention": "normal" });
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 0,
+            "reconciliationReminderTicks": 1,
+            "reconciliationCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [{
+            "id": "task-1",
+            "status": "pending",
+            "description": "wire the widget"
+        }]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    assert!(
+        watcher.plan_sends(&input, NOW).is_empty(),
+        "unowned visible work alone is not enough; reconciliation needs idle watched capacity"
+    );
+}
+
+#[test]
 fn unpausing_loop_alerts_restores_stopped_agent_reminders() {
     let (boss, mut boss_meta) = looping_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
@@ -628,7 +706,7 @@ mod task_inputs {
         assert!(is_scribe(&metadata, &sessions[0]));
         assert!(!is_scribe(&metadata, &sessions[1]));
 
-        let input = build_scan_input(sessions, &metadata, &[], json!({}));
+        let input = build_scan_input(sessions, &metadata, &[], json!({}), json!({}), json!([]));
         let ids = input["sessions"]
             .as_array()
             .unwrap()
@@ -644,7 +722,14 @@ mod task_inputs {
             json!({ "sessionId": "worker", "status": "pending" }),
             json!({ "status": "pending" }),
         ];
-        let input = build_scan_input(vec![], &json!({}), &pending, json!({}));
+        let input = build_scan_input(
+            vec![],
+            &json!({}),
+            &pending,
+            json!({}),
+            json!({}),
+            json!([]),
+        );
         assert_eq!(input["pendingInteractions"], json!(["worker"]));
     }
 
@@ -661,6 +746,8 @@ mod task_inputs {
             &metadata,
             &[],
             serde_json::Value::Null,
+            json!({}),
+            json!([]),
         );
 
         let mut watcher = LoopWatcher::new();
@@ -696,6 +783,8 @@ mod task_inputs {
             &metadata,
             &[],
             json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+            json!({}),
+            json!([]),
         );
 
         apply_live_activity_override(

@@ -4,9 +4,13 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::loop_watcher_task::LoopWatcherTask;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
+use aimux::project_service::runtime_exchange::runtime_exchange_path;
 use aimux::project_service::scheduler::{
     PeriodicScheduler, PeriodicTask, PeriodicTaskFuture, PeriodicTaskHealthSnapshot,
     ProjectSchedulerHandle, spawn_project_service_scheduler,
+};
+use aimux::runtime_topology::{
+    empty_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
 use serde_json::json;
 use std::fs;
@@ -462,6 +466,42 @@ fn corrupt_loop_watcher_state_records_scheduler_visible_failure() {
     let error = health.last_error.as_deref().expect("last error");
     assert!(error.contains("read loop watcher state"), "{error}");
     assert!(error.contains("loop-watcher-state.json"), "{error}");
+}
+
+#[test]
+fn corrupt_runtime_exchange_records_loop_watcher_failure_instead_of_empty_work() {
+    let root = unique_temp_dir("aimux-loop-watcher-health-corrupt-exchange");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+        .expect("write topology");
+    fs::write(runtime_exchange_path(&state_dir), "{ not yaml:").expect("corrupt exchange");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == "loop-watcher")
+        .expect("loop watcher health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(error.contains("runtime exchange"), "{error}");
+    assert!(error.contains("runtime-exchange.yaml"), "{error}");
 }
 
 impl PeriodicTask for SlowTask {
