@@ -424,6 +424,8 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         ("loop", None, _) => Some(LOOP_HELP),
         ("loop", Some("add"), true) => Some(LOOP_ADD_HELP),
         ("loop", Some("remove"), true) => Some(LOOP_REMOVE_HELP),
+        ("loop", Some("pause"), true) => Some(LOOP_PAUSE_HELP),
+        ("loop", Some("unpause"), true) => Some(LOOP_UNPAUSE_HELP),
         ("loop", Some("list"), true) => Some(LOOP_LIST_HELP),
         ("loop", Some("done"), true) => Some(LOOP_DONE_HELP),
         ("loop", Some("block"), true) => Some(LOOP_BLOCK_HELP),
@@ -575,10 +577,12 @@ const SCRIBE_HELP: &str = "Usage: aimux scribe [options] [command]\n\nManage the
 const SCRIBE_START_HELP: &str = "Usage: aimux scribe start [options]\n\nSpawn a scribe agent that maintains project scribe notes\n\nOptions:\n  --tool <toolKey>            Configured tool key\n  --project <path>            Project path\n  --worktree <path>           Target worktree path\n  --no-open                   Do not switch into the scribe window\n  --json                      Emit JSON";
 const SCRIBE_CLEAR_HELP: &str = "Usage: aimux scribe clear <sessionId> [options]\n\nDemote a session from scribe\n\nOptions:\n  --project <path>            Project path";
 const SCRIBE_STATUS_HELP: &str = "Usage: aimux scribe status [options]\n\nPrint scribe status\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
-const LOOP_HELP: &str = "Usage: aimux loop [options] [command]\n\nManage agents in an overseer-managed loop\n\nCommands:\n  add <sessionId>             Mark an agent as in a managed loop\n  remove <sessionId>          Remove an agent from the managed loop\n  list                        List agents in the managed loop\n  done                        Report the loop goal complete\n  block                       Report the loop blocked";
+const LOOP_HELP: &str = "Usage: aimux loop [options] [command]\n\nManage agents in an overseer-managed loop\n\nCommands:\n  add <sessionId>             Mark an agent as in a managed loop\n  remove <sessionId>          Remove an agent from the managed loop\n  pause <sessionId>           Pause loop alerts for an agent\n  unpause <sessionId>         Resume loop alerts for an agent\n  list                        List agents in the managed loop\n  done                        Report the loop goal complete\n  block                       Report the loop blocked";
 const LOOP_ADD_HELP: &str = "Usage: aimux loop add <sessionId> [options]\n\nMark an agent as in a managed loop\n\nOptions:\n  --goal <goal>               What the agent should keep working toward";
 const LOOP_REMOVE_HELP: &str =
     "Usage: aimux loop remove <sessionId>\n\nRemove an agent from the managed loop";
+const LOOP_PAUSE_HELP: &str = "Usage: aimux loop pause <sessionId> [options]\n\nPause loop alerts for an agent without removing it from the loop\n\nOptions:\n  --reason <text>             Why alerts are paused\n  --project <path>            Project path";
+const LOOP_UNPAUSE_HELP: &str = "Usage: aimux loop unpause <sessionId> [options]\n\nResume loop alerts for an agent\n\nOptions:\n  --reason <text>             Why alerts are resumed\n  --project <path>            Project path";
 const LOOP_LIST_HELP: &str = "Usage: aimux loop list [options]\n\nList agents in the managed loop\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
 const LOOP_DONE_HELP: &str = "Usage: aimux loop done [options]\n\nReport the loop goal complete\n\nOptions:\n  --session <id>              Session id\n  --reason <text>             What was completed";
 const LOOP_BLOCK_HELP: &str = "Usage: aimux loop block [options]\n\nReport the loop blocked\n\nOptions:\n  --session <id>              Session id\n  --reason <text>             Why you are blocked";
