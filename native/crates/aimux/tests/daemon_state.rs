@@ -5,8 +5,8 @@ use aimux::daemon_state::{
     load_daemon_state_with_status, load_metadata_endpoint, load_metadata_endpoint_by_project_id,
     load_metadata_endpoint_result, load_metadata_state, metadata_endpoint_path,
     metadata_endpoint_path_by_project_id, metadata_endpoint_text_path, metadata_state_path,
-    remove_metadata_endpoint, resolve_project_service_endpoint, save_daemon_info,
-    save_daemon_state, save_metadata_endpoint, save_metadata_state,
+    remove_metadata_endpoint, remove_metadata_endpoint_if_owned, resolve_project_service_endpoint,
+    save_daemon_info, save_daemon_state, save_metadata_endpoint, save_metadata_state,
 };
 use serde_json::json;
 use std::fs;
@@ -317,6 +317,31 @@ fn metadata_endpoint_load_reports_unreadable_paths_instead_of_absent() {
     assert!(message.contains("read"));
     assert!(message.contains("metadata-api.json"));
     assert_eq!(load_metadata_endpoint(&project_state_dir), None);
+}
+
+#[test]
+fn owned_metadata_endpoint_cleanup_preserves_endpoint_when_owner_read_fails() {
+    let test_dir = TestDir::new();
+    let project_state_dir = test_dir.0.join("projects/project-corrupt-owner");
+    fs::create_dir_all(&project_state_dir).expect("create project state");
+    let json_path = metadata_endpoint_path(&project_state_dir);
+    let text_path = metadata_endpoint_text_path(&project_state_dir);
+    fs::write(&json_path, b"{").expect("write corrupt endpoint");
+    fs::write(&text_path, b"http://127.0.0.1:44555\n").expect("write text endpoint");
+    fs::write(project_state_dir.join("host.json"), "{}").expect("write legacy endpoint");
+
+    let error = remove_metadata_endpoint_if_owned(&project_state_dir, 44555)
+        .expect_err("unreadable owner must fail closed");
+
+    let message = error.to_string();
+    assert!(message.contains("parse"));
+    assert!(message.contains("metadata-api.json"));
+    assert!(json_path.exists(), "corrupt owner file must be preserved");
+    assert!(text_path.exists(), "endpoint text must be preserved");
+    assert!(
+        project_state_dir.join("host.json").exists(),
+        "legacy endpoint must be preserved"
+    );
 }
 
 #[test]
