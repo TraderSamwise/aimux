@@ -59,6 +59,7 @@ export const PROJECT_API_ROUTES = {
     migrate: "/agents/migrate",
     recordBackendSession: "/agents/record-backend-session",
     loop: "/agents/loop",
+    loopAlerts: "/agents/loop-alerts",
     overseer: "/agents/overseer",
     scribe: "/agents/scribe",
     watch: "/agents/watch",
@@ -308,6 +309,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.agents.migrate:
     case PROJECT_API_ROUTES.agents.recordBackendSession:
     case PROJECT_API_ROUTES.agents.loop:
+    case PROJECT_API_ROUTES.agents.loopAlerts:
     case PROJECT_API_ROUTES.agents.overseer:
     case PROJECT_API_ROUTES.agents.scribe:
     case PROJECT_API_ROUTES.agents.watch:

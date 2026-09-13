@@ -54,6 +54,7 @@
     "/agents/migrate",
     "/agents/record-backend-session",
     "/agents/loop",
+    "/agents/loop-alerts",
     "/agents/overseer",
     "/agents/scribe",
     "/agents/watch",

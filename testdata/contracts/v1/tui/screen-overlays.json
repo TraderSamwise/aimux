@@ -3,7 +3,10 @@
   "generatedAt": "2026-09-07T00:00:00.000Z",
   "generatedBy": "scripts/capture-tui-screen-renderer-contracts.mjs",
   "source": "src/tui/screens/overlay-renderers.test.ts",
-  "sources": ["src/tui/screens/overlay-renderers.test.ts", "src/tui/screens/overlay-renderers.ts"],
+  "sources": [
+    "src/tui/screens/overlay-renderers.test.ts",
+    "src/tui/screens/overlay-renderers.ts"
+  ],
   "subject": "tui screen overlay renderers",
   "description": "Raw ANSI and visible text output captured by running TypeScript TUI overlay renderer helpers.",
   "caseCount": 13,
@@ -18,8 +21,15 @@
         "ctx": {
           "mode": "dashboard",
           "dashboardWorktreeGroupsCache": [
-            { "name": "Main Checkout", "branch": "main" },
-            { "name": "feature", "branch": "feature", "path": "/repo/.aimux/worktrees/feature" }
+            {
+              "name": "Main Checkout",
+              "branch": "main"
+            },
+            {
+              "name": "feature",
+              "branch": "feature",
+              "path": "/repo/.aimux/worktrees/feature"
+            }
           ]
         },
         "cols": 100,
@@ -29,7 +39,9 @@
         "rendered": "\u001b7\u001b[11;33H\u001b[34m╭───────────────────────────────╮\u001b[0m\u001b[12;33H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m WORKTREE MANAGEMENT           \u001b[0m\u001b[34m│\u001b[0m\u001b[13;33H\u001b[34m├───────────────────────────────┤\u001b[0m\u001b[14;33H\u001b[34m│\u001b[0m   \u001b[1mMain Checkout\u001b[0m \u001b[2m(main)\u001b[0m \u001b[2m(main)\u001b[0m \u001b[34m│\u001b[0m\u001b[15;33H\u001b[34m│\u001b[0m   \u001b[1mfeature\u001b[0m \u001b[2m(feature)\u001b[0m           \u001b[34m│\u001b[0m\u001b[16;33H\u001b[34m│\u001b[0m                               \u001b[34m│\u001b[0m\u001b[17;33H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m                  \u001b[34m│\u001b[0m\u001b[18;33H\u001b[34m╰───────────────────────────────╯\u001b[0m\u001b8",
         "visibleText": "╭───────────────────────────────╮│ WORKTREE MANAGEMENT           │├───────────────────────────────┤│   Main Checkout (main) (main) ││   feature (feature)           ││                               ││    Esc  back                  │╰───────────────────────────────╯",
         "isNull": false,
-        "sideEffects": { "listAllWorktreesCalled": false }
+        "sideEffects": {
+          "listAllWorktreesCalled": false
+        }
       },
       "inputSha256": "3a90d49f1654a8a74c463588647605227f83994d42d4a59abc903984df465cc4"
     },
@@ -44,7 +56,11 @@
           "worktreeCacheCleanupConfirm": {
             "dryRun": true,
             "reclaimedBytes": 0,
-            "plan": { "reclaimableBytes": 0, "targets": [], "skipped": [] },
+            "plan": {
+              "reclaimableBytes": 0,
+              "targets": [],
+              "skipped": []
+            },
             "results": []
           }
         },
@@ -79,9 +95,20 @@
                   "sizeBytes": 2048
                 }
               ],
-              "skipped": [{ "worktreePath": "/repo/.aimux/worktrees/live", "reason": "active-runtime" }]
+              "skipped": [
+                {
+                  "worktreePath": "/repo/.aimux/worktrees/live",
+                  "reason": "active-runtime"
+                }
+              ]
             },
-            "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 2048 }]
+            "results": [
+              {
+                "path": "/repo/.aimux/worktrees/old/node_modules",
+                "status": "dry-run",
+                "sizeBytes": 2048
+              }
+            ]
           }
         },
         "cols": 120,
@@ -101,7 +128,9 @@
       "api": "buildWorkOutlineOverlayOutput",
       "input": {
         "api": "buildWorkOutlineOverlayOutput",
-        "ctx": { "workOutlineOverlayEntries": [] },
+        "ctx": {
+          "workOutlineOverlayEntries": []
+        },
         "cols": 100,
         "rows": 30
       },
@@ -122,7 +151,14 @@
         "ctx": {
           "dashboard": {
             "viewModel": {
-              "scribeSessions": [{ "id": "claude-scribe", "command": "claude", "status": "ready", "scribe": true }]
+              "scribeSessions": [
+                {
+                  "id": "claude-scribe",
+                  "command": "claude",
+                  "status": "ready",
+                  "scribe": true
+                }
+              ]
             }
           },
           "workOutlineOverlayEntries": []
@@ -156,7 +192,11 @@
               "status": "active",
               "source": "scribe",
               "worktreePath": "/repo/.aimux/worktrees/lifecycle",
-              "sessionIds": ["codex-1", "claude-2", "codex-3"],
+              "sessionIds": [
+                "codex-1",
+                "claude-2",
+                "codex-3"
+              ],
               "updatedAt": "2026-08-30T04:12:30.000Z"
             },
             {
@@ -167,7 +207,9 @@
               "status": "done",
               "source": "manual",
               "worktreePath": "/repo",
-              "sessionIds": ["claude-4"],
+              "sessionIds": [
+                "claude-4"
+              ],
               "updatedAt": "2026-08-30T04:10:00.000Z"
             },
             {
@@ -178,7 +220,9 @@
               "status": "done",
               "source": "scribe",
               "worktreePath": "/repo",
-              "sessionIds": ["codex-5"],
+              "sessionIds": [
+                "codex-5"
+              ],
               "updatedAt": "2026-08-30T04:09:00.000Z"
             }
           ]
@@ -203,19 +247,39 @@
         "ctx": {
           "agentRestoreConfirmSelection": "cancel",
           "dashboardAgentRestoreOfferCache": {
-            "sessionIds": ["claude-1", "codex-2"],
+            "sessionIds": [
+              "claude-1",
+              "codex-2"
+            ],
             "sessions": [
-              { "id": "claude-1", "command": "claude", "worktreePath": "/repo", "overseer": true },
+              {
+                "id": "claude-1",
+                "command": "claude",
+                "worktreePath": "/repo",
+                "overseer": true
+              },
               {
                 "id": "codex-2",
                 "command": "codex",
                 "worktreePath": "/repo/.aimux/worktrees/feature-a",
-                "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+                "team": {
+                  "teamId": "scribe",
+                  "parentSessionId": "",
+                  "role": "scribe"
+                }
               }
             ],
             "worktreeGroups": [
-              { "name": "Main Checkout", "path": "/repo", "count": 1 },
-              { "name": "feature-a", "path": "/repo/.aimux/worktrees/feature-a", "count": 1 }
+              {
+                "name": "Main Checkout",
+                "path": "/repo",
+                "count": 1
+              },
+              {
+                "name": "feature-a",
+                "path": "/repo/.aimux/worktrees/feature-a",
+                "count": 1
+              }
             ]
           }
         },
@@ -238,14 +302,20 @@
         "api": "buildAgentRestoreConfirmOverlayOutput",
         "ctx": {
           "dashboardAgentRestoreOfferCache": {
-            "sessionIds": ["claude-1"],
+            "sessionIds": [
+              "claude-1"
+            ],
             "sessions": [
               {
                 "id": "claude-1",
                 "command": "claude",
                 "worktreePath": "/repo",
                 "scribe": false,
-                "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+                "team": {
+                  "teamId": "scribe",
+                  "parentSessionId": "",
+                  "role": "scribe"
+                }
               }
             ]
           }
@@ -265,7 +335,12 @@
       "name": "help overlay dashboard-local shortcuts",
       "source": "src/tui/screens/overlay-renderers.test.ts",
       "api": "buildHelpOverlayOutput",
-      "input": { "api": "buildHelpOverlayOutput", "ctx": {}, "cols": 120, "rows": 40 },
+      "input": {
+        "api": "buildHelpOverlayOutput",
+        "ctx": {},
+        "cols": 120,
+        "rows": 40
+      },
       "output": {
         "rendered": "\u001b7\u001b[1;29H\u001b[34m╭────────────────────────────────────────────────────────────╮\u001b[0m\u001b[2;29H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m HELP                                                       \u001b[0m\u001b[34m│\u001b[0m\u001b[3;29H\u001b[34m├────────────────────────────────────────────────────────────┤\u001b[0m\u001b[4;29H\u001b[34m│\u001b[0m \u001b[1mTmux mode\u001b[0m                                                  \u001b[34m│\u001b[0m\u001b[5;29H\u001b[34m│\u001b[0m   \u001b[2mDashboard lives in a managed tmux dashboard window\u001b[0m       \u001b[34m│\u001b[0m\u001b[6;29H\u001b[34m│\u001b[0m   \u001b[2mEach agent runs in its own tmux window\u001b[0m                   \u001b[34m│\u001b[0m\u001b[7;29H\u001b[34m│\u001b[0m   \u001b[2mUse normal tmux window navigation inside agents\u001b[0m          \u001b[34m│\u001b[0m\u001b[8;29H\u001b[34m│\u001b[0m   \u001b[2mRun aimux with no args to return to the dashboard window\u001b[0m \u001b[34m│\u001b[0m\u001b[9;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Ctrl+A d \u001b[0m \u001b[2mreturn to the dashboard window\u001b[0m                \u001b[34m│\u001b[0m\u001b[10;29H\u001b[34m│\u001b[0m                                                            \u001b[34m│\u001b[0m\u001b[11;29H\u001b[34m│\u001b[0m \u001b[1mDashboard mode\u001b[0m                                             \u001b[34m│\u001b[0m\u001b[12;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m ? \u001b[0m \u001b[2mshow help\u001b[0m                                            \u001b[34m│\u001b[0m\u001b[13;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m 1-9 \u001b[0m \u001b[2mjump to visible item\u001b[0m                               \u001b[34m│\u001b[0m\u001b[14;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m arrows / h j k l \u001b[0m \u001b[2mnavigate\u001b[0m                              \u001b[34m│\u001b[0m\u001b[15;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter / → / l \u001b[0m \u001b[2mstep in, open, resume, or focus\u001b[0m          \u001b[34m│\u001b[0m\u001b[16;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Tab \u001b[0m \u001b[2mtoggle details\u001b[0m                                     \u001b[34m│\u001b[0m\u001b[17;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m c \u001b[0m \u001b[2mcoordination\u001b[0m                                         \u001b[34m│\u001b[0m\u001b[18;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m p \u001b[0m \u001b[2mproject\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[19;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m L \u001b[0m \u001b[2mlibrary\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[20;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m t \u001b[0m \u001b[2mtopology\u001b[0m                                             \u001b[34m│\u001b[0m\u001b[21;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m g \u001b[0m \u001b[2mgraveyard\u001b[0m                                            \u001b[34m│\u001b[0m\u001b[22;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m n \u001b[0m \u001b[2mnew agent\u001b[0m                                            \u001b[34m│\u001b[0m\u001b[23;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m v \u001b[0m \u001b[2mnew service\u001b[0m                                          \u001b[34m│\u001b[0m\u001b[24;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m f \u001b[0m \u001b[2mfork agent\u001b[0m                                           \u001b[34m│\u001b[0m\u001b[25;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m S \u001b[0m \u001b[2mswitch selected agent tool\u001b[0m                           \u001b[34m│\u001b[0m\u001b[26;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m s \u001b[0m \u001b[2msend message\u001b[0m                                         \u001b[34m│\u001b[0m\u001b[27;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m H \u001b[0m \u001b[2mhandoff\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[28;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m T \u001b[0m \u001b[2mtask\u001b[0m                                                 \u001b[34m│\u001b[0m\u001b[29;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m P \u001b[0m \u001b[2mscribe\u001b[0m                                               \u001b[34m│\u001b[0m\u001b[30;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m o \u001b[0m \u001b[2mopen thread\u001b[0m                                          \u001b[34m│\u001b[0m\u001b[31;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m R \u001b[0m \u001b[2mreply\u001b[0m                                                \u001b[34m│\u001b[0m\u001b[32;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m r \u001b[0m \u001b[2mname agent\u001b[0m                                           \u001b[34m│\u001b[0m\u001b[33;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m m \u001b[0m \u001b[2mmigrate agent\u001b[0m                                        \u001b[34m│\u001b[0m\u001b[34;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m x \u001b[0m \u001b[2mstop or remove selected item\u001b[0m                         \u001b[34m│\u001b[0m\u001b[35;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m q \u001b[0m \u001b[2mquit\u001b[0m                                                 \u001b[34m│\u001b[0m\u001b[36;29H\u001b[34m│\u001b[0m                                                            \u001b[34m│\u001b[0m\u001b[37;29H\u001b[34m│\u001b[0m \u001b[1mEsc, Enter, or ? to close\u001b[0m                                  \u001b[34m│\u001b[0m\u001b[38;29H\u001b[34m╰────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
         "visibleText": "╭────────────────────────────────────────────────────────────╮│ HELP                                                       │├────────────────────────────────────────────────────────────┤│ Tmux mode                                                  ││   Dashboard lives in a managed tmux dashboard window       ││   Each agent runs in its own tmux window                   ││   Use normal tmux window navigation inside agents          ││   Run aimux with no args to return to the dashboard window ││    Ctrl+A d  return to the dashboard window                ││                                                            ││ Dashboard mode                                             ││    ?  show help                                            ││    1-9  jump to visible item                               ││    arrows / h j k l  navigate                              ││    Enter / → / l  step in, open, resume, or focus          ││    Tab  toggle details                                     ││    c  coordination                                         ││    p  project                                              ││    L  library                                              ││    t  topology                                             ││    g  graveyard                                            ││    n  new agent                                            ││    v  new service                                          ││    f  fork agent                                           ││    S  switch selected agent tool                           ││    s  send message                                         ││    H  handoff                                              ││    T  task                                                 ││    P  scribe                                               ││    o  open thread                                          ││    R  reply                                                ││    r  name agent                                           ││    m  migrate agent                                        ││    x  stop or remove selected item                         ││    q  quit                                                 ││                                                            ││ Esc, Enter, or ? to close                                  │╰────────────────────────────────────────────────────────────╯",
@@ -280,13 +355,16 @@
       "api": "buildOverseerOverlayOutput",
       "input": {
         "api": "buildOverseerOverlayOutput",
-        "ctx": { "dashboardOverseerSessionsCache": [], "dashboardSessionsCache": [] },
+        "ctx": {
+          "dashboardOverseerSessionsCache": [],
+          "dashboardSessionsCache": []
+        },
         "cols": 100,
         "rows": 30
       },
       "output": {
-        "rendered": "\u001b7\u001b[9;13H\u001b[34m╭───────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;13H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER                                                              \u001b[0m\u001b[34m│\u001b[0m\u001b[11;13H\u001b[34m├───────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;13H\u001b[34m│\u001b[0m   \u001b[2mStatus:\u001b[0m \u001b[2mOff\u001b[0m                                                         \u001b[34m│\u001b[0m\u001b[13;13H\u001b[34m│\u001b[0m   \u001b[2mOverseer:\u001b[0m \u001b[2mnone running\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[14;13H\u001b[34m│\u001b[0m   \u001b[2mWatching:\u001b[0m 0 agents                                                  \u001b[34m│\u001b[0m\u001b[15;13H\u001b[34m│\u001b[0m   \u001b[2mSelected:\u001b[0m \u001b[2mnone\u001b[0m                                                      \u001b[34m│\u001b[0m\u001b[16;13H\u001b[34m│\u001b[0m                                                                       \u001b[34m│\u001b[0m\u001b[17;13H\u001b[34m│\u001b[0m   \u001b[2mNo watched agents yet.\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[18;13H\u001b[34m│\u001b[0m                                                                       \u001b[34m│\u001b[0m\u001b[19;13H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mstart\u001b[0m  \u001b[48;5;240;38;5;255m w \u001b[0m \u001b[2mwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m u \u001b[0m \u001b[2munwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m \u001b[34m│\u001b[0m\u001b[20;13H\u001b[34m╰───────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
-        "visibleText": "╭───────────────────────────────────────────────────────────────────────╮│ OVERSEER                                                              │├───────────────────────────────────────────────────────────────────────┤│   Status: Off                                                         ││   Overseer: none running                                              ││   Watching: 0 agents                                                  ││   Selected: none                                                      ││                                                                       ││   No watched agents yet.                                              ││                                                                       ││    Enter  start   w  watch selected   u  unwatch selected   Esc  back │╰───────────────────────────────────────────────────────────────────────╯",
+        "rendered": "\u001b7\u001b[9;4H\u001b[34m╭─────────────────────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;4H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER                                                                                \u001b[0m\u001b[34m│\u001b[0m\u001b[11;4H\u001b[34m├─────────────────────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;4H\u001b[34m│\u001b[0m   \u001b[2mStatus:\u001b[0m \u001b[2mOff\u001b[0m                                                                           \u001b[34m│\u001b[0m\u001b[13;4H\u001b[34m│\u001b[0m   \u001b[2mOverseer:\u001b[0m \u001b[2mnone running\u001b[0m                                                                \u001b[34m│\u001b[0m\u001b[14;4H\u001b[34m│\u001b[0m   \u001b[2mWatching:\u001b[0m 0 agents                                                                    \u001b[34m│\u001b[0m\u001b[15;4H\u001b[34m│\u001b[0m   \u001b[2mSelected:\u001b[0m \u001b[2mnone\u001b[0m                                                                        \u001b[34m│\u001b[0m\u001b[16;4H\u001b[34m│\u001b[0m                                                                                         \u001b[34m│\u001b[0m\u001b[17;4H\u001b[34m│\u001b[0m   \u001b[2mNo watched agents yet.\u001b[0m                                                                \u001b[34m│\u001b[0m\u001b[18;4H\u001b[34m│\u001b[0m                                                                                         \u001b[34m│\u001b[0m\u001b[19;4H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mstart\u001b[0m  \u001b[48;5;240;38;5;255m w \u001b[0m \u001b[2mwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m u \u001b[0m \u001b[2munwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m p \u001b[0m \u001b[2mpause alerts\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m \u001b[34m│\u001b[0m\u001b[20;4H\u001b[34m╰─────────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭─────────────────────────────────────────────────────────────────────────────────────────╮│ OVERSEER                                                                                │├─────────────────────────────────────────────────────────────────────────────────────────┤│   Status: Off                                                                           ││   Overseer: none running                                                                ││   Watching: 0 agents                                                                    ││   Selected: none                                                                        ││                                                                                         ││   No watched agents yet.                                                                ││                                                                                         ││    Enter  start   w  watch selected   u  unwatch selected   p  pause alerts   Esc  back │╰─────────────────────────────────────────────────────────────────────────────────────────╯",
         "isNull": false
       },
       "inputSha256": "25d4c414631f22eb297fe1e026e1a3f904e4e751f3f7992075896be4bf54ec00"
@@ -299,13 +377,22 @@
       "input": {
         "api": "buildOverseerOverlayOutput",
         "ctx": {
-          "dashboardOverseerSessionsCache": [{ "id": "overseer-1", "command": "claude", "status": "working" }],
+          "dashboardOverseerSessionsCache": [
+            {
+              "id": "overseer-1",
+              "command": "claude",
+              "status": "working"
+            }
+          ],
           "dashboardSessionsCache": [
             {
               "id": "codex-1",
               "command": "codex",
               "status": "working",
-              "loop": { "active": true, "goal": "keep progressing" }
+              "loop": {
+                "active": true,
+                "goal": "keep progressing"
+              }
             }
           ]
         },
@@ -313,8 +400,8 @@
         "rows": 30
       },
       "output": {
-        "rendered": "\u001b7\u001b[9;4H\u001b[34m╭──────────────────────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;4H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER                                                                                 \u001b[0m\u001b[34m│\u001b[0m\u001b[11;4H\u001b[34m├──────────────────────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;4H\u001b[34m│\u001b[0m   \u001b[2mStatus:\u001b[0m \u001b[32mActive\u001b[0m                                                                         \u001b[34m│\u001b[0m\u001b[13;4H\u001b[34m│\u001b[0m   \u001b[2mOverseer:\u001b[0m \u001b[1mclaude\u001b[0m \u001b[32mworking\u001b[0m                                                               \u001b[34m│\u001b[0m\u001b[14;4H\u001b[34m│\u001b[0m   \u001b[2mWatching:\u001b[0m 1 agent                                                                      \u001b[34m│\u001b[0m\u001b[15;4H\u001b[34m│\u001b[0m   \u001b[2mSelected:\u001b[0m \u001b[1mcodex\u001b[0m \u001b[32mwatched\u001b[0m                                                                \u001b[34m│\u001b[0m\u001b[16;4H\u001b[34m│\u001b[0m                                                                                          \u001b[34m│\u001b[0m\u001b[17;4H\u001b[34m│\u001b[0m   \u001b[1;33m•\u001b[0m \u001b[1mcodex\u001b[0m \u001b[2mworking\u001b[0m\u001b[2m - keep progressing\u001b[0m                                                     \u001b[34m│\u001b[0m\u001b[18;4H\u001b[34m│\u001b[0m                                                                                          \u001b[34m│\u001b[0m\u001b[19;4H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mfocus\u001b[0m  \u001b[48;5;240;38;5;255m w \u001b[0m \u001b[2mwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m u \u001b[0m \u001b[2munwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m x \u001b[0m \u001b[2mstop overseer\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m \u001b[34m│\u001b[0m\u001b[20;4H\u001b[34m╰──────────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
-        "visibleText": "╭──────────────────────────────────────────────────────────────────────────────────────────╮│ OVERSEER                                                                                 │├──────────────────────────────────────────────────────────────────────────────────────────┤│   Status: Active                                                                         ││   Overseer: claude working                                                               ││   Watching: 1 agent                                                                      ││   Selected: codex watched                                                                ││                                                                                          ││   • codex working - keep progressing                                                     ││                                                                                          ││    Enter  focus   w  watch selected   u  unwatch selected   x  stop overseer   Esc  back │╰──────────────────────────────────────────────────────────────────────────────────────────╯",
+        "rendered": "\u001b7\u001b[9;2H\u001b[34m╭──────────────────────────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;2H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER                                                                                     \u001b[0m\u001b[34m│\u001b[0m\u001b[11;2H\u001b[34m├──────────────────────────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;2H\u001b[34m│\u001b[0m   \u001b[2mStatus:\u001b[0m \u001b[32mActive\u001b[0m                                                                             \u001b[34m│\u001b[0m\u001b[13;2H\u001b[34m│\u001b[0m   \u001b[2mOverseer:\u001b[0m \u001b[1mclaude\u001b[0m \u001b[32mworking\u001b[0m                                                                   \u001b[34m│\u001b[0m\u001b[14;2H\u001b[34m│\u001b[0m   \u001b[2mWatching:\u001b[0m 1 agent                                                                          \u001b[34m│\u001b[0m\u001b[15;2H\u001b[34m│\u001b[0m   \u001b[2mSelected:\u001b[0m \u001b[1mcodex\u001b[0m \u001b[32mwatched\u001b[0m                                                                    \u001b[34m│\u001b[0m\u001b[16;2H\u001b[34m│\u001b[0m                                                                                              \u001b[34m│\u001b[0m\u001b[17;2H\u001b[34m│\u001b[0m   \u001b[1;33m•\u001b[0m \u001b[1mcodex\u001b[0m \u001b[2mworking\u001b[0m\u001b[2m - keep progressing\u001b[0m                                                         \u001b[34m│\u001b[0m\u001b[18;2H\u001b[34m│\u001b[0m                                                                                              \u001b[34m│\u001b[0m\u001b[19;2H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mfocus\u001b[0m  \u001b[48;5;240;38;5;255m w \u001b[0m \u001b[2mwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m u \u001b[0m \u001b[2munwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m p \u001b[0m \u001b[2mpause alerts\u001b[0m  \u001b[48;5;240;38;5;255m x \u001b[0m \u001b[2mstop overs…\u001b[0m \u001b[34m│\u001b[0m\u001b[20;2H\u001b[34m╰──────────────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭──────────────────────────────────────────────────────────────────────────────────────────────╮│ OVERSEER                                                                                     │├──────────────────────────────────────────────────────────────────────────────────────────────┤│   Status: Active                                                                             ││   Overseer: claude working                                                                   ││   Watching: 1 agent                                                                          ││   Selected: codex watched                                                                    ││                                                                                              ││   • codex working - keep progressing                                                         ││                                                                                              ││    Enter  focus   w  watch selected   u  unwatch selected   p  pause alerts   x  stop overs… │╰──────────────────────────────────────────────────────────────────────────────────────────────╯",
         "isNull": false
       },
       "inputSha256": "496cfb6d1d45c28ec02a024b7b4c90f4e49ccf1c8c07b2b2b838e07f9580318f"
@@ -328,7 +415,15 @@
         "api": "buildOverseerOverlayOutput",
         "ctx": {
           "dashboard": {
-            "viewModel": { "overseerSessions": [{ "id": "overseer-1", "command": "claude", "status": "ready" }] }
+            "viewModel": {
+              "overseerSessions": [
+                {
+                  "id": "overseer-1",
+                  "command": "claude",
+                  "status": "ready"
+                }
+              ]
+            }
           },
           "dashboardSessionsCache": []
         },
@@ -336,8 +431,8 @@
         "rows": 30
       },
       "output": {
-        "rendered": "\u001b7\u001b[9;4H\u001b[34m╭──────────────────────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;4H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER                                                                                 \u001b[0m\u001b[34m│\u001b[0m\u001b[11;4H\u001b[34m├──────────────────────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;4H\u001b[34m│\u001b[0m   \u001b[2mStatus:\u001b[0m \u001b[32mActive\u001b[0m                                                                         \u001b[34m│\u001b[0m\u001b[13;4H\u001b[34m│\u001b[0m   \u001b[2mOverseer:\u001b[0m \u001b[1mclaude\u001b[0m \u001b[32mready\u001b[0m                                                                 \u001b[34m│\u001b[0m\u001b[14;4H\u001b[34m│\u001b[0m   \u001b[2mWatching:\u001b[0m 0 agents                                                                     \u001b[34m│\u001b[0m\u001b[15;4H\u001b[34m│\u001b[0m   \u001b[2mSelected:\u001b[0m \u001b[2mnone\u001b[0m                                                                         \u001b[34m│\u001b[0m\u001b[16;4H\u001b[34m│\u001b[0m                                                                                          \u001b[34m│\u001b[0m\u001b[17;4H\u001b[34m│\u001b[0m   \u001b[2mNo watched agents yet.\u001b[0m                                                                 \u001b[34m│\u001b[0m\u001b[18;4H\u001b[34m│\u001b[0m                                                                                          \u001b[34m│\u001b[0m\u001b[19;4H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mfocus\u001b[0m  \u001b[48;5;240;38;5;255m w \u001b[0m \u001b[2mwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m u \u001b[0m \u001b[2munwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m x \u001b[0m \u001b[2mstop overseer\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m \u001b[34m│\u001b[0m\u001b[20;4H\u001b[34m╰──────────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
-        "visibleText": "╭──────────────────────────────────────────────────────────────────────────────────────────╮│ OVERSEER                                                                                 │├──────────────────────────────────────────────────────────────────────────────────────────┤│   Status: Active                                                                         ││   Overseer: claude ready                                                                 ││   Watching: 0 agents                                                                     ││   Selected: none                                                                         ││                                                                                          ││   No watched agents yet.                                                                 ││                                                                                          ││    Enter  focus   w  watch selected   u  unwatch selected   x  stop overseer   Esc  back │╰──────────────────────────────────────────────────────────────────────────────────────────╯",
+        "rendered": "\u001b7\u001b[9;2H\u001b[34m╭──────────────────────────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;2H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER                                                                                     \u001b[0m\u001b[34m│\u001b[0m\u001b[11;2H\u001b[34m├──────────────────────────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;2H\u001b[34m│\u001b[0m   \u001b[2mStatus:\u001b[0m \u001b[32mActive\u001b[0m                                                                             \u001b[34m│\u001b[0m\u001b[13;2H\u001b[34m│\u001b[0m   \u001b[2mOverseer:\u001b[0m \u001b[1mclaude\u001b[0m \u001b[32mready\u001b[0m                                                                     \u001b[34m│\u001b[0m\u001b[14;2H\u001b[34m│\u001b[0m   \u001b[2mWatching:\u001b[0m 0 agents                                                                         \u001b[34m│\u001b[0m\u001b[15;2H\u001b[34m│\u001b[0m   \u001b[2mSelected:\u001b[0m \u001b[2mnone\u001b[0m                                                                             \u001b[34m│\u001b[0m\u001b[16;2H\u001b[34m│\u001b[0m                                                                                              \u001b[34m│\u001b[0m\u001b[17;2H\u001b[34m│\u001b[0m   \u001b[2mNo watched agents yet.\u001b[0m                                                                     \u001b[34m│\u001b[0m\u001b[18;2H\u001b[34m│\u001b[0m                                                                                              \u001b[34m│\u001b[0m\u001b[19;2H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mfocus\u001b[0m  \u001b[48;5;240;38;5;255m w \u001b[0m \u001b[2mwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m u \u001b[0m \u001b[2munwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m p \u001b[0m \u001b[2mpause alerts\u001b[0m  \u001b[48;5;240;38;5;255m x \u001b[0m \u001b[2mstop overs…\u001b[0m \u001b[34m│\u001b[0m\u001b[20;2H\u001b[34m╰──────────────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭──────────────────────────────────────────────────────────────────────────────────────────────╮│ OVERSEER                                                                                     │├──────────────────────────────────────────────────────────────────────────────────────────────┤│   Status: Active                                                                             ││   Overseer: claude ready                                                                     ││   Watching: 0 agents                                                                         ││   Selected: none                                                                             ││                                                                                              ││   No watched agents yet.                                                                     ││                                                                                              ││    Enter  focus   w  watch selected   u  unwatch selected   p  pause alerts   x  stop overs… │╰──────────────────────────────────────────────────────────────────────────────────────────────╯",
         "isNull": false
       },
       "inputSha256": "eeb14f40b8ce17564ba5d31e9029d4b479cd0dd0a3cfc0efa08a4cf27ec847b1"

@@ -150,7 +150,8 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
 
     let teammates = state["teammates"].as_array().unwrap();
     assert_eq!(ids(teammates), vec!["reviewer".to_owned()]);
-    assert_eq!(teammates[0]["role"], "reviewer");
+    assert_eq!(teammates[0]["role"], "coder");
+    assert_eq!(teammates[0]["team"]["role"], "reviewer");
     assert_eq!(teammates[0]["status"], "idle");
 
     let services = state["services"].as_array().unwrap();

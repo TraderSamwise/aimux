@@ -22,6 +22,7 @@ pub const ROUTES: &[Spec] = &[
     ),
     Spec::exact(Method::Post, routes::agents::PROMPT_CONTEXT, Group::Agents),
     Spec::exact(Method::Post, routes::agents::LOOP, Group::Agents),
+    Spec::exact(Method::Post, routes::agents::LOOP_ALERTS, Group::Agents),
     Spec::exact(Method::Post, routes::agents::OVERSEER, Group::Agents),
     Spec::exact(Method::Post, routes::agents::SCRIBE, Group::Agents),
     Spec::exact(Method::Post, routes::agents::WATCH, Group::Agents),

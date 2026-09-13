@@ -56,6 +56,7 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/agents/migrate": "client-api",
   "/agents/record-backend-session": "internal-runtime",
   "/agents/loop": "client-api",
+  "/agents/loop-alerts": "client-api",
   "/agents/overseer": "client-api",
   "/agents/scribe": "client-api",
   "/agents/watch": "client-api",
