@@ -54,8 +54,8 @@ decisions or production gaps close: `attachment_store_contract.rs`,
   `project_service/orchestration_routes.rs` owns routing selection. OSC parsing
   was split out and kept.
 - `project_takeover_contract`: already deleted. The old feature only took a
-  project from another daemon home/port in the dev-daemon split; the one-daemon
-  model has nothing to take over.
+  project from another daemon home/port in the retired two-daemon development
+  split; the one-daemon model has nothing to take over.
 - `session_launch_actions_contract`: production dashboard/session actions are
   no longer dispatched through the old Node `handleAction`/`focusSession` host
   object. The live Rust surfaces are the dashboard controller and action/focus

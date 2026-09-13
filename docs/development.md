@@ -100,13 +100,15 @@ using the code you changed.
 Use `aimux doctor versions` to inspect daemon, project-service, dashboard, and
 installed build coherence.
 
-## Explicit Sandboxes
+## Internal Test Sandboxes
 
-Use explicit overrides only when isolated state is required:
+Harnesses and live-drive checks use explicit overrides to keep test state away
+from the installed runtime:
 
 ```bash
 AIMUX_HOME=/tmp/aimux-scratch AIMUX_DAEMON_PORT=43201 aimux daemon restart
 ```
 
-Keep normal development on the installed `aimux` lane so cross-project views,
-restart behavior, and version diagnostics describe one runtime.
+This is an internal testing pattern, not a second user daemon lane. Keep normal
+development on the installed `aimux` runtime so cross-project views, restart
+behavior, and version diagnostics describe one control plane.

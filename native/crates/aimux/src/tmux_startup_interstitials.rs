@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use crate::agent_prompt_delivery::is_agent_prompt_marker;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartupInterstitial {
     pub id: String,
@@ -79,7 +81,7 @@ fn resolve_supported_choice(screen: &str, pattern: &str) -> Option<String> {
         let label = label.replace("\\s+", " ");
         for line in screen.lines() {
             let trimmed = line
-                .trim_start_matches(|ch: char| ch.is_whitespace() || matches!(ch, '›' | '>' | '❯'));
+                .trim_start_matches(|ch: char| ch.is_whitespace() || is_agent_prompt_marker(ch));
             let Some((number, rest)) = trimmed.split_once('.') else {
                 continue;
             };
