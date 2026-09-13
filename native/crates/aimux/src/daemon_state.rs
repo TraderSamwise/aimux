@@ -538,18 +538,43 @@ pub fn save_metadata_endpoint(
         metadata_endpoint_text_path(project_state_dir),
         format!("http://{}:{}\n", endpoint.host, endpoint.port).as_bytes(),
     )?;
-    cleanup_stale_metadata_endpoint_temp_files(project_state_dir)
+    cleanup_stale_project_state_temp_files(project_state_dir)
 }
 
 pub fn remove_metadata_endpoint(project_state_dir: impl AsRef<Path>) {
+    let _ = remove_metadata_endpoint_files(project_state_dir.as_ref());
+}
+
+pub fn remove_metadata_endpoint_if_owned(
+    project_state_dir: impl AsRef<Path>,
+    owner_pid: i32,
+) -> io::Result<bool> {
     let project_state_dir = project_state_dir.as_ref();
+    let Some(endpoint) =
+        load_metadata_endpoint_result(project_state_dir).map_err(io::Error::other)?
+    else {
+        return Ok(false);
+    };
+    if endpoint.pid != owner_pid {
+        return Ok(false);
+    }
+    remove_metadata_endpoint_files(project_state_dir)?;
+    Ok(true)
+}
+
+fn remove_metadata_endpoint_files(project_state_dir: &Path) -> io::Result<()> {
     for path in [
         metadata_endpoint_path(project_state_dir),
         metadata_endpoint_text_path(project_state_dir),
         project_state_dir.join("host.json"),
     ] {
-        let _ = fs::remove_file(path);
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
     }
+    Ok(())
 }
 
 fn read_json(path: impl AsRef<Path>) -> Option<Value> {
@@ -582,7 +607,7 @@ fn read_json_result(path: impl AsRef<Path>) -> Result<Option<Value>, JsonReadErr
         })
 }
 
-fn cleanup_stale_metadata_endpoint_temp_files(project_state_dir: &Path) -> io::Result<()> {
+fn cleanup_stale_project_state_temp_files(project_state_dir: &Path) -> io::Result<()> {
     let now_ms = current_unix_millis();
     for entry in fs::read_dir(project_state_dir)? {
         let entry = entry?;
@@ -590,7 +615,7 @@ fn cleanup_stale_metadata_endpoint_temp_files(project_state_dir: &Path) -> io::R
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if !is_stale_metadata_endpoint_temp_file(file_name, now_ms) {
+        if !is_stale_atomic_write_temp_file(file_name, now_ms) {
             continue;
         }
         match fs::remove_file(&path) {
@@ -602,10 +627,8 @@ fn cleanup_stale_metadata_endpoint_temp_files(project_state_dir: &Path) -> io::R
     Ok(())
 }
 
-fn is_stale_metadata_endpoint_temp_file(file_name: &str, now_ms: u128) -> bool {
-    if !(file_name.starts_with("metadata-api.json.") || file_name.starts_with("metadata-api.txt."))
-        || !file_name.ends_with(".tmp")
-    {
+fn is_stale_atomic_write_temp_file(file_name: &str, now_ms: u128) -> bool {
+    if !file_name.ends_with(".tmp") {
         return false;
     }
     let parts = file_name.split('.').collect::<Vec<_>>();
