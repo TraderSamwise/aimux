@@ -3,10 +3,10 @@ use aimux::daemon_state::{
     clear_daemon_info_if_owned, get_daemon_base_url, get_daemon_host_from, get_daemon_port_from,
     load_daemon_info_with, load_daemon_info_with_probe, load_daemon_state, load_daemon_state_with,
     load_daemon_state_with_status, load_metadata_endpoint, load_metadata_endpoint_by_project_id,
-    load_metadata_state, metadata_endpoint_path, metadata_endpoint_path_by_project_id,
-    metadata_endpoint_text_path, metadata_state_path, remove_metadata_endpoint,
-    resolve_project_service_endpoint, save_daemon_info, save_daemon_state, save_metadata_endpoint,
-    save_metadata_state,
+    load_metadata_endpoint_result, load_metadata_state, metadata_endpoint_path,
+    metadata_endpoint_path_by_project_id, metadata_endpoint_text_path, metadata_state_path,
+    remove_metadata_endpoint, resolve_project_service_endpoint, save_daemon_info,
+    save_daemon_state, save_metadata_endpoint, save_metadata_state,
 };
 use serde_json::json;
 use std::fs;
@@ -288,6 +288,64 @@ fn metadata_endpoint_paths_save_resolve_and_remove_like_metadata_store() {
     assert!(!metadata_endpoint_path(&project_state_dir).exists());
     assert!(!metadata_endpoint_text_path(&project_state_dir).exists());
     assert!(!project_state_dir.join("host.json").exists());
+}
+
+#[test]
+fn metadata_endpoint_load_reports_parse_errors_instead_of_absent() {
+    let test_dir = TestDir::new();
+    let project_state_dir = test_dir.0.join("projects/project-parse-error");
+    fs::create_dir_all(&project_state_dir).expect("create project state");
+    fs::write(metadata_endpoint_path(&project_state_dir), b"{").expect("write corrupt endpoint");
+
+    let error = load_metadata_endpoint_result(&project_state_dir).expect_err("parse error");
+
+    let message = error.to_string();
+    assert!(message.contains("parse"));
+    assert!(message.contains("metadata-api.json"));
+    assert_eq!(load_metadata_endpoint(&project_state_dir), None);
+}
+
+#[test]
+fn metadata_endpoint_load_reports_unreadable_paths_instead_of_absent() {
+    let test_dir = TestDir::new();
+    let project_state_dir = test_dir.0.join("projects/project-read-error");
+    fs::create_dir_all(metadata_endpoint_path(&project_state_dir)).expect("create endpoint dir");
+
+    let error = load_metadata_endpoint_result(&project_state_dir).expect_err("read error");
+
+    let message = error.to_string();
+    assert!(message.contains("read"));
+    assert!(message.contains("metadata-api.json"));
+    assert_eq!(load_metadata_endpoint(&project_state_dir), None);
+}
+
+#[test]
+fn save_metadata_endpoint_prunes_stale_endpoint_tmp_files_only() {
+    let test_dir = TestDir::new();
+    let project_state_dir = test_dir.0.join("projects/project-stale-tmp");
+    fs::create_dir_all(&project_state_dir).expect("create project state");
+    let stale_json = project_state_dir.join("metadata-api.json.111.1.dead.tmp");
+    let stale_text = project_state_dir.join("metadata-api.txt.222.1.dead.tmp");
+    let fresh_json =
+        project_state_dir.join("metadata-api.json.333.999999999999999999999.fresh.tmp");
+    let unrelated = project_state_dir.join("metadata.json.444.1.dead.tmp");
+    for path in [&stale_json, &stale_text, &fresh_json, &unrelated] {
+        fs::write(path, b"tmp").expect("write tmp");
+    }
+    let endpoint = MetadataApiEndpoint {
+        host: "127.0.0.1".into(),
+        port: 44556,
+        pid: 988,
+        updated_at: "now".into(),
+    };
+
+    save_metadata_endpoint(&project_state_dir, &endpoint).expect("save endpoint");
+
+    assert!(!stale_json.exists());
+    assert!(!stale_text.exists());
+    assert!(fresh_json.exists(), "fresh in-progress temp must remain");
+    assert!(unrelated.exists(), "non-endpoint temp must remain");
+    assert_eq!(load_metadata_endpoint(&project_state_dir), Some(endpoint));
 }
 
 #[test]
