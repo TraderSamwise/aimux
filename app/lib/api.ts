@@ -124,6 +124,10 @@ import {
 import { CORE_API_ROUTES } from "../../src/core-command-contract";
 
 export type {
+  AgentLane,
+  AgentRole,
+  AgentRoleState,
+  AgentSupervisorRole,
   CoordinationBucket,
   CoordinationReachability,
   CoordinationWorklistItem,

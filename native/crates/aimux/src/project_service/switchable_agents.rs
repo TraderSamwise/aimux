@@ -11,8 +11,9 @@ use crate::runtime_topology::{
     list_topology_service_states, read_runtime_topology, runtime_topology_path,
 };
 use crate::team_contract::{
-    is_overseer_session, is_project_control_session as team_is_project_control_session,
-    is_scribe_session, project_control_display_role, session_with_stored_control_flags,
+    agent_lane, agent_role, agent_role_state, is_overseer_session,
+    is_project_control_session as team_is_project_control_session, is_scribe_session,
+    project_control_display_role, session_with_stored_control_flags,
 };
 use crate::tmux::TmuxTarget;
 
@@ -92,6 +93,9 @@ pub struct SwitchableAgentItem {
     pub activity: i64,
     pub last_used_at: Option<String>,
     pub recent_rank: i64,
+    pub role: String,
+    pub lane: Value,
+    pub role_state: Value,
     pub overseer: bool,
     pub scribe: bool,
     pub alive: bool,
@@ -616,6 +620,9 @@ pub fn serialize_fast_control_item(item: &SwitchableAgentItem) -> Value {
     serialized.insert("recentRank".into(), Value::from(item.recent_rank));
     serialized.insert("overseer".into(), Value::Bool(item.overseer));
     serialized.insert("scribe".into(), Value::Bool(item.scribe));
+    serialized.insert("role".into(), Value::String(item.role.clone()));
+    serialized.insert("lane".into(), item.lane.clone());
+    serialized.insert("roleState".into(), item.role_state.clone());
     insert_optional_string(&mut serialized, "projectId", item.project_id.as_deref());
     insert_optional_string(&mut serialized, "projectRoot", item.project_root.as_deref());
     insert_optional_string(&mut serialized, "projectName", item.project_name.as_deref());
@@ -739,6 +746,9 @@ pub fn managed_window_item(
         activity: entry.activity,
         last_used_at,
         recent_rank,
+        role: agent_role(Some(&classification_metadata)).to_owned(),
+        lane: agent_lane(Some(&classification_metadata)),
+        role_state: agent_role_state(Some(&classification_metadata)),
         overseer: is_overseer_session(Some(&classification_metadata)),
         scribe: is_scribe_session(Some(&classification_metadata)),
         alive: entry.alive,
@@ -840,6 +850,8 @@ fn session_switchable_entry(
     if let Some(role) = project_control_display_role(Some(&control_probe)) {
         insert_string(&mut metadata, "role", role);
     }
+    metadata.insert("lane".into(), agent_lane(Some(&control_probe)));
+    metadata.insert("roleState".into(), agent_role_state(Some(&control_probe)));
     Some(ManagedWindowEntry {
         activity: target_number_field(&target, "windowIndex").unwrap_or_default(),
         target,

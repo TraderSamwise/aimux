@@ -286,6 +286,14 @@ fn item(
         activity: 1,
         last_used_at: None,
         recent_rank: recent_rank.unwrap_or(9_007_199_254_740_991),
+        role: "coder".into(),
+        lane: json!({ "kind": "worktree", "worktreePath": worktree_path.unwrap_or("/repo") }),
+        role_state: json!({
+            "status": "resolved",
+            "role": "coder",
+            "lane": { "kind": "worktree", "worktreePath": worktree_path.unwrap_or("/repo") },
+            "projectControl": false
+        }),
         overseer: false,
         scribe: false,
         alive: true,

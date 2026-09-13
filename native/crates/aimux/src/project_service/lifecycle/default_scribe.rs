@@ -37,12 +37,22 @@ pub fn ensure_default_scribe_agent(
     if launch.get("reason").and_then(Value::as_str).is_some() {
         return launch;
     }
-    if let Some(session_id) = find_existing_live_scribe(&project_state_dir) {
-        return json!({
-            "created": false,
-            "reason": "existing",
-            "sessionId": session_id,
-        });
+    match find_existing_live_scribe(&project_state_dir) {
+        Ok(Some(session_id)) => {
+            return json!({
+                "created": false,
+                "reason": "existing",
+                "sessionId": session_id,
+            });
+        }
+        Ok(None) => {}
+        Err(error) => {
+            return json!({
+                "created": false,
+                "reason": "topology-unreadable",
+                "error": user_facing_error_message(&error),
+            });
+        }
     }
     let _claim = match claim_default_scribe_creation(&project_state_dir) {
         Ok(claim) => claim,
@@ -54,12 +64,22 @@ pub fn ensure_default_scribe_agent(
             });
         }
     };
-    if let Some(session_id) = find_existing_live_scribe(&project_state_dir) {
-        return json!({
-            "created": false,
-            "reason": "existing",
-            "sessionId": session_id,
-        });
+    match find_existing_live_scribe(&project_state_dir) {
+        Ok(Some(session_id)) => {
+            return json!({
+                "created": false,
+                "reason": "existing",
+                "sessionId": session_id,
+            });
+        }
+        Ok(None) => {}
+        Err(error) => {
+            return json!({
+                "created": false,
+                "reason": "topology-unreadable",
+                "error": user_facing_error_message(&error),
+            });
+        }
     }
     let Some(tool_key) = trimmed_string(launch.get("toolConfigKey")) else {
         return json!({ "created": false, "reason": "unknown-tool" });
@@ -110,27 +130,10 @@ pub fn ensure_default_scribe_agent(
     }
 }
 
-fn find_existing_live_scribe(project_state_dir: &Path) -> Option<String> {
+fn find_existing_live_scribe(project_state_dir: &Path) -> Result<Option<String>, String> {
     let metadata = load_metadata_state(project_state_dir);
-    let topology =
-        read_runtime_topology(runtime_topology_path(project_state_dir)).unwrap_or_else(|_| {
-            json!({
-                "version": 1,
-                "rigs": [],
-                "nodes": [],
-                "edges": [],
-                "bindings": [],
-                "sessions": [],
-                "services": [],
-                "worktrees": [],
-                "worktreeGraveyard": [],
-                "teamRoles": [],
-                "remoteClients": [],
-                "lifecycleOperations": [],
-                "exchangeRefs": []
-            })
-        });
-    list_topology_session_states(&topology, None)
+    let topology = read_runtime_topology(runtime_topology_path(project_state_dir))?;
+    let existing = list_topology_session_states(&topology, None)
         .into_iter()
         .find(|session| {
             is_live_scribe_status(
@@ -143,7 +146,8 @@ fn find_existing_live_scribe(project_state_dir: &Path) -> Option<String> {
         .and_then(|session| trimmed_string(session.get("id")))
         .inspect(|session_id| {
             set_session_control_flags(project_state_dir, session_id, false, true);
-        })
+        });
+    Ok(existing)
 }
 
 fn is_live_scribe_status(status: Option<&str>) -> bool {
