@@ -2,7 +2,9 @@ use serde_json::{Map, Value, json};
 use std::path::Path;
 
 use crate::daemon_state::mutate_metadata_state;
-use crate::team_contract::project_control_display_role;
+use crate::team_contract::{
+    agent_lane, agent_role, agent_role_state, project_control_display_role,
+};
 use crate::tmux::{MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget};
 
 use super::json_helpers::*;
@@ -129,9 +131,12 @@ pub(super) fn upsert_agent_topology(
     node.insert("id".into(), Value::String(node_id.clone()));
     node.insert("rigId".into(), Value::String(rig_id.clone()));
     node.insert("logicalId".into(), Value::String(session_id.clone()));
-    if let Some(role) = project_control_display_role(Some(metadata)) {
-        node.insert("role".into(), Value::String(role.to_owned()));
-    }
+    node.insert(
+        "role".into(),
+        Value::String(agent_role(Some(metadata)).to_owned()),
+    );
+    node.insert("lane".into(), agent_lane(Some(metadata)));
+    node.insert("roleState".into(), agent_role_state(Some(metadata)));
     node.insert(
         "runtime".into(),
         Value::String(
@@ -170,6 +175,12 @@ pub(super) fn upsert_agent_topology(
     session.insert("toolConfigKey".into(), metadata["toolConfigKey"].clone());
     session.insert("command".into(), metadata["command"].clone());
     session.insert("args".into(), metadata["args"].clone());
+    session.insert(
+        "role".into(),
+        Value::String(agent_role(Some(metadata)).to_owned()),
+    );
+    session.insert("lane".into(), agent_lane(Some(metadata)));
+    session.insert("roleState".into(), agent_role_state(Some(metadata)));
     if let Some(backend_session_id) = metadata
         .get("backendSessionId")
         .cloned()

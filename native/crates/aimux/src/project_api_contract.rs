@@ -65,6 +65,7 @@ pub mod routes {
         pub const LOOP_ALERTS: &str = "/agents/loop-alerts";
         pub const OVERSEER: &str = "/agents/overseer";
         pub const SCRIBE: &str = "/agents/scribe";
+        pub const WATCH: &str = "/agents/watch";
         pub const TEAMMATES: &str = "/agents/teammates";
         pub const CREATE_TEAMMATE: &str = "/agents/teammates/create";
         pub const CREATE_TEAMMATE_TASK: &str = "/agents/teammates/tasks";
@@ -341,6 +342,7 @@ pub fn project_api_views_for_mutation_route(
         | agents::LOOP
         | agents::OVERSEER
         | agents::SCRIBE
+        | agents::WATCH
         | live_pane::INTERRUPT
         | agents::CREATE_TEAMMATE
         | agents::STOP_TEAMMATE
@@ -445,6 +447,7 @@ pub fn collect_project_api_routes() -> Vec<&'static str> {
         agents::LOOP_ALERTS,
         agents::OVERSEER,
         agents::SCRIBE,
+        agents::WATCH,
         agents::TEAMMATES,
         agents::CREATE_TEAMMATE,
         agents::CREATE_TEAMMATE_TASK,

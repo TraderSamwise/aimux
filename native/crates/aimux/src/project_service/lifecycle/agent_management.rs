@@ -1,10 +1,11 @@
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::operation_failures::{
     OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
-    add_dashboard_operation_failure, clear_dashboard_operation_failures,
+    clear_dashboard_operation_failures, try_add_dashboard_operation_failure,
 };
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{
@@ -61,9 +62,16 @@ pub(super) fn route_agent_stop(
     if let Some(window_id) = &window_id
         && let Err(error) = runtime.kill_window(window_id)
     {
+        let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
         return json_error(
             500,
-            format!("tmux kill-window failed for session \"{session_id}\": {error}"),
+            record_agent_destructive_operation_failure(
+                &project_state_dir,
+                "agent.stop",
+                "Failed to stop agent",
+                &session_id,
+                &message,
+            ),
         );
     }
     clear_prompt_context(&project_state_dir, &session_id);
@@ -149,9 +157,16 @@ pub(super) async fn route_agent_stop_async(
     if let Some(window_id) = window_id {
         progress.mark_irreversible();
         if let Err(error) = runtime.kill_window(&window_id).await {
+            let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
             return json_error(
                 500,
-                format!("tmux kill-window failed for session \"{session_id}\": {error}"),
+                record_agent_destructive_operation_failure(
+                    &project_state_dir,
+                    "agent.stop",
+                    "Failed to stop agent",
+                    &session_id,
+                    &message,
+                ),
             );
         }
     } else {
@@ -229,8 +244,10 @@ pub(super) fn route_agent_kill(
         && let Err(error) = runtime.kill_window(window_id)
     {
         let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
-        record_agent_kill_operation_failure(&project_state_dir, &session_id, &message);
-        return json_error(500, message);
+        return json_error(
+            500,
+            record_agent_kill_operation_failure(&project_state_dir, &session_id, &message),
+        );
     }
     clear_prompt_context(&project_state_dir, &session_id);
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -290,8 +307,10 @@ pub(super) async fn route_agent_kill_async(
         progress.mark_irreversible();
         if let Err(error) = runtime.kill_window(&window_id).await {
             let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
-            record_agent_kill_operation_failure(&project_state_dir, &session_id, &message);
-            return json_error(500, message);
+            return json_error(
+                500,
+                record_agent_kill_operation_failure(&project_state_dir, &session_id, &message),
+            );
         }
     } else {
         progress.mark_irreversible();
@@ -327,20 +346,65 @@ pub(super) async fn route_agent_kill_async(
     )
 }
 
-fn record_agent_kill_operation_failure(project_state_dir: &Path, session_id: &str, message: &str) {
-    let _ = add_dashboard_operation_failure(
+fn record_agent_kill_operation_failure(
+    project_state_dir: &Path,
+    session_id: &str,
+    message: &str,
+) -> String {
+    record_agent_destructive_operation_failure(
+        project_state_dir,
+        "agent.kill",
+        &format!("Failed to kill {session_id}"),
+        session_id,
+        message,
+    )
+}
+
+fn record_agent_destructive_operation_failure(
+    project_state_dir: &Path,
+    operation: &str,
+    title: &str,
+    session_id: &str,
+    message: &str,
+) -> String {
+    log_always_at(
+        LogLevel::Warn,
+        "agent destructive lifecycle operation failed",
+        "lifecycle",
+        Some(json!({
+            "operation": operation,
+            "sessionId": session_id,
+            "error": message,
+        })),
+    );
+    match try_add_dashboard_operation_failure(
         project_state_dir,
         OperationFailureInput {
             target_kind: "agent".into(),
-            operation: "agent.kill".into(),
-            title: format!("Failed to kill {session_id}"),
-            message: message.to_owned(),
-            target_id: Some(session_id.to_owned()),
+            operation: operation.into(),
+            title: title.into(),
+            message: message.into(),
+            target_id: Some(session_id.into()),
             worktree_path: None,
             worktree_name: None,
             created_at: None,
         },
-    );
+    ) {
+        Ok(_) => message.to_owned(),
+        Err((error, _failure)) => {
+            log_always_at(
+                LogLevel::Error,
+                "failed to record agent destructive lifecycle operation failure",
+                "lifecycle",
+                Some(json!({
+                    "operation": operation,
+                    "sessionId": session_id,
+                    "error": error.to_string(),
+                })),
+            );
+            format!("{message}; additionally failed to record dashboard operation failure: {error}")
+        }
+    }
 }
 
 fn clear_agent_kill_operation_failure(project_state_dir: &Path, session_id: &str) {

@@ -26,6 +26,8 @@ import {
   type AgentOverseerResponse,
   type AgentScribeInput,
   type AgentScribeResponse,
+  type AgentWatchInput,
+  type AgentWatchResponse,
   type AgentOutputStreamInput,
   type AgentSessionInput,
   type ControlActionResponse,
@@ -125,6 +127,13 @@ import {
 import { CORE_API_ROUTES } from "../../src/core-command-contract";
 
 export type {
+  AgentLane,
+  AgentRole,
+  AgentRoleState,
+  AgentSupervisorRole,
+  AgentWatchInput,
+  AgentWatchRefusalReason,
+  AgentWatchResponse,
   CoordinationBucket,
   CoordinationReachability,
   CoordinationWorklistItem,
@@ -771,6 +780,14 @@ export async function setAgentScribe(
   opts?: ApiOpts,
 ): Promise<AgentScribeResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.scribe, opts, input);
+}
+
+export async function setAgentWatch(
+  endpoint: ServiceEndpoint,
+  input: AgentWatchInput,
+  opts?: ApiOpts,
+): Promise<AgentWatchResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.watch, opts, input);
 }
 
 function workOutlineQueryPath(query?: WorkOutlineQuery & { entryId?: string }): string {

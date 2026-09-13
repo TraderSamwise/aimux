@@ -4,6 +4,7 @@ pub mod agent_input_delivery;
 pub mod agent_output;
 pub mod agent_output_projection;
 pub mod agent_restore_task;
+pub mod agent_roles;
 pub mod agents;
 pub mod attachments;
 pub mod builtin_metadata_task;

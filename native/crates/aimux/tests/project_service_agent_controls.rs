@@ -1,6 +1,7 @@
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use aimux::loop_watcher::{load_loop_watcher_state, loop_watcher_state_path};
 use aimux::project_api_contract::routes;
+use aimux::project_service::agent_roles::load_agent_role_registry;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -218,7 +219,7 @@ fn loop_and_control_routes_validate_required_fields() {
 }
 
 #[test]
-fn overseer_route_enforces_single_project_overseer_and_clear_sets_false_override() {
+fn overseer_route_promotes_agent_without_demoting_other_overseers() {
     let project = temp_project("overseer");
     let state_dir = project.join("state");
     seed_metadata(&state_dir);
@@ -233,9 +234,15 @@ fn overseer_route_enforces_single_project_overseer_and_clear_sets_false_override
     assert_eq!(response.status, 200);
     assert_eq!(response.body["overseer"], true);
     let state = load_metadata_state(&state_dir);
-    assert!(state.sessions["boss-1"].get("overseer").is_none());
-    assert_eq!(state.sessions["boss-1"]["projectControl"], false);
+    assert_eq!(state.sessions["boss-1"]["overseer"], true);
     assert_eq!(state.sessions["boss-2"]["overseer"], true);
+    assert_eq!(state.sessions["boss-2"]["role"], "overseer");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["sessions"]["boss-2"]["role"], "overseer");
+    assert_eq!(
+        registry["sessions"]["boss-2"]["lane"],
+        json!({ "kind": "supervisor" })
+    );
 
     let clear = route_project_service_request(
         &context,
@@ -252,7 +259,7 @@ fn overseer_route_enforces_single_project_overseer_and_clear_sets_false_override
 }
 
 #[test]
-fn scribe_route_enforces_single_scribe_and_clear_sets_false_override() {
+fn scribe_route_promotes_and_clear_sets_false_override() {
     let project = temp_project("scribe");
     let state_dir = project.join("state");
     seed_metadata(&state_dir);
@@ -267,9 +274,9 @@ fn scribe_route_enforces_single_scribe_and_clear_sets_false_override() {
     assert_eq!(response.status, 200);
     assert_eq!(response.body["scribe"], true);
     let state = load_metadata_state(&state_dir);
-    assert!(state.sessions["scribe-1"].get("scribe").is_none());
-    assert_eq!(state.sessions["scribe-1"]["projectControl"], false);
+    assert_eq!(state.sessions["scribe-1"]["scribe"], true);
     assert_eq!(state.sessions["scribe-2"]["scribe"], true);
+    assert_eq!(state.sessions["scribe-2"]["role"], "scribe");
 
     let clear = route_project_service_request(
         &context,
@@ -281,6 +288,119 @@ fn scribe_route_enforces_single_scribe_and_clear_sets_false_override() {
     assert_eq!(clear.body["scribe"], false);
     let state = load_metadata_state(&state_dir);
     assert_eq!(state.sessions["scribe-2"]["scribe"], false);
+    cleanup(project);
+}
+
+#[test]
+fn watch_route_binds_coder_to_one_overseer() {
+    let project = temp_project("watch-bind");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss-1".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "boss-2".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "tool": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let bind = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss-1",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+    assert_eq!(bind.status, 200);
+    assert_eq!(bind.body["ok"], true);
+    assert_eq!(bind.body["watchedSessionIds"], json!(["worker"]));
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["worker"], "boss-1");
+    assert_eq!(
+        registry["sessions"]["boss-1"]["watching"],
+        json!(["worker"])
+    );
+
+    let conflict = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss-2",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+    assert_eq!(conflict.status, 409);
+    assert_eq!(conflict.body["ok"], false);
+    assert_eq!(conflict.body["reason"], "already-watched");
+    assert_eq!(conflict.body["currentOverseerSessionId"], "boss-1");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["worker"], "boss-1");
+    cleanup(project);
+}
+
+#[test]
+fn watch_route_refuses_non_coder_watched_agent() {
+    let project = temp_project("watch-refuse-non-coder");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "scribe".into(),
+                    json!({ "scribe": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss",
+            "watchedSessionId": "scribe",
+            "active": true
+        })),
+    );
+
+    assert_eq!(response.status, 400);
+    assert_eq!(response.body["ok"], false);
+    assert_eq!(response.body["reason"], "watched-agent-must-be-coder");
+    assert_eq!(response.body["details"]["role"], "scribe");
+    assert!(
+        !load_agent_role_registry(&state_dir)
+            .expect("role registry")
+            .pointer("/watchBindings/scribe")
+            .is_some()
+    );
     cleanup(project);
 }
 

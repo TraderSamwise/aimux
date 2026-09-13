@@ -3,7 +3,13 @@
 // Canonical server-side shapes live in src/dashboard/index.ts and src/multiplexer/dashboard-model.ts.
 
 import type { AgentTranscriptMessage } from "@/lib/events";
-import type { PreviewCaptureMarker, ProjectOperationFailure } from "../../src/project-api-contract";
+import type {
+  AgentLane,
+  AgentRole,
+  AgentRoleState,
+  PreviewCaptureMarker,
+  ProjectOperationFailure,
+} from "../../src/project-api-contract";
 
 export type DesktopSessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
 export type DesktopServiceStatus = "running" | "exited" | "offline";
@@ -49,7 +55,9 @@ export interface DesktopSession {
   createdAt?: string;
   restoreState?: "ready" | "blocked";
   restoreBlockedReason?: string;
-  role?: string;
+  role?: AgentRole;
+  lane?: AgentLane;
+  roleState?: AgentRoleState;
   activity?: string;
   attention?: string;
   lastUsedAt?: string;
@@ -118,6 +126,11 @@ export interface DesktopWorktreeGroup {
 export interface DesktopState {
   ok: boolean;
   sessions: DesktopSession[];
+  supervisorLane?: {
+    sessions: DesktopSession[];
+    health?: "active" | "attention" | "idle" | "offline" | "unknown";
+    unavailable?: { reason?: string; error?: string };
+  };
   teammates?: DesktopSession[];
   services: DesktopService[];
   worktrees: DesktopWorktree[];
