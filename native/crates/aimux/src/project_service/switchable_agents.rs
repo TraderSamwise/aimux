@@ -34,10 +34,12 @@ use super::preview_snapshots::{
     capture_preview_snapshot_with_tap_async, capture_preview_snapshot_with_tap_result,
 };
 use super::router::ProjectServiceRequestContext;
+use super::session_visibility::{
+    AgentVisibilityInput, AgentVisibilityRule, SessionLivenessPolicy, SwitchableRolePolicy,
+};
 use super::usage::{load_last_used_state, parse_recency_timestamp};
 use super::visual_clients::VisualClientLeaseRoute;
 
-const LIVE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
 const LIVE_SERVICE_STATUSES: &[&str] = &["starting", "running"];
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -488,10 +490,9 @@ fn topology_switchable_entries_from_sessions(
     metadata_sessions: &BTreeMap<String, Value>,
 ) -> Vec<ManagedWindowEntry> {
     let mut entries = Vec::new();
-    for session in sessions
-        .into_iter()
-        .filter(|session| string_field(session, "status").is_some_and(is_live_session_status))
-    {
+    for session in sessions.into_iter().filter(|session| {
+        SessionLivenessPolicy::LiveOnly.allows_status(string_field(session, "status"))
+    }) {
         if let Some(entry) = session_switchable_entry(&session, metadata_sessions) {
             entries.push(entry);
         }
@@ -521,10 +522,6 @@ fn default_tools_config() -> Map<String, Value> {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default()
-}
-
-fn is_live_session_status(status: &str) -> bool {
-    LIVE_SESSION_STATUSES.contains(&status)
 }
 
 pub fn list_switchable_agent_items(
@@ -666,52 +663,30 @@ fn build_switchable_agent_items(
         })
         .map(str::to_owned);
     let scoped_worktree_path = resolve_context_worktree_path(context, current_managed_window);
+    let visibility_rule = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
+        include_overseer: options.include_overseer,
+        scope_all_worktrees: options.scope == AgentListScope::All,
+        scoped_worktree_path: scoped_worktree_path.clone(),
+        current_window_id: current_managed_window
+            .and_then(|entry| target_string_field(&entry.target, "windowId"))
+            .map(str::to_owned),
+        teammate_parent_session_id: teammate_parent_session_id.clone(),
+    });
     let mut managed = entries
         .iter()
         .enumerate()
         .filter(|(_, entry)| {
             let metadata = metadata_with_stored_control_flags(&entry.metadata, metadata_sessions);
-            if target_string_field(&entry.target, "windowName")
-                .is_some_and(is_dashboard_window_name)
-            {
-                return false;
-            }
-            let current_window_id = current_managed_window
-                .and_then(|entry| target_string_field(&entry.target, "windowId"));
-            if !entry.alive && target_string_field(&entry.target, "windowId") != current_window_id {
-                return false;
-            }
-            if is_scribe_session(Some(&metadata)) {
-                return false;
-            }
-            let overseer = is_overseer_session(Some(&metadata));
-            if !options.include_overseer && overseer {
-                return false;
-            }
-            if options.include_overseer && overseer {
-                if options.scope == AgentListScope::All {
-                    return true;
-                }
-                return clean_path_string(
-                    string_field(&entry.metadata, "worktreePath").unwrap_or(&context.project_root),
-                ) == scoped_worktree_path;
-            }
-            if let Some(teammate_parent_session_id) = teammate_parent_session_id.as_deref()
-                && options.scope != AgentListScope::All
-            {
-                return string_field(&metadata, "kind") != Some("service")
-                    && team_string_field(&metadata, "parentSessionId")
-                        == Some(teammate_parent_session_id);
-            }
-            if team_string_field(&metadata, "parentSessionId").is_some_and(|id| !id.is_empty()) {
-                return false;
-            }
-            if options.scope == AgentListScope::All {
-                return true;
-            }
-            clean_path_string(
-                string_field(&metadata, "worktreePath").unwrap_or(&context.project_root),
-            ) == scoped_worktree_path
+            visibility_rule.allows(AgentVisibilityInput {
+                status: None,
+                alive: entry.alive,
+                metadata: &metadata,
+                kind: string_field(&metadata, "kind"),
+                worktree_path: string_field(&metadata, "worktreePath")
+                    .or(Some(&context.project_root)),
+                window_name: target_string_field(&entry.target, "windowName"),
+                window_id: target_string_field(&entry.target, "windowId"),
+            })
         })
         .collect::<Vec<_>>();
     managed.sort_by(|(_, left), (_, right)| {
@@ -1315,10 +1290,6 @@ fn path_clean(path: &Path) -> PathBuf {
         }
     }
     output
-}
-
-fn is_dashboard_window_name(name: &str) -> bool {
-    name == "dashboard" || name.starts_with("dashboard-")
 }
 
 fn user_label_chip(value: &str) -> Option<(&'static str, &'static str)> {

@@ -84,6 +84,16 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
             "codex-cold".to_owned(),
         ]
     );
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| (
+                session["id"].as_str().unwrap(),
+                session["index"].as_i64().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        vec![("boss", 0), ("codex-live", 1), ("codex-cold", 2)]
+    );
     let live = find(sessions, "codex-live");
     assert_eq!(live["status"], "running");
     assert_eq!(live["active"], true);

@@ -38,13 +38,13 @@ use super::preview_snapshots::{
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::session_semantics::{SessionSemanticsInput, derive_session_semantics};
+use super::session_visibility::{AgentVisibilityInput, AgentVisibilityRule};
 use super::usage::parse_recency_timestamp;
 use super::visual_clients::VisualClientLeaseRoute;
 
 const ACTIVE_WORKTREE_STATUSES: &[&str] = &[
     "planned", "creating", "active", "removing", "missing", "error",
 ];
-const DASHBOARD_SESSION_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
 const DASHBOARD_SERVICE_STATUSES: &[&str] = &[
     "planned", "starting", "running", "stopped", "offline", "error",
 ];
@@ -378,10 +378,7 @@ pub fn build_desktop_state_with_live_window_projection(
         live_window_ids,
     )
     .into_iter()
-    .filter(|session| {
-        string_field(session, "status")
-            .is_some_and(|status| DASHBOARD_SESSION_STATUSES.contains(&status))
-    })
+    .filter(dashboard_session_visibility_allows)
     .collect::<Vec<_>>();
     let worktrees = desktop_worktrees(&input.project_root, input.topology);
     let worktree_by_path = worktree_lookup_by_identity(&worktrees);
@@ -464,10 +461,7 @@ async fn build_desktop_state_with_live_window_projection_async(
         live_window_ids,
     )
     .into_iter()
-    .filter(|session| {
-        string_field(session, "status")
-            .is_some_and(|status| DASHBOARD_SESSION_STATUSES.contains(&status))
-    })
+    .filter(dashboard_session_visibility_allows)
     .collect::<Vec<_>>();
     let worktree_projection = desktop_worktrees_async(&input.project_root, input.topology).await;
     let worktrees = worktree_projection.worktrees;
@@ -1561,6 +1555,18 @@ fn dashboard_service_status(status: Option<&str>) -> &'static str {
 
 fn is_teammate_session(session: &Value) -> bool {
     team_string_field(session, "parentSessionId").is_some()
+}
+
+fn dashboard_session_visibility_allows(session: &Value) -> bool {
+    AgentVisibilityRule::dashboard().allows(AgentVisibilityInput {
+        status: string_field(session, "status"),
+        alive: true,
+        metadata: session,
+        kind: string_field(session, "kind"),
+        worktree_path: string_field(session, "worktreePath"),
+        window_name: None,
+        window_id: None,
+    })
 }
 
 fn is_project_control_session(session: &Value) -> bool {

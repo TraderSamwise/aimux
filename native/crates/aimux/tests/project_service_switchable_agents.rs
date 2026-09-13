@@ -2,6 +2,9 @@ use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::preview_snapshots::capture_preview_snapshot_with_tap;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::session_visibility::{
+    AgentVisibilityInput, AgentVisibilityRule, SwitchableRolePolicy,
+};
 use aimux::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
     agent_status_chip, list_switchable_agent_items, resolve_next_agent, resolve_prev_agent,
@@ -100,6 +103,79 @@ fn filters_project_control_and_keeps_services_in_worktree_scope() {
         ids(&items),
         vec!["coder".to_owned(), "boss".to_owned(), "shell-1".to_owned()]
     );
+}
+
+#[test]
+fn shared_visibility_rule_keeps_liveness_parameterized_for_expose_and_dashboard() {
+    let metadata = json!({
+        "kind": "agent",
+        "sessionId": "restore-blocked",
+        "worktreePath": "/repo"
+    });
+    let input = AgentVisibilityInput {
+        status: Some("offline"),
+        alive: true,
+        metadata: &metadata,
+        kind: Some("agent"),
+        worktree_path: Some("/repo"),
+        window_name: Some("codex"),
+        window_id: Some("@1"),
+    };
+
+    let expose_rule = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
+        include_overseer: false,
+        scope_all_worktrees: true,
+        scoped_worktree_path: "/repo".into(),
+        current_window_id: None,
+        teammate_parent_session_id: None,
+    });
+    let dashboard_rule = AgentVisibilityRule::dashboard();
+
+    assert!(
+        !expose_rule.allows(input),
+        "Expose uses the shared rule with live-only liveness"
+    );
+    assert!(
+        dashboard_rule.allows(input),
+        "dashboard uses the same rule with offline-inclusive liveness"
+    );
+}
+
+#[test]
+fn shared_visibility_rule_makes_role_exclusion_an_explicit_parameter() {
+    let overseer = json!({
+        "kind": "agent",
+        "sessionId": "boss",
+        "worktreePath": "/repo",
+        "overseer": true,
+        "projectControl": true
+    });
+    let input = AgentVisibilityInput {
+        status: Some("running"),
+        alive: true,
+        metadata: &overseer,
+        kind: Some("agent"),
+        worktree_path: Some("/repo"),
+        window_name: Some("claude"),
+        window_id: Some("@2"),
+    };
+    let excluded = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
+        include_overseer: false,
+        scope_all_worktrees: false,
+        scoped_worktree_path: "/repo".into(),
+        current_window_id: None,
+        teammate_parent_session_id: None,
+    });
+    let included = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
+        include_overseer: true,
+        scope_all_worktrees: false,
+        scoped_worktree_path: "/repo".into(),
+        current_window_id: None,
+        teammate_parent_session_id: None,
+    });
+
+    assert!(!excluded.allows(input));
+    assert!(included.allows(input));
 }
 
 #[test]
@@ -536,6 +612,76 @@ fn route_switchable_agents_drops_sessions_without_live_tmux_windows() {
             .map(|item| item["id"].as_str().unwrap())
             .collect::<Vec<_>>(),
         vec!["codex-live"]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn route_switchable_agents_expose_liveness_policy_excludes_offline_sessions() {
+    let project = temp_project("route-switchable-expose-offline");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let mut topology = topology_fixture();
+    topology["nodes"].as_array_mut().unwrap().push(json!({
+        "id": "node-offline",
+        "rigId": "rig-1",
+        "logicalId": "restore-blocked",
+        "toolConfigKey": "aider",
+        "cwd": "/repo/wt",
+        "label": "restore-blocked",
+        "createdAt": "2026-09-05T00:00:00.000Z"
+    }));
+    topology["bindings"].as_array_mut().unwrap().push(json!({
+        "id": "binding-offline",
+        "nodeId": "node-offline",
+        "tmuxSession": "aimux-repo",
+        "tmuxWindowId": "@4",
+        "tmuxWindowIndex": 4,
+        "tmuxWindowName": "aider",
+        "updatedAt": "2026-09-05T00:00:00.000Z"
+    }));
+    topology["sessions"].as_array_mut().unwrap().push(json!({
+        "id": "restore-blocked",
+        "nodeId": "node-offline",
+        "status": "offline",
+        "tool": "aider",
+        "command": "aider",
+        "worktreePath": "/repo/wt",
+        "label": "restore-blocked",
+        "createdAt": "2026-09-05T00:00:00.000Z",
+        "updatedAt": "2026-09-05T00:00:00.000Z"
+    }));
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([("boss".into(), json!({ "overseer": true }))]),
+        },
+    )
+    .unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3", "@4"]));
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/control/switchable-agents?scope=all&currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1",
+        None,
+    );
+
+    assert_eq!(response.status, 200);
+    let items = response.body["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["codex-live", "svc-live"]
     );
     cleanup(project);
 }
