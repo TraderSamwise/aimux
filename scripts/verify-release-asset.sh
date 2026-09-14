@@ -86,7 +86,7 @@ fi
 
 BINARY_STAMP="$(
   strings "$NATIVE_ARTIFACT" \
-    | awk -F= '/^AIMUX_EMBEDDED_BUILD_STAMP=/ && length($2) > 0 { print $2; exit }'
+    | awk -F= '/^AIMUX_EMBEDDED_BUILD_STAMP=/ && length($2) > 0 && !found { print $2; found = 1 }'
 )"
 if [ -z "$BINARY_STAMP" ]; then
   printf 'Release binary is missing embedded build stamp witness: native/%s/aimux\n' "$PLATFORM_ARCH" >&2
