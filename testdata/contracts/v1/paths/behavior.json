@@ -55,20 +55,13 @@
     },
     {
       "id": "paths-behavior-005",
-      "name": "prunes claude temp aimux roots before enforcing the registry cap",
+      "name": "retains unmarked claude temp roots before enforcing the registry cap",
       "source": "src/paths.test.ts",
       "api": "initPathsRegistry",
       "input": { "aimuxHome": "<base>-home", "repoRoot": "<base>/real-project", "existingProjects": 600 },
       "output": {
-        "ok": true,
-        "value": [
-          {
-            "id": "real-project-d77af6315aa4",
-            "name": "real-project",
-            "repoRoot": "<base>/real-project",
-            "lastSeen": "<ts:1>"
-          }
-        ]
+        "ok": false,
+        "error": "aimux project registry has 600 entries; cap is 500. Refusing to continue because the registry is likely polluted. Remove stale entries from <base>-home/projects.json."
       },
       "inputSha256": "40b9438c57a7bcff0c6b3f2e112f3351ffff529e5e973b559726e3f2eb6bee3c"
     },

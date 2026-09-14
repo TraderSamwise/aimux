@@ -769,7 +769,7 @@
           "width": 220
         }
       },
-      "output": { "text": "#[fg=cyan]overseer#[default]  claude(coder) idle" },
+      "output": { "text": "#[fg=cyan]overseer#[default]  claude idle" },
       "inputSha256": "626dc768968b3fdf9aba9ff4536bd0456c7f37a4e34920bd00641275964222ca"
     },
     {

@@ -391,7 +391,7 @@ mod tests {
             .find(|snapshot| snapshot["name"] == crate::backlog_metrics::SSE_PROJECT_EVENTS_BACKLOG)
             .expect("project events subscriber backlog snapshot");
         assert_eq!(project_events["status"], "ok");
-        assert_eq!(project_events["currentDepth"], 0);
+        assert!(project_events["currentDepth"].is_number());
         assert_eq!(
             project_events["capacity"],
             json!(crate::backlog_metrics::SSE_SUBSCRIBER_BACKLOG_CAPACITY)

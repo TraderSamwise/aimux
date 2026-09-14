@@ -5452,7 +5452,10 @@ mod tests {
         fixture.persist_service(&project_id, 91_002, ProjectServiceStatus::Running);
         fixture.persist_endpoint(91_002);
         let launcher = Arc::new(RestartTestLauncher::new(91_202).with_endpoint(45_902));
-        let verifier = Arc::new(RestartTestProcessVerifier::previous_build([91_002]));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::previous_build([91_002])
+                .with_pid_exiting_after_live_checks(91_002, 1),
+        );
         let mut runtime = fixture.runtime(launcher.clone(), verifier);
 
         let result = runtime.restart_control_plane_project_with(&project, restart_test_dashboard);
@@ -5492,6 +5495,7 @@ mod tests {
         let launcher = Arc::new(RestartTestLauncher::new(91_211).with_endpoint(45_911));
         let verifier = Arc::new(
             RestartTestProcessVerifier::previous_build([91_011, 91_012, 91_211])
+                .with_pid_exiting_after_live_checks(91_011, 1)
                 .with_project_service_pids(&project_id, [91_011])
                 .with_project_service_pids(&other_project_id, [91_012]),
         );
@@ -5559,6 +5563,8 @@ mod tests {
         let launcher = Arc::new(RestartTestLauncher::new(91_221).with_endpoint(45_921));
         let verifier = Arc::new(
             RestartTestProcessVerifier::previous_build([91_021, 91_022, 91_221])
+                .with_pid_exiting_after_live_checks(91_021, 1)
+                .with_pid_exiting_after_live_checks(91_022, 1)
                 .with_project_service_pids(&project_id, [91_021])
                 .with_project_service_pids(&other_project_id, [91_022]),
         );
@@ -6638,6 +6644,7 @@ mod tests {
         let launcher = Arc::new(RestartTestLauncher::new(91_126).with_endpoint(45_906));
         let verifier = Arc::new(
             RestartTestProcessVerifier::previous_build([91_026])
+                .with_pid_exiting_after_live_checks(91_026, 1)
                 .with_exit_detail(91_126, "signal 9"),
         );
         let health = Arc::new(RestartTestHealthProbe::not_ready());
@@ -8227,6 +8234,7 @@ mod tests {
         current_native: BTreeSet<i32>,
         project_service_pids: BTreeMap<String, Vec<i32>>,
         exit_details: BTreeMap<i32, String>,
+        live_checks_before_exit: Mutex<BTreeMap<i32, usize>>,
         batch_project_counts: Mutex<Vec<usize>>,
         single_project_scan_count: Mutex<usize>,
     }
@@ -8239,6 +8247,7 @@ mod tests {
                 current_native,
                 project_service_pids: BTreeMap::new(),
                 exit_details: BTreeMap::new(),
+                live_checks_before_exit: Mutex::new(BTreeMap::new()),
                 batch_project_counts: Mutex::new(Vec::new()),
                 single_project_scan_count: Mutex::new(0),
             }
@@ -8250,9 +8259,18 @@ mod tests {
                 current_native: BTreeSet::new(),
                 project_service_pids: BTreeMap::new(),
                 exit_details: BTreeMap::new(),
+                live_checks_before_exit: Mutex::new(BTreeMap::new()),
                 batch_project_counts: Mutex::new(Vec::new()),
                 single_project_scan_count: Mutex::new(0),
             }
+        }
+
+        fn with_pid_exiting_after_live_checks(mut self, pid: i32, checks: usize) -> Self {
+            self.live_checks_before_exit
+                .get_mut()
+                .expect("live checks before exit")
+                .insert(pid, checks);
+            self
         }
 
         fn with_exit_detail(mut self, pid: i32, detail: impl Into<String>) -> Self {
@@ -8287,6 +8305,17 @@ mod tests {
 
     impl ProjectServiceProcessVerifier for RestartTestProcessVerifier {
         fn is_live(&self, pid: i32) -> bool {
+            let mut live_checks = self
+                .live_checks_before_exit
+                .lock()
+                .expect("live checks before exit");
+            if let Some(checks) = live_checks.get_mut(&pid) {
+                if *checks == 0 {
+                    return false;
+                }
+                *checks -= 1;
+                return true;
+            }
             self.live.contains(&pid)
         }
 
