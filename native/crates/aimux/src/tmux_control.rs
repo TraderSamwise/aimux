@@ -2,7 +2,8 @@ use crate::async_subprocess::AsyncCommand;
 use crate::cli_launcher::{
     AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
 };
-use crate::tmux::tmux_command_from_env;
+use crate::dashboard_command_spec::get_dashboard_command_spec;
+use crate::tmux::{new_dashboard_window_argv, tmux_command_from_env};
 use crate::tmux_expose::expose_project_control_flag_from_metadata;
 use anyhow::Result;
 use serde_json::{Map, Value};
@@ -496,9 +497,7 @@ impl TmuxControl {
         }
         if attempted_endpoint {
             if self.dashboard_candidate_missing {
-                self.show_local_message(
-                    "#[fg=colour203,bold]aimux#[default] dashboard reload failed - dashboard window missing",
-                );
+                return self.create_missing_dashboard_window();
             } else {
                 self.show_local_message(
                     "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't contact project service endpoint",
@@ -510,6 +509,80 @@ impl TmuxControl {
             );
         }
         true
+    }
+
+    fn create_missing_dashboard_window(&mut self) -> bool {
+        let Some(session) = self.dashboard_reload_session() else {
+            self.show_local_message(
+                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - tmux session missing",
+            );
+            return true;
+        };
+        if !self.tmux_success(&["has-session", "-t", &session]) {
+            self.show_local_message(
+                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - tmux session missing",
+            );
+            return true;
+        }
+        let Ok(spec) = get_dashboard_command_spec(&self.options.project_root) else {
+            self.show_local_message(
+                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't build dashboard command",
+            );
+            return true;
+        };
+        let argv = new_dashboard_window_argv(
+            &session,
+            &self.options.project_root,
+            "dashboard",
+            Some(&spec.dashboard_command),
+        );
+        if command_status("tmux", argv.iter().map(String::as_str)) != 0 {
+            self.show_local_message(
+                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't create dashboard window",
+            );
+            return true;
+        }
+        let Some(index) = self.find_dashboard_index(&session) else {
+            self.show_local_message(
+                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - dashboard window not found after create",
+            );
+            return true;
+        };
+        self.dashboard_session = session.clone();
+        self.dashboard_index = index.clone();
+        self.dashboard_candidate_missing = false;
+        let target = format!("{session}:{index}");
+        let tty = self
+            .live_client
+            .as_ref()
+            .map(|client| client.tty.as_str())
+            .filter(|tty| !tty.is_empty())
+            .unwrap_or(&self.options.client_tty)
+            .to_owned();
+        if !self.switch_client_to_target(&target, &tty) {
+            self.show_local_message(
+                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't focus dashboard window",
+            );
+            return true;
+        }
+        self.refresh_navigation_client(&tty);
+        self.tmux_status(&["send-keys", "-t", &target, "-H", "1b", "5b", "49"]);
+        true
+    }
+
+    fn dashboard_reload_session(&mut self) -> Option<String> {
+        if self.live_client.is_none() {
+            self.resolve_live_client();
+        }
+        self.live_client
+            .as_ref()
+            .map(|client| client.session.as_str())
+            .filter(|session| !session.is_empty())
+            .or_else(|| {
+                (!self.options.current_client_session.is_empty())
+                    .then_some(self.options.current_client_session.as_str())
+            })
+            .map(str::to_owned)
     }
 
     fn show_local_coordination(&mut self) -> bool {

@@ -1077,6 +1077,26 @@ fn invalid_known_commands_name_the_argument_problem_while_unknown_commands_stay_
         "{invalid_message_stderr}"
     );
 
+    let invalid_dashboard_reload = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", &node)
+        .env("HOME", root.join("home"))
+        .env("AIMUX_HOME", root.join("aimux-home"))
+        .env("AIMUX_DAEMON_PORT", allocate_daemon_port().to_string())
+        .args(["dashboard-reload", "--client-tty=-x"])
+        .output()
+        .expect("run invalid dashboard-reload command");
+    assert_eq!(invalid_dashboard_reload.status.code(), Some(1));
+    let invalid_dashboard_reload_stderr = String::from_utf8_lossy(&invalid_dashboard_reload.stderr);
+    assert!(
+        invalid_dashboard_reload_stderr.contains("--client-tty requires a non-flag value"),
+        "{invalid_dashboard_reload_stderr}"
+    );
+    assert!(
+        !invalid_dashboard_reload_stderr.contains("invalid dashboard-reload arguments"),
+        "{invalid_dashboard_reload_stderr}"
+    );
+
     let unknown = Command::new(env!("CARGO_BIN_EXE_aimux"))
         .env("AIMUX_ROOT", &root)
         .env("AIMUX_NODE_BIN", node)

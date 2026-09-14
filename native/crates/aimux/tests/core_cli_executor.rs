@@ -989,6 +989,8 @@ fn dashboard_reload_and_runtime_restart_execute_native_text_routes() {
     let reload = run_core_cli_with(
         &args(&[
             "dashboard-reload",
+            "--project",
+            "other",
             "--open",
             "--client-tty",
             "/dev/ttys001",
@@ -1014,7 +1016,7 @@ fn dashboard_reload_and_runtime_restart_execute_native_text_routes() {
             (
                 "/core/dashboard-reload-text".into(),
                 Some(json!({
-                    "projectRoot": "/repo",
+                    "projectRoot": "/resolved/other",
                     "open": true,
                     "clientTty": "/dev/ttys001",
                     "currentClientSession": "aimux-repo-client-abc12345"

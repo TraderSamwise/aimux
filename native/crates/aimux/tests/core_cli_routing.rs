@@ -10,16 +10,17 @@ use aimux::core_cli_routing::{
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
     parse_core_attachment_publish_args, parse_core_collaboration_args,
     parse_core_collaboration_args_result, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_doctor_args, parse_core_graveyard_args,
-    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
-    parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
-    parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
-    parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
-    parse_core_notification_args, parse_core_outline_args, parse_core_overseer_clear_args,
-    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_project_stop_args,
-    parse_core_repair_args, parse_core_restart_args, parse_core_runtime_restart_args,
-    parse_core_scribe_clear_args, parse_core_scribe_start_args, parse_core_service_create_args,
-    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_dashboard_reload_args, parse_core_dashboard_reload_args_result,
+    parse_core_doctor_args, parse_core_graveyard_args, parse_core_host_agent_read_args,
+    parse_core_host_agent_stream_args, parse_core_host_restart_args, parse_core_host_topology_args,
+    parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
+    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
+    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
+    parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_repair_args,
+    parse_core_restart_args, parse_core_runtime_restart_args, parse_core_scribe_clear_args,
+    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
+    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 
 #[test]
@@ -1469,12 +1470,15 @@ fn dashboard_and_runtime_restart_parsers_match_shell_shim_forms() {
     let reload = parse_core_dashboard_reload_args(&[
         "dashboard-reload",
         "--open",
+        "--project",
+        "/other/repo",
         "--client-tty=/dev/ttys001",
         "--current-client-session",
         "aimux-repo-client-abc12345",
     ])
     .expect("reload args");
     assert!(reload.open);
+    assert_eq!(reload.project.as_deref(), Some("/other/repo"));
     assert_eq!(reload.client_tty.as_deref(), Some("/dev/ttys001"));
     assert_eq!(
         reload.current_client_session.as_deref(),
@@ -1496,6 +1500,36 @@ fn dashboard_and_runtime_restart_parsers_match_shell_shim_forms() {
     assert!(parse_core_dashboard_reload_args(&["dashboard-reload", "--json"]).is_some());
     assert!(parse_core_dashboard_reload_args(&["dashboard-reload", "--client-tty=-x"]).is_none());
     assert!(parse_core_runtime_restart_args(&["restart-runtime", "--project-root=-x"]).is_none());
+}
+
+#[test]
+fn dashboard_reload_parser_names_invalid_argument_reasons() {
+    for (args, expected) in [
+        (
+            vec!["dashboard-reload", "--project"],
+            "--project requires a value",
+        ),
+        (
+            vec!["dashboard-reload", "--project", "--open"],
+            "--project requires a non-flag value",
+        ),
+        (
+            vec!["dashboard-reload", "--client-tty=-x"],
+            "--client-tty requires a non-flag value",
+        ),
+        (
+            vec!["dashboard-reload", "--bad"],
+            "unknown dashboard-reload option --bad",
+        ),
+        (
+            vec!["dashboard-reload", "extra"],
+            "unexpected dashboard-reload argument extra",
+        ),
+    ] {
+        let error = parse_core_dashboard_reload_args_result(&args)
+            .expect_err("invalid dashboard-reload args should name the bad argument");
+        assert_eq!(error.message(), expected, "{args:?}");
+    }
 }
 
 #[test]

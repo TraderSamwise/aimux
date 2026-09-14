@@ -472,13 +472,39 @@ pub fn parse_core_host_agent_stream_args_result<S: AsRef<str>>(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoreDashboardReloadArgsError {
+    message: String,
+}
+
+impl CoreDashboardReloadArgsError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 pub fn parse_core_dashboard_reload_args<S: AsRef<str>>(
     args: &[S],
 ) -> Option<CoreDashboardReloadArgs> {
+    parse_core_dashboard_reload_args_result(args).ok()
+}
+
+pub fn parse_core_dashboard_reload_args_result<S: AsRef<str>>(
+    args: &[S],
+) -> Result<CoreDashboardReloadArgs, CoreDashboardReloadArgsError> {
     if args.first().map(AsRef::as_ref) != Some("dashboard-reload") {
-        return None;
+        return Err(CoreDashboardReloadArgsError::new(
+            "dashboard-reload requires the dashboard-reload command",
+        ));
     }
     let mut parsed = CoreDashboardReloadArgs {
+        project: None,
         open: false,
         json: false,
         client_tty: None,
@@ -497,29 +523,81 @@ pub fn parse_core_dashboard_reload_args<S: AsRef<str>>(
             index += 1;
             continue;
         }
+        if arg == "--project" {
+            parsed.project = Some(required_dashboard_reload_option(args, index, "--project")?);
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            parsed.project = Some(inline_dashboard_reload_option(value, "--project")?);
+            index += 1;
+            continue;
+        }
         if arg == "--client-tty" {
-            parsed.client_tty = Some(required_non_flag_value(args, index)?.to_owned());
+            parsed.client_tty = Some(required_dashboard_reload_option(
+                args,
+                index,
+                "--client-tty",
+            )?);
             index += 2;
             continue;
         }
         if let Some(value) = arg.strip_prefix("--client-tty=") {
-            parsed.client_tty = Some(non_flag_inline_value(value)?.to_owned());
+            parsed.client_tty = Some(inline_dashboard_reload_option(value, "--client-tty")?);
             index += 1;
             continue;
         }
         if arg == "--current-client-session" {
-            parsed.current_client_session = Some(required_non_flag_value(args, index)?.to_owned());
+            parsed.current_client_session = Some(required_dashboard_reload_option(
+                args,
+                index,
+                "--current-client-session",
+            )?);
             index += 2;
             continue;
         }
         if let Some(value) = arg.strip_prefix("--current-client-session=") {
-            parsed.current_client_session = Some(non_flag_inline_value(value)?.to_owned());
+            parsed.current_client_session = Some(inline_dashboard_reload_option(
+                value,
+                "--current-client-session",
+            )?);
             index += 1;
             continue;
         }
-        return None;
+        if arg.starts_with('-') {
+            return Err(CoreDashboardReloadArgsError::new(format!(
+                "unknown dashboard-reload option {arg}"
+            )));
+        }
+        return Err(CoreDashboardReloadArgsError::new(format!(
+            "unexpected dashboard-reload argument {arg}"
+        )));
     }
-    Some(parsed)
+    Ok(parsed)
+}
+
+fn required_dashboard_reload_option<S: AsRef<str>>(
+    args: &[S],
+    index: usize,
+    option: &str,
+) -> Result<String, CoreDashboardReloadArgsError> {
+    let Some(value) = required_value(args, index) else {
+        return Err(CoreDashboardReloadArgsError::new(format!(
+            "{option} requires a value"
+        )));
+    };
+    inline_dashboard_reload_option(value, option)
+}
+
+fn inline_dashboard_reload_option(
+    value: &str,
+    option: &str,
+) -> Result<String, CoreDashboardReloadArgsError> {
+    non_flag_inline_value(value)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            CoreDashboardReloadArgsError::new(format!("{option} requires a non-flag value"))
+        })
 }
 
 pub fn parse_core_runtime_restart_args<S: AsRef<str>>(

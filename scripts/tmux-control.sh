@@ -470,7 +470,8 @@ PY
       debug_log_line "dashboard reload api failed daemon_resolved_endpoint=$daemon_metadata_api"
     fi
     if [ "${dashboard_candidate_missing-0}" = "1" ]; then
-      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - dashboard window missing"
+      create_missing_dashboard_window
+      exit $?
     elif [ "$attempted_endpoint" = "1" ]; then
       show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't contact project service endpoint"
     else
@@ -478,6 +479,33 @@ PY
     fi
     exit 1
   ) >/dev/null 2>&1 &
+  return 0
+}
+
+create_missing_dashboard_window() {
+  reload_session="${live_client_session-${current_client_session-}}"
+  if [ -z "$reload_session" ] || ! tmux has-session -t "$reload_session" >/dev/null 2>&1; then
+    show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - tmux session missing"
+    return 1
+  fi
+  aimux_bin="${AIMUX_BIN-aimux}"
+  if ! tmux new-window -d -t "$reload_session" -c "$project_root" -n dashboard "$aimux_bin" __dashboard-internal-native --project-root "$project_root" >/dev/null 2>&1; then
+    show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't create dashboard window"
+    return 1
+  fi
+  dashboard_index=$(tmux list-windows -t "$reload_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
+  if [ -z "$dashboard_index" ]; then
+    show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - dashboard window not found after create"
+    return 1
+  fi
+  dashboard_switch_target="$reload_session:$dashboard_index"
+  reload_tty="${live_client_tty-${client_tty-}}"
+  if ! switch_client_to_target "$dashboard_switch_target" "$reload_tty"; then
+    show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't focus dashboard window"
+    return 1
+  fi
+  refresh_navigation_client "$reload_tty"
+  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
   return 0
 }
 

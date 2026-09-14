@@ -663,7 +663,7 @@ const FORK_HELP: &str = "Usage: aimux fork <sourceSessionId> --tool <toolKey> [o
 const SPAWN_HELP: &str = "Usage: aimux spawn --tool <toolKey> [options]\n\nSpawn a new agent\n\nOptions:\n  --tool <toolKey>            Configured tool key\n  --project <path>            Project path\n  --worktree <path>           Target worktree path\n  --role <role>               Supervisor role to assign at launch\n  --no-open                   Do not switch into the agent window\n  --json                      Emit JSON";
 const KILL_HELP: &str = "Usage: aimux kill <sessionId> [options]\n\nSend an agent to the graveyard\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
 const MIGRATE_HELP: &str = "Usage: aimux migrate <sessionId> --worktree <path> [options]\n\nMigrate a running agent into another worktree\n\nOptions:\n  --worktree <path>           Target worktree path\n  --project <path>            Project path\n  --json                      Emit JSON";
-const DASHBOARD_RELOAD_HELP: &str = "Usage: aimux dashboard-reload [options]\n\nRecreate and optionally reopen the dashboard window only\n\nOptions:\n  --open                      Open the dashboard after reloading\n  --client-tty <tty>          tmux client tty to switch after reloading\n  --current-client-session <name> Current client session to reopen";
+const DASHBOARD_RELOAD_HELP: &str = "Usage: aimux dashboard-reload [options]\n\nRecreate and optionally reopen the dashboard window only\n\nOptions:\n  --project <path>            Project path\n  --open                      Open the dashboard after reloading\n  --client-tty <tty>          tmux client tty to switch after reloading\n  --current-client-session <name> Current client session to reopen";
 const RESTART_RUNTIME_HELP: &str = "Usage: aimux restart-runtime [options]\n\nHard restart the current project runtime and rebuild its managed tmux topology\n\nOptions:\n  --project-root <path>       Project root\n  --open                      Open the dashboard after restarting the runtime\n  --client-tty <tty>          tmux client tty to switch after reopening\n  --json                      Emit JSON";
 const SERVE_HELP: &str =
     "Usage: aimux serve\n\nAdvanced: ensure the daemon-backed project control service is running";
@@ -1038,6 +1038,10 @@ fn invalid_known_command_help(args: &[String]) -> Option<(String, Option<&'stati
             invalid_collaboration_fallback_message("message", "send", rest),
             Some(MESSAGE_HELP),
         )),
+        [command, rest @ ..] if command == "dashboard-reload" => Some((
+            invalid_dashboard_reload_fallback_message(rest),
+            Some(DASHBOARD_RELOAD_HELP),
+        )),
         [command, subcommand, rest @ ..]
             if command == "handoff" && matches!(subcommand.as_str(), "send" | "accept" | "complete") =>
         {
@@ -1065,6 +1069,44 @@ fn invalid_known_command_help(args: &[String]) -> Option<(String, Option<&'stati
         )),
         _ => None,
     }
+}
+
+fn invalid_dashboard_reload_fallback_message(args: &[String]) -> String {
+    for (index, arg) in args.iter().enumerate() {
+        if matches!(arg.as_str(), "--open" | "--json") {
+            continue;
+        }
+        if dashboard_reload_option_takes_value(arg) {
+            let value = args.get(index + 1).map(String::as_str).unwrap_or("");
+            if value.is_empty() {
+                return format!("error: {arg} requires a value");
+            }
+            if value.starts_with('-') {
+                return format!("error: {arg} requires a non-flag value");
+            }
+        } else if let Some((option, value)) = dashboard_reload_inline_option(arg) {
+            if value.is_empty() || value.starts_with('-') {
+                return format!("error: {option} requires a non-flag value");
+            }
+        } else if arg.starts_with('-') {
+            return format!("error: unknown dashboard-reload option {arg}");
+        } else {
+            return format!("error: unexpected dashboard-reload argument {arg}");
+        }
+    }
+    "error: invalid dashboard-reload arguments".to_owned()
+}
+
+fn dashboard_reload_option_takes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--project" | "--client-tty" | "--current-client-session"
+    )
+}
+
+fn dashboard_reload_inline_option(arg: &str) -> Option<(&str, &str)> {
+    let (option, value) = arg.split_once('=')?;
+    dashboard_reload_option_takes_value(option).then_some((option, value))
 }
 
 fn invalid_collaboration_fallback_message(

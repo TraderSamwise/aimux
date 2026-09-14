@@ -1667,8 +1667,11 @@ where
             )
         }
         ("dashboard-reload", _) => {
-            let (payload, json) =
-                dashboard_reload_payload(context.current_project_root.clone(), &args)?;
+            let (payload, json) = dashboard_reload_payload(
+                context.current_project_root.clone(),
+                &args,
+                &resolve_project_root,
+            )?;
             (
                 CoreCliOperation::DashboardReload,
                 CoreCliAction::TextRoute {

@@ -547,6 +547,8 @@ pub enum CoreHostAgentStreamArgsError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoreDashboardReloadArgs {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     pub open: bool,
     pub json: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

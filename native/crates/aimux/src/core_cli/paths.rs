@@ -1,5 +1,5 @@
 use crate::core_cli_routing::{
-    CoreHostRestartArgs, CoreLifecycleSpawnArgs, parse_core_dashboard_reload_args,
+    CoreHostRestartArgs, CoreLifecycleSpawnArgs, parse_core_dashboard_reload_args_result,
     parse_core_runtime_restart_args,
 };
 use crate::core_command_contract::CORE_API_ROUTES;
@@ -17,15 +17,21 @@ pub(super) fn project_restart_payload(project_root: String, options: CoreHostRes
 }
 
 pub(super) fn dashboard_reload_payload(
-    project_root: String,
+    current_project_root: String,
     args: &[String],
+    resolve_project_root: impl Fn(&str) -> String,
 ) -> Result<(Value, bool), CoreCliPlanError> {
-    let parsed = parse_core_dashboard_reload_args(args).ok_or_else(|| {
+    let parsed = parse_core_dashboard_reload_args_result(args).map_err(|error| {
         CoreCliPlanError::InvalidArguments {
             args: args.to_vec(),
-            message: "error: invalid dashboard-reload arguments".into(),
+            message: format!("error: {}", error.message()),
         }
     })?;
+    let project_root = parsed
+        .project
+        .as_deref()
+        .map(resolve_project_root)
+        .unwrap_or(current_project_root);
     Ok((
         dashboard_text_payload(
             project_root,

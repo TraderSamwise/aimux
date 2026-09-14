@@ -37,9 +37,15 @@ fn dashboard_reload_failure_names_endpoint_not_service_availability() {
 }
 
 #[test]
-fn dashboard_reload_failure_names_missing_dashboard_window() {
-    assert_dashboard_reload_failure_names_missing_dashboard_window(TmuxControlRunner::ShellScript);
-    assert_dashboard_reload_failure_names_missing_dashboard_window(TmuxControlRunner::Native);
+fn dashboard_reload_creates_missing_dashboard_window() {
+    assert_dashboard_reload_creates_missing_dashboard_window(TmuxControlRunner::ShellScript);
+    assert_dashboard_reload_creates_missing_dashboard_window(TmuxControlRunner::Native);
+}
+
+#[test]
+fn dashboard_reload_failure_names_missing_tmux_session() {
+    assert_dashboard_reload_failure_names_missing_tmux_session(TmuxControlRunner::ShellScript);
+    assert_dashboard_reload_failure_names_missing_tmux_session(TmuxControlRunner::Native);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,7 +147,7 @@ fn assert_dashboard_reload_failure_names_endpoint(runner: TmuxControlRunner) {
     );
 }
 
-fn assert_dashboard_reload_failure_names_missing_dashboard_window(runner: TmuxControlRunner) {
+fn assert_dashboard_reload_creates_missing_dashboard_window(runner: TmuxControlRunner) {
     let actual = run_case(
         &dashboard_reload_missing_window_case(json!({
             "TMUX_FAKE_CURL_EXIT": "28",
@@ -150,14 +156,45 @@ fn assert_dashboard_reload_failure_names_missing_dashboard_window(runner: TmuxCo
     );
     let root = &actual["roots"].as_array().expect("roots")[1];
     let tmux_log = serde_json::to_string(&root["tmuxLog"]).expect("tmux log");
+    assert!(tmux_log.contains("new-window"), "{actual:#}");
     assert!(
-        tmux_log.contains("dashboard reload failed - dashboard window missing"),
+        tmux_log.contains("__dashboard-internal-native"),
+        "{actual:#}"
+    );
+    assert!(tmux_log.contains("switch-client"), "{actual:#}");
+    assert!(
+        !tmux_log.contains("dashboard reload failed - dashboard window missing"),
+        "{actual:#}"
+    );
+    let windows = root["state"]["windows"]["aimux-proj-client-1234abcd"]
+        .as_array()
+        .expect("client session windows");
+    assert!(
+        windows
+            .iter()
+            .any(|window| window.get("name").and_then(Value::as_str) == Some("dashboard")),
+        "{actual:#}"
+    );
+}
+
+fn assert_dashboard_reload_failure_names_missing_tmux_session(runner: TmuxControlRunner) {
+    let actual = run_case(
+        &dashboard_reload_missing_session_case(json!({
+            "TMUX_FAKE_CURL_EXIT": "28",
+        })),
+        runner,
+    );
+    let root = &actual["roots"].as_array().expect("roots")[1];
+    let tmux_log = serde_json::to_string(&root["tmuxLog"]).expect("tmux log");
+    assert!(
+        tmux_log.contains("dashboard reload failed - tmux session missing"),
         "{actual:#}"
     );
     assert!(
-        !tmux_log.contains("couldn't contact project service endpoint"),
+        !tmux_log.contains("dashboard reload failed - dashboard window missing"),
         "{actual:#}"
     );
+    assert!(!tmux_log.contains("new-window"), "{actual:#}");
 }
 
 fn dashboard_reload_case(
@@ -174,7 +211,11 @@ fn dashboard_reload_case(
 }
 
 fn dashboard_reload_missing_window_case(env: Value) -> Value {
-    dashboard_reload_case_with_state(env, 2, 10, dashboard_reload_missing_window_tmux_state())
+    dashboard_reload_case_with_state(env, 2, 15, dashboard_reload_missing_window_tmux_state())
+}
+
+fn dashboard_reload_missing_session_case(env: Value) -> Value {
+    dashboard_reload_case_with_state(env, 2, 12, dashboard_reload_missing_session_tmux_state())
 }
 
 fn dashboard_reload_case_with_state(
@@ -303,6 +344,13 @@ fn dashboard_reload_missing_window_tmux_state() -> Value {
         json!([{ "id": "@shell", "index": 3, "name": "shell" }]);
     state["windowOptions"] = json!({});
     state["panes"] = json!({});
+    state
+}
+
+fn dashboard_reload_missing_session_tmux_state() -> Value {
+    let mut state = dashboard_reload_missing_window_tmux_state();
+    state["clients"] = json!([]);
+    state["windows"] = json!({});
     state
 }
 
@@ -1101,6 +1149,11 @@ def list_windows():
             }))
     out("\n".join(rows))
 
+def has_session():
+    session_name = arg_after("-t")
+    if session_name not in state.get("windows", {}):
+        fail()
+
 def display_message():
     target = arg_after("-t")
     fmt = last_arg()
@@ -1189,11 +1242,41 @@ def switch_client():
     client["windowId"] = window.get("id", "")
     save_state()
 
+def new_window():
+    session_name = arg_after("-t")
+    windows = state.get("windows", {}).get(session_name)
+    if windows is None:
+        fail()
+    name = arg_after("-n") or "window"
+    existing_ids = {
+        window.get("id", "")
+        for session_windows in state.get("windows", {}).values()
+        for window in session_windows or []
+    }
+    suffix = 0
+    window_id = "@dash-created"
+    while window_id in existing_ids:
+        suffix += 1
+        window_id = f"@dash-created-{suffix}"
+    index = max([window.get("index", -1) for window in windows] or [-1]) + 1
+    windows.append({"id": window_id, "index": index, "name": name})
+    state.setdefault("panes", {})[window_id] = {
+        "sessionName": session_name,
+        "windowId": window_id,
+        "windowName": name,
+        "clientTty": "",
+        "currentPath": arg_after("-c"),
+        "currentCommand": last_arg(),
+    }
+    save_state()
+
 command = args[0] if args else ""
 if command == "list-clients":
     list_clients()
 elif command == "list-windows":
     list_windows()
+elif command == "has-session":
+    has_session()
 elif command == "display-message":
     display_message()
 elif command == "capture-pane":
@@ -1208,7 +1291,7 @@ elif command == "display-popup":
         result = subprocess.run(["sh", "-c", last_arg()], env=os.environ)
         sys.exit(result.returncode)
 elif command == "new-window":
-    pass
+    new_window()
 elif command == "show-options":
     show_options()
 elif command == "show-window-options":
