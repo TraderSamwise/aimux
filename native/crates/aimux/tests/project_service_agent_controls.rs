@@ -328,8 +328,46 @@ fn loop_alert_state_is_readable_without_mutating_pause_state() {
         true
     );
     assert_eq!(
-        second_read.body["loopAlertState"],
-        first_read.body["loopAlertState"]
+        second_read.body["loopAlertState"]["ok"],
+        first_read.body["loopAlertState"]["ok"]
+    );
+    assert_eq!(
+        second_read.body["loopAlertState"]["globalPause"]["pausedAtMs"],
+        first_read.body["loopAlertState"]["globalPause"]["pausedAtMs"]
+    );
+    assert_eq!(
+        second_read.body["loopAlertState"]["globalPause"]["expiresAtMs"],
+        first_read.body["loopAlertState"]["globalPause"]["expiresAtMs"]
+    );
+    assert_eq!(
+        second_read.body["loopAlertState"]["globalPause"]["pausedBy"],
+        first_read.body["loopAlertState"]["globalPause"]["pausedBy"]
+    );
+    assert_eq!(
+        second_read.body["loopAlertState"]["globalPause"]["reason"],
+        first_read.body["loopAlertState"]["globalPause"]["reason"]
+    );
+    assert_eq!(
+        second_read.body["loopAlertState"]["pausedCount"],
+        first_read.body["loopAlertState"]["pausedCount"]
+    );
+    assert_eq!(
+        second_read.body["loopAlertState"]["bufferedCount"],
+        first_read.body["loopAlertState"]["bufferedCount"]
+    );
+    let first_remaining = first_read.body["loopAlertState"]["globalPause"]["remainingMs"]
+        .as_u64()
+        .expect("first remaining millis");
+    let second_remaining = second_read.body["loopAlertState"]["globalPause"]["remainingMs"]
+        .as_u64()
+        .expect("second remaining millis");
+    assert!(
+        second_remaining <= first_remaining,
+        "remainingMs should not increase across consecutive reads"
+    );
+    assert!(
+        first_remaining.saturating_sub(second_remaining) < 1_000,
+        "consecutive reads should only differ by elapsed wall-clock time"
     );
     assert_eq!(
         after_second_read, before_read,
