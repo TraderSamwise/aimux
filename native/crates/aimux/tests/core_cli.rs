@@ -767,6 +767,24 @@ fn collaboration_command_invalid_arguments_name_the_offending_option() {
         }
     );
 
+    let handoff_missing_body = classify_core_cli(
+        &["handoff", "accept", "thread-1", "--body"],
+        &context(true, true),
+    )
+    .expect_err("handoff accept without body value should be rejected");
+    assert_eq!(
+        handoff_missing_body,
+        CoreCliPlanError::InvalidArguments {
+            args: vec![
+                "handoff".into(),
+                "accept".into(),
+                "thread-1".into(),
+                "--body".into(),
+            ],
+            message: "error: --body requires a value".into(),
+        }
+    );
+
     let valid = classify_core_cli(
         &[
             "message", "send", "body", "--from", "sam", "--to", "codex-1",
@@ -943,6 +961,65 @@ fn task_and_review_commands_plan_native_text_routes() {
 }
 
 #[test]
+fn task_and_review_invalid_arguments_name_the_offending_option() {
+    let missing_description =
+        classify_core_cli(&["task", "assign", "--to", "codex-1"], &context(true, true))
+            .expect_err("missing task description should be rejected");
+    assert_eq!(
+        missing_description,
+        CoreCliPlanError::InvalidArguments {
+            args: vec![
+                "task".into(),
+                "assign".into(),
+                "--to".into(),
+                "codex-1".into()
+            ],
+            message: "error: invalid workflow arguments: task assign description is required"
+                .into(),
+        }
+    );
+
+    let missing_from_before_body = classify_core_cli(
+        &["review", "approve", "task-1", "--from", "--body=ok"],
+        &context(true, true),
+    )
+    .expect_err("missing --from value should name the following option");
+    assert_eq!(
+        missing_from_before_body,
+        CoreCliPlanError::InvalidArguments {
+            args: vec![
+                "review".into(),
+                "approve".into(),
+                "task-1".into(),
+                "--from".into(),
+                "--body=ok".into()
+            ],
+            message: "error: invalid workflow arguments: --from requires a value before --body=ok"
+                .into(),
+        }
+    );
+
+    let unknown_flag = classify_core_cli(
+        &["task", "block", "task-1", "--result=blocked"],
+        &context(true, true),
+    )
+    .expect_err("unexpected task option should be rejected");
+    assert_eq!(
+        unknown_flag,
+        CoreCliPlanError::InvalidArguments {
+            args: vec![
+                "task".into(),
+                "block".into(),
+                "task-1".into(),
+                "--result=blocked".into()
+            ],
+            message: "error: invalid workflow arguments: unknown workflow option --result=blocked"
+                .into(),
+        }
+    );
+}
+
+#[test]
 fn thread_commands_plan_native_text_routes() {
     let list = classify_core_cli_with_project_resolver(
         &[
@@ -1077,6 +1154,63 @@ fn thread_commands_plan_native_text_routes() {
                 "owner": "user",
                 "waitingOn": "claude-1,codex-1",
             })),
+        }
+    );
+}
+
+#[test]
+fn thread_invalid_arguments_name_the_offending_option() {
+    let missing_body = classify_core_cli(
+        &["thread", "send", "thread-1", "--from=user"],
+        &context(true, true),
+    )
+    .expect_err("thread send without body should be rejected");
+    assert_eq!(
+        missing_body,
+        CoreCliPlanError::InvalidArguments {
+            args: vec![
+                "thread".into(),
+                "send".into(),
+                "thread-1".into(),
+                "--from=user".into()
+            ],
+            message: "error: invalid thread arguments: thread send body is required".into(),
+        }
+    );
+
+    let missing_from_before_body = classify_core_cli(
+        &["thread", "send", "thread-1", "--from", "--body=ok"],
+        &context(true, true),
+    )
+    .expect_err("missing --from value should name the following option");
+    assert_eq!(
+        missing_from_before_body,
+        CoreCliPlanError::InvalidArguments {
+            args: vec![
+                "thread".into(),
+                "send".into(),
+                "thread-1".into(),
+                "--from".into(),
+                "--body=ok".into()
+            ],
+            message: "error: invalid thread arguments: --from requires a value before --body=ok"
+                .into(),
+        }
+    );
+
+    let missing_open_from =
+        classify_core_cli(&["thread", "open", "--title", "Plan"], &context(true, true))
+            .expect_err("thread open without --from should be rejected");
+    assert_eq!(
+        missing_open_from,
+        CoreCliPlanError::InvalidArguments {
+            args: vec![
+                "thread".into(),
+                "open".into(),
+                "--title".into(),
+                "Plan".into()
+            ],
+            message: "error: invalid thread arguments: thread open requires --from".into(),
         }
     );
 }

@@ -20,7 +20,8 @@ use aimux::core_cli_routing::{
     parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_repair_args,
     parse_core_restart_args, parse_core_runtime_restart_args, parse_core_scribe_clear_args,
     parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
-    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_task_args_result, parse_core_team_args, parse_core_thread_args,
+    parse_core_thread_args_result, parse_core_worktree_args,
 };
 
 #[test]
@@ -1124,6 +1125,44 @@ fn task_parser_matches_workflow_forms() {
 }
 
 #[test]
+fn task_parser_names_invalid_argument_reasons() {
+    for (args, expected) in [
+        (
+            vec!["task", "assign", "--to", "codex-1"],
+            "task assign description is required",
+        ),
+        (
+            vec!["task", "assign", "Ship it", "--to="],
+            "--to requires a non-empty value",
+        ),
+        (
+            vec!["task", "block", "task-1", "--result=blocked"],
+            "unknown workflow option --result=blocked",
+        ),
+        (
+            vec!["review", "approve", "task-1", "--from", "--body=ok"],
+            "--from requires a value before --body=ok",
+        ),
+    ] {
+        let error = parse_core_task_args_result(&args)
+            .expect_err("invalid workflow args should name the bad argument");
+        assert_eq!(error.message(), expected, "{args:?}");
+    }
+
+    let valid = parse_core_task_args_result(&[
+        "task",
+        "complete",
+        "task-1",
+        "--from=claude-1",
+        "--result=shipped",
+    ])
+    .expect("valid task complete args");
+    assert_eq!(valid.task_id.as_deref(), Some("task-1"));
+    assert_eq!(valid.from.as_deref(), Some("claude-1"));
+    assert_eq!(valid.result.as_deref(), Some("shipped"));
+}
+
+#[test]
 fn thread_parser_matches_orchestration_forms() {
     let list = parse_core_thread_args(&[
         "thread",
@@ -1200,6 +1239,49 @@ fn thread_parser_matches_orchestration_forms() {
     assert!(parse_core_thread_args(&["thread", "send", "thread-1", "--from=user"]).is_none());
     assert!(parse_core_thread_args(&["thread", "mark-seen", "thread-1"]).is_none());
     assert!(parse_core_thread_args(&["thread", "status", "thread-1"]).is_none());
+}
+
+#[test]
+fn thread_parser_names_invalid_argument_reasons() {
+    for (args, expected) in [
+        (vec!["thread", "show"], "thread show thread id is required"),
+        (
+            vec!["thread", "open", "--title", "Plan"],
+            "thread open requires --from",
+        ),
+        (
+            vec!["thread", "send", "thread-1", "--from=user"],
+            "thread send body is required",
+        ),
+        (
+            vec!["thread", "send", "thread-1", "--from", "--body=ok"],
+            "--from requires a value before --body=ok",
+        ),
+        (
+            vec!["thread", "status", "thread-1"],
+            "thread status requires --status",
+        ),
+    ] {
+        let error = parse_core_thread_args_result(&args)
+            .expect_err("invalid thread args should name the bad argument");
+        assert_eq!(error.message(), expected, "{args:?}");
+    }
+
+    let valid = parse_core_thread_args_result(&[
+        "thread",
+        "send",
+        "thread-1",
+        "body",
+        "--from=user",
+        "--to=claude-1",
+        "--kind=reply",
+    ])
+    .expect("valid thread send args");
+    assert_eq!(valid.thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(valid.body.as_deref(), Some("body"));
+    assert_eq!(valid.from.as_deref(), Some("user"));
+    assert_eq!(valid.to.as_deref(), Some("claude-1"));
+    assert_eq!(valid.kind.as_deref(), Some("reply"));
 }
 
 #[test]
@@ -1572,12 +1654,16 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["handoff", "accept", "thread-1", "--body"],
         vec!["handoff", "complete", "thread-1"],
         vec!["task", "list", "--session", "claude-1"],
+        vec!["task", "assign", "--to", "codex-1"],
         vec!["task", "assign", "Ship it", "--to="],
         vec!["task", "block", "task-1", "--result=blocked"],
+        vec!["review", "approve"],
         vec!["review", "approve", "task-1", "--from", "--body=ok"],
         vec!["review", "request-changes", "task-1", "--body", "-h"],
         vec!["thread", "list", "--json"],
+        vec!["thread", "show"],
         vec!["thread", "show", "thread-1"],
+        vec!["thread", "send", "thread-1", "--from", "user"],
         vec!["thread", "send", "thread-1", "body", "--from", "user"],
         vec![
             "thread", "send", "thread-1", "--body", "body", "--from", "user",
@@ -1650,11 +1736,7 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["message", "send", "--help"],
         vec!["handoff", "send", "--help"],
         vec!["handoff", "accept"],
-        vec!["task", "assign", "--to", "codex-1"],
         vec!["task", "assign", "--help"],
-        vec!["review", "approve"],
-        vec!["thread", "show"],
-        vec!["thread", "send", "thread-1", "--from", "user"],
         vec!["threads", "thread-1"],
         vec!["list", "extra"],
         vec!["id"],

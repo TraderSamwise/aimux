@@ -1926,6 +1926,29 @@ fn collaboration_commands_execute_native_text_routes_without_core_command_fallba
 }
 
 #[test]
+fn collaboration_invalid_arguments_keep_specific_native_errors() {
+    let mut runtime = FakeRuntime::default();
+
+    for (command, expected) in [
+        (
+            ["message", "send", "please", "--from"].as_slice(),
+            "error: --from requires a value",
+        ),
+        (
+            ["handoff", "accept", "thread-1", "--body"].as_slice(),
+            "error: --body requires a value",
+        ),
+    ] {
+        let execution = run_core_cli_with(&args(command), &mut runtime);
+        assert_eq!(execution.code, 1, "{command:?}");
+        assert!(execution.stdout.is_empty(), "{command:?}");
+        assert_eq!(execution.stderr, [expected], "{command:?}");
+    }
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
+}
+
+#[test]
 fn task_and_review_commands_execute_native_text_routes_without_core_command_fallback() {
     let mut runtime = FakeRuntime::default();
 
@@ -2138,6 +2161,33 @@ fn task_and_review_commands_execute_native_text_routes_without_core_command_fall
 }
 
 #[test]
+fn task_and_review_invalid_arguments_report_specific_native_errors() {
+    let mut runtime = FakeRuntime::default();
+
+    for (command, expected) in [
+        (
+            ["task", "assign", "--to", "codex-1"].as_slice(),
+            "error: invalid workflow arguments: task assign description is required",
+        ),
+        (
+            ["review", "approve", "task-1", "--from", "--body=ok"].as_slice(),
+            "error: invalid workflow arguments: --from requires a value before --body=ok",
+        ),
+        (
+            ["task", "block", "task-1", "--result=blocked"].as_slice(),
+            "error: invalid workflow arguments: unknown workflow option --result=blocked",
+        ),
+    ] {
+        let execution = run_core_cli_with(&args(command), &mut runtime);
+        assert_eq!(execution.code, 1, "{command:?}");
+        assert!(execution.stdout.is_empty(), "{command:?}");
+        assert_eq!(execution.stderr, [expected], "{command:?}");
+    }
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
+}
+
+#[test]
 fn thread_commands_execute_native_text_routes_without_core_command_fallback() {
     let mut runtime = FakeRuntime::default();
 
@@ -2266,6 +2316,33 @@ fn thread_commands_execute_native_text_routes_without_core_command_fallback() {
         ]
     );
     assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn thread_invalid_arguments_report_specific_native_errors() {
+    let mut runtime = FakeRuntime::default();
+
+    for (command, expected) in [
+        (
+            ["thread", "send", "thread-1", "--from=user"].as_slice(),
+            "error: invalid thread arguments: thread send body is required",
+        ),
+        (
+            ["thread", "send", "thread-1", "--from", "--body=ok"].as_slice(),
+            "error: invalid thread arguments: --from requires a value before --body=ok",
+        ),
+        (
+            ["thread", "open", "--title", "Plan"].as_slice(),
+            "error: invalid thread arguments: thread open requires --from",
+        ),
+    ] {
+        let execution = run_core_cli_with(&args(command), &mut runtime);
+        assert_eq!(execution.code, 1, "{command:?}");
+        assert!(execution.stdout.is_empty(), "{command:?}");
+        assert_eq!(execution.stderr, [expected], "{command:?}");
+    }
+    assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
 }
 
 #[test]
