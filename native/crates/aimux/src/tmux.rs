@@ -652,12 +652,10 @@ impl TmuxRuntimeManager {
             true,
         )?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        let mut last_ready_value: Option<String>;
         while std::time::Instant::now() < deadline {
-            if self
-                .get_window_option(&replacement.window_id, readiness_option)
-                .as_deref()
-                == Some(readiness_value)
-            {
+            last_ready_value = self.get_window_option(&replacement.window_id, readiness_option);
+            if last_ready_value.as_deref() == Some(readiness_value) {
                 let old_name = format!("{}-old", target.window_name);
                 let mut original_renamed = false;
                 let mut replacement_renamed = false;
@@ -710,20 +708,25 @@ impl TmuxRuntimeManager {
                     .unwrap_or_default();
                 let _ = self.kill_window(&replacement);
                 let output = output.trim();
+                let readiness_detail = format!(
+                    "expected {readiness_option}={readiness_value}, last observed {readiness_option}={}",
+                    format_tmux_option_value(last_ready_value.as_deref())
+                );
                 return Err(if output.is_empty() {
                     format!(
-                        "Replacement tmux window {} exited before dashboard readiness",
-                        replacement.window_id
+                        "Replacement tmux window {} exited before dashboard readiness; {}",
+                        replacement.window_id, readiness_detail
                     )
                 } else {
                     format!(
-                        "Replacement tmux window {} exited before dashboard readiness:\n{}",
-                        replacement.window_id, output
+                        "Replacement tmux window {} exited before dashboard readiness; {}:\n{}",
+                        replacement.window_id, readiness_detail, output
                     )
                 });
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+        last_ready_value = self.get_window_option(&replacement.window_id, readiness_option);
         let output = self
             .capture_target(
                 &replacement,
@@ -735,15 +738,28 @@ impl TmuxRuntimeManager {
             .unwrap_or_default();
         let _ = self.kill_window(&replacement);
         let output = output.trim();
+        let readiness_detail = format!(
+            "last observed {readiness_option}={}",
+            format_tmux_option_value(last_ready_value.as_deref())
+        );
         Err(if output.is_empty() {
             format!(
-                "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}",
-                timeout_ms, replacement.window_id, readiness_option, readiness_value
+                "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}; {}",
+                timeout_ms,
+                replacement.window_id,
+                readiness_option,
+                readiness_value,
+                readiness_detail
             )
         } else {
             format!(
-                "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}:\n{}",
-                timeout_ms, replacement.window_id, readiness_option, readiness_value, output
+                "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}; {}:\n{}",
+                timeout_ms,
+                replacement.window_id,
+                readiness_option,
+                readiness_value,
+                readiness_detail,
+                output
             )
         })
     }
@@ -3222,6 +3238,13 @@ fn slugify_project_name(name: &str) -> String {
         }
     }
     slug
+}
+
+fn format_tmux_option_value(value: Option<&str>) -> String {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("{value:?}"))
+        .unwrap_or_else(|| "<missing>".to_owned())
 }
 
 #[cfg(test)]

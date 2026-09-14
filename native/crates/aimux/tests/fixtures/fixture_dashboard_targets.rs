@@ -2,11 +2,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use aimux::dashboard_targets::{
-    DashboardResolveOptions, DashboardTargetContext, resolve_dashboard_target_with_context,
-    run_dashboard_targets_contract_case,
+    DashboardResolveOptions, DashboardTargetContext, DashboardTargetTmux,
+    resolve_dashboard_target_with_context, run_dashboard_targets_contract_case,
 };
 use aimux::tmux::{
     TMUX_DASHBOARD_READY_OPTION, TmuxCommandSpec, TmuxExecOptions, TmuxRuntimeManager,
+    TmuxSessionRef, TmuxTarget, TmuxWindowInfo,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -78,6 +79,69 @@ fn restart_resolution_reuses_usable_dashboard_without_replacement() {
     assert!(!methods.contains(&"ensureProjectSession"));
     assert!(!methods.contains(&"ensureDashboardWindow"));
     assert!(!methods.contains(&"replaceWindowWhenReady"));
+}
+
+#[test]
+fn created_dashboard_exit_reports_child_cause_instead_of_timeout() {
+    let mut tmux = CreatedDashboardTmux {
+        window_alive: Ok(false),
+        captured_output: "dashboard crashed: missing isolated runtime env".to_owned(),
+    };
+    let context = fake_context();
+
+    let error = resolve_dashboard_target_with_context(
+        "/repo/mobile",
+        &mut tmux,
+        DashboardResolveOptions {
+            force_reload: false,
+            open_in_host_session: true,
+        },
+        &context,
+    )
+    .expect_err("dead dashboard should report the child failure");
+
+    assert!(
+        error.contains("Dashboard window @7 exited before becoming ready"),
+        "{error}"
+    );
+    assert!(
+        error.contains("expected @aimux-dashboard-ready=dashboard-stamp"),
+        "{error}"
+    );
+    assert!(
+        error.contains("last observed @aimux-dashboard-ready=<missing>"),
+        "{error}"
+    );
+    assert!(
+        error.contains("dashboard crashed: missing isolated runtime env"),
+        "{error}"
+    );
+    assert!(
+        !error.contains("Timed out waiting"),
+        "child failure was masked as timeout: {error}"
+    );
+}
+
+#[test]
+fn created_dashboard_liveness_error_is_reported_as_could_not_determine() {
+    let mut tmux = CreatedDashboardTmux {
+        window_alive: Err("tmux could not inspect dashboard pane state".to_owned()),
+        ..CreatedDashboardTmux::default()
+    };
+    let context = fake_context();
+
+    let error = resolve_dashboard_target_with_context(
+        "/repo/mobile",
+        &mut tmux,
+        DashboardResolveOptions {
+            force_reload: false,
+            open_in_host_session: true,
+        },
+        &context,
+    )
+    .expect_err("tmux inspection failure should not become a timeout");
+
+    assert_eq!(error, "tmux could not inspect dashboard pane state");
 }
 
 #[test]
@@ -171,6 +235,152 @@ fn production_dashboard_target_resolution_uses_dashboard_command_for_new_session
             "echo custom-dashboard".to_owned(),
         ]
     );
+}
+
+fn fake_context() -> DashboardTargetContext {
+    DashboardTargetContext {
+        dashboard_build_stamp: "dashboard-stamp".to_owned(),
+        dashboard_command: TmuxCommandSpec {
+            cwd: "/repo/mobile".to_owned(),
+            command: "bash".to_owned(),
+            args: vec![
+                "-lc".to_owned(),
+                "aimux __dashboard-internal-native".to_owned(),
+            ],
+        },
+        runtime_owner_id: "owner".to_owned(),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CreatedDashboardTmux {
+    window_alive: Result<bool, String>,
+    captured_output: String,
+}
+
+impl Default for CreatedDashboardTmux {
+    fn default() -> Self {
+        Self {
+            window_alive: Ok(true),
+            captured_output: String::new(),
+        }
+    }
+}
+
+impl DashboardTargetTmux for CreatedDashboardTmux {
+    fn get_project_session(&mut self, project_root: &str) -> TmuxSessionRef {
+        TmuxSessionRef {
+            project_root: project_root.to_owned(),
+            project_id: "mobile".to_owned(),
+            session_name: format!(
+                "aimux-{}",
+                project_root.rsplit('/').next().unwrap_or("repo")
+            ),
+        }
+    }
+
+    fn is_inside_tmux(&mut self) -> bool {
+        false
+    }
+
+    fn get_open_session_name(&mut self, session_name: &str, _inside_tmux: bool) -> String {
+        session_name.to_owned()
+    }
+
+    fn current_client_session(&mut self) -> Option<String> {
+        None
+    }
+
+    fn list_session_names(&mut self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    fn has_session(&mut self, _session_name: &str) -> bool {
+        false
+    }
+
+    fn list_windows(&mut self, _session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
+        Ok(Vec::new())
+    }
+
+    fn get_window_option(&mut self, _target: &TmuxTarget, _key: &str) -> Option<String> {
+        None
+    }
+
+    fn get_session_option(&mut self, _session_name: &str, _key: &str) -> Option<String> {
+        None
+    }
+
+    fn display_message(&mut self, _format: &str, _target: &str) -> Option<String> {
+        None
+    }
+
+    fn capture_target(&mut self, _target: &TmuxTarget, _start_line: i64) -> Option<String> {
+        Some(self.captured_output.clone())
+    }
+
+    fn is_window_alive(&mut self, _target: &TmuxTarget) -> Result<bool, String> {
+        self.window_alive.clone()
+    }
+
+    fn ensure_project_session(
+        &mut self,
+        _project_root: &str,
+        _dashboard_command: &TmuxCommandSpec,
+    ) -> Result<TmuxSessionRef, String> {
+        Ok(TmuxSessionRef {
+            project_root: "/repo/mobile".to_owned(),
+            project_id: "mobile".to_owned(),
+            session_name: "aimux-mobile".to_owned(),
+        })
+    }
+
+    fn ensure_dashboard_window(
+        &mut self,
+        session_name: &str,
+        _project_root: &str,
+        _dashboard_command: &TmuxCommandSpec,
+    ) -> Result<(TmuxTarget, bool), String> {
+        Ok((
+            TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: "@7".to_owned(),
+                window_index: 1,
+                window_name: "dashboard".to_owned(),
+                pane_dead: None,
+            },
+            true,
+        ))
+    }
+
+    fn replace_window_when_ready(
+        &mut self,
+        _target: &TmuxTarget,
+        _dashboard_command: &TmuxCommandSpec,
+        _readiness_option: &str,
+        _readiness_value: &str,
+        _timeout_ms: u64,
+    ) -> Result<TmuxTarget, String> {
+        panic!("created dashboard path should wait on the new target, not replace it");
+    }
+
+    fn set_session_option(
+        &mut self,
+        _session_name: &str,
+        _key: &str,
+        _value: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn set_window_option(
+        &mut self,
+        _target: &TmuxTarget,
+        _key: &str,
+        _value: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 fn normalize_dashboard_stamps(value: Value) -> Value {

@@ -434,12 +434,10 @@ fn wait_for_dashboard_target_ready(
     timeout_ms: u64,
 ) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut last_ready_value: Option<String>;
     while Instant::now() < deadline {
-        if tmux
-            .get_window_option(target, TMUX_DASHBOARD_READY_OPTION)
-            .as_deref()
-            .is_some_and(|value| !value.is_empty())
-        {
+        last_ready_value = tmux.get_window_option(target, TMUX_DASHBOARD_READY_OPTION);
+        if last_ready_value.as_deref() == Some(readiness_value) {
             return Ok(());
         }
         if !tmux.is_window_alive(target)? {
@@ -447,21 +445,38 @@ fn wait_for_dashboard_target_ready(
                 tmux,
                 target,
                 format!(
-                    "Dashboard window {} exited before becoming ready",
-                    target.window_id
+                    "Dashboard window {} exited before becoming ready; expected {}={}, last observed {}={}",
+                    target.window_id,
+                    TMUX_DASHBOARD_READY_OPTION,
+                    readiness_value,
+                    TMUX_DASHBOARD_READY_OPTION,
+                    format_ready_option_value(last_ready_value.as_deref())
                 ),
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    last_ready_value = tmux.get_window_option(target, TMUX_DASHBOARD_READY_OPTION);
     Err(dashboard_target_not_ready_error(
         tmux,
         target,
         format!(
-            "Timed out waiting {}ms for tmux window {} readiness option {}={}",
-            timeout_ms, target.window_id, TMUX_DASHBOARD_READY_OPTION, readiness_value
+            "Timed out waiting {}ms for tmux window {} readiness option {}={}; last observed {}={}",
+            timeout_ms,
+            target.window_id,
+            TMUX_DASHBOARD_READY_OPTION,
+            readiness_value,
+            TMUX_DASHBOARD_READY_OPTION,
+            format_ready_option_value(last_ready_value.as_deref())
         ),
     ))
+}
+
+fn format_ready_option_value(value: Option<&str>) -> String {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("{value:?}"))
+        .unwrap_or_else(|| "<missing>".to_owned())
 }
 
 fn dashboard_target_not_ready_error(

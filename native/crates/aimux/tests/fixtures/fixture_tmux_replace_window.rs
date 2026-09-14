@@ -85,6 +85,10 @@ fn replacement_failure_reports_child_output_before_timeout() {
         "{error}"
     );
     assert!(
+        error.contains("expected @ready=stamp, last observed @ready=<missing>"),
+        "{error}"
+    );
+    assert!(
         error.contains("dashboard crashed while parsing /desktop-state"),
         "{error}"
     );
@@ -138,6 +142,7 @@ fn replacement_timeout_reports_pane_output_when_wrapper_keeps_window_alive() {
         error.contains("Timed out waiting 0ms for replacement tmux window @2"),
         "{error}"
     );
+    assert!(error.contains("last observed @ready=<missing>"), "{error}");
     assert!(error.contains("invalid type: string"), "{error}");
     assert_eq!(
         calls.borrow().last(),
@@ -184,7 +189,53 @@ fn replacement_timeout_without_pane_output_stays_a_timeout() {
     let error = result.expect_err("unstamped replacement should fail");
     assert_eq!(
         error,
-        "Timed out waiting 0ms for replacement tmux window @2 readiness option @ready=stamp"
+        "Timed out waiting 0ms for replacement tmux window @2 readiness option @ready=stamp; last observed @ready=<missing>"
+    );
+}
+
+#[test]
+fn replacement_timeout_reports_last_observed_readiness_value() {
+    let calls = Rc::new(RefCell::new(Vec::<Value>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
+        calls_for_exec.borrow_mut().push(call_to_value(
+            args,
+            options.and_then(|options| options.cwd.as_deref()),
+        ));
+        let joined = args.join(" ");
+        if joined == "display-message -p -t @1 #{window_active}" {
+            return Ok("0".to_owned());
+        }
+        if joined.starts_with("new-window -d -P -t aimux-mobile-abc ") {
+            return Ok("@2\t2\taimux-reload-1-rust".to_owned());
+        }
+        if joined == "show-window-options -v -t @2 @ready" {
+            return Ok("old-stamp".to_owned());
+        }
+        Ok(String::new())
+    });
+
+    let result = manager.replace_window_when_ready(
+        &target_from_value(&json!({
+            "sessionName": "aimux-mobile-abc",
+            "windowId": "@1",
+            "windowIndex": 0,
+            "windowName": "dashboard"
+        })),
+        &command_spec_from_value(&json!({
+            "cwd": "/repo/mobile",
+            "command": "bash",
+            "args": ["-lc", "aimux __dashboard-internal-native"]
+        })),
+        "@ready",
+        "stamp",
+        0,
+    );
+
+    let error = result.expect_err("stale replacement should fail");
+    assert_eq!(
+        error,
+        "Timed out waiting 0ms for replacement tmux window @2 readiness option @ready=stamp; last observed @ready=\"old-stamp\""
     );
 }
 
