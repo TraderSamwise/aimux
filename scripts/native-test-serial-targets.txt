@@ -16,6 +16,7 @@ daemon_operations	operation routes with runtime/process state
 daemon_process	daemon process lifecycle and registration state
 daemon_relay_bridge	relay bridge socket/runtime path
 daemon_runtime	real daemon runtime, local sockets, project services, and process state
+daemon_scheduler	daemon scheduler handle, hosted/disk maintenance state, and process-runtime timing
 daemon_signal_shutdown	real daemon process, signal handling, and child project-service cleanup
 daemon_stream	streaming socket route tests
 daemon_supervisor	daemon supervisor lock, process info, and signal escalation state
@@ -23,6 +24,7 @@ daemon_system_text	system text route invokes environment-sensitive status helper
 daemon_tmux_doctor	tmux/runtime doctor paths
 dashboard_command_spec	command spec includes native launcher/runtime details
 dashboard_event_stream	event stream/socket timing
+dashboard_refresh_errors	binds localhost TCP listeners and dashboard refresh failure/recovery paths
 dashboard_renderer	renderer contains process/runtime-derived dashboard rows
 debug_state	debug-state report reads git/runtime/tmux-shaped state
 desktop_notifier	mutates notification-related process environment
