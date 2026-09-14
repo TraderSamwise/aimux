@@ -82,6 +82,16 @@ fn code_split_registry_preserves_known_method_gates() {
         &[(Group::Events, ResponseKind::Sse)],
     );
     assert_matches(
+        Method::Get,
+        routes::agents::LOOP_ALERTS,
+        &[(Group::Agents, ResponseKind::Json)],
+    );
+    assert_matches(
+        Method::Post,
+        routes::agents::LOOP_ALERTS,
+        &[(Group::Agents, ResponseKind::Json)],
+    );
+    assert_matches(
         Method::Post,
         routes::live_pane::INPUT,
         &[(Group::Io, ResponseKind::Json)],

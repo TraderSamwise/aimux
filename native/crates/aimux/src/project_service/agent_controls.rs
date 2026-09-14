@@ -38,10 +38,13 @@ pub fn route_agent_control_request(
     path: &str,
     body: Option<&Value>,
 ) -> Option<ProjectServiceDispatchResponse> {
+    let pathname = project_service_pathname(path);
+    if method.eq_ignore_ascii_case("GET") && pathname == routes::agents::LOOP_ALERTS {
+        return Some(route_loop_alert_state(context));
+    }
     if !method.eq_ignore_ascii_case("POST") {
         return None;
     }
-    let pathname = project_service_pathname(path);
     let body = body.unwrap_or(&Value::Null);
     match pathname {
         routes::agents::LOOP => Some(route_loop(context, body)),
@@ -50,6 +53,23 @@ pub fn route_agent_control_request(
         routes::agents::SCRIBE => Some(route_scribe(context, body)),
         routes::agents::WATCH => Some(route_watch(context, body)),
         _ => None,
+    }
+}
+
+fn route_loop_alert_state(
+    context: &ProjectServiceRequestContext,
+) -> ProjectServiceDispatchResponse {
+    let now_ms = super::scheduler::scheduler_now_ms();
+    let state_path = loop_watcher_state_path(context.project_state_dir());
+    match load_loop_watcher_state(&state_path) {
+        Ok(watcher) => ProjectServiceDispatchResponse::json(
+            200,
+            json!({
+                "ok": true,
+                "loopAlertState": watcher.loop_alert_state(now_ms),
+            }),
+        ),
+        Err(error) => json_error(500, error),
     }
 }
 

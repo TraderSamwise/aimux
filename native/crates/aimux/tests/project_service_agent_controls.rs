@@ -7,7 +7,7 @@ use aimux::project_service::agent_roles::load_agent_role_registry;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::fs::{create_dir_all, remove_dir_all, write};
+use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -268,6 +268,87 @@ fn global_loop_alert_pause_persists_with_expiry_and_can_resume() {
         resume.body["loopAlertState"]["globalPause"]["enabled"],
         false
     );
+    cleanup(project);
+}
+
+#[test]
+fn loop_alert_state_is_readable_without_mutating_pause_state() {
+    let project = temp_project("global-loop-alert-state-read");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let pause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({
+            "global": true,
+            "paused": true,
+            "durationMs": 60000,
+            "updatedBy": "dashboard",
+            "reason": "human intervention"
+        })),
+    );
+    assert_eq!(pause.status, 200);
+    assert_eq!(pause.body["loopAlertState"]["globalPause"]["enabled"], true);
+    assert_eq!(
+        pause.body["loopAlertState"]["globalPause"]["reason"],
+        "human intervention"
+    );
+
+    let state_path = loop_watcher_state_path(&state_dir);
+    let before_read = read_to_string(&state_path).expect("watcher state file");
+
+    let first_read =
+        route_project_service_request(&context, "GET", routes::agents::LOOP_ALERTS, None);
+    let after_first_read = read_to_string(&state_path).expect("watcher state after first read");
+
+    assert_eq!(first_read.status, 200);
+    assert_eq!(first_read.body["ok"], true);
+    assert_eq!(
+        first_read.body["loopAlertState"]["globalPause"]["enabled"],
+        true
+    );
+    assert_eq!(
+        first_read.body["loopAlertState"]["globalPause"]["reason"],
+        "human intervention"
+    );
+    assert_eq!(
+        after_first_read, before_read,
+        "GET /agents/loop-alerts must not rewrite or toggle watcher state"
+    );
+
+    let second_read =
+        route_project_service_request(&context, "GET", routes::agents::LOOP_ALERTS, None);
+    let after_second_read = read_to_string(&state_path).expect("watcher state after second read");
+
+    assert_eq!(second_read.status, 200);
+    assert_eq!(
+        second_read.body["loopAlertState"]["globalPause"]["enabled"],
+        true
+    );
+    assert_eq!(
+        second_read.body["loopAlertState"],
+        first_read.body["loopAlertState"]
+    );
+    assert_eq!(
+        after_second_read, before_read,
+        "repeated reads must leave the pause state unchanged"
+    );
+
+    let resume = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({ "global": true, "paused": false })),
+    );
+    assert_eq!(resume.status, 200);
+    assert_eq!(resume.body["paused"], false);
+    assert_eq!(
+        resume.body["loopAlertState"]["globalPause"]["enabled"],
+        false
+    );
+
     cleanup(project);
 }
 
