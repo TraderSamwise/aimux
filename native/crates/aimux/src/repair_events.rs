@@ -10,6 +10,7 @@ pub const ACTION_CONTROL_PLANE_RESTART: &str = "control-plane-restart";
 pub const ACTION_PROJECT_SERVICE_ENSURE: &str = "project-service-ensure";
 pub const ACTION_TMUX_RUNTIME_REPAIR: &str = "tmux-runtime-repair";
 pub const ACTION_DASHBOARD_RELOAD: &str = "dashboard-reload";
+pub const ACTION_DASHBOARD_REFRESH: &str = "dashboard-refresh";
 pub const ACTION_VALIDATION_ORPHAN_CLEANUP: &str = "validation-orphan-cleanup";
 
 pub const STATUS_STARTED: &str = "started";

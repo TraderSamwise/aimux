@@ -58,6 +58,9 @@ use crate::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineQuery, list_work_outline_entries,
 };
 use crate::release_version_contract::read_aimux_runtime_version;
+use crate::repair_events::{
+    ACTION_DASHBOARD_REFRESH, STATUS_FAILED, STATUS_REPAIRED, record_repair_event_for_project,
+};
 use crate::runtime_guard::{
     RuntimeGuardState, probe_runtime_guard, runtime_guard_overlay_copy,
     stabilize_runtime_guard_probe,
@@ -107,9 +110,31 @@ pub struct NativeDashboardOptions {
     pub once: bool,
 }
 
-struct DashboardSnapshotLoad {
-    snapshot: DesktopStateSnapshot,
-    endpoint: Option<ProjectServiceEndpoint>,
+#[derive(Debug, Clone)]
+pub struct DashboardSnapshotLoad {
+    pub snapshot: DesktopStateSnapshot,
+    pub endpoint: Option<ProjectServiceEndpoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardSnapshotRefreshRepairEvent {
+    pub status: &'static str,
+    pub error: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum DashboardSnapshotRefreshOutcome {
+    Loaded(DashboardSnapshotLoad),
+    Stale {
+        snapshot: DesktopStateSnapshot,
+        endpoint: Option<ProjectServiceEndpoint>,
+        footer_message: String,
+    },
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct DashboardSnapshotRefreshFailure {
+    current_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -194,6 +219,7 @@ struct DashboardSnapshotRenderContext<'a> {
     hidden_offline_agent_count: usize,
     scroll_offset: usize,
     runtime_guard: Option<&'a DashboardRuntimeGuardStatus>,
+    refresh_error: Option<&'a str>,
     pending_now_ms: i64,
 }
 
@@ -261,6 +287,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut scroll_offset = 0;
     let mut latest_snapshot = None;
     let mut latest_endpoint = None;
+    let mut latest_hidden_offline_agent_count = 0;
+    let mut refresh_failure = DashboardSnapshotRefreshFailure::default();
     let mut pending_actions = DashboardPendingActions::new();
     let mut deferred_requests: Vec<DeferredDashboardRequest> = Vec::new();
     let (request_outcomes_tx, request_outcomes_rx) = mpsc::channel::<DashboardRequestOutcome>();
@@ -647,6 +675,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         hidden_offline_agent_count: 0,
                         scroll_offset,
                         runtime_guard: Some(&runtime_guard),
+                        refresh_error: None,
                         pending_now_ms: pending_action_now_ms(clock_start),
                     },
                 );
@@ -683,120 +712,184 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     return Ok(());
                 }
             } else {
-                let mut loaded = load_dashboard_snapshot(&options)?;
-                if let Some(ui_state) = ui_state.as_ref() {
-                    ui_state.apply_order_to_snapshot(&mut loaded.snapshot);
-                }
-                pending_actions.reconcile(&loaded.snapshot, pending_action_now_ms(clock_start));
-                pending_actions.apply(&mut loaded.snapshot);
-                let hide_offline_agents = controller
-                    .as_ref()
-                    .map(|controller| controller.hide_offline_agents)
-                    .unwrap_or(false);
-                let visible_model =
-                    filter_dashboard_visible_model(&loaded.snapshot, hide_offline_agents);
-                let controller = controller.get_or_insert_with(|| {
-                    let mut controller = DashboardController::new(&visible_model.snapshot);
-                    if let Some(screen) = ui_state
-                        .as_ref()
-                        .and_then(DashboardUiStatePersistence::load_screen)
-                    {
-                        controller.screen = screen;
-                    }
-                    if let Some(preview_source) = ui_state
-                        .as_ref()
-                        .and_then(DashboardUiStatePersistence::load_preview_source)
-                    {
-                        controller.set_preview_source(preview_source);
-                    }
-                    if let Some(details_visible) = ui_state
-                        .as_ref()
-                        .and_then(DashboardUiStatePersistence::load_details_sidebar_visible)
-                    {
-                        controller.details_sidebar_visible = details_visible;
-                    }
-                    if let Some(ui_state) = ui_state.as_ref() {
-                        ui_state.restore_navigation(
-                            &mut controller.navigation,
-                            &visible_model.snapshot,
-                        );
-                    }
-                    controller
-                });
-                restore_dashboard_navigation_for_render(
-                    ui_state.as_ref(),
-                    controller,
-                    &visible_model.snapshot,
-                    render_requested_by_input,
-                    rendered_once,
-                );
-                let frame = render_dashboard_snapshot(
-                    &options,
-                    controller,
-                    &visible_model.snapshot,
-                    &mut pending_actions,
-                    DashboardSnapshotRenderContext {
-                        viewport,
-                        endpoint: loaded.endpoint.as_ref(),
-                        hidden_offline_agent_count: visible_model.hidden_offline_agent_count,
-                        scroll_offset,
-                        runtime_guard: Some(&runtime_guard),
-                        pending_now_ms: pending_action_now_ms(clock_start),
-                    },
-                );
-                write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
-                rendered_once = true;
-                flush_deferred_dashboard_requests(
-                    &mut deferred_requests,
-                    loaded.endpoint.as_ref(),
-                    &mut pending_actions,
-                    Some(controller),
-                    &request_outcomes_tx,
-                );
-                let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
-                    ui_state
-                        .persist_controller_state(
-                            controller.screen,
-                            &controller.preview_source,
-                            controller.details_sidebar_visible,
-                            &visible_model.snapshot,
-                            &controller.navigation,
-                        )
-                        .unwrap_or(false)
-                        .then(|| ui_state.client_session().to_owned())
-                });
-                if let (Some(endpoint), Some(client_session)) = (
-                    loaded.endpoint.as_ref(),
-                    statusline_client_session.as_deref(),
-                ) {
-                    let _ = refresh_dashboard_statusline(endpoint, client_session);
-                }
-                scroll_offset = frame.scroll_offset;
-                if !ready_marked {
-                    let _ = mark_native_dashboard_ready(&options.project_root);
-                    ready_marked = true;
-                    dashboard_ready_since = Some(Instant::now());
-                }
-                latest_snapshot = Some(visible_model.snapshot);
-                latest_endpoint = loaded.endpoint;
-                refresh_state.complete_refresh();
-                reconcile_dashboard_event_stream(
-                    &mut event_stream,
-                    &mut event_stream_retry_at,
+                let refresh = resolve_dashboard_snapshot_refresh(
+                    latest_snapshot.as_ref(),
                     latest_endpoint.as_ref(),
-                    options.once || options.desktop_state_file.is_some(),
-                );
-                let focus_render = if let (Some(snapshot), Some(endpoint)) =
-                    (latest_snapshot.as_ref(), latest_endpoint.as_ref())
-                {
-                    sync_dashboard_focus(&mut focus_state, controller, snapshot, endpoint)
-                } else {
-                    false
-                };
-                render_now = focus_render;
-                last_render = Instant::now();
-                if options.once {
-                    return Ok(());
+                    &mut refresh_failure,
+                    load_dashboard_snapshot(&options),
+                    |event| {
+                        record_dashboard_snapshot_refresh_repair_event(
+                            &PathResolver::from_env(),
+                            &options.project_root,
+                            &event,
+                        );
+                    },
+                )?;
+                match refresh {
+                    DashboardSnapshotRefreshOutcome::Loaded(mut loaded) => {
+                        if let Some(ui_state) = ui_state.as_ref() {
+                            ui_state.apply_order_to_snapshot(&mut loaded.snapshot);
+                        }
+                        pending_actions
+                            .reconcile(&loaded.snapshot, pending_action_now_ms(clock_start));
+                        pending_actions.apply(&mut loaded.snapshot);
+                        let hide_offline_agents = controller
+                            .as_ref()
+                            .map(|controller| controller.hide_offline_agents)
+                            .unwrap_or(false);
+                        let visible_model =
+                            filter_dashboard_visible_model(&loaded.snapshot, hide_offline_agents);
+                        let controller = controller.get_or_insert_with(|| {
+                            let mut controller = DashboardController::new(&visible_model.snapshot);
+                            if let Some(screen) = ui_state
+                                .as_ref()
+                                .and_then(DashboardUiStatePersistence::load_screen)
+                            {
+                                controller.screen = screen;
+                            }
+                            if let Some(preview_source) = ui_state
+                                .as_ref()
+                                .and_then(DashboardUiStatePersistence::load_preview_source)
+                            {
+                                controller.set_preview_source(preview_source);
+                            }
+                            if let Some(details_visible) = ui_state
+                                .as_ref()
+                                .and_then(DashboardUiStatePersistence::load_details_sidebar_visible)
+                            {
+                                controller.details_sidebar_visible = details_visible;
+                            }
+                            if let Some(ui_state) = ui_state.as_ref() {
+                                ui_state.restore_navigation(
+                                    &mut controller.navigation,
+                                    &visible_model.snapshot,
+                                );
+                            }
+                            controller
+                        });
+                        restore_dashboard_navigation_for_render(
+                            ui_state.as_ref(),
+                            controller,
+                            &visible_model.snapshot,
+                            render_requested_by_input,
+                            rendered_once,
+                        );
+                        let frame = render_dashboard_snapshot(
+                            &options,
+                            controller,
+                            &visible_model.snapshot,
+                            &mut pending_actions,
+                            DashboardSnapshotRenderContext {
+                                viewport,
+                                endpoint: loaded.endpoint.as_ref(),
+                                hidden_offline_agent_count: visible_model
+                                    .hidden_offline_agent_count,
+                                scroll_offset,
+                                runtime_guard: Some(&runtime_guard),
+                                refresh_error: None,
+                                pending_now_ms: pending_action_now_ms(clock_start),
+                            },
+                        );
+                        write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
+                        rendered_once = true;
+                        flush_deferred_dashboard_requests(
+                            &mut deferred_requests,
+                            loaded.endpoint.as_ref(),
+                            &mut pending_actions,
+                            Some(controller),
+                            &request_outcomes_tx,
+                        );
+                        let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
+                            ui_state
+                                .persist_controller_state(
+                                    controller.screen,
+                                    &controller.preview_source,
+                                    controller.details_sidebar_visible,
+                                    &visible_model.snapshot,
+                                    &controller.navigation,
+                                )
+                                .unwrap_or(false)
+                                .then(|| ui_state.client_session().to_owned())
+                        });
+                        if let (Some(endpoint), Some(client_session)) = (
+                            loaded.endpoint.as_ref(),
+                            statusline_client_session.as_deref(),
+                        ) {
+                            let _ = refresh_dashboard_statusline(endpoint, client_session);
+                        }
+                        scroll_offset = frame.scroll_offset;
+                        if !ready_marked {
+                            let _ = mark_native_dashboard_ready(&options.project_root);
+                            ready_marked = true;
+                            dashboard_ready_since = Some(Instant::now());
+                        }
+                        latest_hidden_offline_agent_count =
+                            visible_model.hidden_offline_agent_count;
+                        latest_snapshot = Some(visible_model.snapshot);
+                        latest_endpoint = loaded.endpoint;
+                        refresh_state.complete_refresh();
+                        reconcile_dashboard_event_stream(
+                            &mut event_stream,
+                            &mut event_stream_retry_at,
+                            latest_endpoint.as_ref(),
+                            options.once || options.desktop_state_file.is_some(),
+                        );
+                        let focus_render = if let (Some(snapshot), Some(endpoint)) =
+                            (latest_snapshot.as_ref(), latest_endpoint.as_ref())
+                        {
+                            sync_dashboard_focus(&mut focus_state, controller, snapshot, endpoint)
+                        } else {
+                            false
+                        };
+                        render_now = focus_render;
+                        last_render = Instant::now();
+                        if options.once {
+                            return Ok(());
+                        }
+                    }
+                    DashboardSnapshotRefreshOutcome::Stale {
+                        mut snapshot,
+                        endpoint,
+                        footer_message,
+                    } => {
+                        pending_actions.apply(&mut snapshot);
+                        let controller =
+                            controller.get_or_insert_with(|| DashboardController::new(&snapshot));
+                        let frame = render_dashboard_snapshot(
+                            &options,
+                            controller,
+                            &snapshot,
+                            &mut pending_actions,
+                            DashboardSnapshotRenderContext {
+                                viewport,
+                                endpoint: endpoint.as_ref(),
+                                hidden_offline_agent_count: latest_hidden_offline_agent_count,
+                                scroll_offset,
+                                runtime_guard: Some(&runtime_guard),
+                                refresh_error: Some(&footer_message),
+                                pending_now_ms: pending_action_now_ms(clock_start),
+                            },
+                        );
+                        write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
+                        rendered_once = true;
+                        flush_deferred_dashboard_requests(
+                            &mut deferred_requests,
+                            endpoint.as_ref(),
+                            &mut pending_actions,
+                            Some(controller),
+                            &request_outcomes_tx,
+                        );
+                        scroll_offset = frame.scroll_offset;
+                        refresh_state.complete_refresh();
+                        reconcile_dashboard_event_stream(
+                            &mut event_stream,
+                            &mut event_stream_retry_at,
+                            latest_endpoint.as_ref(),
+                            options.once || options.desktop_state_file.is_some(),
+                        );
+                        render_now = false;
+                        last_render = Instant::now();
+                    }
                 }
             }
         }
@@ -1516,7 +1609,9 @@ fn render_dashboard_snapshot(
         hide_offline_agents: controller.hide_offline_agents,
         hidden_offline_agent_count: context.hidden_offline_agent_count,
         scroll_offset: context.scroll_offset,
-        footer_message: controller.footer_message.as_deref(),
+        footer_message: context
+            .refresh_error
+            .or(controller.footer_message.as_deref()),
         details_sidebar_visible: controller.details_sidebar_visible,
         preview_source: &controller.preview_source,
         scribe_preview_entries: &scribe_preview_entries,
@@ -2018,6 +2113,72 @@ fn load_dashboard_snapshot(options: &NativeDashboardOptions) -> Result<Dashboard
         snapshot,
         endpoint: Some(endpoint),
     })
+}
+
+pub fn resolve_dashboard_snapshot_refresh(
+    latest_snapshot: Option<&DesktopStateSnapshot>,
+    latest_endpoint: Option<&ProjectServiceEndpoint>,
+    refresh_failure: &mut DashboardSnapshotRefreshFailure,
+    load_result: Result<DashboardSnapshotLoad>,
+    mut record_event: impl FnMut(DashboardSnapshotRefreshRepairEvent),
+) -> Result<DashboardSnapshotRefreshOutcome> {
+    match load_result {
+        Ok(loaded) => {
+            if let Some(error) = refresh_failure.current_error.take() {
+                record_event(DashboardSnapshotRefreshRepairEvent {
+                    status: STATUS_REPAIRED,
+                    error,
+                });
+            }
+            Ok(DashboardSnapshotRefreshOutcome::Loaded(loaded))
+        }
+        Err(error) => {
+            let message = dashboard_snapshot_refresh_error_message(&error);
+            let Some(snapshot) = latest_snapshot else {
+                return Err(error.context("load initial dashboard snapshot"));
+            };
+            if refresh_failure.current_error.as_deref() != Some(message.as_str()) {
+                record_event(DashboardSnapshotRefreshRepairEvent {
+                    status: STATUS_FAILED,
+                    error: message.clone(),
+                });
+            }
+            refresh_failure.current_error = Some(message.clone());
+            Ok(DashboardSnapshotRefreshOutcome::Stale {
+                snapshot: snapshot.clone(),
+                endpoint: latest_endpoint.cloned(),
+                footer_message: dashboard_snapshot_refresh_footer(&message),
+            })
+        }
+    }
+}
+
+pub fn record_dashboard_snapshot_refresh_repair_event(
+    resolver: &PathResolver,
+    project_root: &Path,
+    event: &DashboardSnapshotRefreshRepairEvent,
+) {
+    record_repair_event_for_project(
+        resolver,
+        &project_root.to_string_lossy(),
+        ACTION_DASHBOARD_REFRESH,
+        "dashboard-refresh",
+        event.status,
+        Some(json!({ "error": event.error })),
+    );
+}
+
+fn dashboard_snapshot_refresh_error_message(error: &anyhow::Error) -> String {
+    format!("{error:#}")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
+fn dashboard_snapshot_refresh_footer(error: &str) -> String {
+    format!("Dashboard data stale: {error}; retrying")
 }
 
 fn scribe_preview_entries_for_render(
@@ -2567,6 +2728,7 @@ mod tests {
             hidden_offline_agent_count: 0,
             scroll_offset: 0,
             runtime_guard: None,
+            refresh_error: None,
             pending_now_ms: 0,
         };
         let mut pending_actions = DashboardPendingActions::new();
