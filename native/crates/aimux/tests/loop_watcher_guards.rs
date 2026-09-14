@@ -20,6 +20,14 @@ fn looping_session(id: &str, activity: &str) -> (Value, Value) {
     )
 }
 
+fn looping_session_with_status(id: &str, status: Option<&str>, activity: &str) -> (Value, Value) {
+    let (mut session, meta) = looping_session(id, activity);
+    if let Some(status) = status {
+        session["status"] = json!(status);
+    }
+    (session, meta)
+}
+
 fn briefing_mentions(send: &LoopSend, id: &str) -> bool {
     send.text
         .lines()
@@ -1146,16 +1154,146 @@ fn without_an_overseer_nothing_is_sent_unless_auto_nudge_is_enabled() {
     );
 }
 
+#[test]
+fn a_looped_agent_that_dies_raises_a_dead_loop_check_after_dwell() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session_with_status("worker", Some("offline"), "running");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 30_000,
+            "unchangedReminderTicks": 2
+        }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    assert!(
+        watcher.plan_sends(&input, NOW).is_empty(),
+        "a death candidate must continuously dwell before the overseer is alerted"
+    );
+    assert!(watcher.plan_sends(&input, NOW + 29_999).is_empty());
+
+    let sends = watcher.plan_sends(&input, NOW + 30_000);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].session_id, "boss");
+    assert_eq!(sends[0].kind, LoopSendKind::OverseerBriefing);
+    assert!(briefing_mentions(&sends[0], "worker"));
+    assert!(sends[0].text.contains("[dead/offline]"));
+    assert!(sends[0].text.contains("dead/offline agent"));
+    assert!(!sends[0].text.contains("[stopped/idle]"));
+    watcher.commit_send_result(&sends[0], NOW + 30_000, LoopDeliveryOutcome::Delivered);
+
+    assert!(
+        watcher.plan_sends(&input, NOW + 30_001).is_empty(),
+        "an unchanged dead candidate must not alert on every tick"
+    );
+    assert_eq!(
+        watcher.plan_sends(&input, NOW + 30_002).len(),
+        1,
+        "dead candidates reuse the stopped reminder cadence after the initial report"
+    );
+}
+
+#[test]
+fn a_looped_agent_that_is_idle_raises_a_distinct_stopped_loop_check() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session_with_status("worker", Some("idle"), "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert!(briefing_mentions(&sends[0], "worker"));
+    assert!(sends[0].text.contains("appear to have stopped:"));
+    assert!(
+        sends[0]
+            .text
+            .contains("decide whether it stopped prematurely")
+    );
+    assert!(!sends[0].text.contains("[dead/offline]"));
+    assert!(!sends[0].text.contains("dead/offline agent"));
+}
+
+#[test]
+fn a_momentary_offline_blip_must_not_report_death_before_dwell() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (offline_worker, worker_meta) =
+        looping_session_with_status("worker", Some("offline"), "running");
+    let (running_worker, _) = looping_session_with_status("worker", Some("running"), "running");
+    let metadata = json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } });
+    let config = json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 30_000 });
+
+    let mut watcher = LoopWatcher::new();
+    let offline_input = input_with_config(
+        vec![boss.clone(), offline_worker.clone()],
+        metadata.clone(),
+        config.clone(),
+    );
+    assert!(watcher.plan_sends(&offline_input, NOW).is_empty());
+
+    let recovered_input = input_with_config(
+        vec![boss.clone(), running_worker],
+        metadata.clone(),
+        config.clone(),
+    );
+    assert!(
+        watcher.plan_sends(&recovered_input, NOW + 10).is_empty(),
+        "recovering before dwell should clear the death level"
+    );
+
+    let offline_again = input_with_config(vec![boss, offline_worker], metadata, config);
+    assert!(
+        watcher.plan_sends(&offline_again, NOW + 30_000).is_empty(),
+        "a later offline blip starts a fresh dwell window instead of inheriting the cleared one"
+    );
+}
+
+#[test]
+fn indeterminate_liveness_does_not_silently_become_dead() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session_with_status("worker", None, "running");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    assert!(
+        watcher.plan_sends(&input, NOW).is_empty(),
+        "missing liveness is a third outcome, not an offline/dead candidate"
+    );
+}
+
 mod task_inputs {
     use aimux::project_service::loop_watcher_task::{
-        NUDGEABLE_SESSION_STATUSES, apply_live_activity_override, build_scan_input, is_scribe,
+        LOOP_WATCH_SESSION_STATUSES, NUDGEABLE_SESSION_STATUSES, apply_live_activity_override,
+        build_scan_input, is_scribe,
     };
     use serde_json::json;
 
     #[test]
-    fn only_sessions_with_a_live_window_are_ever_eligible() {
-        // this is the list handed to list_topology_session_states, and it is
-        // what keeps a graveyarded session with stale loop metadata unreachable
+    fn loop_watcher_sees_offline_sessions_but_does_not_treat_them_as_nudgeable() {
+        // The scan input needs offline sessions as data so death can be
+        // reported, but delivery targets still require a live window.
+        assert_eq!(
+            LOOP_WATCH_SESSION_STATUSES,
+            ["starting", "running", "idle", "offline"]
+        );
+        assert!(LOOP_WATCH_SESSION_STATUSES.contains(&"offline"));
+        assert!(!LOOP_WATCH_SESSION_STATUSES.contains(&"graveyard"));
+        assert!(!LOOP_WATCH_SESSION_STATUSES.contains(&"exited"));
+
         assert_eq!(NUDGEABLE_SESSION_STATUSES, ["starting", "running", "idle"]);
         assert!(!NUDGEABLE_SESSION_STATUSES.contains(&"graveyard"));
         assert!(!NUDGEABLE_SESSION_STATUSES.contains(&"offline"));

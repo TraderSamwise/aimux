@@ -97,6 +97,8 @@ pub struct BufferedLoopSend {
 #[serde(rename_all = "camelCase")]
 pub struct BufferedLoopCandidateKey {
     pub session_id: String,
+    #[serde(default = "default_stopped_condition")]
+    pub condition: String,
     pub loop_since: String,
     pub goal: String,
     pub loop_source: String,
@@ -127,9 +129,32 @@ pub struct LoopWatcher {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct LoopDwellKey {
     session_id: String,
+    condition: LoopCandidateCondition,
     loop_since: String,
     goal: String,
     loop_source: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LoopCandidateCondition {
+    Stopped,
+    Dead,
+}
+
+impl LoopCandidateCondition {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::Dead => "dead",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "dead" => Self::Dead,
+            _ => Self::Stopped,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -228,7 +253,7 @@ impl LoopWatcher {
         let cooldown = config_i64(input, "nudgeCooldownMs", 60_000);
         let overseer_running = overseer_id
             .as_deref()
-            .is_some_and(|id| session_exists(input, id));
+            .is_some_and(|id| session_can_receive_loop_send(input, id));
 
         if let Some(overseer_id) = overseer_id.filter(|_| overseer_running) {
             let values = candidates
@@ -275,6 +300,9 @@ impl LoopWatcher {
         }
 
         for candidate in candidates {
+            if candidate_condition(&candidate.value) != LoopCandidateCondition::Stopped {
+                continue;
+            }
             let id = str_field(&candidate.value, "id").to_owned();
             if now_ms - self.last_nudge_at.get(&id).copied().unwrap_or(0) < cooldown {
                 continue;
@@ -627,7 +655,7 @@ impl LoopWatcher {
             self.last_paused_summary_signature = None;
             return None;
         }
-        let overseer_id = overseer_id.filter(|id| session_exists(input, id))?;
+        let overseer_id = overseer_id.filter(|id| session_can_receive_loop_send(input, id))?;
         self.paused_summary_ticks = self.paused_summary_ticks.saturating_add(1);
         let signature = format!("paused:{}", candidate_signature(paused_candidates));
         let due_by_cadence = self.paused_summary_ticks >= PAUSED_SUMMARY_TICK_CADENCE;
@@ -653,7 +681,7 @@ impl LoopWatcher {
         input: &Value,
         now_ms: i64,
     ) -> Option<LoopSend> {
-        let overseer_id = overseer_id.filter(|id| session_exists(input, id))?;
+        let overseer_id = overseer_id.filter(|id| session_can_receive_loop_send(input, id))?;
         let available = find_idle_loop_capacity(input, Some(overseer_id), paused_candidates);
         let work = find_visible_unowned_work(input);
         if available.is_empty() || work.is_empty() {
@@ -819,6 +847,8 @@ struct PersistentLoopWatcherState {
 #[serde(rename_all = "camelCase")]
 struct PersistentStoppedSince {
     session_id: String,
+    #[serde(default = "default_stopped_condition")]
+    condition: String,
     loop_since: String,
     goal: String,
     loop_source: String,
@@ -844,6 +874,7 @@ impl PersistentLoopWatcherState {
                 .iter()
                 .map(|(key, state)| PersistentStoppedSince {
                     session_id: key.session_id.clone(),
+                    condition: key.condition.as_str().to_owned(),
                     loop_since: key.loop_since.clone(),
                     goal: key.goal.clone(),
                     loop_source: key.loop_source.clone(),
@@ -905,6 +936,7 @@ impl PersistentLoopWatcherState {
                     (
                         LoopDwellKey {
                             session_id: record.session_id,
+                            condition: LoopCandidateCondition::from_str(&record.condition),
                             loop_since: record.loop_since,
                             goal: record.goal,
                             loop_source: record.loop_source,
@@ -956,6 +988,7 @@ impl BufferedLoopCandidateKey {
     fn from_dwell_key(key: &LoopDwellKey) -> Self {
         Self {
             session_id: key.session_id.clone(),
+            condition: key.condition.as_str().to_owned(),
             loop_since: key.loop_since.clone(),
             goal: key.goal.clone(),
             loop_source: key.loop_source.clone(),
@@ -965,11 +998,16 @@ impl BufferedLoopCandidateKey {
     fn to_dwell_key(&self) -> LoopDwellKey {
         LoopDwellKey {
             session_id: self.session_id.clone(),
+            condition: LoopCandidateCondition::from_str(&self.condition),
             loop_since: self.loop_since.clone(),
             goal: self.goal.clone(),
             loop_source: self.loop_source.clone(),
         }
     }
+}
+
+fn default_stopped_condition() -> String {
+    LoopCandidateCondition::Stopped.as_str().to_owned()
 }
 
 fn loop_send_kind_name(kind: LoopSendKind) -> &'static str {
@@ -1040,20 +1078,25 @@ pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&st
                 .get("derived")
                 .and_then(|derived| derived.get("activity"))
                 .and_then(Value::as_str);
-            if activity != Some("idle") && activity != Some("done") {
-                return None;
-            }
-            let attention = meta
-                .get("derived")
-                .and_then(|derived| derived.get("attention"))
-                .and_then(Value::as_str)
-                .unwrap_or("normal");
-            if attention != "normal" {
-                return None;
+            let condition = loop_candidate_condition(session, activity)?;
+            if condition == LoopCandidateCondition::Stopped {
+                let attention = meta
+                    .get("derived")
+                    .and_then(|derived| derived.get("attention"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("normal");
+                if attention != "normal" {
+                    return None;
+                }
             }
 
             let mut candidate = Map::new();
             insert_str(&mut candidate, "id", Some(id));
+            if condition == LoopCandidateCondition::Dead {
+                insert_str(&mut candidate, "condition", Some(condition.as_str()));
+                insert_value(&mut candidate, "status", session.get("status"));
+                insert_str(&mut candidate, "activity", activity);
+            }
             insert_value(&mut candidate, "goal", loop_meta.get("goal"));
             insert_value(&mut candidate, "worktreePath", session.get("worktreePath"));
             insert_value(&mut candidate, "tool", session.get("tool"));
@@ -1074,6 +1117,19 @@ pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&st
             Some(Value::Object(candidate))
         })
         .collect()
+}
+
+fn loop_candidate_condition(
+    session: &Value,
+    activity: Option<&str>,
+) -> Option<LoopCandidateCondition> {
+    match optional_str(session, "status") {
+        Some("offline") => Some(LoopCandidateCondition::Dead),
+        Some("starting" | "running" | "idle") | None => {
+            matches!(activity, Some("idle" | "done")).then_some(LoopCandidateCondition::Stopped)
+        }
+        Some(_) => None,
+    }
 }
 
 fn active_loop_pause_keys(input: &Value) -> BTreeMap<String, String> {
@@ -1100,18 +1156,34 @@ pub fn build_overseer_briefing(candidates: &[Value], template: Option<&str>) -> 
         return render_overseer_briefing_template(template, candidates);
     }
 
-    let mut lines = Vec::from([String::from(
-        "[aimux loop check] These agents are in a managed loop but appear to have stopped:",
-    )]);
+    let has_dead_candidate = candidates
+        .iter()
+        .any(|candidate| candidate_condition(candidate) == LoopCandidateCondition::Dead);
+    let mut lines = Vec::from([String::from(if has_dead_candidate {
+        "[aimux loop check] These agents are in a managed loop but appear to have stopped or died:"
+    } else {
+        "[aimux loop check] These agents are in a managed loop but appear to have stopped:"
+    })]);
     lines.extend(candidates.iter().map(describe_candidate));
-    lines.extend([
-        String::new(),
-        String::from(
-            "Current loop membership is authoritative. If a listed agent was previously removed, the shown loop-since/source is newer state; do not remove it merely because you remember an older removal.",
-        ),
-        String::from(
+    lines.push(String::new());
+    lines.push(String::from(
+        "Current loop membership is authoritative. If a listed agent was previously removed, the shown loop-since/source is newer state; do not remove it merely because you remember an older removal.",
+    ));
+    if has_dead_candidate {
+        lines.extend([
+            String::from(
+                "For each stopped agent: read recent output with `aimux host agent-read <id>`, then decide whether it needs a next instruction.",
+            ),
+            String::from(
+                "For each dead/offline agent: restart it if the loop should continue, or remove it from the loop if the work is no longer recoverable.",
+            ),
+        ]);
+    } else {
+        lines.push(String::from(
             "For each: read its recent output with `aimux host agent-read <id>`, then decide whether it stopped prematurely.",
-        ),
+        ));
+    }
+    lines.extend([
         String::from(
             "If it should keep going, send a specific next instruction with `aimux input <id> \"…\"`.",
         ),
@@ -1214,6 +1286,7 @@ fn find_idle_loop_capacity(
     find_loop_candidates_with_overseer(input, overseer_id)
         .into_iter()
         .filter(|candidate| !paused_ids.contains(str_field(candidate, "id")))
+        .filter(|candidate| candidate_condition(candidate) == LoopCandidateCondition::Stopped)
         .collect()
 }
 
@@ -1369,6 +1442,10 @@ fn describe_reconciliation_capacity(candidate: &Value) -> String {
 
 pub fn describe_candidate(candidate: &Value) -> String {
     let id = str_field(candidate, "id");
+    let condition = match candidate_condition(candidate) {
+        LoopCandidateCondition::Dead => " [dead/offline]",
+        LoopCandidateCondition::Stopped => "",
+    };
     let tool = optional_str(candidate, "tool")
         .map(|tool| format!(" ({tool})"))
         .unwrap_or_default();
@@ -1408,7 +1485,7 @@ pub fn describe_candidate(candidate: &Value) -> String {
         })
         .unwrap_or_default();
 
-    format!("- {id}{tool}{where_text}{provenance}{last_action}{goal}")
+    format!("- {id}{condition}{tool}{where_text}{provenance}{last_action}{goal}")
 }
 
 pub fn build_canned_nudge(candidate: &Value) -> String {
@@ -1441,10 +1518,13 @@ pub fn find_overseer_session_id(metadata: &Value) -> Option<String> {
         })
 }
 
-fn session_exists(input: &Value, id: &str) -> bool {
-    array_field(input, "sessions")
-        .iter()
-        .any(|session| str_field(session, "id") == id)
+fn session_can_receive_loop_send(input: &Value, id: &str) -> bool {
+    array_field(input, "sessions").iter().any(|session| {
+        str_field(session, "id") == id
+            && optional_str(session, "status")
+                .map(|status| matches!(status, "starting" | "running" | "idle"))
+                .unwrap_or(true)
+    })
 }
 
 fn stopped_candidate_due(
@@ -1481,6 +1561,7 @@ fn candidate_signature(candidates: &[Value]) -> String {
         .map(|candidate| {
             [
                 str_field(candidate, "id"),
+                str_field(candidate, "condition"),
                 str_field(candidate, "loopSince"),
                 optional_str(candidate, "goal").unwrap_or_default(),
                 optional_str(candidate, "loopSource").unwrap_or_default(),
@@ -1505,6 +1586,7 @@ fn loop_pause_key(candidate: &Value) -> Option<String> {
 fn dwell_key(candidate: &Value) -> Option<LoopDwellKey> {
     optional_str(candidate, "id").map(|session_id| LoopDwellKey {
         session_id: session_id.to_owned(),
+        condition: candidate_condition(candidate),
         loop_since: str_field(candidate, "loopSince").to_owned(),
         goal: optional_str(candidate, "goal")
             .unwrap_or_default()
@@ -1513,6 +1595,10 @@ fn dwell_key(candidate: &Value) -> Option<LoopDwellKey> {
             .unwrap_or_default()
             .to_owned(),
     })
+}
+
+fn candidate_condition(candidate: &Value) -> LoopCandidateCondition {
+    LoopCandidateCondition::from_str(str_field(candidate, "condition"))
 }
 
 fn optional_str_value(value: Option<&Value>) -> String {

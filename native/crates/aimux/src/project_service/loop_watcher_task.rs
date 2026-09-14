@@ -30,6 +30,9 @@ use super::watcher_delivery::{TickLoopBudget, deliver_agent_input_async};
 /// keeps a graveyarded or offline session with stale `loop.active` metadata
 /// from ever being messaged.
 pub const NUDGEABLE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
+/// The watcher also needs offline sessions as data so it can report a loop
+/// member that died instead of waiting forever for a stopped activity edge.
+pub const LOOP_WATCH_SESSION_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
 const DEFAULT_SCAN_INTERVAL_MS: i64 = 15_000;
 const DEFAULT_SCAN_EVERY_TICKS: u64 = 60;
 const DEFAULT_STOPPED_DWELL_MS: i64 = 30_000;
@@ -118,7 +121,7 @@ impl PeriodicTask for LoopWatcherTask {
                     })?;
             let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
             let sessions =
-                list_topology_session_states(&topology, Some(NUDGEABLE_SESSION_STATUSES));
+                list_topology_session_states(&topology, Some(LOOP_WATCH_SESSION_STATUSES));
             let threads = build_coordination_thread_entries(&exchange, "user");
             let coordination_view =
                 build_coordination_view(&sessions, &[], &[], &[], &threads, "user");
@@ -310,6 +313,13 @@ fn stopped_metadata_session_ids(input: &Value) -> Vec<String> {
         .iter()
         .filter_map(|session| {
             let id = session.get("id").and_then(Value::as_str)?;
+            if session
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| !NUDGEABLE_SESSION_STATUSES.contains(&status))
+            {
+                return None;
+            }
             if matches!(metadata_activity(input, id), Some("idle" | "done")) {
                 Some(id.to_owned())
             } else {
