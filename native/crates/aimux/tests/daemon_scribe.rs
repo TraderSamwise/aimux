@@ -50,7 +50,7 @@ fn text_body(response: DaemonRouteResponse) -> String {
 }
 
 #[test]
-fn scribe_start_uses_generic_supervisor_role_body() {
+fn scribe_start_marks_spawn_body_as_scribe() {
     let mut runtime = FakeScribeRuntime::default();
     let response = route_scribe_text_request(
         &mut runtime,
@@ -72,7 +72,7 @@ fn scribe_start_uses_generic_supervisor_role_body() {
             body: json!({
                 "tool": "codex",
                 "open": false,
-                "role": "scribe"
+                "scribe": true
             }),
         }
     );

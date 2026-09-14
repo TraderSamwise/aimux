@@ -1,4 +1,4 @@
-use aimux::release_version_contract::read_aimux_version_from_package_root;
+use aimux::release_version_contract::read_aimux_runtime_version_from;
 use aimux::tui_render::text::strip_ansi;
 use serde_json::Value;
 use std::fs;
@@ -54,7 +54,7 @@ fn root_version_and_help_stay_native_even_when_node_fallback_is_configured() {
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8_lossy(&version.stdout),
-        format!("{}\n", read_aimux_version_from_package_root(&root))
+        format!("{}\n", expected_runtime_version_for_cargo_binary(&root))
     );
     assert!(
         !log.exists(),
@@ -259,7 +259,7 @@ fn native_dashboard_internal_once_renders_snapshot_without_node_fallback() {
     assert!(
         strip_ansi(&stdout).contains(&format!(
             "aimux v{}",
-            read_aimux_version_from_package_root(&root)
+            expected_runtime_version_for_cargo_binary(&root)
         )),
         "{stdout}"
     );
@@ -1412,6 +1412,13 @@ fn temp_root(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = fs::remove_dir_all(path);
+}
+
+fn expected_runtime_version_for_cargo_binary(aimux_root: impl Into<PathBuf>) -> String {
+    read_aimux_runtime_version_from(
+        Some(aimux_root.into()),
+        Some(PathBuf::from(env!("CARGO_BIN_EXE_aimux"))),
+    )
 }
 
 struct NativeEntrypointFixture {
