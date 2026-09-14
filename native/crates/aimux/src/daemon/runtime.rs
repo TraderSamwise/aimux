@@ -38,6 +38,10 @@ use crate::daemon::listener::{
 };
 use crate::daemon::process::handle_daemon_runtime_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
+use crate::daemon::scheduler::{
+    DaemonPeriodicTask, DaemonSchedulerContext, PeriodicTaskFuture, daemon_scheduler_handle,
+    spawn_daemon_scheduler,
+};
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
 use crate::daemon::stability_doctor::{
     StabilityDoctorReport, build_stability_doctor_report_with_live_scheduler,
@@ -159,6 +163,8 @@ const PROJECT_ONLINE_AGENT_COUNT_TIMEOUT_MS: u64 = 500;
 const INSTALL_CLEANUP_INITIAL_DELAY_MS: u64 = 30 * 60_000;
 const INSTALL_CLEANUP_MAX_PER_SWEEP: usize = 50;
 const RECORDING_CLEANUP_MAX_PER_SWEEP: usize = 200;
+pub const DAEMON_DISK_MAINTENANCE_TASK_NAME: &str = "daemon-disk-maintenance";
+const DAEMON_DISK_MAINTENANCE_FALLBACK_INTERVAL_MS: u64 = 86_400_000;
 const RESTART_BACKEND_ID_CAPTURE_WAIT_MS: u64 = 30_000;
 const RESTART_BACKEND_ID_CAPTURE_POLL_MS: u64 = 250;
 const RESTART_BACKEND_ID_CAPTURE_WAIT_MAX_MS: u64 = RUNTIME_RESTART_LOCK_STALE_MS;
@@ -191,12 +197,12 @@ pub struct RealDaemonRuntime {
 }
 
 #[derive(Default)]
-struct DiskMaintenanceOptions {
-    install_root: Option<String>,
-    install_reference_text: Option<InstallReferenceText>,
-    now_ms: Option<u128>,
-    env: Option<BTreeMap<String, String>>,
-    home: Option<PathBuf>,
+pub struct DiskMaintenanceOptions {
+    pub install_root: Option<String>,
+    pub install_reference_text: Option<InstallReferenceText>,
+    pub now_ms: Option<u128>,
+    pub env: Option<BTreeMap<String, String>>,
+    pub home: Option<PathBuf>,
 }
 
 struct DaemonProjectReadSnapshot {
@@ -664,6 +670,14 @@ impl RealDaemonRuntime {
 
     pub fn with_global_expose_hot_snapshot_background_refresh(mut self) -> Self {
         self.global_expose_hot_snapshots = GlobalExposeHotSnapshotCoordinator::new(true);
+        self
+    }
+
+    pub fn with_global_expose_hot_snapshot_coordinator(
+        mut self,
+        coordinator: GlobalExposeHotSnapshotCoordinator,
+    ) -> Self {
+        self.global_expose_hot_snapshots = coordinator;
         self
     }
 
@@ -2330,17 +2344,27 @@ pub fn run_daemon_internal() -> Result<()> {
         path: resolver.daemon_info_path(),
         pid: info.pid,
     };
-    start_daemon_disk_maintenance_background(resolver.clone());
+    let daemon_scheduler = daemon_scheduler_handle();
+    let scheduler_context = Arc::new(DaemonSchedulerContext::new(resolver.clone(), info.clone()));
+    let global_expose_hot_snapshots =
+        GlobalExposeHotSnapshotCoordinator::new(true).with_scheduler(daemon_scheduler.clone());
     let runtime = Arc::new(Mutex::new(
         RealDaemonRuntime::new(resolver.clone(), info)
-            .with_global_expose_hot_snapshot_background_refresh(),
+            .with_global_expose_hot_snapshot_coordinator(global_expose_hot_snapshots.clone()),
     ));
     let hosted_config = crate::hosted_config::load_hosted_config_with_resolver(&resolver);
-    let _hosted_server = crate::hosted_server::start_hosted_server_background(
+    let _hosted_server = crate::hosted_server::start_hosted_server_background_with_scheduler(
         hosted_config,
         resolver.clone(),
         Arc::clone(&runtime),
+        Some(Arc::clone(&scheduler_context)),
+        Some(daemon_scheduler.clone()),
     )?;
+    spawn_daemon_scheduler(
+        Arc::clone(&scheduler_context),
+        daemon_periodic_tasks(global_expose_hot_snapshots),
+        daemon_scheduler,
+    );
     // A machine left logged in and enabled should come back on its own rather
     // than waiting for someone to run a CLI command.
     if let Ok(runtime) = runtime.lock() {
@@ -2414,79 +2438,106 @@ fn seed_agent_restore_prompt_gates(resolver: &PathResolver, info: &AimuxDaemonIn
     }
 }
 
-fn start_daemon_disk_maintenance_background(resolver: PathResolver) {
-    crate::async_runtime::spawn_named(daemon_disk_maintenance_task_name(&resolver), async move {
-        tokio::time::sleep(Duration::from_millis(INSTALL_CLEANUP_INITIAL_DELAY_MS)).await;
-        loop {
-            let maintenance_resolver = resolver.clone();
-            let interval = match crate::async_runtime::spawn_blocking_named(
-                daemon_disk_maintenance_pass_task_name(&resolver),
-                move || {
-                    run_daemon_disk_maintenance_once(
-                        &maintenance_resolver,
-                        DiskMaintenanceOptions::default(),
-                    )
-                },
-            )
-            .await
-            {
-                Ok(interval) => interval,
-                Err(error) => {
-                    log_lifecycle_always(
-                        "daemon disk maintenance task failed",
-                        "daemon-maintenance",
-                        Some(json!({
-                            "error": error.to_string(),
-                        })),
-                    );
-                    Duration::from_millis(86_400_000)
-                }
-            };
-            tokio::time::sleep(interval).await;
+pub struct DaemonDiskMaintenanceTask {
+    next_interval_ms: u64,
+}
+
+pub fn daemon_periodic_tasks(
+    global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
+) -> Vec<Box<dyn DaemonPeriodicTask>> {
+    vec![
+        Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
+            global_expose_hot_snapshots,
+        )),
+        Box::new(crate::hosted_server::HostedPruneTask),
+        Box::new(crate::hosted_server::HostedOutboxDrainTask),
+        Box::new(DaemonDiskMaintenanceTask::new()),
+    ]
+}
+
+impl DaemonDiskMaintenanceTask {
+    pub fn new() -> Self {
+        Self {
+            next_interval_ms: INSTALL_CLEANUP_INITIAL_DELAY_MS,
         }
-    });
+    }
 }
 
-fn daemon_disk_maintenance_task_name(resolver: &PathResolver) -> String {
-    crate::async_runtime::scoped_task_name(
-        "daemon",
-        "disk-maintenance",
-        &resolver.global_aimux_dir().to_string_lossy(),
-    )
+impl Default for DaemonDiskMaintenanceTask {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-fn daemon_disk_maintenance_pass_task_name(resolver: &PathResolver) -> String {
-    crate::async_runtime::scoped_task_name(
-        "daemon",
-        "disk-maintenance-pass",
-        &resolver.global_aimux_dir().to_string_lossy(),
-    )
+impl DaemonPeriodicTask for DaemonDiskMaintenanceTask {
+    fn name(&self) -> &str {
+        DAEMON_DISK_MAINTENANCE_TASK_NAME
+    }
+
+    fn interval_ms(&self) -> i64 {
+        i64::try_from(self.next_interval_ms).unwrap_or(i64::MAX)
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(120)
+    }
+
+    fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            match try_run_daemon_disk_maintenance_once(
+                &context.resolver,
+                DiskMaintenanceOptions::default(),
+            ) {
+                Ok(interval) => {
+                    self.next_interval_ms = interval.as_millis().min(u128::from(u64::MAX)) as u64;
+                    Ok(())
+                }
+                Err(error) => {
+                    self.next_interval_ms = DAEMON_DISK_MAINTENANCE_FALLBACK_INTERVAL_MS;
+                    Err(error)
+                }
+            }
+        })
+    }
 }
 
+#[cfg(test)]
 fn run_daemon_disk_maintenance_once(
     resolver: &PathResolver,
     options: DiskMaintenanceOptions,
 ) -> Duration {
-    let global_config = match try_load_global_config_with_resolver(resolver) {
-        Ok(config) => config,
+    match try_run_daemon_disk_maintenance_once(resolver, options) {
+        Ok(interval) => interval,
         Err(error) => {
             log_lifecycle_always(
-                "skipped daemon disk maintenance: global config unreadable",
+                "daemon disk maintenance task failed",
                 "daemon-maintenance",
                 Some(json!({
                     "error": error,
                 })),
             );
-            return Duration::from_millis(86_400_000);
+            Duration::from_millis(DAEMON_DISK_MAINTENANCE_FALLBACK_INTERVAL_MS)
+        }
+    }
+}
+
+pub fn try_run_daemon_disk_maintenance_once(
+    resolver: &PathResolver,
+    options: DiskMaintenanceOptions,
+) -> Result<Duration, String> {
+    let global_config = match try_load_global_config_with_resolver(resolver) {
+        Ok(config) => config,
+        Err(error) => {
+            return Err(format!("global config unreadable: {error}"));
         }
     };
     let installs_config =
         normalize_installs_config(global_config.get("installs").unwrap_or(&Value::Null));
-    sweep_stale_recordings(resolver, &global_config, options.now_ms);
+    sweep_stale_recordings(resolver, &global_config, options.now_ms)?;
     let interval = installs_config
         .get("cleanupIntervalMs")
         .and_then(Value::as_u64)
-        .unwrap_or(86_400_000);
+        .unwrap_or(DAEMON_DISK_MAINTENANCE_FALLBACK_INTERVAL_MS);
     if installs_config
         .get("cleanupEnabled")
         .and_then(Value::as_bool)
@@ -2516,7 +2567,7 @@ fn run_daemon_disk_maintenance_once(
             ..PlanInstallCleanupOptions::default()
         });
         if plan.references_complete && !plan.remove.is_empty() {
-            let _ = run_install_cleanup(
+            let result = run_install_cleanup(
                 plan,
                 RunInstallCleanupInput {
                     dry_run: Some(false),
@@ -2524,35 +2575,53 @@ fn run_daemon_disk_maintenance_once(
                     ..RunInstallCleanupInput::default()
                 },
             );
+            let failures = result
+                .results
+                .iter()
+                .filter(|entry| {
+                    entry.status == crate::install_cleanup::InstallCleanupItemStatus::Failed
+                })
+                .map(|entry| {
+                    format!(
+                        "{}: {}",
+                        entry.name,
+                        entry.error.as_deref().unwrap_or("unknown error")
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !failures.is_empty() {
+                return Err(format!("install cleanup failed: {}", failures.join("; ")));
+            }
         }
     }
-    Duration::from_millis(interval)
+    Ok(Duration::from_millis(interval))
 }
 
-fn sweep_stale_recordings(resolver: &PathResolver, global_config: &Value, now_ms: Option<u128>) {
+fn sweep_stale_recordings(
+    resolver: &PathResolver,
+    global_config: &Value,
+    now_ms: Option<u128>,
+) -> Result<(), String> {
     let recordings_config = normalize_recordings_config(global_config.get("recordings"));
     if !recordings_config
         .get("cleanupEnabled")
         .and_then(Value::as_bool)
         .unwrap_or(true)
     {
-        return;
+        return Ok(());
     }
     let mut project_resolver = resolver.clone();
     let extra_dirs = resolver
         .load_registry()
-        .map(|registry| {
-            registry
-                .projects
-                .into_iter()
-                .map(|project| {
-                    project_resolver
-                        .aimux_dir_for(project.repo_root)
-                        .join("recordings")
-                })
-                .collect::<Vec<_>>()
+        .map_err(|error| format!("load project registry for recording cleanup: {error}"))?
+        .projects
+        .into_iter()
+        .map(|project| {
+            project_resolver
+                .aimux_dir_for(project.repo_root)
+                .join("recordings")
         })
-        .unwrap_or_default();
+        .collect::<Vec<_>>();
     let retention_days = recordings_config
         .get("retentionDays")
         .and_then(Value::as_f64);
@@ -2565,10 +2634,16 @@ fn sweep_stale_recordings(resolver: &PathResolver, global_config: &Value, now_ms
         retention_days,
         now_ms,
     );
-    if plan.remove.is_empty() {
-        return;
+    if !plan.errors.is_empty() {
+        return Err(format!(
+            "recording cleanup plan failed: {}",
+            plan.errors.join("; ")
+        ));
     }
-    let _ = run_recording_cleanup(
+    if plan.remove.is_empty() {
+        return Ok(());
+    }
+    let result = run_recording_cleanup(
         &plan,
         RunRecordingCleanupInput {
             dry_run: Some(false),
@@ -2576,6 +2651,13 @@ fn sweep_stale_recordings(resolver: &PathResolver, global_config: &Value, now_ms
         },
         |path| fs::remove_file(path).map_err(|error| error.to_string()),
     );
+    if result.failed > 0 {
+        return Err(format!(
+            "recording cleanup failed for {} files",
+            result.failed
+        ));
+    }
+    Ok(())
 }
 
 fn current_epoch_ms() -> u128 {
@@ -7195,39 +7277,6 @@ mod tests {
         assert_eq!(interval, Duration::from_millis(86_400_000));
         assert!(stale_recording.exists());
         assert!(old_install.exists());
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn daemon_disk_maintenance_background_runs_on_async_runtime() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
-        let root = temp_root("disk-maintenance-async");
-        let home = root.join("home");
-        fs::create_dir_all(&home).expect("home");
-        let resolver = PathResolver::new(
-            &root,
-            &home,
-            Some(home.join(".aimux").to_string_lossy().into_owned()),
-        );
-        fs::create_dir_all(resolver.global_aimux_dir()).expect("aimux home");
-        let task_name = daemon_disk_maintenance_task_name(&resolver);
-
-        start_daemon_disk_maintenance_background(resolver);
-
-        let started = Instant::now();
-        let mut found = false;
-        while started.elapsed() < Duration::from_secs(1) {
-            found = crate::async_runtime::doctor_tasks_report()
-                .tasks
-                .iter()
-                .any(|task| task.name == task_name);
-            if found {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(found, "daemon disk maintenance async task registered");
 
         let _ = fs::remove_dir_all(root);
     }

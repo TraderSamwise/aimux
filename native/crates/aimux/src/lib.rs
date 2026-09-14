@@ -83,6 +83,7 @@ pub mod notification_deep_link;
 pub mod notification_delivery_guard;
 pub mod osc_notifications;
 pub mod paths;
+pub mod periodic_scheduler;
 pub mod plugin_api;
 pub mod plugin_project_service_host;
 pub mod plugin_registry;

@@ -118,17 +118,27 @@ impl HostedAuditStore {
     }
 
     pub fn prune(&self, retention_days: i64, now_ms: u128) {
+        let _ = self.try_prune(retention_days, now_ms);
+    }
+
+    pub fn try_prune(&self, retention_days: i64, now_ms: u128) -> Result<(), String> {
         let cutoff = now_ms.saturating_sub(retention_days.max(0) as u128 * 24 * 60 * 60 * 1_000);
         for path in [self.audit_path(), self.prompts_path()] {
-            let _ = with_hosted_lock(
+            match with_hosted_lock(
                 &path,
-                || prune_unlocked(&path, cutoff),
+                || try_prune_unlocked(&path, cutoff),
                 HostedLockOptions {
                     wait: false,
                     timeout_ms: 0,
                 },
-            );
+            ) {
+                Ok(Some(Ok(()))) => {}
+                Ok(Some(Err(error))) => return Err(error),
+                Ok(None) => return Err(format!("hosted audit state locked: {}", path.display())),
+                Err(error) => return Err(error),
+            }
         }
+        Ok(())
     }
 
     fn append_jsonl(&self, path: PathBuf, record: &impl Serialize) {
@@ -194,7 +204,7 @@ fn rotate_if_needed(path: &Path) {
     let _ = fs::rename(path, format!("{}.1", path.to_string_lossy()));
 }
 
-fn prune_unlocked(path: &Path, cutoff: u128) {
+fn try_prune_unlocked(path: &Path, cutoff: u128) -> Result<(), String> {
     for index in (1..=HOSTED_AUDIT_MAX_FILES).rev() {
         let rotated = PathBuf::from(format!("{}.{}", path.to_string_lossy(), index));
         if rotated
@@ -204,14 +214,19 @@ fn prune_unlocked(path: &Path, cutoff: u128) {
             .map(|modified| unix_millis(modified) < cutoff)
             .unwrap_or(false)
         {
-            let _ = fs::remove_file(rotated);
+            fs::remove_file(&rotated).map_err(|error| {
+                format!(
+                    "remove hosted audit rotation {}: {error}",
+                    rotated.display()
+                )
+            })?;
         }
     }
 
     let staged = stage_pending(path);
     let live_lines = if path.exists() {
         fs::read_to_string(path)
-            .unwrap_or_default()
+            .map_err(|error| format!("read hosted audit log {}: {error}", path.display()))?
             .lines()
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
@@ -220,7 +235,7 @@ fn prune_unlocked(path: &Path, cutoff: u128) {
         Vec::new()
     };
     if live_lines.is_empty() && staged.is_none() {
-        return;
+        return Ok(());
     }
     let mut lines = live_lines.clone();
     if let Some(staged) = &staged {
@@ -247,12 +262,18 @@ fn prune_unlocked(path: &Path, cutoff: u128) {
         } else {
             format!("{}\n", kept.join("\n"))
         };
-        if atomic_write_with_mode(path, data, Some(0o600)).is_ok()
-            && let Some(staged) = staged
-        {
-            let _ = fs::remove_file(staged.path);
+        atomic_write_with_mode(path, data, Some(0o600))
+            .map_err(|error| format!("write hosted audit log {}: {error}", path.display()))?;
+        if let Some(staged) = staged {
+            fs::remove_file(&staged.path).map_err(|error| {
+                format!(
+                    "remove staged hosted audit log {}: {error}",
+                    staged.path.display()
+                )
+            })?;
         }
     }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]

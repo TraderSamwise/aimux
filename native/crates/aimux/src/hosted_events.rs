@@ -202,9 +202,13 @@ impl HostedDevicesStore {
     }
 
     pub fn prune_devices(&self, retention_days: i64, now_ms: u128) {
+        let _ = self.try_prune_devices(retention_days, now_ms);
+    }
+
+    pub fn try_prune_devices(&self, retention_days: i64, now_ms: u128) -> Result<(), String> {
         let path = self.devices_path();
         let cutoff = now_ms.saturating_sub(retention_days.max(0) as u128 * 24 * 60 * 60 * 1_000);
-        let _ = with_hosted_lock(
+        match with_hosted_lock(
             &path,
             || {
                 let mut state = self.load_devices();
@@ -215,14 +219,21 @@ impl HostedDevicesStore {
                         .unwrap_or(true)
                 });
                 if state.devices.len() != before {
-                    let _ = self.save_devices(&state);
+                    self.save_devices(&state)
+                        .map_err(|error| format!("save hosted devices: {error}"))?;
                 }
+                Ok(())
             },
             HostedLockOptions {
                 wait: true,
                 timeout_ms: DEVICE_SIGHTING_TIMEOUT_MS,
             },
-        );
+        ) {
+            Ok(Some(Ok(()))) => Ok(()),
+            Ok(Some(Err(error))) => Err(error),
+            Ok(None) => Err(format!("hosted devices state locked: {}", path.display())),
+            Err(error) => Err(error),
+        }
     }
 }
 

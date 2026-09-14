@@ -9,6 +9,10 @@ use crate::daemon::listener::{
 };
 use crate::daemon::router::{DaemonRouteRuntime, route_daemon_request};
 use crate::daemon::routing::DaemonRouteUrl;
+use crate::daemon::scheduler::{
+    DaemonPeriodicTask, DaemonSchedulerContext, DaemonSchedulerHandle, PeriodicTaskFuture,
+    daemon_scheduler_handle, spawn_daemon_scheduler,
+};
 use crate::daemon::server::DaemonHttpRequest;
 use crate::daemon::stream::{
     HostAgentStreamError, HostAgentStreamRequestOptions, ProjectEventStreamChunk,
@@ -35,7 +39,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::net::TcpListener as StdTcpListener;
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -59,6 +63,8 @@ const STREAM_REAUTH_INTERVAL_MS: u64 = 5_000;
 const AUTH_FAILURE_WINDOW_MS: u128 = 60_000;
 const AUTH_FAILURE_DELIVERY_MAX: usize = 10;
 const HOSTED_REQUEST_READ_TIMEOUT_MS: u64 = 1_000;
+pub const HOSTED_PRUNE_TASK_NAME: &str = "hosted-prune";
+pub const HOSTED_OUTBOX_DRAIN_TASK_NAME: &str = "hosted-outbox-drain";
 
 fn hosted_connection_capacity(config: &HostedConfig) -> usize {
     usize::try_from(config.rate_limit.max_concurrent.max(1)).unwrap_or(1)
@@ -92,8 +98,7 @@ pub struct HostedServerState {
     devices: HostedDevicesStore,
     lockdown: HostedLockdownStore,
     outbox: HostedOutboxStore,
-    outbox_drain: Arc<HostedOutboxDrainSignal>,
-    outbox_drain_worker: Mutex<Option<JoinHandle<()>>>,
+    scheduler: Option<DaemonSchedulerHandle>,
     connection_limiter: Arc<Semaphore>,
     connection_peer_limit: usize,
     connections_by_peer: Arc<Mutex<BTreeMap<String, usize>>>,
@@ -147,6 +152,36 @@ impl HostedServerState {
         stream_limits: HostedStreamLimits,
         delivery: HostedEventDelivery,
     ) -> Self {
+        Self::with_resolver_and_stream_limits_and_delivery_and_scheduler(
+            config,
+            resolver,
+            stream_limits,
+            delivery,
+            None,
+        )
+    }
+
+    pub fn with_resolver_and_scheduler(
+        config: HostedConfig,
+        resolver: PathResolver,
+        scheduler: DaemonSchedulerHandle,
+    ) -> Self {
+        Self::with_resolver_and_stream_limits_and_delivery_and_scheduler(
+            config.clone(),
+            resolver,
+            HostedStreamLimits::default(),
+            HostedEventDelivery::new_from_hosted_config(&config),
+            Some(scheduler),
+        )
+    }
+
+    fn with_resolver_and_stream_limits_and_delivery_and_scheduler(
+        config: HostedConfig,
+        resolver: PathResolver,
+        stream_limits: HostedStreamLimits,
+        delivery: HostedEventDelivery,
+        scheduler: Option<DaemonSchedulerHandle>,
+    ) -> Self {
         let limiter = HostedRateLimiter::new(HostedRateLimitOptions {
             requests_per_minute: config.rate_limit.requests_per_minute as f64,
             max_concurrent: config.rate_limit.max_concurrent,
@@ -160,14 +195,7 @@ impl HostedServerState {
         });
         let delivery = Arc::new(Mutex::new(delivery));
         let outbox = HostedOutboxStore::with_resolver(resolver.clone());
-        let outbox_drain = Arc::new(HostedOutboxDrainSignal::default());
         let connection_capacity = hosted_connection_capacity(&config);
-        let outbox_drain_worker = spawn_hosted_outbox_drain_background(
-            outbox.clone(),
-            Arc::clone(&delivery),
-            Arc::clone(&outbox_drain),
-            Duration::from_millis(OUTBOX_INTERVAL_MS),
-        );
         Self {
             delivery,
             config,
@@ -176,8 +204,7 @@ impl HostedServerState {
             devices: HostedDevicesStore::with_resolver(resolver.clone()),
             lockdown: HostedLockdownStore::with_resolver(resolver.clone()),
             outbox,
-            outbox_drain,
-            outbox_drain_worker: Mutex::new(Some(outbox_drain_worker)),
+            scheduler,
             connection_limiter: Arc::new(Semaphore::new(connection_capacity)),
             connection_peer_limit: connection_capacity,
             connections_by_peer: Arc::new(Mutex::new(BTreeMap::new())),
@@ -193,18 +220,43 @@ impl HostedServerState {
         &self.config
     }
 
-    fn prune(&self) {
-        self.limiter.prune(PRUNE_IDLE_MS);
-        self.peer_limiter.prune(PRUNE_IDLE_MS);
-        self.audit
-            .prune(self.config.retention_days, unix_millis(SystemTime::now()));
-        self.devices
-            .prune_devices(self.config.retention_days, unix_millis(SystemTime::now()));
+    pub fn prune_for_scheduler(&self) -> Result<(), String> {
+        let now = unix_millis(SystemTime::now());
+        let mut errors = Vec::new();
+        if let Err(error) = self.limiter.try_prune(PRUNE_IDLE_MS) {
+            errors.push(format!("limiter: {error}"));
+        }
+        if let Err(error) = self.peer_limiter.try_prune(PRUNE_IDLE_MS) {
+            errors.push(format!("peer limiter: {error}"));
+        }
+        if let Err(error) = self.audit.try_prune(self.config.retention_days, now) {
+            errors.push(format!("audit: {error}"));
+        }
+        if let Err(error) = self
+            .devices
+            .try_prune_devices(self.config.retention_days, now)
+        {
+            errors.push(format!("devices: {error}"));
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
+    pub fn drain_outbox_for_scheduler(&self) -> Result<(), String> {
+        match drain_hosted_outbox(&self.outbox, &self.delivery) {
+            HostedOutboxDrainResult::Empty | HostedOutboxDrainResult::Delivered(_) => Ok(()),
+            HostedOutboxDrainResult::Failed => Err("hosted outbox drain failed".to_owned()),
+        }
     }
 
     fn spool_delivery_event(&self, event: &HostedEvent) {
         self.outbox.spool_event(event);
-        self.outbox_drain.signal();
+        if let Some(scheduler) = self.scheduler.as_ref() {
+            scheduler.force_task_next_tick(HOSTED_OUTBOX_DRAIN_TASK_NAME);
+        }
     }
 
     fn enqueue_delivery_async(&self, event: HostedEvent) {
@@ -321,12 +373,6 @@ impl Drop for HostedConnectionPermit {
 
 impl Drop for HostedServerState {
     fn drop(&mut self) {
-        self.outbox_drain.stop();
-        if let Ok(mut worker) = self.outbox_drain_worker.lock()
-            && let Some(worker) = worker.take()
-        {
-            drop(worker);
-        }
         let _ = drain_hosted_outbox(&self.outbox, &self.delivery);
     }
 }
@@ -336,51 +382,6 @@ enum HostedOutboxDrainResult {
     Empty,
     Delivered(usize),
     Failed,
-}
-
-#[derive(Debug, Default)]
-struct HostedOutboxDrainSignal {
-    state: Mutex<HostedOutboxDrainState>,
-    changed: Condvar,
-}
-
-#[derive(Debug, Default)]
-struct HostedOutboxDrainState {
-    pending: bool,
-    stopped: bool,
-}
-
-impl HostedOutboxDrainSignal {
-    fn signal(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.pending = true;
-        self.changed.notify_one();
-    }
-
-    fn stop(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.stopped = true;
-        self.changed.notify_all();
-    }
-
-    fn wait_for_next_run(&self, backstop: Duration) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.stopped {
-            return false;
-        }
-        if !state.pending {
-            let waited = self
-                .changed
-                .wait_timeout(state, backstop)
-                .unwrap_or_else(|error| error.into_inner());
-            state = waited.0;
-        }
-        if state.stopped {
-            return false;
-        }
-        state.pending = false;
-        true
-    }
 }
 
 fn drain_hosted_outbox(
@@ -473,9 +474,46 @@ pub fn start_hosted_server_background<Runtime>(
 where
     Runtime: DaemonRouteRuntime + Send + 'static,
 {
+    start_hosted_server_background_with_scheduler(config, resolver, runtime, None, None)
+}
+
+pub fn start_hosted_server_background_with_scheduler<Runtime>(
+    config: HostedConfig,
+    resolver: PathResolver,
+    runtime: Arc<Mutex<Runtime>>,
+    scheduler_context: Option<Arc<DaemonSchedulerContext>>,
+    scheduler: Option<DaemonSchedulerHandle>,
+) -> Result<Option<JoinHandle<()>>>
+where
+    Runtime: DaemonRouteRuntime + Send + 'static,
+{
     if !config.enabled {
         return Ok(None);
     }
+    let (scheduler_context, scheduler, spawn_local_scheduler) = match (scheduler_context, scheduler)
+    {
+        (Some(context), Some(handle)) => (context, handle, false),
+        (None, None) => {
+            let issued_at = now_iso();
+            let info = runtime
+                .lock()
+                .map_err(|_| {
+                    anyhow!("daemon runtime lock poisoned before hosted scheduler startup")
+                })?
+                .current_daemon_info(&issued_at);
+            let handle = daemon_scheduler_handle();
+            (
+                Arc::new(DaemonSchedulerContext::new(resolver.clone(), info)),
+                handle,
+                true,
+            )
+        }
+        _ => {
+            return Err(anyhow!(
+                "hosted scheduler startup requires both scheduler context and handle"
+            ));
+        }
+    };
     let principal_count = HostedPrincipalsStore::with_resolver(resolver.clone())
         .count_active_principals()
         .context("count hosted principals")?;
@@ -495,8 +533,26 @@ where
     listener
         .set_nonblocking(true)
         .context("set hosted listener nonblocking")?;
-    let state = Arc::new(HostedServerState::with_resolver(config, resolver));
-    spawn_hosted_prune_background(&state);
+    let state = Arc::new(HostedServerState::with_resolver_and_scheduler(
+        config,
+        resolver,
+        scheduler.clone(),
+    ));
+    scheduler_context
+        .set_hosted_prune(crate::daemon::scheduler::hosted_prune_callback(&state))
+        .map_err(anyhow::Error::msg)?;
+    scheduler_context
+        .set_hosted_outbox_drain(crate::daemon::scheduler::hosted_outbox_drain_callback(
+            &state,
+        ))
+        .map_err(anyhow::Error::msg)?;
+    if spawn_local_scheduler {
+        spawn_daemon_scheduler(
+            Arc::clone(&scheduler_context),
+            vec![Box::new(HostedPruneTask), Box::new(HostedOutboxDrainTask)],
+            scheduler,
+        );
+    }
 
     Ok(Some(crate::async_runtime::spawn_named(
         crate::async_runtime::task_name("hosted", "listener"),
@@ -576,35 +632,36 @@ where
     )))
 }
 
-fn spawn_hosted_prune_background(state: &Arc<HostedServerState>) -> JoinHandle<()> {
-    let state = Arc::downgrade(state);
-    crate::async_runtime::spawn_blocking_named(
-        crate::async_runtime::task_name("hosted", "prune"),
-        move || {
-            thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
-            while let Some(state) = Weak::upgrade(&state) {
-                state.prune();
-                drop(state);
-                thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
-            }
-        },
-    )
+pub struct HostedPruneTask;
+
+impl DaemonPeriodicTask for HostedPruneTask {
+    fn name(&self) -> &str {
+        HOSTED_PRUNE_TASK_NAME
+    }
+
+    fn interval_ms(&self) -> i64 {
+        PRUNE_INTERVAL_MS as i64
+    }
+
+    fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move { context.run_hosted_prune() })
+    }
 }
 
-fn spawn_hosted_outbox_drain_background(
-    outbox: HostedOutboxStore,
-    delivery: Arc<Mutex<HostedEventDelivery>>,
-    signal: Arc<HostedOutboxDrainSignal>,
-    backstop: Duration,
-) -> JoinHandle<()> {
-    crate::async_runtime::spawn_blocking_named(
-        crate::async_runtime::task_name("hosted", "outbox-drain"),
-        move || {
-            while signal.wait_for_next_run(backstop) {
-                drain_hosted_outbox(&outbox, &delivery);
-            }
-        },
-    )
+pub struct HostedOutboxDrainTask;
+
+impl DaemonPeriodicTask for HostedOutboxDrainTask {
+    fn name(&self) -> &str {
+        HOSTED_OUTBOX_DRAIN_TASK_NAME
+    }
+
+    fn interval_ms(&self) -> i64 {
+        OUTBOX_INTERVAL_MS as i64
+    }
+
+    fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move { context.run_hosted_outbox_drain() })
+    }
 }
 
 pub fn handle_hosted_daemon_stream<Runtime, Stream>(
@@ -2032,23 +2089,32 @@ mod tests {
     use std::sync::mpsc;
 
     #[test]
-    fn hosted_outbox_signal_drains_without_waiting_for_backstop() {
-        let fixture = HostedServerFixture::new("outbox-signal");
+    fn hosted_outbox_spool_forces_scheduler_drain_without_waiting_for_backstop() {
+        let fixture = HostedServerFixture::new("outbox-scheduler");
         let webhook = CountingWebhookServer::spawn();
-        let state = Arc::new(HostedServerState::with_resolver_and_delivery(
-            HostedConfig {
-                enabled: true,
-                webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
-                ..HostedConfig::default()
-            },
-            fixture.resolver.clone(),
-            HostedEventDelivery::new(HostedEventDeliveryConfig {
-                webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
-                webhook_secret: Some("secret".into()),
-            }),
-        ));
+        let scheduler = daemon_scheduler_handle();
+        let state = Arc::new(
+            HostedServerState::with_resolver_and_stream_limits_and_delivery_and_scheduler(
+                HostedConfig {
+                    enabled: true,
+                    webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
+                    ..HostedConfig::default()
+                },
+                fixture.resolver.clone(),
+                HostedStreamLimits::default(),
+                HostedEventDelivery::new(HostedEventDeliveryConfig {
+                    webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
+                    webhook_secret: Some("secret".into()),
+                }),
+                Some(scheduler.clone()),
+            ),
+        );
 
         state.spool_delivery_event(&hosted_event("hosted_new_device"));
+        assert!(scheduler.take_forced_task(HOSTED_OUTBOX_DRAIN_TASK_NAME));
+        state
+            .drain_outbox_for_scheduler()
+            .expect("scheduler drain should deliver");
 
         webhook.wait_for_count(1, Duration::from_millis(500));
     }

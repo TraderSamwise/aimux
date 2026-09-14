@@ -1571,7 +1571,7 @@ fn hosted_server_startup_is_default_off() {
 }
 
 #[test]
-fn hosted_server_accept_loop_and_connections_are_async_tasks() {
+fn hosted_server_accept_loop_scheduler_and_connections_are_async_tasks() {
     let fixture = HostedFixture::new("async-listener");
     let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
     let port = unused_loopback_port();
@@ -1590,10 +1590,8 @@ fn hosted_server_accept_loop_and_connections_are_async_tasks() {
 
     let listener_task = wait_for_async_task("hosted:listener").expect("hosted listener task");
     assert_eq!(listener_task.kind, AsyncTaskKind::Async);
-    let prune_task = wait_for_async_task("hosted:prune").expect("hosted prune task");
-    assert_eq!(prune_task.kind, AsyncTaskKind::Blocking);
-    let outbox_task = wait_for_async_task("hosted:outbox-drain").expect("hosted outbox drain task");
-    assert_eq!(outbox_task.kind, AsyncTaskKind::Blocking);
+    let scheduler_task = wait_for_async_task("daemon:scheduler").expect("daemon scheduler task");
+    assert_eq!(scheduler_task.kind, AsyncTaskKind::Async);
 
     let client = connect_loopback_port(port);
     let connection_task =
@@ -1713,8 +1711,9 @@ fn hosted_background_workers_are_named_runtime_tasks_not_bare_threads() {
         !production_source.contains("thread::spawn("),
         "hosted background workers must use named async-runtime tasks"
     );
-    assert!(production_source.contains("task_name(\"hosted\", \"prune\")"));
-    assert!(production_source.contains("task_name(\"hosted\", \"outbox-drain\")"));
+    assert!(production_source.contains("spawn_daemon_scheduler("));
+    assert!(production_source.contains("HOSTED_PRUNE_TASK_NAME"));
+    assert!(production_source.contains("HOSTED_OUTBOX_DRAIN_TASK_NAME"));
 }
 
 #[test]

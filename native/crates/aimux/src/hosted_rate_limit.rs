@@ -127,11 +127,19 @@ impl HostedRateLimiter {
     }
 
     pub fn prune(&self, idle_ms: f64) {
+        let _ = self.try_prune(idle_ms);
+    }
+
+    pub fn try_prune(&self, idle_ms: f64) -> Result<(), String> {
         let now = (self.now)();
-        let mut state = self.inner.lock().expect("hosted rate limiter mutex");
+        let mut state = self
+            .inner
+            .lock()
+            .map_err(|_| "hosted rate limiter mutex poisoned".to_owned())?;
         state
             .buckets
             .retain(|_, bucket| bucket.in_flight != 0 || now - bucket.updated_at <= idle_ms);
+        Ok(())
     }
 }
 

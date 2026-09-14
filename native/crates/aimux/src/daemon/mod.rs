@@ -10,6 +10,7 @@ pub mod relay;
 pub mod router;
 pub mod routing;
 pub mod runtime;
+pub mod scheduler;
 pub mod server;
 pub mod stability_doctor;
 pub mod status;

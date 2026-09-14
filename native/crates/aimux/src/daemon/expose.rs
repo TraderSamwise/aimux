@@ -1,10 +1,11 @@
-use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named, task_name};
 use crate::config::load_global_config;
 use crate::daemon::json::ExposeFocusRequest;
 use crate::daemon::routing::DaemonRouteUrl;
+use crate::daemon::scheduler::{
+    DaemonPeriodicTask, DaemonSchedulerContext, DaemonSchedulerHandle, PeriodicTaskFuture,
+};
 use crate::daemon_projects::ProjectsRouteProject;
 use crate::daemon_state::load_metadata_state;
-use crate::debug_logging::log_lifecycle_always;
 use crate::paths::PathResolver;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service::agents::LiveWindowIdsProjection;
@@ -31,7 +32,7 @@ use crate::tmux::{
 use crate::tmux_expose::{ExposeScope, ExposeScopeView};
 use crate::tmux_expose_hot_snapshot::{HotExposeScopeKey, read_hot_expose_scope_view};
 use crate::tmux_expose_hot_snapshot_worker::{
-    ExposeHotSnapshotWorkerProject, refresh_global_expose_hot_snapshots,
+    ExposeHotSnapshotWorkerProject, try_refresh_global_expose_hot_snapshots,
 };
 use crate::visual_client_leases::{VisualClientLeaseRegistry, parse_visual_client_kind};
 use serde_json::{Value, json};
@@ -39,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS: u64 = 3_000;
 
@@ -63,14 +64,16 @@ pub struct TmuxWindowInfo {
 pub struct GlobalExposeHotSnapshotCoordinator {
     leases: Arc<Mutex<VisualClientLeaseRegistry>>,
     refresh: Arc<Mutex<GlobalExposeHotSnapshotRefreshState>>,
+    scheduler: Option<DaemonSchedulerHandle>,
     background_refresh_enabled: bool,
     refresh_delay_ms: u64,
 }
 
 #[derive(Debug, Default)]
 struct GlobalExposeHotSnapshotRefreshState {
-    scheduled: bool,
     refreshing: bool,
+    projects: Vec<ExposeHotSnapshotWorkerProject>,
+    project_state_dirs: BTreeMap<String, PathBuf>,
 }
 
 impl std::fmt::Debug for GlobalExposeHotSnapshotCoordinator {
@@ -97,6 +100,7 @@ impl GlobalExposeHotSnapshotCoordinator {
         Self {
             leases: Arc::new(Mutex::new(VisualClientLeaseRegistry::default())),
             refresh: Arc::new(Mutex::new(GlobalExposeHotSnapshotRefreshState::default())),
+            scheduler: None,
             background_refresh_enabled,
             refresh_delay_ms: GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS,
         }
@@ -104,6 +108,11 @@ impl GlobalExposeHotSnapshotCoordinator {
 
     pub fn with_refresh_delay_ms(mut self, refresh_delay_ms: u64) -> Self {
         self.refresh_delay_ms = refresh_delay_ms;
+        self
+    }
+
+    pub fn with_scheduler(mut self, scheduler: DaemonSchedulerHandle) -> Self {
+        self.scheduler = Some(scheduler);
         self
     }
 
@@ -145,7 +154,10 @@ impl GlobalExposeHotSnapshotCoordinator {
         let active = leases.has_active_preview_clients(now);
         drop(leases);
         if active {
-            self.schedule_global_refresh(worker_projects(projects), project_state_dirs);
+            self.update_refresh_inputs(worker_projects(projects), project_state_dirs);
+            if let Some(scheduler) = self.scheduler.as_ref() {
+                scheduler.force_task_next_tick(GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME);
+            }
         }
         active
     }
@@ -157,101 +169,98 @@ impl GlobalExposeHotSnapshotCoordinator {
             .has_active_preview_clients(current_unix_millis())
     }
 
-    fn schedule_global_refresh(
+    fn update_refresh_inputs(
         &self,
         projects: Vec<ExposeHotSnapshotWorkerProject>,
         project_state_dirs: BTreeMap<String, PathBuf>,
     ) {
-        if !self.background_refresh_enabled {
-            return;
-        }
-        if !global_hot_snapshots_enabled() {
-            return;
-        }
-        {
-            let mut refresh = self
-                .refresh
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if refresh.scheduled || refresh.refreshing {
-                return;
-            }
-            refresh.scheduled = true;
-        }
-        let coordinator = self.clone();
-        let cleanup_coordinator = self.clone();
-        let delay = Duration::from_millis(self.refresh_delay_ms);
-        spawn_named(global_refresh_task_name(self), async move {
-            tokio::time::sleep(delay).await;
-            let refresh_result = spawn_blocking_named(
-                task_name("daemon-expose", "hot-snapshot-refresh-blocking"),
-                move || {
-                    coordinator.run_scheduled_global_refresh(projects, project_state_dirs);
-                },
-            )
-            .await;
-            if let Err(error) = refresh_result {
-                cleanup_coordinator.clear_refresh_state();
-                log_lifecycle_always(
-                    "global expose hot snapshot refresh task failed",
-                    "daemon-expose",
-                    Some(json!({
-                        "error": error.to_string(),
-                    })),
-                );
-            }
-        });
-    }
-
-    fn run_scheduled_global_refresh(
-        &self,
-        projects: Vec<ExposeHotSnapshotWorkerProject>,
-        project_state_dirs: BTreeMap<String, PathBuf>,
-    ) {
-        {
-            let mut refresh = self
-                .refresh
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            refresh.scheduled = false;
-            if refresh.refreshing {
-                return;
-            }
-            refresh.refreshing = true;
-        }
-        if self.has_active_preview_clients() && global_hot_snapshots_enabled() {
-            refresh_global_expose_hot_snapshots(&projects, |id| {
-                project_state_dirs.get(id).cloned().unwrap_or_default()
-            });
-        }
-        {
-            let mut refresh = self
-                .refresh
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            refresh.refreshing = false;
-        }
-        if self.has_active_preview_clients() && global_hot_snapshots_enabled() {
-            self.schedule_global_refresh(projects, project_state_dirs);
-        }
-    }
-
-    fn clear_refresh_state(&self) {
         let mut refresh = self
             .refresh
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        refresh.scheduled = false;
+        refresh.projects = projects;
+        refresh.project_state_dirs = project_state_dirs;
+    }
+
+    pub fn run_scheduler_refresh(&self) -> Result<(), String> {
+        if !self.background_refresh_enabled
+            || !global_hot_snapshots_enabled()
+            || !self.has_active_preview_clients()
+        {
+            return Ok(());
+        }
+        let (projects, project_state_dirs) = {
+            let mut refresh = self
+                .refresh
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if refresh.refreshing {
+                return Ok(());
+            }
+            refresh.refreshing = true;
+            (refresh.projects.clone(), refresh.project_state_dirs.clone())
+        };
+        let result = run_global_expose_scheduler_refresh(&projects, &project_state_dirs);
+        let mut refresh = self
+            .refresh
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         refresh.refreshing = false;
+        result
     }
 }
 
-fn global_refresh_task_name(coordinator: &GlobalExposeHotSnapshotCoordinator) -> String {
-    scoped_task_name(
-        "daemon-expose",
-        "hot-snapshot-refresh",
-        &format!("{:p}", Arc::as_ptr(&coordinator.refresh)),
-    )
+pub const GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME: &str = "global-expose-hot-snapshot";
+
+pub struct GlobalExposeHotSnapshotTask {
+    coordinator: GlobalExposeHotSnapshotCoordinator,
+}
+
+impl GlobalExposeHotSnapshotTask {
+    pub fn new(coordinator: GlobalExposeHotSnapshotCoordinator) -> Self {
+        Self { coordinator }
+    }
+}
+
+impl DaemonPeriodicTask for GlobalExposeHotSnapshotTask {
+    fn name(&self) -> &str {
+        GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME
+    }
+
+    fn interval_ms(&self) -> i64 {
+        self.coordinator.refresh_delay_ms as i64
+    }
+
+    fn run<'a>(&'a mut self, _context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move { self.coordinator.run_scheduler_refresh() })
+    }
+}
+
+pub fn run_global_expose_scheduler_refresh(
+    projects: &[ExposeHotSnapshotWorkerProject],
+    project_state_dirs: &BTreeMap<String, PathBuf>,
+) -> Result<(), String> {
+    let active_projects = projects
+        .iter()
+        .filter(|project| project.service_alive)
+        .collect::<Vec<_>>();
+    let missing_dirs = active_projects
+        .iter()
+        .filter(|project| !project_state_dirs.contains_key(&project.id))
+        .map(|project| project.id.clone())
+        .collect::<Vec<_>>();
+    if !missing_dirs.is_empty() {
+        return Err(format!(
+            "global expose hot snapshot refresh missing project state dirs: {}",
+            missing_dirs.join(", ")
+        ));
+    }
+    try_refresh_global_expose_hot_snapshots(projects, |id| {
+        project_state_dirs
+            .get(id)
+            .cloned()
+            .expect("state dirs validated for active projects")
+    })
 }
 
 pub trait DaemonExposeFocusRuntime {
@@ -1075,13 +1084,14 @@ fn run_tmux_argv_output(argv: Vec<String>, fallback_error: String) -> Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::async_runtime::{AsyncTaskKind, doctor_tasks_report, init_process_runtime};
-    use std::time::Instant;
+    use crate::daemon::scheduler::daemon_scheduler_handle;
 
     #[test]
-    fn active_global_preview_refresh_runs_on_async_runtime() {
-        init_process_runtime().expect("runtime initialized");
-        let coordinator = GlobalExposeHotSnapshotCoordinator::new(true).with_refresh_delay_ms(200);
+    fn active_global_preview_refresh_forces_daemon_scheduler_task() {
+        let handle = daemon_scheduler_handle();
+        let coordinator = GlobalExposeHotSnapshotCoordinator::new(true)
+            .with_refresh_delay_ms(200)
+            .with_scheduler(handle.clone());
         let route_url = DaemonRouteUrl::parse(
             "/core/expose/items?includePreview=1&clientId=phase3c-global&clientTtlMs=1",
         );
@@ -1089,57 +1099,20 @@ mod tests {
         let active = coordinator.touch_route_lease(&route_url, &[], BTreeMap::new());
 
         assert!(active);
-        let task_name = global_refresh_task_name(&coordinator);
-        let task = wait_for_task(&task_name).expect("refresh task registered");
-        assert_eq!(task.kind, AsyncTaskKind::Async);
-        wait_for_task_to_finish(&task_name).expect("refresh task finished");
+        assert!(handle.take_forced_task(GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME));
     }
 
     #[test]
-    fn global_preview_refresh_does_not_schedule_without_preview_request() {
-        init_process_runtime().expect("runtime initialized");
-        let coordinator = GlobalExposeHotSnapshotCoordinator::new(true).with_refresh_delay_ms(200);
+    fn global_preview_refresh_does_not_force_without_preview_request() {
+        let handle = daemon_scheduler_handle();
+        let coordinator = GlobalExposeHotSnapshotCoordinator::new(true)
+            .with_refresh_delay_ms(200)
+            .with_scheduler(handle.clone());
         let route_url = DaemonRouteUrl::parse("/core/expose/items?clientId=phase3c-global-none");
-        let task_name = global_refresh_task_name(&coordinator);
 
         let active = coordinator.touch_route_lease(&route_url, &[], BTreeMap::new());
 
         assert!(!active);
-        assert!(
-            doctor_tasks_report()
-                .tasks
-                .iter()
-                .all(|task| task.name != task_name)
-        );
-    }
-
-    fn wait_for_task(name: &str) -> Option<crate::async_runtime::AsyncTaskSnapshot> {
-        wait_until(|| {
-            doctor_tasks_report()
-                .tasks
-                .into_iter()
-                .find(|task| task.name == name)
-        })
-    }
-
-    fn wait_for_task_to_finish(name: &str) -> Option<()> {
-        wait_until(|| {
-            let still_live = doctor_tasks_report()
-                .tasks
-                .iter()
-                .any(|task| task.name == name);
-            (!still_live).then_some(())
-        })
-    }
-
-    fn wait_until<T>(mut condition: impl FnMut() -> Option<T>) -> Option<T> {
-        let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(2) {
-            if let Some(value) = condition() {
-                return Some(value);
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        None
+        assert!(!handle.take_forced_task(GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME));
     }
 }
