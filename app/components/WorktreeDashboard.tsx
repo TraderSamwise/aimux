@@ -169,6 +169,7 @@ export function AgentRow({
   digit,
   selected,
   compact,
+  supervisorLane,
   projectPath,
   endpoint,
   token,
@@ -180,6 +181,7 @@ export function AgentRow({
   digit: number;
   selected: boolean;
   compact?: boolean;
+  supervisorLane?: boolean;
   projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
@@ -202,6 +204,7 @@ export function AgentRow({
         <StatusDotMini status={state.kind} />
       </View>
       <IndexBadge digit={digit} />
+      {supervisorLane ? <SupervisorRoleCell session={session} /> : null}
       <View
         className={cn(
           "min-w-0 flex-row items-baseline gap-2",
@@ -260,6 +263,23 @@ export function AgentRow({
         />
       </View>
     </View>
+  );
+}
+
+function supervisorRoleLabel(session: DesktopSession): string {
+  if (session.overseer === true || session.role === "overseer") return "overseer";
+  if (session.scribe === true || session.role === "scribe") return "scribe";
+  return "control";
+}
+
+function SupervisorRoleCell({ session }: { session: DesktopSession }) {
+  return (
+    <Text
+      className="w-16 shrink-0 font-mono text-[11px] font-semibold uppercase text-[#d787d7]"
+      numberOfLines={1}
+    >
+      {supervisorRoleLabel(session)}
+    </Text>
   );
 }
 
@@ -472,6 +492,7 @@ export function WorktreeCard({
               digit={i + 1}
               selected={session.id === selectedSessionId}
               compact={compact}
+              supervisorLane={bucket.isSupervisorLane}
               projectPath={projectPath}
               endpoint={endpoint}
               token={token}

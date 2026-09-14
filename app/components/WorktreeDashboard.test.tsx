@@ -182,6 +182,53 @@ describe("WorktreeCard", () => {
       IPHONE_PRO_MAX_LOGICAL_WIDTH,
     );
   });
+
+  it("renders project-control sessions in a supervisor lane card", () => {
+    const text = collectText(
+      React.createElement(WorktreeCard, {
+        bucket: {
+          key: "__supervisor_lane__",
+          name: "Supervisor Lane",
+          branch: "",
+          path: null,
+          isMainCheckout: false,
+          isSupervisorLane: true,
+          sessions: [
+            session({
+              id: "boss",
+              label: "control",
+              role: "overseer",
+              overseer: true,
+              projectControl: true,
+            }),
+            session({
+              id: "scribe",
+              label: "notes",
+              role: "scribe",
+              scribe: true,
+              projectControl: true,
+            }),
+          ],
+          services: [],
+        },
+        identityTone: "#d787d7",
+        compact: false,
+        selectedSessionId: null,
+        onPickSession: vi.fn(),
+        onPickService: vi.fn(),
+        onKillSession: vi.fn(),
+        projectPath: "/repo",
+        endpoint: null,
+        token: null,
+      }),
+    );
+
+    expect(text).toContain("Supervisor Lane");
+    expect(text).toContain("control");
+    expect(text).toContain("notes");
+    expect(text).toContain("overseer");
+    expect(text).toContain("scribe");
+  });
 });
 
 describe("AgentRow", () => {
@@ -207,5 +254,30 @@ describe("AgentRow", () => {
     expect(text).toContain("boss");
     expect(text).toContain("Running");
     expect(text).not.toContain("overseer");
+  });
+
+  it("renders the role column only inside the supervisor lane", () => {
+    const text = collectText(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-overseer",
+          label: "boss",
+          command: "claude",
+          role: "overseer",
+          overseer: true,
+        }),
+        digit: 1,
+        selected: false,
+        supervisorLane: true,
+        projectPath: "/repo",
+        endpoint: null,
+        token: null,
+        onPress: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+
+    expect(text).toContain("boss");
+    expect(text).toContain("overseer");
   });
 });

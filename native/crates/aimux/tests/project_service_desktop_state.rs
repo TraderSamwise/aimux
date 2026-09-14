@@ -157,6 +157,18 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
     let boss = find(sessions, "boss");
     assert_eq!(boss["projectControl"], true);
     assert_eq!(boss["overseer"], true);
+    let supervisor_sessions = state["supervisorLane"]["sessions"].as_array().unwrap();
+    assert_eq!(ids(supervisor_sessions), vec!["boss".to_owned()]);
+    assert_eq!(
+        supervisor_sessions[0]["lane"],
+        json!({ "kind": "supervisor" })
+    );
+    assert!(
+        supervisor_sessions
+            .iter()
+            .all(|session| session["id"] != "codex-live"),
+        "ordinary coder leaked into supervisor lane: {supervisor_sessions:#?}"
+    );
 
     let teammates = state["teammates"].as_array().unwrap();
     assert_eq!(ids(teammates), vec!["reviewer".to_owned()]);

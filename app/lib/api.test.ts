@@ -937,6 +937,24 @@ describe("api relay routing", () => {
     ]);
   });
 
+  it("posts overseer promote and demote through the relay proxy", async () => {
+    const fetchMock = installFetchMock();
+    const request = installRelayMock({ ok: true });
+
+    await setAgentOverseer(endpoint, { sessionId: "agent-1", active: true });
+    await setAgentOverseer(endpoint, { sessionId: "agent-1", active: false });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request).toHaveBeenNthCalledWith(1, "POST", "/proxy/127.0.0.1/43210/agents/overseer", {
+      sessionId: "agent-1",
+      active: true,
+    });
+    expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/agents/overseer", {
+      sessionId: "agent-1",
+      active: false,
+    });
+  });
+
   it("defaults location actions to resolve-only over relay", async () => {
     const fetchMock = installFetchMock();
     const request = installRelayMock({ ok: true });

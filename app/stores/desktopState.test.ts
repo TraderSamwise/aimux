@@ -54,24 +54,48 @@ describe("desktop state resource lifecycle", () => {
       desktopState({
         sessions: [
           {
-            id: "overseer-flag",
-            status: "running",
-            toolConfigKey: "codex",
-            role: "overseer",
-            lane: { kind: "supervisor" },
-            overseer: true,
-          },
-          {
-            id: "overseer-team",
-            status: "running",
-            toolConfigKey: "claude",
-            team: { role: "overseer" },
-          },
-          {
             id: "agent",
             status: "running",
             toolConfigKey: "codex",
             worktreePath: "/repo/wt",
+          },
+        ],
+        supervisorLane: {
+          sessions: [
+            {
+              id: "overseer-flag",
+              status: "running",
+              toolConfigKey: "codex",
+              role: "overseer",
+              lane: { kind: "supervisor" },
+              overseer: true,
+            },
+            {
+              id: "scribe-control",
+              status: "running",
+              toolConfigKey: "claude",
+              role: "scribe",
+              lane: { kind: "supervisor" },
+              scribe: true,
+              projectControl: true,
+            },
+          ],
+        },
+        worktreeGroups: [
+          {
+            name: "wt",
+            path: "/repo/wt",
+            branch: "feature",
+            status: "active",
+            sessions: [
+              {
+                id: "agent",
+                status: "running",
+                toolConfigKey: "codex",
+                worktreePath: "/repo/wt",
+              },
+            ],
+            services: [],
           },
         ],
         worktrees: [{ name: "wt", path: "/repo/wt", branch: "feature" }],
@@ -81,16 +105,16 @@ describe("desktop state resource lifecycle", () => {
     expect(groups[0]).toMatchObject({ isSupervisorLane: true, name: "Supervisor Lane" });
     expect(groups[0]?.sessions.map((session) => session.id)).toEqual([
       "overseer-flag",
-      "overseer-team",
+      "scribe-control",
     ]);
     expect(groups.flatMap((group) => group.sessions.map((session) => session.id))).toEqual([
       "overseer-flag",
-      "overseer-team",
+      "scribe-control",
       "agent",
     ]);
   });
 
-  it("uses explicit project-control flags before legacy team roles", () => {
+  it("does not synthesize a supervisor lane when relay payload omits the field", () => {
     const groups = groupByWorktree(
       desktopState({
         sessions: [
@@ -106,6 +130,7 @@ describe("desktop state resource lifecycle", () => {
             id: "legacy-scribe",
             status: "running",
             toolConfigKey: "claude",
+            role: "scribe",
             team: { role: "scribe" },
           },
           { id: "agent", status: "running", toolConfigKey: "codex" },
@@ -113,9 +138,12 @@ describe("desktop state resource lifecycle", () => {
       }),
     );
 
-    expect(groups[0]).toMatchObject({ isSupervisorLane: true });
-    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["legacy-scribe"]);
-    expect(groups[1]?.sessions.map((session) => session.id)).toEqual(["stale-role", "agent"]);
+    expect(groups.some((group) => group.isSupervisorLane)).toBe(false);
+    expect(groups[0]?.sessions.map((session) => session.id)).toEqual([
+      "stale-role",
+      "legacy-scribe",
+      "agent",
+    ]);
   });
 
   it("keeps configured project-control roles in the supervisor lane", () => {
@@ -138,6 +166,18 @@ describe("desktop state resource lifecycle", () => {
             team: { role: "qa" },
           },
         ],
+        supervisorLane: {
+          sessions: [
+            {
+              id: "qa-supervisor",
+              status: "running",
+              toolConfigKey: "codex",
+              projectControl: true,
+              role: "qa",
+              team: { role: "qa" },
+            },
+          ],
+        },
       }),
     );
 
@@ -241,22 +281,24 @@ describe("desktop state resource lifecycle", () => {
   it("keeps active supervisor lane entries in the compact sidebar projection", () => {
     const groups = groupByWorktree(
       desktopState({
-        sessions: [
-          {
-            id: "overseer",
-            status: "running",
-            toolConfigKey: "codex",
-            role: "overseer",
-            lane: { kind: "supervisor" },
-          },
-          {
-            id: "stopped-scribe",
-            status: "offline",
-            toolConfigKey: "claude",
-            role: "scribe",
-            lane: { kind: "supervisor" },
-          },
-        ],
+        supervisorLane: {
+          sessions: [
+            {
+              id: "overseer",
+              status: "running",
+              toolConfigKey: "codex",
+              role: "overseer",
+              lane: { kind: "supervisor" },
+            },
+            {
+              id: "stopped-scribe",
+              status: "offline",
+              toolConfigKey: "claude",
+              role: "scribe",
+              lane: { kind: "supervisor" },
+            },
+          ],
+        },
       }),
     );
 

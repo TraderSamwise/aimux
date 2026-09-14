@@ -406,6 +406,7 @@ pub fn build_desktop_state_with_live_window_projection(
     }
     set_indexes(&mut sessions);
     set_indexes(&mut teammates);
+    let supervisor_lane = supervisor_lane_from_sessions(&sessions);
     let services = list_topology_service_states(input.topology, Some(DASHBOARD_SERVICE_STATUSES))
         .iter()
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
@@ -423,6 +424,9 @@ pub fn build_desktop_state_with_live_window_projection(
     state.insert("serviceInfo".into(), service_info());
     state.insert("pendingInteractions".into(), Value::Array(Vec::new()));
     state.insert("sessions".into(), Value::Array(sessions));
+    if let Some(supervisor_lane) = supervisor_lane {
+        state.insert("supervisorLane".into(), supervisor_lane);
+    }
     state.insert("teammates".into(), Value::Array(teammates));
     state.insert("services".into(), Value::Array(services));
     state.insert("worktrees".into(), Value::Array(worktrees));
@@ -490,6 +494,7 @@ async fn build_desktop_state_with_live_window_projection_async(
     }
     set_indexes(&mut sessions);
     set_indexes(&mut teammates);
+    let supervisor_lane = supervisor_lane_from_sessions(&sessions);
     let services = list_topology_service_states(input.topology, Some(DASHBOARD_SERVICE_STATUSES))
         .iter()
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
@@ -508,6 +513,9 @@ async fn build_desktop_state_with_live_window_projection_async(
     state.insert("serviceInfo".into(), service_info());
     state.insert("pendingInteractions".into(), Value::Array(Vec::new()));
     state.insert("sessions".into(), Value::Array(sessions));
+    if let Some(supervisor_lane) = supervisor_lane {
+        state.insert("supervisorLane".into(), supervisor_lane);
+    }
     state.insert("teammates".into(), Value::Array(teammates));
     state.insert("services".into(), Value::Array(services));
     state.insert("worktrees".into(), Value::Array(worktrees));
@@ -988,6 +996,15 @@ fn dashboard_session(
         item.insert("scribe".into(), Value::Bool(false));
     }
     Value::Object(item)
+}
+
+fn supervisor_lane_from_sessions(sessions: &[Value]) -> Option<Value> {
+    let sessions = sessions
+        .iter()
+        .filter(|session| team_is_project_control_session(Some(session)))
+        .cloned()
+        .collect::<Vec<_>>();
+    (!sessions.is_empty()).then(|| json!({ "sessions": sessions }))
 }
 
 fn dashboard_service(

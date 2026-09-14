@@ -1,10 +1,10 @@
 import React, { useState } from "react";
 import { View } from "react-native";
 import { useSetAtom } from "jotai";
-import { GitFork, Play, Square, Trash2 } from "lucide-react-native";
+import { GitFork, Play, Radar, ShieldOff, Square, Trash2 } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { forkAgent, killAgent, resumeAgent, stopAgent } from "@/lib/api";
+import { forkAgent, killAgent, resumeAgent, setAgentOverseer, stopAgent } from "@/lib/api";
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import { agentCompactIdentity } from "@/lib/agent-display";
 import { canResumeSession } from "@/lib/agent-lifecycle";
@@ -69,6 +69,7 @@ export function AgentActions({
     session.worktreePath && session.worktreePath !== mainCheckoutPath
       ? session.worktreePath
       : undefined;
+  const overseerAction = overseerActionForSession(session);
 
   function runAction(
     fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
@@ -195,6 +196,27 @@ export function AgentActions({
             label={`Fork ${displayName}`}
           />
         ) : null}
+        {overseerAction ? (
+          <ActionButton
+            icon={overseerAction === "demote" ? ShieldOff : Radar}
+            iconSize={iconSize}
+            sizeClass={sizeClass}
+            onPress={runAction(async () => {
+              await setAgentOverseer(
+                endpoint,
+                { sessionId: session.id, active: overseerAction === "promote" },
+                { token },
+              );
+              return {};
+            })}
+            disabled={!canAct}
+            label={
+              overseerAction === "demote"
+                ? `Demote ${displayName} from overseer`
+                : `Promote ${displayName} to overseer`
+            }
+          />
+        ) : null}
         <ActionButton
           icon={Trash2}
           iconSize={iconSize}
@@ -217,6 +239,15 @@ export function AgentActions({
       ) : null}
     </View>
   );
+}
+
+export type OverseerRowAction = "promote" | "demote";
+
+export function overseerActionForSession(session: DesktopSession): OverseerRowAction | null {
+  if (session.overseer === true) return "demote";
+  if (session.projectControl === true || session.lane?.kind === "supervisor") return null;
+  if (session.scribe === true) return null;
+  return "promote";
 }
 
 const FALLBACK_FORK_TOOLS = new Set(["claude", "codex", "aider"]);

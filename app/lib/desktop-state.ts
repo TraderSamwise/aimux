@@ -178,7 +178,8 @@ export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): Wor
   return { ...bucket, sessions, services };
 }
 
-function isDashboardHiddenSession(session: DesktopSession): boolean {
+function isDashboardHiddenSession(session: DesktopSession, hasSupervisorLane: boolean): boolean {
+  if (!hasSupervisorLane) return false;
   return isSupervisorLaneSession(session);
 }
 
@@ -190,22 +191,13 @@ export function isSupervisorLaneSession(session: DesktopSession): boolean {
 function isDesktopProjectControlSession(session: DesktopSession): boolean {
   if (session.projectControl === true) return true;
   if (session.projectControl === false) return false;
-  return isDesktopOverseerSession(session) || isDesktopScribeSession(session);
+  return false;
 }
 
-function isDesktopOverseerSession(session: DesktopSession): boolean {
-  if (session.overseer === true) return true;
-  if (session.overseer === false || session.projectControl === false) return false;
-  return session.team?.role === "overseer";
-}
-
-function isDesktopScribeSession(session: DesktopSession): boolean {
-  if (session.scribe === true) return true;
-  if (session.scribe === false || session.projectControl === false) return false;
-  return session.team?.role === "scribe";
-}
-
-function bucketFromServerGroup(group: DesktopWorktreeGroup): WorktreeBucket {
+function bucketFromServerGroup(
+  group: DesktopWorktreeGroup,
+  hasSupervisorLane: boolean,
+): WorktreeBucket {
   const isMainCheckout = !group.path;
   return {
     key: group.path ?? MAIN_CHECKOUT_KEY,
@@ -215,7 +207,9 @@ function bucketFromServerGroup(group: DesktopWorktreeGroup): WorktreeBucket {
     isMainCheckout,
     pending: group.pending,
     removing: group.removing,
-    sessions: group.sessions.filter((session) => !isDashboardHiddenSession(session)),
+    sessions: group.sessions.filter(
+      (session) => !isDashboardHiddenSession(session, hasSupervisorLane),
+    ),
     services: group.services,
   };
 }
@@ -224,7 +218,7 @@ function supervisorLaneSessions(state: DesktopState): DesktopSession[] {
   if (Array.isArray(state.supervisorLane?.sessions)) {
     return state.supervisorLane.sessions;
   }
-  return state.sessions.filter(isSupervisorLaneSession);
+  return [];
 }
 
 function supervisorLaneBucket(state: DesktopState): WorktreeBucket | null {
@@ -247,8 +241,11 @@ function supervisorLaneBucket(state: DesktopState): WorktreeBucket | null {
 // payloads that do not include worktreeGroups.
 export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
   const supervisor = supervisorLaneBucket(state);
+  const hasSupervisorLane = supervisor !== null;
   if (Array.isArray(state.worktreeGroups)) {
-    const groups = state.worktreeGroups.map(bucketFromServerGroup);
+    const groups = state.worktreeGroups.map((group) =>
+      bucketFromServerGroup(group, hasSupervisorLane),
+    );
     return supervisor ? [supervisor, ...groups] : groups;
   }
 
@@ -301,7 +298,7 @@ export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
   }
 
   for (const session of state.sessions) {
-    if (isDashboardHiddenSession(session)) continue;
+    if (isDashboardHiddenSession(session, hasSupervisorLane)) continue;
     bucketFor(session.worktreePath).sessions.push(session);
   }
   for (const service of state.services) {
