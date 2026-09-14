@@ -404,6 +404,53 @@ export interface DaemonProject {
   onlineAgentCount?: number;
 }
 
+type RawDaemonProject = Partial<Omit<DaemonProject, "onlineAgentCount" | "serviceAlive">> & {
+  onlineAgentCount?: unknown;
+  serviceAlive?: unknown;
+};
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function optionalStringField(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function normalizeServiceEndpoint(value: unknown): ServiceEndpoint | null {
+  if (!value || typeof value !== "object") return null;
+  const endpoint = value as { host?: unknown; port?: unknown };
+  if (typeof endpoint.host !== "string" || typeof endpoint.port !== "number") return null;
+  return { host: endpoint.host, port: endpoint.port };
+}
+
+function normalizeOnlineAgentCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function normalizeDaemonProject(project: RawDaemonProject): DaemonProject {
+  return {
+    id: stringField(project.id),
+    name: stringField(project.name),
+    path: stringField(project.path),
+    lastSeen: optionalStringField(project.lastSeen),
+    dashboardSessionName: stringField(project.dashboardSessionName),
+    service: project.service ?? null,
+    serviceAlive: project.serviceAlive === true,
+    serviceEndpoint: normalizeServiceEndpoint(project.serviceEndpoint),
+    onlineAgentCount: normalizeOnlineAgentCount(project.onlineAgentCount),
+  };
+}
+
+function normalizeDaemonProjects(projects: unknown): DaemonProject[] {
+  if (!Array.isArray(projects)) return [];
+  return projects
+    .filter((project): project is RawDaemonProject =>
+      Boolean(project && typeof project === "object"),
+    )
+    .map(normalizeDaemonProject);
+}
+
 export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {
   if (shouldRouteViaRelay())
     return callDaemonViaRelay<DaemonHealth>("GET", "/health", undefined, opts);
@@ -412,20 +459,20 @@ export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {
 
 export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
   if (shouldRouteViaRelay()) {
-    const data = await callDaemonViaRelay<{ ok: boolean; projects: DaemonProject[] }>(
+    const data = await callDaemonViaRelay<{ ok: boolean; projects?: unknown }>(
       "GET",
       "/projects",
       undefined,
       opts,
     );
-    return data.projects;
+    return normalizeDaemonProjects(data.projects);
   }
-  const data = await callJson<{ ok: boolean; projects: DaemonProject[] }>(
+  const data = await callJson<{ ok: boolean; projects?: unknown }>(
     `${getDaemonUrl()}/projects`,
     { method: "GET" },
     opts,
   );
-  return data.projects;
+  return normalizeDaemonProjects(data.projects);
 }
 
 export async function listGlobalExposeItems(

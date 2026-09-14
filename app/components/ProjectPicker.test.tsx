@@ -13,6 +13,14 @@ vi.mock("@/components/ui/text", () => ({
 import type { DaemonProject } from "@/lib/api";
 import { ProjectPicker } from "@/components/ProjectPicker";
 
+interface HostNode {
+  type: unknown;
+  props: Record<string, unknown>;
+  children: HostNode[];
+}
+
+type FunctionComponentNode = (props: unknown) => ReactNode;
+
 function project(
   input: Partial<DaemonProject> & Pick<DaemonProject, "id" | "name">,
 ): DaemonProject {
@@ -26,6 +34,30 @@ function project(
   };
 }
 
+function renderNode(node: ReactNode): HostNode[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (typeof node === "string" || typeof node === "number") return [];
+  if (Array.isArray(node)) return node.flatMap(renderNode);
+  if (!React.isValidElement(node)) return [];
+
+  if (node.type === React.Fragment) {
+    return renderNode((node.props as { children?: ReactNode }).children);
+  }
+
+  if (typeof node.type === "function") {
+    return renderNode((node.type as FunctionComponentNode)(node.props));
+  }
+
+  const props = node.props as Record<string, unknown> & { children?: ReactNode };
+  return [
+    {
+      type: node.type,
+      props,
+      children: renderNode(props.children),
+    },
+  ];
+}
+
 function collectText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === "boolean") return "";
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -34,6 +66,24 @@ function collectText(node: ReactNode): string {
     return collectText((node.props as { children?: ReactNode }).children);
   }
   return "";
+}
+
+function collectHostText(nodes: HostNode[]): string {
+  return nodes
+    .map(
+      (node) =>
+        `${collectText(node.props.children as ReactNode)}\n${collectHostText(node.children)}`,
+    )
+    .join("\n");
+}
+
+function findNodes(root: HostNode[], predicate: (node: HostNode) => boolean): HostNode[] {
+  const matches: HostNode[] = [];
+  for (const node of root) {
+    if (predicate(node)) matches.push(node);
+    matches.push(...findNodes(node.children, predicate));
+  }
+  return matches;
 }
 
 function renderPickerText(projects: DaemonProject[], showAllProjects: boolean): string {
@@ -108,5 +158,57 @@ describe("ProjectPicker", () => {
     expect(allText).toContain("glyde-frontend");
     expect(allText).toContain("premys");
     expect(allText).toContain("serenity");
+  });
+
+  it("renders native filter controls that dispatch active/all state changes", () => {
+    const onShowAllProjectsChange = vi.fn();
+    const tree = renderNode(
+      ProjectPicker({
+        projects: [
+          project({ id: "active", name: "active", serviceAlive: true }),
+          project({ id: "offline", name: "offline", serviceAlive: false, serviceEndpoint: null }),
+        ],
+        selectedPath: null,
+        showAllProjects: false,
+        onShowAllProjectsChange,
+        onSelect: vi.fn(),
+      }),
+    );
+
+    const pressables = findNodes(tree, (node) => node.type === "Pressable");
+    const allControl = pressables.find((node) =>
+      collectText(node.props.children as ReactNode).includes("All"),
+    );
+    const activeControl = pressables.find((node) =>
+      collectText(node.props.children as ReactNode).includes("Active"),
+    );
+
+    expect(allControl).toBeDefined();
+    expect(activeControl).toBeDefined();
+
+    (allControl!.props.onPress as () => void)();
+    (activeControl!.props.onPress as () => void)();
+
+    expect(onShowAllProjectsChange).toHaveBeenNthCalledWith(1, true);
+    expect(onShowAllProjectsChange).toHaveBeenNthCalledWith(2, false);
+  });
+
+  it("renders the filtered project result rather than the unfiltered source", () => {
+    const tree = renderNode(
+      ProjectPicker({
+        projects: [
+          project({ id: "active", name: "active", serviceAlive: true }),
+          project({ id: "offline", name: "offline", serviceAlive: false, serviceEndpoint: null }),
+        ],
+        selectedPath: null,
+        showAllProjects: false,
+        onShowAllProjectsChange: vi.fn(),
+        onSelect: vi.fn(),
+      }),
+    );
+
+    const text = collectHostText(tree);
+    expect(text).toContain("active");
+    expect(text).not.toContain("offline");
   });
 });

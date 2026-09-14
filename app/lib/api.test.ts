@@ -156,6 +156,40 @@ describe("api relay routing", () => {
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("normalizes direct project liveness without treating absent fields as active", async () => {
+    installFetchMock({
+      ok: true,
+      projects: [
+        {
+          id: "active",
+          name: "active",
+          path: "/repo/active",
+          dashboardSessionName: "aimux-active",
+          service: null,
+          serviceAlive: true,
+          serviceEndpoint: { host: "127.0.0.1", port: 43191, pid: 123 },
+          onlineAgentCount: 1,
+        },
+        {
+          id: "relay-cold",
+          name: "relay-cold",
+          path: "/repo/relay-cold",
+          dashboardSessionName: "aimux-relay-cold",
+          service: null,
+          serviceEndpoint: null,
+        },
+      ],
+    });
+
+    const projects = await listProjects();
+
+    expect(projects.map((project) => [project.id, project.serviceAlive])).toEqual([
+      ["active", true],
+      ["relay-cold", false],
+    ]);
+    expect(projects[0]!.serviceEndpoint).toEqual({ host: "127.0.0.1", port: 43191 });
+  });
+
   it("sends shared chat actor metadata only when provided", async () => {
     const fetchMock = installFetchMock({ ok: true, sessionId: "agent-1", accepted: true });
 
@@ -1160,6 +1194,51 @@ describe("api relay routing", () => {
         sessionId: "agent-1",
       },
     );
+  });
+
+  it("normalizes relay project liveness and keeps absent liveness inactive for native clients", async () => {
+    const fetchMock = installFetchMock();
+    const request = installRelayMock({
+      ok: true,
+      projects: [
+        {
+          id: "relay-active",
+          name: "relay-active",
+          path: "/repo/relay-active",
+          dashboardSessionName: "aimux-relay-active",
+          service: null,
+          serviceAlive: true,
+          serviceEndpoint: { host: "127.0.0.1", port: 43191 },
+        },
+        {
+          id: "relay-offline",
+          name: "relay-offline",
+          path: "/repo/relay-offline",
+          dashboardSessionName: "aimux-relay-offline",
+          service: null,
+          serviceAlive: false,
+          serviceEndpoint: null,
+        },
+        {
+          id: "relay-unknown",
+          name: "relay-unknown",
+          path: "/repo/relay-unknown",
+          dashboardSessionName: "aimux-relay-unknown",
+          service: null,
+          serviceEndpoint: null,
+        },
+      ],
+    });
+
+    const projects = await listProjects();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledWith("GET", "/projects", undefined);
+    expect(projects.map((project) => [project.id, project.serviceAlive])).toEqual([
+      ["relay-active", true],
+      ["relay-offline", false],
+      ["relay-unknown", false],
+    ]);
   });
 
   it("does not fall back to direct HTTP when relay transport is not ready", async () => {

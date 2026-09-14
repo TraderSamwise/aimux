@@ -80,7 +80,13 @@ describe("RelayObject request hibernation", () => {
         id: daemonRequest.id,
         type: "response",
         status: 200,
-        body: { ok: true, projects: [{ id: "aimux" }] },
+        body: {
+          ok: true,
+          projects: [
+            { id: "aimux", serviceAlive: true },
+            { id: "cold", serviceAlive: false },
+          ],
+        },
       }),
     );
 
@@ -89,7 +95,13 @@ describe("RelayObject request hibernation", () => {
         id: "client-req-1",
         type: "response",
         status: 200,
-        body: { ok: true, projects: [{ id: "aimux" }] },
+        body: {
+          ok: true,
+          projects: [
+            { id: "aimux", serviceAlive: true },
+            { id: "cold", serviceAlive: false },
+          ],
+        },
       }),
     );
   });

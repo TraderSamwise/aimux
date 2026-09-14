@@ -1,7 +1,7 @@
 import type { DaemonProject } from "@/lib/api";
 
 export function hasLiveProjectService(project: Pick<DaemonProject, "serviceAlive">): boolean {
-  return project.serviceAlive;
+  return project.serviceAlive === true;
 }
 
 export function filterProjectPickerProjects(

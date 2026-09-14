@@ -17,7 +17,7 @@ function project(
 }
 
 describe("filterProjectPickerProjects", () => {
-  it("defaults to projects with a live service", () => {
+  it("excludes projects with no live service in active mode", () => {
     const projects = [
       project({ id: "active", name: "active", onlineAgentCount: 2, serviceAlive: true }),
       project({ id: "empty", name: "empty", onlineAgentCount: 0, serviceAlive: true }),
@@ -36,7 +36,7 @@ describe("filterProjectPickerProjects", () => {
     ).toEqual(["active", "empty"]);
   });
 
-  it("can show every project", () => {
+  it("includes projects with no live service in all mode", () => {
     const projects = [
       project({ id: "active", name: "active", onlineAgentCount: 1 }),
       project({ id: "offline", name: "offline", serviceAlive: false, serviceEndpoint: null }),
@@ -45,5 +45,25 @@ describe("filterProjectPickerProjects", () => {
     expect(
       filterProjectPickerProjects(projects, { showAll: true }).map((entry) => entry.id),
     ).toEqual(["active", "offline"]);
+  });
+
+  it("does not treat absent relay liveness as active", () => {
+    const relayProjectWithoutLiveness = {
+      id: "relay-cold",
+      name: "relay-cold",
+      path: "/repo/relay-cold",
+      dashboardSessionName: "aimux-relay-cold",
+      service: null,
+      serviceEndpoint: null,
+    } as DaemonProject;
+
+    expect(filterProjectPickerProjects([relayProjectWithoutLiveness], { showAll: false })).toEqual(
+      [],
+    );
+    expect(
+      filterProjectPickerProjects([relayProjectWithoutLiveness], { showAll: true }).map(
+        (entry) => entry.id,
+      ),
+    ).toEqual(["relay-cold"]);
   });
 });
