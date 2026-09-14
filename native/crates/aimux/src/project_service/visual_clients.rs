@@ -1,9 +1,9 @@
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named};
+use crate::async_runtime::{scoped_task_name, spawn_blocking_named};
 use crate::config::load_config_for_known_project_root;
 use crate::debug_logging::log_lifecycle_always;
 use crate::tmux::TmuxRuntimeManager;
@@ -12,8 +12,12 @@ use crate::tmux_expose_hot_snapshot_worker::refresh_project_expose_hot_snapshots
 use crate::visual_client_leases::{VisualClientLeaseRegistry, parse_visual_client_kind};
 
 use super::http::trimmed_query;
+use super::router::ProjectServiceRequestContext;
+use super::scheduler::{PeriodicTask, PeriodicTaskFuture, ProjectSchedulerHandle};
 
 pub const EXPOSE_HOT_SNAPSHOT_REFRESH_MS: u64 = 3_000;
+pub const PROJECT_EXPOSE_HOT_SNAPSHOT_REFRESH_TASK_NAME: &str =
+    "project-expose-hot-snapshot-refresh";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisualClientLeaseRoute<'a> {
@@ -30,6 +34,7 @@ pub struct ProjectHotSnapshotCoordinator {
     refresh: Arc<Mutex<ProjectHotSnapshotRefreshState>>,
     background_refresh_enabled: bool,
     refresh_delay_ms: u64,
+    scheduler: Option<ProjectSchedulerHandle>,
 }
 
 #[derive(Debug, Default)]
@@ -64,11 +69,17 @@ impl ProjectHotSnapshotCoordinator {
             refresh: Arc::new(Mutex::new(ProjectHotSnapshotRefreshState::default())),
             background_refresh_enabled,
             refresh_delay_ms: EXPOSE_HOT_SNAPSHOT_REFRESH_MS,
+            scheduler: None,
         }
     }
 
     pub fn with_refresh_delay_ms(mut self, refresh_delay_ms: u64) -> Self {
         self.refresh_delay_ms = refresh_delay_ms;
+        self
+    }
+
+    pub fn with_scheduler(mut self, scheduler: ProjectSchedulerHandle) -> Self {
+        self.scheduler = Some(scheduler);
         self
     }
 
@@ -93,7 +104,7 @@ impl ProjectHotSnapshotCoordinator {
         params: &std::collections::BTreeMap<String, String>,
         route: VisualClientLeaseRoute<'_>,
         project_root: &Path,
-        project_state_dir: &Path,
+        _project_state_dir: &Path,
         now_ms: i64,
     ) -> bool {
         if !route.requested_preview && !route.requested_chat_preview {
@@ -130,14 +141,12 @@ impl ProjectHotSnapshotCoordinator {
             .leases
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        let was_active = leases.has_active_preview_clients(now_ms);
         leases.touch(&input, now_ms);
         let active = leases.has_active_preview_clients(now_ms);
         drop(leases);
-        if active {
-            self.schedule_project_refresh(
-                project_root.to_path_buf(),
-                project_state_dir.to_path_buf(),
-            );
+        if active && !was_active {
+            self.schedule_project_refresh(project_root);
         }
         active
     }
@@ -183,8 +192,8 @@ impl ProjectHotSnapshotCoordinator {
         })
     }
 
-    fn schedule_project_refresh(&self, project_root: PathBuf, project_state_dir: PathBuf) {
-        if !self.background_refresh_enabled || !project_hot_snapshots_enabled(&project_root) {
+    fn schedule_project_refresh(&self, project_root: &Path) {
+        if !self.background_refresh_enabled || !project_hot_snapshots_enabled(project_root) {
             return;
         }
         {
@@ -197,40 +206,20 @@ impl ProjectHotSnapshotCoordinator {
             }
             refresh.scheduled = true;
         }
-        let coordinator = self.clone();
-        let cleanup_coordinator = self.clone();
-        let delay = Duration::from_millis(self.refresh_delay_ms);
-        let task_name = project_refresh_task_name(&project_root);
-        spawn_named(task_name, async move {
-            tokio::time::sleep(delay).await;
-            let project_label = project_root.to_string_lossy().into_owned();
-            let blocking_task_name = scoped_task_name(
-                "project-service",
-                "hot-snapshot-refresh-blocking",
-                &project_label,
-            );
-            let refresh_result = spawn_blocking_named(blocking_task_name, move || {
-                coordinator.run_scheduled_project_refresh(project_root, project_state_dir);
-            })
-            .await;
-            if let Err(error) = refresh_result {
-                cleanup_coordinator.clear_refresh_state();
-                log_lifecycle_always(
-                    "project hot snapshot refresh task failed",
-                    "project-service-visual-clients",
-                    Some(json!({
-                        "projectRoot": project_label,
-                        "error": error.to_string(),
-                    })),
-                );
-            }
-        });
+        if let Some(scheduler) = self.scheduler.as_ref() {
+            scheduler.force_task_next_tick(PROJECT_EXPOSE_HOT_SNAPSHOT_REFRESH_TASK_NAME);
+        }
     }
 
-    fn run_scheduled_project_refresh(&self, project_root: PathBuf, project_state_dir: PathBuf) {
-        if !project_hot_snapshots_enabled(&project_root) {
+    pub fn run_scheduled_project_refresh_with(
+        &self,
+        project_root: &Path,
+        project_state_dir: &Path,
+        refresher: &dyn ProjectExposeHotSnapshotRefresher,
+    ) -> Result<(), String> {
+        if !project_hot_snapshots_enabled(project_root) {
             self.clear_refresh_state();
-            return;
+            return Ok(());
         }
         {
             let mut refresh = self
@@ -239,15 +228,16 @@ impl ProjectHotSnapshotCoordinator {
                 .unwrap_or_else(|error| error.into_inner());
             refresh.scheduled = false;
             if refresh.refreshing {
-                return;
+                return Ok(());
             }
             refresh.refreshing = true;
         }
-        prune_expired_hot_expose_snapshots(&project_state_dir);
-        if self.has_active_preview_clients() {
-            let mut runtime = TmuxRuntimeManager::new();
-            refresh_project_expose_hot_snapshots(&project_root, &project_state_dir, &mut runtime);
-        }
+        prune_expired_hot_expose_snapshots(project_state_dir);
+        let result = if self.has_active_preview_clients() {
+            refresher.refresh(project_root, project_state_dir)
+        } else {
+            Ok(())
+        };
         {
             let mut refresh = self
                 .refresh
@@ -255,9 +245,7 @@ impl ProjectHotSnapshotCoordinator {
                 .unwrap_or_else(|error| error.into_inner());
             refresh.refreshing = false;
         }
-        if self.has_active_preview_clients() {
-            self.schedule_project_refresh(project_root, project_state_dir);
-        }
+        result
     }
 
     fn clear_refresh_state(&self) {
@@ -270,9 +258,105 @@ impl ProjectHotSnapshotCoordinator {
     }
 }
 
-fn project_refresh_task_name(project_root: &Path) -> String {
-    let subject = project_root.to_string_lossy();
-    scoped_task_name("project-service", "hot-snapshot-refresh", subject.as_ref())
+pub trait ProjectExposeHotSnapshotRefresher: Send + Sync + 'static {
+    fn refresh(&self, project_root: &Path, project_state_dir: &Path) -> Result<(), String>;
+}
+
+#[derive(Debug, Default)]
+pub struct SystemProjectExposeHotSnapshotRefresher;
+
+impl ProjectExposeHotSnapshotRefresher for SystemProjectExposeHotSnapshotRefresher {
+    fn refresh(&self, project_root: &Path, project_state_dir: &Path) -> Result<(), String> {
+        let mut runtime = TmuxRuntimeManager::new();
+        refresh_project_expose_hot_snapshots(project_root, project_state_dir, &mut runtime)
+    }
+}
+
+pub struct ProjectExposeHotSnapshotRefreshTask {
+    coordinator: ProjectHotSnapshotCoordinator,
+    refresher: Arc<dyn ProjectExposeHotSnapshotRefresher>,
+}
+
+impl ProjectExposeHotSnapshotRefreshTask {
+    pub fn new(coordinator: ProjectHotSnapshotCoordinator) -> Self {
+        Self {
+            coordinator,
+            refresher: Arc::new(SystemProjectExposeHotSnapshotRefresher),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn with_refresher(
+        coordinator: ProjectHotSnapshotCoordinator,
+        refresher: Arc<dyn ProjectExposeHotSnapshotRefresher>,
+    ) -> Self {
+        Self {
+            coordinator,
+            refresher,
+        }
+    }
+}
+
+impl PeriodicTask for ProjectExposeHotSnapshotRefreshTask {
+    fn name(&self) -> &str {
+        PROJECT_EXPOSE_HOT_SNAPSHOT_REFRESH_TASK_NAME
+    }
+
+    fn interval_ms(&self) -> i64 {
+        i64::try_from(EXPOSE_HOT_SNAPSHOT_REFRESH_MS).unwrap_or(i64::MAX)
+    }
+
+    fn tick_multiple(&self) -> u64 {
+        12
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(10)
+    }
+
+    fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        let coordinator = self.coordinator.clone();
+        let cleanup_coordinator = coordinator.clone();
+        let refresher = Arc::clone(&self.refresher);
+        let project_root = context.project_root().to_path_buf();
+        let project_state_dir = context.project_state_dir();
+        Box::pin(async move {
+            let project_label = project_root.to_string_lossy().into_owned();
+            let blocking_task_name = scoped_task_name(
+                "project-service",
+                "hot-snapshot-refresh-blocking",
+                &project_label,
+            );
+            spawn_blocking_named(blocking_task_name, move || {
+                coordinator.run_scheduled_project_refresh_with(
+                    &project_root,
+                    &project_state_dir,
+                    refresher.as_ref(),
+                )
+            })
+            .await
+            .map_err(|error| {
+                cleanup_coordinator.clear_refresh_state();
+                log_lifecycle_always(
+                    "project hot snapshot refresh task failed",
+                    "project-service-visual-clients",
+                    Some(json!({
+                        "projectRoot": project_label,
+                        "error": error.to_string(),
+                    })),
+                );
+                error.to_string()
+            })?
+        })
+    }
+}
+
+pub fn project_expose_hot_snapshot_refresh_task(
+    context: &ProjectServiceRequestContext,
+) -> Box<dyn PeriodicTask> {
+    Box::new(ProjectExposeHotSnapshotRefreshTask::new(
+        context.visual_clients.clone(),
+    ))
 }
 
 fn project_hot_snapshots_enabled(project_root: &Path) -> bool {
@@ -300,25 +384,23 @@ fn sanitize_remote_address(remote_address: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::async_runtime::{AsyncTaskKind, doctor_tasks_report, init_process_runtime};
     use std::collections::BTreeMap;
     use std::fs;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Instant;
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
-    fn active_project_preview_refresh_runs_on_async_runtime() {
-        init_process_runtime().expect("runtime initialized");
+    fn active_project_preview_marks_refresh_scheduled_for_scheduler() {
         let project_root = temp_root("project-preview-refresh");
         let project_state_dir = project_root.join("state");
         fs::create_dir_all(&project_state_dir).expect("state dir");
-        let coordinator = ProjectHotSnapshotCoordinator::new(true).with_refresh_delay_ms(200);
-        let task_name = project_refresh_task_name(&project_root);
+        let coordinator = ProjectHotSnapshotCoordinator::new(true)
+            .with_scheduler(ProjectSchedulerHandle::default());
         let params = BTreeMap::from([
             ("clientId".to_owned(), "phase3c-project-preview".to_owned()),
-            ("clientTtlMs".to_owned(), "1".to_owned()),
+            ("clientTtlMs".to_owned(), "60000".to_owned()),
         ]);
 
         let active = coordinator.touch_route_lease(
@@ -335,20 +417,18 @@ mod tests {
         );
 
         assert!(active);
-        let task = wait_for_task(&task_name).expect("refresh task registered");
-        assert_eq!(task.kind, AsyncTaskKind::Async);
-        wait_for_task_to_finish(&task_name).expect("refresh task finished");
+        let diagnostics = coordinator.diagnostics(&project_root);
+        assert_eq!(diagnostics["hotSnapshots"]["scheduled"], true);
+        assert_eq!(diagnostics["hotSnapshots"]["refreshing"], false);
         let _ = fs::remove_dir_all(project_root);
     }
 
     #[test]
     fn project_preview_refresh_does_not_schedule_without_preview_request() {
-        init_process_runtime().expect("runtime initialized");
         let project_root = temp_root("project-preview-inactive");
         let project_state_dir = project_root.join("state");
         fs::create_dir_all(&project_state_dir).expect("state dir");
         let coordinator = ProjectHotSnapshotCoordinator::new(true).with_refresh_delay_ms(200);
-        let task_name = project_refresh_task_name(&project_root);
         let params = BTreeMap::new();
 
         let active = coordinator.touch_route_lease(
@@ -365,43 +445,10 @@ mod tests {
         );
 
         assert!(!active);
-        assert!(
-            doctor_tasks_report()
-                .tasks
-                .iter()
-                .all(|task| task.name != task_name)
-        );
+        let diagnostics = coordinator.diagnostics(&project_root);
+        assert_eq!(diagnostics["hotSnapshots"]["scheduled"], false);
+        assert_eq!(diagnostics["hotSnapshots"]["refreshing"], false);
         let _ = fs::remove_dir_all(project_root);
-    }
-
-    fn wait_for_task(name: &str) -> Option<crate::async_runtime::AsyncTaskSnapshot> {
-        wait_until(|| {
-            doctor_tasks_report()
-                .tasks
-                .into_iter()
-                .find(|task| task.name == name)
-        })
-    }
-
-    fn wait_for_task_to_finish(name: &str) -> Option<()> {
-        wait_until(|| {
-            let still_live = doctor_tasks_report()
-                .tasks
-                .iter()
-                .any(|task| task.name == name);
-            (!still_live).then_some(())
-        })
-    }
-
-    fn wait_until<T>(mut condition: impl FnMut() -> Option<T>) -> Option<T> {
-        let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(2) {
-            if let Some(value) = condition() {
-                return Some(value);
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        None
     }
 
     fn temp_root(label: &str) -> PathBuf {

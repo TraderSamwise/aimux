@@ -130,12 +130,14 @@ impl ProjectServiceRequestContext {
     }
 
     pub fn with_scheduler(mut self, scheduler: ProjectSchedulerHandle) -> Self {
+        self.visual_clients = self.visual_clients.with_scheduler(scheduler.clone());
         self.scheduler = scheduler;
         self
     }
 
     pub fn with_hot_snapshot_background_refresh(mut self) -> Self {
-        self.visual_clients = ProjectHotSnapshotCoordinator::new(true);
+        self.visual_clients =
+            ProjectHotSnapshotCoordinator::new(true).with_scheduler(self.scheduler.clone());
         self
     }
 

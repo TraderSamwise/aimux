@@ -10,7 +10,7 @@ use crate::tmux::{CapturePaneOptions, TmuxManagedWindow, TmuxRuntimeManager, Tmu
 use crate::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
 use crate::tmux_expose_hot_snapshot::{
     HotExposeScopeKey, HotExposeScopePrune, HotExposeScopeWrite, normalize_hot_snapshot_path,
-    read_hot_expose_scope_view, write_hot_expose_scope_views,
+    read_hot_expose_scope_view, try_write_hot_expose_scope_views,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -63,7 +63,7 @@ pub fn refresh_project_expose_hot_snapshots(
     project_root: impl AsRef<Path>,
     project_state_dir: impl AsRef<Path>,
     runtime: &mut impl ProjectExposeHotSnapshotRuntime,
-) {
+) -> Result<(), String> {
     let project_root = normalize_hot_snapshot_path(&project_root.as_ref().to_string_lossy());
     let project_state_dir = project_state_dir.as_ref();
     let captured_at = now_iso();
@@ -87,7 +87,7 @@ pub fn refresh_project_expose_hot_snapshots(
                     "error": error,
                 })),
             );
-            return;
+            return Err(format!("tmux inventory failed: {error}"));
         }
     };
     let project_items = list_project_switchable_items(
@@ -161,7 +161,7 @@ pub fn refresh_project_expose_hot_snapshots(
             },
         });
     }
-    write_hot_expose_scope_views(
+    try_write_hot_expose_scope_views(
         project_state_dir,
         &snapshot_writes,
         Some(&HotExposeScopePrune {
@@ -169,7 +169,7 @@ pub fn refresh_project_expose_hot_snapshots(
             scopes: Some(vec![ExposeScope::Worktree]),
             keep_launch_window_ids: Some(keep_launch_window_ids),
         }),
-    );
+    )
 }
 
 pub fn build_global_expose_hot_snapshot_view(
@@ -205,8 +205,15 @@ pub fn build_global_expose_hot_snapshot_view(
 
 pub fn refresh_global_expose_hot_snapshots(
     projects: &[ExposeHotSnapshotWorkerProject],
-    mut project_state_dir_by_id: impl FnMut(&str) -> PathBuf,
+    project_state_dir_by_id: impl FnMut(&str) -> PathBuf,
 ) {
+    let _ = try_refresh_global_expose_hot_snapshots(projects, project_state_dir_by_id);
+}
+
+pub fn try_refresh_global_expose_hot_snapshots(
+    projects: &[ExposeHotSnapshotWorkerProject],
+    mut project_state_dir_by_id: impl FnMut(&str) -> PathBuf,
+) -> Result<(), String> {
     let active_projects = projects
         .iter()
         .filter(|project| project.service_alive)
@@ -216,7 +223,7 @@ pub fn refresh_global_expose_hot_snapshots(
         build_global_expose_hot_snapshot_view(&active_projects, |id| project_state_dir_by_id(id));
     for project in active_projects {
         let project_root = normalize_hot_snapshot_path(&project.path);
-        write_hot_expose_scope_views(
+        try_write_hot_expose_scope_views(
             project_state_dir_by_id(&project.id),
             &[HotExposeScopeWrite {
                 key: HotExposeScopeKey {
@@ -228,8 +235,9 @@ pub fn refresh_global_expose_hot_snapshots(
                 view: view.clone(),
             }],
             None,
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn global_item(

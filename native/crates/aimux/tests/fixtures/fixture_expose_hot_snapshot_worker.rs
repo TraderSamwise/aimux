@@ -90,7 +90,8 @@ fn run_case(case: &Value) -> Value {
                 project_root,
                 state_dir(&home, "repo"),
                 &mut runtime,
-            );
+            )
+            .expect("refresh project hot snapshots");
             json!({
                 "project": project_snapshot(&home, "repo", project_root),
                 "worktree11": worktree_snapshot(&home, "repo", project_root, "@11"),
@@ -106,7 +107,8 @@ fn run_case(case: &Value) -> Value {
                 project_root,
                 state_dir(&home, "repo"),
                 &mut runtime,
-            );
+            )
+            .expect("refresh project hot snapshots");
             json!({
                 "worktree7": worktree_snapshot(&home, "repo", project_root, "@7"),
                 "captureCalls": runtime.capture_calls,
@@ -431,7 +433,8 @@ fn project_hot_snapshot_records_preview_capture_failure() {
     let mut runtime =
         MockProjectRuntime::new(windows).with_capture_error("tmux capture-pane timed out");
 
-    refresh_project_expose_hot_snapshots(project_root, state_dir(&home, "repo"), &mut runtime);
+    refresh_project_expose_hot_snapshots(project_root, state_dir(&home, "repo"), &mut runtime)
+        .expect("refresh project hot snapshots");
 
     let project = project_snapshot(&home, "repo", project_root);
     let item = &project["items"][0];
@@ -499,7 +502,8 @@ fn project_hot_snapshot_enriches_recency_from_metadata_state_when_tmux_metadata_
     ];
     let mut runtime = MockProjectRuntime::new(windows);
 
-    refresh_project_expose_hot_snapshots(project_root, &project_state_dir, &mut runtime);
+    refresh_project_expose_hot_snapshots(project_root, &project_state_dir, &mut runtime)
+        .expect("refresh project hot snapshots");
 
     let project = raw_project_snapshot(&project_state_dir, project_root);
     let agent_a = item_by_session(&project, "agent-a");

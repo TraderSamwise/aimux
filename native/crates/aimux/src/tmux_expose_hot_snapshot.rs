@@ -103,11 +103,22 @@ pub fn write_hot_expose_scope_views(
     entries: &[HotExposeScopeWrite],
     prune: Option<&HotExposeScopePrune>,
 ) {
+    let _ = try_write_hot_expose_scope_views(project_state_dir, entries, prune);
+}
+
+pub fn try_write_hot_expose_scope_views(
+    project_state_dir: impl AsRef<Path>,
+    entries: &[HotExposeScopeWrite],
+    prune: Option<&HotExposeScopePrune>,
+) -> Result<(), String> {
     let project_state_dir = project_state_dir.as_ref();
     if !acquire_write_lock(project_state_dir) {
-        return;
+        return Err(format!(
+            "acquire expose hot snapshot write lock for {}",
+            project_state_dir.display()
+        ));
     }
-    let _ = (|| -> Result<(), String> {
+    let result = (|| -> Result<(), String> {
         let mut file = read_file(project_state_dir).unwrap_or_else(|_| HotExposeSnapshotFile {
             version: HOT_SNAPSHOT_VERSION,
             views: Map::new(),
@@ -165,6 +176,7 @@ pub fn write_hot_expose_scope_views(
         write_file_or_delete(project_state_dir, &file).map_err(|error| error.to_string())
     })();
     release_write_lock(project_state_dir);
+    result
 }
 
 pub fn write_hot_expose_scope_view(
