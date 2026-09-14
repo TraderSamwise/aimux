@@ -29,8 +29,8 @@ pub use notifications::{
     parse_core_attachment_publish_args, parse_core_notification_args,
     parse_core_notification_test_args, parse_core_outline_args,
 };
-pub use tasks::parse_core_task_args;
-pub use threads::parse_core_thread_args;
+pub use tasks::{CoreTaskArgsError, parse_core_task_args, parse_core_task_args_result};
+pub use threads::{CoreThreadArgsError, parse_core_thread_args, parse_core_thread_args_result};
 pub use workflow::{
     parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_overseer_clear_args,
     parse_core_overseer_start_args, parse_core_scribe_clear_args, parse_core_scribe_start_args,
@@ -800,17 +800,11 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (
             Some("task"),
             Some("show" | "assign" | "accept" | "block" | "cancel" | "complete" | "reopen"),
-        ) => has_workflow_required_positional(args),
+        ) => true,
         (Some("review"), Some("list")) => true,
-        (Some("review"), Some("approve" | "request-changes")) => {
-            has_workflow_required_positional(args)
-        }
+        (Some("review"), Some("approve" | "request-changes")) => true,
         (Some("thread"), Some("list")) => true,
-        (Some("thread"), Some("show" | "mark-seen" | "status")) => {
-            thread_positional_count(args) >= 1
-        }
-        (Some("thread"), Some("send")) => parse_core_thread_args(args).is_some(),
-        (Some("thread"), Some("open")) => parse_core_thread_args(args).is_some(),
+        (Some("thread"), Some("show" | "open" | "send" | "mark-seen" | "status")) => true,
         (Some("threads"), _) => parse_core_threads_alias_args(args).is_some(),
         (Some("worktree"), None) | (Some("worktree"), Some("list" | "cleanup-caches")) => true,
         (
@@ -933,27 +927,4 @@ fn parse_core_threads_alias_args<S: AsRef<str>>(args: &[S]) -> Option<CoreThread
     let mut alias = vec!["thread".to_owned(), "list".to_owned()];
     alias.extend(args.iter().skip(1).map(|arg| arg.as_ref().to_owned()));
     parse_core_thread_args(&alias)
-}
-
-fn thread_positional_count<S: AsRef<str>>(args: &[S]) -> usize {
-    let mut count = 0;
-    let mut index = 2;
-    while index < args.len() {
-        let arg = args[index].as_ref();
-        if arg == "--json" || arg.starts_with("--") && arg.contains('=') {
-            index += 1;
-            continue;
-        }
-        if workflow_option_takes_value(arg) {
-            index += 2;
-            continue;
-        }
-        if arg.starts_with('-') {
-            index += 1;
-            continue;
-        }
-        count += 1;
-        index += 1;
-    }
-    count
 }

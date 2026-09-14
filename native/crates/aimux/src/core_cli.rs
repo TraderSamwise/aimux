@@ -13,8 +13,8 @@ use crate::core_cli_routing::{
     parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
     parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_projects_remove_args,
     parse_core_repair_args, parse_core_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
-    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args_result,
+    parse_core_team_args, parse_core_thread_args_result, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::native_cli_dispatch::{
@@ -1321,11 +1321,12 @@ where
             "list" | "show" | "assign" | "accept" | "block" | "cancel" | "complete" | "reopen",
         )
         | ("review", "approve" | "request-changes") => {
-            let parsed =
-                parse_core_task_args(&args).ok_or_else(|| CoreCliPlanError::InvalidArguments {
+            let parsed = parse_core_task_args_result(&args).map_err(|error| {
+                CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid workflow arguments".into(),
-                })?;
+                    message: format!("error: invalid workflow arguments: {}", error.message()),
+                }
+            })?;
             let project_root = parsed
                 .project
                 .as_deref()
@@ -1455,10 +1456,10 @@ where
             } else {
                 args.clone()
             };
-            let parsed = parse_core_thread_args(&thread_args).ok_or_else(|| {
+            let parsed = parse_core_thread_args_result(&thread_args).map_err(|error| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),
-                    message: "error: invalid thread arguments".into(),
+                    message: format!("error: invalid thread arguments: {}", error.message()),
                 }
             })?;
             let project_root = parsed
