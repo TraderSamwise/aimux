@@ -512,13 +512,24 @@ fn route_loop(
         Value::String(session_loop_action(body.get("action"), "remove")),
     );
     loop_last_action.insert("at".into(), Value::String(now));
-    if let Some(goal) = goal {
+    if let Some(goal) = goal.clone() {
         loop_last_action.insert("goal".into(), Value::String(goal));
     }
-    let loop_last_action = Value::Object(loop_last_action);
+    let mut loop_last_action = Value::Object(loop_last_action);
     if let Err(error) =
         update_session_metadata(context.project_state_dir(), &session_id, |current| {
             let mut current = object_value(current);
+            if goal.is_none()
+                && let Some(prior_goal) = current.get("loop").and_then(|loop_meta| {
+                    loop_meta
+                        .get("goal")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                })
+                && let Some(action) = loop_last_action.as_object_mut()
+            {
+                action.insert("goal".into(), Value::String(prior_goal.to_owned()));
+            }
             current.remove("loop");
             current.insert("loopLastAction".into(), loop_last_action.clone());
             Value::Object(current)

@@ -28,6 +28,27 @@ fn looping_session_with_status(id: &str, status: Option<&str>, activity: &str) -
     (session, meta)
 }
 
+fn self_exited_session_with_status(id: &str, status: Option<&str>, action: &str) -> (Value, Value) {
+    let mut session = json!({ "id": id, "tool": "claude", "worktreePath": "/repo" });
+    if let Some(status) = status {
+        session["status"] = json!(status);
+    }
+    (
+        session,
+        json!({
+            "loopLastAction": {
+                "action": action,
+                "at": "2026-09-09T00:10:00.000Z",
+                "source": "agent",
+                "updatedBySessionId": id,
+                "goal": "ship it",
+                "reason": "finished the goal"
+            },
+            "derived": { "activity": "done", "attention": "normal" }
+        }),
+    )
+}
+
 fn briefing_mentions(send: &LoopSend, id: &str) -> bool {
     send.text
         .lines()
@@ -1183,6 +1204,7 @@ fn a_looped_agent_that_dies_raises_a_dead_loop_check_after_dwell() {
     assert!(briefing_mentions(&sends[0], "worker"));
     assert!(sends[0].text.contains("[dead/offline]"));
     assert!(sends[0].text.contains("dead/offline agent"));
+    assert!(!sends[0].text.contains("[completed/self-reported]"));
     assert!(!sends[0].text.contains("[stopped/idle]"));
     watcher.commit_send_result(&sends[0], NOW + 30_000, LoopDeliveryOutcome::Delivered);
 
@@ -1220,6 +1242,75 @@ fn a_looped_agent_that_is_idle_raises_a_distinct_stopped_loop_check() {
     );
     assert!(!sends[0].text.contains("[dead/offline]"));
     assert!(!sends[0].text.contains("dead/offline agent"));
+    assert!(!sends[0].text.contains("[completed/self-reported]"));
+    assert!(!sends[0].text.contains("self-reported a loop exit"));
+}
+
+#[test]
+fn a_looped_agent_that_self_reports_done_raises_completion_notification_once() {
+    let state_dir = temp_state_dir("self-reported-done");
+    let path = loop_watcher_state_path(&state_dir);
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = self_exited_session_with_status("worker", Some("offline"), "done");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0, "unchangedReminderTicks": 1 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].session_id, "boss");
+    assert_eq!(sends[0].kind, LoopSendKind::LoopExit);
+    assert!(briefing_mentions(&sends[0], "worker"));
+    assert!(sends[0].text.contains("self-reported a loop exit"));
+    assert!(sends[0].text.contains("[completed/self-reported]"));
+    assert!(sends[0].text.contains("self-reported done"));
+    assert!(sends[0].text.contains("goal: ship it"));
+    assert!(!sends[0].text.contains("[dead/offline]"));
+    assert!(!sends[0].text.contains("appear to have stopped:"));
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+
+    assert!(
+        watcher.plan_sends(&input, NOW + 1).is_empty(),
+        "self-reported completion is an edge and must not repeat on the next scan"
+    );
+    assert!(
+        watcher.plan_sends(&input, NOW + 60_000).is_empty(),
+        "self-reported completion must not use the unchanged stopped/dead reminder cadence"
+    );
+    save_loop_watcher_state(&path, &watcher).expect("save loop exit edge state");
+    let mut restarted = load_loop_watcher_state(&path).expect("reload loop exit edge state");
+    assert!(
+        restarted.plan_sends(&input, NOW + 60_001).is_empty(),
+        "self-reported completion must stay one-shot after watcher state reload"
+    );
+    let _ = fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn a_looped_agent_that_self_reports_block_raises_blocked_notification_once() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = self_exited_session_with_status("worker", Some("running"), "block");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].kind, LoopSendKind::LoopExit);
+    assert!(briefing_mentions(&sends[0], "worker"));
+    assert!(sends[0].text.contains("[blocked/self-reported]"));
+    assert!(sends[0].text.contains("self-reported block"));
+    assert!(sends[0].text.contains("For each blocked agent"));
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+    assert!(watcher.plan_sends(&input, NOW + 1).is_empty());
 }
 
 #[test]
@@ -1262,16 +1353,22 @@ fn indeterminate_liveness_does_not_silently_become_dead() {
     let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session_with_status("worker", None, "running");
+    let (completed_worker, completed_worker_meta) =
+        self_exited_session_with_status("completed-worker", None, "done");
     let input = input_with_config(
-        vec![boss, worker],
-        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        vec![boss, worker, completed_worker],
+        json!({ "sessions": {
+            "boss": boss_meta,
+            "worker": worker_meta,
+            "completed-worker": completed_worker_meta
+        } }),
         json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
     );
 
     let mut watcher = LoopWatcher::new();
     assert!(
         watcher.plan_sends(&input, NOW).is_empty(),
-        "missing liveness is a third outcome, not an offline/dead candidate"
+        "missing liveness is a third outcome, not an offline/dead or completed candidate"
     );
 }
 

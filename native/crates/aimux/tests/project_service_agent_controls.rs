@@ -71,6 +71,7 @@ fn loop_route_sets_and_clears_loop_metadata_with_provenance() {
     let worker = &state.sessions["worker-1"];
     assert!(worker.get("loop").is_none());
     assert_eq!(worker["loopLastAction"], remove.body["loopLastAction"]);
+    assert_eq!(worker["loopLastAction"]["goal"], "ship");
     cleanup(project);
 }
 

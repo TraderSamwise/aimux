@@ -28,6 +28,7 @@ pub enum LoopSendKind {
     DirectNudge,
     PausedSummary,
     Reconciliation,
+    LoopExit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +125,7 @@ pub struct LoopWatcher {
     last_reconciliation_wake_at: i64,
     unchanged_reconciliation_ticks: u64,
     reconciliation_condition_since_ms: Option<i64>,
+    reported_loop_exits: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -139,6 +141,8 @@ struct LoopDwellKey {
 enum LoopCandidateCondition {
     Stopped,
     Dead,
+    Completed,
+    Blocked,
 }
 
 impl LoopCandidateCondition {
@@ -146,12 +150,16 @@ impl LoopCandidateCondition {
         match self {
             Self::Stopped => "stopped",
             Self::Dead => "dead",
+            Self::Completed => "completed",
+            Self::Blocked => "blocked",
         }
     }
 
     fn from_str(value: &str) -> Self {
         match value {
             "dead" => Self::Dead,
+            "completed" => Self::Completed,
+            "blocked" => Self::Blocked,
             _ => Self::Stopped,
         }
     }
@@ -227,6 +235,7 @@ impl LoopWatcher {
         let metadata = input.get("metadata").unwrap_or(&Value::Null);
         let overseer_id = find_overseer_session_id(metadata);
         self.gc_stale_pauses(input);
+        let loop_exit_summary = self.plan_loop_exit_summary(overseer_id.as_deref(), input);
         let mut raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
         let paused_candidates = self.extract_paused_candidates(&mut raw_candidates);
         let paused_summary =
@@ -240,6 +249,9 @@ impl LoopWatcher {
             config_i64(input, "nudgeCooldownMs", 60_000),
             config_u64(input, "unchangedReminderTicks"),
         );
+        if let Some(send) = loop_exit_summary {
+            sends.push(send);
+        }
         if candidates.is_empty() {
             if let Some(send) = paused_summary {
                 sends.push(send);
@@ -334,7 +346,7 @@ impl LoopWatcher {
         outcome: LoopDeliveryOutcome,
     ) {
         match send.kind {
-            LoopSendKind::OverseerBriefing => {
+            LoopSendKind::OverseerBriefing | LoopSendKind::LoopExit => {
                 self.last_overseer_wake_at = now_ms;
             }
             LoopSendKind::DirectNudge => {
@@ -728,6 +740,32 @@ impl LoopWatcher {
             kind: LoopSendKind::Reconciliation,
         })
     }
+
+    fn plan_loop_exit_summary(
+        &mut self,
+        overseer_id: Option<&str>,
+        input: &Value,
+    ) -> Option<LoopSend> {
+        let overseer_id = overseer_id.filter(|id| session_can_receive_loop_send(input, id))?;
+        let candidates = find_loop_exit_candidates_with_overseer(input, Some(overseer_id));
+        let unreported = candidates
+            .into_iter()
+            .filter(|candidate| {
+                self.reported_loop_exits
+                    .insert(loop_exit_candidate_signature(candidate))
+            })
+            .collect::<Vec<_>>();
+        if unreported.is_empty() {
+            return None;
+        }
+        let signature = format!("loop-exit:{}", candidate_signature(&unreported));
+        Some(LoopSend {
+            session_id: overseer_id.to_owned(),
+            text: build_loop_exit_briefing(&unreported),
+            signature,
+            kind: LoopSendKind::LoopExit,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -841,6 +879,8 @@ struct PersistentLoopWatcherState {
     unchanged_reconciliation_ticks: u64,
     #[serde(default)]
     reconciliation_condition_since_ms: Option<i64>,
+    #[serde(default)]
+    reported_loop_exits: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -906,6 +946,7 @@ impl PersistentLoopWatcherState {
             last_reconciliation_wake_at: watcher.last_reconciliation_wake_at,
             unchanged_reconciliation_ticks: watcher.unchanged_reconciliation_ticks,
             reconciliation_condition_since_ms: watcher.reconciliation_condition_since_ms,
+            reported_loop_exits: watcher.reported_loop_exits.iter().cloned().collect(),
         }
     }
 
@@ -967,6 +1008,7 @@ impl PersistentLoopWatcherState {
             last_reconciliation_wake_at: self.last_reconciliation_wake_at,
             unchanged_reconciliation_ticks: self.unchanged_reconciliation_ticks,
             reconciliation_condition_since_ms: self.reconciliation_condition_since_ms,
+            reported_loop_exits: self.reported_loop_exits.into_iter().collect(),
         })
     }
 }
@@ -1016,6 +1058,7 @@ fn loop_send_kind_name(kind: LoopSendKind) -> &'static str {
         LoopSendKind::DirectNudge => "directNudge",
         LoopSendKind::PausedSummary => "pausedSummary",
         LoopSendKind::Reconciliation => "reconciliation",
+        LoopSendKind::LoopExit => "loopExit",
     }
 }
 
@@ -1025,6 +1068,7 @@ fn loop_send_kind_from_name(value: &str) -> Option<LoopSendKind> {
         "directNudge" => Some(LoopSendKind::DirectNudge),
         "pausedSummary" => Some(LoopSendKind::PausedSummary),
         "reconciliation" => Some(LoopSendKind::Reconciliation),
+        "loopExit" => Some(LoopSendKind::LoopExit),
         _ => None,
     }
 }
@@ -1119,6 +1163,79 @@ pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&st
         .collect()
 }
 
+pub fn find_loop_exit_candidates_with_overseer(
+    input: &Value,
+    overseer_id: Option<&str>,
+) -> Vec<Value> {
+    let metadata = input.get("metadata").unwrap_or(&Value::Null);
+    let metadata_sessions = match metadata.get("sessions").and_then(Value::as_object) {
+        Some(sessions) => sessions,
+        None => empty_object(),
+    };
+    array_field(input, "sessions")
+        .iter()
+        .filter_map(|session| {
+            let id = str_field(session, "id");
+            if overseer_id == Some(id) || !is_known_loop_exit_session_status(session) {
+                return None;
+            }
+            let meta = metadata_sessions.get(id)?;
+            if meta
+                .get("loop")
+                .and_then(Value::as_object)
+                .and_then(|loop_meta| loop_meta.get("active"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                return None;
+            }
+            let action = meta.get("loopLastAction")?;
+            let action_name = str_field(action, "action");
+            let condition = loop_exit_action_condition(action_name)?;
+            if optional_str(action, "source") != Some("agent") {
+                return None;
+            }
+
+            let mut candidate = Map::new();
+            insert_str(&mut candidate, "id", Some(id));
+            insert_str(&mut candidate, "condition", Some(condition.as_str()));
+            insert_value(&mut candidate, "status", session.get("status"));
+            insert_value(&mut candidate, "goal", action.get("goal"));
+            insert_value(&mut candidate, "worktreePath", session.get("worktreePath"));
+            insert_value(&mut candidate, "tool", session.get("tool"));
+            insert_value(&mut candidate, "loopSource", action.get("source"));
+            insert_value(&mut candidate, "loopUpdatedBy", action.get("updatedBy"));
+            insert_value(
+                &mut candidate,
+                "loopUpdatedBySessionId",
+                action.get("updatedBySessionId"),
+            );
+            insert_value(
+                &mut candidate,
+                "loopUpdatedByRole",
+                action.get("updatedByRole"),
+            );
+            insert_value(&mut candidate, "loopActionAt", action.get("at"));
+            insert_value(&mut candidate, "loopLastAction", Some(action));
+            Some(Value::Object(candidate))
+        })
+        .collect()
+}
+
+fn is_known_loop_exit_session_status(session: &Value) -> bool {
+    optional_str(session, "status")
+        .map(|status| matches!(status, "starting" | "running" | "idle" | "offline"))
+        .unwrap_or(false)
+}
+
+fn loop_exit_action_condition(action: &str) -> Option<LoopCandidateCondition> {
+    match action {
+        "done" => Some(LoopCandidateCondition::Completed),
+        "block" => Some(LoopCandidateCondition::Blocked),
+        _ => None,
+    }
+}
+
 fn loop_candidate_condition(
     session: &Value,
     activity: Option<&str>,
@@ -1191,6 +1308,24 @@ pub fn build_overseer_briefing(candidates: &[Value], template: Option<&str>) -> 
             "If it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back.",
         ),
     ]);
+    lines.join("\n")
+}
+
+fn build_loop_exit_briefing(candidates: &[Value]) -> String {
+    let mut lines = Vec::from([String::from(
+        "[aimux loop check] These agents self-reported a loop exit and left the managed loop:",
+    )]);
+    lines.extend(candidates.iter().map(describe_candidate));
+    lines.push(String::new());
+    lines.push(String::from(
+        "This is based on `loopLastAction` from `aimux loop done` or `aimux loop block`, not inferred from missing loop membership.",
+    ));
+    lines.push(String::from(
+        "For each completed agent: acknowledge the result, inspect what landed if needed, and reassign or remove the freed loop capacity.",
+    ));
+    lines.push(String::from(
+        "For each blocked agent: read its reason/output, decide whether to unblock it or reassign the goal, and keep the loop list intentional.",
+    ));
     lines.join("\n")
 }
 
@@ -1444,6 +1579,8 @@ pub fn describe_candidate(candidate: &Value) -> String {
     let id = str_field(candidate, "id");
     let condition = match candidate_condition(candidate) {
         LoopCandidateCondition::Dead => " [dead/offline]",
+        LoopCandidateCondition::Completed => " [completed/self-reported]",
+        LoopCandidateCondition::Blocked => " [blocked/self-reported]",
         LoopCandidateCondition::Stopped => "",
     };
     let tool = optional_str(candidate, "tool")
@@ -1466,19 +1603,25 @@ pub fn describe_candidate(candidate: &Value) -> String {
     .collect::<Vec<_>>()
     .join("/");
     let provenance = if actor.is_empty() {
-        format!(" — loop since {}", str_field(candidate, "loopSince"))
+        optional_str(candidate, "loopActionAt")
+            .map(|at| format!(" — loop action at {at}"))
+            .unwrap_or_else(|| format!(" — loop since {}", str_field(candidate, "loopSince")))
     } else {
-        format!(
-            " — loop since {} by {actor}",
-            str_field(candidate, "loopSince")
-        )
+        optional_str(candidate, "loopActionAt")
+            .map(|at| format!(" — loop action at {at} by {actor}"))
+            .unwrap_or_else(|| {
+                format!(
+                    " — loop since {} by {actor}",
+                    str_field(candidate, "loopSince")
+                )
+            })
     };
     let last_action = candidate
         .get("loopLastAction")
         .filter(|action| str_field(action, "action") != "add")
         .map(|action| {
             format!(
-                " — last loop action: {} at {}",
+                " — self-reported {} at {}",
                 str_field(action, "action"),
                 str_field(action, "at")
             )
@@ -1563,6 +1706,7 @@ fn candidate_signature(candidates: &[Value]) -> String {
                 str_field(candidate, "id"),
                 str_field(candidate, "condition"),
                 str_field(candidate, "loopSince"),
+                str_field(candidate, "loopActionAt"),
                 optional_str(candidate, "goal").unwrap_or_default(),
                 optional_str(candidate, "loopSource").unwrap_or_default(),
             ]
@@ -1571,6 +1715,13 @@ fn candidate_signature(candidates: &[Value]) -> String {
         .collect::<Vec<_>>();
     ids.sort();
     ids.join("\u{1e}")
+}
+
+fn loop_exit_candidate_signature(candidate: &Value) -> String {
+    format!(
+        "loop-exit:{}",
+        candidate_signature(std::slice::from_ref(candidate))
+    )
 }
 
 fn loop_pause_key(candidate: &Value) -> Option<String> {
