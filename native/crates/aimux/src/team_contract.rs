@@ -115,6 +115,12 @@ pub fn is_scribe_session(session: Option<&Value>) -> bool {
 
 pub fn project_control_display_role(session: Option<&Value>) -> Option<&str> {
     let session = session?;
+    if bool_field(session, "overseer") == Some(true) {
+        return Some("overseer");
+    }
+    if bool_field(session, "scribe") == Some(true) {
+        return Some("scribe");
+    }
     let role = legacy_role(session)?;
     match role {
         "overseer" => is_overseer_session(Some(session)).then_some(role),
@@ -430,6 +436,25 @@ mod tests {
                 "projectControl": true
             })
         );
+    }
+
+    #[test]
+    fn explicit_supervisor_flag_beats_stale_ordinary_role() {
+        let session = json!({
+            "id": "codex-1",
+            "overseer": true,
+            "team": { "role": "coder" },
+            "worktreePath": "/repo/wt"
+        });
+
+        assert!(is_overseer_session(Some(&session)));
+        assert!(is_project_control_session(Some(&session)));
+        assert_eq!(
+            project_control_display_role(Some(&session)),
+            Some("overseer")
+        );
+        assert_eq!(agent_role(Some(&session)), "overseer");
+        assert_eq!(agent_lane(Some(&session)), json!({ "kind": "supervisor" }));
     }
 
     #[test]
