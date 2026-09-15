@@ -1225,6 +1225,9 @@ fn normalize_json_keyed(value: Value, context: &NormalizeContext, key: Option<&s
     if key == Some("scheduler") {
         return normalize_scheduler_health(value);
     }
+    if key == Some("recentScans") {
+        return json!([]);
+    }
     match value {
         Value::Object(map) => Value::Object(
             map.into_iter()

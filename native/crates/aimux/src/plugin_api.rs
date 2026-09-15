@@ -78,6 +78,7 @@ pub enum NativePluginApiRequest {
     ReadStatuslineSnapshot,
     ReadDaemonStateSnapshot,
     ReadMetadataState,
+    ListTranscriptSources,
     ReadTranscriptBytesSinceCheckpoint {
         session_id: String,
     },

@@ -1,7 +1,8 @@
 use aimux::native_plugin_transcript_length::TranscriptLengthPlugin;
 use aimux::plugin_api::{NativePluginApiRequest, NativePluginHost};
 use aimux::plugin_project_service_host::{
-    PluginMetadataCache, PluginTickTask, ProjectServicePluginHost, builtin_plugin_tick_tasks,
+    PluginMetadataCache, PluginTickTask, ProjectServicePluginHost, TranscriptSourceCache,
+    builtin_plugin_tick_tasks,
 };
 use aimux::plugin_registry::builtin_native_plugins;
 use aimux::project_service::router::ProjectServiceRequestContext;
@@ -10,6 +11,7 @@ use serde_json::{Value, json};
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -111,18 +113,24 @@ fn transcript_plugin_does_not_reparse_unchanged_metadata_on_each_tick() {
     let mut task = PluginTickTask::new(2_000, Box::new(TranscriptLengthPlugin::new("top")));
 
     run_task(&mut task, &context);
-    assert_eq!(task.metadata_load_count_for_tests(), 1);
+    assert_eq!(task.metadata_load_count_for_tests(), 0);
+    assert_eq!(task.transcript_source_load_count_for_tests(), 1);
     run_task(&mut task, &context);
-    let after_own_statusline_write = task.metadata_load_count_for_tests();
+    let after_own_statusline_write = task.transcript_source_load_count_for_tests();
     run_task(&mut task, &context);
     assert_eq!(
-        task.metadata_load_count_for_tests(),
+        task.transcript_source_load_count_for_tests(),
         after_own_statusline_write,
-        "unchanged metadata must not be parsed again on every tick"
+        "unchanged metadata must not be scanned again on every tick"
     );
     assert!(
         after_own_statusline_write <= 2,
-        "expected at most initial load plus one reload for the plugin's own statusline write, got {after_own_statusline_write}"
+        "expected at most initial scan plus one reload for the plugin's own statusline write, got {after_own_statusline_write}"
+    );
+    assert_eq!(
+        task.metadata_load_count_for_tests(),
+        0,
+        "transcript length ticks must not load full metadata"
     );
 }
 
@@ -143,19 +151,135 @@ fn transcript_plugin_observes_metadata_change_on_next_tick() {
     let mut task = PluginTickTask::new(2_000, Box::new(TranscriptLengthPlugin::new("top")));
     run_task(&mut task, &context);
     run_task(&mut task, &context);
-    let stable_loads = task.metadata_load_count_for_tests();
+    let stable_loads = task.transcript_source_load_count_for_tests();
 
     write_metadata(&state_dir, "codex-1", &updated_path);
     run_task(&mut task, &context);
 
     assert!(
-        task.metadata_load_count_for_tests() > stable_loads,
-        "metadata signature change must trigger a fresh parse on the next tick"
+        task.transcript_source_load_count_for_tests() > stable_loads,
+        "metadata signature change must trigger a fresh transcript-source scan on the next tick"
+    );
+    assert_eq!(
+        task.metadata_load_count_for_tests(),
+        0,
+        "transcript path changes must be observed without loading full metadata"
     );
     let metadata = read_json(state_dir.join("metadata.json"));
     assert_eq!(
         metadata["sessions"]["codex-1"]["statusline"]["top"][0]["text"],
         "2kb"
+    );
+}
+
+#[test]
+fn transcript_plugin_active_metadata_changes_do_not_reload_full_metadata() {
+    let project = temp_project("transcript-active-metadata");
+    let state_dir = project.join("state");
+    let transcript_dir = project.join("transcripts");
+    create_dir_all(&state_dir).expect("create state dir");
+    create_dir_all(&transcript_dir).expect("create transcript dir");
+    let transcript_path = transcript_dir.join("shared.jsonl");
+    write(&transcript_path, "x".repeat(4096)).expect("write transcript");
+    let session_count = 40usize;
+    write_metadata_with_sessions(&state_dir, session_count, |_| {
+        json!({
+            "updatedAt": "2026-09-15T00:00:00.000Z",
+            "context": {
+                "transcriptPath": transcript_path.to_string_lossy()
+            }
+        })
+    });
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut task = PluginTickTask::new(2_000, Box::new(TranscriptLengthPlugin::new("top")));
+    run_task(&mut task, &context);
+    let warm_sources = task.transcript_source_load_count_for_tests();
+    let warm_full_metadata = task.metadata_load_count_for_tests();
+    let tick_count = 5usize;
+    let started = Instant::now();
+    for tick in 0..tick_count {
+        write_busy_metadata(&state_dir, session_count, &transcript_path, tick);
+        run_task(&mut task, &context);
+    }
+    let elapsed = started.elapsed();
+    let source_scans = task.transcript_source_load_count_for_tests() - warm_sources;
+    let full_metadata_loads = task.metadata_load_count_for_tests() - warm_full_metadata;
+    println!(
+        "busy metadata measurement: sessions={session_count} ticks={tick_count} legacy_full_parse_count={tick_count} cached_full_parse_count={full_metadata_loads} transcript_source_scan_count={source_scans} wall_us_per_tick={}",
+        elapsed.as_micros() / tick_count as u128
+    );
+    assert_eq!(
+        full_metadata_loads, 0,
+        "active unrelated metadata writes must not make transcript-length load full metadata"
+    );
+    assert_eq!(
+        source_scans, tick_count,
+        "active metadata changes should cause exactly one narrow transcript-source scan per tick"
+    );
+}
+
+#[test]
+fn transcript_source_snapshot_is_shared_for_many_sessions_inside_one_tick() {
+    let project = temp_project("transcript-source-host-cache");
+    let state_dir = project.join("state");
+    let transcript_dir = project.join("transcripts");
+    create_dir_all(&state_dir).expect("create state dir");
+    create_dir_all(&transcript_dir).expect("create transcript dir");
+    let transcript_path = transcript_dir.join("shared.jsonl");
+    write(&transcript_path, "x".repeat(2048)).expect("write transcript");
+    let session_count = 1_000usize;
+    write_metadata_with_sessions(&state_dir, session_count, |_| {
+        json!({
+            "updatedAt": "2026-09-15T00:00:00.000Z",
+            "context": {
+                "transcriptPath": transcript_path.to_string_lossy()
+            },
+            "logs": ["this field should be skipped by the narrow transcript-source decoder"],
+            "statusline": {
+                "top": [{"id": "noise", "text": "unchanged"}]
+            }
+        })
+    });
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let metadata_cache = PluginMetadataCache::default();
+    let transcript_source_cache = TranscriptSourceCache::default();
+    let mut host = ProjectServicePluginHost::new_with_caches(
+        &context,
+        metadata_cache.clone(),
+        transcript_source_cache.clone(),
+    );
+    let sources = host
+        .execute(
+            "transcript-length",
+            NativePluginApiRequest::ListTranscriptSources,
+        )
+        .expect("list transcript sources");
+    assert_eq!(
+        sources.as_array().map(Vec::len),
+        Some(session_count),
+        "all sessions should be visible through the narrow transcript source API"
+    );
+    let _second = host
+        .execute(
+            "transcript-length",
+            NativePluginApiRequest::ListTranscriptSources,
+        )
+        .expect("list transcript sources again");
+    let source_scans = transcript_source_cache.load_count_for_tests();
+    let full_metadata_loads = metadata_cache.load_count_for_tests();
+    println!(
+        "many session transcript-source measurement: sessions={session_count} source_scans={source_scans} full_metadata_loads={}",
+        full_metadata_loads
+    );
+    assert_eq!(
+        full_metadata_loads, 0,
+        "many transcript sessions must not route through load_metadata_state"
+    );
+    assert_eq!(
+        source_scans, 1,
+        "many sessions must share exactly one transcript-source scan in one tick"
     );
 }
 
@@ -200,6 +324,28 @@ fn write_metadata_with_sessions(
         .to_string(),
     )
     .expect("write metadata");
+}
+
+fn write_busy_metadata(
+    state_dir: &Path,
+    session_count: usize,
+    transcript_path: &Path,
+    tick: usize,
+) {
+    write_metadata_with_sessions(state_dir, session_count, |index| {
+        json!({
+            "updatedAt": "2026-09-15T00:00:00.000Z",
+            "context": {
+                "transcriptPath": transcript_path.to_string_lossy()
+            },
+            "logs": [
+                {
+                    "message": format!("unrelated active metadata tick {tick} session {index}"),
+                    "padding": "x".repeat((tick + index) % 17)
+                }
+            ]
+        })
+    });
 }
 
 fn temp_project(label: &str) -> PathBuf {
