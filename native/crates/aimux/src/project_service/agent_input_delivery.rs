@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::agent_prompt_delivery::current_composer_text;
+use crate::agent_prompt_delivery::{current_composer_text, strip_agent_prompt_marker};
 use crate::atomic_write::write_json_atomic;
 use crate::backlog_metrics::{
     AGENT_INPUT_DELIVERY_BACKLOG, BacklogMetricSnapshot, backlog_metric, record_backlog_error,
@@ -736,12 +736,83 @@ pub fn active_client_count_for_window(
 }
 
 pub fn pane_has_unsubmitted_agent_input(pane: &str) -> bool {
+    if latest_composer_region_is_chrome_only(pane) {
+        return false;
+    }
     current_composer_text(pane).is_some_and(|composer| has_user_composer_text(&composer))
 }
 
 fn has_user_composer_text(value: &str) -> bool {
     let text = value.trim();
     !text.is_empty() && !is_empty_composer_placeholder(text)
+}
+
+fn latest_composer_region_is_chrome_only(pane: &str) -> bool {
+    let lines = pane.lines().collect::<Vec<_>>();
+    let Some((prompt_index, prompt_text)) =
+        lines.iter().enumerate().rev().find_map(|(index, line)| {
+            strip_agent_prompt_marker(line.trim()).map(|rest| (index, rest.trim()))
+        })
+    else {
+        return false;
+    };
+
+    if !prompt_text.is_empty() {
+        return is_agent_input_composer_chrome_text(prompt_text)
+            && lines[prompt_index + 1..]
+                .iter()
+                .all(|line| is_agent_input_composer_tail_chrome(line.trim()));
+    }
+
+    let mut non_chrome_tail = lines[prompt_index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .filter(|line| !is_agent_input_composer_tail_chrome(line));
+
+    let Some(first) = non_chrome_tail.next() else {
+        return false;
+    };
+    is_agent_input_composer_chrome_text(first) && non_chrome_tail.next().is_none()
+}
+
+fn is_agent_input_composer_chrome_text(text: &str) -> bool {
+    let normalized = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "ask codex to do anything" | "ask claude to do anything"
+    ) || (normalized.starts_with("press up ") && normalized.contains("queued message"))
+        || (normalized.starts_with("press tab ") && normalized.contains("queue a message"))
+        || (normalized.contains("shift+tab") && normalized.contains("cycle"))
+        || normalized.contains("bypass permissions")
+}
+
+fn is_agent_input_composer_tail_chrome(line: &str) -> bool {
+    if line.is_empty() {
+        return true;
+    }
+    let lower = line.to_ascii_lowercase();
+    is_agent_input_horizontal_rule(line)
+        || line.starts_with('⏵')
+        || line.starts_with('⧉')
+        || line.contains("[[aimux]")
+        || lower.contains("bypass permissions")
+        || lower.contains("shift+tab")
+        || lower.contains(" context)")
+        || lower.starts_with("gpt-")
+        || lower.starts_with("claude-")
+}
+
+fn is_agent_input_horizontal_rule(line: &str) -> bool {
+    let mut chars = line.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    matches!(first, '─' | '-') && chars.all(|character| character == first)
 }
 
 fn is_empty_composer_placeholder(text: &str) -> bool {

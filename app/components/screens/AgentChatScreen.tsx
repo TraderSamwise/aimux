@@ -1939,11 +1939,11 @@ export default function ChatScreen() {
                     />
                     <View className="min-w-0 flex-1 px-1">
                       {sendError ? (
-                        <View className="min-w-0 flex-row items-center gap-1.5">
-                          <CircleAlert size={13} color="#f87171" />
+                        <View className="min-w-0 flex-row items-start gap-1.5">
+                          <CircleAlert size={13} color="#f87171" style={{ marginTop: 1 }} />
                           <Text
                             className="min-w-0 flex-1 text-xs text-destructive"
-                            numberOfLines={1}
+                            numberOfLines={3}
                           >
                             {sendError}
                           </Text>

@@ -80,4 +80,17 @@ describe("AgentChatScreen composer render contract", () => {
     expect(after.onContentSizeChange).toBe(before.onContentSizeChange);
     expect(after.onScroll).toBe(before.onScroll);
   });
+
+  it("lets held-input footer warnings wrap instead of clipping the reason", () => {
+    const source = agentChatScreenSource();
+    const sendErrorStart = source.indexOf("{sendError ? (");
+    expect(sendErrorStart).toBeGreaterThanOrEqual(0);
+    const busyStart = source.indexOf(") : sendBusy || composerAwaitingAck ?", sendErrorStart);
+    expect(busyStart).toBeGreaterThan(sendErrorStart);
+    const sendErrorJsx = source.slice(sendErrorStart, busyStart);
+
+    expect(sendErrorJsx).toContain("items-start");
+    expect(sendErrorJsx).toContain("numberOfLines={3}");
+    expect(sendErrorJsx).not.toContain("numberOfLines={1}");
+  });
 });
