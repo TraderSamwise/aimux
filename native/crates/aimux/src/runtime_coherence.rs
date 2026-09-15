@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::git_delivery::{GitCheckoutCoherence, inspect_git_checkout_coherence};
 use crate::paths::PathResolver;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
@@ -150,7 +151,14 @@ pub fn build_runtime_coherence_report_with_resolver(
             &project_root.project_root,
             &expected_state_dir,
         );
-        let status = project_status(&runtime, &service, &dashboards, &agent_inventory);
+        let git_checkout = read_project_git_checkout_report(&project_root.project_root);
+        let status = project_status(
+            &runtime,
+            &service,
+            &dashboards,
+            &agent_inventory,
+            &git_checkout,
+        );
         projects.push(json!({
             "projectRoot": project_root.project_root,
             "sources": project_root.sources,
@@ -159,6 +167,7 @@ pub fn build_runtime_coherence_report_with_resolver(
             "service": service,
             "dashboards": dashboards,
             "agentInventory": agent_inventory,
+            "gitCheckout": git_checkout,
             "status": status,
         }));
     }
@@ -412,6 +421,7 @@ pub fn render_runtime_coherence_report(report: &Value) -> String {
         if let Some(error) = project.pointer("/service/error").and_then(Value::as_str) {
             lines.push(format!("    error: {error}"));
         }
+        lines.extend(render_git_checkout_report(project));
         lines.extend(render_agent_inventory_report(project));
         let dashboards = project["dashboards"].as_array().unwrap_or(&empty);
         if dashboards.is_empty() {
@@ -878,6 +888,61 @@ fn build_process_report(
     }))
 }
 
+fn read_project_git_checkout_report(project_root: &str) -> Value {
+    let path = Path::new(project_root);
+    if !path.exists() {
+        return json!({
+            "status": "not-checked",
+            "error": "project root is not present on disk",
+            "head": null,
+            "staleBase": null,
+            "files": [],
+        });
+    }
+    match inspect_git_checkout_coherence(project_root) {
+        Ok(checkout) => git_checkout_report(checkout),
+        Err(error) => {
+            let error = error.to_string();
+            if error.contains("not a git repository") {
+                json!({
+                    "status": "not-checked",
+                    "error": "project root is not a git checkout",
+                    "head": null,
+                    "staleBase": null,
+                    "files": [],
+                })
+            } else {
+                json!({
+                    "status": "unavailable",
+                    "error": error,
+                    "head": null,
+                    "staleBase": null,
+                    "files": [],
+                })
+            }
+        }
+    }
+}
+
+fn git_checkout_report(checkout: GitCheckoutCoherence) -> Value {
+    json!({
+        "status": checkout.status.as_str(),
+        "error": null,
+        "head": checkout.head_sha,
+        "staleBase": checkout.stale_base,
+        "files": checkout.files.into_iter().map(|file| {
+            json!({
+                "path": file.path,
+                "indexStatus": file.index_status.to_string(),
+                "worktreeStatus": file.worktree_status.to_string(),
+                "headBlob": file.head_blob,
+                "indexBlob": file.index_blob,
+                "worktreeBlob": file.worktree_blob,
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
 fn list_stale_hook_processes(processes: &[Value], cli_launch: &Value) -> Vec<Value> {
     let mut reports = Vec::new();
     for entry in processes {
@@ -935,6 +1000,7 @@ fn project_status(
     service: &Value,
     dashboards: &[Value],
     agent_inventory: &Value,
+    git_checkout: &Value,
 ) -> &'static str {
     if service_deliberately_stopped(service) {
         return "stopped";
@@ -951,6 +1017,10 @@ fn project_status(
         .iter()
         .any(|dashboard| dashboard["status"].as_str() != Some("ok"))
         || agent_inventory.get("status").and_then(Value::as_str) != Some("ok")
+        || matches!(
+            git_checkout.get("status").and_then(Value::as_str),
+            Some("stale" | "unavailable")
+        )
     {
         "needs-attention"
     } else {
@@ -1095,6 +1165,97 @@ fn render_agent_inventory_report(project: &Value) -> Vec<String> {
         }
     }
     lines
+}
+
+fn render_git_checkout_report(project: &Value) -> Vec<String> {
+    let empty = Vec::new();
+    let checkout = project.get("gitCheckout").unwrap_or(&Value::Null);
+    let status = checkout
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("not-checked");
+    let mut lines = Vec::new();
+    match status {
+        "coherent" => lines.push(format!(
+            "  git checkout: coherent head={}",
+            short_sha(checkout.get("head").and_then(Value::as_str).unwrap_or(""))
+        )),
+        "stale" => {
+            let files = checkout
+                .get("files")
+                .and_then(Value::as_array)
+                .unwrap_or(&empty);
+            lines.push(format!(
+                "  git checkout: stale behind HEAD head={} staleBase={} files={}",
+                short_sha(checkout.get("head").and_then(Value::as_str).unwrap_or("")),
+                short_sha(
+                    checkout
+                        .get("staleBase")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                ),
+                files.len()
+            ));
+            for file in files.iter().take(10) {
+                lines.push(format!(
+                    "    stale: path={} index={} worktree={}",
+                    file.get("path")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    file.get("indexStatus")
+                        .and_then(Value::as_str)
+                        .unwrap_or("?"),
+                    file.get("worktreeStatus")
+                        .and_then(Value::as_str)
+                        .unwrap_or("?")
+                ));
+            }
+        }
+        "modified" => {
+            let files = checkout
+                .get("files")
+                .and_then(Value::as_array)
+                .unwrap_or(&empty);
+            lines.push(format!(
+                "  git checkout: modified uncommitted={} head={}",
+                files.len(),
+                short_sha(checkout.get("head").and_then(Value::as_str).unwrap_or(""))
+            ));
+            for file in files.iter().take(10) {
+                lines.push(format!(
+                    "    modified: path={} index={} worktree={}",
+                    file.get("path")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    file.get("indexStatus")
+                        .and_then(Value::as_str)
+                        .unwrap_or("?"),
+                    file.get("worktreeStatus")
+                        .and_then(Value::as_str)
+                        .unwrap_or("?")
+                ));
+            }
+        }
+        "unavailable" => lines.push(format!(
+            "  git checkout: unavailable ({})",
+            checkout
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )),
+        _ => lines.push(format!(
+            "  git checkout: not checked ({})",
+            checkout
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("not a local checkout")
+        )),
+    }
+    lines
+}
+
+fn short_sha(value: &str) -> &str {
+    value.get(..value.len().min(8)).unwrap_or(value)
 }
 
 fn project_session_name(tmux: &RuntimeCoherenceTmux, project_root: &str) -> String {

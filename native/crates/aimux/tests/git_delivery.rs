@@ -1,4 +1,7 @@
-use aimux::git_delivery::{GitDeliveryError, verify_git_delivery};
+use aimux::git_delivery::{
+    GitCheckoutCoherenceStatus, GitDeliveryError, inspect_git_checkout_coherence,
+    verify_git_delivery,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -108,6 +111,91 @@ fn linked_worktree_commit_reachable_from_target_ref_passes() {
         .success(),
         "source checkout should immediately know linked-worktree commit objects"
     );
+}
+
+#[test]
+fn target_checkout_stale_behind_head_is_reported_and_refused() {
+    let fixture = TempGitFixture::new("stale-target");
+    let source = fixture.path("source");
+    let linked = fixture.path("linked");
+    create_source_repo(&source);
+
+    run_git(
+        &source,
+        &["worktree", "add", "-b", "agent", path_str(&linked)],
+    );
+    configure_git_user(&linked);
+    fs::write(linked.join("file.txt"), "base\nlanded\n").expect("update linked file");
+    run_git(&linked, &["add", "file.txt"]);
+    run_git(&linked, &["commit", "-m", "landed"]);
+    let linked_head = git_output(&linked, &["rev-parse", "HEAD"]);
+    let previous_master = git_output(&source, &["rev-parse", "HEAD"]);
+    run_git(&source, &["update-ref", "refs/heads/master", &linked_head]);
+
+    let checkout = inspect_git_checkout_coherence(path_str(&source)).expect("inspect checkout");
+    assert_eq!(checkout.status, GitCheckoutCoherenceStatus::Stale);
+    assert_eq!(checkout.head_sha, linked_head);
+    assert_eq!(
+        checkout.stale_base.as_deref(),
+        Some(previous_master.as_str())
+    );
+    assert_eq!(
+        checkout
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        ["file.txt"]
+    );
+
+    let result = verify_git_delivery(path_str(&linked), path_str(&source), "master");
+    let Err(GitDeliveryError::StaleTargetCheckout {
+        target_project_root,
+        files,
+        ..
+    }) = result
+    else {
+        panic!("stale target checkout should be refused: {result:?}");
+    };
+    assert_eq!(target_project_root.as_ref(), path_str(&source));
+    assert_eq!(files, ["file.txt"]);
+}
+
+#[test]
+fn genuine_uncommitted_work_is_modified_not_stale() {
+    let fixture = TempGitFixture::new("modified-target");
+    let source = fixture.path("source");
+    create_source_repo(&source);
+    fs::write(source.join("file.txt"), "base\ngenuine work\n").expect("edit source file");
+
+    let checkout = inspect_git_checkout_coherence(path_str(&source)).expect("inspect checkout");
+    assert_eq!(checkout.status, GitCheckoutCoherenceStatus::Modified);
+    assert_eq!(
+        checkout
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        ["file.txt"]
+    );
+
+    let check = verify_git_delivery(path_str(&source), path_str(&source), "master")
+        .expect("modified target checkout is not pure staleness");
+    assert_eq!(
+        check.target_checkout.status,
+        GitCheckoutCoherenceStatus::Modified
+    );
+}
+
+#[test]
+fn clean_checkout_is_coherent() {
+    let fixture = TempGitFixture::new("coherent-target");
+    let source = fixture.path("source");
+    create_source_repo(&source);
+
+    let checkout = inspect_git_checkout_coherence(path_str(&source)).expect("inspect checkout");
+    assert_eq!(checkout.status, GitCheckoutCoherenceStatus::Coherent);
+    assert!(checkout.files.is_empty());
 }
 
 fn create_source_repo(path: &Path) {

@@ -6,7 +6,7 @@ use aimux::daemon::text::operations::{
     RestartControlPlaneTextResult, render_runtime_restart_result,
 };
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
-use aimux::git_delivery::GitDeliveryCheck;
+use aimux::git_delivery::{GitCheckoutCoherence, GitCheckoutCoherenceStatus, GitDeliveryCheck};
 use aimux::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
 use aimux::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
@@ -457,6 +457,13 @@ impl CoreCliRuntime for FakeRuntime {
             source_common_dir: "/repo/.git".into(),
             target_common_dir: "/repo/.git".into(),
             shares_object_store: true,
+            target_checkout: GitCheckoutCoherence {
+                repo: target_project_root.to_owned(),
+                head_sha: "abc123".into(),
+                status: GitCheckoutCoherenceStatus::Coherent,
+                stale_base: None,
+                files: Vec::new(),
+            },
         })
     }
 }

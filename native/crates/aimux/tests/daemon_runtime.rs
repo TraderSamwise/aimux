@@ -44,6 +44,7 @@ use std::fs::{self, remove_dir_all};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -1380,6 +1381,98 @@ fn native_daemon_doctor_versions_agent_inventory_ok_keeps_project_ok() {
     assert!(body.contains("Project ok:"));
     assert!(body.contains("agents: ok"));
     assert!(body.contains("projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention"));
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_doctor_versions_reports_stale_git_checkout_by_path() {
+    let fixture = RuntimeFixture::new("doctor-stale-git-checkout");
+    let project = fixture.project("live");
+    init_git_project(&project);
+    let linked = fixture.project("linked");
+    fs::remove_dir_all(&linked).expect("remove placeholder linked project");
+    run_git(
+        &project,
+        &["worktree", "add", "-b", "agent", path_str(&linked)],
+    );
+    fs::write(linked.join("file.txt"), "base\nlanded\n").expect("edit linked file");
+    run_git(&linked, &["add", "file.txt"]);
+    run_git(&linked, &["commit", "-m", "landed"]);
+    let linked_head = git_output(&linked, &["rev-parse", "HEAD"]);
+    run_git(&project, &["update-ref", "refs/heads/master", &linked_head]);
+
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("project entry");
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project);
+    let session_name = aimux::tmux::project_session(&project, "aimux").session_name;
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &daemon_expose_topology(&project, &session_name, "codex-live", "@7", 7),
+    )
+    .expect("write topology");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 46_214,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("metadata endpoint");
+    let mut runtime = fixture
+        .runtime()
+        .with_runtime_coherence_tmux_provider(Arc::new({
+            let project_root = project_root.clone();
+            let session_name = session_name.clone();
+            move || {
+                doctor_agent_tmux(
+                    &project_root,
+                    &session_name,
+                    vec![("@7", 7, "codex", Some("codex-live"))],
+                )
+            }
+        }));
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let report: Value = serde_json::from_slice(&response.body).expect("doctor json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(report["summary"]["ok"], json!(0));
+    assert_eq!(report["summary"]["needsAttention"], json!(1));
+    assert_eq!(report["projects"][0]["status"], "needs-attention");
+    assert_eq!(report["projects"][0]["gitCheckout"]["status"], "stale");
+    assert_eq!(
+        report["projects"][0]["gitCheckout"]["files"][0]["path"],
+        "file.txt"
+    );
+
+    let text_response = handle_daemon_runtime_request(
+        &mut runtime,
+        request("GET", CORE_API_ROUTES.doctor_versions_text),
+    );
+    let body = String::from_utf8(text_response.body).expect("versions text");
+    assert!(body.contains("Project needs-attention:"));
+    assert!(body.contains("git checkout: stale behind HEAD"));
+    assert!(body.contains("stale: path=file.txt"));
+    assert!(body.contains("projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention"));
     fixture.cleanup();
 }
 
@@ -3185,6 +3278,52 @@ fn assert_request_path(request: &str, method: &str, path: &str) {
     let mut parts = request.lines().next().unwrap_or_default().split(' ');
     assert_eq!(parts.next(), Some(method));
     assert_eq!(parts.next(), Some(path));
+}
+
+fn init_git_project(path: &Path) {
+    run_git(path, &["init", "--initial-branch=master"]);
+    run_git(path, &["config", "user.email", "aimux-test@example.com"]);
+    run_git(path, &["config", "user.name", "Aimux Test"]);
+    fs::write(path.join("file.txt"), "base\n").expect("write git fixture");
+    run_git(path, &["add", "file.txt"]);
+    run_git(path, &["commit", "-m", "base"]);
+}
+
+fn run_git(cwd: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn git_output(cwd: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+fn path_str(path: &Path) -> &str {
+    path.to_str().expect("utf8 temp path")
 }
 
 fn request_json_body(request: &str) -> Value {
