@@ -388,6 +388,86 @@ fn retasking_resets_the_stopped_dwell_window_for_the_new_assignment() {
 }
 
 #[test]
+fn assignment_add_action_resets_stale_stopped_dwell_for_a_fresh_dispatch() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) = looping_session("worker", "done");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 30_000 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+
+    worker_meta["loopLastAction"] = json!({
+        "action": "add",
+        "at": "2026-09-15T07:36:02.346Z",
+        "goal": "ship it",
+        "source": "overseer",
+        "updatedBySessionId": "boss"
+    });
+    input["metadata"]["sessions"]["worker"] = worker_meta;
+
+    assert!(
+        watcher.scan(&input, NOW + 30_000, &mut ok).is_empty(),
+        "a fresh assignment edge must start a fresh stopped dwell window"
+    );
+    assert!(watcher.scan(&input, NOW + 59_999, &mut ok).is_empty());
+    let sends = watcher.scan(&input, NOW + 60_000, &mut ok);
+    assert_eq!(
+        sends.len(),
+        1,
+        "a truly stopped agent must still alert after the assignment dwell elapses"
+    );
+    assert!(briefing_mentions(&sends[0], "worker"));
+    assert!(sends[0].text.contains("appear to have stopped:"));
+}
+
+#[test]
+fn reassigning_an_already_enrolled_agent_resets_prior_stopped_alert_state() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) = looping_session("worker", "done");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 30_000 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+    let first = watcher.scan(&input, NOW + 30_000, &mut ok);
+    assert_eq!(first.len(), 1);
+    assert!(briefing_mentions(&first[0], "worker"));
+
+    worker_meta["loopLastAction"] = json!({
+        "action": "add",
+        "at": "2026-09-15T07:36:02.346Z",
+        "goal": "ship it",
+        "source": "overseer",
+        "updatedBySessionId": "boss"
+    });
+    input["metadata"]["sessions"]["worker"] = worker_meta;
+
+    assert!(
+        watcher.scan(&input, NOW + 30_001, &mut ok).is_empty(),
+        "a re-assignment must clear the prior stopped alert state"
+    );
+    assert!(watcher.scan(&input, NOW + 60_000, &mut ok).is_empty());
+    let sends = watcher.scan(&input, NOW + 60_001, &mut ok);
+    assert_eq!(
+        sends.len(),
+        1,
+        "a re-assigned agent still alerts if it remains stopped for its new dwell window"
+    );
+    assert!(briefing_mentions(&sends[0], "worker"));
+}
+
+#[test]
 fn same_assignment_bookkeeping_does_not_reset_the_stopped_dwell_window() {
     let (boss, mut boss_meta) = looping_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
