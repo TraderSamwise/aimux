@@ -102,6 +102,7 @@ export const CORE_API_ROUTES = {
   worktreeDeleteGraveyardText: "/core/worktree/delete-graveyard-text",
   worktreeGraveyardText: "/core/worktree/graveyard-text",
   worktreeListText: "/core/worktree/list-text",
+  worktreePruneText: "/core/worktree/prune-text",
   worktreeRemoveText: "/core/worktree/remove-text",
   worktreeResurrectText: "/core/worktree/resurrect-text",
 } as const;

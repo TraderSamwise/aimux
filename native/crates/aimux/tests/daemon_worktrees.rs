@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 struct FakeWorktreeRuntime {
     calls: Vec<(String, String, Option<Value>, Option<u64>)>,
     fail_get: bool,
+    fail_prune: bool,
     empty_graveyard_status: bool,
     omit_graveyard_status: bool,
 }
@@ -124,6 +125,31 @@ impl DaemonWorktreeTextRuntime for FakeWorktreeRuntime {
             _ => ProjectServiceJsonResult::error(DaemonRouteResponse::text(404, "not found\n")),
         }
     }
+
+    fn prune_git_worktree_metadata(
+        &mut self,
+        project_root: &str,
+        dry_run: bool,
+    ) -> Result<Value, String> {
+        self.calls.push((
+            project_root.into(),
+            "git worktree prune".into(),
+            Some(json!({ "dryRun": dry_run })),
+            None,
+        ));
+        if self.fail_prune {
+            return Err("permission denied inspecting .git/worktrees".into());
+        }
+        Ok(json!({
+            "ok": true,
+            "dryRun": dry_run,
+            "entries": [
+                "Removing worktrees/stale-one: gitdir file points to non-existent location",
+                "Removing worktrees/stale-two: gitdir file points to non-existent location"
+            ],
+            "output": "Removing worktrees/stale-one: gitdir file points to non-existent location\nRemoving worktrees/stale-two: gitdir file points to non-existent location"
+        }))
+    }
 }
 
 fn text_body(response: aimux::daemon::routing::DaemonRouteResponse) -> String {
@@ -174,6 +200,64 @@ fn worktree_list_and_create_match_text_and_json_contracts() {
         text_body(created),
         "Created worktree \"feature\" at /repo/.aimux/worktrees/feature\n"
     );
+}
+
+#[test]
+fn worktree_prune_defaults_to_dry_run_and_reports_git_entries() {
+    let mut runtime = FakeWorktreeRuntime::default();
+    let pruned = route_worktree_text_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?project=.", CORE_API_ROUTES.worktree_prune_text),
+        None,
+    )
+    .expect("worktree prune");
+    let body = text_body(pruned);
+    assert!(body.contains("Worktree metadata prune would remove 2 stale entries."));
+    assert!(body.contains("Removing worktrees/stale-one"));
+    let call = runtime.calls.last().expect("prune call");
+    assert_eq!(call.0, "/repo");
+    assert_eq!(call.1, "git worktree prune");
+    assert_eq!(call.2, Some(json!({ "dryRun": true })));
+
+    let applied = route_worktree_text_request(
+        &mut runtime,
+        "POST",
+        &format!(
+            "{}?project=/repo&dryRun=0&json=1",
+            CORE_API_ROUTES.worktree_prune_text
+        ),
+        None,
+    )
+    .expect("worktree prune json");
+    let parsed = serde_json::from_str::<Value>(&text_body(applied)).expect("json");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["dryRun"], false);
+    assert_eq!(parsed["projectRoot"], "/repo");
+    assert_eq!(parsed["entries"].as_array().expect("entries").len(), 2);
+}
+
+#[test]
+fn worktree_prune_failure_is_reported_not_empty() {
+    let mut runtime = FakeWorktreeRuntime {
+        fail_prune: true,
+        ..FakeWorktreeRuntime::default()
+    };
+    let response = route_worktree_text_request(
+        &mut runtime,
+        "POST",
+        &format!(
+            "{}?project=/repo&dryRun=0",
+            CORE_API_ROUTES.worktree_prune_text
+        ),
+        None,
+    )
+    .expect("worktree prune");
+
+    assert_eq!(response.status, 500);
+    let body = text_body(response);
+    assert!(body.contains("git worktree prune failed for /repo"));
+    assert!(body.contains("permission denied inspecting .git/worktrees"));
 }
 
 #[test]
