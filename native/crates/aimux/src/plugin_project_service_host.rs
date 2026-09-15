@@ -5,6 +5,7 @@ use crate::plugin_api::{
 use crate::plugin_registry::NativePluginRegistry;
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::project_service::scheduler::{PeriodicTask, PeriodicTaskFuture};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -24,6 +25,8 @@ pub struct ProjectServicePluginHost<'a> {
     store: BTreeMap<String, BTreeMap<String, Value>>,
     metadata_cache: PluginMetadataCache,
     metadata_snapshot: Option<Arc<Value>>,
+    transcript_source_cache: TranscriptSourceCache,
+    transcript_source_snapshot: Option<Arc<Value>>,
 }
 
 #[derive(Clone, Default)]
@@ -78,6 +81,77 @@ impl PluginMetadataCache {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct TranscriptSourceCache {
+    inner: Arc<Mutex<TranscriptSourceCacheState>>,
+}
+
+#[derive(Debug, Default)]
+struct TranscriptSourceCacheState {
+    signature: Option<MetadataFileSignature>,
+    value: Option<Arc<Value>>,
+    load_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscriptMetadataState {
+    #[serde(default)]
+    sessions: BTreeMap<String, TranscriptMetadataSession>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscriptMetadataSession {
+    #[serde(default)]
+    context: TranscriptMetadataContext,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscriptMetadataContext {
+    transcript_path: Option<String>,
+}
+
+impl TranscriptSourceCache {
+    fn load(
+        &self,
+        project_root: impl AsRef<Path>,
+        project_state_dir: impl AsRef<Path>,
+    ) -> Arc<Value> {
+        let project_root = project_root.as_ref().to_path_buf();
+        let project_state_dir = project_state_dir.as_ref().to_path_buf();
+        let path = crate::daemon_state::metadata_state_path(&project_state_dir);
+        let signature = MetadataFileSignature::read(&path);
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if inner.signature.as_ref() == Some(&signature)
+            && let Some(value) = &inner.value
+        {
+            return Arc::clone(value);
+        }
+        let value = Arc::new(read_transcript_sources(
+            &project_root,
+            &project_state_dir,
+            &path,
+        ));
+        inner.signature = Some(MetadataFileSignature::read(&path));
+        inner.value = Some(Arc::clone(&value));
+        inner.load_count += 1;
+        value
+    }
+
+    #[doc(hidden)]
+    pub fn load_count_for_tests(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .load_count
+    }
+}
+
 impl MetadataFileSignature {
     fn read(path: &Path) -> Self {
         let Ok(metadata) = fs::metadata(path) else {
@@ -113,6 +187,23 @@ impl<'a> ProjectServicePluginHost<'a> {
             store: BTreeMap::new(),
             metadata_cache,
             metadata_snapshot: None,
+            transcript_source_cache: TranscriptSourceCache::default(),
+            transcript_source_snapshot: None,
+        }
+    }
+
+    pub fn new_with_caches(
+        context: &'a ProjectServiceRequestContext,
+        metadata_cache: PluginMetadataCache,
+        transcript_source_cache: TranscriptSourceCache,
+    ) -> Self {
+        Self {
+            context,
+            store: BTreeMap::new(),
+            metadata_cache,
+            metadata_snapshot: None,
+            transcript_source_cache,
+            transcript_source_snapshot: None,
         }
     }
 
@@ -127,6 +218,17 @@ impl<'a> ProjectServicePluginHost<'a> {
         let metadata = self.metadata_cache.load(self.project_state_dir());
         self.metadata_snapshot = Some(Arc::clone(&metadata));
         metadata
+    }
+
+    fn transcript_sources(&mut self) -> Arc<Value> {
+        if let Some(sources) = &self.transcript_source_snapshot {
+            return Arc::clone(sources);
+        }
+        let sources = self
+            .transcript_source_cache
+            .load(self.context.project_root(), self.project_state_dir());
+        self.transcript_source_snapshot = Some(Arc::clone(&sources));
+        sources
     }
 
     fn session_list(&mut self) -> Vec<Value> {
@@ -277,6 +379,9 @@ impl NativePluginHost for ProjectServicePluginHost<'_> {
                     .unwrap_or_else(|| json!({ "services": [] })))
             }
             NativePluginApiRequest::ReadMetadataState => Ok(self.metadata_value().as_ref().clone()),
+            NativePluginApiRequest::ListTranscriptSources => {
+                Ok(self.transcript_sources().as_ref().clone())
+            }
             NativePluginApiRequest::SetStatuslineSegment {
                 session_id,
                 line,
@@ -502,6 +607,111 @@ fn plugin_declares_file_read(plugin_name: &str, capability: &str) -> bool {
     plugin_name == "transcript-length" && capability == "session-transcript"
 }
 
+fn read_transcript_sources(
+    project_root: &Path,
+    project_state_dir: &Path,
+    metadata_path: &Path,
+) -> Value {
+    let metadata = fs::read_to_string(metadata_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<TranscriptMetadataState>(&raw).ok())
+        .unwrap_or_else(|| TranscriptMetadataState {
+            sessions: BTreeMap::new(),
+        });
+    let mut sessions = BTreeMap::<String, Option<String>>::new();
+    if let Ok(topology) = crate::runtime_topology::read_runtime_topology(
+        crate::runtime_topology::runtime_topology_path(project_state_dir),
+    ) {
+        for session in crate::runtime_topology::list_topology_session_states(&topology, None) {
+            if let Some(id) = session.get("id").and_then(Value::as_str) {
+                sessions.entry(id.to_owned()).or_insert(None);
+            }
+        }
+    }
+    for (session_id, session) in metadata.sessions {
+        sessions.insert(session_id, session.context.transcript_path);
+    }
+    Value::Array(
+        sessions
+            .into_iter()
+            .map(|(session_id, transcript_path)| {
+                transcript_source_entry(project_root, &session_id, transcript_path)
+            })
+            .collect(),
+    )
+}
+
+fn transcript_source_entry(
+    project_root: &Path,
+    session_id: &str,
+    transcript_path: Option<String>,
+) -> Value {
+    if let Some(path) = transcript_path.filter(|path| !path.trim().is_empty()) {
+        let signature = FileContentSignature::read(Path::new(&path));
+        return json!({
+            "id": session_id,
+            "transcriptPath": path,
+            "sourceKind": "transcriptPath",
+            "signature": signature.to_key(),
+            "bytes": signature.len,
+            "available": signature.exists,
+        });
+    }
+    let history_path = session_history_path(project_root, session_id);
+    let checkpoint_path = session_checkpoint_path(project_root, session_id);
+    let history_signature = FileContentSignature::read(&history_path);
+    let checkpoint_signature = FileContentSignature::read(&checkpoint_path);
+    json!({
+        "id": session_id,
+        "sourceKind": "historyFallback",
+        "signature": format!(
+            "history:{}|checkpoint:{}",
+            history_signature.to_key(),
+            checkpoint_signature.to_key()
+        ),
+        "available": history_signature.exists,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct FileContentSignature {
+    exists: bool,
+    len: u64,
+    modified_ns: Option<u128>,
+}
+
+impl FileContentSignature {
+    fn read(path: &Path) -> Self {
+        let Ok(metadata) = fs::metadata(path) else {
+            return Self {
+                exists: false,
+                len: 0,
+                modified_ns: None,
+            };
+        };
+        Self {
+            exists: true,
+            len: metadata.len(),
+            modified_ns: metadata
+                .modified()
+                .ok()
+                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos()),
+        }
+    }
+
+    fn to_key(&self) -> String {
+        format!(
+            "exists:{}|len:{}|modified_ns:{}",
+            self.exists,
+            self.len,
+            self.modified_ns
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned())
+        )
+    }
+}
+
 fn read_transcript_bytes_since_checkpoint(
     project_root: &Path,
     session_id: &str,
@@ -521,10 +731,7 @@ fn read_session_history_lines(
     session_id: &str,
     since: Option<&str>,
 ) -> Vec<String> {
-    let path = project_root
-        .join(".aimux")
-        .join("history")
-        .join(format!("{session_id}.jsonl"));
+    let path = session_history_path(project_root, session_id);
     let Ok(raw) = fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -544,11 +751,7 @@ fn read_session_history_lines(
 }
 
 fn read_last_compaction_turn_ts(project_root: &Path, session_id: &str) -> Option<String> {
-    let path = project_root
-        .join(".aimux")
-        .join("context")
-        .join(session_id)
-        .join("summary.checkpoints.jsonl");
+    let path = session_checkpoint_path(project_root, session_id);
     let raw = fs::read_to_string(path).ok()?;
     raw.lines()
         .rev()
@@ -561,6 +764,21 @@ fn read_last_compaction_turn_ts(project_root: &Path, session_id: &str) -> Option
                 .and_then(Value::as_str)
                 .map(str::to_owned)
         })
+}
+
+fn session_history_path(project_root: &Path, session_id: &str) -> PathBuf {
+    project_root
+        .join(".aimux")
+        .join("history")
+        .join(format!("{session_id}.jsonl"))
+}
+
+fn session_checkpoint_path(project_root: &Path, session_id: &str) -> PathBuf {
+    project_root
+        .join(".aimux")
+        .join("context")
+        .join(session_id)
+        .join("summary.checkpoints.jsonl")
 }
 
 fn merge_session_context_value(mut current: Value, input: Value) -> Value {
@@ -634,6 +852,7 @@ pub struct PluginTickTask {
     interval_ms: i64,
     plugin: Box<dyn NativePlugin + Send>,
     metadata_cache: PluginMetadataCache,
+    transcript_source_cache: TranscriptSourceCache,
 }
 
 impl PluginTickTask {
@@ -643,12 +862,18 @@ impl PluginTickTask {
             interval_ms,
             plugin,
             metadata_cache: PluginMetadataCache::default(),
+            transcript_source_cache: TranscriptSourceCache::default(),
         }
     }
 
     #[doc(hidden)]
     pub fn metadata_load_count_for_tests(&self) -> usize {
         self.metadata_cache.load_count_for_tests()
+    }
+
+    #[doc(hidden)]
+    pub fn transcript_source_load_count_for_tests(&self) -> usize {
+        self.transcript_source_cache.load_count_for_tests()
     }
 }
 
@@ -672,9 +897,10 @@ impl PeriodicTask for PluginTickTask {
                     .await
                     .map_err(|error| format!("{} tick failed: {error}", self.name));
             }
-            let mut host = ProjectServicePluginHost::new_with_metadata_cache(
+            let mut host = ProjectServicePluginHost::new_with_caches(
                 context,
                 self.metadata_cache.clone(),
+                self.transcript_source_cache.clone(),
             );
             let plugin_name = self.name.clone();
             let mut api = NativePluginApi::new(&plugin_name, &mut host);

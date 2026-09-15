@@ -143,6 +143,32 @@ impl NativePluginHost for TranscriptLengthHost {
             NativePluginApiRequest::ListSessions => Ok(Value::Array(
                 self.sessions.iter().map(|id| json!({ "id": id })).collect(),
             )),
+            NativePluginApiRequest::ListTranscriptSources => {
+                let metadata = read_json(self.project_state_dir.join("metadata.json"));
+                Ok(Value::Array(
+                    self.sessions
+                        .iter()
+                        .map(|session_id| {
+                            let transcript_path = metadata
+                                .as_ref()
+                                .and_then(|metadata| {
+                                    metadata
+                                        .get("sessions")
+                                        .and_then(|sessions| sessions.get(session_id))
+                                        .and_then(|session| session.get("context"))
+                                        .and_then(|context| context.get("transcriptPath"))
+                                        .and_then(Value::as_str)
+                                })
+                                .map(str::to_owned);
+                            transcript_source_fixture_entry(
+                                &self.project_root,
+                                session_id,
+                                transcript_path,
+                            )
+                        })
+                        .collect(),
+                ))
+            }
             NativePluginApiRequest::ReadSessionContext { session_id } => {
                 Ok(read_json(self.project_state_dir.join("metadata.json"))
                     .and_then(|metadata| {
@@ -193,6 +219,58 @@ impl NativePluginHost for TranscriptLengthHost {
             other => Err(format!("unexpected transcript-length request: {other:?}")),
         }
     }
+}
+
+fn transcript_source_fixture_entry(
+    project_root: &Path,
+    session_id: &str,
+    transcript_path: Option<String>,
+) -> Value {
+    if let Some(path) = transcript_path {
+        let metadata = fs::metadata(&path).ok();
+        return json!({
+            "id": session_id,
+            "transcriptPath": path,
+            "sourceKind": "transcriptPath",
+            "signature": fixture_file_signature(metadata.as_ref()),
+            "bytes": metadata.as_ref().map(|metadata| metadata.len()).unwrap_or(0),
+            "available": metadata.is_some(),
+        });
+    }
+    let history_path = project_root
+        .join(".aimux")
+        .join("history")
+        .join(format!("{session_id}.jsonl"));
+    let checkpoint_path = project_root
+        .join(".aimux")
+        .join("context")
+        .join(session_id)
+        .join("summary.checkpoints.jsonl");
+    let history = fs::metadata(history_path).ok();
+    let checkpoint = fs::metadata(checkpoint_path).ok();
+    json!({
+        "id": session_id,
+        "sourceKind": "historyFallback",
+        "signature": format!(
+            "history:{}|checkpoint:{}",
+            fixture_file_signature(history.as_ref()),
+            fixture_file_signature(checkpoint.as_ref())
+        ),
+        "available": history.is_some(),
+    })
+}
+
+fn fixture_file_signature(metadata: Option<&fs::Metadata>) -> String {
+    format!(
+        "exists:{}|len:{}|modified_ns:{}",
+        metadata.is_some(),
+        metadata.map(|metadata| metadata.len()).unwrap_or(0),
+        metadata
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos().to_string())
+            .unwrap_or_else(|| "none".to_owned())
+    )
 }
 
 struct GhPrContextHost {
