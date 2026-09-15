@@ -1775,11 +1775,13 @@ impl TmuxRuntimeManager {
         host_session_name: &str,
     ) -> Result<Option<String>, String> {
         let attached = self.attached_client_sessions()?;
+        let now = unix_timestamp_seconds();
         let mut candidates = self
             .list_sessions()?
             .into_iter()
             .filter(|session| is_tmux_client_session_for_host(&session.name, host_session_name))
             .filter(|session| !attached.contains(&session.name))
+            .filter(|session| Self::client_session_is_past_abandoned_grace(session, now))
             .collect::<Vec<_>>();
         candidates.sort_by_key(|session| {
             (
@@ -1790,7 +1792,7 @@ impl TmuxRuntimeManager {
         });
         candidates.reverse();
         for session in candidates {
-            if self.client_session_has_ready_dashboard(&session.name)? {
+            if self.client_session_is_reusable_abandoned_dashboard(&session.name)? {
                 return Ok(Some(session.name));
             }
         }
@@ -1812,12 +1814,7 @@ impl TmuxRuntimeManager {
             if attached.contains(&session.name) {
                 continue;
             }
-            let reference = session
-                .last_attached
-                .or(session.activity)
-                .or(session.created)
-                .unwrap_or(now);
-            if now.saturating_sub(reference) < ABANDONED_CLIENT_SESSION_GRACE_SECONDS {
+            if !Self::client_session_is_past_abandoned_grace(&session, now) {
                 continue;
             }
             match self.classify_abandoned_client_session(&session.name) {
@@ -1838,6 +1835,15 @@ impl TmuxRuntimeManager {
         Ok(reaped)
     }
 
+    fn client_session_is_past_abandoned_grace(session: &TmuxSessionInfo, now: i64) -> bool {
+        let reference = session
+            .last_attached
+            .or(session.activity)
+            .or(session.created)
+            .unwrap_or(now);
+        now.saturating_sub(reference) >= ABANDONED_CLIENT_SESSION_GRACE_SECONDS
+    }
+
     fn attached_client_sessions(&mut self) -> Result<BTreeSet<String>, String> {
         Ok(self
             .list_clients()?
@@ -1847,8 +1853,21 @@ impl TmuxRuntimeManager {
             .collect())
     }
 
-    fn client_session_has_ready_dashboard(&mut self, session_name: &str) -> Result<bool, String> {
-        let Some(dashboard) = self.client_session_dashboard_window(session_name)? else {
+    fn client_session_is_reusable_abandoned_dashboard(
+        &mut self,
+        session_name: &str,
+    ) -> Result<bool, String> {
+        let windows = self.list_windows(session_name)?;
+        if windows
+            .iter()
+            .any(|window| !is_dashboard_window_name(&window.name))
+        {
+            return Ok(false);
+        }
+        let Some(dashboard) = windows
+            .iter()
+            .find(|window| is_dashboard_window_name(&window.name))
+        else {
             return Ok(false);
         };
         if dashboard.pane_dead == Some(true) {
@@ -1886,22 +1905,6 @@ impl TmuxRuntimeManager {
             return Ok(Some("dashboard-not-ready".to_owned()));
         }
         Ok(None)
-    }
-
-    fn client_session_dashboard_window(
-        &mut self,
-        session_name: &str,
-    ) -> Result<Option<TmuxWindowInfo>, String> {
-        let windows = self.list_windows(session_name)?;
-        Ok(windows
-            .iter()
-            .find(|window| is_dashboard_window_name(&window.name) && window.index == 0)
-            .cloned()
-            .or_else(|| {
-                windows
-                    .into_iter()
-                    .find(|window| is_dashboard_window_name(&window.name))
-            }))
     }
 
     fn report_client_session_reap(

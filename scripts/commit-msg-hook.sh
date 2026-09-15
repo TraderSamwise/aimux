@@ -7,6 +7,11 @@ set -euo pipefail
 
 MSG_FILE="${1:?commit message file is required}"
 MARKER="$(git rev-parse --git-path aimux/pre-commit-ok)"
+MERGE_HEAD="$(git rev-parse --git-path MERGE_HEAD)"
+
+if [ -f "$MERGE_HEAD" ]; then
+  exit 0
+fi
 
 if [ ! -s "$MARKER" ]; then
   echo "aimux: missing pre-commit attestation; run git commit without --no-verify." >&2

@@ -820,8 +820,8 @@ fn render_navigation_grouped(
                 style(&format!("· {}", worktree.branch), Tone::Muted)
             ));
         }
-        let summary = worktree_summary_text(&worktree);
-        let tone = worktree_tone(&worktree);
+        let summary = worktree_summary_text(worktree);
+        let tone = worktree_tone(worktree);
         let digit_by_id = worktree
             .entries
             .iter()
@@ -2027,7 +2027,7 @@ fn render_worktree_details_panel(
             );
         }
     }
-    if focused_group.and_then(|group| group.pending_action.as_deref()) == Some("creating") {
+    if focused_group.and_then(|group| group.pending_action) == Some("creating") {
         push_kv(&mut lines, "Status", "creating", width);
     }
     push_kv(

@@ -337,4 +337,33 @@ describe("pre-commit hook", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("allows merge commits without requiring a local hook attestation", () => {
+    const { root, realGit } = setupRepo();
+    try {
+      runOk(root, "git", ["checkout", "-q", "-b", "side"]);
+      writeFileSync(join(root, "notes.txt"), "committed\nside branch\n");
+      runOk(root, "git", ["add", "notes.txt"]);
+      runOk(root, "git", ["commit", "-m", "side change"], {
+        env: hookEnv(root, realGit),
+      });
+
+      runOk(root, "git", ["checkout", "-q", "master"]);
+      writeFileSync(join(root, "src/hook.ts"), "export const hook = 'master';\n");
+      runOk(root, "git", ["add", "src/hook.ts"]);
+      runOk(root, "git", ["commit", "-m", "master change"], {
+        env: hookEnv(root, realGit),
+      });
+
+      const result = run(root, "git", ["merge", "--no-ff", "-m", "merge side", "side"], {
+        env: hookEnv(root, realGit),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const attest = run(root, "bash", ["scripts/check-commit-hook-attestations.sh", "HEAD^..HEAD"]);
+      expect(attest.status, attest.stderr).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
