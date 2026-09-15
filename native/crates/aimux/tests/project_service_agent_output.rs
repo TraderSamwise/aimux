@@ -1868,6 +1868,15 @@ fn agent_input_prepends_prompt_context_for_both_input_routes() {
     )
     .unwrap();
     assert_eq!(agents_input.status, 200);
+    assert_eq!(
+        agents_input.body["turnSemantics"]["kind"],
+        "submittedPrompt"
+    );
+    assert_eq!(agents_input.body["turnSemantics"]["consumesTurn"], true);
+    assert_eq!(
+        agents_input.body["turnSemantics"]["preservesInFlightWork"],
+        false
+    );
     let live_pane_input = route_agent_output_request_with_runtime(
         &context,
         "POST",
@@ -1877,6 +1886,10 @@ fn agent_input_prepends_prompt_context_for_both_input_routes() {
     )
     .unwrap();
     assert_eq!(live_pane_input.status, 200);
+    assert_eq!(
+        live_pane_input.body["turnSemantics"]["message"],
+        "aimux input submits text as the agent's next user turn; it is not side-channel context"
+    );
 
     assert_eq!(
         runtime.actions,
@@ -1923,6 +1936,8 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
     assert_eq!(held.status, 200);
     assert_eq!(held.body["accepted"], true);
     assert_eq!(held.body["delivery"]["state"], "held");
+    assert_eq!(held.body["turnSemantics"]["consumesTurn"], true);
+    assert_eq!(held.body["turnSemantics"]["preservesInFlightWork"], false);
     assert_eq!(
         held.body["delivery"]["reason"],
         "active-client-recent-input"
@@ -3266,7 +3281,17 @@ fn live_pane_resize_interrupt_and_input_send_tmux_commands() {
     assert_eq!(input.status, 200);
     assert_eq!(
         input.body,
-        json!({ "ok": true, "sessionId": "codex-1", "accepted": true })
+        json!({
+            "ok": true,
+            "sessionId": "codex-1",
+            "accepted": true,
+            "turnSemantics": {
+                "kind": "submittedPrompt",
+                "consumesTurn": true,
+                "preservesInFlightWork": false,
+                "message": "aimux input submits text as the agent's next user turn; it is not side-channel context"
+            }
+        })
     );
     assert_eq!(
         runtime.actions,

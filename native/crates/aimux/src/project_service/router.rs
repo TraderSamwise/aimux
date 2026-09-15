@@ -132,6 +132,7 @@ impl ProjectServiceRequestContext {
     pub fn with_scheduler(mut self, scheduler: ProjectSchedulerHandle) -> Self {
         self.visual_clients = self.visual_clients.with_scheduler(scheduler.clone());
         self.scheduler = scheduler;
+        super::scheduler::attach_project_scheduler_alert_sink(&self.scheduler, &self);
         self
     }
 

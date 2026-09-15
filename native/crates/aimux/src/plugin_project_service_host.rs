@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, UNIX_EPOCH};
 
 pub fn native_plugin_statuses_for_context(
     context: &ProjectServiceRequestContext,
@@ -21,13 +22,97 @@ pub fn native_plugin_statuses_for_context(
 pub struct ProjectServicePluginHost<'a> {
     context: &'a ProjectServiceRequestContext,
     store: BTreeMap<String, BTreeMap<String, Value>>,
+    metadata_cache: PluginMetadataCache,
+    metadata_snapshot: Option<Arc<Value>>,
+}
+
+#[derive(Clone, Default)]
+pub struct PluginMetadataCache {
+    inner: Arc<Mutex<PluginMetadataCacheState>>,
+}
+
+#[derive(Debug, Default)]
+struct PluginMetadataCacheState {
+    signature: Option<MetadataFileSignature>,
+    value: Option<Arc<Value>>,
+    load_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MetadataFileSignature {
+    exists: bool,
+    len: u64,
+    modified_ns: Option<u128>,
+}
+
+impl PluginMetadataCache {
+    fn load(&self, project_state_dir: impl AsRef<Path>) -> Arc<Value> {
+        let project_state_dir = project_state_dir.as_ref().to_path_buf();
+        let path = crate::daemon_state::metadata_state_path(&project_state_dir);
+        let signature = MetadataFileSignature::read(&path);
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if inner.signature.as_ref() == Some(&signature)
+            && let Some(value) = &inner.value
+        {
+            return Arc::clone(value);
+        }
+        let value = Arc::new(
+            serde_json::to_value(crate::daemon_state::load_metadata_state(&project_state_dir))
+                .unwrap_or_else(|_| json!({ "version": 1, "sessions": {} })),
+        );
+        inner.signature = Some(MetadataFileSignature::read(&path));
+        inner.value = Some(Arc::clone(&value));
+        inner.load_count += 1;
+        value
+    }
+
+    #[doc(hidden)]
+    pub fn load_count_for_tests(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .load_count
+    }
+}
+
+impl MetadataFileSignature {
+    fn read(path: &Path) -> Self {
+        let Ok(metadata) = fs::metadata(path) else {
+            return Self {
+                exists: false,
+                len: 0,
+                modified_ns: None,
+            };
+        };
+        Self {
+            exists: true,
+            len: metadata.len(),
+            modified_ns: metadata
+                .modified()
+                .ok()
+                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos()),
+        }
+    }
 }
 
 impl<'a> ProjectServicePluginHost<'a> {
     pub fn new(context: &'a ProjectServiceRequestContext) -> Self {
+        Self::new_with_metadata_cache(context, PluginMetadataCache::default())
+    }
+
+    pub fn new_with_metadata_cache(
+        context: &'a ProjectServiceRequestContext,
+        metadata_cache: PluginMetadataCache,
+    ) -> Self {
         Self {
             context,
             store: BTreeMap::new(),
+            metadata_cache,
+            metadata_snapshot: None,
         }
     }
 
@@ -35,14 +120,16 @@ impl<'a> ProjectServicePluginHost<'a> {
         self.context.project_state_dir()
     }
 
-    fn metadata_value(&self) -> Value {
-        serde_json::to_value(crate::daemon_state::load_metadata_state(
-            self.project_state_dir(),
-        ))
-        .unwrap_or_else(|_| json!({ "version": 1, "sessions": {} }))
+    fn metadata_value(&mut self) -> Arc<Value> {
+        if let Some(metadata) = &self.metadata_snapshot {
+            return Arc::clone(metadata);
+        }
+        let metadata = self.metadata_cache.load(self.project_state_dir());
+        self.metadata_snapshot = Some(Arc::clone(&metadata));
+        metadata
     }
 
-    fn session_list(&self) -> Vec<Value> {
+    fn session_list(&mut self) -> Vec<Value> {
         let metadata = self.metadata_value();
         let mut seen = BTreeSet::new();
         let mut sessions = Vec::new();
@@ -82,10 +169,10 @@ impl NativePluginHost for ProjectServicePluginHost<'_> {
             })),
             NativePluginApiRequest::ListSessions => Ok(Value::Array(self.session_list())),
             NativePluginApiRequest::ReadSessionMetadata { session_id } => {
-                Ok(session_value(&self.metadata_value(), &session_id))
+                Ok(session_value(self.metadata_value().as_ref(), &session_id))
             }
             NativePluginApiRequest::ReadSessionContext { session_id } => {
-                Ok(session_value(&self.metadata_value(), &session_id)
+                Ok(session_value(self.metadata_value().as_ref(), &session_id)
                     .get("context")
                     .cloned()
                     .unwrap_or_else(|| json!({})))
@@ -120,7 +207,7 @@ impl NativePluginHost for ProjectServicePluginHost<'_> {
                 "available": false,
             })),
             NativePluginApiRequest::ReadActivityAttention { session_id } => {
-                let session = session_value(&self.metadata_value(), &session_id);
+                let session = session_value(self.metadata_value().as_ref(), &session_id);
                 Ok(json!({
                     "activity": session.get("derived").and_then(|derived| derived.get("activity")).cloned().unwrap_or(Value::Null),
                     "attention": session.get("derived").and_then(|derived| derived.get("attention")).cloned().unwrap_or(Value::Null),
@@ -189,7 +276,7 @@ impl NativePluginHost for ProjectServicePluginHost<'_> {
                 Ok(read_json_file(self.project_state_dir().join("state.json"))
                     .unwrap_or_else(|| json!({ "services": [] })))
             }
-            NativePluginApiRequest::ReadMetadataState => Ok(self.metadata_value()),
+            NativePluginApiRequest::ReadMetadataState => Ok(self.metadata_value().as_ref().clone()),
             NativePluginApiRequest::SetStatuslineSegment {
                 session_id,
                 line,
@@ -546,6 +633,7 @@ pub struct PluginTickTask {
     name: String,
     interval_ms: i64,
     plugin: Box<dyn NativePlugin + Send>,
+    metadata_cache: PluginMetadataCache,
 }
 
 impl PluginTickTask {
@@ -554,7 +642,13 @@ impl PluginTickTask {
             name: plugin.manifest().name,
             interval_ms,
             plugin,
+            metadata_cache: PluginMetadataCache::default(),
         }
+    }
+
+    #[doc(hidden)]
+    pub fn metadata_load_count_for_tests(&self) -> usize {
+        self.metadata_cache.load_count_for_tests()
     }
 }
 
@@ -574,11 +668,14 @@ impl PeriodicTask for PluginTickTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             if self.name == "gh-pr-context" {
-                return refresh_github_pr_context_async(context)
+                return refresh_github_pr_context_async(context, self.metadata_cache.clone())
                     .await
                     .map_err(|error| format!("{} tick failed: {error}", self.name));
             }
-            let mut host = ProjectServicePluginHost::new(context);
+            let mut host = ProjectServicePluginHost::new_with_metadata_cache(
+                context,
+                self.metadata_cache.clone(),
+            );
             let plugin_name = self.name.clone();
             let mut api = NativePluginApi::new(&plugin_name, &mut host);
             // The builtins do their refresh in on_event; start() would re-subscribe.
@@ -591,8 +688,9 @@ impl PeriodicTask for PluginTickTask {
 
 async fn refresh_github_pr_context_async(
     context: &ProjectServiceRequestContext,
+    metadata_cache: PluginMetadataCache,
 ) -> Result<(), String> {
-    let mut host = ProjectServicePluginHost::new(context);
+    let mut host = ProjectServicePluginHost::new_with_metadata_cache(context, metadata_cache);
     let plugin_name = "gh-pr-context";
     let statusline = host.execute(plugin_name, NativePluginApiRequest::ReadStatuslineSnapshot)?;
     let state = host.execute(plugin_name, NativePluginApiRequest::ReadDaemonStateSnapshot)?;

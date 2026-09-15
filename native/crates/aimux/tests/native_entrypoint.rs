@@ -810,6 +810,33 @@ fn advertised_command_groups_render_command_scoped_help() {
 }
 
 #[test]
+fn input_help_warns_that_input_is_a_user_turn() {
+    let root = temp_root("native-input-help-turn-warning");
+    fs::create_dir_all(root.join("home")).expect("create home");
+    fs::create_dir_all(root.join("aimux-home")).expect("create aimux home");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("HOME", root.join("home"))
+        .env("AIMUX_HOME", root.join("aimux-home"))
+        .env("AIMUX_DAEMON_PORT", allocate_daemon_port().to_string())
+        .args(["input", "--help"])
+        .output()
+        .expect("run native aimux input help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Submit input to a running agent as its next user turn"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("This is not side-channel context and can interrupt in-flight work"),
+        "{stdout}"
+    );
+    cleanup(root);
+}
+
+#[test]
 fn advertised_subcommands_without_specific_help_render_group_scoped_help() {
     for (index, (args, expected)) in [
         (
