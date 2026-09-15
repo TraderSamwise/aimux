@@ -284,6 +284,7 @@ fn transcript_source_snapshot_is_shared_for_many_sessions_inside_one_tick() {
 }
 
 fn run_task(task: &mut PluginTickTask, context: &ProjectServiceRequestContext) {
+    // aimux-async-seam: test - sync test drives async handler
     aimux::async_runtime::block_on_named("test:plugin-tick-task", task.run(context))
         .expect("plugin tick");
 }

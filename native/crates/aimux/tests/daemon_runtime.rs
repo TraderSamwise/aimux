@@ -1083,6 +1083,307 @@ fn native_daemon_doctor_versions_reports_tmux_snapshot() {
 }
 
 #[test]
+fn native_daemon_doctor_versions_reports_agent_inventory_mismatch_by_name() {
+    let fixture = RuntimeFixture::new("doctor-agent-missing-window");
+    let project = fixture.project("live");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("project entry");
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project);
+    let session_name = aimux::tmux::project_session(&project, "aimux").session_name;
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &daemon_expose_topology(&project, &session_name, "codex-dead", "@7", 7),
+    )
+    .expect("write topology");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 46_211,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("metadata endpoint");
+    let mut runtime = fixture
+        .runtime()
+        .with_runtime_coherence_tmux_provider(Arc::new({
+            let project_root = project_root.clone();
+            let session_name = session_name.clone();
+            move || doctor_agent_tmux(&project_root, &session_name, Vec::new())
+        }));
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let report: Value = serde_json::from_slice(&response.body).expect("doctor json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(report["summary"]["ok"], json!(0));
+    assert_eq!(report["summary"]["needsAttention"], json!(1));
+    assert_eq!(report["projects"][0]["status"], "needs-attention");
+    assert_eq!(
+        report["projects"][0]["agentInventory"]["mismatches"][0]["kind"],
+        "inventoried-session-missing-window"
+    );
+    assert_eq!(
+        report["projects"][0]["agentInventory"]["mismatches"][0]["sessionId"],
+        "codex-dead"
+    );
+    assert_eq!(
+        report["projects"][0]["agentInventory"]["mismatches"][0]["projectRoot"],
+        project_root
+    );
+
+    let text_response = handle_daemon_runtime_request(
+        &mut runtime,
+        request("GET", CORE_API_ROUTES.doctor_versions_text),
+    );
+    let body = String::from_utf8(text_response.body).expect("versions text");
+    assert!(body.contains("Project needs-attention:"));
+    assert!(!body.contains("Project ok:"));
+    assert!(body.contains("projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention"));
+    assert!(body.contains("inventoried-session-missing-window: session=codex-dead"));
+    assert!(body.contains("found=runtime window not found"));
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_doctor_versions_reports_orphan_runtime_agent_window_by_name() {
+    let fixture = RuntimeFixture::new("doctor-agent-orphan-window");
+    let project = fixture.project("live");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("project entry");
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project);
+    let session_name = aimux::tmux::project_session(&project, "aimux").session_name;
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 46_212,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("metadata endpoint");
+    let mut runtime = fixture
+        .runtime()
+        .with_runtime_coherence_tmux_provider(Arc::new({
+            let project_root = project_root.clone();
+            let session_name = session_name.clone();
+            move || {
+                doctor_agent_tmux(
+                    &project_root,
+                    &session_name,
+                    vec![("@9", 9, "codex", Some("codex-orphan"))],
+                )
+            }
+        }));
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let report: Value = serde_json::from_slice(&response.body).expect("doctor json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(report["summary"]["ok"], json!(0));
+    assert_eq!(report["summary"]["needsAttention"], json!(1));
+    assert_eq!(
+        report["projects"][0]["agentInventory"]["mismatches"][0]["kind"],
+        "orphan-runtime-window"
+    );
+    assert_eq!(
+        report["projects"][0]["agentInventory"]["mismatches"][0]["sessionId"],
+        "codex-orphan"
+    );
+
+    let text_response = handle_daemon_runtime_request(
+        &mut runtime,
+        request("GET", CORE_API_ROUTES.doctor_versions_text),
+    );
+    let body = String::from_utf8(text_response.body).expect("versions text");
+    assert!(body.contains("orphan-runtime-window: session=codex-orphan"));
+    assert!(body.contains("expected=inventory entry for runtime window"));
+    assert!(body.contains("found=runtime window"));
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_doctor_versions_distinguishes_runtime_query_failure_from_no_windows() {
+    let fixture = RuntimeFixture::new("doctor-agent-runtime-unavailable");
+    let project = fixture.project("live");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("project entry");
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project);
+    let session_name = aimux::tmux::project_session(&project, "aimux").session_name;
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &daemon_expose_topology(&project, &session_name, "codex-live", "@7", 7),
+    )
+    .expect("write topology");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    let mut runtime = fixture
+        .runtime()
+        .with_runtime_coherence_tmux_provider(Arc::new(|| RuntimeCoherenceTmux {
+            available: false,
+            error: Some("tmux socket busy".into()),
+            version: Some("tmux 3.6b".into()),
+            ..RuntimeCoherenceTmux::default()
+        }));
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let report: Value = serde_json::from_slice(&response.body).expect("doctor json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(report["tmux"]["error"], "tmux socket busy");
+    assert_eq!(
+        report["projects"][0]["agentInventory"]["status"],
+        "unavailable"
+    );
+    assert_eq!(
+        report["projects"][0]["agentInventory"]["error"],
+        "tmux socket busy"
+    );
+    assert!(
+        report["projects"][0]["agentInventory"]["mismatches"]
+            .as_array()
+            .expect("mismatches")
+            .is_empty()
+    );
+
+    let text_response = handle_daemon_runtime_request(
+        &mut runtime,
+        request("GET", CORE_API_ROUTES.doctor_versions_text),
+    );
+    let body = String::from_utf8(text_response.body).expect("versions text");
+    assert!(body.contains("tmux: unavailable (tmux socket busy)"));
+    assert!(body.contains("agents: unavailable (could not query tmux runtime: tmux socket busy)"));
+    assert!(!body.contains("found=runtime window not found"));
+    assert!(body.contains(&project_root));
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_doctor_versions_agent_inventory_ok_keeps_project_ok() {
+    let fixture = RuntimeFixture::new("doctor-agent-inventory-ok");
+    let project = fixture.project("live");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("project entry");
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project);
+    let session_name = aimux::tmux::project_session(&project, "aimux").session_name;
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &daemon_expose_topology(&project, &session_name, "codex-live", "@7", 7),
+    )
+    .expect("write topology");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 46_213,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("metadata endpoint");
+    let mut runtime = fixture
+        .runtime()
+        .with_runtime_coherence_tmux_provider(Arc::new({
+            let project_root = project_root.clone();
+            let session_name = session_name.clone();
+            move || {
+                doctor_agent_tmux(
+                    &project_root,
+                    &session_name,
+                    vec![("@7", 7, "codex", Some("codex-live"))],
+                )
+            }
+        }));
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let report: Value = serde_json::from_slice(&response.body).expect("doctor json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(report["projects"][0]["status"], "ok");
+    assert_eq!(report["summary"]["ok"], json!(1));
+    assert_eq!(report["summary"]["needsAttention"], json!(0));
+    assert_eq!(report["projects"][0]["agentInventory"]["status"], "ok");
+
+    let text_response = handle_daemon_runtime_request(
+        &mut runtime,
+        request("GET", CORE_API_ROUTES.doctor_versions_text),
+    );
+    let body = String::from_utf8(text_response.body).expect("versions text");
+    assert!(body.contains("Project ok:"));
+    assert!(body.contains("agents: ok"));
+    assert!(body.contains("projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention"));
+    fixture.cleanup();
+}
+
+#[test]
 fn native_daemon_doctor_versions_uses_dashboard_launch_stamp_for_current_dashboard() {
     let fixture = RuntimeFixture::new("doctor-dashboard-stamp");
     let project = fixture.project("live");
@@ -1124,6 +1425,7 @@ fn native_daemon_doctor_versions_uses_dashboard_launch_stamp_for_current_dashboa
             let runtime_owner = runtime_owner.clone();
             move || RuntimeCoherenceTmux {
                 available: true,
+                error: None,
                 version: Some("tmux 3.6b".into()),
                 session_names: vec![session_name.clone()],
                 session_options: [(
@@ -2314,6 +2616,69 @@ fn daemon_expose_topology(
         "lifecycleOperations": [],
         "exchangeRefs": []
     })
+}
+
+fn doctor_agent_tmux(
+    project_root: &str,
+    session_name: &str,
+    windows: Vec<(&str, i64, &str, Option<&str>)>,
+) -> RuntimeCoherenceTmux {
+    let mut tmux = RuntimeCoherenceTmux {
+        available: true,
+        version: Some("tmux 3.6b".into()),
+        session_names: vec![session_name.to_owned()],
+        session_options: [(
+            session_name.to_owned(),
+            [
+                (
+                    "@aimux-project-root".to_owned(),
+                    Some(project_root.to_owned()),
+                ),
+                (
+                    TMUX_RUNTIME_OWNER_OPTION.to_owned(),
+                    Some(get_runtime_owner_id()),
+                ),
+                (
+                    TMUX_RUNTIME_CONTRACT_OPTION.to_owned(),
+                    Some(AIMUX_TMUX_RUNTIME_CONTRACT_VERSION.to_owned()),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        )]
+        .into_iter()
+        .collect(),
+        ..RuntimeCoherenceTmux::default()
+    };
+    let mut window_reports = Vec::new();
+    for (window_id, window_index, window_name, session_id) in windows {
+        window_reports.push(RuntimeCoherenceTmuxWindow {
+            id: window_id.to_owned(),
+            index: window_index,
+            name: window_name.to_owned(),
+            active: true,
+        });
+        tmux.window_alive.insert(window_id.to_owned(), true);
+        let metadata = session_id.map(|session_id| {
+            serde_json::to_string(&json!({
+                "kind": "agent",
+                "sessionId": session_id,
+                "toolConfigKey": window_name,
+            }))
+            .expect("metadata json")
+        });
+        tmux.window_options.insert(
+            window_id.to_owned(),
+            [
+                ("@aimux-tool".to_owned(), Some(window_name.to_owned())),
+                ("@aimux-meta".to_owned(), metadata),
+            ]
+            .into_iter()
+            .collect(),
+        );
+    }
+    tmux.windows.insert(session_name.to_owned(), window_reports);
+    tmux
 }
 
 fn tmux_target(

@@ -251,8 +251,8 @@ fn route_agents_reads_topology_metadata_and_exchange_tasks() {
 }
 
 #[test]
-fn route_agents_preserves_live_sessions_when_tmux_liveness_query_is_unavailable() {
-    let project = temp_project("route-tmux-unavailable");
+fn route_agents_reconciles_live_dead_and_unavailable_tmux_liveness() {
+    let project = temp_project("route-tmux-liveness");
     let state_dir = project.join("state");
     create_dir_all(&state_dir).unwrap();
     write(
@@ -261,11 +261,25 @@ fn route_agents_preserves_live_sessions_when_tmux_liveness_query_is_unavailable(
     )
     .unwrap();
 
+    let live_inventory_context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_window_ids(support::live_window_ids(&["@1"]));
+    let live_inventory_response =
+        route_project_service_request(&live_inventory_context, "GET", routes::agents::LIST, None);
+    assert_eq!(live_inventory_response.status, 200);
+    let live_inventory_agents = live_inventory_response.body["agents"].as_array().unwrap();
+    assert_eq!(
+        find(live_inventory_agents, "codex-live")["status"],
+        "running",
+        "a session backed by a live tmux window must still report running"
+    );
+
     let empty_inventory_context =
         ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
             .with_live_window_ids(support::live_window_ids(&[]));
     let empty_inventory_response =
         route_project_service_request(&empty_inventory_context, "GET", routes::agents::LIST, None);
+    assert_eq!(empty_inventory_response.status, 200);
     let empty_inventory_agents = empty_inventory_response.body["agents"].as_array().unwrap();
     assert_eq!(
         find(empty_inventory_agents, "codex-live")["status"],
@@ -278,14 +292,77 @@ fn route_agents_preserves_live_sessions_when_tmux_liveness_query_is_unavailable(
             .with_live_window_ids_error("tmux list-windows timed out after 2s");
     let unavailable_response =
         route_project_service_request(&unavailable_context, "GET", routes::agents::LIST, None);
-    let unavailable_agents = unavailable_response.body["agents"].as_array().unwrap();
+    assert_eq!(unavailable_response.status, 503);
+    assert_eq!(unavailable_response.body["ok"], false);
     assert_eq!(
-        find(unavailable_agents, "codex-live")["status"],
-        "running",
-        "a tmux query timeout is could-not-ask, not proof that the live binding disappeared"
+        unavailable_response.body["error"],
+        "could not verify agent tmux liveness: tmux list-windows timed out after 2s",
+        "could-not-query must not be rendered as either running or offline"
+    );
+    assert!(
+        unavailable_response.body.get("agents").is_none(),
+        "an unverified inventory must not include normal-looking agent rows"
+    );
+    assert_eq!(
+        unavailable_response.body["tmuxLiveWindowQuery"]["ok"],
+        false
     );
 
     cleanup(project);
+}
+
+#[test]
+fn async_route_agents_reconciles_tmux_liveness_on_native_service_path() {
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    aimux::async_runtime::block_on_named("test:async-route-agents-liveness", async {
+        let project = temp_project("async-route-tmux-liveness");
+        let state_dir = project.join("state");
+        create_dir_all(&state_dir).unwrap();
+        write(
+            runtime_topology_path(&state_dir),
+            serde_yaml::to_string(&topology_fixture()).unwrap(),
+        )
+        .unwrap();
+
+        let live_context =
+            ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+                .with_live_window_ids(support::live_window_ids(&["@1"]));
+        let live_response =
+            route_agent_read_request_async(&live_context, "GET", routes::agents::LIST)
+                .await
+                .expect("agent list route handled");
+        assert_eq!(live_response.status, 200);
+        let live_agents = live_response.body["agents"].as_array().unwrap();
+        assert_eq!(find(live_agents, "codex-live")["status"], "running");
+
+        let gone_context =
+            ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+                .with_live_window_ids(support::live_window_ids(&[]));
+        let gone_response =
+            route_agent_read_request_async(&gone_context, "GET", routes::agents::LIST)
+                .await
+                .expect("agent list route handled");
+        assert_eq!(gone_response.status, 200);
+        let gone_agents = gone_response.body["agents"].as_array().unwrap();
+        assert_eq!(find(gone_agents, "codex-live")["status"], "offline");
+        assert!(find(gone_agents, "codex-live").get("tmuxTarget").is_none());
+
+        let unavailable_context =
+            ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+                .with_live_window_ids_error("tmux socket busy");
+        let unavailable_response =
+            route_agent_read_request_async(&unavailable_context, "GET", routes::agents::LIST)
+                .await
+                .expect("agent list route handled");
+        assert_eq!(unavailable_response.status, 503);
+        assert_eq!(
+            unavailable_response.body["error"],
+            "could not verify agent tmux liveness: tmux socket busy"
+        );
+        assert!(unavailable_response.body.get("agents").is_none());
+
+        cleanup(project);
+    });
 }
 
 #[test]
@@ -430,7 +507,7 @@ fn route_teammates_reads_runtime_topology() {
 }
 
 #[test]
-fn async_route_teammates_preserves_live_sessions_when_tmux_query_is_unavailable() {
+fn async_route_teammates_rejects_unverified_tmux_liveness() {
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
     // aimux-async-seam: test - agent read route test drives async handler
     aimux::async_runtime::block_on_named(
@@ -456,22 +533,18 @@ fn async_route_teammates_preserves_live_sessions_when_tmux_query_is_unavailable(
             .await
             .expect("teammate route handled");
 
-            assert_eq!(response.status, 200);
-            assert_eq!(response.body["ok"], true);
+            assert_eq!(response.status, 503);
+            assert_eq!(response.body["ok"], false);
+            assert_eq!(
+                response.body["error"],
+                "could not verify agent tmux liveness: tmux socket busy"
+            );
             assert_eq!(response.body["tmuxLiveWindowQuery"]["ok"], false);
             assert_eq!(
                 response.body["tmuxLiveWindowQuery"]["error"],
                 "tmux socket busy"
             );
-            assert_eq!(
-                response.body["teammates"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|teammate| teammate["id"].as_str().unwrap())
-                    .collect::<Vec<_>>(),
-                vec!["child-review", "child-code"]
-            );
+            assert!(response.body.get("teammates").is_none());
             cleanup(project);
         },
     );

@@ -165,21 +165,24 @@ pub fn route_agent_read_request(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let sessions = topology_desktop_session_list_for_context(
+    let projection = topology_desktop_session_projection_for_context(
         context,
         &topology,
         &metadata_state.sessions,
         &tools,
     );
+    if let Some(error) = projection.live_window_query_error.as_deref() {
+        return Some(tmux_liveness_unavailable_response(error));
+    }
     if pathname == routes::agents::TEAMMATES {
-        return Some(route_teammates(path, &sessions));
+        return Some(route_teammates(path, &projection.sessions));
     }
     Some(json_response(
         200,
         json!({
             "ok": true,
             "agents": build_agent_list(
-                &sessions,
+                &projection.sessions,
                 &metadata_state.sessions,
                 array_field(&exchange, "tasks"),
                 Some(&role_registry),
@@ -232,42 +235,40 @@ pub async fn route_agent_read_request_async(
         &tools,
     )
     .await;
+    if let Some(error) = projection.live_window_query_error.as_deref() {
+        return Some(tmux_liveness_unavailable_response(error));
+    }
     if pathname == routes::agents::TEAMMATES {
-        let mut response = route_teammates(path, &projection.sessions);
-        if response.status == 200
-            && let Some(error) = projection.live_window_query_error
-            && let Value::Object(map) = &mut response.body
-        {
-            map.insert(
-                "tmuxLiveWindowQuery".into(),
-                json!({ "ok": false, "error": error }),
-            );
-        }
-        return Some(response);
+        return Some(route_teammates(path, &projection.sessions));
     }
-    let mut body = json!({
-        "ok": true,
-        "agents": build_agent_list(
-            &projection.sessions,
-            &metadata_state.sessions,
-            array_field(&exchange, "tasks"),
-            Some(&role_registry),
-        ),
-    });
-    if let Some(error) = projection.live_window_query_error
-        && let Value::Object(map) = &mut body
-    {
-        map.insert(
-            "tmuxLiveWindowQuery".into(),
-            json!({ "ok": false, "error": error }),
-        );
-    }
-    Some(json_response(200, body))
+    Some(json_response(
+        200,
+        json!({
+            "ok": true,
+            "agents": build_agent_list(
+                &projection.sessions,
+                &metadata_state.sessions,
+                array_field(&exchange, "tasks"),
+                Some(&role_registry),
+            ),
+        }),
+    ))
 }
 
 pub struct TopologyDesktopSessionProjection {
     pub sessions: Vec<Value>,
     pub live_window_query_error: Option<String>,
+}
+
+fn tmux_liveness_unavailable_response(error: &str) -> ProjectServiceDispatchResponse {
+    json_response(
+        503,
+        json!({
+            "ok": false,
+            "error": format!("could not verify agent tmux liveness: {error}"),
+            "tmuxLiveWindowQuery": { "ok": false, "error": error },
+        }),
+    )
 }
 
 fn route_teammates(path: &str, sessions: &[Value]) -> ProjectServiceDispatchResponse {
@@ -313,20 +314,55 @@ pub fn topology_desktop_session_list_for_context(
     metadata_sessions: &BTreeMap<String, Value>,
     tools: &Map<String, Value>,
 ) -> Vec<Value> {
+    topology_desktop_session_projection_for_context(context, topology, metadata_sessions, tools)
+        .sessions
+}
+
+pub fn topology_desktop_session_projection_for_context(
+    context: &ProjectServiceRequestContext,
+    topology: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+    tools: &Map<String, Value>,
+) -> TopologyDesktopSessionProjection {
     match context.live_window_ids_status() {
-        Some(Ok(live_window_ids)) => topology_desktop_session_list_with_live_window_ids(
-            topology,
-            metadata_sessions,
-            tools,
-            live_window_ids,
-        ),
-        Some(Err(error)) => topology_desktop_session_list_with_live_window_projection(
-            topology,
-            metadata_sessions,
-            tools,
-            LiveWindowIdsProjection::Unavailable(error),
-        ),
-        None => topology_desktop_session_list(topology, metadata_sessions, tools),
+        Some(Ok(live_window_ids)) => TopologyDesktopSessionProjection {
+            sessions: topology_desktop_session_list_with_live_window_ids(
+                topology,
+                metadata_sessions,
+                tools,
+                live_window_ids,
+            ),
+            live_window_query_error: None,
+        },
+        Some(Err(error)) => TopologyDesktopSessionProjection {
+            sessions: topology_desktop_session_list_with_live_window_projection(
+                topology,
+                metadata_sessions,
+                tools,
+                LiveWindowIdsProjection::Unavailable(error),
+            ),
+            live_window_query_error: Some(error.to_owned()),
+        },
+        None => match try_live_window_ids_for_session_projection("topology-desktop-session-list") {
+            Ok(live_window_ids) => TopologyDesktopSessionProjection {
+                sessions: topology_desktop_session_list_with_live_window_ids(
+                    topology,
+                    metadata_sessions,
+                    tools,
+                    &live_window_ids,
+                ),
+                live_window_query_error: None,
+            },
+            Err(error) => TopologyDesktopSessionProjection {
+                sessions: topology_desktop_session_list_with_live_window_projection(
+                    topology,
+                    metadata_sessions,
+                    tools,
+                    LiveWindowIdsProjection::Unavailable(&error),
+                ),
+                live_window_query_error: Some(error),
+            },
+        },
     }
 }
 

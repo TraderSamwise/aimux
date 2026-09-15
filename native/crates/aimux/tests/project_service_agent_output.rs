@@ -440,6 +440,81 @@ fn output_projection_reads_tool_progress_activity_text() {
 }
 
 #[test]
+fn output_projection_keeps_claude_composer_hint_out_of_user_messages() {
+    let raw = [
+        "❯ What did Sam ask us to prove?",
+        "",
+        "⏺ Sam asked us to prove the GUI transcript does not turn CLI chrome into chat.",
+        "",
+        "❯ Press up to edit queued messages",
+        "──────────────────────────────",
+        "sam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context) [[aimux] overseer]",
+        "⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents",
+        "⧉  port-gap-closure · rail-hardening · async-cutover",
+    ]
+    .join("\n");
+
+    let projection = project_agent_output(&raw, Some("claude"));
+
+    assert_eq!(
+        projection
+            .messages
+            .iter()
+            .map(|message| (
+                message["role"].as_str().unwrap(),
+                message["text"].as_str().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("user", "What did Sam ask us to prove?"),
+            (
+                "assistant",
+                "Sam asked us to prove the GUI transcript does not turn CLI chrome into chat."
+            ),
+        ]
+    );
+    assert!(
+        !projection.messages.iter().any(|message| message["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("queued messages"))),
+        "Claude composer chrome must not become a GUI user bubble"
+    );
+}
+
+#[test]
+fn output_projection_keeps_real_claude_prompt_with_hint_words_as_user_message() {
+    let raw = [
+        "❯ What phrase caused the bug?",
+        "",
+        "⏺ The confusing phrase was a composer hint.",
+        "",
+        "❯ Press up to edit queued messages for this regression test",
+    ]
+    .join("\n");
+
+    let projection = project_agent_output(&raw, Some("claude"));
+
+    assert_eq!(
+        projection
+            .messages
+            .iter()
+            .map(|message| (
+                message["role"].as_str().unwrap(),
+                message["text"].as_str().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("user", "What phrase caused the bug?"),
+            ("assistant", "The confusing phrase was a composer hint."),
+            (
+                "user",
+                "Press up to edit queued messages for this regression test"
+            ),
+        ]
+    );
+}
+
+#[test]
 fn output_projection_preserves_full_sgr_spans_from_ansi_capture() {
     let ansi = [
         "› use colors?",
@@ -1109,6 +1184,47 @@ fn output_route_refuses_foreign_runtime_target_before_capture() {
         vec![("aimux-repo".into(), "@1".into(), project.clone())]
     );
     assert!(runtime.captures.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn output_route_refuses_recycled_pane_not_owned_by_addressed_tmux_session() {
+    let project = temp_project("recycled-pane");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = CheckedCaptureRuntime {
+        output: "contents from recycled pane".into(),
+        verify_result: Err(
+            "refusing to read pane @1: window is not present in addressed tmux runtime aimux-repo"
+                .into(),
+        ),
+        verified: Vec::new(),
+        captures: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/live-pane/output?sessionId=codex-1&purpose=terminal",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        response.body["error"],
+        "refusing to read pane @1: window is not present in addressed tmux runtime aimux-repo"
+    );
+    assert_eq!(
+        runtime.verified,
+        vec![("aimux-repo".into(), "@1".into(), project.clone())]
+    );
+    assert!(
+        runtime.captures.is_empty(),
+        "capture must not fall through to a same-numbered pane in another tmux session"
+    );
     cleanup(project);
 }
 

@@ -1607,6 +1607,74 @@
         "anchors": [{ "attachmentId": "att_no_reply", "messageId": "assistant:published:att_no_reply" }]
       },
       "inputSha256": "e2441d3de98a2b652490e0b4db0d6f743f904571e3da4a382ac208d98e7f85a0"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-051",
+      "name": "keeps Claude composer hint chrome out of GUI user messages",
+      "source": "src-agent-output-projection-regression.rs",
+      "api": "messagesFromAgentOutput",
+      "input": {
+        "output": "❯ What did Sam ask us to prove?\n\n⏺ Sam asked us to prove the GUI transcript does not turn CLI chrome into chat.\n\n❯ Press up to edit queued messages\n──────────────────────────────\nsam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context) [[aimux] overseer]\n⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents\n⧉  port-gap-closure · rail-hardening · async-cutover",
+        "tool": "claude"
+      },
+      "output": [
+        {
+          "id": "user:7d7a6572ad02",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "What did Sam ask us to prove?" }],
+          "text": "What did Sam ask us to prove?"
+        },
+        {
+          "id": "assistant:5c9c765b34d1",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Sam asked us to prove the GUI transcript does not turn CLI chrome into chat."
+            }
+          ],
+          "text": "Sam asked us to prove the GUI transcript does not turn CLI chrome into chat.",
+          "latest": true
+        }
+      ],
+      "inputSha256": "209a3bdbc8228df6892b45887a49d910056e05f52178f3f65a3ee5159cf2c194"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-052",
+      "name": "keeps genuine Claude prompt with composer-hint words as a GUI user message",
+      "source": "src-agent-output-projection-regression.rs",
+      "api": "messagesFromAgentOutput",
+      "input": {
+        "output": "❯ What phrase caused the bug?\n\n⏺ The confusing phrase was a composer hint.\n\n❯ Press up to edit queued messages for this regression test",
+        "tool": "claude"
+      },
+      "output": [
+        {
+          "id": "user:99fc7d77fa07",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "What phrase caused the bug?" }],
+          "text": "What phrase caused the bug?"
+        },
+        {
+          "id": "assistant:8b12c05ced16",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "The confusing phrase was a composer hint." }],
+          "text": "The confusing phrase was a composer hint."
+        },
+        {
+          "id": "user:7981c47e920a",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Press up to edit queued messages for this regression test"
+            }
+          ],
+          "text": "Press up to edit queued messages for this regression test",
+          "latest": true
+        }
+      ],
+      "inputSha256": "5d789efb3ae2a8e9d8733508dbe083d1d47c81b4309ac882d31c1567da95f613"
     }
   ]
 }
