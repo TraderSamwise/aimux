@@ -20,7 +20,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -997,6 +997,95 @@ fn loop_routes_round_trip_through_daemon_http_to_project_service() {
 }
 
 #[test]
+fn loop_done_returns_promptly_when_runtime_event_stalls_after_durable_state_write() {
+    let fixture = CoordinationHttpFixture::new("loop-done-event-timeout");
+    let project = fixture.project("repo");
+    let project_text = project.to_string_lossy().into_owned();
+    let server = ScriptedHttpServer::spawn_scripted(vec![
+        ScriptedHttpResponse::json(json!({ "sessionId": "claude-1", "loop": { "active": true } })),
+        ScriptedHttpResponse::json(json!({ "sessionId": "codex-1", "loop": { "active": true } })),
+        ScriptedHttpResponse::json(json!({ "sessionId": "aider-1", "loop": { "active": true } })),
+        ScriptedHttpResponse::json(json!({ "sessionId": "shell-1", "loop": { "active": true } })),
+        ScriptedHttpResponse::json(json!({
+            "sessionId": "codex-1",
+            "loop": null,
+            "loopLastAction": { "action": "done" }
+        })),
+        ScriptedHttpResponse::stall_after_read(Duration::from_millis(2_500)),
+    ]);
+    let mut runtime = fixture.runtime_for_project(&project, server.port);
+
+    for session_id in ["claude-1", "codex-1", "aider-1", "shell-1"] {
+        let added = handle_daemon_runtime_request(
+            &mut runtime,
+            request(
+                "POST",
+                CORE_API_ROUTES.loop_add_text,
+                Some(json!({
+                    "project": project_text,
+                    "sessionId": session_id,
+                    "goal": "keep working"
+                })),
+            ),
+        );
+        assert_eq!(added.status, 200, "body: {}", text_body(&added));
+    }
+
+    let started = Instant::now();
+    let done = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.loop_done_text,
+            Some(json!({
+                "project": project_text,
+                "sessionId": "codex-1",
+                "reason": "finished under load"
+            })),
+        ),
+    );
+    let elapsed = started.elapsed();
+    eprintln!("loop_done_elapsed_ms={}", elapsed.as_millis());
+
+    assert!(
+        elapsed < Duration::from_millis(1_500),
+        "loop done waited {elapsed:?} for the optional runtime event"
+    );
+    assert_eq!(done.status, 200, "body: {}", text_body(&done));
+    assert!(
+        text_body(&done).contains("loop done codex-1"),
+        "body: {}",
+        text_body(&done)
+    );
+    assert!(
+        text_body(&done).contains("status event could not be recorded"),
+        "body: {}",
+        text_body(&done)
+    );
+    assert!(
+        text_body(&done).contains("daemon loopback read retried transient error")
+            && text_body(&done).contains("over 500ms"),
+        "body: {}",
+        text_body(&done)
+    );
+
+    let requests = server.join();
+    assert_request_path(&requests[4], "POST", project_routes::agents::LOOP);
+    assert_eq!(
+        request_json_body(&requests[4]),
+        json!({
+            "sessionId": "codex-1",
+            "source": "agent",
+            "active": false,
+            "action": "done",
+            "reason": "finished under load"
+        })
+    );
+    assert_request_path(&requests[5], "POST", project_routes::runtime::EVENT);
+    fixture.cleanup();
+}
+
+#[test]
 fn worktree_and_graveyard_routes_round_trip_through_daemon_http_to_project_service() {
     let fixture = CoordinationHttpFixture::new("worktree-routes");
     let project = fixture.project("repo");
@@ -1366,8 +1455,32 @@ struct ScriptedHttpServer {
     handle: std::thread::JoinHandle<Vec<String>>,
 }
 
+enum ScriptedHttpResponse {
+    Json(Value),
+    StallAfterRead(Duration),
+}
+
+impl ScriptedHttpResponse {
+    fn json(value: Value) -> Self {
+        Self::Json(value)
+    }
+
+    fn stall_after_read(duration: Duration) -> Self {
+        Self::StallAfterRead(duration)
+    }
+}
+
 impl ScriptedHttpServer {
     fn spawn(responses: Vec<Value>) -> Self {
+        Self::spawn_scripted(
+            responses
+                .into_iter()
+                .map(ScriptedHttpResponse::Json)
+                .collect(),
+        )
+    }
+
+    fn spawn_scripted(responses: Vec<ScriptedHttpResponse>) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test listener");
         let port = listener.local_addr().expect("listener addr").port();
         let handle = std::thread::spawn(move || {
@@ -1375,15 +1488,22 @@ impl ScriptedHttpServer {
             for response in responses {
                 let (mut stream, _) = listener.accept().expect("accept");
                 let request = read_http_request(&mut stream);
-                let body = response.to_string();
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
-                    body.len()
-                );
-                stream
-                    .write_all(response.as_bytes())
-                    .expect("write headers");
-                stream.write_all(body.as_bytes()).expect("write body");
+                match response {
+                    ScriptedHttpResponse::Json(response) => {
+                        let body = response.to_string();
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                            body.len()
+                        );
+                        stream
+                            .write_all(response.as_bytes())
+                            .expect("write headers");
+                        stream.write_all(body.as_bytes()).expect("write body");
+                    }
+                    ScriptedHttpResponse::StallAfterRead(duration) => {
+                        std::thread::sleep(duration);
+                    }
+                }
                 requests.push(request);
             }
             requests

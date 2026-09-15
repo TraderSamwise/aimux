@@ -23,6 +23,9 @@ use crate::native_cli_dispatch::{
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
 
+const LOOP_EXIT_STATE_WRITE_TIMEOUT_MS: u64 = 2_000;
+const LOOP_EXIT_EVENT_TIMEOUT_MS: u64 = 500;
+
 pub trait DaemonAgentTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;
     fn get_project_service_json(
@@ -42,18 +45,35 @@ pub trait DaemonAgentTextRuntime {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProjectServicePostOptions {
     pub ensure_project: bool,
+    pub timeout_ms: Option<u64>,
 }
 
 impl ProjectServicePostOptions {
     pub fn ensure() -> Self {
         Self {
             ensure_project: true,
+            timeout_ms: None,
         }
     }
 
     pub fn skip_ensure() -> Self {
         Self {
             ensure_project: false,
+            timeout_ms: None,
+        }
+    }
+
+    pub fn ensure_with_timeout(timeout_ms: u64) -> Self {
+        Self {
+            ensure_project: true,
+            timeout_ms: Some(timeout_ms),
+        }
+    }
+
+    pub fn skip_ensure_with_timeout(timeout_ms: u64) -> Self {
+        Self {
+            ensure_project: false,
+            timeout_ms: Some(timeout_ms),
         }
     }
 }
@@ -810,7 +830,7 @@ pub fn loop_exit_text_route(
         &project,
         project_routes::agents::LOOP,
         Value::Object(request),
-        ProjectServicePostOptions::ensure(),
+        ProjectServicePostOptions::ensure_with_timeout(LOOP_EXIT_STATE_WRITE_TIMEOUT_MS),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -833,7 +853,7 @@ pub fn loop_exit_text_route(
         &project,
         project_routes::runtime::EVENT,
         json!({ "session": returned_session_id, "event": Value::Object(event) }),
-        ProjectServicePostOptions::skip_ensure(),
+        ProjectServicePostOptions::skip_ensure_with_timeout(LOOP_EXIT_EVENT_TIMEOUT_MS),
     );
     let event_warning = match event_result {
         ProjectServiceJsonResult::Ok { .. } => None,
