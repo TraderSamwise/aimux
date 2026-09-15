@@ -3,6 +3,9 @@ use crate::cli_launcher::{
     AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
 };
 use crate::paths::{PathResolver, basename_like_node_posix, compute_project_id};
+use crate::repair_events::{
+    ACTION_TMUX_RUNTIME_REPAIR, STATUS_REPAIRED, record_repair_event_from_env,
+};
 use crate::tmux_exec_metrics::{TmuxExecMode, record_tmux_exec};
 use crate::tmux_query_memo::{
     is_non_caching_tmux_read, is_read_only_tmux_verb, memoized_tmux_query, reset_tmux_query_memo,
@@ -43,6 +46,7 @@ pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-t
 pub const AIMUX_MODIFIED_ENTER_COMMAND: &str = "send-keys -H 1b 5b 31 33 3b 32 75";
 pub const AIMUX_STALE_MODIFIED_ENTER_COMMAND: &str = "send-keys -H 1b5b32373b3575";
 static TMUX_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+const ABANDONED_CLIENT_SESSION_GRACE_SECONDS: i64 = 10 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ManagedTmuxSessionOptions {
@@ -111,6 +115,15 @@ pub struct TmuxClientInfo {
     pub session_name: String,
     pub window_id: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TmuxSessionInfo {
+    pub name: String,
+    pub created: Option<i64>,
+    pub last_attached: Option<i64>,
+    pub activity: Option<i64>,
+    pub attached: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -411,6 +424,17 @@ impl TmuxRuntimeManager {
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
             .collect())
+    }
+
+    pub fn list_sessions(&mut self) -> Result<Vec<TmuxSessionInfo>, String> {
+        let raw = match self.exec_owned(list_sessions_argv(), None) {
+            Ok(raw) => raw,
+            Err(error) if tmux_list_sessions_failed_because_no_server(&error) => {
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(parse_tmux_sessions(&raw))
     }
 
     pub fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
@@ -1730,12 +1754,176 @@ impl TmuxRuntimeManager {
         let Some(client_suffix) = client_suffix else {
             return Ok(session_name.to_owned());
         };
-        let client_session_name =
+        let candidate_session_name =
             self.get_project_client_session_name(session_name, &client_suffix);
+        let client_session_name =
+            if project_root.is_none() || self.has_session(&candidate_session_name) {
+                candidate_session_name
+            } else {
+                self.reap_abandoned_client_sessions(session_name, project_root.as_deref())?;
+                self.find_reusable_client_session(session_name)?
+                    .unwrap_or(candidate_session_name)
+            };
         if let Some(project_root) = project_root {
             self.ensure_client_session(session_name, &client_session_name, &project_root)?;
         }
         Ok(client_session_name)
+    }
+
+    fn find_reusable_client_session(
+        &mut self,
+        host_session_name: &str,
+    ) -> Result<Option<String>, String> {
+        let attached = self.attached_client_sessions()?;
+        let mut candidates = self
+            .list_sessions()?
+            .into_iter()
+            .filter(|session| is_tmux_client_session_for_host(&session.name, host_session_name))
+            .filter(|session| !attached.contains(&session.name))
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|session| {
+            (
+                session.last_attached.unwrap_or_default(),
+                session.activity.unwrap_or_default(),
+                session.created.unwrap_or_default(),
+            )
+        });
+        candidates.reverse();
+        for session in candidates {
+            if self.client_session_has_ready_dashboard(&session.name)? {
+                return Ok(Some(session.name));
+            }
+        }
+        Ok(None)
+    }
+
+    fn reap_abandoned_client_sessions(
+        &mut self,
+        host_session_name: &str,
+        project_root: Option<&str>,
+    ) -> Result<Vec<String>, String> {
+        let attached = self.attached_client_sessions()?;
+        let now = unix_timestamp_seconds();
+        let mut reaped = Vec::new();
+        for session in self.list_sessions()? {
+            if !is_tmux_client_session_for_host(&session.name, host_session_name) {
+                continue;
+            }
+            if attached.contains(&session.name) {
+                continue;
+            }
+            let reference = session
+                .last_attached
+                .or(session.activity)
+                .or(session.created)
+                .unwrap_or(now);
+            if now.saturating_sub(reference) < ABANDONED_CLIENT_SESSION_GRACE_SECONDS {
+                continue;
+            }
+            match self.classify_abandoned_client_session(&session.name) {
+                Ok(Some(reason)) => {
+                    self.kill_session(&session.name)?;
+                    self.report_client_session_reap(
+                        project_root,
+                        STATUS_REPAIRED,
+                        &session.name,
+                        &reason,
+                    );
+                    reaped.push(session.name);
+                }
+                Ok(None) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(reaped)
+    }
+
+    fn attached_client_sessions(&mut self) -> Result<BTreeSet<String>, String> {
+        Ok(self
+            .list_clients()?
+            .into_iter()
+            .map(|client| client.session_name)
+            .filter(|session| !session.is_empty())
+            .collect())
+    }
+
+    fn client_session_has_ready_dashboard(&mut self, session_name: &str) -> Result<bool, String> {
+        let Some(dashboard) = self.client_session_dashboard_window(session_name)? else {
+            return Ok(false);
+        };
+        if dashboard.pane_dead == Some(true) {
+            return Ok(false);
+        }
+        Ok(self
+            .get_window_option(&dashboard.id, TMUX_DASHBOARD_READY_OPTION)
+            .is_some())
+    }
+
+    fn classify_abandoned_client_session(
+        &mut self,
+        session_name: &str,
+    ) -> Result<Option<String>, String> {
+        let windows = self.list_windows(session_name)?;
+        if windows
+            .iter()
+            .any(|window| !is_dashboard_window_name(&window.name))
+        {
+            return Ok(None);
+        }
+        let Some(dashboard) = windows
+            .iter()
+            .find(|window| is_dashboard_window_name(&window.name))
+        else {
+            return Ok(Some("no-dashboard-window".to_owned()));
+        };
+        if dashboard.pane_dead == Some(true) {
+            return Ok(Some("dead-dashboard-pane".to_owned()));
+        }
+        if self
+            .get_window_option(&dashboard.id, TMUX_DASHBOARD_READY_OPTION)
+            .is_none()
+        {
+            return Ok(Some("dashboard-not-ready".to_owned()));
+        }
+        Ok(None)
+    }
+
+    fn client_session_dashboard_window(
+        &mut self,
+        session_name: &str,
+    ) -> Result<Option<TmuxWindowInfo>, String> {
+        let windows = self.list_windows(session_name)?;
+        Ok(windows
+            .iter()
+            .find(|window| is_dashboard_window_name(&window.name) && window.index == 0)
+            .cloned()
+            .or_else(|| {
+                windows
+                    .into_iter()
+                    .find(|window| is_dashboard_window_name(&window.name))
+            }))
+    }
+
+    fn report_client_session_reap(
+        &self,
+        project_root: Option<&str>,
+        status: &str,
+        session_name: &str,
+        reason: &str,
+    ) {
+        let Some(project_root) = project_root.filter(|root| !root.trim().is_empty()) else {
+            return;
+        };
+        record_repair_event_from_env(
+            project_root,
+            ACTION_TMUX_RUNTIME_REPAIR,
+            "client-session-reap",
+            status,
+            Some(serde_json::json!({
+                "sessionName": session_name,
+                "reason": reason,
+            })),
+        );
     }
 
     fn ensure_client_session(
@@ -2713,6 +2901,14 @@ pub fn list_clients_argv() -> Vec<String> {
     ]
 }
 
+pub fn list_sessions_argv() -> Vec<String> {
+    vec![
+        "list-sessions".to_owned(),
+        "-F".to_owned(),
+        "#{session_name}\t#{session_created}\t#{session_last_attached}\t#{session_activity}\t#{session_attached}".to_owned(),
+    ]
+}
+
 pub fn list_all_window_ids_argv() -> Vec<String> {
     vec![
         "list-windows".to_owned(),
@@ -2889,6 +3085,23 @@ fn parse_tmux_windows(raw: &str) -> Vec<TmuxWindowInfo> {
         .collect()
 }
 
+fn parse_tmux_sessions(raw: &str) -> Vec<TmuxSessionInfo> {
+    raw.lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let mut parts = line.split('\t');
+            TmuxSessionInfo {
+                name: parts.next().unwrap_or_default().to_owned(),
+                created: parse_optional_i64(parts.next()),
+                last_attached: parse_optional_i64(parts.next()),
+                activity: parse_optional_i64(parts.next()),
+                attached: parse_optional_i64(parts.next()),
+            }
+        })
+        .filter(|session| !session.name.is_empty())
+        .collect()
+}
+
 fn parse_tmux_managed_windows(session_name: &str, raw: &str) -> Vec<TmuxManagedWindow> {
     raw.lines()
         .filter_map(|line| {
@@ -2944,6 +3157,10 @@ fn parse_optional_i64(value: Option<&str>) -> Option<i64> {
     } else {
         value.parse().ok()
     }
+}
+
+fn unix_timestamp_seconds() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp()
 }
 
 fn metadata_string<'a>(metadata: &'a Value, key: &str) -> Option<&'a str> {
