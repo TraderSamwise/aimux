@@ -216,7 +216,7 @@ pub fn worktree_prune_text_route(
         Err(error) => {
             return text_error(
                 500,
-                &format!("Error: git worktree prune failed for {project_root}: {error}"),
+                format!("Error: git worktree prune failed for {project_root}: {error}"),
             );
         }
     };
