@@ -67,6 +67,58 @@ fn treats_missing_tmux_server_as_empty_live_window_inventory() {
 }
 
 #[test]
+fn treats_no_server_running_as_empty_tmux_inventory() {
+    let mut manager =
+        TmuxRuntimeManager::with_exec(|args, _options| match args.join(" ").as_str() {
+            "list-sessions -F #{session_name}" => {
+                Err("no server running on /private/tmp/tmux-501/default".to_owned())
+            }
+            "list-windows -a -F #{window_id}" => {
+                Err("no server running on /private/tmp/tmux-501/default".to_owned())
+            }
+            _ => Ok(String::new()),
+        });
+
+    assert_eq!(
+        manager.list_session_names().expect("session inventory"),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        manager
+            .try_live_window_ids()
+            .expect("live window inventory"),
+        Default::default()
+    );
+}
+
+#[test]
+fn tmux_inventory_failures_remain_errors() {
+    let mut manager =
+        TmuxRuntimeManager::with_exec(|args, _options| match args.join(" ").as_str() {
+            "list-sessions -F #{session_name}" => Err(
+                "error connecting to /private/tmp/tmux-501/default (Permission denied)".to_owned(),
+            ),
+            "list-windows -a -F #{window_id}" => Err(
+                "error connecting to /private/tmp/tmux-501/default (Permission denied)".to_owned(),
+            ),
+            _ => Ok(String::new()),
+        });
+
+    assert!(
+        manager
+            .list_session_names()
+            .expect_err("session inventory failure must stay an error")
+            .contains("Permission denied")
+    );
+    assert!(
+        manager
+            .try_live_window_ids()
+            .expect_err("live-window inventory failure must stay an error")
+            .contains("Permission denied")
+    );
+}
+
+#[test]
 fn reports_window_liveness_errors() {
     let mut manager = TmuxRuntimeManager::with_exec(|args, _options| {
         if args.join(" ") == "display-message -p -t @3 #{pane_dead}" {

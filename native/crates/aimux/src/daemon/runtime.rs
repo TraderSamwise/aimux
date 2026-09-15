@@ -5726,6 +5726,39 @@ mod tests {
     }
 
     #[test]
+    fn control_plane_restart_proceeds_when_tmux_live_window_inventory_is_empty() {
+        let fixture = restart_service_fixture("restart-empty-live-window-inventory");
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_009, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_009);
+        fixture.persist_runtime_session_with_window(
+            "codex-pending",
+            "codex",
+            "running",
+            None,
+            Some("@codex-pending"),
+            None,
+        );
+        let launcher = Arc::new(RestartTestLauncher::new(91_209));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_009]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        runtime.restart_backend_id_capture_timeout = Duration::ZERO;
+        runtime.restart_backend_id_live_window_ids = Some(Ok(BTreeSet::new()));
+
+        let notice = runtime
+            .prepare_restart_control_plane_runtime(None, false, false)
+            .expect("empty live tmux inventory should not require --force");
+
+        assert!(
+            notice.is_none(),
+            "empty live-window inventory means there is nothing to protect"
+        );
+        assert!(launcher.calls().is_empty());
+        assert!(launcher.terminations().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
     fn control_plane_restart_guard_covers_project_control_exact_resume_sessions() {
         let fixture = restart_service_fixture("restart-project-control-pending-backend-id");
         let project = fixture.project_root.clone();
