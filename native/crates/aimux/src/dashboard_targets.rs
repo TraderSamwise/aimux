@@ -3,6 +3,10 @@ use crate::dashboard_command_spec::{
     get_dashboard_command_spec_with_options,
 };
 use crate::dashboard_readiness::{get_runtime_owner_id, runtime_owner_id_from_parts};
+use crate::repair_events::{
+    ACTION_DASHBOARD_RELOAD, STATUS_FAILED, STATUS_REPAIRED, STATUS_STARTED,
+    record_repair_event_from_env,
+};
 use crate::tmux::{
     CapturePaneOptions, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
     TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_OWNER_OPTION, TmuxCommandSpec, TmuxRuntimeManager,
@@ -85,6 +89,14 @@ pub trait DashboardTargetTmux {
         key: &str,
         value: &str,
     ) -> Result<(), String>;
+    fn report_dashboard_target_repair(
+        &mut self,
+        _project_root: &str,
+        _reason: &str,
+        _status: &str,
+        _details: Value,
+    ) {
+    }
 }
 
 impl DashboardTargetContext {
@@ -221,6 +233,22 @@ impl DashboardTargetTmux for TmuxRuntimeManager {
     ) -> Result<(), String> {
         TmuxRuntimeManager::set_window_option(self, &target.window_id, key, value)
     }
+
+    fn report_dashboard_target_repair(
+        &mut self,
+        project_root: &str,
+        reason: &str,
+        status: &str,
+        details: Value,
+    ) {
+        record_repair_event_from_env(
+            project_root,
+            ACTION_DASHBOARD_RELOAD,
+            reason,
+            status,
+            Some(details),
+        );
+    }
 }
 
 pub fn find_live_dashboard_target(
@@ -299,7 +327,7 @@ fn find_dashboard_target_with_context(
     let mut seen = BTreeSet::new();
     let mut candidate_sessions = Vec::new();
     for session_name in [
-        Some(preferred_open_session),
+        Some(preferred_open_session.clone()),
         same_project_current_client_session,
         Some(dashboard_session.session_name.clone()),
     ] {
@@ -318,6 +346,9 @@ fn find_dashboard_target_with_context(
         }
     }
     for session_name in candidate_sessions {
+        let is_preferred_client_session = session_name == preferred_open_session
+            && session_name != dashboard_session.session_name
+            && is_tmux_client_session_for_host(&session_name, &dashboard_session.session_name);
         let has_session = tmux.has_session(&session_name);
         if !has_session {
             continue;
@@ -346,6 +377,9 @@ fn find_dashboard_target_with_context(
                 dashboard_session,
                 dashboard_target,
             }));
+        }
+        if is_preferred_client_session {
+            return Ok(None);
         }
     }
 
@@ -385,12 +419,23 @@ pub fn resolve_dashboard_target_with_context(
         tmux.get_window_option(&dashboard_target, TMUX_DASHBOARD_READY_OPTION);
     let current_dashboard_owner =
         tmux.get_window_option(&dashboard_target, TMUX_DASHBOARD_OWNER_OPTION);
-    let mut should_respawn = options.force_reload
-        || !tmux.is_window_alive(&dashboard_target)?
-        || current_build_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str())
-        || current_ready_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str())
-        || current_dashboard_owner.as_deref() != Some(context.runtime_owner_id.as_str());
-    if !should_respawn {
+    let mut repair_reasons = Vec::<String>::new();
+    if options.force_reload {
+        repair_reasons.push("force-reload".to_owned());
+    }
+    if !tmux.is_window_alive(&dashboard_target)? {
+        repair_reasons.push("window-dead".to_owned());
+    }
+    if current_build_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str()) {
+        repair_reasons.push("dashboard-build-mismatch".to_owned());
+    }
+    if current_ready_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str()) {
+        repair_reasons.push("dashboard-ready-mismatch".to_owned());
+    }
+    if current_dashboard_owner.as_deref() != Some(context.runtime_owner_id.as_str()) {
+        repair_reasons.push("dashboard-owner-mismatch".to_owned());
+    }
+    if repair_reasons.is_empty() {
         let pane_command = tmux
             .display_message("#{pane_current_command}", &dashboard_target.window_id)
             .unwrap_or_default();
@@ -400,7 +445,9 @@ pub fn resolve_dashboard_target_with_context(
         } else {
             String::new()
         };
-        should_respawn = !is_dashboard_pane_command_usable(&pane_command, &pane_tail);
+        if !is_dashboard_pane_command_usable(&pane_command, &pane_tail) {
+            repair_reasons.push(format!("stale-dashboard-pane-command:{pane_command}"));
+        }
     }
     if dashboard_created {
         wait_for_dashboard_target_ready(
@@ -409,14 +456,58 @@ pub fn resolve_dashboard_target_with_context(
             &context.dashboard_build_stamp,
             DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS,
         )?;
-    } else if should_respawn {
-        dashboard_target = tmux.replace_window_when_ready(
+    } else if !repair_reasons.is_empty() {
+        let repair_details = json!({
+            "sessionName": dashboard_target.session_name,
+            "windowId": dashboard_target.window_id,
+            "windowIndex": dashboard_target.window_index,
+            "windowName": dashboard_target.window_name,
+            "reasons": repair_reasons,
+        });
+        tmux.report_dashboard_target_repair(
+            project_root,
+            "dashboard-target-resolution",
+            STATUS_STARTED,
+            repair_details.clone(),
+        );
+        let replacement = tmux.replace_window_when_ready(
             &dashboard_target,
             &context.dashboard_command,
             TMUX_DASHBOARD_READY_OPTION,
             &context.dashboard_build_stamp,
             DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS,
-        )?;
+        );
+        match replacement {
+            Ok(replacement) => {
+                tmux.report_dashboard_target_repair(
+                    project_root,
+                    "dashboard-target-resolution",
+                    STATUS_REPAIRED,
+                    json!({
+                        "previous": repair_details,
+                        "target": {
+                            "sessionName": replacement.session_name.clone(),
+                            "windowId": replacement.window_id.clone(),
+                            "windowIndex": replacement.window_index,
+                            "windowName": replacement.window_name.clone(),
+                        },
+                    }),
+                );
+                dashboard_target = replacement;
+            }
+            Err(error) => {
+                tmux.report_dashboard_target_repair(
+                    project_root,
+                    "dashboard-target-resolution",
+                    STATUS_FAILED,
+                    json!({
+                        "previous": repair_details,
+                        "error": error,
+                    }),
+                );
+                return Err(error);
+            }
+        }
     }
     tmux.set_session_option(
         &dashboard_session.session_name,

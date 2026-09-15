@@ -2,8 +2,10 @@ use std::collections::BTreeMap;
 
 const ALLOWED_ENV_KEYS: &[&str] = &[
     "AIMUX_DAEMON_PORT",
+    "AIMUX_DELIVERY_REF",
     "AIMUX_ENV",
     "AIMUX_HOME",
+    "AIMUX_PROJECT_ROOT",
     "BUN_INSTALL",
     "CARGO_HOME",
     "CLAUDE_CONFIG_DIR",
@@ -168,6 +170,8 @@ mod tests {
     #[test]
     fn managed_launch_env_filters_and_normalizes_interactive_env() {
         let env = build_managed_launch_env([
+            ("AIMUX_DELIVERY_REF".to_owned(), "master".to_owned()),
+            ("AIMUX_PROJECT_ROOT".to_owned(), "/repo".to_owned()),
             ("PATH".to_owned(), "/bin".to_owned()),
             ("SECRET".to_owned(), "nope".to_owned()),
             ("TERM".to_owned(), "dumb".to_owned()),
@@ -175,6 +179,14 @@ mod tests {
             ("AIMUX_WRAPPER".to_owned(), "1".to_owned()),
         ]);
 
+        assert_eq!(
+            env.get("AIMUX_DELIVERY_REF").map(String::as_str),
+            Some("master")
+        );
+        assert_eq!(
+            env.get("AIMUX_PROJECT_ROOT").map(String::as_str),
+            Some("/repo")
+        );
         assert_eq!(env.get("PATH").map(String::as_str), Some("/bin"));
         assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));

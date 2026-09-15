@@ -65,6 +65,7 @@ fixture_plugins_contracts
 fixture_project_service_contracts
 fixture_runtime_contracts
 fixture_tmux_tui_contracts
+git_delivery
 hosted_lock
 install_cleanup
 launcher_env
