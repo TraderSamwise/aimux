@@ -55,6 +55,9 @@ struct FakeRuntime {
     topology_json: Value,
     parity_text_error: Option<String>,
     existing_daemon_text_error: Option<String>,
+    pending_loop_self_reports: RefCell<Vec<(String, Option<Value>, String)>>,
+    pending_loop_self_report_record_error: Option<String>,
+    pending_loop_self_report_spool_path: PathBuf,
 }
 
 impl Default for FakeRuntime {
@@ -98,6 +101,11 @@ impl Default for FakeRuntime {
             topology_json: json!({ "version": 1, "generatedAt": "now", "rigs": [] }),
             parity_text_error: None,
             existing_daemon_text_error: None,
+            pending_loop_self_reports: RefCell::new(Vec::new()),
+            pending_loop_self_report_record_error: None,
+            pending_loop_self_report_spool_path: PathBuf::from(
+                "/tmp/aimux-test/pending-loop-self-reports.jsonl",
+            ),
         }
     }
 }
@@ -249,6 +257,32 @@ impl CoreCliRuntime for FakeRuntime {
             return Err(error);
         }
         Ok(fake_text_response(path))
+    }
+
+    fn replay_pending_loop_self_reports(&mut self) -> Result<usize, String> {
+        let pending = self.pending_loop_self_reports.replace(Vec::new());
+        let count = pending.len();
+        for (path, body, _) in pending {
+            self.request_existing_daemon_text(&path, body)?;
+        }
+        Ok(count)
+    }
+
+    fn record_pending_loop_self_report(
+        &self,
+        path: &str,
+        body: Option<&Value>,
+        delivery_error: &str,
+    ) -> Result<PathBuf, String> {
+        if let Some(error) = self.pending_loop_self_report_record_error.clone() {
+            return Err(error);
+        }
+        self.pending_loop_self_reports.borrow_mut().push((
+            path.to_owned(),
+            body.cloned(),
+            delivery_error.to_owned(),
+        ));
+        Ok(self.pending_loop_self_report_spool_path.clone())
     }
 
     fn selected_log_path(&self, _options: &aimux::core_cli_routing::CoreLogsArgs) -> PathBuf {
@@ -1727,7 +1761,7 @@ fn parity_required_text_routes_still_refuse_across_build_skew() {
 }
 
 #[test]
-fn undelivered_loop_self_report_reports_that_nothing_was_recorded() {
+fn undelivered_loop_self_report_records_pending_retry() {
     let mut runtime = FakeRuntime {
         existing_daemon_text_error: Some("connection refused".into()),
         ..FakeRuntime::default()
@@ -1743,7 +1777,7 @@ fn undelivered_loop_self_report_reports_that_nothing_was_recorded() {
     assert_eq!(
         done.stderr,
         [
-            "Error: loop self-report could not be delivered to the running aimux daemon and was not recorded: connection refused. Ask the supervising user to restart or repair aimux when it is safe, then re-run the self-report or reconcile loop state."
+            "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: connection refused. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt."
         ],
     );
     assert!(runtime.text_routes.is_empty());
@@ -1758,6 +1792,65 @@ fn undelivered_loop_self_report_reports_that_nothing_was_recorded() {
             })),
         )]
     );
+    assert_eq!(
+        runtime.pending_loop_self_reports.into_inner(),
+        [(
+            "/core/loop/done-text".into(),
+            Some(json!({
+                "project": "/repo",
+                "sessionId": "codex-1",
+                "source": "agent",
+            })),
+            "connection refused".into()
+        )]
+    );
+}
+
+#[test]
+fn pending_loop_self_reports_replay_before_current_self_report() {
+    let mut runtime = FakeRuntime::default();
+    runtime.pending_loop_self_reports.borrow_mut().push((
+        "/core/loop/done-text".into(),
+        Some(json!({
+            "project": "/repo",
+            "sessionId": "codex-old",
+            "source": "agent",
+            "reason": "already finished",
+        })),
+        "connection refused".into(),
+    ));
+
+    let done = run_core_cli_with(
+        &args(&["loop", "done", "--session", "codex-new"]),
+        &mut runtime,
+    );
+
+    assert_eq!(done.code, 0);
+    assert_eq!(done.stdout, ["loop ok"]);
+    assert!(runtime.text_routes.is_empty());
+    assert_eq!(
+        runtime.existing_daemon_text_routes,
+        [
+            (
+                "/core/loop/done-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sessionId": "codex-old",
+                    "source": "agent",
+                    "reason": "already finished",
+                })),
+            ),
+            (
+                "/core/loop/done-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sessionId": "codex-new",
+                    "source": "agent",
+                })),
+            ),
+        ]
+    );
+    assert!(runtime.pending_loop_self_reports.borrow().is_empty());
 }
 
 #[test]

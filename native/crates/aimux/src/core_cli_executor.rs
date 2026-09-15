@@ -1,3 +1,4 @@
+use crate::atomic_write::write_text_atomic;
 use crate::backend_session_ids::{
     build_agent_identity_error_payload, build_agent_identity_payload, render_agent_identity_lines,
     resolve_agent_identity,
@@ -69,11 +70,12 @@ use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 use crate::tmux::{attach_session_argv, switch_client_argv, tmux_command_from_env};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const DAEMON_RESTART_SIGNAL: &str = "SIGHUP";
+const LOOP_SELF_REPORT_SPOOL_RELATIVE_PATH: &str = "daemon/pending-loop-self-reports.jsonl";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreCliExecution {
@@ -127,6 +129,18 @@ pub trait CoreCliRuntime {
         body: Option<Value>,
     ) -> Result<String, String> {
         self.request_daemon_text(path, body)
+    }
+    fn replay_pending_loop_self_reports(&mut self) -> Result<usize, String> {
+        Ok(0)
+    }
+    fn record_pending_loop_self_report(
+        &self,
+        path: &str,
+        body: Option<&Value>,
+        delivery_error: &str,
+    ) -> Result<PathBuf, String> {
+        let _ = (path, body, delivery_error);
+        Err("pending loop self-report recording is not available in this runtime".into())
     }
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
     fn read_log_lines(&self, path: &Path, lines: usize) -> String;
@@ -309,6 +323,19 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             },
         )
         .map_err(|error| error.to_string())
+    }
+
+    fn replay_pending_loop_self_reports(&mut self) -> Result<usize, String> {
+        replay_pending_loop_self_reports(|path, body| self.request_existing_daemon_text(path, body))
+    }
+
+    fn record_pending_loop_self_report(
+        &self,
+        path: &str,
+        body: Option<&Value>,
+        delivery_error: &str,
+    ) -> Result<PathBuf, String> {
+        record_pending_loop_self_report(path, body, delivery_error)
     }
 
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf {
@@ -1414,13 +1441,30 @@ fn run_text_route(
     body: Option<Value>,
     runtime: &mut impl CoreCliRuntime,
 ) -> Result<CoreCliExecution, String> {
-    let text = if operation_allows_build_skew_text_route(operation) {
-        runtime
-            .request_existing_daemon_text(path, body)
-            .map_err(loop_self_report_delivery_error)?
-    } else {
-        runtime.request_daemon_text(path, body)?
-    };
+    if operation_allows_build_skew_text_route(operation) {
+        let replay_warning = runtime
+            .replay_pending_loop_self_reports()
+            .err()
+            .map(|error| format!("Warning: pending loop self-report replay failed: {error}"));
+        let text = match runtime.request_existing_daemon_text(path, body.clone()) {
+            Ok(text) => text,
+            Err(error) => {
+                let spool_path = runtime
+                    .record_pending_loop_self_report(path, body.as_ref(), &error)
+                    .map_err(|record_error| {
+                        loop_self_report_record_failure_error(&error, &record_error)
+                    })?;
+                return Err(loop_self_report_recorded_error(&error, &spool_path));
+            }
+        };
+        let mut execution =
+            CoreCliExecution::ok(vec![text.strip_suffix('\n').unwrap_or(&text).to_owned()]);
+        if let Some(warning) = replay_warning {
+            execution.stderr.push(warning);
+        }
+        return Ok(execution);
+    }
+    let text = runtime.request_daemon_text(path, body)?;
     Ok(CoreCliExecution::ok(vec![
         text.strip_suffix('\n').unwrap_or(&text).to_owned(),
     ]))
@@ -1433,9 +1477,143 @@ fn operation_allows_build_skew_text_route(operation: CoreCliOperation) -> bool {
     )
 }
 
-fn loop_self_report_delivery_error(error: impl std::fmt::Display) -> String {
+fn loop_self_report_recorded_error(
+    error: impl std::fmt::Display,
+    spool_path: impl AsRef<Path>,
+) -> String {
     format!(
-        "loop self-report could not be delivered to the running aimux daemon and was not recorded: {error}. Ask the supervising user to restart or repair aimux when it is safe, then re-run the self-report or reconcile loop state."
+        "loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at {}: {error}. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt.",
+        spool_path.as_ref().display()
+    )
+}
+
+fn loop_self_report_record_failure_error(
+    delivery_error: impl std::fmt::Display,
+    record_error: impl std::fmt::Display,
+) -> String {
+    format!(
+        "loop self-report could not be delivered to the running aimux daemon and could not be recorded for retry: {delivery_error}; record error: {record_error}. Ask the supervising user to restart or repair aimux when it is safe, then reconcile loop state."
+    )
+}
+
+fn pending_loop_self_report_spool_path() -> PathBuf {
+    PathResolver::from_env()
+        .global_aimux_dir()
+        .join(LOOP_SELF_REPORT_SPOOL_RELATIVE_PATH)
+}
+
+fn record_pending_loop_self_report(
+    path: &str,
+    body: Option<&Value>,
+    delivery_error: &str,
+) -> Result<PathBuf, String> {
+    let spool_path = pending_loop_self_report_spool_path();
+    if let Some(parent) = spool_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    let record = json!({
+        "kind": "loop-self-report",
+        "recordedAt": now_iso(),
+        "route": path,
+        "body": body.cloned().unwrap_or(Value::Null),
+        "deliveryError": delivery_error,
+    });
+    let line = serde_json::to_string(&record).map_err(|error| error.to_string())?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&spool_path)
+        .map_err(|error| format!("open {}: {error}", spool_path.display()))?;
+    writeln!(file, "{line}").map_err(|error| format!("write {}: {error}", spool_path.display()))?;
+    file.sync_all()
+        .map_err(|error| format!("sync {}: {error}", spool_path.display()))?;
+    Ok(spool_path)
+}
+
+fn replay_pending_loop_self_reports(
+    mut request: impl FnMut(&str, Option<Value>) -> Result<String, String>,
+) -> Result<usize, String> {
+    let spool_path = pending_loop_self_report_spool_path();
+    let text = match fs::read_to_string(&spool_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(format!("read {}: {error}", spool_path.display())),
+    };
+    let mut records: Vec<(String, Option<Value>, String)> = Vec::new();
+    for (index, raw_line) in text.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(line).map_err(|error| {
+            format!("parse {} line {}: {error}", spool_path.display(), index + 1)
+        })?;
+        if value.get("kind").and_then(Value::as_str) != Some("loop-self-report") {
+            return Err(format!(
+                "parse {} line {}: unexpected pending record kind",
+                spool_path.display(),
+                index + 1
+            ));
+        }
+        let route = value
+            .get("route")
+            .and_then(Value::as_str)
+            .filter(|route| !route.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "parse {} line {}: pending loop self-report route is missing",
+                    spool_path.display(),
+                    index + 1
+                )
+            })?
+            .to_owned();
+        let body = value.get("body").filter(|value| !value.is_null()).cloned();
+        records.push((route, body, raw_line.to_owned()));
+    }
+    if records.is_empty() {
+        let _ = fs::remove_file(&spool_path);
+        return Ok(0);
+    }
+    let mut delivered = 0usize;
+    for index in 0..records.len() {
+        let (route, body, _) = &records[index];
+        if let Err(error) = request(route, body.clone()) {
+            let mut remaining = records[index..]
+                .iter()
+                .map(|(_, _, line)| line.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            remaining.push('\n');
+            write_text_atomic(&spool_path, remaining).map_err(|write_error| {
+                format!("rewrite {}: {write_error}", spool_path.display())
+            })?;
+            return Err(format!(
+                "retry {} failed after {delivered} delivered: {error}",
+                spool_path.display()
+            ));
+        }
+        delivered += 1;
+    }
+    match fs::remove_file(&spool_path) {
+        Ok(()) => Ok(delivered),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(delivered),
+        Err(error) => Err(format!("remove {}: {error}", spool_path.display())),
+    }
+}
+
+fn now_iso() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    let millis = now.millisecond();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        millis
     )
 }
 
