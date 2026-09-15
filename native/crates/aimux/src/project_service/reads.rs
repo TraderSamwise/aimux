@@ -30,6 +30,7 @@ pub fn route_read_request(
                 "projectStateDir": context.project_state_dir_string(),
                 "pid": std::process::id(),
                 "serviceInfo": service_info,
+                "scheduler": context.scheduler.diagnostics_json(),
             }),
         ));
     }

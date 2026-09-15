@@ -522,21 +522,46 @@ fn render_project_scheduler_health_lines(project_root: &str, scheduler: &Value) 
             .get("p95DurationMs")
             .map(|value| display_jsonish(value, "n/a"))
             .unwrap_or_else(|| "n/a".to_owned());
+        let interval = task
+            .get("intervalMs")
+            .map(|value| display_jsonish(value, "n/a"))
+            .unwrap_or_else(|| "n/a".to_owned());
+        let duty = task
+            .get("lastDutyCyclePerMille")
+            .and_then(Value::as_i64)
+            .map(display_duty_percent)
+            .unwrap_or_else(|| "n/a".to_owned());
         lines.push(format!(
-            "  {name}: runs={} lastCompleted={} lastDuration={}ms p95={}ms failures={} timeouts={}/{}",
+            "  {name}: runs={} interval={}ms lastCompleted={} lastDuration={}ms p95={}ms duty={} failures={} timeouts={}/{}",
             display_i64(&task, "totalRuns", 0),
+            interval,
             last_completed,
             last_duration,
             p95,
+            duty,
             display_i64(&task, "consecutiveFailures", 0),
             display_i64(&task, "consecutiveTimeouts", 0),
             display_i64(&task, "totalTimeouts", 0),
         ));
+        if task.get("hot").and_then(Value::as_bool) == Some(true) {
+            let hot_since = task
+                .get("hotSinceMs")
+                .map(|value| display_jsonish(value, "unknown"))
+                .unwrap_or_else(|| "unknown".to_owned());
+            let consecutive_hot_runs = display_i64(&task, "consecutiveHotRuns", 0);
+            lines.push(format!(
+                "    HOT: sustained scheduler cost {last_duration}ms per {interval}ms tick ({duty}, {consecutive_hot_runs} consecutive hot runs, since {hot_since})"
+            ));
+        }
         if let Some(error) = task.get("lastError").and_then(Value::as_str) {
             lines.push(format!("    last error: {error}"));
         }
     }
     lines
+}
+
+fn display_duty_percent(per_mille: i64) -> String {
+    format!("{}.{:01}%", per_mille / 10, (per_mille % 10).abs())
 }
 
 pub fn doctor_exchange_text_route(

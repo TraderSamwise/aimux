@@ -1760,9 +1760,6 @@ fn stopped_candidate_due(
 
 fn instruction_cadence_signature(candidate: &Value) -> Option<String> {
     let action = candidate.get("loopLastAction")?;
-    if str_field(action, "action") == "add" {
-        return None;
-    }
     serde_json::to_string(action).ok()
 }
 

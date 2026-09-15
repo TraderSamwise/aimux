@@ -16,10 +16,13 @@ use crate::config::{load_config_for_known_project_root, project_config_path_for_
 use crate::paths::PathResolver;
 use crate::periodic_scheduler as periodic;
 
+use super::notifications::{NotificationWriteInput, add_notification};
+use super::operation_failures::{OperationFailureInput, add_dashboard_operation_failure};
 use super::router::ProjectServiceRequestContext;
 
 pub use crate::periodic_scheduler::{
-    PeriodicTaskFuture, PeriodicTaskHealthSnapshot, PeriodicTaskRunResult, scheduler_now_ms,
+    PeriodicTaskFuture, PeriodicTaskHealthAlert, PeriodicTaskHealthSnapshot, PeriodicTaskRunResult,
+    scheduler_now_ms,
 };
 pub type ProjectSchedulerHandle = periodic::SchedulerHandle;
 
@@ -221,12 +224,79 @@ pub fn spawn_project_service_scheduler(
     tasks: Vec<Box<dyn PeriodicTask>>,
     handle: ProjectSchedulerHandle,
 ) {
+    attach_project_scheduler_alert_sink(&handle, &context);
     periodic::spawn_periodic_scheduler(
         context,
         adapt_tasks(tasks),
         handle,
         periodic::PeriodicSchedulerLogLabels::project_service(),
     );
+}
+
+pub fn attach_project_scheduler_alert_sink(
+    handle: &ProjectSchedulerHandle,
+    context: &ProjectServiceRequestContext,
+) {
+    let project_root = context.project_root().to_path_buf();
+    let project_state_dir = context.project_state_dir();
+    let project_events = context.project_events.clone();
+    handle.set_alert_sink(move |alert| {
+        let notification = scheduler_hot_task_notification(&project_root, &alert);
+        if let Ok(record) = add_notification(&project_state_dir, notification.clone()) {
+            project_events.publish_alert_from_notification_with_state_dir(
+                &project_root,
+                &project_state_dir,
+                &notification,
+                &record,
+            );
+        }
+        add_dashboard_operation_failure(
+            &project_state_dir,
+            OperationFailureInput {
+                target_kind: "scheduler-task".to_owned(),
+                operation: "hot-task".to_owned(),
+                title: format!("Scheduler task {} is hot", alert.name),
+                message: scheduler_hot_task_message(&alert),
+                target_id: Some(alert.name.clone()),
+                ..OperationFailureInput::default()
+            },
+        );
+    });
+}
+
+fn scheduler_hot_task_notification(
+    project_root: &Path,
+    alert: &PeriodicTaskHealthAlert,
+) -> NotificationWriteInput {
+    NotificationWriteInput {
+        kind: Some("scheduler_hot_task".to_owned()),
+        title: format!("aimux scheduler task hot: {}", alert.name),
+        body: scheduler_hot_task_message(alert),
+        target_key: Some(format!("scheduler-task:{}", alert.name)),
+        target_kind: Some("scheduler-task".to_owned()),
+        project_root: Some(project_root.to_string_lossy().into_owned()),
+        category_label: Some("Project service".to_owned()),
+        reason_label: Some("Scheduler task hot".to_owned()),
+        dedupe_key: Some(format!("scheduler-hot-task:{}", alert.name)),
+        unread: true,
+        force_notify: true,
+        ..NotificationWriteInput::default()
+    }
+}
+
+fn scheduler_hot_task_message(alert: &PeriodicTaskHealthAlert) -> String {
+    format!(
+        "{}: {}ms per {}ms tick ({} duty, {} consecutive hot runs)",
+        alert.name,
+        alert.last_duration_ms,
+        alert.interval_ms,
+        duty_percent(alert.duty_cycle_per_mille),
+        alert.consecutive_hot_runs
+    )
+}
+
+fn duty_percent(per_mille: i64) -> String {
+    format!("{}.{:01}%", per_mille / 10, (per_mille % 10).abs())
 }
 
 struct ProjectPeriodicTask {
