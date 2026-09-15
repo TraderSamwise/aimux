@@ -1222,6 +1222,9 @@ fn normalize_json(value: Value, context: &NormalizeContext) -> Value {
 }
 
 fn normalize_json_keyed(value: Value, context: &NormalizeContext, key: Option<&str>) -> Value {
+    if key == Some("scheduler") {
+        return normalize_scheduler_health(value);
+    }
     match value {
         Value::Object(map) => Value::Object(
             map.into_iter()
@@ -1252,6 +1255,35 @@ fn normalize_json_keyed(value: Value, context: &NormalizeContext, key: Option<&s
         }
         other => other,
     }
+}
+
+fn normalize_scheduler_health(value: Value) -> Value {
+    let Value::Object(mut map) = value else {
+        return value;
+    };
+    let periodic_tasks = map
+        .remove("periodicTasks")
+        .and_then(|value| match value {
+            Value::Array(tasks) => Some(tasks),
+            _ => None,
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|task| {
+            let Value::Object(mut task) = task else {
+                return None;
+            };
+            Some(json!({
+                "name": task.remove("name").unwrap_or(Value::Null),
+                "intervalMs": "<interval-ms-or-null>",
+                "hot": task.remove("hot").unwrap_or(Value::Null),
+            }))
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "ok": map.remove("ok").unwrap_or(Value::Null),
+        "periodicTasks": periodic_tasks,
+    })
 }
 
 fn normalize_json_string(text: &str, context: &NormalizeContext, key: Option<&str>) -> Value {

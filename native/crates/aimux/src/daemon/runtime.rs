@@ -3593,9 +3593,9 @@ impl DaemonAgentTextRuntime for RealDaemonRuntime {
         options: ProjectServicePostOptions,
     ) -> ProjectServiceJsonResult {
         if options.ensure_project {
-            self.post_ensured_project_service_json(project, route_path, body, None)
+            self.post_ensured_project_service_json(project, route_path, body, options.timeout_ms)
         } else {
-            self.request_project_service_json(project, route_path, Some(body), None)
+            self.request_project_service_json(project, route_path, Some(body), options.timeout_ms)
         }
     }
 }
