@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::atomic_write::atomic_write;
-use crate::managed_launch_env::{
-    wrap_command_with_managed_launch_env, wrap_command_with_managed_launch_env_extra,
-};
+use crate::managed_launch_env::wrap_command_with_managed_launch_env_extra;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedShellIntegration {
@@ -87,6 +85,22 @@ pub fn wrap_interactive_shell_with_integration(
     tool: &str,
     shell_path: &str,
 ) -> Result<(String, Vec<String>), String> {
+    wrap_interactive_shell_with_integration_extra(
+        project_state_dir,
+        session_id,
+        tool,
+        shell_path,
+        Vec::<(String, String)>::new(),
+    )
+}
+
+pub fn wrap_interactive_shell_with_integration_extra(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    tool: &str,
+    shell_path: &str,
+    extra_env: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+) -> Result<(String, Vec<String>), String> {
     let project_state_dir = project_state_dir.as_ref();
     let prepared = prepare_shell_integration(project_state_dir, shell_path)?;
     let mut env_args = shell_env_args(project_state_dir, session_id, tool, &prepared);
@@ -108,7 +122,9 @@ pub fn wrap_interactive_shell_with_integration(
             env_args
         }
     };
-    Ok(wrap_command_with_managed_launch_env("env", shell_args))
+    Ok(wrap_command_with_managed_launch_env_extra(
+        "env", shell_args, extra_env,
+    ))
 }
 
 pub fn prepare_shell_integration(

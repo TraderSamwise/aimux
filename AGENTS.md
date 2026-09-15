@@ -123,6 +123,14 @@ the agent that changed them. Apply these rules before every commit:
 - Commit your own work promptly with a message that names its actual scope.
   Small explicit commits are easier to audit and cannot be swept into someone
   else's later commit.
+- For writable work on the target branch, create an Aimux-managed linked
+  worktree with `aimux worktree create <name> --project "$AIMUX_PROJECT_ROOT"`.
+  Do not use a standalone `git clone`; clone-only commits do not share Sam's
+  object store and are not delivered to the real repository.
+- Before marking loop or task work complete, ensure the current HEAD is
+  reachable from the claimed target ref in the project root. `aimux loop done`
+  and `aimux task complete` enforce this with
+  `git merge-base --is-ancestor <sha> <ref>`.
 - If a hook fails because of unrelated shared-tree changes, do not bypass it
   with `HUSKY=0`. Hooks must run without stashing or hiding unstaged files; if
   they still cannot run safely, report the hook conflict instead of committing

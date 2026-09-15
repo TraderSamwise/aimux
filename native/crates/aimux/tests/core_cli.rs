@@ -2193,6 +2193,31 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
         }
     );
 
+    let done_with_delivery_ref = classify_core_cli(
+        &[
+            "loop",
+            "done",
+            "--session",
+            "claude-1",
+            "--delivery-ref",
+            "master",
+        ],
+        &context(true, true),
+    )
+    .expect("loop done delivery ref plan");
+    assert_eq!(
+        done_with_delivery_ref.action,
+        CoreCliAction::TextRoute {
+            path: "/core/loop/done-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "agent",
+                "deliveryRef": "master",
+            })),
+        }
+    );
+
     let block = classify_core_cli(
         &["loop", "block", "--session=claude-1"],
         &context(true, true),

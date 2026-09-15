@@ -8,7 +8,7 @@ use crate::runtime_topology::{
     read_runtime_topology, runtime_topology_path, update_runtime_topology,
 };
 use crate::shell_hooks::{
-    wrap_command_with_shell_integration, wrap_interactive_shell_with_integration,
+    wrap_command_with_shell_integration_extra, wrap_interactive_shell_with_integration_extra,
 };
 use crate::tmux::{MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget, project_session};
 
@@ -132,11 +132,12 @@ fn launch_service(
         shell.clone()
     };
     let (launch_command, args) = if input.launch_command_line.is_empty() {
-        match wrap_interactive_shell_with_integration(
+        match wrap_interactive_shell_with_integration_extra(
             context.project_state_dir(),
             &input.service_id,
             "service",
             &shell,
+            [("AIMUX_PROJECT_ROOT".to_owned(), project_root.clone())],
         ) {
             Ok(wrapped) => wrapped,
             Err(error) => return json_error(500, error),
@@ -146,13 +147,14 @@ fn launch_service(
             "-lc".to_owned(),
             build_service_launch_script(&input.launch_command_line, &shell),
         ];
-        match wrap_command_with_shell_integration(
+        match wrap_command_with_shell_integration_extra(
             context.project_state_dir(),
             &input.service_id,
             "service",
             &shell,
             &launch_args,
             &shell,
+            [("AIMUX_PROJECT_ROOT".to_owned(), project_root.clone())],
         ) {
             Ok(wrapped) => wrapped,
             Err(error) => return json_error(500, error),

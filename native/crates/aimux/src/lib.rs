@@ -55,6 +55,7 @@ pub mod desktop_notifier;
 pub mod event_loop_budget;
 pub mod expose_pane_output_tap;
 pub mod expose_socket;
+pub mod git_delivery;
 pub mod hosted_audit;
 pub mod hosted_auth;
 pub mod hosted_cli;

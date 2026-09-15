@@ -202,6 +202,8 @@ pub struct CoreLoopActorContext {
     pub session_id: Option<String>,
     pub tool: Option<String>,
     pub overseer: bool,
+    pub project_root: Option<String>,
+    pub delivery_ref: Option<String>,
 }
 
 impl CoreLoopActorContext {
@@ -210,6 +212,8 @@ impl CoreLoopActorContext {
             session_id: env_value("AIMUX_SESSION_ID"),
             tool: env_value("AIMUX_TOOL"),
             overseer: std::env::var("AIMUX_OVERSEER").ok().as_deref() == Some("1"),
+            project_root: env_value("AIMUX_PROJECT_ROOT"),
+            delivery_ref: env_value("AIMUX_DELIVERY_REF"),
         }
     }
 }
@@ -821,6 +825,7 @@ where
                 .project
                 .as_deref()
                 .map(&resolve_project_root)
+                .or_else(|| context.loop_actor.project_root.clone())
                 .unwrap_or_else(|| context.current_project_root.clone());
             let mut body = serde_json::Map::from_iter([
                 ("project".into(), Value::String(project_root)),
@@ -831,6 +836,12 @@ where
                 body.insert("reason".into(), Value::String(reason));
             }
             let (operation, route) = if parsed.subcommand == "done" {
+                if let Some(delivery_ref) = parsed
+                    .delivery_ref
+                    .or_else(|| context.loop_actor.delivery_ref.clone())
+                {
+                    body.insert("deliveryRef".into(), Value::String(delivery_ref));
+                }
                 (CoreCliOperation::LoopDone, CORE_API_ROUTES.loop_done_text)
             } else {
                 (CoreCliOperation::LoopBlock, CORE_API_ROUTES.loop_block_text)

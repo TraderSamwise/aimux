@@ -670,6 +670,19 @@ fn loop_parsers_match_mutation_and_exit_forms() {
     assert_eq!(done.reason.as_deref(), Some("done"));
     assert!(done.json);
 
+    let done_with_delivery_ref = parse_core_loop_exit_args(&[
+        "loop",
+        "done",
+        "--session",
+        "claude-1",
+        "--delivery-ref=master",
+    ])
+    .expect("loop done delivery ref");
+    assert_eq!(
+        done_with_delivery_ref.delivery_ref.as_deref(),
+        Some("master")
+    );
+
     let block =
         parse_core_loop_exit_args(&["loop", "block", "--project", "/repo"]).expect("loop block");
     assert_eq!(block.subcommand, "block");
@@ -681,6 +694,8 @@ fn loop_parsers_match_mutation_and_exit_forms() {
     );
     assert!(parse_core_loop_mutation_args(&["loop", "add", "claude-1", "--reason", "x"]).is_none());
     assert!(parse_core_loop_exit_args(&["loop", "done", "--session"]).is_none());
+    assert!(parse_core_loop_exit_args(&["loop", "done", "--delivery-ref", "--json"]).is_none());
+    assert!(parse_core_loop_exit_args(&["loop", "block", "--delivery-ref", "master"]).is_none());
 }
 
 #[test]

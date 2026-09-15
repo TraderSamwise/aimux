@@ -95,6 +95,7 @@ pub fn parse_core_loop_exit_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLoopEx
     let mut session_id = None;
     let mut reason = None;
     let mut project = None;
+    let mut delivery_ref = None;
     let mut json = false;
     let mut index = 2;
     while index < args.len() {
@@ -127,6 +128,29 @@ pub fn parse_core_loop_exit_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLoopEx
             index += 1;
             continue;
         }
+        if arg == "--delivery-ref" {
+            if subcommand != "done" {
+                return None;
+            }
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            delivery_ref = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--delivery-ref=") {
+            if subcommand != "done" {
+                return None;
+            }
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            delivery_ref = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
         if arg == "--project" {
             let value = required_value(args, index)?;
             if value.starts_with('-') {
@@ -151,6 +175,7 @@ pub fn parse_core_loop_exit_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLoopEx
         session_id,
         reason,
         project,
+        delivery_ref,
         json,
     })
 }
