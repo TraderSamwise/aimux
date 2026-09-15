@@ -17,6 +17,8 @@
           "dist-ui",
           "docs",
           "scripts/tmux-control.sh",
+          "scripts/cargo-sweep-stale-targets.sh",
+          "scripts/install-cargo-sweep-schedule.sh",
           "scripts/tmux-open-hyperlink.sh",
           "scripts/tmux-statusline.sh",
           "native/darwin-arm64",
@@ -30,6 +32,8 @@
           "dist-ui",
           "docs",
           "scripts/tmux-control.sh",
+          "scripts/cargo-sweep-stale-targets.sh",
+          "scripts/install-cargo-sweep-schedule.sh",
           "scripts/tmux-open-hyperlink.sh",
           "scripts/tmux-statusline.sh",
           "native/darwin-arm64",
@@ -42,6 +46,8 @@
           { "entry": "dist-ui", "present": true },
           { "entry": "docs", "present": true },
           { "entry": "scripts/tmux-control.sh", "present": true },
+          { "entry": "scripts/cargo-sweep-stale-targets.sh", "present": true },
+          { "entry": "scripts/install-cargo-sweep-schedule.sh", "present": true },
           { "entry": "scripts/tmux-open-hyperlink.sh", "present": true },
           { "entry": "scripts/tmux-statusline.sh", "present": true },
           { "entry": "native/darwin-arm64", "present": true },
@@ -52,7 +58,7 @@
           { "entry": "scripts/installed-aimux-shim.sh", "present": false }
         ]
       },
-      "inputSha256": "61a4d866206845115f7ee672478eddf210e8c6e266411afc6b25b6bda1b412c2"
+      "inputSha256": "27f88ee12fdea6e5bfcfe76d0611bdf7053af65ceb490614cc990398fdf516ae"
     }
   ]
 }

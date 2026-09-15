@@ -63,7 +63,7 @@
     "verify": "yarn verify:fast",
     "verify:fast": "yarn verify:push && yarn lint && yarn native:fmt:check && yarn check:local-build-boundary && yarn audit:rust-orphans && yarn audit:parser:strict && yarn audit:async-blocking && yarn audit:async-seams && yarn audit:async-clippy && yarn audit:contract-secrets && yarn audit:live-residual-isolation",
     "verify:full": "yarn verify:fast && yarn native:test && yarn test && yarn --cwd app lint --max-warnings=0 && yarn --cwd app test",
-    "verify:push": "yarn typecheck && yarn --cwd app typecheck",
+    "verify:push": "yarn typecheck && yarn --cwd app typecheck && yarn hook:attest",
     "verify:app": "yarn --cwd app typecheck && yarn --cwd app lint --max-warnings=0 && yarn --cwd app test",
     "verify:codex-instructions": "bash scripts/verify-codex-developer-instructions.sh",
     "release:readiness": "yarn verify:full",
@@ -82,7 +82,8 @@
     "native:cargo-sweep:install-schedule": "bash scripts/install-cargo-sweep-schedule.sh",
     "prepack": "yarn build:release && yarn build:ui:local",
     "prepare": "husky",
-    "check:hosted": "yarn native:build && ./scripts/hosted-check.mjs"
+    "check:hosted": "yarn native:build && ./scripts/hosted-check.mjs",
+    "hook:attest": "bash scripts/check-commit-hook-attestations.sh"
   },
   "lint-staged": {
     "src/**/*.ts": [

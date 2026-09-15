@@ -1,4 +1,2 @@
 set -e
-yarn native:fmt:staged
-yarn typecheck
-npx lint-staged --no-stash --no-hide-partially-staged
+bash scripts/pre-commit.sh

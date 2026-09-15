@@ -17,6 +17,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commit hook attestations
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            bash scripts/check-commit-hook-attestations.sh "origin/${GITHUB_BASE_REF}..HEAD"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            bash scripts/check-commit-hook-attestations.sh "${{ github.event.before }}..HEAD"
+          fi
 
       - name: Install Node from .nvmrc
         uses: actions/setup-node@v4

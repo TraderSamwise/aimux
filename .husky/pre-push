@@ -1,1 +1,2 @@
-yarn verify:push
+set -e
+bash scripts/pre-push-hook.sh

@@ -1,0 +1,2 @@
+set -e
+bash scripts/post-commit-hook.sh
