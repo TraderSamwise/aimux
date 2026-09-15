@@ -24,7 +24,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +72,27 @@ def native_test_jobs() -> int:
         except ValueError:
             raise SystemExit(f"AIMUX_NATIVE_TEST_JOBS must be a positive integer, got {raw!r}")
     return DEFAULT_NATIVE_TEST_JOBS
+
+
+def default_agent_cargo_target_dir(env: Mapping[str, str] = os.environ) -> str | None:
+    if env.get("CARGO_TARGET_DIR"):
+        return None
+    session_id = (env.get("AIMUX_SESSION_ID") or "").strip()
+    if not session_id:
+        return None
+    safe_session_id = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in session_id
+    ).strip("_")
+    if not safe_session_id:
+        return None
+    return f"/tmp/aimux-cargo-target-{safe_session_id}"
+
+
+def apply_default_agent_cargo_target_dir() -> None:
+    target_dir = default_agent_cargo_target_dir()
+    if target_dir:
+        os.environ["CARGO_TARGET_DIR"] = target_dir
 
 
 def aimux_home() -> Path:
@@ -466,6 +487,7 @@ def report_failures(results: list[TestResult]) -> None:
 
 
 def main() -> int:
+    apply_default_agent_cargo_target_dir()
     parallel_targets = set(read_list(PARALLEL_TARGETS))
     serial_targets = read_serial(SERIAL_TARGETS)
     validate_classification(parallel_targets, set(serial_targets))
