@@ -15,11 +15,13 @@ struct Call {
     route_path: String,
     body: Option<Value>,
     ensure_project: Option<bool>,
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Default)]
 struct FakeAgentRuntime {
     calls: Vec<Call>,
+    fail_loop: bool,
     fail_event: bool,
     invalid_agents: bool,
 }
@@ -43,6 +45,7 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             route_path: route_path.into(),
             body: None,
             ensure_project: None,
+            timeout_ms: None,
         });
         match route_path {
             project_routes::agents::LIST if self.invalid_agents => ProjectServiceJsonResult::ok(
@@ -80,6 +83,7 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             route_path: route_path.into(),
             body: Some(body.clone()),
             ensure_project: Some(options.ensure_project),
+            timeout_ms: options.timeout_ms,
         });
         match route_path {
             project_routes::agents::SPAWN if body["tool"] == "aider" => {
@@ -136,6 +140,9 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
                 "/repo",
                 json!({ "sessionId": body["sessionId"].clone() }),
             ),
+            project_routes::agents::LOOP if self.fail_loop => ProjectServiceJsonResult::error(
+                DaemonRouteResponse::json(500, json!({ "error": "loop write failed" })),
+            ),
             project_routes::agents::LOOP => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "sessionId": body["sessionId"].clone(), "loop": { "goal": "canonical goal" } }),
@@ -164,6 +171,13 @@ fn text_body(response: DaemonRouteResponse) -> String {
 
 fn json_text(response: DaemonRouteResponse) -> Value {
     serde_json::from_str(&text_body(response)).expect("json text")
+}
+
+fn json_body(response: DaemonRouteResponse) -> Value {
+    match response.body {
+        DaemonResponseBody::Json(value) => value,
+        other => panic!("expected json body, got {other:?}"),
+    }
 }
 
 #[test]
@@ -537,6 +551,14 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
         })
     );
     assert_eq!(
+        runtime.calls[runtime.calls.len() - 2].ensure_project,
+        Some(true)
+    );
+    assert_eq!(
+        runtime.calls[runtime.calls.len() - 2].timeout_ms,
+        Some(2_000)
+    );
+    assert_eq!(
         runtime.calls.last().unwrap().body.as_ref().unwrap(),
         &json!({
             "session": "claude-1",
@@ -549,6 +571,7 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
         })
     );
     assert_eq!(runtime.calls.last().unwrap().ensure_project, Some(false));
+    assert_eq!(runtime.calls.last().unwrap().timeout_ms, Some(500));
 
     let mut failed_event = FakeAgentRuntime {
         fail_event: true,
@@ -579,12 +602,40 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
         })
     );
     assert_eq!(
+        failed_event.calls[failed_event.calls.len() - 2].timeout_ms,
+        Some(2_000)
+    );
+    assert_eq!(
         failed_event.calls.last().unwrap().body.as_ref().unwrap(),
         &json!({
             "session": "claude-1",
             "event": { "kind": "blocked", "message": "waiting", "source": "loop" }
         })
     );
+    assert_eq!(failed_event.calls.last().unwrap().timeout_ms, Some(500));
+}
+
+#[test]
+fn loop_exit_reports_required_state_write_failure_without_event_post() {
+    let mut runtime = FakeAgentRuntime {
+        fail_loop: true,
+        ..FakeAgentRuntime::default()
+    };
+
+    let response = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.loop_done_text,
+        Some(&json!({ "project": "/repo", "sessionId": "claude-1" })),
+    )
+    .expect("loop done");
+
+    assert_eq!(response.status, 500);
+    assert_eq!(json_body(response)["error"], json!("loop write failed"));
+    assert_eq!(runtime.calls.len(), 1);
+    assert_eq!(runtime.calls[0].route_path, project_routes::agents::LOOP);
+    assert_eq!(runtime.calls[0].ensure_project, Some(true));
+    assert_eq!(runtime.calls[0].timeout_ms, Some(2_000));
 }
 
 #[test]
