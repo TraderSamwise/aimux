@@ -544,6 +544,9 @@ pub fn agent_ps_text_route(
         Ok(result) => result,
         Err(response) => return response,
     };
+    if let Some(response) = reject_unverified_tmux_liveness(&json) {
+        return response;
+    }
     let agents = match required_project_service_array(&json, "agent ps", "agents") {
         Ok(agents) => agents,
         Err(response) => return response,
@@ -585,6 +588,9 @@ fn agent_filtered_text_route(
         Ok(result) => result,
         Err(response) => return response,
     };
+    if let Some(response) = reject_unverified_tmux_liveness(&json) {
+        return response;
+    }
     let agents = match required_project_service_array(&json, "agent filtered list", "agents") {
         Ok(agents) => agents,
         Err(response) => return response,
@@ -642,6 +648,9 @@ pub fn agent_list_text_route(
         Ok(result) => result,
         Err(response) => return response,
     };
+    if let Some(response) = reject_unverified_tmux_liveness(&json) {
+        return response;
+    }
     let agents = match required_project_service_array(&json, "agent list", "agents") {
         Ok(agents) => agents,
         Err(response) => return response,
@@ -987,6 +996,22 @@ fn loop_base_request(
         optional_string(route_url, body, "updatedByRole"),
     );
     request
+}
+
+fn reject_unverified_tmux_liveness(json: &Value) -> Option<DaemonRouteResponse> {
+    let query = json.get("tmuxLiveWindowQuery")?.as_object()?;
+    if query.get("ok").and_then(Value::as_bool) != Some(false) {
+        return None;
+    }
+    let error = query
+        .get("error")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("unknown tmux liveness query failure");
+    Some(text_error(
+        503,
+        format!("Error: could not verify agent tmux liveness: {error}"),
+    ))
 }
 
 fn unwrap_project_result(
