@@ -314,6 +314,7 @@ fn route_agents_reconciles_live_dead_and_unavailable_tmux_liveness() {
 #[test]
 fn async_route_agents_reconciles_tmux_liveness_on_native_service_path() {
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    // aimux-async-seam: test - sync test drives async handler
     aimux::async_runtime::block_on_named("test:async-route-agents-liveness", async {
         let project = temp_project("async-route-tmux-liveness");
         let state_dir = project.join("state");
