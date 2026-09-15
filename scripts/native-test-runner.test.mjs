@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const packageJsonPath = join(repoRoot, "package.json");
 const runnerPath = join(repoRoot, "scripts/native-test-runner.py");
 const python = process.env.PYTHON || "python3";
 const roots = [];
@@ -103,6 +104,15 @@ afterEach(() => {
 });
 
 describe("native-test-runner machine-wide cap", () => {
+  it("keeps the yarn native:test lane on the Python runner instead of nesting yarn", () => {
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    const script = packageJson.scripts?.["native:test"];
+
+    expect(script).toBe("CARGO_INCREMENTAL=0 python3 scripts/native-test-runner.py");
+    expect(script).not.toMatch(/(^|[;&|]\s*)yarn(\s|$)/);
+    expect(script).not.toMatch(/(^|[;&|]\s*)npm(\s|$)/);
+  });
+
   it("bounds observed concurrent native suites to AIMUX_NATIVE_TEST_JOBS", async () => {
     const home = tempAimuxHome("native-test-cap");
     const children = Array.from({ length: 6 }, (_, index) =>
