@@ -2,9 +2,13 @@ mod footer;
 
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
-    DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
-    ServiceStatus, SessionStatus, is_dashboard_overseer_session,
-    is_dashboard_project_control_session, is_dashboard_scribe_session,
+    DashboardService, DashboardSession, DesktopStateSnapshot, ServiceStatus, SessionStatus,
+    is_dashboard_overseer_session, is_dashboard_project_control_session,
+    is_dashboard_scribe_session,
+};
+use crate::dashboard_navigation::{
+    DASHBOARD_QUICK_JUMP_LIMIT, DashboardNavigationGroup, DashboardNavigationGroupKind,
+    dashboard_navigation_groups,
 };
 use crate::project_service::work_outline::{WorkOutlineEntry, WorkOutlineStatus};
 use crate::project_service::worktree_colors_contract::worktree_color_ansi;
@@ -22,11 +26,10 @@ use crate::tui_render::theme::{
     visible_width,
 };
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const RECENT_IDLE_MS: u128 = 2 * 60 * 1000;
-const DASHBOARD_QUICK_JUMP_LIMIT: usize = 9;
 const COL_SELECT: usize = 2;
 const COL_DOT: usize = 2;
 const COL_INDEX: usize = 4;
@@ -34,11 +37,7 @@ const COL_IDENTITY: usize = 16;
 const COL_STATUS: usize = 14;
 const COL_TIME: usize = 16;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DashboardNavLevel {
-    Worktrees,
-    Sessions,
-}
+pub use crate::dashboard_navigation::DashboardNavLevel;
 
 #[derive(Debug, Clone)]
 pub struct DashboardRenderInput<'a> {
@@ -51,6 +50,7 @@ pub struct DashboardRenderInput<'a> {
     pub selected_session_id: Option<&'a str>,
     pub selected_service_id: Option<&'a str>,
     pub focused_worktree_path: Option<&'a str>,
+    pub focused_group_index: Option<usize>,
     pub runtime_label: Option<&'a str>,
     pub version: Option<&'a str>,
     pub hide_offline_agents: bool,
@@ -107,6 +107,7 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         .iter()
         .filter(|session| !is_project_control_session(session))
         .collect::<Vec<_>>();
+    let navigation_groups = dashboard_navigation_groups(input.snapshot);
     let mut content = Vec::new();
     if !input.snapshot.operation_failures.is_empty() {
         let mut failure_rows = input
@@ -155,11 +156,13 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         }));
         content.push(String::new());
     }
-    render_supervisor_section(input, &mut content, card_width);
-    if dashboard_sessions.is_empty() && input.snapshot.worktree_groups.is_empty() {
+    if dashboard_sessions.is_empty()
+        && input.snapshot.worktree_groups.is_empty()
+        && navigation_groups.is_empty()
+    {
         content.push(center_in_block("No sessions. Press [n] to create one."));
     } else if has_worktrees(input) {
-        render_worktree_grouped(input, &mut content, card_width);
+        render_navigation_grouped(input, &navigation_groups, &mut content, card_width);
     } else {
         for (index, session) in dashboard_sessions.iter().enumerate() {
             let selected = input.nav_level == DashboardNavLevel::Sessions
@@ -458,8 +461,8 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
                 tone: None,
             },
             FooterHint {
-                key: "1-9",
-                label: "worktree",
+                key: "0-9",
+                label: "group",
                 tone: None,
             },
             FooterHint {
@@ -648,32 +651,50 @@ fn has_worktrees(input: &DashboardRenderInput<'_>) -> bool {
     !input.snapshot.worktree_groups.is_empty()
 }
 
-fn render_supervisor_section(
+fn render_supervisor_group(
     input: &DashboardRenderInput<'_>,
+    group: &DashboardNavigationGroup<'_>,
+    group_index: usize,
     lines: &mut Vec<String>,
     card_width: usize,
 ) {
-    let mut seen = BTreeSet::new();
-    let mut sessions = Vec::new();
-    for session in input.overseer_sessions.iter().chain(input.scribe_sessions) {
-        if seen.insert(session.id.as_str()) {
-            sessions.push(session);
-        }
-    }
-    if sessions.is_empty() {
-        return;
-    }
-    let rows = sessions
+    let focused = input.nav_level == DashboardNavLevel::Worktrees
+        && input.focused_group_index == Some(group_index);
+    let focus_mark = if focused {
+        format!("{} ", style("▸", Tone::Accent))
+    } else {
+        String::new()
+    };
+    let badge = group
+        .digit
+        .map(|digit| format!("[{digit}] "))
+        .unwrap_or_default();
+    let title = format!("{focus_mark}{}{}", badge, style("SUPERVISOR", Tone::Accent));
+    let digit_by_id = group
+        .entries
         .iter()
-        .map(|session| supervisor_session_row(session))
+        .map(|entry| (entry.id, entry.digit))
+        .collect::<BTreeMap<_, _>>();
+    let rows = group
+        .sessions
+        .iter()
+        .map(|session| {
+            let selected = input.nav_level == DashboardNavLevel::Sessions
+                && input.selected_session_id == Some(session.id.as_str());
+            supervisor_session_row(
+                session,
+                selected,
+                digit_by_id.get(session.id.as_str()).copied().flatten(),
+            )
+        })
         .collect::<Vec<_>>();
-    let summary = match sessions.len() {
+    let summary = match group.sessions.len() {
         1 => "1 project-control session".to_owned(),
         count => format!("{count} project-control sessions"),
     };
     lines.extend(card(&CardSpec {
         tone: Tone::Accent,
-        title: &style("SUPERVISOR", Tone::Accent),
+        title: &title,
         summary: Some(&summary),
         rows: &rows,
         width: card_width,
@@ -681,7 +702,17 @@ fn render_supervisor_section(
     lines.push(String::new());
 }
 
-fn supervisor_session_row(session: &DashboardSession) -> String {
+fn supervisor_session_row(
+    session: &DashboardSession,
+    selected: bool,
+    digit: Option<usize>,
+) -> String {
+    let marker = if selected {
+        style("▸", Tone::Accent)
+    } else {
+        String::new()
+    };
+    let digit = digit.map(|digit| format!("{digit}.")).unwrap_or_default();
     let role = style(supervisor_role_label(session), Tone::Strong);
     let dot = format!("{} ", session_status_dot(session));
     let identity = agent_identity(session);
@@ -696,12 +727,16 @@ fn supervisor_session_row(session: &DashboardSession) -> String {
         .unwrap_or_default();
     grid_cols(&[
         Column {
-            content: "",
+            content: &marker,
             width: COL_SELECT,
         },
         Column {
             content: &dot,
             width: COL_DOT,
+        },
+        Column {
+            content: &digit,
+            width: COL_INDEX,
         },
         Column {
             content: &role,
@@ -736,13 +771,22 @@ fn supervisor_role_label(session: &DashboardSession) -> &'static str {
     }
 }
 
-fn render_worktree_grouped(
+fn render_navigation_grouped(
     input: &DashboardRenderInput<'_>,
+    groups: &[DashboardNavigationGroup<'_>],
     lines: &mut Vec<String>,
     card_width: usize,
 ) {
-    for worktree in build_dashboard_quick_jump_worktrees(input) {
-        let focused = worktree.path == input.focused_worktree_path;
+    for (group_index, worktree) in groups.iter().enumerate() {
+        if worktree.kind == DashboardNavigationGroupKind::Supervisor {
+            render_supervisor_group(input, worktree, group_index, lines, card_width);
+            continue;
+        }
+        let focused = if let Some(focused_group_index) = input.focused_group_index {
+            focused_group_index == group_index
+        } else {
+            worktree.path == input.focused_worktree_path
+        };
         let focus_mark = if focused && input.nav_level == DashboardNavLevel::Worktrees {
             format!("{} ", style("▸", Tone::Accent))
         } else {
@@ -802,338 +846,6 @@ fn render_worktree_grouped(
         }));
         lines.push(String::new());
     }
-}
-
-#[derive(Clone, Copy)]
-struct QuickJumpEntry<'a> {
-    digit: Option<usize>,
-    id: &'a str,
-}
-
-struct QuickJumpWorktree<'a> {
-    digit: Option<usize>,
-    path: Option<&'a str>,
-    name: &'a str,
-    branch: &'a str,
-    pending: bool,
-    removing: bool,
-    pending_action: Option<&'a str>,
-    operation_failure: Option<&'a DashboardOperationFailure>,
-    sessions: Vec<&'a DashboardSession>,
-    services: Vec<&'a DashboardService>,
-    entries: Vec<QuickJumpEntry<'a>>,
-}
-
-fn build_dashboard_quick_jump_worktrees<'a>(
-    input: &'a DashboardRenderInput<'_>,
-) -> Vec<QuickJumpWorktree<'a>> {
-    let mut main_sessions = Vec::new();
-    let mut main_services = Vec::new();
-    let mut sessions_by_path: BTreeMap<&str, Vec<&'a DashboardSession>> = BTreeMap::new();
-    let mut services_by_path: BTreeMap<&str, Vec<&'a DashboardService>> = BTreeMap::new();
-    let mut session_path_order = Vec::new();
-    let mut service_path_order = Vec::new();
-    // A session in the main checkout may carry either no worktree path or the
-    // main path spelled out. Treating only the first as main left the second
-    // unclaimed, and the orphan sweep below then drew it as a second
-    // "Main Checkout" card holding the same agents.
-    let main_path = input.snapshot.main_checkout_path.as_deref();
-    let is_main_path =
-        |path: &str| main_path.is_some_and(|main| same_dashboard_worktree_path(path, main));
-
-    for session in &input.snapshot.sessions {
-        if is_project_control_session(session) {
-            continue;
-        }
-        match session.worktree_path.as_deref() {
-            Some(path) if !is_main_path(path) => {
-                if !sessions_by_path.contains_key(path) {
-                    session_path_order.push(path);
-                }
-                sessions_by_path.entry(path).or_default().push(session);
-            }
-            _ => main_sessions.push(session),
-        }
-    }
-    for service in &input.snapshot.services {
-        match service.worktree_path.as_deref() {
-            Some(path) if !is_main_path(path) => {
-                if !services_by_path.contains_key(path) {
-                    service_path_order.push(path);
-                }
-                services_by_path.entry(path).or_default().push(service);
-            }
-            _ => main_services.push(service),
-        }
-    }
-    sort_sessions_by_created(&mut main_sessions);
-    sort_services_by_created(&mut main_services);
-    for sessions in sessions_by_path.values_mut() {
-        sort_sessions_by_created(sessions);
-    }
-    for services in services_by_path.values_mut() {
-        sort_services_by_created(services);
-    }
-
-    let mut worktrees = Vec::new();
-    if let Some(main_group) = input
-        .snapshot
-        .worktree_groups
-        .iter()
-        .find(|group| group.path.is_none())
-    {
-        let sessions = entries_for_group_sessions(&main_group.sessions, &main_sessions);
-        let services = entries_for_group_services(&main_group.services, &main_services);
-        push_quick_jump_worktree(
-            &mut worktrees,
-            QuickJumpWorktreeInput {
-                path: None,
-                name: &main_group.name,
-                branch: &main_group.branch,
-                pending: main_group.pending,
-                removing: main_group.removing,
-                pending_action: main_group.pending_action.as_deref(),
-                operation_failure: main_group.operation_failure.as_ref(),
-                sessions,
-                services,
-            },
-        );
-    } else if !input.hide_offline_agents || !main_sessions.is_empty() || !main_services.is_empty() {
-        push_quick_jump_worktree(
-            &mut worktrees,
-            QuickJumpWorktreeInput {
-                path: None,
-                name: &input.snapshot.main_checkout_info.name,
-                branch: &input.snapshot.main_checkout_info.branch,
-                pending: false,
-                removing: false,
-                pending_action: None,
-                operation_failure: None,
-                sessions: main_sessions,
-                services: main_services,
-            },
-        );
-    }
-
-    let mut rendered_paths = BTreeMap::new();
-    let mut ordered_groups = input
-        .snapshot
-        .worktree_groups
-        .iter()
-        .filter(|group| group.path.is_some())
-        .collect::<Vec<_>>();
-    ordered_groups.sort_by(|left, right| {
-        dashboard_created_sort_key_group(right).cmp(&dashboard_created_sort_key_group(left))
-    });
-    for group in ordered_groups {
-        let path = group.path.as_deref();
-        let sessions = entries_for_group_sessions(
-            &group.sessions,
-            path.and_then(|path| sessions_by_path.get(path))
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-        );
-        let services = entries_for_group_services(
-            &group.services,
-            path.and_then(|path| services_by_path.get(path))
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-        );
-        if let Some(path) = path {
-            rendered_paths.insert(path, true);
-        }
-        push_quick_jump_worktree(
-            &mut worktrees,
-            QuickJumpWorktreeInput {
-                path,
-                name: &group.name,
-                branch: &group.branch,
-                pending: group.pending,
-                removing: group.removing,
-                pending_action: group.pending_action.as_deref(),
-                operation_failure: group.operation_failure.as_ref(),
-                sessions,
-                services,
-            },
-        );
-    }
-
-    let orphan_paths = session_path_order
-        .into_iter()
-        .chain(service_path_order)
-        .collect::<Vec<_>>();
-    for path in orphan_paths {
-        if path.is_empty() || rendered_paths.contains_key(path) {
-            continue;
-        }
-        rendered_paths.insert(path, true);
-        let sessions = sessions_by_path.get(path).cloned().unwrap_or_default();
-        let services = services_by_path.get(path).cloned().unwrap_or_default();
-        let name = sessions
-            .first()
-            .and_then(|session| session.worktree_name.as_deref())
-            .or_else(|| {
-                services
-                    .first()
-                    .and_then(|service| service.worktree_name.as_deref())
-            })
-            .unwrap_or("unknown");
-        let branch = sessions
-            .first()
-            .and_then(|session| session.worktree_branch.as_deref())
-            .or_else(|| {
-                services
-                    .first()
-                    .and_then(|service| service.worktree_branch.as_deref())
-            })
-            .unwrap_or("unknown");
-        push_quick_jump_worktree(
-            &mut worktrees,
-            QuickJumpWorktreeInput {
-                path: Some(path),
-                name,
-                branch,
-                pending: false,
-                removing: false,
-                pending_action: None,
-                operation_failure: None,
-                sessions,
-                services,
-            },
-        );
-    }
-    worktrees
-}
-
-struct QuickJumpWorktreeInput<'a> {
-    path: Option<&'a str>,
-    name: &'a str,
-    branch: &'a str,
-    pending: bool,
-    removing: bool,
-    pending_action: Option<&'a str>,
-    operation_failure: Option<&'a DashboardOperationFailure>,
-    sessions: Vec<&'a DashboardSession>,
-    services: Vec<&'a DashboardService>,
-}
-
-fn push_quick_jump_worktree<'a>(
-    worktrees: &mut Vec<QuickJumpWorktree<'a>>,
-    input: QuickJumpWorktreeInput<'a>,
-) {
-    let mut entries = Vec::new();
-    for session in &input.sessions {
-        entries.push(QuickJumpEntry {
-            digit: (entries.len() < DASHBOARD_QUICK_JUMP_LIMIT).then_some(entries.len() + 1),
-            id: &session.id,
-        });
-    }
-    for service in &input.services {
-        entries.push(QuickJumpEntry {
-            digit: (entries.len() < DASHBOARD_QUICK_JUMP_LIMIT).then_some(entries.len() + 1),
-            id: &service.id,
-        });
-    }
-    worktrees.push(QuickJumpWorktree {
-        digit: (worktrees.len() < DASHBOARD_QUICK_JUMP_LIMIT).then_some(worktrees.len() + 1),
-        path: input.path,
-        name: input.name,
-        branch: input.branch,
-        pending: input.pending,
-        removing: input.removing,
-        pending_action: input.pending_action,
-        operation_failure: input.operation_failure,
-        sessions: input.sessions,
-        services: input.services,
-        entries,
-    });
-}
-
-fn entries_for_group_sessions<'a>(
-    ordered_group_entries: &'a [DashboardSession],
-    fallback_entries: &[&'a DashboardSession],
-) -> Vec<&'a DashboardSession> {
-    if ordered_group_entries.is_empty() {
-        fallback_entries
-            .iter()
-            .copied()
-            .filter(|session| !is_project_control_session(session))
-            .collect()
-    } else {
-        ordered_group_entries
-            .iter()
-            .filter(|session| !is_project_control_session(session))
-            .collect()
-    }
-}
-
-fn entries_for_group_services<'a>(
-    ordered_group_entries: &'a [DashboardService],
-    fallback_entries: &[&'a DashboardService],
-) -> Vec<&'a DashboardService> {
-    if ordered_group_entries.is_empty() {
-        fallback_entries.to_vec()
-    } else {
-        ordered_group_entries.iter().collect()
-    }
-}
-
-fn sort_sessions_by_created(sessions: &mut [&DashboardSession]) {
-    sessions.sort_by(|left, right| {
-        dashboard_created_sort_key_session(right).cmp(&dashboard_created_sort_key_session(left))
-    });
-}
-
-fn sort_services_by_created(services: &mut [&DashboardService]) {
-    services.sort_by(|left, right| {
-        dashboard_created_sort_key_service(right).cmp(&dashboard_created_sort_key_service(left))
-    });
-}
-
-fn dashboard_created_sort_key_session(session: &DashboardSession) -> i128 {
-    created_sort_key(
-        session.created_at.as_deref(),
-        session.tmux_window_index,
-        Some(session.index),
-    )
-}
-
-fn dashboard_created_sort_key_service(service: &DashboardService) -> i128 {
-    created_sort_key(
-        service.created_at.as_deref(),
-        service.tmux_window_index,
-        None,
-    )
-}
-
-fn dashboard_created_sort_key_group(group: &crate::dashboard_model::WorktreeGroup) -> i128 {
-    let created_at = string_at_extra(&group.extra, "createdAt");
-    let tmux_window_index = number_at_extra(&group.extra, "tmuxWindowIndex");
-    created_sort_key(created_at, tmux_window_index, None)
-}
-
-fn created_sort_key(
-    created_at: Option<&str>,
-    tmux_window_index: Option<usize>,
-    index: Option<usize>,
-) -> i128 {
-    created_at
-        .and_then(parse_timestamp_ms)
-        .map(|value| value as i128)
-        .or_else(|| tmux_window_index.map(|value| value as i128))
-        .or_else(|| index.map(|value| value as i128))
-        .unwrap_or(0)
-}
-
-fn string_at_extra<'a>(extra: &'a BTreeMap<String, Value>, key: &str) -> Option<&'a str> {
-    extra.get(key).and_then(Value::as_str)
-}
-
-fn number_at_extra(extra: &BTreeMap<String, Value>, key: &str) -> Option<usize> {
-    extra
-        .get(key)
-        .and_then(Value::as_u64)
-        .map(|value| value as usize)
 }
 
 fn agent_row(
@@ -1707,7 +1419,7 @@ fn service_status_dot(service: &DashboardService) -> String {
     }
 }
 
-fn semantic_count_parts(worktree: &QuickJumpWorktree<'_>) -> Vec<String> {
+fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for session in &worktree.sessions {
         if let Some(label) = effective_session_row_state(session) {
@@ -1777,7 +1489,7 @@ fn append_count(
     }
 }
 
-fn worktree_summary_text(worktree: &QuickJumpWorktree<'_>) -> String {
+fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     if worktree.operation_failure.is_some() {
         return style("failed", Tone::Danger);
     }
@@ -1800,7 +1512,7 @@ fn worktree_summary_text(worktree: &QuickJumpWorktree<'_>) -> String {
     }
 }
 
-fn worktree_tone(worktree: &QuickJumpWorktree<'_>) -> Tone {
+fn worktree_tone(worktree: &DashboardNavigationGroup<'_>) -> Tone {
     if worktree.operation_failure.is_some() {
         return Tone::Danger;
     }
@@ -2214,19 +1926,18 @@ fn render_worktree_details_panel(
     width: usize,
 ) -> Vec<String> {
     let focused_path = input.focused_worktree_path;
-    let focused_quick_jump_worktree = build_dashboard_quick_jump_worktrees(input)
-        .into_iter()
-        .find(|worktree| worktree.path == focused_path);
-    let focused_sessions = focused_quick_jump_worktree
-        .as_ref()
-        .map(|worktree| {
-            worktree
-                .sessions
-                .iter()
-                .copied()
-                .filter(|session| !is_project_control_session(session))
-                .collect::<Vec<_>>()
-        })
+    let navigation_groups = dashboard_navigation_groups(input.snapshot);
+    let focused_navigation_group = input
+        .focused_group_index
+        .and_then(|index| navigation_groups.get(index))
+        .or_else(|| {
+            navigation_groups.iter().find(|worktree| {
+                worktree.kind == DashboardNavigationGroupKind::Worktree
+                    && worktree.path == focused_path
+            })
+        });
+    let focused_sessions = focused_navigation_group
+        .map(|worktree| worktree.sessions.clone())
         .unwrap_or_else(|| {
             input
                 .snapshot
@@ -2236,8 +1947,7 @@ fn render_worktree_details_panel(
                 .filter(|session| !is_project_control_session(session))
                 .collect::<Vec<_>>()
         });
-    let focused_services = focused_quick_jump_worktree
-        .as_ref()
+    let focused_services = focused_navigation_group
         .map(|worktree| worktree.services.clone())
         .unwrap_or_else(|| {
             input
@@ -2247,25 +1957,20 @@ fn render_worktree_details_panel(
                 .filter(|service| service.worktree_path.as_deref() == focused_path)
                 .collect::<Vec<_>>()
         });
-    let focused_group = focused_path.and_then(|path| {
-        input
-            .snapshot
-            .worktree_groups
-            .iter()
-            .find(|group| group.path.as_deref() == Some(path))
-    });
-    let (name, branch, path) = if focused_path.is_none() {
+    let focused_group = focused_navigation_group
+        .filter(|group| group.kind == DashboardNavigationGroupKind::Worktree);
+    let (name, branch, path) = if focused_navigation_group
+        .is_some_and(|group| group.kind == DashboardNavigationGroupKind::Supervisor)
+    {
+        ("Supervisor", "", "(project control)")
+    } else if focused_path.is_none() {
         (
             input.snapshot.main_checkout_info.name.as_str(),
             input.snapshot.main_checkout_info.branch.as_str(),
             "(main checkout)",
         )
     } else if let Some(group) = focused_group {
-        (
-            group.name.as_str(),
-            group.branch.as_str(),
-            group.path.as_deref().unwrap_or(""),
-        )
+        (group.name, group.branch, group.path.unwrap_or(""))
     } else {
         (
             focused_sessions
@@ -4354,18 +4059,4 @@ fn strip_styled(line: &str) -> String {
 #[allow(dead_code)]
 fn _assert_width(line: &str, width: usize) -> bool {
     visible_width(line) <= width
-}
-
-/// Compare two worktree paths the way the project service groups them.
-fn same_dashboard_worktree_path(left: &str, right: &str) -> bool {
-    fn identity(path: &str) -> String {
-        let trimmed = path.trim().trim_end_matches('/');
-        std::fs::canonicalize(trimmed)
-            .map(|resolved| resolved.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| trimmed.to_owned())
-            .trim_end_matches('/')
-            .to_owned()
-    }
-    left.trim().trim_end_matches('/') == right.trim().trim_end_matches('/')
-        || identity(left) == identity(right)
 }

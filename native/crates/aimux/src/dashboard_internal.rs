@@ -1604,6 +1604,7 @@ fn render_dashboard_snapshot(
         selected_session_id,
         selected_service_id,
         focused_worktree_path,
+        focused_group_index: Some(controller.navigation.worktree_index),
         runtime_label: Some("tmux"),
         version: Some(&runtime_version),
         hide_offline_agents: controller.hide_offline_agents,

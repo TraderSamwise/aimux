@@ -229,6 +229,7 @@ fn claude_hook_backend_id_updates_the_topology_session_row() {
         selected_session_id: Some("claude-aimux-1"),
         selected_service_id: None,
         focused_worktree_path: Some(project.to_string_lossy().as_ref()),
+        focused_group_index: None,
         runtime_label: Some("native"),
         version: Some("local"),
         hide_offline_agents: false,

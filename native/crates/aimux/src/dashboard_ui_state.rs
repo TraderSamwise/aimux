@@ -3,7 +3,10 @@ use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
     DashboardSession, DesktopStateSnapshot, is_dashboard_project_control_session,
 };
-use crate::dashboard_navigation::{DashboardEntryRef, DashboardNavigationState};
+use crate::dashboard_navigation::{
+    DashboardEntryRef, DashboardNavigationGroupKind, DashboardNavigationState,
+    dashboard_navigation_groups,
+};
 use crate::dashboard_renderer::DashboardNavLevel;
 use crate::paths::PathResolver;
 use crate::tmux::tmux_command_from_env;
@@ -349,13 +352,18 @@ fn restore_worktree_focus(
         navigation.worktree_index = 0;
         return;
     }
+    let groups = dashboard_navigation_groups(snapshot);
     let focused_path = state.get("focusedWorktreePath").and_then(Value::as_str);
     navigation.worktree_index = focused_path
         .and_then(|path| {
-            snapshot
-                .worktree_groups
+            groups.iter().position(|group| {
+                group.kind == DashboardNavigationGroupKind::Worktree && group.path == Some(path)
+            })
+        })
+        .or_else(|| {
+            groups
                 .iter()
-                .position(|group| group.path.as_deref() == Some(path))
+                .position(|group| group.kind == DashboardNavigationGroupKind::Worktree)
         })
         .unwrap_or(0);
 }
@@ -399,23 +407,18 @@ fn restore_selected_entry(
     let Some(id) = state.get("selectedEntryId").and_then(Value::as_str) else {
         return;
     };
-    let Some(group) = snapshot.worktree_groups.get(navigation.worktree_index) else {
+    let Some(group) = navigation.focused_group(snapshot) else {
         return;
     };
     let session_index = group
         .sessions
         .iter()
-        .filter(|session| !is_project_control_session(session))
         .position(|session| kind == "session" && session.id == id);
     if let Some(index) = session_index {
         navigation.item_index = index;
         return;
     }
-    let session_count = group
-        .sessions
-        .iter()
-        .filter(|session| !is_project_control_session(session))
-        .count();
+    let session_count = group.sessions.len();
     if let Some(index) = group
         .services
         .iter()
@@ -450,10 +453,10 @@ fn persist_worktree_focus(
         remove_object_key(state, "focusedWorktreePath");
         return;
     }
-    if let Some(path) = snapshot
-        .worktree_groups
-        .get(navigation.worktree_index)
-        .and_then(|group| group.path.as_deref())
+    if let Some(path) = navigation
+        .focused_group(snapshot)
+        .filter(|group| group.kind == DashboardNavigationGroupKind::Worktree)
+        .and_then(|group| group.path)
     {
         state["focusedWorktreePath"] = Value::String(path.to_owned());
     } else {

@@ -59,6 +59,7 @@ fn run_case(case: &Value) -> Value {
             selected_session_id,
             selected_service_id,
             focused_worktree_path: None,
+            focused_group_index: None,
             runtime_label: None,
             version: None,
             hide_offline_agents: state
