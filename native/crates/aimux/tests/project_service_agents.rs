@@ -520,6 +520,7 @@ fn route_agent_spawn_composes_launch_and_records_topology_without_real_tmux() {
     let argv = create["args"].as_array().expect("create argv");
     assert!(argv.contains(&json!("AIMUX_SESSION_ID=codex-create")));
     assert!(argv.contains(&json!("AIMUX_TOOL=codex")));
+    assert!(argv.contains(&json!(format!("AIMUX_PROJECT_ROOT={}", project.display()))));
     assert!(argv.contains(&json!("codex")));
     assert!(argv.contains(&json!("resume")));
     assert!(argv.contains(&json!("backend-123")));

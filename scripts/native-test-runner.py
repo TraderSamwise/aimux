@@ -12,13 +12,19 @@ refuses to run if a target is unclassified.
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import json
 import os
+import secrets
+import shutil
+import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +32,18 @@ MANIFEST = ROOT / "native" / "Cargo.toml"
 TESTS_DIR = ROOT / "native" / "crates" / "aimux" / "tests"
 PARALLEL_TARGETS = ROOT / "scripts" / "native-test-parallel-targets.txt"
 SERIAL_TARGETS = ROOT / "scripts" / "native-test-serial-targets.txt"
+DEFAULT_NATIVE_TEST_JOBS = 3
+DEFAULT_NATIVE_TEST_LOCK_STALE_MS = 30 * 60 * 1_000
+DEFAULT_NATIVE_TEST_WAIT_LOG_MS = 10_000
+DEFAULT_NATIVE_TEST_WAIT_TIMEOUT_MS = 60 * 60 * 1_000
+NATIVE_TEST_HEARTBEAT_MS = 5_000
+
+
+@dataclass(frozen=True)
+class NativeTestSlot:
+    path: Path
+    token: str
+    slot: int
 
 
 @dataclass(frozen=True)
@@ -44,6 +62,208 @@ class TestResult:
     duration: float
     stdout: str
     stderr: str
+
+
+def native_test_jobs() -> int:
+    raw = os.environ.get("AIMUX_NATIVE_TEST_JOBS")
+    if raw is not None and raw.strip() != "":
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            raise SystemExit(f"AIMUX_NATIVE_TEST_JOBS must be a positive integer, got {raw!r}")
+    return DEFAULT_NATIVE_TEST_JOBS
+
+
+def aimux_home() -> Path:
+    return Path(os.environ.get("AIMUX_HOME") or (Path.home() / ".aimux"))
+
+
+@contextlib.contextmanager
+def native_test_slot(label: str = "native:test") -> Iterator[NativeTestSlot]:
+    slot = acquire_native_test_slot(label)
+    stop = threading.Event()
+
+    def heartbeat() -> None:
+        while not stop.wait(NATIVE_TEST_HEARTBEAT_MS / 1000.0):
+            touch_native_test_slot(slot, label)
+
+    thread = threading.Thread(target=heartbeat, name="aimux-native-test-lock", daemon=True)
+    thread.start()
+    try:
+        yield slot
+    finally:
+        stop.set()
+        release_native_test_slot(slot)
+
+
+def acquire_native_test_slot(label: str = "native:test") -> NativeTestSlot:
+    jobs = native_test_jobs()
+    locks_dir = aimux_home() / "locks"
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    next_log = started
+    wait_log_ms = int(
+        os.environ.get("AIMUX_NATIVE_TEST_WAIT_LOG_MS") or DEFAULT_NATIVE_TEST_WAIT_LOG_MS
+    )
+    wait_timeout_ms = int(
+        os.environ.get("AIMUX_NATIVE_TEST_WAIT_TIMEOUT_MS") or DEFAULT_NATIVE_TEST_WAIT_TIMEOUT_MS
+    )
+    stale_ms = int(
+        os.environ.get("AIMUX_NATIVE_TEST_LOCK_STALE_MS") or DEFAULT_NATIVE_TEST_LOCK_STALE_MS
+    )
+
+    while True:
+        for slot in range(jobs):
+            slot_path = native_test_slot_path(locks_dir, slot)
+            token = secrets.token_hex(12)
+            try:
+                slot_path.mkdir()
+            except FileExistsError:
+                reclaim_native_test_slot_if_stale(slot_path, stale_ms)
+                continue
+            write_native_test_slot_owner(slot_path, token, label)
+            return NativeTestSlot(path=slot_path, token=token, slot=slot)
+
+        now = time.monotonic()
+        waited_ms = int((now - started) * 1000)
+        if waited_ms >= wait_timeout_ms:
+            raise SystemExit(
+                "[aimux] native test concurrency cap wait timed out "
+                f"after {format_ms(waited_ms)} before {label}; "
+                f"locks={native_test_slot_summary(locks_dir, jobs)}"
+            )
+        if now >= next_log:
+            print(
+                "[aimux] native test concurrency cap reached "
+                f"({held_native_test_slots(locks_dir, jobs)}/{jobs}); waiting before "
+                f"{label} (waited {format_ms(waited_ms)}; "
+                f"locks={native_test_slot_summary(locks_dir, jobs)})",
+                file=sys.stderr,
+                flush=True,
+            )
+            next_log = now + (wait_log_ms / 1000.0)
+        time.sleep(0.2)
+
+
+def touch_native_test_slot(slot: NativeTestSlot, label: str) -> None:
+    owner = read_native_test_slot_owner(slot.path)
+    if owner.get("token") != slot.token:
+        return
+    write_native_test_slot_owner(slot.path, slot.token, label)
+
+
+def release_native_test_slot(slot: NativeTestSlot) -> None:
+    owner = read_native_test_slot_owner(slot.path)
+    if owner.get("token") == slot.token:
+        shutil.rmtree(slot.path, ignore_errors=True)
+
+
+def reclaim_native_test_slot_if_stale(slot_path: Path, stale_ms: int) -> None:
+    owner = read_native_test_slot_owner(slot_path)
+    pid = owner.get("pid")
+    pid_is_dead = isinstance(pid, int) and not pid_alive(pid)
+    stale = native_test_slot_age_ms(slot_path) > stale_ms
+    if not pid_is_dead and not stale:
+        return
+
+    steal_path = slot_path.with_name(f"{slot_path.name}.steal")
+    try:
+        steal_path.mkdir()
+    except FileExistsError:
+        if native_test_slot_age_ms(steal_path) <= stale_ms:
+            return
+        shutil.rmtree(steal_path, ignore_errors=True)
+        try:
+            steal_path.mkdir()
+        except FileExistsError:
+            return
+
+    try:
+        current_owner = read_native_test_slot_owner(slot_path)
+        current_pid = current_owner.get("pid")
+        current_pid_is_dead = isinstance(current_pid, int) and not pid_alive(current_pid)
+        current_stale = native_test_slot_age_ms(slot_path) > stale_ms
+        if current_pid_is_dead or current_stale:
+            shutil.rmtree(slot_path, ignore_errors=True)
+            print(
+                "[aimux] reclaimed stale native test lock "
+                f"{slot_path.name} "
+                f"owner_pid={current_pid if isinstance(current_pid, int) else 'unknown'}",
+                file=sys.stderr,
+                flush=True,
+            )
+    finally:
+        shutil.rmtree(steal_path, ignore_errors=True)
+
+
+def write_native_test_slot_owner(slot_path: Path, token: str, label: str) -> None:
+    now_ms = int(time.time() * 1000)
+    owner = {
+        "pid": os.getpid(),
+        "token": token,
+        "label": label,
+        "cwd": str(ROOT),
+        "command": sys.argv,
+        "hostname": socket.gethostname(),
+        "updatedAtMs": now_ms,
+    }
+    (slot_path / "owner.json").write_text(json.dumps(owner, sort_keys=True) + "\n")
+    os.utime(slot_path, None)
+
+
+def read_native_test_slot_owner(slot_path: Path) -> dict:
+    try:
+        return json.loads((slot_path / "owner.json").read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def native_test_slot_age_ms(slot_path: Path) -> int:
+    try:
+        modified = slot_path.stat().st_mtime
+    except FileNotFoundError:
+        return DEFAULT_NATIVE_TEST_LOCK_STALE_MS + 1
+    return max(0, int((time.time() - modified) * 1000))
+
+
+def native_test_slot_path(locks_dir: Path, slot: int) -> Path:
+    return locks_dir / f"native-test-{slot}"
+
+
+def held_native_test_slots(locks_dir: Path, jobs: int) -> int:
+    return sum(1 for slot in range(jobs) if native_test_slot_path(locks_dir, slot).exists())
+
+
+def native_test_slot_summary(locks_dir: Path, jobs: int) -> str:
+    owners = []
+    for slot in range(jobs):
+        slot_path = native_test_slot_path(locks_dir, slot)
+        if not slot_path.exists():
+            continue
+        owner = read_native_test_slot_owner(slot_path)
+        pid = owner.get("pid", "unknown")
+        label = owner.get("label", "unknown")
+        owners.append(
+            f"slot {slot}: pid={pid} label={label} "
+            f"age={format_ms(native_test_slot_age_ms(slot_path))}"
+        )
+    return "; ".join(owners) or "none"
+
+
+def format_ms(value: int) -> str:
+    return f"{value / 1000:.1f}s"
 
 
 def read_list(path: Path) -> list[str]:
@@ -250,6 +470,15 @@ def main() -> int:
     serial_targets = read_serial(SERIAL_TARGETS)
     validate_classification(parallel_targets, set(serial_targets))
 
+    with native_test_slot("native:test"):
+        return run_native_tests(parallel_targets, serial_targets)
+
+
+def native_test_parallel_jobs() -> int:
+    return native_test_jobs()
+
+
+def run_native_tests(parallel_targets: set[str], serial_targets: dict[str, str]) -> int:
     started = time.monotonic()
     build_started = time.monotonic()
     executables = build_tests()
@@ -268,8 +497,7 @@ def main() -> int:
     serial_tests = non_integrations + [
         integrations[name] for name in sorted(serial_targets)
     ]
-    jobs = int(os.environ.get("AIMUX_NATIVE_TEST_JOBS") or min(4, os.cpu_count() or 2))
-    jobs = max(1, jobs)
+    jobs = native_test_parallel_jobs()
 
     print(
         "Rust test target plan: "

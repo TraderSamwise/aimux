@@ -46,6 +46,7 @@ use crate::desktop_notifier::{
     render_desktop_notifier_doctor_report, render_notification_test_failure,
     render_notification_test_success, send_desktop_notification_and_wait,
 };
+use crate::git_delivery::{GitDeliveryCheck, git_current_branch, verify_git_delivery};
 use crate::install_cleanup::{
     DEFAULT_INSTALL_KEEP_RECENT, DEFAULT_INSTALL_RETENTION_DAYS, PlanInstallCleanupOptions,
     RunInstallCleanupInput, is_install_cleanup_dry_run, plan_install_cleanup,
@@ -155,6 +156,17 @@ pub trait CoreCliRuntime {
         body: &str,
         open_url: Option<&str>,
     ) -> Result<Value, String>;
+    fn git_current_branch(&self, repo: &str) -> Result<String, String> {
+        git_current_branch(repo).map_err(|error| error.to_string())
+    }
+    fn verify_git_delivery(
+        &self,
+        cwd: &str,
+        target_project_root: &str,
+        target_ref: &str,
+    ) -> Result<GitDeliveryCheck, String> {
+        verify_git_delivery(cwd, target_project_root, target_ref).map_err(|error| error.to_string())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -830,6 +842,13 @@ pub fn run_core_cli_with(
         return CoreCliExecution::error(project_checkout_required_message(project_root), 1);
     }
     scope_bare_restart_to_current_project(&mut plan, &context, runtime);
+    if matches!(
+        plan.operation,
+        CoreCliOperation::LoopDone | CoreCliOperation::TaskComplete
+    ) && let Err(message) = guard_completion_delivery(plan.operation, &plan.action, runtime)
+    {
+        return CoreCliExecution::error(message, 1);
+    }
     match run_plan(plan.operation, plan.output_mode, plan.action, runtime) {
         Ok(execution) => execution,
         Err(message) => CoreCliExecution::error(format!("Error: {message}"), 1),
@@ -923,6 +942,53 @@ fn project_root_value(payload: &Value) -> Option<&Value> {
     payload
         .get("projectRoot")
         .or_else(|| payload.get("project"))
+}
+
+fn guard_completion_delivery(
+    operation: CoreCliOperation,
+    action: &CoreCliAction,
+    runtime: &impl CoreCliRuntime,
+) -> Result<(), String> {
+    let label = completion_operation_label(operation);
+    let project_root = action_project_root(action).ok_or_else(|| {
+        format!("aimux: {label} refused: missing project root for git delivery check")
+    })?;
+    let delivery_ref = match action_delivery_ref(action) {
+        Some(delivery_ref) => delivery_ref.to_owned(),
+        None => runtime.git_current_branch(&project_root).map_err(|error| {
+            format!(
+                "aimux: {label} refused: could not resolve delivery ref for {project_root}: {error}"
+            )
+        })?,
+    };
+    runtime
+        .verify_git_delivery(&runtime.cwd(), &project_root, &delivery_ref)
+        .map(|_| ())
+        .map_err(|error| {
+            format!(
+                "aimux: {label} refused: {error}\nCurrent HEAD must be reachable from {delivery_ref} in {project_root} before marking work complete. Use `aimux worktree create <name> --project \"{project_root}\"` for linked agent work instead of `git clone`, then merge the work into {delivery_ref}."
+            )
+        })
+}
+
+fn completion_operation_label(operation: CoreCliOperation) -> &'static str {
+    match operation {
+        CoreCliOperation::LoopDone => "loop done",
+        CoreCliOperation::TaskComplete => "task complete",
+        _ => "completion",
+    }
+}
+
+fn action_delivery_ref(action: &CoreCliAction) -> Option<&str> {
+    match action {
+        CoreCliAction::TextRoute { body, .. } => body
+            .as_ref()
+            .and_then(|payload| payload.get("deliveryRef"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        _ => None,
+    }
 }
 
 fn run_plan(

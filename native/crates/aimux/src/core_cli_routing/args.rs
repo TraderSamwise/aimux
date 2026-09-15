@@ -156,6 +156,8 @@ pub struct CoreLoopExitArgs {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_ref: Option<String>,
     pub json: bool,
 }
 

@@ -6,6 +6,7 @@ use aimux::daemon::text::operations::{
     RestartControlPlaneTextResult, render_runtime_restart_result,
 };
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
+use aimux::git_delivery::GitDeliveryCheck;
 use aimux::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
 use aimux::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
@@ -20,6 +21,7 @@ use std::process::Command;
 #[derive(Debug)]
 struct FakeRuntime {
     cwd: String,
+    loop_actor: CoreLoopActorContext,
     daemon_info: Option<AimuxDaemonInfo>,
     daemon_state: DaemonState,
     commands: Vec<CoreCommandCall>,
@@ -38,6 +40,9 @@ struct FakeRuntime {
     security_devices: Vec<Value>,
     pending_security_devices: Vec<Value>,
     security_updates: RefCell<Vec<(String, String, Option<String>)>>,
+    git_branch: String,
+    delivery_checks: RefCell<Vec<(String, String, String)>>,
+    delivery_check_error: Option<String>,
     fail_commands: bool,
     git_project_root: bool,
     real_git_paths: bool,
@@ -56,6 +61,7 @@ impl Default for FakeRuntime {
     fn default() -> Self {
         Self {
             cwd: "/repo".into(),
+            loop_actor: CoreLoopActorContext::default(),
             daemon_info: Some(daemon_info()),
             daemon_state: DaemonState::empty(),
             commands: Vec::new(),
@@ -77,6 +83,9 @@ impl Default for FakeRuntime {
             security_devices: Vec::new(),
             pending_security_devices: Vec::new(),
             security_updates: RefCell::new(Vec::new()),
+            git_branch: "master".into(),
+            delivery_checks: RefCell::new(Vec::new()),
+            delivery_check_error: None,
             fail_commands: false,
             git_project_root: true,
             real_git_paths: false,
@@ -127,7 +136,7 @@ impl CoreCliRuntime for FakeRuntime {
     }
 
     fn loop_actor_context(&self) -> CoreLoopActorContext {
-        CoreLoopActorContext::default()
+        self.loop_actor.clone()
     }
 
     fn credentials_for_status(&self) -> Option<Value> {
@@ -383,6 +392,38 @@ impl CoreCliRuntime for FakeRuntime {
                 "stderr": "",
             }
         }))
+    }
+
+    fn git_current_branch(&self, repo: &str) -> Result<String, String> {
+        if repo.is_empty() {
+            return Err("missing repo".into());
+        }
+        Ok(self.git_branch.clone())
+    }
+
+    fn verify_git_delivery(
+        &self,
+        cwd: &str,
+        target_project_root: &str,
+        target_ref: &str,
+    ) -> Result<GitDeliveryCheck, String> {
+        self.delivery_checks.borrow_mut().push((
+            cwd.to_owned(),
+            target_project_root.to_owned(),
+            target_ref.to_owned(),
+        ));
+        if let Some(error) = &self.delivery_check_error {
+            return Err(error.clone());
+        }
+        Ok(GitDeliveryCheck {
+            head_sha: "abc123".into(),
+            source_repo: cwd.to_owned(),
+            target_project_root: target_project_root.to_owned(),
+            target_ref: target_ref.to_owned(),
+            source_common_dir: "/repo/.git".into(),
+            target_common_dir: "/repo/.git".into(),
+            shares_object_store: true,
+        })
     }
 }
 
@@ -1420,6 +1461,199 @@ fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
         ]
     );
     assert!(runtime.commands.is_empty());
+    assert_eq!(
+        runtime.delivery_checks.into_inner(),
+        [("/repo".into(), "/repo".into(), "master".into())]
+    );
+}
+
+#[test]
+fn loop_done_refuses_undelivered_git_head_before_daemon_route() {
+    let mut runtime = FakeRuntime {
+        cwd: "/private/tmp/standalone-clone".into(),
+        loop_actor: CoreLoopActorContext {
+            session_id: Some("codex-1".into()),
+            project_root: Some("/repo".into()),
+            delivery_ref: Some("master".into()),
+            ..CoreLoopActorContext::default()
+        },
+        delivery_check_error: Some(
+            "git delivery check failed: HEAD deadbeef from /private/tmp/standalone-clone is not reachable from master in /repo. source common dir: /private/tmp/standalone-clone/.git; target common dir: /repo/.git; shares object store: false; Not a valid commit name deadbeef".into(),
+        ),
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(&args(&["loop", "done", "--reason", "done"]), &mut runtime);
+
+    assert_eq!(execution.code, 1);
+    assert!(execution.stdout.is_empty());
+    assert!(
+        execution
+            .stderr
+            .join("\n")
+            .contains("aimux: loop done refused: git delivery check failed: HEAD deadbeef")
+    );
+    assert!(
+        execution
+            .stderr
+            .join("\n")
+            .contains("shares object store: false")
+    );
+    assert!(
+        execution
+            .stderr
+            .join("\n")
+            .contains("aimux worktree create")
+    );
+    assert!(runtime.text_routes.is_empty());
+    assert_eq!(
+        runtime.delivery_checks.into_inner(),
+        [(
+            "/private/tmp/standalone-clone".into(),
+            "/repo".into(),
+            "master".into()
+        )]
+    );
+}
+
+#[test]
+fn loop_done_passes_reachable_git_head_without_extra_friction() {
+    let mut runtime = FakeRuntime::default();
+
+    let execution = run_core_cli_with(
+        &args(&["loop", "done", "--session", "claude-1", "--reason", "done"]),
+        &mut runtime,
+    );
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(execution.stdout, ["loop ok"]);
+    assert_eq!(
+        runtime.delivery_checks.into_inner(),
+        [("/repo".into(), "/repo".into(), "master".into())]
+    );
+    assert_eq!(
+        runtime.text_routes,
+        [(
+            "/core/loop/done-text".into(),
+            Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "agent",
+                "reason": "done",
+            })),
+        )]
+    );
+}
+
+#[test]
+fn loop_done_uses_actor_project_root_as_delivery_target() {
+    let mut runtime = FakeRuntime {
+        cwd: "/private/tmp/standalone-clone".into(),
+        loop_actor: CoreLoopActorContext {
+            session_id: Some("codex-1".into()),
+            project_root: Some("/repo".into()),
+            delivery_ref: Some("master".into()),
+            ..CoreLoopActorContext::default()
+        },
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(&args(&["loop", "done", "--reason", "done"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(execution.stdout, ["loop ok"]);
+    assert_eq!(
+        runtime.delivery_checks.into_inner(),
+        [(
+            "/private/tmp/standalone-clone".into(),
+            "/repo".into(),
+            "master".into()
+        )]
+    );
+    assert_eq!(
+        runtime.text_routes,
+        [(
+            "/core/loop/done-text".into(),
+            Some(json!({
+                "project": "/repo",
+                "sessionId": "codex-1",
+                "source": "agent",
+                "updatedBy": "codex-1",
+                "updatedBySessionId": "codex-1",
+                "reason": "done",
+                "deliveryRef": "master",
+            })),
+        )]
+    );
+}
+
+#[test]
+fn loop_block_does_not_require_delivery_check() {
+    let mut runtime = FakeRuntime {
+        delivery_check_error: Some("undelivered".into()),
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(
+        &args(&["loop", "block", "--session=claude-1", "--reason=blocked"]),
+        &mut runtime,
+    );
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(execution.stdout, ["loop ok"]);
+    assert!(runtime.delivery_checks.into_inner().is_empty());
+    assert_eq!(
+        runtime.text_routes,
+        [(
+            "/core/loop/block-text".into(),
+            Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "agent",
+                "reason": "blocked",
+            })),
+        )]
+    );
+}
+
+#[test]
+fn task_complete_refuses_undelivered_git_head_before_daemon_route() {
+    let mut runtime = FakeRuntime {
+        cwd: "/private/tmp/standalone-clone".into(),
+        delivery_check_error: Some(
+            "git delivery check failed: HEAD cafebabe from /private/tmp/standalone-clone is not reachable from master in /repo. source common dir: /private/tmp/standalone-clone/.git; target common dir: /repo/.git; shares object store: false; Not a valid commit name cafebabe".into(),
+        ),
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(
+        &args(&[
+            "task",
+            "complete",
+            "task-1",
+            "--from=codex-1",
+            "--result=done",
+        ]),
+        &mut runtime,
+    );
+
+    assert_eq!(execution.code, 1);
+    assert!(execution.stdout.is_empty());
+    assert!(
+        execution
+            .stderr
+            .join("\n")
+            .contains("aimux: task complete refused: git delivery check failed: HEAD cafebabe")
+    );
+    assert!(runtime.text_routes.is_empty());
+    assert_eq!(
+        runtime.delivery_checks.into_inner(),
+        [(
+            "/private/tmp/standalone-clone".into(),
+            "/repo".into(),
+            "master".into()
+        )]
+    );
 }
 
 #[test]
@@ -2290,6 +2524,10 @@ fn task_and_review_commands_execute_native_text_routes_without_core_command_fall
         ]
     );
     assert!(runtime.commands.is_empty());
+    assert_eq!(
+        runtime.delivery_checks.into_inner(),
+        [("/repo".into(), "/repo".into(), "master".into())]
+    );
 }
 
 #[test]

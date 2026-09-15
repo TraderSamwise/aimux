@@ -865,6 +865,7 @@ pub(super) fn wrap_agent_launch(
                     path_string(project_state_dir.join("metadata-api.txt")),
                 ),
                 ("AIMUX_SESSION_ID".to_owned(), session_id.to_owned()),
+                ("AIMUX_PROJECT_ROOT".to_owned(), project_root.to_owned()),
                 ("AIMUX_TOOL".to_owned(), tool_key.to_owned()),
             ]),
         ));
@@ -899,7 +900,9 @@ pub(super) fn wrap_agent_launch(
         std::env::var("SHELL")
             .unwrap_or_else(|_| "zsh".to_owned())
             .as_str(),
-        launch_env,
+        launch_env
+            .into_iter()
+            .chain([("AIMUX_PROJECT_ROOT".to_owned(), project_root.to_owned())]),
     )
 }
 

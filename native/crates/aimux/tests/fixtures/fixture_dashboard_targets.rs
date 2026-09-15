@@ -172,6 +172,24 @@ fn shell_husk_dashboard_is_rejected_and_replaced() {
 
         assert_eq!(resolved.dashboard_target.window_id, "@fresh");
         assert_eq!(tmux.replace_calls, 1);
+        assert_eq!(
+            tmux.reports
+                .iter()
+                .map(|report| report.status.as_str())
+                .collect::<Vec<_>>(),
+            vec!["started", "repaired"]
+        );
+        assert!(
+            tmux.reports[0].details["reasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reason| reason
+                    .as_str()
+                    .is_some_and(|reason| reason.starts_with("stale-dashboard-pane-command"))),
+            "{:?}",
+            tmux.reports
+        );
     }
 }
 
@@ -193,6 +211,54 @@ fn healthy_client_dashboard_is_reused_without_replacement() {
 
     assert_eq!(resolved.dashboard_target.window_id, "@dash");
     assert_eq!(tmux.replace_calls, 0);
+    assert!(tmux.reports.is_empty(), "{:?}", tmux.reports);
+}
+
+#[test]
+fn stale_preferred_client_dashboard_blocks_host_fallback_and_repairs_client_slot() {
+    let mut tmux = HostHealthyClientStaleTmux::default();
+    let context = fake_context();
+
+    let live = find_live_dashboard_target_with_context("/repo/mobile", &mut tmux, &context)
+        .expect("live dashboard lookup");
+    assert_eq!(
+        live, None,
+        "stale preferred client dashboard must not fall back to host dashboard"
+    );
+
+    let resolved = resolve_dashboard_target_with_context(
+        "/repo/mobile",
+        &mut tmux,
+        DashboardResolveOptions {
+            force_reload: false,
+            open_in_host_session: false,
+        },
+        &context,
+    )
+    .expect("dashboard target");
+
+    assert_eq!(resolved.dashboard_target.session_name, CLIENT_SESSION);
+    assert_eq!(resolved.dashboard_target.window_id, "@client-fresh");
+    assert_eq!(tmux.replace_calls, 1);
+    assert_eq!(
+        tmux.reports
+            .iter()
+            .map(|report| report.status.as_str())
+            .collect::<Vec<_>>(),
+        vec!["started", "repaired"]
+    );
+    assert_eq!(tmux.reports[0].project_root, "/repo/mobile");
+    assert_eq!(tmux.reports[0].reason, "dashboard-target-resolution");
+    assert_eq!(tmux.reports[0].details["windowId"], "@client-stale");
+    assert!(
+        tmux.reports[0].details["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason == "dashboard-build-mismatch"),
+        "{:?}",
+        tmux.reports
+    );
 }
 
 #[test]
@@ -438,6 +504,7 @@ impl DashboardTargetTmux for CreatedDashboardTmux {
 struct ExistingDashboardTmux {
     pane_command: String,
     replace_calls: usize,
+    reports: Vec<RepairReport>,
 }
 
 impl ExistingDashboardTmux {
@@ -445,6 +512,7 @@ impl ExistingDashboardTmux {
         Self {
             pane_command: pane_command.to_owned(),
             replace_calls: 0,
+            reports: Vec::new(),
         }
     }
 
@@ -594,6 +662,209 @@ impl DashboardTargetTmux for ExistingDashboardTmux {
     ) -> Result<(), String> {
         Ok(())
     }
+
+    fn report_dashboard_target_repair(
+        &mut self,
+        project_root: &str,
+        reason: &str,
+        status: &str,
+        details: Value,
+    ) {
+        self.reports.push(RepairReport {
+            project_root: project_root.to_owned(),
+            reason: reason.to_owned(),
+            status: status.to_owned(),
+            details,
+        });
+    }
+}
+
+const HOST_SESSION: &str = "aimux-mobile";
+const CLIENT_SESSION: &str = "aimux-mobile-client-deadbeef";
+
+#[derive(Debug, Clone, Default)]
+struct HostHealthyClientStaleTmux {
+    replace_calls: usize,
+    reports: Vec<RepairReport>,
+}
+
+impl HostHealthyClientStaleTmux {
+    fn host_session(&self) -> TmuxSessionRef {
+        TmuxSessionRef {
+            project_root: "/repo/mobile".to_owned(),
+            project_id: "mobile".to_owned(),
+            session_name: HOST_SESSION.to_owned(),
+        }
+    }
+
+    fn dashboard_target(session_name: &str, window_id: &str) -> TmuxTarget {
+        TmuxTarget {
+            session_name: session_name.to_owned(),
+            window_id: window_id.to_owned(),
+            window_index: 0,
+            window_name: "dashboard".to_owned(),
+            pane_dead: Some(false),
+        }
+    }
+}
+
+impl DashboardTargetTmux for HostHealthyClientStaleTmux {
+    fn get_project_session(&mut self, _project_root: &str) -> TmuxSessionRef {
+        self.host_session()
+    }
+
+    fn is_inside_tmux(&mut self) -> bool {
+        false
+    }
+
+    fn get_open_session_name(&mut self, _session_name: &str, _inside_tmux: bool) -> String {
+        CLIENT_SESSION.to_owned()
+    }
+
+    fn current_client_session(&mut self) -> Option<String> {
+        None
+    }
+
+    fn list_session_names(&mut self) -> Result<Vec<String>, String> {
+        Ok(vec![HOST_SESSION.to_owned(), CLIENT_SESSION.to_owned()])
+    }
+
+    fn has_session(&mut self, session_name: &str) -> bool {
+        matches!(session_name, HOST_SESSION | CLIENT_SESSION)
+    }
+
+    fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
+        match session_name {
+            HOST_SESSION => Ok(vec![TmuxWindowInfo {
+                id: "@host".to_owned(),
+                index: 0,
+                name: "dashboard".to_owned(),
+                active: true,
+                activity: None,
+                pane_dead: Some(false),
+            }]),
+            CLIENT_SESSION => Ok(vec![TmuxWindowInfo {
+                id: "@client-stale".to_owned(),
+                index: 0,
+                name: "dashboard".to_owned(),
+                active: true,
+                activity: None,
+                pane_dead: Some(false),
+            }]),
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    fn get_window_option(&mut self, target: &TmuxTarget, key: &str) -> Option<String> {
+        match (target.window_id.as_str(), key) {
+            ("@host", TMUX_DASHBOARD_BUILD_OPTION | TMUX_DASHBOARD_READY_OPTION) => {
+                Some("dashboard-stamp".to_owned())
+            }
+            ("@host", TMUX_DASHBOARD_OWNER_OPTION) => Some("owner".to_owned()),
+            _ => None,
+        }
+    }
+
+    fn get_session_option(&mut self, session_name: &str, key: &str) -> Option<String> {
+        match key {
+            TMUX_RUNTIME_OWNER_OPTION => Some("owner".to_owned()),
+            "@aimux-project-root" if matches!(session_name, HOST_SESSION | CLIENT_SESSION) => {
+                Some("/repo/mobile".to_owned())
+            }
+            _ => None,
+        }
+    }
+
+    fn display_message(&mut self, format: &str, target: &str) -> Option<String> {
+        if format != "#{pane_current_command}" {
+            return None;
+        }
+        match target {
+            "@host" => Some("aimux".to_owned()),
+            "@client-stale" => Some("sh".to_owned()),
+            _ => None,
+        }
+    }
+
+    fn capture_target(&mut self, _target: &TmuxTarget, _start_line: i64) -> Option<String> {
+        Some(String::new())
+    }
+
+    fn is_window_alive(&mut self, _target: &TmuxTarget) -> Result<bool, String> {
+        Ok(true)
+    }
+
+    fn ensure_project_session(
+        &mut self,
+        _project_root: &str,
+        _dashboard_command: &TmuxCommandSpec,
+    ) -> Result<TmuxSessionRef, String> {
+        Ok(self.host_session())
+    }
+
+    fn ensure_dashboard_window(
+        &mut self,
+        session_name: &str,
+        _project_root: &str,
+        _dashboard_command: &TmuxCommandSpec,
+    ) -> Result<(TmuxTarget, bool), String> {
+        Ok((Self::dashboard_target(session_name, "@client-stale"), false))
+    }
+
+    fn replace_window_when_ready(
+        &mut self,
+        target: &TmuxTarget,
+        _dashboard_command: &TmuxCommandSpec,
+        _readiness_option: &str,
+        _readiness_value: &str,
+        _timeout_ms: u64,
+    ) -> Result<TmuxTarget, String> {
+        assert_eq!(target.session_name, CLIENT_SESSION);
+        assert_eq!(target.window_id, "@client-stale");
+        self.replace_calls += 1;
+        Ok(Self::dashboard_target(CLIENT_SESSION, "@client-fresh"))
+    }
+
+    fn set_session_option(
+        &mut self,
+        _session_name: &str,
+        _key: &str,
+        _value: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn set_window_option(
+        &mut self,
+        _target: &TmuxTarget,
+        _key: &str,
+        _value: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn report_dashboard_target_repair(
+        &mut self,
+        project_root: &str,
+        reason: &str,
+        status: &str,
+        details: Value,
+    ) {
+        self.reports.push(RepairReport {
+            project_root: project_root.to_owned(),
+            reason: reason.to_owned(),
+            status: status.to_owned(),
+            details,
+        });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RepairReport {
+    project_root: String,
+    reason: String,
+    status: String,
+    details: Value,
 }
 
 fn normalize_dashboard_stamps(value: Value) -> Value {

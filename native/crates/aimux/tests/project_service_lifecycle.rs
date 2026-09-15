@@ -1961,6 +1961,12 @@ fn agent_resume_launches_exact_backend_resume_and_updates_topology_metadata() {
             .any(|arg| arg == "AIMUX_SESSION_ID=mock-offline")
     );
     assert!(
+        created
+            .args
+            .iter()
+            .any(|arg| arg == &format!("AIMUX_PROJECT_ROOT={}", project.display()))
+    );
+    assert!(
         !created
             .args
             .iter()
@@ -2288,6 +2294,12 @@ fn service_create_launches_detached_window_with_metadata_policy_and_topology() {
             .args
             .iter()
             .any(|arg| arg == "AIMUX_SESSION_ID=svc-dev")
+    );
+    assert!(
+        created
+            .args
+            .iter()
+            .any(|arg| arg == &format!("AIMUX_PROJECT_ROOT={}", project.display()))
     );
     assert!(created.args.iter().any(|arg| arg == "AIMUX_TOOL=service"));
     assert!(created.args.iter().any(|arg| arg == "-ic"));
