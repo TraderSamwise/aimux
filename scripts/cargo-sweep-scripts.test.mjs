@@ -95,7 +95,14 @@ describe("cargo sweep maintenance scripts", () => {
     writeFileSync(join(target, "debug", "artifact"), "active");
     const canonicalTarget = realpathSync(target);
 
-    const active = spawn("bash", ["-lc", `sleep 20 # ${canonicalTarget}`], {
+    const holder = join(root, "hold-active-target");
+    writeExecutable(
+      holder,
+      `#!/usr/bin/env bash
+sleep 20
+`,
+    );
+    const active = spawn(holder, [canonicalTarget], {
       stdio: "ignore",
       detached: false,
     });

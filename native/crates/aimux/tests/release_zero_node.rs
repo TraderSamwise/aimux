@@ -199,7 +199,9 @@ fn release_asset_compiles_native_binary_with_selected_build_profile() {
         "release asset must package the freshly built native artifact"
     );
     assert!(
-        script.contains("scripts/cargo-sweep-stale-targets.sh scripts/install-cargo-sweep-schedule.sh"),
+        script.contains(
+            "scripts/cargo-sweep-stale-targets.sh scripts/install-cargo-sweep-schedule.sh"
+        ),
         "release asset must include the scheduled Cargo cleanup scripts"
     );
     assert!(
