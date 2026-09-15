@@ -89,6 +89,31 @@ pub fn render_core_worktree_create_lines(payload: &Value) -> Vec<String> {
     }
 }
 
+pub fn render_core_worktree_prune_lines(payload: &Value) -> Vec<String> {
+    let entries = array(payload, "entries");
+    let dry_run = field(payload, "dryRun").and_then(Value::as_bool) != Some(false);
+    if entries.is_empty() {
+        return vec!["Worktree metadata prune found no stale entries.".into()];
+    }
+    let mut lines = vec![format!(
+        "Worktree metadata prune {} {} stale entr{}.",
+        if dry_run { "would remove" } else { "removed" },
+        entries.len(),
+        if entries.len() == 1 { "y" } else { "ies" }
+    )];
+    for entry in entries.iter().take(20) {
+        lines.push(format!("  {}", js_string(Some(entry))));
+    }
+    if entries.len() > 20 {
+        lines.push(format!(
+            "... {} more stale worktree metadata entr{} hidden; use --json for full detail.",
+            entries.len() - 20,
+            if entries.len() - 20 == 1 { "y" } else { "ies" }
+        ));
+    }
+    lines
+}
+
 pub fn render_core_worktree_remove_lines(payload: &Value) -> Vec<String> {
     vec![format!(
         "{} {}",

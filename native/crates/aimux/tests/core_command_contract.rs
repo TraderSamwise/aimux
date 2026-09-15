@@ -119,6 +119,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ),
         ("worktreeGraveyardText", "/core/worktree/graveyard-text"),
         ("worktreeListText", "/core/worktree/list-text"),
+        ("worktreePruneText", "/core/worktree/prune-text"),
         ("worktreeRemoveText", "/core/worktree/remove-text"),
         ("worktreeResurrectText", "/core/worktree/resurrect-text"),
     ];

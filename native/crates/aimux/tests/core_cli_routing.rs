@@ -1327,6 +1327,12 @@ fn worktree_and_graveyard_parsers_match_cli_forms() {
         parse_core_worktree_args(&["worktree", "create", "feature"]).expect("worktree create args");
     assert_eq!(create.name.as_deref(), Some("feature"));
 
+    let prune = parse_core_worktree_args(&["worktree", "prune", "--project=/repo", "--yes"])
+        .expect("worktree prune args");
+    assert_eq!(prune.subcommand, "prune");
+    assert_eq!(prune.project.as_deref(), Some("/repo"));
+    assert!(prune.yes);
+
     let remove = parse_core_worktree_args(&[
         "worktree",
         "remove",

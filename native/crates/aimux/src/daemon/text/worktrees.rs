@@ -4,7 +4,8 @@ use crate::core_text::{
     render_core_graveyard_lines, render_core_worktree_cache_cleanup_lines,
     render_core_worktree_create_lines, render_core_worktree_delete_graveyard_lines,
     render_core_worktree_graveyard_lines, render_core_worktree_list_lines,
-    render_core_worktree_remove_lines, render_core_worktree_resurrect_lines,
+    render_core_worktree_prune_lines, render_core_worktree_remove_lines,
+    render_core_worktree_resurrect_lines,
 };
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, required_param, text_error,
@@ -33,6 +34,13 @@ pub trait DaemonWorktreeTextRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult;
+    fn prune_git_worktree_metadata(
+        &mut self,
+        _project_root: &str,
+        _dry_run: bool,
+    ) -> Result<Value, String> {
+        Err("git worktree prune is not supported by this runtime".into())
+    }
 }
 
 pub fn route_worktree_text_request(
@@ -49,6 +57,9 @@ pub fn route_worktree_text_request(
     }
     if method == "POST" && pathname == CORE_API_ROUTES.worktree_create_text {
         return Some(worktree_create_text_route(runtime, &route_url, body));
+    }
+    if method == "POST" && pathname == CORE_API_ROUTES.worktree_prune_text {
+        return Some(worktree_prune_text_route(runtime, &route_url, body));
     }
     if method == "POST" && pathname == CORE_API_ROUTES.worktree_cache_cleanup_text {
         return Some(worktree_cache_cleanup_text_route(runtime, &route_url, body));
@@ -181,6 +192,38 @@ pub fn worktree_create_text_route(
         route_url,
         payload.clone(),
         &render_core_worktree_create_lines(&payload),
+    )
+}
+
+pub fn worktree_prune_text_route(
+    runtime: &mut impl DaemonWorktreeTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let project_root = runtime.resolve_project_root(&project);
+    let dry_run = boolean_param(route_url, body, "dryRun", true);
+    let payload = match runtime.prune_git_worktree_metadata(&project_root, dry_run) {
+        Ok(mut payload) => {
+            if let Some(map) = payload.as_object_mut() {
+                map.insert("projectRoot".into(), Value::String(project_root));
+            }
+            payload
+        }
+        Err(error) => {
+            return text_error(
+                500,
+                &format!("Error: git worktree prune failed for {project_root}: {error}"),
+            );
+        }
+    };
+    text_or_json_lines(
+        route_url,
+        payload.clone(),
+        &render_core_worktree_prune_lines(&payload),
     )
 }
 

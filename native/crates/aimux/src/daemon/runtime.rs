@@ -3708,6 +3708,57 @@ impl DaemonWorktreeTextRuntime for RealDaemonRuntime {
     ) -> ProjectServiceJsonResult {
         self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
+
+    fn prune_git_worktree_metadata(
+        &mut self,
+        project_root: &str,
+        dry_run: bool,
+    ) -> Result<Value, String> {
+        run_git_worktree_prune(project_root, dry_run)
+    }
+}
+
+fn run_git_worktree_prune(project_root: &str, dry_run: bool) -> Result<Value, String> {
+    let mut command = std::process::Command::new("git");
+    command
+        .arg("-C")
+        .arg(project_root)
+        .args(["worktree", "prune", "--verbose"]);
+    if dry_run {
+        command.arg("--dry-run");
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("could not run git: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        let detail = [stderr.trim(), stdout.trim()]
+            .into_iter()
+            .find(|value| !value.is_empty())
+            .unwrap_or("git worktree prune exited without an error message");
+        return Err(format!(
+            "`git worktree prune` exited with status {}: {detail}",
+            output.status
+        ));
+    }
+    let output_text = [stdout.trim(), stderr.trim()]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let entries = output_text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| Value::String(line.to_owned()))
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "ok": true,
+        "dryRun": dry_run,
+        "entries": entries,
+        "output": output_text,
+    }))
 }
 
 impl DaemonCollaborationTextRuntime for RealDaemonRuntime {

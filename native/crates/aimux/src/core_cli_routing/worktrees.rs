@@ -22,6 +22,7 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
         "list"
             | "add"
             | "create"
+            | "prune"
             | "cleanup-caches"
             | "remove"
             | "graveyard"
@@ -62,7 +63,7 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
             index += 1;
             continue;
         }
-        if subcommand == "cleanup-caches" && arg == "--yes" {
+        if matches!(subcommand, "cleanup-caches" | "prune") && arg == "--yes" {
             parsed.yes = true;
             index += 1;
             continue;
@@ -88,13 +89,13 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
                 }
                 parsed.path = Some(arg.to_owned());
             }
-            "list" | "cleanup-caches" => return None,
+            "list" | "cleanup-caches" | "prune" => return None,
             _ => unreachable!("validated worktree subcommand"),
         }
         index += 1;
     }
     match subcommand {
-        "list" | "cleanup-caches" => {}
+        "list" | "cleanup-caches" | "prune" => {}
         "add" | "create" => {
             parsed.name.as_ref()?;
         }
