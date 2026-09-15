@@ -84,6 +84,32 @@ impl FakeRouterRuntime {
     fn project_json_result(&mut self, project: &str, route_path: &str) -> ProjectServiceJsonResult {
         self.calls.push(format!("get:{project}:{route_path}"));
         match route_path {
+            project_routes::DIAGNOSTICS => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "ok": true,
+                    "scheduler": {
+                        "ok": true,
+                        "periodicTasks": [{
+                            "name": "transcript-length",
+                            "totalRuns": 9,
+                            "intervalMs": 1000,
+                            "lastCompletedAtMs": 1800000000000_i64,
+                            "lastDurationMs": 940,
+                            "p95DurationMs": 950,
+                            "lastDutyCyclePerMille": 940,
+                            "p95DutyCyclePerMille": 950,
+                            "consecutiveHotRuns": 3,
+                            "hotSinceMs": 1799999998000_i64,
+                            "hot": true,
+                            "consecutiveFailures": 0,
+                            "consecutiveTimeouts": 0,
+                            "totalTimeouts": 0,
+                            "lastError": null
+                        }]
+                    }
+                }),
+            ),
             project_routes::agents::LIST => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "agents": [{ "id": "claude-1", "status": "running" }] }),
@@ -843,6 +869,28 @@ fn unified_router_preserves_local_cli_and_auth_guards() {
     );
     assert_eq!(cli.status, 403);
     assert_eq!(text_body(cli), "core text routes are cli-only\n");
+}
+
+#[test]
+fn doctor_tasks_project_surface_names_hot_scheduler_task_cost() {
+    let mut runtime = FakeRouterRuntime::default();
+    let response = route_daemon_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?projectRoot=%2Frepo", CORE_API_ROUTES.doctor_tasks_text),
+        None,
+        "issued",
+        &DaemonRouteRequestContext::default(),
+    );
+
+    assert_eq!(response.status, 200);
+    let text = text_body(response);
+    assert!(text.contains("Project Scheduler Tasks"), "{text}");
+    assert!(text.contains("transcript-length"), "{text}");
+    assert!(
+        text.contains("HOT: sustained scheduler cost 940ms per 1000ms tick"),
+        "{text}"
+    );
 }
 
 #[test]

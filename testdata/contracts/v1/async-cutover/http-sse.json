@@ -178,6 +178,61 @@
               "parsedAgentOutput": true
             },
             "buildStamp": "<build-stamp>"
+          },
+          "scheduler": {
+            "ok": true,
+            "periodicTasks": [
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "agent-input-delivery"
+              },
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "agent-restore-snapshot"
+              },
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "builtin-metadata-watchers"
+              },
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "gh-pr-context"
+              },
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "loop-watcher"
+              },
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "project-expose-hot-snapshot-refresh"
+              },
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "runtime-health-recorder"
+              },
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "scribe-watcher"
+              },
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "transcript-length"
+              },
+              {
+                "hot": false,
+                "intervalMs": "<interval-ms-or-null>",
+                "name": "transcript-reconciler"
+              }
+            ]
           }
         },
         "framing": {
@@ -474,6 +529,61 @@
                 "parsedAgentOutput": true
               },
               "buildStamp": "<build-stamp>"
+            },
+            "scheduler": {
+              "ok": true,
+              "periodicTasks": [
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "agent-input-delivery"
+                },
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "agent-restore-snapshot"
+                },
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "builtin-metadata-watchers"
+                },
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "gh-pr-context"
+                },
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "loop-watcher"
+                },
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "project-expose-hot-snapshot-refresh"
+                },
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "runtime-health-recorder"
+                },
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "scribe-watcher"
+                },
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "transcript-length"
+                },
+                {
+                  "hot": false,
+                  "intervalMs": "<interval-ms-or-null>",
+                  "name": "transcript-reconciler"
+                }
+              ]
             }
           }
         }

@@ -8,6 +8,8 @@ use aimux::project_service::agent_input_delivery::{
 };
 use aimux::project_service::agent_restore_task::{AgentRestoreSnapshotTask, LiveWindowSource};
 use aimux::project_service::loop_watcher_task::LoopWatcherTask;
+use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
+use aimux::project_service::operation_failures::list_dashboard_operation_failures;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
 use aimux::project_service::runtime_exchange::runtime_exchange_path;
@@ -1208,6 +1210,130 @@ impl PeriodicTask for SlowTask {
     }
 }
 
+struct MeasuredHotTask {
+    runs: Arc<AtomicUsize>,
+}
+
+impl PeriodicTask for MeasuredHotTask {
+    fn name(&self) -> &str {
+        "measured-hot"
+    }
+    fn interval_ms(&self) -> i64 {
+        250
+    }
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(225));
+            Ok(())
+        })
+    }
+}
+
+#[test]
+fn hot_task_reaches_health_notifications_and_operation_failures() {
+    let project_root = unique_temp_dir("scheduler-hot-task-alert");
+    let state_dir = project_root.join("state");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    let handle = ProjectSchedulerHandle::default();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+        .with_scheduler(handle.clone());
+    let runs = Arc::new(AtomicUsize::new(0));
+    let clock = Arc::new(std::sync::Mutex::new(1_000i64));
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(MeasuredHotTask {
+            runs: Arc::clone(&runs),
+        })],
+        0,
+        handle.clone(),
+    );
+    let reader = Arc::clone(&clock);
+    let mut now = move || *reader.lock().unwrap();
+    let mut due_ms = 1_000;
+
+    for _ in 0..3 {
+        *clock.lock().unwrap() = due_ms;
+        assert_eq!(
+            run_due_with_clock(&mut scheduler, &context, &mut now),
+            vec!["measured-hot".to_owned()]
+        );
+        due_ms = due_ms.saturating_add(250);
+    }
+
+    let health = handle
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == "measured-hot")
+        .expect("measured-hot health");
+    assert_eq!(health.hot, true);
+    assert_eq!(health.interval_ms, Some(250));
+    assert!(
+        health.last_duration_ms.unwrap_or_default() >= 200,
+        "{health:?}"
+    );
+    assert!(
+        health.last_duty_cycle_per_mille.unwrap_or_default() >= 800,
+        "{health:?}"
+    );
+    assert_eq!(health.consecutive_hot_runs, 3);
+
+    let health_response = route_project_service_request(&context, "GET", routes::HEALTH, None);
+    assert_eq!(health_response.status, 200);
+    assert_eq!(
+        health_response.body["scheduler"]["periodicTasks"][0]["name"],
+        "measured-hot"
+    );
+    assert_eq!(
+        health_response.body["scheduler"]["periodicTasks"][0]["hot"],
+        true
+    );
+
+    let notifications = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            include_cleared: true,
+            ..NotificationQuery::default()
+        },
+    );
+    let notification = notifications
+        .notifications
+        .iter()
+        .find(|notification| notification["kind"] == "scheduler_hot_task")
+        .expect("scheduler hot notification");
+    assert_eq!(notification["targetKind"], "scheduler-task");
+    assert!(
+        notification["body"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("measured-hot:")
+            && notification["body"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("per 250ms tick"),
+        "{notification:#?}"
+    );
+
+    let failures = list_dashboard_operation_failures(&state_dir);
+    let failure = failures
+        .iter()
+        .find(|failure| failure["operation"] == "hot-task")
+        .expect("scheduler hot operation failure");
+    assert_eq!(failure["targetKind"], "scheduler-task");
+    assert_eq!(failure["targetId"], "measured-hot");
+    assert!(
+        failure["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("measured-hot:")
+            && failure["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("per 250ms tick"),
+        "{failure:#?}"
+    );
+}
+
 #[test]
 fn a_task_that_overruns_its_interval_still_gets_a_full_gap_afterwards() {
     let runs = Arc::new(AtomicUsize::new(0));
@@ -1388,8 +1514,14 @@ fn scheduler_health_records_timeouts_without_marking_completion() {
     assert_eq!(started.load(Ordering::SeqCst), 1);
     assert_eq!(health.total_runs, 1);
     assert_eq!(health.last_completed_at_ms, None);
-    assert_eq!(health.last_duration_ms, None);
-    assert_eq!(health.p95_duration_ms, None);
+    assert!(
+        health.last_duration_ms.unwrap_or_default() >= 25,
+        "{health:?}"
+    );
+    assert!(
+        health.p95_duration_ms.unwrap_or_default() >= 25,
+        "{health:?}"
+    );
     assert_eq!(health.consecutive_failures, 1);
     assert_eq!(health.consecutive_timeouts, 1);
     assert_eq!(health.total_timeouts, 1);
