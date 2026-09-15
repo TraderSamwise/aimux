@@ -148,7 +148,9 @@ if [ "$BUILD_PROFILE" = "full" ]; then
   cp -R dist-ui docs "$PKG_DIR/"
 fi
 mkdir -p "$PKG_DIR/scripts"
-cp scripts/tmux-control.sh scripts/tmux-open-hyperlink.sh scripts/tmux-statusline.sh "$PKG_DIR/scripts/"
+cp scripts/cargo-sweep-stale-targets.sh scripts/install-cargo-sweep-schedule.sh \
+  scripts/tmux-control.sh scripts/tmux-open-hyperlink.sh scripts/tmux-statusline.sh \
+  "$PKG_DIR/scripts/"
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 printf '%s\n' "$BUILD_PROFILE" > "$PKG_DIR/BUILD_PROFILE"
 

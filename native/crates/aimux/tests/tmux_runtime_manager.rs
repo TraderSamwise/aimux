@@ -1073,6 +1073,257 @@ fn client_session_default_statusline_uses_native_internal_reader() {
 }
 
 #[test]
+fn reconnects_with_different_ttys_reuse_detached_ready_client_session() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let interactive = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let interactive_for_exec = interactive.clone();
+    let mut manager = TmuxRuntimeManager::with_exec_and_interactive(
+        move |args, _options| {
+            calls_for_exec.borrow_mut().push(args.to_vec());
+            let joined = args.join(" ");
+            match joined.as_str() {
+                "show-options -v -t aimux-mobile-abc @aimux-project-root" => {
+                    Ok("/repo/mobile".to_owned())
+                }
+                "list-clients -F #{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}" => {
+                    Ok("/dev/pts/1\taimux-mobile-abc\t@dash\tclient-1\n/dev/pts/2\taimux-mobile-abc\t@dash\tclient-2\n/dev/pts/3\taimux-mobile-abc\t@dash\tclient-3".to_owned())
+                }
+                "list-sessions -F #{session_name}\t#{session_created}\t#{session_last_attached}\t#{session_activity}\t#{session_attached}" => {
+                    Ok("aimux-mobile-abc\t100\t\t100\t1\naimux-mobile-abc-client-abcddcba\t200\t300\t300\t0".to_owned())
+                }
+                "has-session -t aimux-mobile-abc-client-abcddcba" => Ok(String::new()),
+                "list-windows -t aimux-mobile-abc-client-abcddcba -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}" => {
+                    Ok("@dash\t0\tdashboard\t1\t300\t0".to_owned())
+                }
+                "show-window-options -v -t @dash @aimux-dashboard-ready" => Ok("stamp".to_owned()),
+                "display-message -p -t @dash #{pane_in_mode}" => Ok("0".to_owned()),
+                _ if joined.starts_with("has-session -t aimux-mobile-abc-client-") => {
+                    Err("missing".to_owned())
+                }
+                _ => Ok(String::new()),
+            }
+        },
+        move |args, _options| {
+            interactive_for_exec.borrow_mut().push(args.to_vec());
+            Ok(())
+        },
+    );
+
+    let dashboard = dashboard_target();
+    for tty in ["/dev/pts/1", "/dev/pts/2", "/dev/pts/3"] {
+        manager
+            .open_target(
+                &dashboard,
+                OpenTargetOptions {
+                    inside_tmux: true,
+                    client_tty: Some(tty.to_owned()),
+                    ..OpenTargetOptions::default()
+                },
+            )
+            .expect("open target");
+    }
+
+    assert!(!calls.borrow().iter().any(|args| args[0] == "new-session"));
+    assert_eq!(
+        interactive.borrow().as_slice(),
+        [
+            vec![
+                "switch-client".to_owned(),
+                "-c".to_owned(),
+                "/dev/pts/1".to_owned(),
+                "-t".to_owned(),
+                "aimux-mobile-abc-client-abcddcba:0".to_owned(),
+            ],
+            vec![
+                "switch-client".to_owned(),
+                "-c".to_owned(),
+                "/dev/pts/2".to_owned(),
+                "-t".to_owned(),
+                "aimux-mobile-abc-client-abcddcba:0".to_owned(),
+            ],
+            vec![
+                "switch-client".to_owned(),
+                "-c".to_owned(),
+                "/dev/pts/3".to_owned(),
+                "-t".to_owned(),
+                "aimux-mobile-abc-client-abcddcba:0".to_owned(),
+            ],
+        ]
+    );
+}
+
+#[test]
+fn attached_stale_client_session_is_not_reaped() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec_and_interactive(
+        move |args, _options| {
+            calls_for_exec.borrow_mut().push(args.to_vec());
+            let joined = args.join(" ");
+            match joined.as_str() {
+                "show-options -v -t aimux-mobile-abc @aimux-project-root" => {
+                    Ok("/repo/mobile".to_owned())
+                }
+                "list-clients -F #{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}" => {
+                    Ok("/dev/pts/9\taimux-mobile-abc-client-badc0ffe\t@old\tattached".to_owned())
+                }
+                "list-sessions -F #{session_name}\t#{session_created}\t#{session_last_attached}\t#{session_activity}\t#{session_attached}" => {
+                    Ok("aimux-mobile-abc-client-badc0ffe\t100\t100\t100\t1".to_owned())
+                }
+                "list-windows -t aimux-mobile-abc-client-badc0ffe -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}" => {
+                    Ok("@old\t0\tdashboard\t1\t100\t0".to_owned())
+                }
+                "list-windows -t aimux-mobile-abc-client-feedbeef -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}" => {
+                    Ok("@dash\t0\tdashboard\t1\t400\t0".to_owned())
+                }
+                "show-window-options -v -t @dash @aimux-dashboard-ready" => Ok("stamp".to_owned()),
+                "display-message -p -t @dash #{pane_in_mode}" => Ok("0".to_owned()),
+                _ if joined.starts_with("has-session -t aimux-mobile-abc-client-") => {
+                    Err("missing".to_owned())
+                }
+                _ => Ok(String::new()),
+            }
+        },
+        |_args, _options| Ok(()),
+    );
+
+    manager
+        .open_target(
+            &dashboard_target(),
+            OpenTargetOptions {
+                inside_tmux: true,
+                client_suffix: Some("feedbeef".to_owned()),
+                ..OpenTargetOptions::default()
+            },
+        )
+        .expect("open target");
+
+    assert!(!calls.borrow().iter().any(|args| {
+        args == &vec![
+            "kill-session".to_owned(),
+            "-t".to_owned(),
+            "aimux-mobile-abc-client-badc0ffe".to_owned(),
+        ]
+    }));
+}
+
+#[test]
+fn disconnected_ready_mosh_client_session_is_not_reaped() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let interactive = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let interactive_for_exec = interactive.clone();
+    let mut manager = TmuxRuntimeManager::with_exec_and_interactive(
+        move |args, _options| {
+            calls_for_exec.borrow_mut().push(args.to_vec());
+            let joined = args.join(" ");
+            match joined.as_str() {
+                "show-options -v -t aimux-mobile-abc @aimux-project-root" => {
+                    Ok("/repo/mobile".to_owned())
+                }
+                "list-clients -F #{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}" => {
+                    Ok(String::new())
+                }
+                "list-sessions -F #{session_name}\t#{session_created}\t#{session_last_attached}\t#{session_activity}\t#{session_attached}" => {
+                    Ok("aimux-mobile-abc-client-facefeed\t100\t200\t200\t0".to_owned())
+                }
+                "has-session -t aimux-mobile-abc-client-facefeed" => Ok(String::new()),
+                "list-windows -t aimux-mobile-abc-client-facefeed -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}" => {
+                    Ok("@dash\t0\tdashboard\t1\t200\t0".to_owned())
+                }
+                "show-window-options -v -t @dash @aimux-dashboard-ready" => Ok("stamp".to_owned()),
+                "display-message -p -t @dash #{pane_in_mode}" => Ok("0".to_owned()),
+                _ if joined.starts_with("has-session -t aimux-mobile-abc-client-") => {
+                    Err("missing".to_owned())
+                }
+                _ => Ok(String::new()),
+            }
+        },
+        move |args, _options| {
+            interactive_for_exec.borrow_mut().push(args.to_vec());
+            Ok(())
+        },
+    );
+
+    manager
+        .open_target(
+            &dashboard_target(),
+            OpenTargetOptions {
+                inside_tmux: true,
+                client_suffix: Some("aaaabbbb".to_owned()),
+                ..OpenTargetOptions::default()
+            },
+        )
+        .expect("open target");
+
+    assert!(!calls.borrow().iter().any(|args| args[0] == "kill-session"));
+    assert!(interactive.borrow().iter().any(|args| {
+        args == &vec![
+            "switch-client".to_owned(),
+            "-t".to_owned(),
+            "aimux-mobile-abc-client-facefeed:0".to_owned(),
+        ]
+    }));
+}
+
+#[test]
+fn old_detached_unready_client_shell_is_reaped_before_new_attach() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec_and_interactive(
+        move |args, _options| {
+            calls_for_exec.borrow_mut().push(args.to_vec());
+            let joined = args.join(" ");
+            match joined.as_str() {
+                "show-options -v -t aimux-mobile-abc @aimux-project-root" => {
+                    Ok("/repo/mobile".to_owned())
+                }
+                "list-clients -F #{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}" => {
+                    Ok(String::new())
+                }
+                "list-sessions -F #{session_name}\t#{session_created}\t#{session_last_attached}\t#{session_activity}\t#{session_attached}" => {
+                    Ok("aimux-mobile-abc-client-decafbad\t1\t1\t1\t0".to_owned())
+                }
+                "list-windows -t aimux-mobile-abc-client-decafbad -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}" => {
+                    Ok("@old\t0\tdashboard\t1\t1\t0".to_owned())
+                }
+                "show-window-options -v -t @old @aimux-dashboard-ready" => Ok(String::new()),
+                "list-windows -t aimux-mobile-abc-client-feedbeef -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}" => {
+                    Ok("@dash\t0\tdashboard\t1\t400\t0".to_owned())
+                }
+                "show-window-options -v -t @dash @aimux-dashboard-ready" => Ok("stamp".to_owned()),
+                "display-message -p -t @dash #{pane_in_mode}" => Ok("0".to_owned()),
+                _ if joined.starts_with("has-session -t aimux-mobile-abc-client-") => {
+                    Err("missing".to_owned())
+                }
+                _ => Ok(String::new()),
+            }
+        },
+        |_args, _options| Ok(()),
+    );
+
+    manager
+        .open_target(
+            &dashboard_target(),
+            OpenTargetOptions {
+                inside_tmux: true,
+                client_suffix: Some("feedbeef".to_owned()),
+                ..OpenTargetOptions::default()
+            },
+        )
+        .expect("open target");
+
+    assert!(calls.borrow().iter().any(|args| {
+        args == &vec![
+            "kill-session".to_owned(),
+            "-t".to_owned(),
+            "aimux-mobile-abc-client-decafbad".to_owned(),
+        ]
+    }));
+}
+
+#[test]
 fn configure_managed_session_ignores_unsupported_extended_key_options() {
     let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
     let calls_for_exec = calls.clone();
@@ -1308,6 +1559,16 @@ fn target() -> TmuxTarget {
         window_id: "@9".to_owned(),
         window_index: 9,
         window_name: "codex".to_owned(),
+        pane_dead: None,
+    }
+}
+
+fn dashboard_target() -> TmuxTarget {
+    TmuxTarget {
+        session_name: "aimux-mobile-abc".to_owned(),
+        window_id: "@dash".to_owned(),
+        window_index: 0,
+        window_name: "dashboard".to_owned(),
         pane_dead: None,
     }
 }

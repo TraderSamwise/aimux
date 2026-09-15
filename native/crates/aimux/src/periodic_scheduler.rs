@@ -929,7 +929,7 @@ mod tests {
         assert_eq!(alert.last_duration_ms, 950);
         assert_eq!(alert.duty_cycle_per_mille, 950);
         assert_eq!(snapshot.consecutive_hot_runs, 3);
-        assert_eq!(snapshot.hot, true);
+        assert!(snapshot.hot);
         assert_eq!(snapshot.hot_since_ms, Some(1_000));
     }
 
@@ -950,7 +950,7 @@ mod tests {
         }
         let snapshot = record.snapshot("healthy");
 
-        assert_eq!(snapshot.hot, false);
+        assert!(!snapshot.hot);
         assert_eq!(snapshot.consecutive_hot_runs, 0);
         assert_eq!(snapshot.last_duty_cycle_per_mille, Some(75));
         assert_eq!(snapshot.last_error, None);
@@ -973,7 +973,7 @@ mod tests {
         }
         let snapshot = record.snapshot("rare-slow");
 
-        assert_eq!(snapshot.hot, false);
+        assert!(!snapshot.hot);
         assert_eq!(snapshot.consecutive_hot_runs, 0);
         assert_eq!(snapshot.last_duty_cycle_per_mille, Some(83));
         assert_eq!(snapshot.last_error, None);
@@ -989,7 +989,7 @@ mod tests {
         );
         let snapshot = record.snapshot("broken-measurement");
 
-        assert_eq!(snapshot.hot, false);
+        assert!(!snapshot.hot);
         assert_eq!(snapshot.consecutive_failures, 1);
         assert_eq!(
             snapshot.last_error.as_deref(),
