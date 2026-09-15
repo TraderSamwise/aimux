@@ -12,7 +12,8 @@ use serde_json::{Map, Value, json};
 use crate::daemon_state::{MetadataState, metadata_state_path};
 use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::{
-    LoopDeliveryOutcome, load_loop_watcher_state, loop_watcher_state_path, save_loop_watcher_state,
+    LoopDeliveryOutcome, LoopScanIndeterminate, load_loop_watcher_state, loop_watcher_state_path,
+    save_loop_watcher_state,
 };
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
@@ -143,12 +144,13 @@ impl PeriodicTask for LoopWatcherTask {
                 exchange,
                 coordination_worklist,
             );
-            apply_live_activity_overrides_for_scan(context, &mut input).await?;
+            let indeterminate = apply_live_activity_overrides_for_scan(context, &mut input).await?;
 
             let budget = TickLoopBudget::new(SCAN_BUDGET);
             let planned_at = now_ms();
             watcher.expire_global_pause(planned_at);
             let sends = watcher.plan_sends(&input, planned_at);
+            watcher.record_scan_result(&input, planned_at, &sends, indeterminate);
             if watcher.is_global_pause_active(planned_at) {
                 watcher.note_global_pause_tick();
                 for send in sends.into_iter().take(MAX_SENDS_PER_SCAN) {
@@ -260,17 +262,23 @@ fn load_metadata_state_for_loop_watcher(
 async fn apply_live_activity_overrides_for_scan(
     context: &ProjectServiceRequestContext,
     input: &mut Value,
-) -> Result<(), String> {
+) -> Result<Vec<LoopScanIndeterminate>, String> {
     let candidate_ids = stopped_metadata_session_ids(input);
     if candidate_ids.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
+    let mut indeterminate = Vec::new();
     for session_id in candidate_ids {
-        if let Some(live) = live_activity_override(context, &session_id).await? {
-            apply_live_activity_override(input, &session_id, &live);
+        match live_activity_override(context, &session_id).await {
+            Ok(Some(live)) => apply_live_activity_override(input, &session_id, &live),
+            Ok(None) => {}
+            Err(reason) => {
+                mark_live_activity_indeterminate(input, &session_id, &reason);
+                indeterminate.push(LoopScanIndeterminate { session_id, reason });
+            }
         }
     }
-    Ok(())
+    Ok(indeterminate)
 }
 
 async fn live_activity_override(
@@ -369,6 +377,29 @@ pub fn apply_live_activity_override(input: &mut Value, session_id: &str, live: &
     derived.insert("activity".to_owned(), Value::String(activity.to_owned()));
     insert_value(derived, "activityText", live.get("activityText"));
     insert_value(derived, "attention", live.get("attention"));
+}
+
+pub fn mark_live_activity_indeterminate(input: &mut Value, session_id: &str, reason: &str) {
+    let Some(metadata) = input.get_mut("metadata").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(sessions) = metadata.get_mut("sessions").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(session) = sessions.get_mut(session_id).and_then(Value::as_object_mut) else {
+        return;
+    };
+    let derived = session
+        .entry("derived".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(derived) = derived.as_object_mut() else {
+        return;
+    };
+    derived.insert("activity".to_owned(), Value::String("unknown".to_owned()));
+    derived.insert(
+        "loopWatcherLiveProbeError".to_owned(),
+        Value::String(reason.to_owned()),
+    );
 }
 
 /// The scribe narrates the project; nudging it as if it were doing loop work is

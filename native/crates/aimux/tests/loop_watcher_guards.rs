@@ -1,7 +1,7 @@
 use aimux::loop_watcher::{
-    LoopAlertPauseProvenance, LoopDeliveryOutcome, LoopSend, LoopSendKind, LoopWatcher,
-    load_loop_watcher_state, loop_pause_key_from_loop_metadata, loop_watcher_state_path,
-    save_loop_watcher_state,
+    LoopAlertPauseProvenance, LoopDeliveryOutcome, LoopScanIndeterminate, LoopSend, LoopSendKind,
+    LoopWatcher, load_loop_watcher_state, loop_pause_key_from_loop_metadata,
+    loop_watcher_state_path, save_loop_watcher_state,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -412,6 +412,46 @@ fn same_assignment_bookkeeping_does_not_reset_the_stopped_dwell_window() {
         1,
         "bookkeeping on the same assignment must not mask a genuinely stuck agent"
     );
+}
+
+#[test]
+fn stopped_agent_still_alerts_while_surrounding_project_is_busy() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session_with_status("worker", Some("running"), "done");
+    let (busy, mut busy_meta) =
+        looping_session_with_status("busy-agent", Some("running"), "running");
+    busy_meta["loop"] = json!({ "active": false });
+    let mut input = input_with_config(
+        vec![boss.clone(), worker.clone(), busy.clone()],
+        json!({ "sessions": {
+            "boss": boss_meta.clone(),
+            "worker": worker_meta.clone(),
+            "busy-agent": busy_meta.clone()
+        } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 30_000 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+
+    for offset in [5_000, 15_000, 29_999] {
+        input["metadata"]["sessions"]["boss"]["derived"]["activity"] = json!("running");
+        input["metadata"]["sessions"]["busy-agent"]["derived"]["activityText"] =
+            json!(format!("issued command at {offset}"));
+        input["metadata"]["sessions"]["busy-agent"]["progress"] =
+            json!({ "current": offset / 5_000, "total": 6 });
+        assert!(
+            watcher.scan(&input, NOW + offset, &mut ok).is_empty(),
+            "unrelated project activity must not restart the worker's stopped dwell"
+        );
+    }
+
+    let sends = watcher.scan(&input, NOW + 30_000, &mut ok);
+    assert_eq!(sends.len(), 1);
+    assert!(briefing_mentions(&sends[0], "worker"));
+    assert!(!briefing_mentions(&sends[0], "busy-agent"));
 }
 
 #[test]
@@ -1372,10 +1412,47 @@ fn indeterminate_liveness_does_not_silently_become_dead() {
     );
 }
 
+#[test]
+fn scan_records_capture_decisions_without_a_delivery_attempt() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session_with_status("worker", Some("running"), "running");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    watcher.record_scan_result(
+        &input,
+        NOW,
+        &sends,
+        vec![LoopScanIndeterminate {
+            session_id: "probe-failed".into(),
+            reason: "read live activity failed".into(),
+        }],
+    );
+
+    let record = watcher.last_scan_record().expect("scan record");
+    assert_eq!(record.raw_candidate_count, 0);
+    assert_eq!(record.planned_send_count, 0);
+    assert_eq!(record.indeterminate.len(), 1);
+    assert_eq!(record.indeterminate[0].session_id, "probe-failed");
+
+    let state = watcher.loop_alert_state(NOW);
+    assert_eq!(state["recentScans"][0]["plannedSendCount"], 0);
+    assert_eq!(
+        state["recentScans"][0]["indeterminate"][0]["reason"],
+        "read live activity failed"
+    );
+}
+
 mod task_inputs {
     use aimux::project_service::loop_watcher_task::{
         LOOP_WATCH_SESSION_STATUSES, NUDGEABLE_SESSION_STATUSES, apply_live_activity_override,
-        build_scan_input, is_scribe,
+        build_scan_input, is_scribe, mark_live_activity_indeterminate,
     };
     use serde_json::json;
 
@@ -1501,6 +1578,49 @@ mod task_inputs {
             watcher.scan(&input, super::NOW, &mut ok).is_empty(),
             "a visible working pane must not be reported as stopped just because metadata is stale"
         );
+    }
+
+    #[test]
+    fn live_activity_probe_failure_makes_only_that_session_indeterminate() {
+        use aimux::loop_watcher::{LoopSend, LoopWatcher};
+
+        let mut boss_meta = json!({
+            "overseer": true,
+            "derived": { "activity": "busy", "attention": "normal" }
+        });
+        boss_meta["loop"] = json!({ "active": false });
+        let metadata = json!({ "sessions": {
+            "boss": boss_meta,
+            "probe-failed": {
+                "loop": { "active": true, "since": "2026-09-09T00:00:00.000Z", "goal": "stale candidate" },
+                "derived": { "activity": "done", "attention": "normal" }
+            },
+            "worker": {
+                "loop": { "active": true, "since": "2026-09-09T00:00:00.000Z", "goal": "ship it" },
+                "derived": { "activity": "done", "attention": "normal" }
+            }
+        }});
+        let mut input = build_scan_input(
+            vec![
+                json!({ "id": "boss", "tool": "claude", "status": "running" }),
+                json!({ "id": "probe-failed", "tool": "codex", "status": "running" }),
+                json!({ "id": "worker", "tool": "codex", "status": "running" }),
+            ],
+            &metadata,
+            &[],
+            json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+            json!({}),
+            json!([]),
+        );
+
+        mark_live_activity_indeterminate(&mut input, "probe-failed", "read live activity failed");
+
+        let mut watcher = LoopWatcher::new();
+        let mut ok = |_: &LoopSend| true;
+        let sends = watcher.scan(&input, super::NOW, &mut ok);
+        assert_eq!(sends.len(), 1);
+        assert!(sends[0].text.contains("- worker"));
+        assert!(!sends[0].text.contains("probe-failed"));
     }
 }
 

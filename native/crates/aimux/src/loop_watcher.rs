@@ -96,6 +96,29 @@ pub struct BufferedLoopSend {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LoopScanIndeterminate {
+    pub session_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopScanRecord {
+    pub at_ms: i64,
+    pub raw_candidate_count: usize,
+    pub planned_send_count: usize,
+    pub buffered_send_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub raw_candidate_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub planned_send_kinds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indeterminate: Vec<LoopScanIndeterminate>,
+    pub global_pause_active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BufferedLoopCandidateKey {
     pub session_id: String,
     #[serde(default = "default_stopped_condition")]
@@ -126,6 +149,7 @@ pub struct LoopWatcher {
     unchanged_reconciliation_ticks: u64,
     reconciliation_condition_since_ms: Option<i64>,
     reported_loop_exits: BTreeSet<String>,
+    scan_records: Vec<LoopScanRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -396,8 +420,47 @@ impl LoopWatcher {
         self.record_delivery(send, now_ms, outcome);
     }
 
+    pub fn record_scan_result(
+        &mut self,
+        input: &Value,
+        now_ms: i64,
+        sends: &[LoopSend],
+        indeterminate: Vec<LoopScanIndeterminate>,
+    ) {
+        let metadata = input.get("metadata").unwrap_or(&Value::Null);
+        let overseer_id = find_overseer_session_id(metadata);
+        let raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        let mut raw_candidate_ids = raw_candidates
+            .iter()
+            .filter_map(|candidate| optional_str(candidate, "id").map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+        raw_candidate_ids.sort();
+        raw_candidate_ids.dedup();
+        self.scan_records.push(LoopScanRecord {
+            at_ms: now_ms,
+            raw_candidate_count: raw_candidates.len(),
+            planned_send_count: sends.len(),
+            buffered_send_count: self.buffered_sends.len(),
+            raw_candidate_ids,
+            planned_send_kinds: sends
+                .iter()
+                .map(|send| loop_send_kind_name(send.kind).to_owned())
+                .collect(),
+            indeterminate,
+            global_pause_active: self.is_global_pause_active(now_ms),
+        });
+        if self.scan_records.len() > 32 {
+            let excess = self.scan_records.len().saturating_sub(32);
+            self.scan_records.drain(0..excess);
+        }
+    }
+
     pub fn last_delivery_record(&self) -> Option<&LoopDeliveryRecord> {
         self.delivery_records.last()
+    }
+
+    pub fn last_scan_record(&self) -> Option<&LoopScanRecord> {
+        self.scan_records.last()
     }
 
     pub fn pause_loop_alerts(
@@ -550,7 +613,8 @@ impl LoopWatcher {
                 "bufferedCount": self.buffered_sends.len()
             })),
             "pausedCount": self.paused_loop_alerts.len(),
-            "bufferedCount": self.buffered_sends.len()
+            "bufferedCount": self.buffered_sends.len(),
+            "recentScans": self.scan_records
         })
     }
 
@@ -881,6 +945,8 @@ struct PersistentLoopWatcherState {
     reconciliation_condition_since_ms: Option<i64>,
     #[serde(default)]
     reported_loop_exits: Vec<String>,
+    #[serde(default)]
+    scan_records: Vec<LoopScanRecord>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -947,6 +1013,7 @@ impl PersistentLoopWatcherState {
             unchanged_reconciliation_ticks: watcher.unchanged_reconciliation_ticks,
             reconciliation_condition_since_ms: watcher.reconciliation_condition_since_ms,
             reported_loop_exits: watcher.reported_loop_exits.iter().cloned().collect(),
+            scan_records: watcher.scan_records.clone(),
         }
     }
 
@@ -1009,6 +1076,7 @@ impl PersistentLoopWatcherState {
             unchanged_reconciliation_ticks: self.unchanged_reconciliation_ticks,
             reconciliation_condition_since_ms: self.reconciliation_condition_since_ms,
             reported_loop_exits: self.reported_loop_exits.into_iter().collect(),
+            scan_records: self.scan_records,
         })
     }
 }

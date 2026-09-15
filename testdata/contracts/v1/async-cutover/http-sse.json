@@ -257,7 +257,8 @@
               "bufferedCount": 0
             },
             "pausedCount": 0,
-            "bufferedCount": 0
+            "bufferedCount": 0,
+            "recentScans": []
           }
         },
         "framing": {
