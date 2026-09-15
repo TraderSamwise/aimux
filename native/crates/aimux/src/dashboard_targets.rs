@@ -385,11 +385,23 @@ pub fn resolve_dashboard_target_with_context(
         tmux.get_window_option(&dashboard_target, TMUX_DASHBOARD_READY_OPTION);
     let current_dashboard_owner =
         tmux.get_window_option(&dashboard_target, TMUX_DASHBOARD_OWNER_OPTION);
-    let should_respawn = options.force_reload
+    let mut should_respawn = options.force_reload
         || !tmux.is_window_alive(&dashboard_target)?
         || current_build_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str())
         || current_ready_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str())
         || current_dashboard_owner.as_deref() != Some(context.runtime_owner_id.as_str());
+    if !should_respawn {
+        let pane_command = tmux
+            .display_message("#{pane_current_command}", &dashboard_target.window_id)
+            .unwrap_or_default();
+        let pane_tail = if is_shell_pane_command(&pane_command) {
+            tmux.capture_target(&dashboard_target, -40)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        should_respawn = !is_dashboard_pane_command_usable(&pane_command, &pane_tail);
+    }
     if dashboard_created {
         wait_for_dashboard_target_ready(
             tmux,
@@ -520,7 +532,7 @@ fn is_usable_dashboard_target_with_context(
     let pane_command = tmux
         .display_message("#{pane_current_command}", &dashboard_target.window_id)
         .unwrap_or_default();
-    let pane_tail = if pane_command == "bash" {
+    let pane_tail = if is_shell_pane_command(&pane_command) {
         tmux.capture_target(dashboard_target, -40)
             .unwrap_or_default()
     } else {
@@ -538,7 +550,7 @@ fn is_usable_dashboard_target_with_context(
         current_build_stamp.as_deref() == Some(context.dashboard_build_stamp.as_str());
     let ready_matches =
         current_ready_stamp.as_deref() == Some(context.dashboard_build_stamp.as_str());
-    let command_ok = pane_command != "cat" && pane_command != "tail";
+    let command_ok = is_dashboard_pane_command_usable(&pane_command, &pane_tail);
     let tail_ok = !pane_tail.contains("aimux dashboard failed to start.");
     Ok(window_alive
         && project_root_matches
@@ -547,6 +559,21 @@ fn is_usable_dashboard_target_with_context(
         && (!require_current_build || (build_matches && ready_matches))
         && command_ok
         && tail_ok)
+}
+
+fn is_dashboard_pane_command_usable(pane_command: &str, pane_tail: &str) -> bool {
+    let pane_command = pane_command.trim();
+    if pane_command.is_empty() || matches!(pane_command, "cat" | "tail") {
+        return false;
+    }
+    if is_shell_pane_command(pane_command) {
+        return pane_tail.contains("Aimux") || pane_tail.contains("aimux");
+    }
+    true
+}
+
+fn is_shell_pane_command(pane_command: &str) -> bool {
+    matches!(pane_command.trim(), "bash" | "sh" | "zsh" | "fish")
 }
 
 fn project_roots_match(expected: &str, actual: &str) -> bool {
@@ -841,7 +868,7 @@ impl DashboardTargetTmux for DashboardTargetsContractTmux {
             "captureTarget",
             json!([target_to_value(target), { "startLine": start_line }]),
         );
-        Some(String::new())
+        Some("Aimux dashboard".to_owned())
     }
 
     fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String> {

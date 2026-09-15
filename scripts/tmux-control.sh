@@ -16,6 +16,7 @@ aimux_home=""
 daemon_host=""
 daemon_port=""
 dashboard_candidate_missing=0
+dashboard_candidate_stale_shell=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -257,8 +258,19 @@ validate_dashboard_target() {
 
   dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
   case "$dashboard_command" in
-    cat|tail)
+    ''|cat|tail|sh)
+      dashboard_candidate_stale_shell=1
       return 1
+      ;;
+    bash|zsh|fish)
+      dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -40 2>/dev/null || true)
+      case "$dashboard_preview" in
+        *Aimux*|*aimux*) ;;
+        *)
+          dashboard_candidate_stale_shell=1
+          return 1
+          ;;
+      esac
       ;;
   esac
   dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
@@ -328,6 +340,24 @@ dashboard_candidate_needs_reload() {
   [ -n "$expected_dashboard_build" ] && [ -n "$dashboard_build" ] || return 0
   [ "$dashboard_build" != "$expected_dashboard_build" ] && return 0
   dashboard_ready_for_build "$dashboard_window_id" "$expected_dashboard_build" || return 0
+
+  dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
+  case "$dashboard_command" in
+    ''|cat|tail|sh)
+      dashboard_candidate_stale_shell=1
+      return 0
+      ;;
+    bash|zsh|fish)
+      dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -40 2>/dev/null || true)
+      case "$dashboard_preview" in
+        *Aimux*|*aimux*) ;;
+        *)
+          dashboard_candidate_stale_shell=1
+          return 0
+          ;;
+      esac
+      ;;
+  esac
 
   dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
   case "$dashboard_preview" in
@@ -429,8 +459,13 @@ switch_local_dashboard() {
 reload_local_dashboard() {
   [ -n "$project_root" ] || return 1
   debug_log_line "dashboard reload fallback project_root=$project_root"
-  show_local_message "#[fg=colour220,bold]aimux#[default] reloading dashboard"
+  if [ "${dashboard_candidate_stale_shell-0}" = "1" ]; then
+    show_local_message "#[fg=colour220,bold]aimux#[default] dashboard process exited; reloading dashboard"
+  else
+    show_local_message "#[fg=colour220,bold]aimux#[default] reloading dashboard"
+  fi
   (
+    trap '' HUP
     reload_client_tty="${live_client_tty-${client_tty-}}"
     reload_client_session="${live_client_session-${current_client_session-}}"
     metadata_api=$(cat "$project_state_dir/metadata-api.txt" 2>/dev/null || true)
