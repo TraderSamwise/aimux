@@ -3,6 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::paths::PathResolver;
+use crate::runtime_topology::{
+    list_topology_session_states, read_runtime_topology, runtime_topology_path,
+};
 use crate::tmux::{
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
     TMUX_RUNTIME_OWNER_OPTION, is_dashboard_window_name, is_tmux_client_session_for_host,
@@ -20,6 +23,7 @@ pub struct RuntimeCoherenceTmuxWindow {
 #[derive(Debug, Clone)]
 pub struct RuntimeCoherenceTmux {
     pub available: bool,
+    pub error: Option<String>,
     pub version: Option<String>,
     pub session_names: Vec<String>,
     pub session_options: BTreeMap<String, BTreeMap<String, Option<String>>>,
@@ -33,6 +37,7 @@ impl Default for RuntimeCoherenceTmux {
     fn default() -> Self {
         Self {
             available: true,
+            error: None,
             version: Some("tmux 3.5a".into()),
             session_names: Vec::new(),
             session_options: BTreeMap::new(),
@@ -140,7 +145,12 @@ pub fn build_runtime_coherence_report_with_resolver(
             &expected_dashboard_build_stamp,
         );
         let runtime = read_project_runtime_report(&input.tmux, &project_root.project_root);
-        let status = project_status(&runtime, &service, &dashboards);
+        let agent_inventory = read_project_agent_inventory_report(
+            &input.tmux,
+            &project_root.project_root,
+            &expected_state_dir,
+        );
+        let status = project_status(&runtime, &service, &dashboards, &agent_inventory);
         projects.push(json!({
             "projectRoot": project_root.project_root,
             "sources": project_root.sources,
@@ -148,6 +158,7 @@ pub fn build_runtime_coherence_report_with_resolver(
             "runtime": runtime,
             "service": service,
             "dashboards": dashboards,
+            "agentInventory": agent_inventory,
             "status": status,
         }));
     }
@@ -205,6 +216,7 @@ pub fn build_runtime_coherence_report_with_resolver(
         },
         "tmux": {
             "available": input.tmux.available,
+            "error": input.tmux.error,
             "version": if input.tmux.available { input.tmux.version } else { None },
             "sessionCount": session_names.len(),
         },
@@ -281,6 +293,8 @@ pub fn render_runtime_coherence_report(report: &Value) -> String {
         "  tmux: {}",
         if report.pointer("/tmux/available").and_then(Value::as_bool) == Some(true) {
             string_at(report, &["tmux", "version"]).unwrap_or_else(|| "available".into())
+        } else if let Some(error) = string_at(report, &["tmux", "error"]) {
+            format!("unavailable ({error})")
         } else {
             "unavailable".into()
         }
@@ -398,6 +412,7 @@ pub fn render_runtime_coherence_report(report: &Value) -> String {
         if let Some(error) = project.pointer("/service/error").and_then(Value::as_str) {
             lines.push(format!("    error: {error}"));
         }
+        lines.extend(render_agent_inventory_report(project));
         let dashboards = project["dashboards"].as_array().unwrap_or(&empty);
         if dashboards.is_empty() {
             lines.push("  dashboards: none".into());
@@ -695,6 +710,10 @@ fn list_dashboard_reports(
 }
 
 const TMUX_DASHBOARD_BUILD_OPTION: &str = "@aimux-dashboard-build";
+const TMUX_AGENT_TOOL_OPTION: &str = "@aimux-tool";
+const TMUX_AGENT_METADATA_OPTION: &str = "@aimux-meta";
+const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
+const LIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle"];
 
 fn read_project_runtime_report(tmux: &RuntimeCoherenceTmux, project_root: &str) -> Value {
     let session_name = project_session_name(tmux, project_root);
@@ -739,6 +758,104 @@ fn read_project_runtime_report(tmux: &RuntimeCoherenceTmux, project_root: &str) 
         "expectedContract": AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
         "rebuildRequired": rebuild_required,
         "clientSessions": client_sessions,
+    })
+}
+
+fn read_project_agent_inventory_report(
+    tmux: &RuntimeCoherenceTmux,
+    project_root: &str,
+    project_state_dir: &str,
+) -> Value {
+    if !tmux.available {
+        return json!({
+            "status": "unavailable",
+            "error": tmux.error.clone().unwrap_or_else(|| "could not query tmux runtime".into()),
+            "mismatches": [],
+        });
+    }
+    let topology = match read_runtime_topology(runtime_topology_path(project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => {
+            return json!({
+                "status": "unreadable",
+                "error": error,
+                "mismatches": [],
+            });
+        }
+    };
+    let session_name = project_session_name(tmux, project_root);
+    let all_sessions = list_topology_session_states(&topology, None);
+    let inventoried_ids = all_sessions
+        .iter()
+        .filter_map(|session| string_field(session, "id").map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    let mut mismatches = Vec::new();
+    for session in list_topology_session_states(&topology, Some(ACTIVE_AGENT_STATUSES)) {
+        let status = string_field(&session, "status").unwrap_or("offline");
+        if !LIVE_AGENT_STATUSES.contains(&status) {
+            continue;
+        }
+        let session_id = string_field(&session, "id").unwrap_or("unknown");
+        let Some(target) = session.get("tmuxTarget") else {
+            mismatches.push(json!({
+                "kind": "inventoried-session-missing-window",
+                "sessionId": session_id,
+                "projectRoot": project_root,
+                "expected": format!("inventory status={status} with tmux target"),
+                "found": "no tmux target recorded in inventory",
+            }));
+            continue;
+        };
+        let target_session = target
+            .get("sessionName")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let window_id = target.get("windowId").and_then(Value::as_str).unwrap_or("");
+        let found = tmux
+            .windows
+            .get(target_session)
+            .into_iter()
+            .flatten()
+            .any(|window| window.id == window_id);
+        if !found {
+            mismatches.push(json!({
+                "kind": "inventoried-session-missing-window",
+                "sessionId": session_id,
+                "projectRoot": project_root,
+                "expected": format!("inventory status={status} target {target_session}:{window_id}"),
+                "found": "runtime window not found",
+            }));
+        }
+    }
+    for window in tmux
+        .windows
+        .get(&session_name)
+        .into_iter()
+        .flatten()
+        .filter(|window| tmux.window_alive.get(&window.id).copied().unwrap_or(true))
+    {
+        let Some(metadata) = agent_window_metadata(tmux, &window.id) else {
+            continue;
+        };
+        let session_id = metadata
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        if inventoried_ids.contains(session_id) {
+            continue;
+        }
+        mismatches.push(json!({
+            "kind": "orphan-runtime-window",
+            "sessionId": session_id,
+            "projectRoot": project_root,
+            "expected": "inventory entry for runtime window",
+            "found": format!("runtime window {session_name}:{} {}", window.id, window.name),
+        }));
+    }
+    json!({
+        "status": if mismatches.is_empty() { "ok" } else { "mismatch" },
+        "error": null,
+        "mismatches": mismatches,
     })
 }
 
@@ -813,7 +930,12 @@ fn manifests_match(expected: &Value, actual: &Value) -> bool {
     })
 }
 
-fn project_status(runtime: &Value, service: &Value, dashboards: &[Value]) -> &'static str {
+fn project_status(
+    runtime: &Value,
+    service: &Value,
+    dashboards: &[Value],
+    agent_inventory: &Value,
+) -> &'static str {
     if service_deliberately_stopped(service) {
         return "stopped";
     }
@@ -828,6 +950,7 @@ fn project_status(runtime: &Value, service: &Value, dashboards: &[Value]) -> &'s
     if dashboards
         .iter()
         .any(|dashboard| dashboard["status"].as_str() != Some("ok"))
+        || agent_inventory.get("status").and_then(Value::as_str) != Some("ok")
     {
         "needs-attention"
     } else {
@@ -892,6 +1015,86 @@ fn window_option(tmux: &RuntimeCoherenceTmux, window_id: &str, key: &str) -> Opt
         .and_then(|options| options.get(key))
         .cloned()
         .flatten()
+}
+
+fn agent_window_metadata(tmux: &RuntimeCoherenceTmux, window_id: &str) -> Option<Value> {
+    let tool = window_option(tmux, window_id, TMUX_AGENT_TOOL_OPTION)?;
+    if tool == "service" {
+        return None;
+    }
+    let raw = window_option(tmux, window_id, TMUX_AGENT_METADATA_OPTION)?;
+    let metadata = serde_json::from_str::<Value>(&raw).ok()?;
+    if metadata.get("kind").and_then(Value::as_str) != Some("agent") {
+        return None;
+    }
+    if metadata
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return None;
+    }
+    Some(metadata)
+}
+
+fn render_agent_inventory_report(project: &Value) -> Vec<String> {
+    let empty = Vec::new();
+    let inventory = project.get("agentInventory").unwrap_or(&Value::Null);
+    let status = inventory
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unavailable");
+    let mismatches = inventory
+        .get("mismatches")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let mut lines = Vec::new();
+    match status {
+        "ok" => lines.push("  agents: ok".into()),
+        "unavailable" => lines.push(format!(
+            "  agents: unavailable (could not query tmux runtime: {})",
+            inventory
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )),
+        "unreadable" => lines.push(format!(
+            "  agents: unreadable ({})",
+            inventory
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )),
+        _ => {
+            lines.push(format!("  agents: mismatch ({})", mismatches.len()));
+            for mismatch in mismatches {
+                let kind = mismatch
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("mismatch");
+                lines.push(format!(
+                    "    {kind}: session={} project={} expected={} found={}",
+                    mismatch
+                        .get("sessionId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    mismatch
+                        .get("projectRoot")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    mismatch
+                        .get("expected")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    mismatch
+                        .get("found")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                ));
+            }
+        }
+    }
+    lines
 }
 
 fn project_session_name(tmux: &RuntimeCoherenceTmux, project_root: &str) -> String {
@@ -1171,6 +1374,10 @@ fn string_at(value: &Value, path: &[&str]) -> Option<String> {
         current = current.get(*key)?;
     }
     current.as_str().map(str::to_owned)
+}
+
+fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
 }
 
 fn nullable_string(value: Option<&Value>) -> String {
