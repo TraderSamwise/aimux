@@ -320,7 +320,7 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
         },
         FooterHint {
             key: "O",
-            label: "overseer",
+            label: "overseer menu",
             tone: None,
         },
     ];
@@ -353,6 +353,9 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
         });
     }
     let has_worktrees = has_worktrees(input);
+    let has_supervisor_group = dashboard_navigation_groups(input.snapshot)
+        .iter()
+        .any(|group| group.kind == DashboardNavigationGroupKind::Supervisor);
     if has_worktrees && input.nav_level == DashboardNavLevel::Sessions {
         let mut hints = vec![
             FooterHint {
@@ -454,15 +457,22 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
         return hints;
     }
     if has_worktrees {
-        let mut hints = vec![
-            FooterHint {
-                key: "↑↓/jk",
-                label: "worktrees",
+        let mut hints = vec![FooterHint {
+            key: "↑↓/jk",
+            label: "worktrees",
+            tone: None,
+        }];
+        if has_supervisor_group {
+            hints.push(FooterHint {
+                key: "0",
+                label: "supervisor",
                 tone: None,
-            },
+            });
+        }
+        hints.extend([
             FooterHint {
-                key: "0-9",
-                label: "group",
+                key: "1-9",
+                label: "worktrees",
                 tone: None,
             },
             FooterHint {
@@ -475,7 +485,7 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
                 label: "details",
                 tone: None,
             },
-        ];
+        ]);
         hints.extend(scribe_controls);
         hints.extend([
             FooterHint {
@@ -2589,7 +2599,8 @@ fn render_help_content() -> Vec<String> {
         "    [↑↓/jk] select rows".into(),
         "    [Enter/→/l] open selected row".into(),
         "    [h/←] back to worktrees".into(),
-        "    [1-9] quick jump".into(),
+        "    [0 then 1-9] open supervisor session".into(),
+        "    [1-9 then 1-9] open worktree entry".into(),
         String::new(),
         format!("  {}", style("Screens", Tone::Strong)),
         "    [c] coordination".into(),
@@ -2601,7 +2612,7 @@ fn render_help_content() -> Vec<String> {
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
         "    [a] hide/show offline agents  [x] stop/kill".into(),
-        "    [O then p] pause/resume loop alerts".into(),
+        "    [O] overseer menu  [O then p] pause/resume loop alerts".into(),
     ]
 }
 
