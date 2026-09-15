@@ -172,6 +172,7 @@ struct TmuxControl {
     dashboard_index: String,
     dashboard_window_id: String,
     dashboard_candidate_missing: bool,
+    dashboard_candidate_stale_shell: bool,
     control_failure_reason: Option<String>,
     control_failure_exits_nonzero: bool,
     debug_log: PathBuf,
@@ -189,6 +190,7 @@ impl TmuxControl {
             dashboard_index: String::new(),
             dashboard_window_id: String::new(),
             dashboard_candidate_missing: false,
+            dashboard_candidate_stale_shell: false,
             control_failure_reason: None,
             control_failure_exits_nonzero: false,
             debug_log: debug_root.join("aimux-debug.log"),
@@ -443,7 +445,13 @@ impl TmuxControl {
             "dashboard reload fallback project_root={}",
             self.options.project_root
         ));
-        self.show_local_message("#[fg=colour220,bold]aimux#[default] reloading dashboard");
+        if self.dashboard_candidate_stale_shell {
+            self.show_local_message(
+                "#[fg=colour220,bold]aimux#[default] dashboard process exited; reloading dashboard",
+            );
+        } else {
+            self.show_local_message("#[fg=colour220,bold]aimux#[default] reloading dashboard");
+        }
         let tty = self
             .live_client
             .as_ref()
@@ -1536,6 +1544,9 @@ impl TmuxControl {
         if !self.dashboard_ready_for_build(&row.id, &expected_build) {
             return true;
         }
+        if self.dashboard_pane_command_is_stale(&row.id) {
+            return true;
+        }
         let preview = self
             .tmux_output(&["capture-pane", "-p", "-t", &row.id, "-S", "-80"])
             .unwrap_or_default();
@@ -1652,22 +1663,39 @@ impl TmuxControl {
         {
             self.tmux_status(&["send-keys", "-t", &row.id, "-X", "cancel"]);
         }
-        if let Some("cat" | "tail") = self
-            .tmux_output(&[
-                "display-message",
-                "-p",
-                "-t",
-                &row.id,
-                "#{pane_current_command}",
-            ])
-            .as_deref()
-        {
+        if self.dashboard_pane_command_is_stale(&row.id) {
             return false;
         }
         let preview = self
             .tmux_output(&["capture-pane", "-p", "-t", &row.id, "-S", "-80"])
             .unwrap_or_default();
         !preview.contains("aimux dashboard failed to start.")
+    }
+
+    fn dashboard_pane_command_is_stale(&mut self, window_id: &str) -> bool {
+        let command = self
+            .tmux_output(&[
+                "display-message",
+                "-p",
+                "-t",
+                window_id,
+                "#{pane_current_command}",
+            ])
+            .unwrap_or_default();
+        let stale = match command.trim() {
+            "" | "cat" | "tail" | "sh" => true,
+            "bash" | "zsh" | "fish" => {
+                let preview = self
+                    .tmux_output(&["capture-pane", "-p", "-t", window_id, "-S", "-40"])
+                    .unwrap_or_default();
+                !(preview.contains("Aimux") || preview.contains("aimux"))
+            }
+            _ => false,
+        };
+        if stale {
+            self.dashboard_candidate_stale_shell = true;
+        }
+        stale
     }
 
     fn dashboard_ready_for_build(&mut self, window_id: &str, build: &str) -> bool {

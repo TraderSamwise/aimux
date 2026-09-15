@@ -1,5 +1,5 @@
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -40,6 +40,12 @@ fn dashboard_reload_failure_names_endpoint_not_service_availability() {
 fn dashboard_reload_creates_missing_dashboard_window() {
     assert_dashboard_reload_creates_missing_dashboard_window(TmuxControlRunner::ShellScript);
     assert_dashboard_reload_creates_missing_dashboard_window(TmuxControlRunner::Native);
+}
+
+#[test]
+fn dashboard_reload_reports_shell_husk_instead_of_silently_switching_to_it() {
+    assert_dashboard_reload_reports_shell_husk(TmuxControlRunner::ShellScript);
+    assert_dashboard_reload_reports_shell_husk(TmuxControlRunner::Native);
 }
 
 #[test]
@@ -177,6 +183,27 @@ fn assert_dashboard_reload_creates_missing_dashboard_window(runner: TmuxControlR
     );
 }
 
+fn assert_dashboard_reload_reports_shell_husk(runner: TmuxControlRunner) {
+    let actual = run_case(
+        &dashboard_reload_shell_husk_case(json!({
+            "TMUX_FAKE_CURL_EXIT": "28",
+        })),
+        runner,
+    );
+    let root = &actual["roots"].as_array().expect("roots")[1];
+    let tmux_log = serde_json::to_string(&root["tmuxLog"]).expect("tmux log");
+    assert!(
+        tmux_log.contains("dashboard process exited; reloading dashboard"),
+        "{actual:#}"
+    );
+    assert!(
+        !tmux_log.contains(
+            "\"switch-client\",\"-c\",\"/dev/live\",\"-t\",\"aimux-proj-client-1234abcd:0\""
+        ),
+        "stale shell dashboard was focused as if healthy: {actual:#}"
+    );
+}
+
 fn assert_dashboard_reload_failure_names_missing_tmux_session(runner: TmuxControlRunner) {
     let actual = run_case(
         &dashboard_reload_missing_session_case(json!({
@@ -212,6 +239,10 @@ fn dashboard_reload_case(
 
 fn dashboard_reload_missing_window_case(env: Value) -> Value {
     dashboard_reload_case_with_state(env, 2, 15, dashboard_reload_missing_window_tmux_state())
+}
+
+fn dashboard_reload_shell_husk_case(env: Value) -> Value {
+    dashboard_reload_case_with_state(env, 2, 30, dashboard_reload_shell_husk_tmux_state())
 }
 
 fn dashboard_reload_missing_session_case(env: Value) -> Value {
@@ -347,6 +378,16 @@ fn dashboard_reload_missing_window_tmux_state() -> Value {
     state
 }
 
+fn dashboard_reload_shell_husk_tmux_state() -> Value {
+    let mut state = dashboard_reload_tmux_state();
+    state["panes"]["@dash"]["currentCommand"] = json!("bash");
+    state["capturedPanes"] = json!({ "@dash": "" });
+    state["sessionOptions"]["aimux-proj"]["@aimux-project-root"] = json!("<temp1>");
+    state["windowOptions"]["@dash"]["@aimux-dashboard-build"] = json!("build-current");
+    state["windowOptions"]["@dash"]["@aimux-dashboard-ready"] = json!("build-current");
+    state
+}
+
 fn dashboard_reload_missing_session_tmux_state() -> Value {
     let mut state = dashboard_reload_missing_window_tmux_state();
     state["clients"] = json!([]);
@@ -362,6 +403,7 @@ fn expected_output(case: &Value, runner: TmuxControlRunner) -> Value {
     {
         insert_native_project_control_probe(&mut expected, window_id);
     }
+    insert_dashboard_shell_health_probes(&mut expected);
     expected
 }
 
@@ -399,6 +441,94 @@ fn insert_native_project_control_probe(expected: &mut Value, window_id: &str) {
             continue;
         };
         tmux_log.insert(insert_at + 1, probe.clone());
+    }
+}
+
+fn insert_dashboard_shell_health_probes(expected: &mut Value) {
+    for root in expected["roots"].as_array_mut().into_iter().flatten() {
+        let shell_windows = root["state"]["panes"]
+            .as_object()
+            .map(|panes| {
+                panes
+                    .iter()
+                    .filter_map(|(window_id, pane)| {
+                        let command = pane.get("currentCommand").and_then(Value::as_str)?;
+                        matches!(command, "bash" | "zsh" | "fish").then(|| window_id.clone())
+                    })
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+        if shell_windows.is_empty() {
+            continue;
+        }
+        let Some(tmux_log) = root["tmuxLog"].as_array_mut() else {
+            continue;
+        };
+        let mut index = 0;
+        while index < tmux_log.len() {
+            let should_insert_after_command = tmux_log[index].as_array().is_some_and(|args| {
+                args.len() == 5
+                    && args[0] == json!("display-message")
+                    && args[1] == json!("-p")
+                    && args[2] == json!("-t")
+                    && args[4] == json!("#{pane_current_command}")
+                    && args[3]
+                        .as_str()
+                        .is_some_and(|window_id| shell_windows.contains(window_id))
+            });
+            if should_insert_after_command {
+                let window_id = tmux_log[index]
+                    .as_array()
+                    .and_then(|args| args.get(3))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let probe = json!(["capture-pane", "-p", "-t", window_id, "-S", "-40"]);
+                if tmux_log.get(index + 1) != Some(&probe) {
+                    tmux_log.insert(index + 1, probe);
+                    index += 1;
+                }
+                index += 1;
+                continue;
+            }
+
+            let should_insert_before_preview = tmux_log[index].as_array().is_some_and(|args| {
+                args.len() == 6
+                    && args[0] == json!("capture-pane")
+                    && args[1] == json!("-p")
+                    && args[2] == json!("-t")
+                    && args[4] == json!("-S")
+                    && args[5] == json!("-80")
+                    && args[3]
+                        .as_str()
+                        .is_some_and(|window_id| shell_windows.contains(window_id))
+            });
+            if should_insert_before_preview {
+                let window_id = tmux_log[index]
+                    .as_array()
+                    .and_then(|args| args.get(3))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let command_probe = json!([
+                    "display-message",
+                    "-p",
+                    "-t",
+                    window_id,
+                    "#{pane_current_command}"
+                ]);
+                let capture_probe = json!(["capture-pane", "-p", "-t", window_id, "-S", "-40"]);
+                if index == 0
+                    || (tmux_log.get(index - 1) != Some(&capture_probe)
+                        && tmux_log.get(index - 1) != Some(&command_probe))
+                {
+                    tmux_log.insert(index, command_probe);
+                    tmux_log.insert(index + 1, capture_probe);
+                    index += 2;
+                }
+            }
+            index += 1;
+        }
     }
 }
 
@@ -1169,6 +1299,9 @@ def display_message():
         return
     pane = state.get("panes", {}).get(target)
     if pane is None:
+        if fmt == "#{pane_current_command}":
+            out("aimux")
+            return
         fail()
     out(render_format(fmt, {
         "pane_in_mode": "1" if pane.get("inMode") else "0",
@@ -1181,7 +1314,7 @@ def display_message():
     }))
 
 def capture_pane():
-    out(option(state.get("capturedPanes", {}), arg_after("-t"), ""))
+    out(option(state.get("capturedPanes", {}), arg_after("-t"), "Aimux dashboard"))
 
 def show_options():
     value = option(option(state.get("sessionOptions", {}), arg_after("-t"), {}), last_arg())

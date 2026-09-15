@@ -3,10 +3,12 @@ use serde_json::{Value, json};
 
 use aimux::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetContext, DashboardTargetTmux,
-    resolve_dashboard_target_with_context, run_dashboard_targets_contract_case,
+    find_live_dashboard_target_with_context, resolve_dashboard_target_with_context,
+    run_dashboard_targets_contract_case,
 };
 use aimux::tmux::{
-    TMUX_DASHBOARD_READY_OPTION, TmuxCommandSpec, TmuxExecOptions, TmuxRuntimeManager,
+    TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION,
+    TMUX_RUNTIME_OWNER_OPTION, TmuxCommandSpec, TmuxExecOptions, TmuxRuntimeManager,
     TmuxSessionRef, TmuxTarget, TmuxWindowInfo,
 };
 use std::cell::RefCell;
@@ -142,6 +144,55 @@ fn created_dashboard_liveness_error_is_reported_as_could_not_determine() {
     .expect_err("tmux inspection failure should not become a timeout");
 
     assert_eq!(error, "tmux could not inspect dashboard pane state");
+}
+
+#[test]
+fn shell_husk_dashboard_is_rejected_and_replaced() {
+    for pane_command in ["sh", "bash"] {
+        let mut tmux = ExistingDashboardTmux::new(pane_command);
+        let context = fake_context();
+
+        let live = find_live_dashboard_target_with_context("/repo/mobile", &mut tmux, &context)
+            .expect("live dashboard lookup");
+        assert!(
+            live.is_none(),
+            "{pane_command} shell husk must not be reused: {live:#?}"
+        );
+
+        let resolved = resolve_dashboard_target_with_context(
+            "/repo/mobile",
+            &mut tmux,
+            DashboardResolveOptions {
+                force_reload: false,
+                open_in_host_session: false,
+            },
+            &context,
+        )
+        .expect("dashboard target");
+
+        assert_eq!(resolved.dashboard_target.window_id, "@fresh");
+        assert_eq!(tmux.replace_calls, 1);
+    }
+}
+
+#[test]
+fn healthy_client_dashboard_is_reused_without_replacement() {
+    let mut tmux = ExistingDashboardTmux::new("aimux");
+    let context = fake_context();
+
+    let resolved = resolve_dashboard_target_with_context(
+        "/repo/mobile",
+        &mut tmux,
+        DashboardResolveOptions {
+            force_reload: false,
+            open_in_host_session: false,
+        },
+        &context,
+    )
+    .expect("dashboard target");
+
+    assert_eq!(resolved.dashboard_target.window_id, "@dash");
+    assert_eq!(tmux.replace_calls, 0);
 }
 
 #[test]
@@ -362,6 +413,168 @@ impl DashboardTargetTmux for CreatedDashboardTmux {
         _timeout_ms: u64,
     ) -> Result<TmuxTarget, String> {
         panic!("created dashboard path should wait on the new target, not replace it");
+    }
+
+    fn set_session_option(
+        &mut self,
+        _session_name: &str,
+        _key: &str,
+        _value: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn set_window_option(
+        &mut self,
+        _target: &TmuxTarget,
+        _key: &str,
+        _value: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ExistingDashboardTmux {
+    pane_command: String,
+    replace_calls: usize,
+}
+
+impl ExistingDashboardTmux {
+    fn new(pane_command: &str) -> Self {
+        Self {
+            pane_command: pane_command.to_owned(),
+            replace_calls: 0,
+        }
+    }
+
+    fn host_session(&self) -> TmuxSessionRef {
+        TmuxSessionRef {
+            project_root: "/repo/mobile".to_owned(),
+            project_id: "mobile".to_owned(),
+            session_name: "aimux-mobile".to_owned(),
+        }
+    }
+
+    fn dashboard_target(&self, window_id: &str) -> TmuxTarget {
+        TmuxTarget {
+            session_name: "aimux-mobile-client-deadbeef".to_owned(),
+            window_id: window_id.to_owned(),
+            window_index: 0,
+            window_name: "dashboard".to_owned(),
+            pane_dead: Some(false),
+        }
+    }
+}
+
+impl DashboardTargetTmux for ExistingDashboardTmux {
+    fn get_project_session(&mut self, _project_root: &str) -> TmuxSessionRef {
+        self.host_session()
+    }
+
+    fn is_inside_tmux(&mut self) -> bool {
+        false
+    }
+
+    fn get_open_session_name(&mut self, _session_name: &str, _inside_tmux: bool) -> String {
+        "aimux-mobile-client-deadbeef".to_owned()
+    }
+
+    fn current_client_session(&mut self) -> Option<String> {
+        None
+    }
+
+    fn list_session_names(&mut self) -> Result<Vec<String>, String> {
+        Ok(vec![
+            "aimux-mobile".to_owned(),
+            "aimux-mobile-client-deadbeef".to_owned(),
+        ])
+    }
+
+    fn has_session(&mut self, session_name: &str) -> bool {
+        matches!(
+            session_name,
+            "aimux-mobile" | "aimux-mobile-client-deadbeef"
+        )
+    }
+
+    fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
+        if session_name == "aimux-mobile-client-deadbeef" {
+            Ok(vec![TmuxWindowInfo {
+                id: "@dash".to_owned(),
+                index: 0,
+                name: "dashboard".to_owned(),
+                active: true,
+                activity: None,
+                pane_dead: Some(false),
+            }])
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    fn get_window_option(&mut self, _target: &TmuxTarget, key: &str) -> Option<String> {
+        match key {
+            TMUX_DASHBOARD_BUILD_OPTION | TMUX_DASHBOARD_READY_OPTION => {
+                Some("dashboard-stamp".to_owned())
+            }
+            TMUX_DASHBOARD_OWNER_OPTION => Some("owner".to_owned()),
+            _ => None,
+        }
+    }
+
+    fn get_session_option(&mut self, session_name: &str, key: &str) -> Option<String> {
+        match key {
+            TMUX_RUNTIME_OWNER_OPTION => Some("owner".to_owned()),
+            "@aimux-project-root" if session_name == "aimux-mobile-client-deadbeef" => {
+                Some("/repo/mobile".to_owned())
+            }
+            "@aimux-project-root" if session_name == "aimux-mobile" => {
+                Some("/repo/mobile".to_owned())
+            }
+            _ => None,
+        }
+    }
+
+    fn display_message(&mut self, format: &str, _target: &str) -> Option<String> {
+        (format == "#{pane_current_command}").then(|| self.pane_command.clone())
+    }
+
+    fn capture_target(&mut self, _target: &TmuxTarget, _start_line: i64) -> Option<String> {
+        Some(String::new())
+    }
+
+    fn is_window_alive(&mut self, _target: &TmuxTarget) -> Result<bool, String> {
+        Ok(true)
+    }
+
+    fn ensure_project_session(
+        &mut self,
+        _project_root: &str,
+        _dashboard_command: &TmuxCommandSpec,
+    ) -> Result<TmuxSessionRef, String> {
+        Ok(self.host_session())
+    }
+
+    fn ensure_dashboard_window(
+        &mut self,
+        _session_name: &str,
+        _project_root: &str,
+        _dashboard_command: &TmuxCommandSpec,
+    ) -> Result<(TmuxTarget, bool), String> {
+        Ok((self.dashboard_target("@dash"), false))
+    }
+
+    fn replace_window_when_ready(
+        &mut self,
+        _target: &TmuxTarget,
+        _dashboard_command: &TmuxCommandSpec,
+        _readiness_option: &str,
+        _readiness_value: &str,
+        _timeout_ms: u64,
+    ) -> Result<TmuxTarget, String> {
+        self.replace_calls += 1;
+        Ok(self.dashboard_target("@fresh"))
     }
 
     fn set_session_option(
