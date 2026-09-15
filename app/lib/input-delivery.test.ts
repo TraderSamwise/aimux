@@ -21,6 +21,33 @@ describe("formatLivePaneInputDeliveryNotice", () => {
     ).toBe("Input held, not delivered yet: active client is still attached");
   });
 
+  it("explains each held-input reason in user-facing language", () => {
+    expect(
+      formatLivePaneInputDeliveryNotice({
+        state: "held",
+        reason: "visible-unsubmitted-input",
+      }),
+    ).toBe(
+      "Input held, not delivered yet: the agent terminal already has typed text. Clear or send that terminal draft, or Aimux will send this after the 15s safety hold.",
+    );
+    expect(
+      formatLivePaneInputDeliveryNotice({
+        state: "held",
+        reason: "active-client-recent-input",
+      }),
+    ).toBe(
+      "Input held, not delivered yet: a tmux client typed in the agent terminal recently. Aimux will retry after the terminal is quiet for a moment.",
+    );
+    expect(
+      formatLivePaneInputDeliveryNotice({
+        state: "held",
+        reason: "max-hold-elapsed",
+      }),
+    ).toBe(
+      "Input held, not delivered yet: the 15s safety hold elapsed, so Aimux is sending the queued input now.",
+    );
+  });
+
   it("reports accepted-false input responses as refusal", () => {
     expect(
       formatLivePaneInputResponseRefusal({
