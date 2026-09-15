@@ -118,8 +118,9 @@ fn runtime_coherence_uses_resolver_for_expected_project_state_dir() {
             .collect(),
             health,
             tmux: RuntimeCoherenceTmux {
-                available: false,
-                version: None,
+                available: true,
+                error: None,
+                version: Some("tmux 3.6b".into()),
                 ..RuntimeCoherenceTmux::default()
             },
             dashboard_build_stamps: [(project_root.to_owned(), "dashboard-new".to_owned())]
@@ -261,6 +262,7 @@ fn runtime_coherence_reports_real_computed_tmux_session_names() {
             .collect(),
             tmux: RuntimeCoherenceTmux {
                 available: true,
+                error: None,
                 version: Some("tmux 3.6b".to_owned()),
                 session_names: vec![session_name.clone()],
                 session_options,
@@ -418,6 +420,7 @@ fn runtime_coherence_reports_tmux_only_residue_as_inactive() {
             health: BTreeMap::new(),
             tmux: RuntimeCoherenceTmux {
                 available: true,
+                error: None,
                 version: Some("tmux 3.6b".to_owned()),
                 session_names: vec![session_name],
                 session_options,

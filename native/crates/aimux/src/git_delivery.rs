@@ -16,19 +16,19 @@ pub struct GitDeliveryCheck {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GitDeliveryError {
     GitCommand {
-        cwd: String,
+        cwd: Box<str>,
         args: Vec<String>,
-        message: String,
+        message: Box<str>,
     },
     Undelivered {
         head_sha: String,
-        source_repo: String,
-        target_project_root: String,
-        target_ref: String,
-        source_common_dir: String,
-        target_common_dir: String,
+        source_repo: Box<str>,
+        target_project_root: Box<str>,
+        target_ref: Box<str>,
+        source_common_dir: Box<str>,
+        target_common_dir: Box<str>,
         shares_object_store: bool,
-        detail: String,
+        detail: Box<str>,
     },
 }
 
@@ -85,14 +85,14 @@ pub fn verify_git_delivery(
         .args(["merge-base", "--is-ancestor", &head_sha, target_ref])
         .output()
         .map_err(|error| GitDeliveryError::GitCommand {
-            cwd: target_project_root.to_owned(),
+            cwd: target_project_root.into(),
             args: vec![
                 "merge-base".into(),
                 "--is-ancestor".into(),
                 head_sha.clone(),
                 target_ref.to_owned(),
             ],
-            message: error.to_string(),
+            message: error.to_string().into_boxed_str(),
         })?;
     if ancestry.status.success() {
         return Ok(GitDeliveryCheck {
@@ -119,13 +119,13 @@ pub fn verify_git_delivery(
     };
     Err(GitDeliveryError::Undelivered {
         head_sha,
-        source_repo,
-        target_project_root: target_project_root.to_owned(),
-        target_ref: target_ref.to_owned(),
-        source_common_dir,
-        target_common_dir,
+        source_repo: source_repo.into_boxed_str(),
+        target_project_root: target_project_root.into(),
+        target_ref: target_ref.into(),
+        source_common_dir: source_common_dir.into_boxed_str(),
+        target_common_dir: target_common_dir.into_boxed_str(),
         shares_object_store,
-        detail,
+        detail: detail.into_boxed_str(),
     })
 }
 
@@ -151,15 +151,15 @@ fn git_output(cwd: &str, args: &[&str]) -> Result<String, GitDeliveryError> {
         .args(args)
         .output()
         .map_err(|error| GitDeliveryError::GitCommand {
-            cwd: cwd.to_owned(),
+            cwd: cwd.into(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-            message: error.to_string(),
+            message: error.to_string().into_boxed_str(),
         })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         return Err(GitDeliveryError::GitCommand {
-            cwd: cwd.to_owned(),
+            cwd: cwd.into(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
             message: if !stderr.is_empty() {
                 stderr
@@ -167,7 +167,8 @@ fn git_output(cwd: &str, args: &[&str]) -> Result<String, GitDeliveryError> {
                 stdout
             } else {
                 format!("exited with {}", output.status)
-            },
+            }
+            .into_boxed_str(),
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())

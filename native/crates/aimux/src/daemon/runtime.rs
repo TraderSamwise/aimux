@@ -2190,15 +2190,17 @@ fn runtime_coherence_tmux_from_manager(tmux: &mut TmuxRuntimeManager) -> Runtime
     let Some(version) = tmux.get_version() else {
         return RuntimeCoherenceTmux {
             available: false,
+            error: Some("tmux version query failed".into()),
             version: None,
             ..RuntimeCoherenceTmux::default()
         };
     };
     let session_names = match tmux.list_session_names() {
         Ok(session_names) => session_names,
-        Err(_) => {
+        Err(error) => {
             return RuntimeCoherenceTmux {
                 available: false,
+                error: Some(format!("tmux list-sessions failed: {error}")),
                 version: Some(version),
                 ..RuntimeCoherenceTmux::default()
             };
@@ -2224,8 +2226,11 @@ fn runtime_coherence_tmux_from_manager(tmux: &mut TmuxRuntimeManager) -> Runtime
             .insert(session_name.clone(), session_options);
         let windows = match tmux.list_windows(&session_name) {
             Ok(windows) => windows,
-            Err(_) => {
+            Err(error) => {
                 report.available = false;
+                report.error = Some(format!(
+                    "tmux list-windows failed for {session_name}: {error}"
+                ));
                 Vec::new()
             }
         }
@@ -2243,8 +2248,12 @@ fn runtime_coherence_tmux_from_manager(tmux: &mut TmuxRuntimeManager) -> Runtime
                 window.pane_dead.map_or_else(
                     || match tmux.is_window_alive(&target) {
                         Ok(alive) => alive,
-                        Err(_) => {
+                        Err(error) => {
                             report.available = false;
+                            report.error = Some(format!(
+                                "tmux window probe failed for {}: {error}",
+                                window.id
+                            ));
                             false
                         }
                     },
@@ -2264,6 +2273,14 @@ fn runtime_coherence_tmux_from_manager(tmux: &mut TmuxRuntimeManager) -> Runtime
                     (
                         TMUX_DASHBOARD_OWNER_OPTION.to_owned(),
                         tmux.get_window_option(&window.id, TMUX_DASHBOARD_OWNER_OPTION),
+                    ),
+                    (
+                        "@aimux-tool".to_owned(),
+                        tmux.get_window_option(&window.id, "@aimux-tool"),
+                    ),
+                    (
+                        "@aimux-meta".to_owned(),
+                        tmux.get_window_option(&window.id, "@aimux-meta"),
                     ),
                 ]
                 .into_iter()
