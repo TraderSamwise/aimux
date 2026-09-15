@@ -934,22 +934,31 @@ fn is_bottom_chrome(line: &str) -> bool {
         || is_titled_divider(trimmed)
         || is_wrapped_divider_fragment(trimmed)
         || is_todo_panel_line(trimmed)
+        || trimmed.starts_with('⧉')
         || is_footer_line(trimmed)
         || looks_like_terminal_tail_chrome_status_text(trimmed)
 }
 
 fn body_end(lines: &[String], tool: &str) -> usize {
     let mut body_end = lines.len();
+    let mut stripped_tail_chrome = false;
     while body_end > 0 && is_bottom_chrome(lines[body_end - 1].as_str()) {
+        stripped_tail_chrome = true;
         body_end -= 1;
     }
-    if let Some(start) = trailing_composer_block_start(lines, tool) {
+    if let Some(start) =
+        trailing_composer_block_start(&lines[..body_end], tool, stripped_tail_chrome)
+    {
         body_end = body_end.min(start);
     }
     body_end
 }
 
-fn trailing_composer_block_start(lines: &[String], tool: &str) -> Option<usize> {
+fn trailing_composer_block_start(
+    lines: &[String],
+    tool: &str,
+    stripped_tail_chrome: bool,
+) -> Option<usize> {
     if tool != "claude" {
         return None;
     }
@@ -961,9 +970,18 @@ fn trailing_composer_block_start(lines: &[String], tool: &str) -> Option<usize> 
         return None;
     }
     let tail_text = lines[end].trim();
+    if is_prompt_line(lines[end].as_str()) {
+        let prompt_text = strip_prompt_marker(lines[end].as_str());
+        if stripped_tail_chrome
+            && is_agent_composer_chrome_text(&prompt_text)
+            && has_prior_conversation(&lines[..end])
+        {
+            return Some(end);
+        }
+        return None;
+    }
     if tail_text.is_empty()
         || tail_text.chars().count() > 220
-        || is_prompt_line(lines[end].as_str())
         || tail_text.starts_with('⏺')
         || tail_text.starts_with('●')
         || tail_text.starts_with('•')
@@ -1001,13 +1019,73 @@ fn trailing_composer_block_start(lines: &[String], tool: &str) -> Option<usize> 
     if !saw_prompt_marker {
         return None;
     }
-    let has_prior_conversation = lines[..=cursor].iter().any(|line| {
+    has_prior_conversation(&lines[..=cursor]).then_some(cursor + 1)
+}
+
+fn has_prior_conversation(lines: &[String]) -> bool {
+    lines.iter().any(|line| {
         is_prompt_line(line)
             || line.trim_start().starts_with('⏺')
             || line.trim_start().starts_with('●')
             || line.trim_start().starts_with('•')
-    });
-    has_prior_conversation.then_some(cursor + 1)
+    })
+}
+
+fn is_agent_composer_chrome_text(text: &str) -> bool {
+    let normalized = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    if normalized.is_empty()
+        || matches!(
+            normalized.as_str(),
+            "ask codex to do anything" | "ask claude to do anything"
+        )
+    {
+        return true;
+    }
+    if normalized.contains("bypass permissions")
+        || (normalized.contains("shift+tab") && normalized.contains("cycle"))
+    {
+        return true;
+    }
+    let mut words = normalized.split_whitespace();
+    matches!(words.next(), Some("press"))
+        && words.next().is_some_and(is_keyboard_hint_token)
+        && normalized.contains(" to ")
+        && (normalized.contains("message")
+            || normalized.contains("prompt")
+            || normalized.contains("composer")
+            || normalized.contains("input")
+            || normalized.contains("send")
+            || normalized.contains("queue")
+            || normalized.contains("edit")
+            || normalized.contains("accept")
+            || normalized.contains("cancel"))
+}
+
+fn is_keyboard_hint_token(token: &str) -> bool {
+    matches!(
+        token.trim_matches(|ch: char| matches!(ch, ',' | '.' | ':' | ';' | '(' | ')' | '[' | ']')),
+        "up" | "down"
+            | "left"
+            | "right"
+            | "tab"
+            | "enter"
+            | "return"
+            | "esc"
+            | "escape"
+            | "space"
+            | "backspace"
+            | "delete"
+            | "ctrl+c"
+            | "ctrl+d"
+            | "ctrl+j"
+            | "ctrl+o"
+            | "ctrl+r"
+            | "shift+tab"
+    )
 }
 
 fn starts_with_whitespace_nonspace(line: &str) -> bool {
