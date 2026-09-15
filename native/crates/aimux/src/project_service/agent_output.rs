@@ -1564,6 +1564,7 @@ fn input_live_pane_route(
                 "ok": true,
                 "sessionId": session_id,
                 "accepted": true,
+                "turnSemantics": agent_input_turn_semantics(),
                 "delivery": {
                     "state": "held",
                     "id": pending.id,
@@ -1580,8 +1581,22 @@ fn input_live_pane_route(
     }
     ProjectServiceDispatchResponse::json(
         200,
-        json!({ "ok": true, "sessionId": session_id, "accepted": true }),
+        json!({
+            "ok": true,
+            "sessionId": session_id,
+            "accepted": true,
+            "turnSemantics": agent_input_turn_semantics(),
+        }),
     )
+}
+
+fn agent_input_turn_semantics() -> Value {
+    json!({
+        "kind": "submittedPrompt",
+        "consumesTurn": true,
+        "preservesInFlightWork": false,
+        "message": "aimux input submits text as the agent's next user turn; it is not side-channel context",
+    })
 }
 
 async fn attach_live_pane_route_async(
@@ -1888,6 +1903,7 @@ async fn input_live_pane_route_async(
                 "ok": true,
                 "sessionId": session_id,
                 "accepted": true,
+                "turnSemantics": agent_input_turn_semantics(),
                 "delivery": {
                     "state": "held",
                     "id": pending.id,
@@ -1909,7 +1925,12 @@ async fn input_live_pane_route_async(
     }
     ProjectServiceDispatchResponse::json(
         200,
-        json!({ "ok": true, "sessionId": session_id, "accepted": true }),
+        json!({
+            "ok": true,
+            "sessionId": session_id,
+            "accepted": true,
+            "turnSemantics": agent_input_turn_semantics(),
+        }),
     )
 }
 

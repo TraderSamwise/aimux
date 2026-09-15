@@ -726,21 +726,41 @@ fn js_string_or_undefined(value: Option<&Value>) -> String {
 }
 
 pub fn render_core_agent_input_lines(payload: &Value) -> Vec<String> {
+    let consumes_turn = payload
+        .get("turnSemantics")
+        .and_then(|semantics| semantics.get("consumesTurn"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let mut lines = Vec::new();
     if payload
         .get("delivery")
         .and_then(|delivery| delivery.get("state"))
         .and_then(Value::as_str)
         == Some("held")
     {
-        return vec![format!(
+        lines.push(format!(
             "queued for {}",
             js_string(field(payload, "sessionId"))
-        )];
+        ));
+        if consumes_turn {
+            lines.push(
+                "turn: will consume agent turn when delivered (submitted prompt; in-flight work is not preserved)"
+                    .to_owned(),
+            );
+        }
+        return lines;
     }
-    vec![format!(
+    lines.push(format!(
         "delivered to {}",
         js_string(field(payload, "sessionId"))
-    )]
+    ));
+    if consumes_turn {
+        lines.push(
+            "turn: consumes agent turn (submitted prompt; in-flight work is not preserved)"
+                .to_owned(),
+        );
+    }
+    lines
 }
 pub fn render_core_agent_rename_lines(payload: &Value) -> Vec<String> {
     vec![
