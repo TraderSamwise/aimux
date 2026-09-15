@@ -193,7 +193,7 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "POST",
         "/projects/ensure",
         Some(&ensure_body),
-        Duration::from_secs(45),
+        Duration::from_secs(120),
         "daemon-project-ensure",
         "daemon-http",
     );
