@@ -24,6 +24,7 @@ struct FakeAgentRuntime {
     fail_loop: bool,
     fail_event: bool,
     invalid_agents: bool,
+    tmux_live_window_error: Option<String>,
 }
 
 impl DaemonAgentTextRuntime for FakeAgentRuntime {
@@ -52,6 +53,23 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
                 "/repo",
                 json!({ "agents": [{ "id": "claude-1" }, []] }),
             ),
+            project_routes::agents::LIST if self.tmux_live_window_error.is_some() => {
+                let error = self.tmux_live_window_error.as_deref().unwrap();
+                ProjectServiceJsonResult::ok(
+                    "/repo",
+                    json!({
+                        "ok": true,
+                        "tmuxLiveWindowQuery": { "ok": false, "error": error },
+                        "agents": [{
+                            "id": "claude-1",
+                            "tool": "claude",
+                            "role": "dev",
+                            "status": "running",
+                            "activity": "busy"
+                        }]
+                    }),
+                )
+            }
             project_routes::agents::LIST => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({
@@ -384,6 +402,38 @@ fn agent_read_mutation_routes_match_text_and_json_shapes() {
     )
     .expect("list json route");
     assert_eq!(json_text(list_json)[0]["id"], "claude-1");
+
+    let unavailable_ps = route_agent_text_request(
+        &mut FakeAgentRuntime {
+            tmux_live_window_error: Some("tmux socket busy".into()),
+            ..FakeAgentRuntime::default()
+        },
+        "GET",
+        &format!("{}?project=/repo", CORE_API_ROUTES.agent_ps_text),
+        None,
+    )
+    .expect("ps route");
+    assert_eq!(unavailable_ps.status, 503);
+    assert_eq!(
+        text_body(unavailable_ps),
+        "Error: could not verify agent tmux liveness: tmux socket busy\n"
+    );
+
+    let unavailable_list = route_agent_text_request(
+        &mut FakeAgentRuntime {
+            tmux_live_window_error: Some("tmux socket busy".into()),
+            ..FakeAgentRuntime::default()
+        },
+        "GET",
+        &format!("{}?project=/repo", CORE_API_ROUTES.agent_list_text),
+        None,
+    )
+    .expect("list route");
+    assert_eq!(unavailable_list.status, 503);
+    assert_eq!(
+        text_body(unavailable_list),
+        "Error: could not verify agent tmux liveness: tmux socket busy\n"
+    );
 
     let invalid_ps = route_agent_text_request(
         &mut FakeAgentRuntime {

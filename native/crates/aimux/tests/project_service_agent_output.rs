@@ -1113,6 +1113,47 @@ fn output_route_refuses_foreign_runtime_target_before_capture() {
 }
 
 #[test]
+fn output_route_refuses_recycled_pane_not_owned_by_addressed_tmux_session() {
+    let project = temp_project("recycled-pane");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = CheckedCaptureRuntime {
+        output: "contents from recycled pane".into(),
+        verify_result: Err(
+            "refusing to read pane @1: window is not present in addressed tmux runtime aimux-repo"
+                .into(),
+        ),
+        verified: Vec::new(),
+        captures: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/live-pane/output?sessionId=codex-1&purpose=terminal",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        response.body["error"],
+        "refusing to read pane @1: window is not present in addressed tmux runtime aimux-repo"
+    );
+    assert_eq!(
+        runtime.verified,
+        vec![("aimux-repo".into(), "@1".into(), project.clone())]
+    );
+    assert!(
+        runtime.captures.is_empty(),
+        "capture must not fall through to a same-numbered pane in another tmux session"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn output_route_reads_same_runtime_target_after_ownership_check() {
     let project = temp_project("same-runtime");
     let state_dir = project.join("state");
