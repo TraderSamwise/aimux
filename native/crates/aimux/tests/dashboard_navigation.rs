@@ -1,6 +1,7 @@
 use aimux::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 use aimux::dashboard_navigation::{
-    DashboardEntryRef, DashboardNavigationOutcome, DashboardNavigationState,
+    DashboardEntryRef, DashboardNavigationGroupKind, DashboardNavigationOutcome,
+    DashboardNavigationState, dashboard_navigation_groups,
 };
 use aimux::dashboard_renderer::DashboardNavLevel;
 
@@ -137,6 +138,73 @@ fn navigation_skips_project_control_sessions_inside_worktree_groups() {
     assert_eq!(
         state.selected_entry(&snapshot),
         Some(DashboardEntryRef::Session(&plain))
+    );
+}
+
+#[test]
+fn supervisor_group_does_not_change_resolved_worktree_session_membership() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].services.clear();
+    snapshot.services.clear();
+
+    let mut main_agent = snapshot.worktree_groups[0].sessions[0].clone();
+    main_agent.id = "main-agent".into();
+    main_agent.overseer = None;
+    main_agent.scribe = None;
+    main_agent.project_control = None;
+    main_agent.team = None;
+
+    let mut worker_agent = snapshot.worktree_groups[1].sessions[0].clone();
+    worker_agent.id = "worker-agent".into();
+    worker_agent.overseer = None;
+    worker_agent.scribe = None;
+    worker_agent.project_control = None;
+    worker_agent.team = None;
+
+    let mut overseer = main_agent.clone();
+    overseer.id = "project-overseer".into();
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+
+    let mut scribe = main_agent.clone();
+    scribe.id = "project-scribe".into();
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+
+    snapshot.sessions = vec![
+        overseer.clone(),
+        main_agent.clone(),
+        worker_agent.clone(),
+        scribe.clone(),
+    ];
+    snapshot.worktree_groups[0].sessions = vec![overseer, main_agent];
+    snapshot.worktree_groups[1].sessions = vec![worker_agent, scribe];
+
+    let groups = dashboard_navigation_groups(&snapshot);
+    assert_eq!(groups[0].kind, DashboardNavigationGroupKind::Supervisor);
+    assert_eq!(
+        groups[0]
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["project-overseer", "project-scribe"]
+    );
+    assert_eq!(
+        groups[1]
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["main-agent"]
+    );
+    assert_eq!(
+        groups[2]
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["worker-agent"]
     );
 }
 

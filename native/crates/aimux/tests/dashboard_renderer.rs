@@ -1019,6 +1019,7 @@ fn renders_state_aware_footer_hints_for_session_actions() {
     let plain = strip_ansi(&result.frame);
 
     assert!(plain.contains("Enter/→/l focus"));
+    assert!(plain.contains("O overseer menu"));
     assert!(plain.contains("x stop"));
     assert!(result.frame.contains("\x1b[1;38;5;203mx\x1b[0m"));
 }
@@ -1737,7 +1738,8 @@ fn focused_supervisor_section_renders_cursor() {
     let plain = strip_ansi(&result.frame);
 
     assert!(plain.contains("▸ [0] SUPERVISOR"));
-    assert!(plain.contains("0-9 group"));
+    assert!(plain.contains("0 supervisor"));
+    assert!(plain.contains("1-9 worktrees"));
 }
 
 #[test]
@@ -2091,6 +2093,9 @@ fn help_screen_names_global_loop_alert_pause_shortcut_path() {
     });
     let plain = strip_ansi(&result.frame);
 
+    assert!(plain.contains("[0 then 1-9] open supervisor session"));
+    assert!(plain.contains("[1-9 then 1-9] open worktree entry"));
+    assert!(plain.contains("[O] overseer menu"));
     assert!(plain.contains("[O then p] pause/resume loop alerts"));
 }
 

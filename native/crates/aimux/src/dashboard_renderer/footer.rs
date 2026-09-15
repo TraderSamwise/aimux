@@ -1,4 +1,5 @@
 use crate::dashboard_model::{DashboardService, DashboardSession};
+use crate::dashboard_navigation::{DashboardNavigationGroupKind, dashboard_navigation_groups};
 use crate::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput};
 use serde_json::{Value, json};
 
@@ -107,21 +108,28 @@ fn build_dashboard_footer_hints<'a>(
         },
         FooterHint {
             key: "O",
-            label: "overseer",
+            label: "overseer menu",
             danger: false,
         },
     ];
     let mut hints = Vec::new();
     if has_worktrees && input.nav_level == DashboardNavLevel::Worktrees {
+        hints.push(FooterHint {
+            key: "\u{2191}\u{2193}/jk",
+            label: "worktrees",
+            danger: false,
+        });
+        if has_supervisor_group(input) {
+            hints.push(FooterHint {
+                key: "0",
+                label: "supervisor",
+                danger: false,
+            });
+        }
         hints.extend([
             FooterHint {
-                key: "\u{2191}\u{2193}/jk",
-                label: "worktrees",
-                danger: false,
-            },
-            FooterHint {
                 key: "1-9",
-                label: "worktree",
+                label: "worktrees",
                 danger: false,
             },
             FooterHint {
@@ -383,6 +391,12 @@ fn append_loop_alert_hint<'a>(hints: &mut Vec<FooterHint<'a>>) {
         label: "loop alerts",
         danger: false,
     });
+}
+
+fn has_supervisor_group(input: &DashboardRenderInput<'_>) -> bool {
+    dashboard_navigation_groups(input.snapshot)
+        .iter()
+        .any(|group| group.kind == DashboardNavigationGroupKind::Supervisor)
 }
 
 fn dashboard_enter_verb(

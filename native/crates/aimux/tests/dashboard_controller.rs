@@ -128,6 +128,46 @@ fn supervisor_lane_wraps_in_both_worktree_directions() {
 }
 
 #[test]
+fn supervisor_lane_wrap_selection_resolves_session_id_in_each_direction() {
+    let snapshot = snapshot_with_supervisor_lane();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Up),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Up),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        selected_session_id(&controller, &snapshot),
+        Some("claude-1")
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Back),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Down),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        selected_session_id(&controller, &snapshot),
+        Some("claude-overseer")
+    );
+}
+
+#[test]
 fn supervisor_lane_quick_zero_then_one_enters_first_overseer() {
     let snapshot = snapshot_with_supervisor_lane();
     let mut controller = DashboardController::new(&snapshot);
@@ -157,6 +197,37 @@ fn supervisor_lane_quick_zero_then_one_enters_first_overseer() {
     );
     assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
     assert_eq!(controller.navigation.item_index, 0);
+    assert_eq!(
+        selected_session_id(&controller, &snapshot),
+        Some("claude-overseer")
+    );
+}
+
+#[test]
+fn supervisor_lane_quick_zero_then_n_resolves_intended_session_id() {
+    let snapshot = snapshot_with_supervisor_lane();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Digit('0')),
+        DashboardControllerEffect::Render
+    );
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Digit('2'))
+    else {
+        panic!("expected second supervisor entry activation");
+    };
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(
+        request.body,
+        json!({ "windowId": "@scribe", "focus": true })
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+    assert_eq!(controller.navigation.item_index, 1);
+    assert_eq!(
+        selected_session_id(&controller, &snapshot),
+        Some("claude-scribe")
+    );
 }
 
 #[test]
@@ -193,6 +264,10 @@ fn ordinary_agent_action_resolves_same_session_after_leaving_supervisor_lane() {
         Some(DashboardEntryRef::Session(
             &snapshot.worktree_groups[1].sessions[0]
         ))
+    );
+    assert_eq!(
+        selected_session_id(&controller, &snapshot),
+        Some("claude-1")
     );
 }
 
@@ -2678,6 +2753,16 @@ fn focus_session(
         }
     }
     panic!("missing session {session_id}");
+}
+
+fn selected_session_id<'a>(
+    controller: &'a DashboardController,
+    snapshot: &'a DesktopStateSnapshot,
+) -> Option<&'a str> {
+    match controller.navigation.selected_entry(snapshot) {
+        Some(DashboardEntryRef::Session(session)) => Some(session.id.as_str()),
+        _ => None,
+    }
 }
 
 fn focus_worktree_path(

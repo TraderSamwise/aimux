@@ -2140,6 +2140,88 @@ fn agent_input_holds_multiline_composer_draft_even_without_active_client() {
 }
 
 #[test]
+fn agent_input_ignores_claude_queued_message_hint_as_composer_chrome() {
+    let project = temp_project("queued-message-hint-no-hold");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output: "Ready\n❯ Press up to edit queued messages\n──────────────────────────────\nsam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context)\n⏵⏵ bypass permissions on (shift+tab to cycle)"
+                .into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "next gui message" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "next gui message".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "queued-message composer chrome must not stall the next GUI send"
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn composer_chrome_hint_does_not_mask_real_unsubmitted_input() {
+    let project = temp_project("queued-hint-real-input-hold");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output: "Ready\n❯ Sam is actually typing\n  Press up to edit queued messages\n──────────────────────────────\nsam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context)"
+                .into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let held = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "next gui message" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(held.status, 200);
+    assert_eq!(held.body["delivery"]["state"], "held");
+    assert_eq!(held.body["delivery"]["reason"], "visible-unsubmitted-input");
+    assert!(runtime.inner.actions.is_empty());
+    assert!(agent_input_delivery_queue_path(&state_dir).exists());
+
+    let deliver_at_ms = queued_max_deliver_at_ms(&state_dir);
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "next gui message".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "a genuine draft still releases after the bounded hold"
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
 fn active_client_with_visible_draft_holds_instead_of_idle_delivery() {
     let panes = "@1\t1\n";
     let clients = "client-1\t1000\t@1\n";
