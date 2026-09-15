@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const packageJsonPath = join(repoRoot, "package.json");
 const runnerPath = join(repoRoot, "scripts/native-test-runner.py");
 const python = process.env.PYTHON || "python3";
 const roots = [];
@@ -88,6 +89,15 @@ function runProbe(home, extraEnv = {}) {
   });
 }
 
+function runPython(source, extraEnv = {}) {
+  return spawnSync(python, ["-c", source, runnerPath], {
+    cwd: repoRoot,
+    env: { ...process.env, ...extraEnv },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
 function waitForLock(home) {
   const lockPath = join(home, "locks/native-test-0");
   const start = Date.now();
@@ -103,6 +113,34 @@ afterEach(() => {
 });
 
 describe("native-test-runner machine-wide cap", () => {
+  it("keeps the yarn native:test lane on the Python runner instead of nesting yarn", () => {
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    const script = packageJson.scripts?.["native:test"];
+
+    expect(script).toBe("CARGO_INCREMENTAL=0 python3 scripts/native-test-runner.py");
+    expect(script).not.toMatch(/(^|[;&|]\s*)yarn(\s|$)/);
+    expect(script).not.toMatch(/(^|[;&|]\s*)npm(\s|$)/);
+  });
+
+  it("defaults Aimux agent runs to a per-session Cargo target directory", () => {
+    const result = runPython(
+      `
+import importlib.util
+import sys
+spec = importlib.util.spec_from_file_location("native_test_runner", sys.argv[1])
+runner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = runner
+spec.loader.exec_module(runner)
+print(runner.default_agent_cargo_target_dir({"AIMUX_SESSION_ID": "codex:test"}))
+print(runner.default_agent_cargo_target_dir({"AIMUX_SESSION_ID": "codex:test", "CARGO_TARGET_DIR": "/tmp/custom"}))
+`,
+      { CARGO_TARGET_DIR: "" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(["/tmp/aimux-cargo-target-codex_test", "None"]);
+  });
+
   it("bounds observed concurrent native suites to AIMUX_NATIVE_TEST_JOBS", async () => {
     const home = tempAimuxHome("native-test-cap");
     const children = Array.from({ length: 6 }, (_, index) =>

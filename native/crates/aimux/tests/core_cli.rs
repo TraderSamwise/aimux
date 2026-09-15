@@ -1253,6 +1253,27 @@ fn worktree_and_graveyard_commands_plan_native_text_routes() {
         }
     );
 
+    let prune = classify_core_cli(
+        &[
+            "worktree",
+            "prune",
+            "--project",
+            "./child",
+            "--yes",
+            "--json",
+        ],
+        &context(true, true),
+    )
+    .expect("worktree prune plan");
+    assert_eq!(prune.operation, CoreCliOperation::WorktreePrune);
+    assert_eq!(
+        prune.action,
+        CoreCliAction::TextRoute {
+            path: "/core/worktree/prune-text?json=1".into(),
+            body: Some(json!({ "project": "./child", "dryRun": false })),
+        }
+    );
+
     let cleanup = classify_core_cli(
         &[
             "worktree",

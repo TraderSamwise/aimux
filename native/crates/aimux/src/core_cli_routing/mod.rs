@@ -806,7 +806,8 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("thread"), Some("list")) => true,
         (Some("thread"), Some("show" | "open" | "send" | "mark-seen" | "status")) => true,
         (Some("threads"), _) => parse_core_threads_alias_args(args).is_some(),
-        (Some("worktree"), None) | (Some("worktree"), Some("list" | "cleanup-caches")) => true,
+        (Some("worktree"), None)
+        | (Some("worktree"), Some("list" | "cleanup-caches" | "prune")) => true,
         (
             Some("worktree"),
             Some("add" | "create" | "remove" | "graveyard" | "resurrect" | "delete-graveyard"),
