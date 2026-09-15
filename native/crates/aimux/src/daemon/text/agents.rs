@@ -482,16 +482,26 @@ pub fn agent_input_text_route(
         Err(response) => return response,
     };
     let force = boolean_param(route_url, body, "force", false);
-    let (_, project_root) = match unwrap_project_result(runtime.post_project_service_json(
-        &project,
-        project_routes::agents::INPUT,
-        json!({ "sessionId": session_id, "text": text, "force": force }),
-        ProjectServicePostOptions::ensure(),
-    )) {
-        Ok(result) => result,
-        Err(response) => return response,
+    let (project_response, project_root) =
+        match unwrap_project_result(runtime.post_project_service_json(
+            &project,
+            project_routes::agents::INPUT,
+            json!({ "sessionId": session_id, "text": text, "force": force }),
+            ProjectServicePostOptions::ensure(),
+        )) {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
+    let payload = match project_response {
+        Value::Object(mut payload) => {
+            payload.insert("projectRoot".into(), Value::String(project_root));
+            payload
+                .entry("sessionId")
+                .or_insert_with(|| Value::String(session_id));
+            Value::Object(payload)
+        }
+        _ => json!({ "ok": true, "projectRoot": project_root, "sessionId": session_id }),
     };
-    let payload = json!({ "ok": true, "projectRoot": project_root, "sessionId": session_id });
     text_or_json_lines(
         route_url,
         payload.clone(),

@@ -114,9 +114,20 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
                 "/repo",
                 json!({ "sessionId": "codex-2", "threadId": "thread-1", "tool": body.get("tool").cloned().unwrap_or_else(|| json!("claude")) }),
             ),
-            project_routes::agents::INPUT => {
-                ProjectServiceJsonResult::ok("/repo", json!({ "ok": true }))
-            }
+            project_routes::agents::INPUT => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "ok": true,
+                    "sessionId": body["sessionId"].clone(),
+                    "accepted": true,
+                    "turnSemantics": {
+                        "kind": "submittedPrompt",
+                        "consumesTurn": true,
+                        "preservesInFlightWork": false,
+                        "message": "aimux input submits text as the agent's next user turn; it is not side-channel context"
+                    }
+                }),
+            ),
             project_routes::agents::RENAME => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "sessionId": body["sessionId"].clone(), "label": body["label"].clone() }),
@@ -274,7 +285,10 @@ fn agent_read_mutation_routes_match_text_and_json_shapes() {
         Some(&json!({ "project": "/repo", "sessionId": "claude-1", "text": "hello" })),
     )
     .expect("input route");
-    assert_eq!(text_body(input), "delivered to claude-1\n");
+    assert_eq!(
+        text_body(input),
+        "delivered to claude-1\nturn: consumes agent turn (submitted prompt; in-flight work is not preserved)\n"
+    );
     assert_eq!(
         runtime.calls.last().unwrap().body.as_ref().unwrap(),
         &json!({ "sessionId": "claude-1", "text": "hello", "force": false })
@@ -287,10 +301,29 @@ fn agent_read_mutation_routes_match_text_and_json_shapes() {
         Some(&json!({ "project": "/repo", "sessionId": "claude-1", "text": "now" })),
     )
     .expect("forced input route");
-    assert_eq!(text_body(forced), "delivered to claude-1\n");
+    assert_eq!(
+        text_body(forced),
+        "delivered to claude-1\nturn: consumes agent turn (submitted prompt; in-flight work is not preserved)\n"
+    );
     assert_eq!(
         runtime.calls.last().unwrap().body.as_ref().unwrap(),
         &json!({ "sessionId": "claude-1", "text": "now", "force": true })
+    );
+
+    let input_json = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?json=1", CORE_API_ROUTES.agent_input_text),
+        Some(&json!({ "project": "/repo", "sessionId": "claude-1", "text": "json" })),
+    )
+    .expect("input json route");
+    let input_json_body = json_text(input_json);
+    assert_eq!(input_json_body["sessionId"], "claude-1");
+    assert_eq!(input_json_body["projectRoot"], "/repo");
+    assert_eq!(input_json_body["turnSemantics"]["consumesTurn"], true);
+    assert_eq!(
+        input_json_body["turnSemantics"]["preservesInFlightWork"],
+        false
     );
 
     let ps = route_agent_text_request(
