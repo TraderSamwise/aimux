@@ -2087,10 +2087,16 @@ mod tests {
                 handle_project_service_http_request_transport_async(request, context, &mut reader)
                     .await
                     .expect("async read route returns");
-            assert_eq!(response.response.status, 200);
+            assert_eq!(response.response.status, 503);
             let body: Value =
                 serde_json::from_slice(&response.response.body).expect("JSON response body");
-            assert_eq!(body.get("ok"), Some(&Value::Bool(true)));
+            assert_eq!(body.get("ok"), Some(&Value::Bool(false)));
+            assert_eq!(
+                body.get("error"),
+                Some(&Value::String(
+                    "could not verify agent tmux liveness: tmux socket busy".to_owned()
+                ))
+            );
             assert_eq!(
                 body.pointer("/tmuxLiveWindowQuery/ok"),
                 Some(&Value::Bool(false))
@@ -2099,11 +2105,7 @@ mod tests {
                 body.pointer("/tmuxLiveWindowQuery/error"),
                 Some(&Value::String("tmux socket busy".to_owned()))
             );
-            let sessions = body
-                .get("agents")
-                .and_then(Value::as_array)
-                .expect("agents array");
-            assert_eq!(sessions.len(), 1);
+            assert!(body.get("agents").is_none());
             let _ = fs::remove_dir_all(root);
         });
     }

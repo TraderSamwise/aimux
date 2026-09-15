@@ -594,6 +594,7 @@ const POST_TEXT_ROUTES: &[&str] = &[
     CORE_API_ROUTES.worktree_create_text,
     CORE_API_ROUTES.worktree_delete_graveyard_text,
     CORE_API_ROUTES.worktree_graveyard_text,
+    CORE_API_ROUTES.worktree_prune_text,
     CORE_API_ROUTES.worktree_remove_text,
     CORE_API_ROUTES.worktree_resurrect_text,
     crate::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE,

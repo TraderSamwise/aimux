@@ -918,6 +918,47 @@ fn ensure_project_session_creates_and_configures_missing_session() {
 }
 
 #[test]
+fn ensure_project_session_preserves_existing_session_windows_on_restart() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+        calls_for_exec.borrow_mut().push(args.to_vec());
+        let joined = args.join(" ");
+        if joined == "has-session -t aimux-mobile-078d0ecd20ec" {
+            return Ok(String::new());
+        }
+        if joined == "show-options -v -t aimux-mobile-078d0ecd20ec @aimux-runtime-contract" {
+            return Ok(AIMUX_TMUX_RUNTIME_CONTRACT_VERSION.to_owned());
+        }
+        if joined == "show-options -v -t aimux-mobile-078d0ecd20ec terminal-features" {
+            return Ok(String::new());
+        }
+        Ok(String::new())
+    });
+
+    manager
+        .ensure_project_session("/repo/mobile", None, Some(test_runtime_config()))
+        .expect("existing tmux session should be reused");
+
+    let calls = calls.borrow();
+    assert!(
+        !calls
+            .iter()
+            .any(|args| args.first().map(String::as_str) == Some("new-session")),
+        "daemon/project-service restart must not recreate an existing project tmux session"
+    );
+    assert!(
+        !calls.iter().any(|args| {
+            matches!(
+                args.first().map(String::as_str),
+                Some("kill-session" | "kill-window")
+            )
+        }),
+        "daemon/project-service restart must not kill existing agent windows"
+    );
+}
+
+#[test]
 fn ensure_project_session_bootstraps_empty_tmux_server() {
     let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
     let created = Rc::new(RefCell::new(false));

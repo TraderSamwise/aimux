@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crate::config::load_config_for_known_project_root;
 use crate::debug_logging::{LogLevel, log_always_at};
+use crate::git_clone_guard::prepare_git_clone_guard_env;
 use crate::managed_launch_env::wrap_command_with_managed_launch_env_extra;
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{
@@ -14,9 +15,7 @@ use crate::runtime_topology::{
 use crate::session_bootstrap::{
     build_session_preamble, cap_launch_preamble_for_argv, ensure_default_plan,
 };
-use crate::shell_hooks::{
-    wrap_command_with_shell_integration, wrap_command_with_shell_integration_extra,
-};
+use crate::shell_hooks::wrap_command_with_shell_integration_extra;
 use crate::tmux::project_session;
 use crate::tool_hooks::{codex_launch_hook_args, inject_claude_hook_args, install_codex_hooks};
 
@@ -827,6 +826,11 @@ pub(super) fn wrap_agent_launch(
         .and_then(|name| name.to_str())
         .unwrap_or(command);
     let wrapper_enabled = tool_config.get("wrapperEnabled").and_then(Value::as_bool) != Some(false);
+    let git_guard_env = prepare_git_clone_guard_env(project_state_dir, project_root)?;
+    let launch_env = launch_env
+        .into_iter()
+        .chain(git_guard_env)
+        .collect::<Vec<_>>();
     if !is_configured_tool_command {
         if launch_env.is_empty() {
             return Ok((command.to_owned(), launch_args));
@@ -838,7 +842,7 @@ pub(super) fn wrap_agent_launch(
         ));
     }
     if !wrapper_enabled {
-        return wrap_command_with_shell_integration(
+        return wrap_command_with_shell_integration_extra(
             project_state_dir,
             session_id,
             tool_key,
@@ -847,6 +851,7 @@ pub(super) fn wrap_agent_launch(
             std::env::var("SHELL")
                 .unwrap_or_else(|_| "zsh".to_owned())
                 .as_str(),
+            launch_env,
         );
     }
     if configured_executable == "claude" {
@@ -908,4 +913,80 @@ pub(super) fn wrap_agent_launch(
 
 fn path_string(path: impl AsRef<Path>) -> String {
     path.as_ref().to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "{label}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("time")
+                    .as_nanos()
+            ));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn wrapper_disabled_agent_launch_still_installs_git_clone_guard() {
+        let temp = TempDir::new("aimux-agent-launch-git-guard");
+        let project = temp.path().join("project");
+        let state = temp.path().join("state");
+        fs::create_dir_all(&project).expect("project");
+        fs::create_dir_all(&state).expect("state");
+        let project_root = project.to_string_lossy().into_owned();
+        let (command, args) = wrap_agent_launch(AgentLaunchWrapInput {
+            project_state_dir: &state,
+            session_id: "codex-guarded",
+            tool_key: "codex",
+            command: "codex",
+            launch_args: vec!["--help".to_owned()],
+            backend_session_id: None,
+            tool_config: &json!({
+                "command": "codex",
+                "wrapperEnabled": false,
+            }),
+            project_root: &project_root,
+            launch_env: Vec::new(),
+        })
+        .expect("wrap launch");
+
+        assert_eq!(command, "env");
+        assert!(
+            args.iter()
+                .any(|arg| arg.starts_with("PATH=") && arg.contains("/git-guard:")),
+            "wrapped args should prepend the guard directory to PATH: {args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg == &format!("AIMUX_GIT_GUARD_PROJECT_ROOT={project_root}")),
+            "wrapped args should carry the protected project root: {args:?}"
+        );
+        assert!(
+            state.join("git-guard/git").is_file(),
+            "launch wrapping should install the git guard executable"
+        );
+    }
 }

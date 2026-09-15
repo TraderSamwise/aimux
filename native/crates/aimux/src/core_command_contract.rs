@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    106,
+    107,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -134,6 +134,7 @@ define_string_contract!(
         worktree_delete_graveyard_text => ("worktreeDeleteGraveyardText", "/core/worktree/delete-graveyard-text"),
         worktree_graveyard_text => ("worktreeGraveyardText", "/core/worktree/graveyard-text"),
         worktree_list_text => ("worktreeListText", "/core/worktree/list-text"),
+        worktree_prune_text => ("worktreePruneText", "/core/worktree/prune-text"),
         worktree_remove_text => ("worktreeRemoveText", "/core/worktree/remove-text"),
         worktree_resurrect_text => ("worktreeResurrectText", "/core/worktree/resurrect-text"),
     }

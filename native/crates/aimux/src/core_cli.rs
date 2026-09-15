@@ -114,6 +114,7 @@ pub enum CoreCliOperation {
     ThreadStatus,
     WorktreeList,
     WorktreeCreate,
+    WorktreePrune,
     WorktreeCacheCleanup,
     WorktreeRemove,
     WorktreeGraveyard,
@@ -1546,7 +1547,7 @@ where
         }
         (
             "worktree",
-            "" | "list" | "add" | "create" | "cleanup-caches" | "remove" | "graveyard"
+            "" | "list" | "add" | "create" | "prune" | "cleanup-caches" | "remove" | "graveyard"
             | "resurrect" | "delete-graveyard",
         ) => {
             let parsed = parse_core_worktree_args(&args).ok_or_else(|| {
@@ -1574,6 +1575,14 @@ where
                     CoreCliOperation::WorktreeCreate,
                     text_route_path(CORE_API_ROUTES.worktree_create_text, parsed.json),
                     Some(json!({ "project": project_root, "name": parsed.name })),
+                ),
+                "prune" => (
+                    CoreCliOperation::WorktreePrune,
+                    text_route_path(CORE_API_ROUTES.worktree_prune_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "dryRun": !parsed.yes,
+                    })),
                 ),
                 "cleanup-caches" => (
                     CoreCliOperation::WorktreeCacheCleanup,

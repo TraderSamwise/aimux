@@ -353,6 +353,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.worktree_delete_graveyard_text,
     crate::core_command_contract::CORE_API_ROUTES.worktree_graveyard_text,
     crate::core_command_contract::CORE_API_ROUTES.worktree_list_text,
+    crate::core_command_contract::CORE_API_ROUTES.worktree_prune_text,
     crate::core_command_contract::CORE_API_ROUTES.worktree_remove_text,
     crate::core_command_contract::CORE_API_ROUTES.worktree_resurrect_text,
 ];
