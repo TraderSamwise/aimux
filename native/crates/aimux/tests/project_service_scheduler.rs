@@ -1266,7 +1266,7 @@ fn hot_task_reaches_health_notifications_and_operation_failures() {
         .into_iter()
         .find(|task| task.name == "measured-hot")
         .expect("measured-hot health");
-    assert_eq!(health.hot, true);
+    assert!(health.hot);
     assert_eq!(health.interval_ms, Some(250));
     assert!(
         health.last_duration_ms.unwrap_or_default() >= 200,

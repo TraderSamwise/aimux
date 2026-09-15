@@ -440,6 +440,81 @@ fn output_projection_reads_tool_progress_activity_text() {
 }
 
 #[test]
+fn output_projection_keeps_claude_composer_hint_out_of_user_messages() {
+    let raw = [
+        "❯ What did Sam ask us to prove?",
+        "",
+        "⏺ Sam asked us to prove the GUI transcript does not turn CLI chrome into chat.",
+        "",
+        "❯ Press up to edit queued messages",
+        "──────────────────────────────",
+        "sam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context) [[aimux] overseer]",
+        "⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents",
+        "⧉  port-gap-closure · rail-hardening · async-cutover",
+    ]
+    .join("\n");
+
+    let projection = project_agent_output(&raw, Some("claude"));
+
+    assert_eq!(
+        projection
+            .messages
+            .iter()
+            .map(|message| (
+                message["role"].as_str().unwrap(),
+                message["text"].as_str().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("user", "What did Sam ask us to prove?"),
+            (
+                "assistant",
+                "Sam asked us to prove the GUI transcript does not turn CLI chrome into chat."
+            ),
+        ]
+    );
+    assert!(
+        !projection.messages.iter().any(|message| message["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("queued messages"))),
+        "Claude composer chrome must not become a GUI user bubble"
+    );
+}
+
+#[test]
+fn output_projection_keeps_real_claude_prompt_with_hint_words_as_user_message() {
+    let raw = [
+        "❯ What phrase caused the bug?",
+        "",
+        "⏺ The confusing phrase was a composer hint.",
+        "",
+        "❯ Press up to edit queued messages for this regression test",
+    ]
+    .join("\n");
+
+    let projection = project_agent_output(&raw, Some("claude"));
+
+    assert_eq!(
+        projection
+            .messages
+            .iter()
+            .map(|message| (
+                message["role"].as_str().unwrap(),
+                message["text"].as_str().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("user", "What phrase caused the bug?"),
+            ("assistant", "The confusing phrase was a composer hint."),
+            (
+                "user",
+                "Press up to edit queued messages for this regression test"
+            ),
+        ]
+    );
+}
+
+#[test]
 fn output_projection_preserves_full_sgr_spans_from_ansi_capture() {
     let ansi = [
         "› use colors?",
