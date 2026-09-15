@@ -635,7 +635,7 @@ fn probe_default_daemon_with_manifest(
     }
     if !is_matching_daemon_health(&response.json, manifest) {
         return Err(DaemonSupervisorError::Message(
-            "aimux daemon on default port is from a different local build; run aimux restart"
+            "aimux daemon on default port is from a different local build; ask the supervising user to restart aimux when the fleet is safe"
                 .into(),
         ));
     }

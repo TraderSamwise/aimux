@@ -24,6 +24,7 @@ struct FakeRuntime {
     daemon_state: DaemonState,
     commands: Vec<CoreCommandCall>,
     text_routes: Vec<(String, Option<Value>)>,
+    existing_daemon_text_routes: Vec<(String, Option<Value>)>,
     open_targets: Vec<Value>,
     restart_calls: Vec<(Option<String>, bool)>,
     restart_progress: Vec<String>,
@@ -47,6 +48,8 @@ struct FakeRuntime {
     topology_path: PathBuf,
     topology_raw: String,
     topology_json: Value,
+    parity_text_error: Option<String>,
+    existing_daemon_text_error: Option<String>,
 }
 
 impl Default for FakeRuntime {
@@ -57,6 +60,7 @@ impl Default for FakeRuntime {
             daemon_state: DaemonState::empty(),
             commands: Vec::new(),
             text_routes: Vec::new(),
+            existing_daemon_text_routes: Vec::new(),
             open_targets: Vec::new(),
             restart_calls: Vec::new(),
             restart_progress: Vec::new(),
@@ -83,6 +87,8 @@ impl Default for FakeRuntime {
             topology_path: PathBuf::from("/repo/.aimux/runtime-topology.yaml"),
             topology_raw: "version: 1\ngeneratedAt: now\n".into(),
             topology_json: json!({ "version": 1, "generatedAt": "now", "rigs": [] }),
+            parity_text_error: None,
+            existing_daemon_text_error: None,
         }
     }
 }
@@ -216,85 +222,24 @@ impl CoreCliRuntime for FakeRuntime {
     }
 
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {
+        if let Some(error) = self.parity_text_error.clone() {
+            return Err(error);
+        }
         self.text_routes.push((path.to_owned(), body));
-        Ok(if path.starts_with("/core/host-agent-stream-text?") {
-            "streamed output\n".into()
-        } else if path.starts_with("/core/host-agent-read-text?") {
-            "pane output\n".into()
-        } else if path.starts_with("/core/agents/ps-text?") {
-            "claude-1  [claude]  ready\n".into()
-        } else if path.starts_with("/core/agents/list-text?") {
-            "Main Checkout  /repo\n  ready  canonical=claude  aimux=claude-1\n".into()
-        } else if path == "/core/agents/input-text" {
-            "delivered to claude-1\n".into()
-        } else if path.starts_with("/core/agents/rename-text") {
-            "renamed claude-1 -> reviewer\n".into()
-        } else if path.starts_with("/core/agents/migrate-text") {
-            "migrated claude-1 -> feature\n".into()
-        } else if path.starts_with("/core/lifecycle/spawn-text") {
-            "spawned claude-1\n".into()
-        } else if path.starts_with(CORE_SERVICE_CREATE_TEXT_ROUTE) {
-            "service service-1 running\n".into()
-        } else if path.starts_with("/core/lifecycle/stop-text") {
-            "stopped claude-1\n".into()
-        } else if path.starts_with("/core/lifecycle/kill-text") {
-            "graveyarded claude-1\n".into()
-        } else if path.starts_with("/core/lifecycle/fork-text") {
-            "forked codex-2\nthread thread-1\n".into()
-        } else if path.starts_with("/core/loop/") {
-            "loop ok\n".into()
-        } else if path.starts_with("/core/overseer/") {
-            "overseer ok\n".into()
-        } else if path.starts_with("/core/scribe/") {
-            "scribe ok\n".into()
-        } else if path.starts_with("/core/team/") {
-            "team ok\n".into()
-        } else if path.starts_with("/core/notifications/") {
-            "notifications ok\n".into()
-        } else if path.starts_with("/core/outline/") {
-            "outline ok\n".into()
-        } else if path.starts_with("/core/attachment/") {
-            "Attached files:\n- notes.txt (text/plain, 5 bytes): /tmp/notes.txt\n".into()
-        } else if path.starts_with("/core/task/")
-            || path.starts_with("/core/review/")
-            || path.starts_with("/core/message/")
-            || path.starts_with("/core/handoff/")
-            || path.starts_with("/core/thread/")
-        {
-            "task task-1\nthread thread-1\n".into()
-        } else if path.starts_with("/core/worktree/") || path.starts_with("/core/graveyard/") {
-            "worktree ok\n".into()
-        } else if path.starts_with("/core/metadata-text") {
-            "metadata ok\n".into()
-        } else if path.starts_with("/core/repair-text")
-            || path.starts_with("/core/repair-exchange-text")
-        {
-            "repair ok\n".into()
-        } else if path.starts_with("/core/doctor/versions-text?json=1") {
-            "{\n  \"cliVersion\": \"test-cli\",\n  \"summary\": { \"projects\": 0 },\n  \"expected\": { \"runtimeContract\": \"2\" }\n}\n".into()
-        } else if path.starts_with("/core/doctor/versions-text") {
-            concat!(
-                "Aimux Versions\n",
-                "  cli version: test-cli\n",
-                "  build profile: test\n",
-                "  cli launcher: /tmp/aimux\n",
-                "  cli current entry: /tmp/aimux\n",
-                "  cli stable shim: /tmp/stable/aimux\n",
-                "  expected project service: api=5 build=test-build capabilities=parsedAgentOutput, attachmentRead, chatEventStream, agentTranscriptMessages, agentActivityState\n",
-                "  expected runtime owner: test-owner\n",
-                "  expected tmux runtime contract: 2\n",
-                "  daemon: running pid=123 endpoint=http://127.0.0.1:46290\n",
-                "  daemon projects: 0\n",
-                "  tmux: unavailable\n",
-                "  tmux sessions: 0\n",
-                "  projects: 0 (0 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n"
-            )
-            .into()
-        } else if path.ends_with("?json=1") {
-            "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
-        } else {
-            "Runtime Coherence\n  ok\n".into()
-        })
+        Ok(fake_text_response(path))
+    }
+
+    fn request_existing_daemon_text(
+        &mut self,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<String, String> {
+        self.existing_daemon_text_routes
+            .push((path.to_owned(), body));
+        if let Some(error) = self.existing_daemon_text_error.clone() {
+            return Err(error);
+        }
+        Ok(fake_text_response(path))
     }
 
     fn selected_log_path(&self, _options: &aimux::core_cli_routing::CoreLogsArgs) -> PathBuf {
@@ -443,6 +388,87 @@ impl CoreCliRuntime for FakeRuntime {
 
 fn args(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| value.to_string()).collect()
+}
+
+fn fake_text_response(path: &str) -> String {
+    if path.starts_with("/core/host-agent-stream-text?") {
+        "streamed output\n".into()
+    } else if path.starts_with("/core/host-agent-read-text?") {
+        "pane output\n".into()
+    } else if path.starts_with("/core/agents/ps-text?") {
+        "claude-1  [claude]  ready\n".into()
+    } else if path.starts_with("/core/agents/list-text?") {
+        "Main Checkout  /repo\n  ready  canonical=claude  aimux=claude-1\n".into()
+    } else if path == "/core/agents/input-text" {
+        "delivered to claude-1\n".into()
+    } else if path.starts_with("/core/agents/rename-text") {
+        "renamed claude-1 -> reviewer\n".into()
+    } else if path.starts_with("/core/agents/migrate-text") {
+        "migrated claude-1 -> feature\n".into()
+    } else if path.starts_with("/core/lifecycle/spawn-text") {
+        "spawned claude-1\n".into()
+    } else if path.starts_with(CORE_SERVICE_CREATE_TEXT_ROUTE) {
+        "service service-1 running\n".into()
+    } else if path.starts_with("/core/lifecycle/stop-text") {
+        "stopped claude-1\n".into()
+    } else if path.starts_with("/core/lifecycle/kill-text") {
+        "graveyarded claude-1\n".into()
+    } else if path.starts_with("/core/lifecycle/fork-text") {
+        "forked codex-2\nthread thread-1\n".into()
+    } else if path.starts_with("/core/loop/") {
+        "loop ok\n".into()
+    } else if path.starts_with("/core/overseer/") {
+        "overseer ok\n".into()
+    } else if path.starts_with("/core/scribe/") {
+        "scribe ok\n".into()
+    } else if path.starts_with("/core/team/") {
+        "team ok\n".into()
+    } else if path.starts_with("/core/notifications/") {
+        "notifications ok\n".into()
+    } else if path.starts_with("/core/outline/") {
+        "outline ok\n".into()
+    } else if path.starts_with("/core/attachment/") {
+        "Attached files:\n- notes.txt (text/plain, 5 bytes): /tmp/notes.txt\n".into()
+    } else if path.starts_with("/core/task/")
+        || path.starts_with("/core/review/")
+        || path.starts_with("/core/message/")
+        || path.starts_with("/core/handoff/")
+        || path.starts_with("/core/thread/")
+    {
+        "task task-1\nthread thread-1\n".into()
+    } else if path.starts_with("/core/worktree/") || path.starts_with("/core/graveyard/") {
+        "worktree ok\n".into()
+    } else if path.starts_with("/core/metadata-text") {
+        "metadata ok\n".into()
+    } else if path.starts_with("/core/repair-text")
+        || path.starts_with("/core/repair-exchange-text")
+    {
+        "repair ok\n".into()
+    } else if path.starts_with("/core/doctor/versions-text?json=1") {
+        "{\n  \"cliVersion\": \"test-cli\",\n  \"summary\": { \"projects\": 0 },\n  \"expected\": { \"runtimeContract\": \"2\" }\n}\n".into()
+    } else if path.starts_with("/core/doctor/versions-text") {
+        concat!(
+            "Aimux Versions\n",
+            "  cli version: test-cli\n",
+            "  build profile: test\n",
+            "  cli launcher: /tmp/aimux\n",
+            "  cli current entry: /tmp/aimux\n",
+            "  cli stable shim: /tmp/stable/aimux\n",
+            "  expected project service: api=5 build=test-build capabilities=parsedAgentOutput, attachmentRead, chatEventStream, agentTranscriptMessages, agentActivityState\n",
+            "  expected runtime owner: test-owner\n",
+            "  expected tmux runtime contract: 2\n",
+            "  daemon: running pid=123 endpoint=http://127.0.0.1:46290\n",
+            "  daemon projects: 0\n",
+            "  tmux: unavailable\n",
+            "  tmux sessions: 0\n",
+            "  projects: 0 (0 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n"
+        )
+        .into()
+    } else if path.ends_with("?json=1") {
+        "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
+    } else {
+        "Runtime Coherence\n  ok\n".into()
+    }
 }
 
 fn daemon_info() -> AimuxDaemonInfo {
@@ -1367,6 +1393,12 @@ fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
                     "source": "human",
                 })),
             ),
+            (format!("{CORE_LOOP_LIST_TEXT_ROUTE}?project=%2Frepo"), None,),
+        ]
+    );
+    assert_eq!(
+        runtime.existing_daemon_text_routes,
+        [
             (
                 "/core/loop/done-text".into(),
                 Some(json!({
@@ -1385,10 +1417,110 @@ fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
                     "reason": "blocked",
                 })),
             ),
-            (format!("{CORE_LOOP_LIST_TEXT_ROUTE}?project=%2Frepo"), None,),
         ]
     );
     assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn loop_self_report_uses_existing_daemon_across_build_skew() {
+    let mut runtime = FakeRuntime {
+        parity_text_error: Some(
+            "aimux daemon on default port is from a different local build; ask the supervising user to restart aimux when the fleet is safe"
+                .into(),
+        ),
+        ..FakeRuntime::default()
+    };
+
+    let done = run_core_cli_with(
+        &args(&[
+            "loop",
+            "done",
+            "--session",
+            "codex-1",
+            "--reason",
+            "finished",
+        ]),
+        &mut runtime,
+    );
+
+    assert_eq!(done.code, 0);
+    assert_eq!(done.stdout, ["loop ok"]);
+    assert!(done.stderr.is_empty());
+    assert!(runtime.text_routes.is_empty());
+    assert_eq!(
+        runtime.existing_daemon_text_routes,
+        [(
+            "/core/loop/done-text".into(),
+            Some(json!({
+                "project": "/repo",
+                "sessionId": "codex-1",
+                "source": "agent",
+                "reason": "finished",
+            })),
+        )]
+    );
+}
+
+#[test]
+fn parity_required_text_routes_still_refuse_across_build_skew() {
+    let mut runtime = FakeRuntime {
+        parity_text_error: Some(
+            "aimux daemon on default port is from a different local build; ask the supervising user to restart aimux when the fleet is safe"
+                .into(),
+        ),
+        ..FakeRuntime::default()
+    };
+
+    let input = run_core_cli_with(
+        &args(&["input", "codex-1", "keep going", "--project", "/repo"]),
+        &mut runtime,
+    );
+
+    assert_eq!(input.code, 1);
+    assert!(input.stdout.is_empty());
+    assert_eq!(
+        input.stderr,
+        [
+            "Error: aimux daemon on default port is from a different local build; ask the supervising user to restart aimux when the fleet is safe"
+        ]
+    );
+    assert!(runtime.text_routes.is_empty());
+    assert!(runtime.existing_daemon_text_routes.is_empty());
+}
+
+#[test]
+fn undelivered_loop_self_report_reports_that_nothing_was_recorded() {
+    let mut runtime = FakeRuntime {
+        existing_daemon_text_error: Some("connection refused".into()),
+        ..FakeRuntime::default()
+    };
+
+    let done = run_core_cli_with(
+        &args(&["loop", "done", "--session", "codex-1"]),
+        &mut runtime,
+    );
+
+    assert_eq!(done.code, 1);
+    assert!(done.stdout.is_empty());
+    assert_eq!(
+        done.stderr,
+        [
+            "Error: loop self-report could not be delivered to the running aimux daemon and was not recorded: connection refused. Ask the supervising user to restart or repair aimux when it is safe, then re-run the self-report or reconcile loop state."
+        ],
+    );
+    assert!(runtime.text_routes.is_empty());
+    assert_eq!(
+        runtime.existing_daemon_text_routes,
+        [(
+            "/core/loop/done-text".into(),
+            Some(json!({
+                "project": "/repo",
+                "sessionId": "codex-1",
+                "source": "agent",
+            })),
+        )]
+    );
 }
 
 #[test]

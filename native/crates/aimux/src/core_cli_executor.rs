@@ -120,6 +120,13 @@ pub trait CoreCliRuntime {
     ) -> Result<Value, String>;
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String>;
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String>;
+    fn request_existing_daemon_text(
+        &mut self,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<String, String> {
+        self.request_daemon_text(path, body)
+    }
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
     fn read_log_lines(&self, path: &Path, lines: usize) -> String;
     fn clear_log(&self, path: &Path) -> Result<(), String>;
@@ -273,6 +280,23 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             },
             request_daemon_text,
         )
+    }
+
+    fn request_existing_daemon_text(
+        &mut self,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<String, String> {
+        let method = daemon_text_route_method(path, body.as_ref());
+        request_daemon_text(
+            path,
+            DaemonRequestInit {
+                method: Some(method),
+                body: body.map(|value| value.to_string()),
+                ..DaemonRequestInit::default()
+            },
+        )
+        .map_err(|error| error.to_string())
     }
 
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf {
@@ -918,7 +942,7 @@ fn run_plan(
             open_dashboard_after,
             runtime,
         ),
-        CoreCliAction::TextRoute { path, body } => run_text_route(&path, body, runtime),
+        CoreCliAction::TextRoute { path, body } => run_text_route(operation, &path, body, runtime),
         CoreCliAction::Logs(options) => run_logs(&options, runtime),
         CoreCliAction::InitProject => run_init_project(runtime),
         CoreCliAction::HostTopology { json, raw } => run_host_topology(json, raw, runtime),
@@ -1319,14 +1343,34 @@ fn run_restart_control_plane(
 }
 
 fn run_text_route(
+    operation: CoreCliOperation,
     path: &str,
     body: Option<Value>,
     runtime: &mut impl CoreCliRuntime,
 ) -> Result<CoreCliExecution, String> {
-    let text = runtime.request_daemon_text(path, body)?;
+    let text = if operation_allows_build_skew_text_route(operation) {
+        runtime
+            .request_existing_daemon_text(path, body)
+            .map_err(loop_self_report_delivery_error)?
+    } else {
+        runtime.request_daemon_text(path, body)?
+    };
     Ok(CoreCliExecution::ok(vec![
         text.strip_suffix('\n').unwrap_or(&text).to_owned(),
     ]))
+}
+
+fn operation_allows_build_skew_text_route(operation: CoreCliOperation) -> bool {
+    matches!(
+        operation,
+        CoreCliOperation::LoopDone | CoreCliOperation::LoopBlock
+    )
+}
+
+fn loop_self_report_delivery_error(error: impl std::fmt::Display) -> String {
+    format!(
+        "loop self-report could not be delivered to the running aimux daemon and was not recorded: {error}. Ask the supervising user to restart or repair aimux when it is safe, then re-run the self-report or reconcile loop state."
+    )
 }
 
 fn run_init_project(runtime: &mut impl CoreCliRuntime) -> Result<CoreCliExecution, String> {
