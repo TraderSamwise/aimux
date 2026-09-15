@@ -8,7 +8,8 @@ use crate::dashboard_model::{
     is_dashboard_project_control_session, is_dashboard_scribe_session,
 };
 use crate::dashboard_navigation::{
-    DashboardEntryRef, DashboardNavigationOutcome, DashboardNavigationState,
+    DashboardEntryRef, DashboardNavigationGroupKind, DashboardNavigationOutcome,
+    DashboardNavigationState, dashboard_navigation_groups,
 };
 use crate::dashboard_renderer::DashboardNavLevel;
 use crate::dashboard_service_input::{
@@ -549,7 +550,7 @@ impl DashboardController {
         {
             return DashboardControllerEffect::Ignored;
         }
-        let Some(group) = snapshot.worktree_groups.get(self.navigation.worktree_index) else {
+        let Some(group) = self.navigation.focused_worktree_group(snapshot) else {
             return DashboardControllerEffect::Ignored;
         };
         let Some(selected) = self.navigation.selected_entry(snapshot) else {
@@ -2440,11 +2441,13 @@ impl DashboardController {
             }
             return false;
         }
-        for (worktree_index, group) in snapshot.worktree_groups.iter().enumerate() {
+        for (worktree_index, group) in dashboard_navigation_groups(snapshot).iter().enumerate() {
+            if group.kind != DashboardNavigationGroupKind::Worktree {
+                continue;
+            }
             if let Some(item_index) = group
                 .sessions
                 .iter()
-                .filter(|session| !is_project_control_session(session))
                 .position(|session| session.id == session_id)
             {
                 self.navigation.level = DashboardNavLevel::Sessions;
@@ -2517,9 +2520,7 @@ impl DashboardController {
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> Option<DashboardControllerEffect> {
-        let group = snapshot
-            .worktree_groups
-            .get(self.navigation.worktree_index)?;
+        let group = self.navigation.focused_worktree_group(snapshot)?;
         let path = group.path.as_ref()?;
         if group.removing
             || group.pending_action.as_deref() == Some("removing")

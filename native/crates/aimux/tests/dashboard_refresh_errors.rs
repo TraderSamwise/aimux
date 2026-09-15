@@ -239,6 +239,7 @@ fn render_dashboard_with_footer(snapshot: &DesktopStateSnapshot, footer_message:
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: Some("tmux"),
         version: Some("test"),
         hide_offline_agents: false,

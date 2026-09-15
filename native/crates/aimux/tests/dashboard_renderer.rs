@@ -54,6 +54,7 @@ fn renders_empty_dashboard_with_create_hint() {
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: Some("tmux"),
         version: Some("local"),
         hide_offline_agents: false,
@@ -88,6 +89,7 @@ fn matches_node_dashboard_full_frame_for_populated_agent_selection() {
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
         focused_worktree_path: Some("<WORKTREE>"),
+        focused_group_index: None,
         runtime_label: Some("tmux"),
         version: Some("local-node"),
         hide_offline_agents: false,
@@ -166,6 +168,7 @@ fn matches_node_dashboard_full_frame_with_project_controls_and_scribe_preview() 
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: Some("tmux"),
         version: Some("local-node"),
         hide_offline_agents: false,
@@ -686,6 +689,7 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
         focused_worktree_path: Some("<WORKTREE>"),
+        focused_group_index: None,
         runtime_label: Some("tmux"),
         version: Some("local"),
         hide_offline_agents: true,
@@ -731,6 +735,7 @@ fn populated_dashboard_frame_fits_common_viewports() {
             selected_session_id: Some("claude-0"),
             selected_service_id: None,
             focused_worktree_path: Some("<WORKTREE>"),
+            focused_group_index: None,
             runtime_label: Some("tmux"),
             version: Some("local"),
             hide_offline_agents: true,
@@ -752,6 +757,8 @@ fn orphan_worktrees_keep_node_first_seen_order() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_light.clone();
+    snapshot.worktrees.clear();
+    snapshot.worktree_groups.clear();
     snapshot.services.clear();
     snapshot.worktree_groups = vec![WorktreeGroup {
         name: "Main Checkout".into(),
@@ -789,6 +796,7 @@ fn orphan_worktrees_keep_node_first_seen_order() {
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -813,6 +821,8 @@ fn a_session_naming_the_main_path_stays_in_the_main_checkout_card() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_light.clone();
+    snapshot.worktrees.clear();
+    snapshot.worktree_groups.clear();
     snapshot.services.clear();
     snapshot.main_checkout_path = Some("/repo".into());
     snapshot.worktree_groups = vec![WorktreeGroup {
@@ -849,6 +859,7 @@ fn a_session_naming_the_main_path_stays_in_the_main_checkout_card() {
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -908,6 +919,7 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
         selected_session_id: Some("claude-08h5sggs"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -940,6 +952,16 @@ fn row_dot_ignores_legacy_direct_attention_without_semantic_state() {
     session.status = SessionStatus::Running;
     session.semantic = None;
     session.attention = Some("error".into());
+    for session in snapshot
+        .worktree_groups
+        .iter_mut()
+        .flat_map(|group| group.sessions.iter_mut())
+        .filter(|session| session.id == "claude-0")
+    {
+        session.status = SessionStatus::Running;
+        session.semantic = None;
+        session.attention = Some("error".into());
+    }
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
@@ -951,6 +973,7 @@ fn row_dot_ignores_legacy_direct_attention_without_semantic_state() {
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -982,6 +1005,7 @@ fn renders_state_aware_footer_hints_for_session_actions() {
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1030,6 +1054,7 @@ fn flat_session_footer_keeps_team_hint_for_selected_parent() {
         selected_session_id: Some(&parent_id),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1091,6 +1116,7 @@ fn renders_selected_session_details_sidebar_when_visible() {
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1195,6 +1221,7 @@ fn renders_selected_teammates_in_node_order() {
         selected_session_id: Some(&parent_id),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1260,6 +1287,7 @@ fn renders_typed_scribe_preview_rows_for_selected_session() {
         selected_session_id: Some("claude-parent"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1316,6 +1344,7 @@ fn explicit_scribe_sessions_drive_scribe_preview_like_node_view_model() {
         selected_session_id: Some("claude-parent"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1364,6 +1393,7 @@ fn teammate_scribe_does_not_enable_project_scribe_preview() {
         selected_session_id: Some(&parent_id),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1398,6 +1428,7 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1418,6 +1449,7 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1481,6 +1513,7 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1535,6 +1568,7 @@ fn selected_project_control_session_keeps_worktree_details_like_node() {
         selected_session_id: Some("claude-scribe"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1590,6 +1624,7 @@ fn flat_session_rows_exclude_project_control_sessions_like_node() {
         selected_session_id: Some("claude-plain"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1613,8 +1648,6 @@ fn supervisor_section_renders_project_control_sessions() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_light.clone();
-    snapshot.worktrees.clear();
-    snapshot.worktree_groups.clear();
     snapshot.services.clear();
 
     let mut plain_agent = snapshot.sessions[0].clone();
@@ -1645,6 +1678,7 @@ fn supervisor_section_renders_project_control_sessions() {
         selected_session_id: Some("claude-plain"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1662,45 +1696,34 @@ fn supervisor_section_renders_project_control_sessions() {
     assert!(plain.contains("Boss"));
     assert!(plain.contains("scribe"));
     assert!(plain.contains("Notes"));
+    assert!(plain.contains("[0] SUPERVISOR"));
 }
 
 #[test]
-fn supervisor_section_does_not_change_main_session_membership() {
+fn focused_supervisor_section_renders_cursor() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_light.clone();
-    snapshot.worktrees.clear();
-    snapshot.worktree_groups.clear();
     snapshot.services.clear();
 
-    let mut plain_agent = snapshot.sessions[0].clone();
-    plain_agent.id = "claude-plain".into();
-    plain_agent.label = Some("Plain Agent".into());
-
-    let mut overseer = plain_agent.clone();
+    let mut overseer = snapshot.sessions[0].clone();
     overseer.id = "claude-overseer".into();
     overseer.label = Some("Boss".into());
     overseer.overseer = Some(true);
     overseer.project_control = Some(true);
-
-    let mut scribe = plain_agent.clone();
-    scribe.id = "claude-scribe".into();
-    scribe.label = Some("Notes".into());
-    scribe.scribe = Some(true);
-    scribe.project_control = Some(true);
-
-    snapshot.sessions = vec![overseer.clone(), plain_agent, scribe.clone()];
+    snapshot.sessions.insert(0, overseer);
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
-        overseer_sessions: &[overseer],
-        scribe_sessions: &[scribe],
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 50,
-        nav_level: DashboardNavLevel::Sessions,
-        selected_session_id: Some("claude-plain"),
+        nav_level: DashboardNavLevel::Worktrees,
+        selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: Some(0),
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1713,10 +1736,63 @@ fn supervisor_section_does_not_change_main_session_membership() {
     });
     let plain = strip_ansi(&result.frame);
 
-    assert!(plain.contains("Plain Agent"));
+    assert!(plain.contains("▸ [0] SUPERVISOR"));
+    assert!(plain.contains("0-9 group"));
+}
+
+#[test]
+fn supervisor_section_does_not_change_main_session_membership() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.services.clear();
+
+    let mut overseer = snapshot.sessions[0].clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Boss".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+
+    let mut scribe = snapshot.sessions[0].clone();
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Notes".into());
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+
+    snapshot
+        .sessions
+        .splice(0..0, [overseer.clone(), scribe.clone()]);
+    snapshot.worktree_groups[0]
+        .sessions
+        .splice(0..0, [overseer.clone(), scribe.clone()]);
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[overseer],
+        scribe_sessions: &[scribe],
+        cols: 140,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("label-claude-0"));
     assert!(plain.contains("[1]"));
-    assert!(!plain.contains("[2]"));
-    assert!(!plain.contains("[3]"));
+    assert_eq!(plain.matches("Boss").count(), 1);
+    assert_eq!(plain.matches("Notes").count(), 1);
 }
 
 #[test]
@@ -1745,6 +1821,7 @@ fn flat_footer_uses_no_session_hints_when_only_project_control_sessions_exist() 
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1792,6 +1869,7 @@ fn worktree_details_show_active_removal_status_and_progress() {
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: Some(&worktree_path),
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1834,6 +1912,7 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
         selected_session_id: Some("codex-offline"),
         selected_service_id: None,
         focused_worktree_path: None,
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1883,6 +1962,7 @@ fn renders_service_and_failure_footer_hints() {
         selected_session_id: None,
         selected_service_id: Some(&service_id),
         focused_worktree_path: Some("<WORKTREE>"),
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: true,
@@ -1930,6 +2010,7 @@ fn renders_global_loop_alert_pause_chrome() {
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
         focused_worktree_path: Some("<WORKTREE>"),
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -1976,6 +2057,7 @@ fn unpaused_loop_alert_state_does_not_render_pause_chrome() {
         selected_session_id: Some("claude-0"),
         selected_service_id: None,
         focused_worktree_path: Some("<WORKTREE>"),
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,
@@ -2046,6 +2128,7 @@ fn renders_typed_operation_failures_in_banner_and_worktree_details() {
         selected_session_id: None,
         selected_service_id: None,
         focused_worktree_path: Some(&worktree_path),
+        focused_group_index: None,
         runtime_label: None,
         version: None,
         hide_offline_agents: false,

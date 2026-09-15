@@ -586,7 +586,7 @@ fn corrupt_metadata_state_records_loop_watcher_failure_instead_of_empty_metadata
 }
 
 #[test]
-fn unavailable_live_activity_probe_records_loop_watcher_failure_instead_of_stale_alert() {
+fn unavailable_live_activity_probe_is_recorded_as_indeterminate_without_failing_scan() {
     let root = unique_temp_dir("aimux-loop-watcher-live-probe-unavailable");
     let project_root = root.join("project");
     let state_dir = root.join("state");
@@ -638,9 +638,25 @@ fn unavailable_live_activity_probe_records_loop_watcher_failure_instead_of_stale
         .find(|task| task.name == "loop-watcher")
         .expect("loop watcher health");
     assert_eq!(health.total_runs, 1);
-    assert_eq!(health.consecutive_failures, 1);
-    let error = health.last_error.as_deref().expect("last error");
-    assert!(error.contains("read live activity for worker"), "{error}");
+    assert_eq!(health.consecutive_failures, 0);
+    assert_eq!(health.last_error, None);
+
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(loop_watcher_state_path(&state_dir)).expect("watcher state"),
+    )
+    .expect("watcher state json");
+    assert_eq!(state["scanRecords"][0]["rawCandidateCount"], 0);
+    assert_eq!(state["scanRecords"][0]["plannedSendCount"], 0);
+    assert_eq!(
+        state["scanRecords"][0]["indeterminate"][0]["sessionId"],
+        "worker"
+    );
+    assert!(
+        state["scanRecords"][0]["indeterminate"][0]["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("read live activity for worker")
+    );
 }
 
 #[test]

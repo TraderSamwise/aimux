@@ -8,7 +8,9 @@ use aimux::dashboard_model::{
     DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
     SessionSemanticState, SessionStatus, SessionTeamMetadata, filter_dashboard_visible_model,
 };
-use aimux::dashboard_navigation::DashboardEntryRef;
+use aimux::dashboard_navigation::{
+    DashboardEntryRef, DashboardNavigationGroupKind, dashboard_navigation_groups,
+};
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::dashboard_service_input::DashboardThreadReplyState;
 use aimux::dashboard_tool_picker::{DashboardToolEntry, DashboardToolPickerMode};
@@ -44,6 +46,154 @@ fn hjkl_navigation_steps_into_and_back_out_of_worktrees() {
         DashboardControllerEffect::Render
     );
     assert_eq!(controller.navigation.level, DashboardNavLevel::Worktrees);
+}
+
+#[test]
+fn supervisor_lane_navigation_defaults_to_main_and_steps_in_from_up() {
+    let snapshot = snapshot_with_supervisor_lane();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Worktrees);
+    assert_eq!(
+        controller
+            .navigation
+            .focused_group(&snapshot)
+            .map(|group| group.kind),
+        Some(DashboardNavigationGroupKind::Worktree)
+    );
+    assert_eq!(controller.navigation.focused_worktree_path(&snapshot), None);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Up),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .navigation
+            .focused_group(&snapshot)
+            .map(|group| group.kind),
+        Some(DashboardNavigationGroupKind::Supervisor)
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+    assert_eq!(
+        controller.navigation.selected_entry(&snapshot),
+        Some(DashboardEntryRef::Session(&snapshot.sessions[0]))
+    );
+}
+
+#[test]
+fn supervisor_lane_wraps_in_both_worktree_directions() {
+    let snapshot = snapshot_with_supervisor_lane();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Up),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .navigation
+            .focused_group(&snapshot)
+            .map(|group| group.kind),
+        Some(DashboardNavigationGroupKind::Supervisor)
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Up),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.navigation.focused_worktree_path(&snapshot),
+        Some("<WORKTREE>")
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Down),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .navigation
+            .focused_group(&snapshot)
+            .map(|group| group.kind),
+        Some(DashboardNavigationGroupKind::Supervisor)
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Down),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.navigation.focused_worktree_path(&snapshot), None);
+}
+
+#[test]
+fn supervisor_lane_quick_zero_then_one_enters_first_overseer() {
+    let snapshot = snapshot_with_supervisor_lane();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Digit('0')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.navigation.quick_jump_digits, "0");
+    assert_eq!(
+        controller
+            .navigation
+            .focused_group(&snapshot)
+            .map(|group| group.kind),
+        Some(DashboardNavigationGroupKind::Supervisor)
+    );
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Digit('1'))
+    else {
+        panic!("expected first supervisor entry activation");
+    };
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(
+        request.body,
+        json!({ "windowId": "@overseer", "focus": true })
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+    assert_eq!(controller.navigation.item_index, 0);
+}
+
+#[test]
+fn ordinary_agent_action_resolves_same_session_after_leaving_supervisor_lane() {
+    let snapshot = snapshot_with_supervisor_lane();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Digit('0')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Back),
+        DashboardControllerEffect::Render
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Digit('2')),
+        DashboardControllerEffect::Render
+    );
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Digit('1'))
+    else {
+        panic!("expected ordinary worktree agent activation");
+    };
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(request.body, json!({ "windowId": "@wt", "focus": true }));
+    assert_eq!(
+        controller.navigation.selected_entry(&snapshot),
+        Some(DashboardEntryRef::Session(
+            &snapshot.worktree_groups[1].sessions[0]
+        ))
+    );
 }
 
 #[test]
@@ -122,7 +272,12 @@ fn grouped_session_selection_clamps_when_selected_entry_disappears() {
     controller.navigation.item_index = 99;
 
     snapshot.worktree_groups[0].sessions.truncate(1);
+    let retained_id = snapshot.worktree_groups[0].sessions[0].id.clone();
+    snapshot
+        .sessions
+        .retain(|session| session.id == retained_id);
     snapshot.worktree_groups[0].services.clear();
+    snapshot.services.clear();
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Other),
@@ -147,6 +302,12 @@ fn empty_focused_worktree_keeps_session_level_but_has_no_activation_target() {
 
     snapshot.worktree_groups[1].sessions.clear();
     snapshot.worktree_groups[1].services.clear();
+    snapshot
+        .sessions
+        .retain(|session| session.worktree_path.as_deref() != Some("<WORKTREE>"));
+    snapshot
+        .services
+        .retain(|service| service.worktree_path.as_deref() != Some("<WORKTREE>"));
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Enter),
@@ -281,10 +442,7 @@ fn quick_jump_uses_filtered_worktrees_when_offline_agents_are_hidden() {
         controller.handle_key(&visible, DashboardKey::Digit('1')),
         DashboardControllerEffect::Render
     );
-    assert_eq!(
-        controller.navigation.focused_worktree_path(&visible),
-        Some("<WORKTREE>")
-    );
+    assert_eq!(controller.navigation.focused_worktree_path(&visible), None);
 }
 
 #[test]
@@ -503,7 +661,7 @@ fn tool_picker_enter_dispatches_agent_spawn_request() {
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Sessions;
-    controller.navigation.worktree_index = 0;
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
     controller.open_tool_picker(
         vec![DashboardToolEntry {
             key: "codex".into(),
@@ -826,8 +984,17 @@ fn next_attention_key_opens_highest_priority_attention_session() {
     assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
     assert_eq!(request.body, json!({ "windowId": "@input", "focus": true }));
     assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
-    assert_eq!(controller.navigation.worktree_index, 1);
     assert_eq!(controller.navigation.item_index, 0);
+    assert_eq!(
+        controller.navigation.focused_worktree_path(&snapshot),
+        Some("<WORKTREE>")
+    );
+    assert_eq!(
+        controller.navigation.selected_entry(&snapshot),
+        Some(DashboardEntryRef::Session(
+            &snapshot.worktree_groups[1].sessions[0]
+        ))
+    );
 }
 
 #[test]
@@ -858,8 +1025,17 @@ fn next_attention_key_ignores_project_control_sessions() {
     assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
     assert_eq!(request.body, json!({ "windowId": "@input", "focus": true }));
     assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
-    assert_eq!(controller.navigation.worktree_index, 1);
     assert_eq!(controller.navigation.item_index, 0);
+    assert_eq!(
+        controller.navigation.focused_worktree_path(&snapshot),
+        Some("<WORKTREE>")
+    );
+    assert_eq!(
+        controller.navigation.selected_entry(&snapshot),
+        Some(DashboardEntryRef::Session(
+            &snapshot.worktree_groups[1].sessions[1]
+        ))
+    );
 }
 
 #[test]
@@ -1007,6 +1183,7 @@ fn enter_from_worktree_level_renders_agent_details_rail() {
         selected_session_id: Some(selected_session_id),
         selected_service_id: None,
         focused_worktree_path: controller.navigation.focused_worktree_path(&snapshot),
+        focused_group_index: None,
         runtime_label: Some("native"),
         version: Some("local"),
         hide_offline_agents: false,
@@ -1094,9 +1271,7 @@ fn shifted_p_opens_work_outline_overlay_for_selected_session() {
         .sessions
         .push(scribe_session(&snapshot.sessions[0]));
     let mut controller = DashboardController::new(&snapshot);
-    controller.navigation.level = DashboardNavLevel::Sessions;
-    controller.navigation.worktree_index = 0;
-    controller.navigation.item_index = 1;
+    focus_session(&mut controller, &snapshot, "claude-0");
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Printable('P')),
@@ -1114,9 +1289,7 @@ fn shifted_o_opens_overseer_overlay_and_overlay_keys_follow_node_actions() {
         .sessions
         .push(overseer_session(&snapshot.sessions[0]));
     let mut controller = DashboardController::new(&snapshot);
-    controller.navigation.level = DashboardNavLevel::Sessions;
-    controller.navigation.worktree_index = 0;
-    controller.navigation.item_index = 1;
+    focus_session(&mut controller, &snapshot, "claude-0");
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Printable('O')),
@@ -1731,6 +1904,7 @@ fn service_input_collects_printable_text_and_dispatches_create() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());
     let mut controller = DashboardController::new(&snapshot);
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Printable('v')),
@@ -1765,6 +1939,7 @@ fn service_input_handles_pasted_command_sequence() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());
     let mut controller = DashboardController::new(&snapshot);
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
     controller.handle_key(&snapshot, DashboardKey::Printable('v'));
 
     for key in parse_dashboard_keys(b"yarn dev") {
@@ -2474,6 +2649,51 @@ fn semantic(
         "activityNewCount": activity_new_count
     }))
     .unwrap()
+}
+
+fn snapshot_with_supervisor_lane() -> DesktopStateSnapshot {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[1].sessions[0].tmux_window_id = Some("@wt".into());
+    let overseer = overseer_session(&snapshot.sessions[0]);
+    let scribe = scribe_session(&snapshot.sessions[0]);
+    snapshot.sessions.splice(0..0, [overseer, scribe]);
+    snapshot
+}
+
+fn focus_session(
+    controller: &mut DashboardController,
+    snapshot: &DesktopStateSnapshot,
+    session_id: &str,
+) {
+    for (group_index, group) in dashboard_navigation_groups(snapshot).iter().enumerate() {
+        if let Some(item_index) = group
+            .sessions
+            .iter()
+            .position(|session| session.id == session_id)
+        {
+            controller.navigation.level = DashboardNavLevel::Sessions;
+            controller.navigation.worktree_index = group_index;
+            controller.navigation.item_index = item_index;
+            return;
+        }
+    }
+    panic!("missing session {session_id}");
+}
+
+fn focus_worktree_path(
+    controller: &mut DashboardController,
+    snapshot: &DesktopStateSnapshot,
+    path: Option<&str>,
+) {
+    let groups = dashboard_navigation_groups(snapshot);
+    let Some(group_index) = groups.iter().position(|group| {
+        group.kind == DashboardNavigationGroupKind::Worktree && group.path == path
+    }) else {
+        panic!("missing worktree path {path:?}");
+    };
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = group_index;
+    controller.navigation.item_index = 0;
 }
 
 fn scribe_session(

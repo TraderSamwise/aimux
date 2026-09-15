@@ -10,11 +10,13 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
-use crate::backlog_metrics::{BacklogMetric, RELAY_OUTBOX_BACKLOG, backlog_metric};
+use crate::backlog_metrics::{
+    BacklogMetric, BacklogMetricSnapshot, BacklogMetricStatus, RELAY_OUTBOX_BACKLOG, backlog_metric,
+};
 use crate::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
     decide_connect_error, handle_frame, project_events_error_frame,
@@ -126,6 +128,7 @@ pub struct RelayRunner {
     outbox: Arc<Mutex<VecDeque<String>>>,
     outbox_ready: Arc<Notify>,
     outbox_metric: BacklogMetric,
+    outbox_high_water: AtomicUsize,
 }
 
 impl RelayRunner {
@@ -148,6 +151,7 @@ impl RelayRunner {
             outbox: Arc::new(Mutex::new(VecDeque::new())),
             outbox_ready: Arc::new(Notify::new()),
             outbox_metric: backlog_metric(RELAY_OUTBOX_BACKLOG, Some(MAX_RELAY_OUTBOX_FRAMES)),
+            outbox_high_water: AtomicUsize::new(0),
         })
     }
 
@@ -480,24 +484,45 @@ impl RelayRunner {
             .lock()
             .map_err(|_| "relay_outbox_unavailable".to_owned())?;
         push_outbox_frame(&mut outbox, frame)?;
-        self.outbox_metric.set_depth(outbox.len());
+        self.record_outbox_depth(outbox.len());
         drop(outbox);
         self.outbox_ready.notify_one();
         Ok(())
     }
 
-    pub fn outbox_backlog_snapshot(&self) -> crate::backlog_metrics::BacklogMetricSnapshot {
+    pub fn outbox_backlog_snapshot(&self) -> BacklogMetricSnapshot {
         match self.outbox.lock() {
             Ok(outbox) => {
-                self.outbox_metric.set_depth(outbox.len());
-                self.outbox_metric.snapshot()
+                let depth = outbox.len();
+                let high_water = self.record_outbox_depth(depth);
+                BacklogMetricSnapshot {
+                    name: RELAY_OUTBOX_BACKLOG.to_owned(),
+                    status: BacklogMetricStatus::Ok,
+                    current_depth: Some(depth),
+                    high_water_mark: Some(high_water),
+                    capacity: Some(MAX_RELAY_OUTBOX_FRAMES),
+                    error: None,
+                }
             }
             Err(_) => {
                 self.outbox_metric
                     .set_error("relay outbox lock is unavailable".to_owned());
-                self.outbox_metric.snapshot()
+                BacklogMetricSnapshot {
+                    name: RELAY_OUTBOX_BACKLOG.to_owned(),
+                    status: BacklogMetricStatus::Unavailable,
+                    current_depth: None,
+                    high_water_mark: Some(self.outbox_high_water.load(Ordering::Relaxed)),
+                    capacity: Some(MAX_RELAY_OUTBOX_FRAMES),
+                    error: Some("relay outbox lock is unavailable".to_owned()),
+                }
             }
         }
+    }
+
+    fn record_outbox_depth(&self, depth: usize) -> usize {
+        self.outbox_metric.set_depth(depth);
+        self.outbox_high_water.fetch_max(depth, Ordering::Relaxed);
+        self.outbox_high_water.load(Ordering::Relaxed)
     }
 
     async fn send_next_outbox_frame(
@@ -526,7 +551,7 @@ impl RelayRunner {
             && outbox.front().is_some_and(|queued| queued == frame)
         {
             outbox.pop_front();
-            self.outbox_metric.set_depth(outbox.len());
+            self.record_outbox_depth(outbox.len());
         }
     }
 
