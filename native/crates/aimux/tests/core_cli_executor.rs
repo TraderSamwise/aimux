@@ -1531,8 +1531,9 @@ fn loop_done_passes_reachable_git_head_without_extra_friction() {
         runtime.delivery_checks.into_inner(),
         [("/repo".into(), "/repo".into(), "master".into())]
     );
+    assert!(runtime.text_routes.is_empty());
     assert_eq!(
-        runtime.text_routes,
+        runtime.existing_daemon_text_routes,
         [(
             "/core/loop/done-text".into(),
             Some(json!({
@@ -1570,8 +1571,9 @@ fn loop_done_uses_actor_project_root_as_delivery_target() {
             "master".into()
         )]
     );
+    assert!(runtime.text_routes.is_empty());
     assert_eq!(
-        runtime.text_routes,
+        runtime.existing_daemon_text_routes,
         [(
             "/core/loop/done-text".into(),
             Some(json!({
@@ -1602,8 +1604,9 @@ fn loop_block_does_not_require_delivery_check() {
     assert_eq!(execution.code, 0);
     assert_eq!(execution.stdout, ["loop ok"]);
     assert!(runtime.delivery_checks.into_inner().is_empty());
+    assert!(runtime.text_routes.is_empty());
     assert_eq!(
-        runtime.text_routes,
+        runtime.existing_daemon_text_routes,
         [(
             "/core/loop/block-text".into(),
             Some(json!({
