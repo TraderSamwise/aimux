@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
@@ -22,6 +23,8 @@ pub const TICK_INTERVAL_MS: i64 = MIN_INTERVAL_MS;
 const SLOW_TASK_WARNING_MS: i64 = 5_000;
 const TASK_DURATION_SAMPLE_LIMIT: usize = 128;
 const MAX_LAST_ERROR_CHARS: usize = 512;
+const HOT_TASK_DUTY_CYCLE_PERMILLE: i64 = 800;
+const HOT_TASK_DWELL_RUNS: u64 = 3;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PeriodicSchedulerLogLabels {
@@ -84,11 +87,20 @@ impl Default for SchedulerHandle {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct SchedulerSignal {
     forced_tasks: Mutex<BTreeSet<String>>,
     health: Mutex<BTreeMap<String, PeriodicTaskHealthRecord>>,
+    alert_sink: Mutex<Option<SchedulerAlertSink>>,
 }
+
+impl fmt::Debug for SchedulerSignal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SchedulerSignal").finish_non_exhaustive()
+    }
+}
+
+type SchedulerAlertSink = Arc<dyn Fn(PeriodicTaskHealthAlert) + Send + Sync>;
 
 impl SchedulerHandle {
     pub fn new(labels: PeriodicSchedulerLogLabels) -> Self {
@@ -140,16 +152,55 @@ impl SchedulerHandle {
         }
     }
 
-    fn record_run(&self, name: &str, outcome: PeriodicTaskRunOutcome, duration_ms: i64) {
-        match self.inner.health.lock() {
+    pub fn set_alert_sink(&self, sink: impl Fn(PeriodicTaskHealthAlert) + Send + Sync + 'static) {
+        match self.inner.alert_sink.lock() {
+            Ok(mut alert_sink) => {
+                *alert_sink = Some(Arc::new(sink));
+            }
+            Err(_) => self.log_health_error("alert-sink", "scheduler alert lock poisoned"),
+        }
+    }
+
+    fn record_run(
+        &self,
+        name: &str,
+        outcome: PeriodicTaskRunOutcome,
+        duration_ms: i64,
+        interval_ms: i64,
+    ) {
+        let alert = match self.inner.health.lock() {
             Ok(mut health) => {
-                health.entry(name.to_owned()).or_default().record(
+                let mut alert = health.entry(name.to_owned()).or_default().record(
                     outcome,
                     duration_ms,
+                    interval_ms,
                     scheduler_now_ms(),
                 );
+                if let Some(alert) = alert.as_mut() {
+                    alert.name = name.to_owned();
+                }
+                alert
             }
-            Err(_) => self.log_health_error("record", "scheduler health lock poisoned"),
+            Err(_) => {
+                self.log_health_error("record", "scheduler health lock poisoned");
+                None
+            }
+        };
+        if let Some(alert) = alert {
+            self.publish_alert(alert);
+        }
+    }
+
+    fn publish_alert(&self, alert: PeriodicTaskHealthAlert) {
+        let sink = match self.inner.alert_sink.lock() {
+            Ok(alert_sink) => alert_sink.clone(),
+            Err(_) => {
+                self.log_health_error("alert", "scheduler alert lock poisoned");
+                None
+            }
+        };
+        if let Some(sink) = sink {
+            sink(alert);
         }
     }
 
@@ -216,21 +267,45 @@ pub type PeriodicTaskFuture<'a> = Pin<Box<dyn Future<Output = PeriodicTaskRunRes
 pub struct PeriodicTaskHealthSnapshot {
     pub name: String,
     pub total_runs: u64,
+    pub interval_ms: Option<i64>,
     pub last_completed_at_ms: Option<i64>,
     pub last_duration_ms: Option<i64>,
     pub p95_duration_ms: Option<i64>,
+    pub last_duty_cycle_per_mille: Option<i64>,
+    pub p95_duty_cycle_per_mille: Option<i64>,
+    pub consecutive_hot_runs: u64,
+    pub hot_since_ms: Option<i64>,
+    pub hot: bool,
     pub consecutive_failures: u64,
     pub consecutive_timeouts: u64,
     pub total_timeouts: u64,
     pub last_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PeriodicTaskHealthAlert {
+    pub name: String,
+    pub interval_ms: i64,
+    pub last_duration_ms: i64,
+    pub p95_duration_ms: Option<i64>,
+    pub duty_cycle_per_mille: i64,
+    pub consecutive_hot_runs: u64,
+    pub hot_since_ms: i64,
+}
+
 #[derive(Debug, Clone, Default)]
 struct PeriodicTaskHealthRecord {
     total_runs: u64,
+    last_interval_ms: Option<i64>,
     last_completed_at_ms: Option<i64>,
     last_duration_ms: Option<i64>,
     duration_samples_ms: VecDeque<i64>,
+    duty_cycle_samples_per_mille: VecDeque<i64>,
+    last_duty_cycle_per_mille: Option<i64>,
+    consecutive_hot_runs: u64,
+    hot_since_ms: Option<i64>,
+    hot_alerted: bool,
     consecutive_failures: u64,
     consecutive_timeouts: u64,
     total_timeouts: u64,
@@ -255,9 +330,15 @@ impl PeriodicTaskHealthRecord {
         }
         Self {
             total_runs: snapshot.total_runs,
+            last_interval_ms: snapshot.interval_ms,
             last_completed_at_ms: snapshot.last_completed_at_ms,
             last_duration_ms: snapshot.last_duration_ms,
             duration_samples_ms,
+            duty_cycle_samples_per_mille: snapshot.p95_duty_cycle_per_mille.into_iter().collect(),
+            last_duty_cycle_per_mille: snapshot.last_duty_cycle_per_mille,
+            consecutive_hot_runs: snapshot.consecutive_hot_runs,
+            hot_since_ms: snapshot.hot_since_ms,
+            hot_alerted: snapshot.hot,
             consecutive_failures: snapshot.consecutive_failures,
             consecutive_timeouts: snapshot.consecutive_timeouts,
             total_timeouts: snapshot.total_timeouts,
@@ -265,8 +346,15 @@ impl PeriodicTaskHealthRecord {
         }
     }
 
-    fn record(&mut self, outcome: PeriodicTaskRunOutcome, duration_ms: i64, completed_at_ms: i64) {
+    fn record(
+        &mut self,
+        outcome: PeriodicTaskRunOutcome,
+        duration_ms: i64,
+        interval_ms: i64,
+        completed_at_ms: i64,
+    ) -> Option<PeriodicTaskHealthAlert> {
         self.total_runs = self.total_runs.saturating_add(1);
+        self.last_interval_ms = Some(interval_ms);
         match outcome {
             PeriodicTaskRunOutcome::Completed => {
                 self.last_completed_at_ms = Some(completed_at_ms);
@@ -293,6 +381,8 @@ impl PeriodicTaskHealthRecord {
                 self.last_error = Some("task panicked".to_owned());
             }
             PeriodicTaskRunOutcome::TimedOut { timeout_ms } => {
+                self.last_duration_ms = Some(duration_ms);
+                self.push_duration_sample(duration_ms);
                 self.consecutive_failures = self.consecutive_failures.saturating_add(1);
                 self.consecutive_timeouts = self.consecutive_timeouts.saturating_add(1);
                 self.total_timeouts = self.total_timeouts.saturating_add(1);
@@ -300,6 +390,7 @@ impl PeriodicTaskHealthRecord {
                     Some(limit_last_error(&format!("timed out after {timeout_ms}ms")));
             }
         }
+        self.record_duty(duration_ms, interval_ms, completed_at_ms)
     }
 
     fn push_duration_sample(&mut self, duration_ms: i64) {
@@ -309,13 +400,69 @@ impl PeriodicTaskHealthRecord {
         self.duration_samples_ms.push_back(duration_ms);
     }
 
+    fn record_duty(
+        &mut self,
+        duration_ms: i64,
+        interval_ms: i64,
+        completed_at_ms: i64,
+    ) -> Option<PeriodicTaskHealthAlert> {
+        let Some(duty_cycle_per_mille) = duty_cycle_per_mille(duration_ms, interval_ms) else {
+            self.last_duty_cycle_per_mille = None;
+            self.consecutive_hot_runs = 0;
+            self.hot_since_ms = None;
+            self.hot_alerted = false;
+            self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+            self.last_error = Some("scheduler task cost measurement failed".to_owned());
+            return None;
+        };
+        self.last_duty_cycle_per_mille = Some(duty_cycle_per_mille);
+        self.push_duty_sample(duty_cycle_per_mille);
+        if duty_cycle_per_mille >= HOT_TASK_DUTY_CYCLE_PERMILLE {
+            self.consecutive_hot_runs = self.consecutive_hot_runs.saturating_add(1);
+            if self.hot_since_ms.is_none() {
+                self.hot_since_ms = Some(completed_at_ms);
+            }
+        } else {
+            self.consecutive_hot_runs = 0;
+            self.hot_since_ms = None;
+            self.hot_alerted = false;
+        }
+        if self.consecutive_hot_runs < HOT_TASK_DWELL_RUNS || self.hot_alerted {
+            return None;
+        }
+        self.hot_alerted = true;
+        Some(PeriodicTaskHealthAlert {
+            name: String::new(),
+            interval_ms,
+            last_duration_ms: duration_ms,
+            p95_duration_ms: percentile_95(&self.duration_samples_ms),
+            duty_cycle_per_mille,
+            consecutive_hot_runs: self.consecutive_hot_runs,
+            hot_since_ms: self.hot_since_ms.unwrap_or(completed_at_ms),
+        })
+    }
+
+    fn push_duty_sample(&mut self, duty_cycle_per_mille: i64) {
+        if self.duty_cycle_samples_per_mille.len() == TASK_DURATION_SAMPLE_LIMIT {
+            self.duty_cycle_samples_per_mille.pop_front();
+        }
+        self.duty_cycle_samples_per_mille
+            .push_back(duty_cycle_per_mille);
+    }
+
     fn snapshot(&self, name: &str) -> PeriodicTaskHealthSnapshot {
         PeriodicTaskHealthSnapshot {
             name: name.to_owned(),
             total_runs: self.total_runs,
+            interval_ms: self.last_interval_ms,
             last_completed_at_ms: self.last_completed_at_ms,
             last_duration_ms: self.last_duration_ms,
             p95_duration_ms: percentile_95(&self.duration_samples_ms),
+            last_duty_cycle_per_mille: self.last_duty_cycle_per_mille,
+            p95_duty_cycle_per_mille: percentile_95(&self.duty_cycle_samples_per_mille),
+            consecutive_hot_runs: self.consecutive_hot_runs,
+            hot_since_ms: self.hot_since_ms,
+            hot: self.hot_alerted,
             consecutive_failures: self.consecutive_failures,
             consecutive_timeouts: self.consecutive_timeouts,
             total_timeouts: self.total_timeouts,
@@ -410,7 +557,8 @@ impl<C: 'static> PeriodicScheduler<C> {
             let outcome = run_outcome_from_result(&task_result);
             let panicked = task_result.panicked;
             let failed_error = task_result.error.clone();
-            self.handle.record_run(&name, outcome, elapsed_ms);
+            self.handle
+                .record_run(&name, outcome, elapsed_ms, interval_ms);
             scheduled.next_due_ms = finished_ms.saturating_add(interval_ms);
             log_task_result(
                 self.handle.labels,
@@ -566,7 +714,7 @@ async fn run_task_once<C: Send + Sync + 'static>(
     } else {
         PeriodicTaskRunOutcome::Completed
     };
-    handle.record_run(&name, outcome, elapsed_ms);
+    handle.record_run(&name, outcome, elapsed_ms, interval_ms);
     log_task_result(
         labels,
         &name,
@@ -708,6 +856,13 @@ fn percentile_95(samples: &VecDeque<i64>) -> Option<i64> {
     sorted.get(index).copied()
 }
 
+fn duty_cycle_per_mille(duration_ms: i64, interval_ms: i64) -> Option<i64> {
+    if duration_ms < 0 || interval_ms <= 0 {
+        return None;
+    }
+    Some(duration_ms.saturating_mul(1_000) / interval_ms)
+}
+
 fn limit_last_error(error: &str) -> String {
     error.chars().take(MAX_LAST_ERROR_CHARS).collect()
 }
@@ -739,11 +894,107 @@ mod tests {
     fn duration_samples_stay_bounded_while_p95_moves() {
         let mut record = PeriodicTaskHealthRecord::default();
         for duration_ms in 0..200 {
-            record.record(PeriodicTaskRunOutcome::Completed, duration_ms, duration_ms);
+            record.record(
+                PeriodicTaskRunOutcome::Completed,
+                duration_ms,
+                1_000,
+                duration_ms,
+            );
         }
 
         assert_eq!(record.duration_samples_ms.len(), TASK_DURATION_SAMPLE_LIMIT);
         assert_eq!(record.total_runs, 200);
         assert_eq!(record.snapshot("sampled").p95_duration_ms, Some(193));
+    }
+
+    #[test]
+    fn sustained_hot_task_is_flagged_with_cost() {
+        let mut record = PeriodicTaskHealthRecord::default();
+        assert!(
+            record
+                .record(PeriodicTaskRunOutcome::Completed, 940, 1_000, 1_000)
+                .is_none()
+        );
+        assert!(
+            record
+                .record(PeriodicTaskRunOutcome::Completed, 930, 1_000, 2_000)
+                .is_none()
+        );
+        let alert = record
+            .record(PeriodicTaskRunOutcome::Completed, 950, 1_000, 3_000)
+            .expect("third hot run should alert");
+        let snapshot = record.snapshot("transcript-length");
+
+        assert_eq!(alert.interval_ms, 1_000);
+        assert_eq!(alert.last_duration_ms, 950);
+        assert_eq!(alert.duty_cycle_per_mille, 950);
+        assert_eq!(snapshot.consecutive_hot_runs, 3);
+        assert_eq!(snapshot.hot, true);
+        assert_eq!(snapshot.hot_since_ms, Some(1_000));
+    }
+
+    #[test]
+    fn healthy_task_is_not_flagged() {
+        let mut record = PeriodicTaskHealthRecord::default();
+        for completed_at_ms in [1_000, 2_000, 3_000, 4_000] {
+            assert!(
+                record
+                    .record(
+                        PeriodicTaskRunOutcome::Completed,
+                        75,
+                        1_000,
+                        completed_at_ms,
+                    )
+                    .is_none()
+            );
+        }
+        let snapshot = record.snapshot("healthy");
+
+        assert_eq!(snapshot.hot, false);
+        assert_eq!(snapshot.consecutive_hot_runs, 0);
+        assert_eq!(snapshot.last_duty_cycle_per_mille, Some(75));
+        assert_eq!(snapshot.last_error, None);
+    }
+
+    #[test]
+    fn rarely_run_slow_task_is_not_flagged() {
+        let mut record = PeriodicTaskHealthRecord::default();
+        for completed_at_ms in [60_000, 120_000, 180_000, 240_000] {
+            assert!(
+                record
+                    .record(
+                        PeriodicTaskRunOutcome::Completed,
+                        5_000,
+                        60_000,
+                        completed_at_ms,
+                    )
+                    .is_none()
+            );
+        }
+        let snapshot = record.snapshot("rare-slow");
+
+        assert_eq!(snapshot.hot, false);
+        assert_eq!(snapshot.consecutive_hot_runs, 0);
+        assert_eq!(snapshot.last_duty_cycle_per_mille, Some(83));
+        assert_eq!(snapshot.last_error, None);
+    }
+
+    #[test]
+    fn measurement_failure_is_not_reported_as_healthy() {
+        let mut record = PeriodicTaskHealthRecord::default();
+        assert!(
+            record
+                .record(PeriodicTaskRunOutcome::Completed, -1, 1_000, 1_000)
+                .is_none()
+        );
+        let snapshot = record.snapshot("broken-measurement");
+
+        assert_eq!(snapshot.hot, false);
+        assert_eq!(snapshot.consecutive_failures, 1);
+        assert_eq!(
+            snapshot.last_error.as_deref(),
+            Some("scheduler task cost measurement failed")
+        );
+        assert_eq!(snapshot.last_duty_cycle_per_mille, None);
     }
 }
