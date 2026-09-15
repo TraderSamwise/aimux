@@ -11,6 +11,8 @@
     "dist-ui",
     "docs",
     "scripts/tmux-control.sh",
+    "scripts/cargo-sweep-stale-targets.sh",
+    "scripts/install-cargo-sweep-schedule.sh",
     "scripts/tmux-open-hyperlink.sh",
     "scripts/tmux-statusline.sh",
     "native/darwin-arm64",
@@ -77,6 +79,7 @@
     "native:fmt:staged": "bash scripts/check-staged-rustfmt.sh",
     "native:test": "CARGO_INCREMENTAL=0 python3 scripts/native-test-runner.py",
     "native:cargo-sweep": "bash scripts/cargo-sweep-stale-targets.sh",
+    "native:cargo-sweep:install-schedule": "bash scripts/install-cargo-sweep-schedule.sh",
     "prepack": "yarn build:release && yarn build:ui:local",
     "prepare": "husky",
     "check:hosted": "yarn native:build && ./scripts/hosted-check.mjs"

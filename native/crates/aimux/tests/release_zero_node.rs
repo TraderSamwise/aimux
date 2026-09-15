@@ -199,6 +199,10 @@ fn release_asset_compiles_native_binary_with_selected_build_profile() {
         "release asset must package the freshly built native artifact"
     );
     assert!(
+        script.contains("scripts/cargo-sweep-stale-targets.sh scripts/install-cargo-sweep-schedule.sh"),
+        "release asset must include the scheduled Cargo cleanup scripts"
+    );
+    assert!(
         script.contains("BUILD_STAMP=\"$(release_build_stamp)\""),
         "release asset must generate one release stamp before compiling the native binary"
     );
@@ -382,6 +386,7 @@ fn release_bash_scripts_report_clear_error_when_invoked_with_sh() {
         "scripts/build-release-asset.sh",
         "scripts/cargo-sweep-stale-targets.sh",
         "scripts/check-staged-rustfmt.sh",
+        "scripts/install-cargo-sweep-schedule.sh",
         "scripts/verify-codex-developer-instructions.sh",
         "scripts/verify-release-asset.sh",
     ] {
