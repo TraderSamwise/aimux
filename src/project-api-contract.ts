@@ -436,6 +436,8 @@ export type AgentRoleState =
       role?: AgentRole;
       lane?: AgentLane;
       projectControl?: boolean;
+      shouldShowInExpose?: boolean;
+      exposeOrder?: number;
     };
 
 export type DaemonProjectReadError =
