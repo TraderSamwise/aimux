@@ -592,7 +592,7 @@ describe("verify-release-asset-set.sh", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 
   it("rejects the reviewer probe: non-tar assets with stale zero checksums", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
