@@ -1,10 +1,10 @@
-use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
 use crate::paths::PathResolver;
+use crate::secure_permissions;
 
 pub const ACTION_CONTROL_PLANE_RESTART: &str = "control-plane-restart";
 pub const ACTION_PROJECT_SERVICE_ENSURE: &str = "project-service-ensure";
@@ -52,10 +52,7 @@ fn record_repair_event_to_resolver(
         .and_then(Value::as_str)
         .unwrap_or_default();
     let path = resolver.project_repair_log_path_for(project_root);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    let mut file = secure_permissions::open_private_append(&path)?;
     writeln!(
         file,
         "{}",
@@ -93,6 +90,7 @@ fn now_iso() -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     #[test]
     fn repair_event_helper_appends_project_log_without_panicking_on_details() {

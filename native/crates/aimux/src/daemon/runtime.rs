@@ -139,6 +139,7 @@ use crate::runtime_guard::read_runtime_rebuild_required;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
+use crate::secure_permissions;
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
 use crate::team_contract::{is_overseer_session, is_project_control_session};
 use crate::tmux::{
@@ -2339,6 +2340,18 @@ fn process_list_json(processes: Vec<ProcessArgsEntry>) -> Vec<Value> {
 
 pub fn run_daemon_internal() -> Result<()> {
     let resolver = PathResolver::from_env();
+    secure_permissions::repair_global_aimux_home(resolver.global_aimux_dir())
+        .context("repair global .aimux permissions")?;
+    let registry = resolver
+        .load_registry()
+        .context("load project registry for permission repair")?;
+    secure_permissions::repair_registered_project_local_stores(
+        registry
+            .projects
+            .iter()
+            .map(|project| project.repo_root.as_str()),
+    )
+    .context("repair registered project .aimux permissions")?;
     let host = get_daemon_host().map_err(anyhow::Error::msg)?;
     let port = get_daemon_port().map_err(anyhow::Error::msg)?;
     if let Some(reason) = crate::runtime_safety_guard::default_daemon_run_refusal_reason(port) {

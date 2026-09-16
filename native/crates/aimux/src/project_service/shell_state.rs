@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 
+use crate::atomic_write::write_text_atomic;
 use crate::config::default_config;
 use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
@@ -227,7 +228,7 @@ fn consume_shell_state_suppress_file(
         .unwrap_or(1);
     let remaining = count.max(1) - 1;
     let result = if remaining > 0 {
-        fs::write(&path, remaining.to_string())
+        write_text_atomic(&path, remaining.to_string())
     } else {
         fs::remove_file(&path)
     };

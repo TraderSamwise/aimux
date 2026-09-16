@@ -1,3 +1,4 @@
+use crate::secure_permissions::{self, PRIVATE_FILE_MODE};
 use serde::Serialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -68,16 +69,16 @@ fn atomic_write_impl(path: &Path, data: &[u8], mode: Option<u32>, durable: bool)
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
+    secure_permissions::ensure_private_dir(parent)?;
     let temp_path = temp_path_for(path);
 
     let result = (|| {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
-        if let Some(mode) = mode {
+        {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(mode);
+            options.mode(mode.unwrap_or(PRIVATE_FILE_MODE));
         }
         #[cfg(not(unix))]
         let _ = mode;

@@ -1,4 +1,5 @@
 use crate::async_subprocess::AsyncCommand;
+use crate::atomic_write::write_text_atomic;
 use crate::cli_launcher::{
     AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
 };
@@ -1859,9 +1860,7 @@ impl TmuxControl {
             snapshot = Value::Object(Default::default());
         }
         snapshot["screen"] = Value::String(screen.to_owned());
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, python_json_dumps(&snapshot)?)?;
-        fs::rename(tmp, path)?;
+        write_text_atomic(&path, python_json_dumps(&snapshot)?)?;
         Ok(())
     }
 
@@ -2330,11 +2329,14 @@ fn create_temp_file() -> Option<PathBuf> {
             std::process::id(),
             attempt + randish_counter()
         ));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(crate::secure_permissions::PRIVATE_FILE_MODE);
+        }
+        match options.open(&path) {
             Ok(_) => return Some(path),
             Err(_) => continue,
         }

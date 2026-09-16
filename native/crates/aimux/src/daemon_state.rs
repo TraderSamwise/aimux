@@ -1,5 +1,6 @@
 use crate::async_subprocess::AsyncCommand;
 use crate::atomic_write::{atomic_write, quarantine_corrupt_file, write_json_atomic};
+use crate::secure_permissions;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -876,11 +877,14 @@ impl Drop for DaemonInfoLock {
 
 fn acquire_daemon_info_lock(path: &Path) -> io::Result<DaemonInfoLock> {
     let lock_path = daemon_info_lock_path(path);
-    fs::create_dir_all(lock_path.parent().unwrap_or_else(|| Path::new(".")))?;
+    secure_permissions::ensure_private_dir(lock_path.parent().unwrap_or_else(|| Path::new(".")))?;
     let deadline = current_unix_millis() + DAEMON_INFO_LOCK_WAIT_MS;
     loop {
         match fs::create_dir(&lock_path) {
-            Ok(()) => return Ok(DaemonInfoLock { path: lock_path }),
+            Ok(()) => {
+                secure_permissions::ensure_private_dir(&lock_path)?;
+                return Ok(DaemonInfoLock { path: lock_path });
+            }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 if current_unix_millis() >= deadline {
                     return Err(io::Error::new(
@@ -914,18 +918,15 @@ fn save_json_with_fallback(path: impl AsRef<Path>, value: &impl Serialize) -> io
     match save_json(path, value) {
         Ok(()) => Ok(()),
         Err(_) => {
-            fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new(".")))?;
             let mut bytes = serde_json::to_vec_pretty(value).expect("serializable JSON state");
             bytes.push(b'\n');
-            fs::write(path, bytes)
+            atomic_write(path, bytes)
         }
     }
 }
 
 fn clear_file(path: impl AsRef<Path>) -> io::Result<()> {
-    let path = path.as_ref();
-    fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new(".")))?;
-    fs::write(path, [])
+    secure_permissions::truncate_private_file(path)
 }
 
 #[cfg(test)]

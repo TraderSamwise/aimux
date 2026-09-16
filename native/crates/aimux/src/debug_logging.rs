@@ -1,5 +1,6 @@
 use crate::config;
 use crate::paths::PathResolver;
+use crate::secure_permissions;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fs;
@@ -409,15 +410,8 @@ pub fn append_rotating_jsonl_with_limits(
     max_files: u64,
 ) -> io::Result<()> {
     let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     rotate_if_needed(path, line.len() as u64, max_bytes, max_files);
-    fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?
-        .write_all(line.as_bytes())
+    secure_permissions::open_private_append(path)?.write_all(line.as_bytes())
 }
 
 fn write_record(
@@ -443,21 +437,13 @@ fn write_record(
     let Ok(line) = serde_json::to_string(&record).map(|line| format!("{line}\n")) else {
         return;
     };
-    if let Some(parent) = config.path.parent()
-        && fs::create_dir_all(parent).is_err()
-    {
-        return;
-    }
     rotate_if_needed(
         &config.path,
         line.len() as u64,
         config.max_bytes,
         config.max_files,
     );
-    let _ = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&config.path)
+    let _ = secure_permissions::open_private_append(&config.path)
         .and_then(|mut file| file.write_all(line.as_bytes()));
 }
 

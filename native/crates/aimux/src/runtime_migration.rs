@@ -6,6 +6,7 @@ use crate::project_service::runtime_exchange::{
     write_runtime_exchange,
 };
 use crate::runtime_topology::read_runtime_topology;
+use crate::secure_permissions;
 use anyhow::{Result, bail};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -93,7 +94,7 @@ pub fn import_runtime_migration(
         .join("migration-backups")
         .join(timestamp_for_path(&generated_at));
     let manifest_path = backup_dir.join("manifest.json");
-    fs::create_dir_all(&backup_dir)?;
+    secure_permissions::ensure_private_dir(&backup_dir)?;
     let mut manifest = RuntimeMigrationManifest {
         version: 1,
         generated_at,
@@ -391,15 +392,15 @@ fn ensure_project_paths(cwd: &Path) -> Result<()> {
     let mut resolver = PathResolver::from_env();
     let paths = resolver.read_only_project_paths_for(cwd);
     let project_state_dir = PathBuf::from(&paths.project_state_dir);
-    fs::create_dir_all(&project_state_dir)?;
+    secure_permissions::ensure_private_dir(&project_state_dir)?;
     write_text_atomic(
         project_state_dir.join("project-root.txt"),
         format!("{}\n", paths.repo_root),
     )?;
     let local_dir = PathBuf::from(paths.local_aimux_dir);
-    fs::create_dir_all(&local_dir)?;
+    secure_permissions::ensure_private_dir(&local_dir)?;
     for subdir in ["plans", "context", "history", "status", "attachments"] {
-        fs::create_dir_all(local_dir.join(subdir))?;
+        secure_permissions::ensure_private_dir(local_dir.join(subdir))?;
     }
     Ok(())
 }
@@ -760,9 +761,10 @@ fn rollback_manifest(manifest: &RuntimeMigrationManifest) -> Result<()> {
     for backup in &manifest.backups {
         let source = Path::new(&backup.source);
         if let Some(parent) = source.parent() {
-            fs::create_dir_all(parent)?;
+            secure_permissions::ensure_private_dir(parent)?;
         }
         fs::copy(&backup.backup, source)?;
+        secure_permissions::set_private_file_mode(source)?;
     }
     Ok(())
 }
@@ -778,6 +780,7 @@ fn backup_file(
     }
     let backup = backup_dir.join(source.file_name().unwrap_or_default());
     fs::copy(source, &backup)?;
+    secure_permissions::set_private_file_mode(&backup)?;
     manifest.backups.push(RuntimeMigrationFileBackup {
         kind,
         source: path_string(source),
@@ -796,7 +799,7 @@ fn copy_legacy_dir(
         return Ok(());
     }
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
+        secure_permissions::ensure_private_dir(parent)?;
     }
     copy_dir_recursive(source, target)?;
     manifest.copied_dirs.push(RuntimeMigrationCopiedDir {
@@ -821,7 +824,7 @@ fn copy_legacy_dir(
 }
 
 fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
-    fs::create_dir_all(target)?;
+    secure_permissions::ensure_private_dir(target)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let source_path = entry.path();
@@ -829,7 +832,8 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
         if entry.file_type()?.is_dir() {
             copy_dir_recursive(&source_path, &target_path)?;
         } else {
-            fs::copy(source_path, target_path)?;
+            fs::copy(source_path, &target_path)?;
+            secure_permissions::set_private_file_mode(&target_path)?;
         }
     }
     Ok(())

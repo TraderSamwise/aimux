@@ -138,6 +138,7 @@ pub mod runtime_topology_sessions;
 pub mod runtime_topology_state_save;
 pub mod runtime_topology_worktrees;
 pub mod scribe_watcher;
+pub mod secure_permissions;
 pub mod service_state_snapshot;
 pub mod session_bootstrap;
 pub mod session_launch;

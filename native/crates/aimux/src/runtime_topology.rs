@@ -5,7 +5,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::atomic_write::write_text_atomic_fast;
+use crate::atomic_write::{write_text_atomic, write_text_atomic_fast};
+use crate::secure_permissions;
 
 pub const RUNTIME_TOPOLOGY_VERSION: i64 = 1;
 
@@ -74,11 +75,13 @@ impl Drop for RuntimeTopologyUpdateLock {
 
 fn acquire_update_lock(path: &Path) -> Result<RuntimeTopologyUpdateLock, String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        secure_permissions::ensure_private_dir(parent).map_err(|error| error.to_string())?;
     }
     let lock_path = topology_lock_path(path);
     match fs::create_dir(&lock_path) {
         Ok(()) => {
+            secure_permissions::ensure_private_dir(&lock_path)
+                .map_err(|error| error.to_string())?;
             write_lock_owner(&lock_path)?;
             Ok(RuntimeTopologyUpdateLock { path: lock_path })
         }
@@ -86,6 +89,8 @@ fn acquire_update_lock(path: &Path) -> Result<RuntimeTopologyUpdateLock, String>
             if error.kind() == io::ErrorKind::AlreadyExists && reclaim_stale_lock(&lock_path) =>
         {
             fs::create_dir(&lock_path).map_err(|error| error.to_string())?;
+            secure_permissions::ensure_private_dir(&lock_path)
+                .map_err(|error| error.to_string())?;
             write_lock_owner(&lock_path)?;
             Ok(RuntimeTopologyUpdateLock { path: lock_path })
         }
@@ -102,7 +107,7 @@ fn topology_lock_path(path: &Path) -> PathBuf {
 }
 
 fn write_lock_owner(lock_path: &Path) -> Result<(), String> {
-    fs::write(lock_path.join("owner"), format!("{}\n", std::process::id()))
+    write_text_atomic(lock_path.join("owner"), format!("{}\n", std::process::id()))
         .map_err(|error| error.to_string())
 }
 

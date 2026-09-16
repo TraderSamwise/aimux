@@ -1,3 +1,4 @@
+use crate::atomic_write::write_text_atomic;
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_command_transport::{DaemonHttpMethod, DaemonRequestInit, request_daemon_json};
 use crate::daemon_state::is_pid_alive;
@@ -6,6 +7,7 @@ use crate::repair_events::{
     ACTION_CONTROL_PLANE_RESTART, STATUS_FAILED, STATUS_STARTED, record_repair_event_from_env,
 };
 use crate::runtime_guard::{RuntimeGuardStaleReason, RuntimeGuardState};
+use crate::secure_permissions;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
@@ -138,7 +140,7 @@ pub fn try_acquire_runtime_guard_repair_lock(
     now_ms: i64,
 ) -> io::Result<Option<RuntimeGuardRepairLock>> {
     let home = home.as_ref();
-    fs::create_dir_all(home.join("locks"))?;
+    secure_permissions::ensure_private_dir(home.join("locks"))?;
     let lock_path = runtime_guard_repair_lock_path(home);
     if acquire_lock_dir(&lock_path, project_root, now_ms)? {
         return Ok(Some(RuntimeGuardRepairLock { path: lock_path }));
@@ -218,6 +220,7 @@ pub fn start_runtime_guard_repair_daemon_request(project_root: &str) -> Result<V
 fn acquire_lock_dir(lock_path: &Path, project_root: &str, now_ms: i64) -> io::Result<bool> {
     match fs::create_dir(lock_path) {
         Ok(()) => {
+            secure_permissions::ensure_private_dir(lock_path)?;
             write_runtime_guard_repair_lock_owner(lock_path, project_root, now_ms)?;
             Ok(true)
         }
@@ -231,7 +234,7 @@ fn write_runtime_guard_repair_lock_owner(
     project_root: &str,
     acquired_at_ms: i64,
 ) -> io::Result<()> {
-    fs::write(
+    write_text_atomic(
         lock_path.join("owner.json"),
         format!(
             "{}\n",
