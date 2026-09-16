@@ -93,7 +93,7 @@ case "$ARCHIVE_PACKAGE_PROFILE" in
     ;;
 esac
 case "$ARCHIVE_VARIANT" in
-  full | lite) ;;
+  full | local) ;;
   "")
     printf 'Release archive is missing BUILD_VARIANT\n' >&2
     exit 1

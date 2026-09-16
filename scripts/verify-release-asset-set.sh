@@ -83,9 +83,9 @@ verify_archive_shape() {
 missing=0
 for platform in darwin linux; do
   for arch in arm64 x64; do
-    for variant in full lite; do
-      if [ "$variant" = "lite" ]; then
-        asset="aimux-lite-${platform}-${arch}.tar.gz"
+    for variant in full local; do
+      if [ "$variant" = "local" ]; then
+        asset="aimux-local-${platform}-${arch}.tar.gz"
       else
         asset="aimux-${platform}-${arch}.tar.gz"
       fi

@@ -70,7 +70,7 @@ fi
 LEGACY_BUILD_PROFILE="$(package_profile_to_legacy_build_profile "$PACKAGE_PROFILE")"
 BUILD_VARIANT="${AIMUX_BUILD_VARIANT:-full}"
 case "$BUILD_VARIANT" in
-  full | lite) ;;
+  full | local) ;;
   *) printf 'Unsupported AIMUX_BUILD_VARIANT: %s\n' "$BUILD_VARIANT" >&2; exit 1 ;;
 esac
 export AIMUX_PACKAGE_PROFILE="$PACKAGE_PROFILE"
@@ -113,8 +113,8 @@ if [ "$PLATFORM" != "$HOST_PLATFORM" ] || [ "$ARCH" != "$HOST_ARCH" ]; then
     "$HOST_PLATFORM" "$HOST_ARCH" "$PLATFORM" "$ARCH" >&2
   exit 1
 fi
-if [ "$BUILD_VARIANT" = "lite" ]; then
-  ASSET="aimux-lite-${PLATFORM}-${ARCH}.tar.gz"
+if [ "$BUILD_VARIANT" = "local" ]; then
+  ASSET="aimux-local-${PLATFORM}-${ARCH}.tar.gz"
 else
   ASSET="aimux-${PLATFORM}-${ARCH}.tar.gz"
 fi
@@ -168,7 +168,7 @@ release_build_stamp() {
 BUILD_STAMP="$(release_build_stamp)"
 export AIMUX_RELEASE_BUILD_STAMP="$BUILD_STAMP"
 
-if [ "$BUILD_VARIANT" = "lite" ]; then
+if [ "$BUILD_VARIANT" = "local" ]; then
   cargo build --manifest-path native/Cargo.toml -p aimux --release --no-default-features
 else
   cargo build --manifest-path native/Cargo.toml -p aimux --release
@@ -218,20 +218,29 @@ bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$OUT_DIR/$ASSET" "$PLATFORM-$A
   shasum -a 256 "$ASSET" > "$ASSET.sha256"
 )
 SOURCE_REVISION="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)"
-SOURCE_REF_ARGS=()
 if [ -n "${GITHUB_REF_NAME:-}" ]; then
-  SOURCE_REF_ARGS=(--source-ref "$GITHUB_REF_NAME")
+  bash "$ROOT_DIR/scripts/write-release-provenance.sh" \
+    --release-dir "$OUT_DIR" \
+    --asset "$ASSET" \
+    --platform-arch "$PLATFORM-$ARCH" \
+    --variant "$BUILD_VARIANT" \
+    --package-profile "$PACKAGE_PROFILE" \
+    --legacy-build-profile "$LEGACY_BUILD_PROFILE" \
+    --version "$VERSION" \
+    --build-stamp "$BUILD_STAMP" \
+    --source-revision "$SOURCE_REVISION" \
+    --source-ref "$GITHUB_REF_NAME"
+else
+  bash "$ROOT_DIR/scripts/write-release-provenance.sh" \
+    --release-dir "$OUT_DIR" \
+    --asset "$ASSET" \
+    --platform-arch "$PLATFORM-$ARCH" \
+    --variant "$BUILD_VARIANT" \
+    --package-profile "$PACKAGE_PROFILE" \
+    --legacy-build-profile "$LEGACY_BUILD_PROFILE" \
+    --version "$VERSION" \
+    --build-stamp "$BUILD_STAMP" \
+    --source-revision "$SOURCE_REVISION"
 fi
-bash "$ROOT_DIR/scripts/write-release-provenance.sh" \
-  --release-dir "$OUT_DIR" \
-  --asset "$ASSET" \
-  --platform-arch "$PLATFORM-$ARCH" \
-  --variant "$BUILD_VARIANT" \
-  --package-profile "$PACKAGE_PROFILE" \
-  --legacy-build-profile "$LEGACY_BUILD_PROFILE" \
-  --version "$VERSION" \
-  --build-stamp "$BUILD_STAMP" \
-  --source-revision "$SOURCE_REVISION" \
-  "${SOURCE_REF_ARGS[@]}"
 
 printf 'Built %s\n' "$OUT_DIR/$ASSET"

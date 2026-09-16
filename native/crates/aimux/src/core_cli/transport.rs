@@ -25,7 +25,7 @@ impl Default for CoreCommandRequestOptions {
 }
 
 impl CoreCommandRequestOptions {
-    pub(super) fn existing_daemon() -> Self {
+    pub(crate) fn existing_daemon() -> Self {
         Self {
             ensure_daemon: false,
             timeout_ms: Some(CORE_DIAGNOSTIC_TIMEOUT_MS),

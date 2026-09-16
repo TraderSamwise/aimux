@@ -18,13 +18,6 @@ use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonRequestInit, request_daemon_json,
     request_daemon_text,
 };
-#[cfg(feature = "remote-control")]
-use crate::core_text::{
-    core_whoami_json, render_core_login_lines, render_core_logout_lines,
-    render_core_remote_disable_lines, render_core_remote_enable_lines,
-    render_core_remote_security_device_mutation_line, render_core_remote_security_devices_lines,
-    render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
-};
 use crate::core_text::{
     render_core_daemon_projects_lines, render_core_daemon_status_lines,
     render_core_host_status_lines, render_core_project_ensure_lines,
@@ -61,16 +54,6 @@ use crate::logs::{
 };
 use crate::paths::{PathResolver, is_git_project_root, project_checkout_required_message};
 use crate::project_service_manifest::get_project_service_manifest;
-#[cfg(feature = "remote-control")]
-use crate::remote::daemon_auth_text::AuthFlowResult;
-#[cfg(feature = "remote-control")]
-use crate::remote::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
-#[cfg(feature = "remote-control")]
-use crate::remote::remote_login::{LoginAction, run_login_flow};
-#[cfg(feature = "remote-control")]
-use crate::remote::remote_security_devices::{
-    list_remote_security_devices, update_remote_security_device,
-};
 use crate::runtime_migration::{
     build_runtime_migration_report, import_runtime_migration,
     render_runtime_migration_import_result, render_runtime_migration_report,
@@ -101,7 +84,7 @@ pub struct CoreCliExecution {
 }
 
 impl CoreCliExecution {
-    fn ok(stdout: Vec<String>) -> Self {
+    pub(crate) fn ok(stdout: Vec<String>) -> Self {
         Self {
             code: 0,
             stdout,
@@ -109,7 +92,7 @@ impl CoreCliExecution {
         }
     }
 
-    fn error(message: impl Into<String>, code: i32) -> Self {
+    pub(crate) fn error(message: impl Into<String>, code: i32) -> Self {
         Self {
             code,
             stdout: Vec::new(),
@@ -123,28 +106,15 @@ pub trait CoreCliRuntime {
     fn resolve_project_root(&self, path: &str) -> String;
     fn load_daemon_info(&self) -> Option<AimuxDaemonInfo>;
     fn load_daemon_state(&self) -> DaemonState;
-    #[cfg(feature = "remote-control")]
-    fn has_remote_credentials(&self) -> bool;
     fn loop_actor_context(&self) -> CoreLoopActorContext;
     #[cfg(feature = "remote-control")]
-    fn credentials_for_status(&self) -> Option<Value>;
+    fn has_remote_credentials(&self) -> bool;
     #[cfg(feature = "remote-control")]
-    fn whoami_payload(&self) -> Value;
-    #[cfg(feature = "remote-control")]
-    fn set_remote_enabled(&self, enabled: bool) -> Result<(), String>;
-    #[cfg(feature = "remote-control")]
-    fn clear_credentials(&self) -> String;
-    #[cfg(feature = "remote-control")]
-    fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String>;
-    #[cfg(feature = "remote-control")]
-    fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String>;
-    #[cfg(feature = "remote-control")]
-    fn update_remote_security_device(
-        &self,
-        device_id: &str,
-        action: &str,
-        approval_code: Option<&str>,
-    ) -> Result<Value, String>;
+    fn run_remote_cli_action(
+        &mut self,
+        action: crate::remote::cli::RemoteCliAction,
+        output_mode: CoreCliOutputMode,
+    ) -> Result<CoreCliExecution, String>;
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String>;
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String>;
     fn request_existing_daemon_text(
@@ -258,85 +228,23 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         load_daemon_state(resolver.daemon_state_path())
     }
 
-    #[cfg(feature = "remote-control")]
-    fn has_remote_credentials(&self) -> bool {
-        let resolver = PathResolver::from_env();
-        load_credentials(&resolver).is_some()
-    }
-
     fn loop_actor_context(&self) -> CoreLoopActorContext {
         CoreLoopActorContext::from_env()
     }
 
     #[cfg(feature = "remote-control")]
-    fn credentials_for_status(&self) -> Option<Value> {
+    fn has_remote_credentials(&self) -> bool {
         let resolver = PathResolver::from_env();
-        load_credentials(&resolver).map(|credentials| {
-            json!({
-                "relayUrl": credentials.relay_url,
-                "remoteEnabled": credentials.remote_enabled,
-            })
-        })
+        crate::remote::remote_credentials::load_credentials(&resolver).is_some()
     }
 
     #[cfg(feature = "remote-control")]
-    fn whoami_payload(&self) -> Value {
-        let resolver = PathResolver::from_env();
-        let credentials = load_credentials(&resolver).map(|credentials| {
-            json!({
-                "userId": credentials.user_id,
-                "relayUrl": credentials.relay_url,
-                "remoteEnabled": credentials.remote_enabled,
-            })
-        });
-        json!({ "credentials": credentials })
-    }
-
-    #[cfg(feature = "remote-control")]
-    fn set_remote_enabled(&self, enabled: bool) -> Result<(), String> {
-        let resolver = PathResolver::from_env();
-        set_remote_enabled(&resolver, enabled)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
-    #[cfg(feature = "remote-control")]
-    fn clear_credentials(&self) -> String {
-        let resolver = PathResolver::from_env();
-        clear_credentials(&resolver).as_str().into()
-    }
-
-    #[cfg(feature = "remote-control")]
-    fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String> {
-        let resolver = PathResolver::from_env();
-        let result = run_login_flow(
-            &resolver,
-            if security_unlock {
-                LoginAction::SecurityUnlock
-            } else {
-                LoginAction::Login
-            },
-        )?;
-        Ok(AuthFlowResult {
-            user_id: result.user_id,
-            relay: Value::Null,
-            messages: result.messages,
-        })
-    }
-
-    #[cfg(feature = "remote-control")]
-    fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String> {
-        list_remote_security_devices(pending)
-    }
-
-    #[cfg(feature = "remote-control")]
-    fn update_remote_security_device(
-        &self,
-        device_id: &str,
-        action: &str,
-        approval_code: Option<&str>,
-    ) -> Result<Value, String> {
-        update_remote_security_device(device_id, action, approval_code)
+    fn run_remote_cli_action(
+        &mut self,
+        action: crate::remote::cli::RemoteCliAction,
+        output_mode: CoreCliOutputMode,
+    ) -> Result<CoreCliExecution, String> {
+        crate::remote::cli::run_remote_cli_action(action, output_mode, self)
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -544,6 +452,83 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             deep_link_url: open_url.map(str::to_owned),
         });
         Ok(notification_test_json(&attempt))
+    }
+}
+
+#[cfg(feature = "remote-control")]
+impl crate::remote::cli::RemoteCliRuntime for RealCoreCliRuntime {
+    fn credentials_for_status(&self) -> Option<Value> {
+        let resolver = PathResolver::from_env();
+        crate::remote::remote_credentials::load_credentials(&resolver).map(|credentials| {
+            json!({
+                "relayUrl": credentials.relay_url,
+                "remoteEnabled": credentials.remote_enabled,
+            })
+        })
+    }
+
+    fn whoami_payload(&self) -> Value {
+        let resolver = PathResolver::from_env();
+        let credentials =
+            crate::remote::remote_credentials::load_credentials(&resolver).map(|credentials| {
+                json!({
+                    "userId": credentials.user_id,
+                    "relayUrl": credentials.relay_url,
+                    "remoteEnabled": credentials.remote_enabled,
+                })
+            });
+        json!({ "credentials": credentials })
+    }
+
+    fn set_remote_enabled(&self, enabled: bool) -> Result<(), String> {
+        let resolver = PathResolver::from_env();
+        crate::remote::remote_credentials::set_remote_enabled(&resolver, enabled)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    fn clear_credentials(&self) -> String {
+        let resolver = PathResolver::from_env();
+        crate::remote::remote_credentials::clear_credentials(&resolver)
+            .as_str()
+            .into()
+    }
+
+    fn run_login_flow(
+        &self,
+        security_unlock: bool,
+    ) -> Result<crate::remote::daemon_auth_text::AuthFlowResult, String> {
+        let resolver = PathResolver::from_env();
+        let result = crate::remote::remote_login::run_login_flow(
+            &resolver,
+            if security_unlock {
+                crate::remote::remote_login::LoginAction::SecurityUnlock
+            } else {
+                crate::remote::remote_login::LoginAction::Login
+            },
+        )?;
+        Ok(crate::remote::daemon_auth_text::AuthFlowResult {
+            user_id: result.user_id,
+            relay: Value::Null,
+            messages: result.messages,
+        })
+    }
+
+    fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String> {
+        crate::remote::remote_security_devices::list_remote_security_devices(pending)
+    }
+
+    fn update_remote_security_device(
+        &self,
+        device_id: &str,
+        action: &str,
+        approval_code: Option<&str>,
+    ) -> Result<Value, String> {
+        crate::remote::remote_security_devices::update_remote_security_device(
+            device_id,
+            action,
+            approval_code,
+        )
     }
 }
 
@@ -942,6 +927,7 @@ fn post_restart_daemon_verify_error_is_retryable(error: &CoreCommandTransportErr
     matches!(
         error,
         CoreCommandTransportError::TransientIoExhausted { .. }
+            | CoreCommandTransportError::Timeout { .. }
     )
 }
 
@@ -972,9 +958,9 @@ pub fn run_core_cli(raw_args: &[String]) -> CoreCliExecution {
     run_core_cli_with(raw_args, &mut runtime)
 }
 
-pub fn run_core_cli_with(
+pub fn run_core_cli_with<R: CoreCliRuntime>(
     raw_args: &[String],
-    runtime: &mut impl CoreCliRuntime,
+    runtime: &mut R,
 ) -> CoreCliExecution {
     let current_working_dir = runtime.cwd();
     let current_project_root = runtime.resolve_project_root(&current_working_dir);
@@ -1019,7 +1005,7 @@ pub fn run_core_cli_with(
 }
 
 #[cfg(feature = "remote-control")]
-fn core_cli_has_remote_credentials(runtime: &impl CoreCliRuntime) -> bool {
+fn core_cli_has_remote_credentials(runtime: &(impl CoreCliRuntime + ?Sized)) -> bool {
     runtime.has_remote_credentials()
 }
 
@@ -1165,12 +1151,15 @@ fn action_delivery_ref(action: &CoreCliAction) -> Option<&str> {
     }
 }
 
-fn run_plan(
+fn run_plan<R>(
     operation: CoreCliOperation,
     output_mode: CoreCliOutputMode,
     action: CoreCliAction,
-    runtime: &mut impl CoreCliRuntime,
-) -> Result<CoreCliExecution, String> {
+    runtime: &mut R,
+) -> Result<CoreCliExecution, String>
+where
+    R: CoreCliRuntime,
+{
     match action {
         CoreCliAction::Command {
             request,
@@ -1192,123 +1181,7 @@ fn run_plan(
         } => run_agent_identity(output_mode, &project_root, &session_id, runtime),
         CoreCliAction::Compact { project_root } => run_compact(&project_root),
         #[cfg(feature = "remote-control")]
-        CoreCliAction::RemoteStatus { relay_request } => {
-            let credentials = runtime.credentials_for_status();
-            let relay = match relay_request {
-                Some(request) => runtime
-                    .request_core_command(&request)
-                    .map(|response| response.result["relay"].clone())
-                    .unwrap_or_else(|_| json!({ "status": "off" })),
-                None => json!({ "status": "off" }),
-            };
-            let payload = json!({ "credentials": credentials, "relay": relay.clone() });
-            render_json_or_lines(
-                output_mode,
-                json!({ "loggedIn": payload.get("credentials").is_some_and(|value| !value.is_null()), "relay": relay }),
-                render_core_remote_status_lines(&payload),
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        CoreCliAction::RemoteEnable { relay_request } => {
-            let Some(request) = relay_request else {
-                return Ok(CoreCliExecution::error(
-                    "Not logged in. Run `aimux login` first.",
-                    1,
-                ));
-            };
-            let response = runtime.request_core_command(&request)?;
-            render_json_or_lines(
-                output_mode,
-                json!({ "relay": response.result["relay"].clone() }),
-                render_core_remote_enable_lines(&response.result["relay"]),
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        CoreCliAction::RemoteDisable { relay_request } => {
-            let daemon_disconnected = relay_request.is_some();
-            if let Some(request) = relay_request {
-                runtime.request_core_command(&request)?;
-            } else {
-                runtime.set_remote_enabled(false)?;
-            }
-            render_json_or_lines(
-                output_mode,
-                json!({ "remoteEnabled": false, "daemonDisconnected": daemon_disconnected }),
-                render_core_remote_disable_lines(daemon_disconnected),
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        CoreCliAction::Whoami => {
-            let payload = runtime.whoami_payload();
-            render_json_or_lines(
-                output_mode,
-                core_whoami_json(&payload),
-                render_core_whoami_lines(&payload),
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        CoreCliAction::Logout { relay_disable } => {
-            if let Some(request) = relay_disable {
-                let _ = runtime.request_core_command(&request);
-            }
-            let result = runtime.clear_credentials();
-            render_json_or_lines(
-                output_mode,
-                json!({ "result": result }),
-                render_core_logout_lines(&result),
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        CoreCliAction::Login {
-            security_unlock,
-            relay_enable,
-        } => {
-            let result = runtime.run_login_flow(security_unlock)?;
-            let relay = match relay_enable {
-                Some(request) => runtime
-                    .request_core_command(&request)
-                    .map(|response| response.result["relay"].clone())
-                    .unwrap_or_else(|error| {
-                        json!({
-                            "status": "disconnected",
-                            "relayUrl": "",
-                            "lastConnectedAt": Value::Null,
-                            "lastError": error,
-                        })
-                    }),
-                None => json!({ "status": "off" }),
-            };
-            let payload = json!({ "userId": result.user_id, "relay": relay });
-            let mut lines = result.messages;
-            if security_unlock {
-                lines.extend(render_core_security_unlock_lines(&payload));
-            } else {
-                lines.extend(render_core_login_lines(&payload));
-            }
-            Ok(CoreCliExecution::ok(lines))
-        }
-        #[cfg(feature = "remote-control")]
-        CoreCliAction::SecurityDevices { json } => {
-            run_security_devices(json, false, output_mode, runtime)
-        }
-        #[cfg(feature = "remote-control")]
-        CoreCliAction::SecurityDeviceApproveLive { device_id, json } => {
-            run_security_device_approve_live(device_id.as_deref(), json, output_mode, runtime)
-        }
-        #[cfg(feature = "remote-control")]
-        CoreCliAction::SecurityDeviceUpdate {
-            device_id,
-            action,
-            approval_code,
-            json,
-        } => run_security_device_update(
-            &device_id,
-            action,
-            approval_code.as_deref(),
-            json,
-            output_mode,
-            runtime,
-        ),
+        CoreCliAction::Remote(action) => runtime.run_remote_cli_action(action, output_mode),
         CoreCliAction::RestartControlPlane {
             project_root,
             force,
@@ -1340,86 +1213,6 @@ fn run_plan(
             open_url,
         } => run_notification_test(output_mode, &title, &body, open_url.as_deref(), runtime),
     }
-}
-
-#[cfg(feature = "remote-control")]
-fn run_security_devices(
-    json_flag: bool,
-    pending: bool,
-    output_mode: CoreCliOutputMode,
-    runtime: &impl CoreCliRuntime,
-) -> Result<CoreCliExecution, String> {
-    let devices = runtime.list_remote_security_devices(pending)?;
-    if json_flag || output_mode == CoreCliOutputMode::Json {
-        return Ok(CoreCliExecution::ok(vec![
-            serde_json::to_string_pretty(&json!({ "devices": devices }))
-                .map_err(|error| error.to_string())?,
-        ]));
-    }
-    Ok(CoreCliExecution::ok(
-        render_core_remote_security_devices_lines(&devices),
-    ))
-}
-
-#[cfg(feature = "remote-control")]
-fn run_security_device_approve_live(
-    device_id: Option<&str>,
-    json_flag: bool,
-    output_mode: CoreCliOutputMode,
-    runtime: &impl CoreCliRuntime,
-) -> Result<CoreCliExecution, String> {
-    let devices = runtime.list_remote_security_devices(true)?;
-    let candidates = if let Some(device_id) = device_id {
-        devices
-            .into_iter()
-            .filter(|device| {
-                [device.get("id"), device.get("deviceId")]
-                    .into_iter()
-                    .flatten()
-                    .any(|value| value.as_str() == Some(device_id))
-            })
-            .collect::<Vec<_>>()
-    } else {
-        devices
-    };
-    if candidates.is_empty() {
-        if json_flag || output_mode == CoreCliOutputMode::Json {
-            return Ok(CoreCliExecution::ok(vec![
-                serde_json::to_string_pretty(
-                    &json!({ "ok": false, "devices": [], "error": "No live remote clients are waiting for approval" }),
-                )
-                .map_err(|error| error.to_string())?,
-            ]));
-        }
-        let message = device_id
-            .map(|device_id| {
-                format!("No live remote client is waiting for approval as {device_id}.")
-            })
-            .unwrap_or_else(|| "No live remote clients are waiting for approval.".into());
-        return Ok(CoreCliExecution::ok(vec![message]));
-    }
-    Err("Interactive approval requires a TTY. Run `aimux security device approve` in a terminal and type the code shown on the waiting device.".into())
-}
-
-#[cfg(feature = "remote-control")]
-fn run_security_device_update(
-    device_id: &str,
-    action: &str,
-    approval_code: Option<&str>,
-    json_flag: bool,
-    output_mode: CoreCliOutputMode,
-    runtime: &impl CoreCliRuntime,
-) -> Result<CoreCliExecution, String> {
-    let device = runtime.update_remote_security_device(device_id, action, approval_code)?;
-    if json_flag || output_mode == CoreCliOutputMode::Json {
-        return Ok(CoreCliExecution::ok(vec![
-            serde_json::to_string_pretty(&json!({ "device": device }))
-                .map_err(|error| error.to_string())?,
-        ]));
-    }
-    Ok(CoreCliExecution::ok(vec![
-        render_core_remote_security_device_mutation_line(action, &device),
-    ]))
 }
 
 fn resolve_path_from(cwd: &str, path: &str) -> PathBuf {
@@ -1693,10 +1486,20 @@ fn loop_self_report_recorded_error(
     error: impl std::fmt::Display,
     spool_path: impl AsRef<Path>,
 ) -> String {
+    let error = error.to_string();
+    let recovery = if loop_self_report_delivery_error_suggests_busy_daemon(&error) {
+        "The daemon may still be healthy but too busy to answer this request; aimux will replay pending loop self-reports on the next loop self-report attempt."
+    } else {
+        "Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt."
+    };
     format!(
-        "loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at {}: {error}. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt.",
-        spool_path.as_ref().display()
+        "loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at {}: {error}. {recovery}",
+        spool_path.as_ref().display(),
     )
+}
+
+fn loop_self_report_delivery_error_suggests_busy_daemon(error: &str) -> bool {
+    error.contains("request timed out after")
 }
 
 fn loop_self_report_record_failure_error(
@@ -2492,6 +2295,36 @@ mod tests {
             ),
             "{error}"
         );
+    }
+
+    #[test]
+    fn post_restart_daemon_verify_waits_through_loopback_timeouts_until_success() {
+        let attempts = RefCell::new(0);
+        let sleeps = RefCell::new(0);
+        let elapsed_ms = RefCell::new(0_u64);
+
+        let health = request_restarted_daemon_health_until_ready(
+            30_000,
+            || {
+                let mut attempts = attempts.borrow_mut();
+                *attempts += 1;
+                if *attempts <= 2 {
+                    Err(CoreCommandTransportError::Timeout { timeout_ms: 2_500 })
+                } else {
+                    Ok(json!({ "pid": 42, "serviceInfo": { "buildStamp": "ok" } }))
+                }
+            },
+            || {
+                *sleeps.borrow_mut() += 1;
+                *elapsed_ms.borrow_mut() += 2_500;
+            },
+            || *elapsed_ms.borrow(),
+        )
+        .expect("post-restart health timeouts should be allowed to settle");
+
+        assert_eq!(health["pid"], json!(42));
+        assert_eq!(*attempts.borrow(), 3);
+        assert_eq!(*sleeps.borrow(), 2);
     }
 
     #[test]
