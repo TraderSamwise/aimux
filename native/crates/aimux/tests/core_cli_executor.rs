@@ -27,6 +27,8 @@ struct FakeRuntime {
     commands: Vec<CoreCommandCall>,
     text_routes: Vec<(String, Option<Value>)>,
     existing_daemon_text_routes: Vec<(String, Option<Value>)>,
+    text_route_timeouts: Vec<Option<u64>>,
+    existing_daemon_text_timeouts: Vec<Option<u64>>,
     open_targets: Vec<Value>,
     restart_calls: Vec<(Option<String>, bool)>,
     restart_progress: Vec<String>,
@@ -54,6 +56,7 @@ struct FakeRuntime {
     topology_raw: String,
     topology_json: Value,
     parity_text_error: Option<String>,
+    text_route_error: Option<String>,
     existing_daemon_text_error: Option<String>,
     pending_loop_self_reports: RefCell<Vec<(String, Option<Value>, String)>>,
     pending_loop_self_report_record_error: Option<String>,
@@ -70,6 +73,8 @@ impl Default for FakeRuntime {
             commands: Vec::new(),
             text_routes: Vec::new(),
             existing_daemon_text_routes: Vec::new(),
+            text_route_timeouts: Vec::new(),
+            existing_daemon_text_timeouts: Vec::new(),
             open_targets: Vec::new(),
             restart_calls: Vec::new(),
             restart_progress: Vec::new(),
@@ -100,6 +105,7 @@ impl Default for FakeRuntime {
             topology_raw: "version: 1\ngeneratedAt: now\n".into(),
             topology_json: json!({ "version": 1, "generatedAt": "now", "rigs": [] }),
             parity_text_error: None,
+            text_route_error: None,
             existing_daemon_text_error: None,
             pending_loop_self_reports: RefCell::new(Vec::new()),
             pending_loop_self_report_record_error: None,
@@ -239,10 +245,23 @@ impl CoreCliRuntime for FakeRuntime {
     }
 
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {
+        self.request_daemon_text_with_timeout(path, body, None)
+    }
+
+    fn request_daemon_text_with_timeout(
+        &mut self,
+        path: &str,
+        body: Option<Value>,
+        timeout_ms: Option<u64>,
+    ) -> Result<String, String> {
         if let Some(error) = self.parity_text_error.clone() {
             return Err(error);
         }
         self.text_routes.push((path.to_owned(), body));
+        self.text_route_timeouts.push(timeout_ms);
+        if let Some(error) = self.text_route_error.clone() {
+            return Err(error);
+        }
         Ok(fake_text_response(path))
     }
 
@@ -251,19 +270,32 @@ impl CoreCliRuntime for FakeRuntime {
         path: &str,
         body: Option<Value>,
     ) -> Result<String, String> {
+        self.request_existing_daemon_text_with_timeout(path, body, None)
+    }
+
+    fn request_existing_daemon_text_with_timeout(
+        &mut self,
+        path: &str,
+        body: Option<Value>,
+        timeout_ms: Option<u64>,
+    ) -> Result<String, String> {
         self.existing_daemon_text_routes
             .push((path.to_owned(), body));
+        self.existing_daemon_text_timeouts.push(timeout_ms);
         if let Some(error) = self.existing_daemon_text_error.clone() {
             return Err(error);
         }
         Ok(fake_text_response(path))
     }
 
-    fn replay_pending_loop_self_reports(&mut self) -> Result<usize, String> {
+    fn replay_pending_loop_self_reports(
+        &mut self,
+        timeout_ms: Option<u64>,
+    ) -> Result<usize, String> {
         let pending = self.pending_loop_self_reports.replace(Vec::new());
         let count = pending.len();
         for (path, body, _) in pending {
-            self.request_existing_daemon_text(&path, body)?;
+            self.request_existing_daemon_text_with_timeout(&path, body, timeout_ms)?;
         }
         Ok(count)
     }
@@ -1502,11 +1534,42 @@ fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
             ),
         ]
     );
+    assert_eq!(
+        runtime.text_route_timeouts,
+        [Some(60_000), Some(60_000), None]
+    );
+    assert_eq!(
+        runtime.existing_daemon_text_timeouts,
+        [Some(10_000), Some(10_000)]
+    );
     assert!(runtime.commands.is_empty());
     assert_eq!(
         runtime.delivery_checks.into_inner(),
         [("/repo".into(), "/repo".into(), "master".into())]
     );
+}
+
+#[test]
+fn loop_add_timeout_reports_named_daemon_route() {
+    let mut runtime = FakeRuntime {
+        text_route_error: Some("request timed out after 60000ms".into()),
+        ..FakeRuntime::default()
+    };
+
+    let add = run_core_cli_with(
+        &args(&["loop", "add", "claude-1", "--goal", "keep going"]),
+        &mut runtime,
+    );
+
+    assert_eq!(add.code, 1);
+    assert!(add.stdout.is_empty());
+    assert_eq!(
+        add.stderr,
+        [
+            "Error: loop add request to aimux daemon route /core/loop/add-text failed while waiting up to 60000ms for daemon response: request timed out after 60000ms"
+        ]
+    );
+    assert_eq!(runtime.text_route_timeouts, [Some(60_000)]);
 }
 
 #[test]
@@ -1785,7 +1848,7 @@ fn undelivered_loop_self_report_records_pending_retry() {
     assert_eq!(
         done.stderr,
         [
-            "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: connection refused. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt."
+            "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: connection refused. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt."
         ],
     );
     assert!(runtime.text_routes.is_empty());
@@ -1809,9 +1872,80 @@ fn undelivered_loop_self_report_records_pending_retry() {
                 "sessionId": "codex-1",
                 "source": "agent",
             })),
-            "connection refused".into()
+            "loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: connection refused".into()
         )]
     );
+    assert_eq!(runtime.existing_daemon_text_timeouts, [Some(10_000)]);
+}
+
+#[test]
+fn loop_self_report_timeout_records_pending_retry_with_named_wait() {
+    let mut runtime = FakeRuntime {
+        existing_daemon_text_error: Some("request timed out after 10000ms".into()),
+        ..FakeRuntime::default()
+    };
+
+    let done = run_core_cli_with(
+        &args(&["loop", "done", "--session", "codex-1"]),
+        &mut runtime,
+    );
+
+    assert_eq!(done.code, 1);
+    assert!(done.stdout.is_empty());
+    assert_eq!(
+        done.stderr,
+        [
+            "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt."
+        ],
+    );
+    assert_eq!(
+        runtime.pending_loop_self_reports.into_inner(),
+        [(
+            "/core/loop/done-text".into(),
+            Some(json!({
+                "project": "/repo",
+                "sessionId": "codex-1",
+                "source": "agent",
+            })),
+            "loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms".into()
+        )]
+    );
+    assert_eq!(runtime.existing_daemon_text_timeouts, [Some(10_000)]);
+}
+
+#[test]
+fn loop_block_timeout_records_pending_retry_with_distinct_operation() {
+    let mut runtime = FakeRuntime {
+        existing_daemon_text_error: Some("request timed out after 10000ms".into()),
+        ..FakeRuntime::default()
+    };
+
+    let block = run_core_cli_with(
+        &args(&["loop", "block", "--session", "codex-1"]),
+        &mut runtime,
+    );
+
+    assert_eq!(block.code, 1);
+    assert!(block.stdout.is_empty());
+    assert_eq!(
+        block.stderr,
+        [
+            "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: loop block request to aimux daemon route /core/loop/block-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt."
+        ],
+    );
+    assert_eq!(
+        runtime.pending_loop_self_reports.into_inner(),
+        [(
+            "/core/loop/block-text".into(),
+            Some(json!({
+                "project": "/repo",
+                "sessionId": "codex-1",
+                "source": "agent",
+            })),
+            "loop block request to aimux daemon route /core/loop/block-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms".into()
+        )]
+    );
+    assert_eq!(runtime.existing_daemon_text_timeouts, [Some(10_000)]);
 }
 
 #[test]
