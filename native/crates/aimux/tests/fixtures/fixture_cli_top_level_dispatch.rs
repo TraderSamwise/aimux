@@ -1,12 +1,13 @@
 use aimux::config::default_config;
-use aimux::core_cli::{CoreCommandCall, CoreCommandOk, CoreLoopActorContext};
-use aimux::core_cli_executor::{CoreCliRuntime, run_core_cli_with};
+use aimux::core_cli::{CoreCliOutputMode, CoreCommandCall, CoreCommandOk, CoreLoopActorContext};
+use aimux::core_cli_executor::{CoreCliExecution, CoreCliRuntime, run_core_cli_with};
 use aimux::core_cli_routing::is_core_cli_command;
 use aimux::daemon::text::operations::RestartControlPlaneTextResult;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
 use aimux::native_cli_dispatch::{
     native_root_tool_launch_args_for_config, normalize_root_dispatch_args,
 };
+use aimux::remote::cli::{RemoteCliAction, RemoteCliRuntime};
 use aimux::remote::daemon_auth_text::AuthFlowResult;
 use aimux::root_session_launch::{RootSessionLaunchMode, parse_root_resume_args};
 use serde_json::{Value, json};
@@ -140,37 +141,12 @@ impl CoreCliRuntime for FakeRuntime {
         CoreLoopActorContext::default()
     }
 
-    fn credentials_for_status(&self) -> Option<Value> {
-        None
-    }
-
-    fn whoami_payload(&self) -> Value {
-        json!({ "credentials": Value::Null })
-    }
-
-    fn set_remote_enabled(&self, _enabled: bool) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn clear_credentials(&self) -> String {
-        "none".into()
-    }
-
-    fn run_login_flow(&self, _security_unlock: bool) -> Result<AuthFlowResult, String> {
-        unreachable!("top-level dispatch fixture does not exercise login")
-    }
-
-    fn list_remote_security_devices(&self, _pending: bool) -> Result<Vec<Value>, String> {
-        Ok(Vec::new())
-    }
-
-    fn update_remote_security_device(
-        &self,
-        _device_id: &str,
-        _action: &str,
-        _approval_code: Option<&str>,
-    ) -> Result<Value, String> {
-        unreachable!("top-level dispatch fixture does not exercise security devices")
+    fn run_remote_cli_action(
+        &mut self,
+        action: RemoteCliAction,
+        output_mode: CoreCliOutputMode,
+    ) -> Result<CoreCliExecution, String> {
+        aimux::remote::cli::run_remote_cli_action(action, output_mode, self)
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -296,6 +272,41 @@ impl CoreCliRuntime for FakeRuntime {
         _open_url: Option<&str>,
     ) -> Result<Value, String> {
         Ok(json!({ "ok": false }))
+    }
+}
+
+impl RemoteCliRuntime for FakeRuntime {
+    fn credentials_for_status(&self) -> Option<Value> {
+        None
+    }
+
+    fn whoami_payload(&self) -> Value {
+        json!({ "credentials": Value::Null })
+    }
+
+    fn set_remote_enabled(&self, _enabled: bool) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn clear_credentials(&self) -> String {
+        "none".into()
+    }
+
+    fn run_login_flow(&self, _security_unlock: bool) -> Result<AuthFlowResult, String> {
+        unreachable!("top-level dispatch fixture does not exercise login")
+    }
+
+    fn list_remote_security_devices(&self, _pending: bool) -> Result<Vec<Value>, String> {
+        Ok(Vec::new())
+    }
+
+    fn update_remote_security_device(
+        &self,
+        _device_id: &str,
+        _action: &str,
+        _approval_code: Option<&str>,
+    ) -> Result<Value, String> {
+        unreachable!("top-level dispatch fixture does not exercise security devices")
     }
 }
 

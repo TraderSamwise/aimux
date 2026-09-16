@@ -1,5 +1,5 @@
-use aimux::core_cli::{CoreCommandCall, CoreCommandOk, CoreLoopActorContext};
-use aimux::core_cli_executor::{CoreCliRuntime, run_core_cli_with};
+use aimux::core_cli::{CoreCliOutputMode, CoreCommandCall, CoreCommandOk, CoreLoopActorContext};
+use aimux::core_cli_executor::{CoreCliExecution, CoreCliRuntime, run_core_cli_with};
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::text::operations::{
     RestartControlPlaneTextResult, render_runtime_restart_result,
@@ -10,6 +10,7 @@ use aimux::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
     CORE_SCRIBE_STATUS_TEXT_ROUTE, CORE_SERVICE_CREATE_TEXT_ROUTE, CORE_SERVICE_REMOVE_TEXT_ROUTE,
 };
+use aimux::remote::cli::{RemoteCliAction, RemoteCliRuntime};
 use aimux::remote::daemon_auth_text::AuthFlowResult;
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
@@ -152,87 +153,12 @@ impl CoreCliRuntime for FakeRuntime {
         self.loop_actor.clone()
     }
 
-    fn credentials_for_status(&self) -> Option<Value> {
-        self.credentials.as_ref().map(|credentials| {
-            json!({
-                "relayUrl": credentials["relayUrl"].clone(),
-                "remoteEnabled": credentials["remoteEnabled"].clone(),
-            })
-        })
-    }
-
-    fn whoami_payload(&self) -> Value {
-        json!({ "credentials": self.credentials.clone() })
-    }
-
-    fn set_remote_enabled(&self, enabled: bool) -> Result<(), String> {
-        self.remote_enabled.set(Some(enabled));
-        Ok(())
-    }
-
-    fn clear_credentials(&self) -> String {
-        self.cleared_credentials
-            .set(self.cleared_credentials.get() + 1);
-        if self.credentials.is_some() {
-            "cleared".into()
-        } else {
-            "none".into()
-        }
-    }
-
-    fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String> {
-        if security_unlock {
-            self.security_unlock_calls
-                .set(self.security_unlock_calls.get() + 1);
-        } else {
-            self.login_calls.set(self.login_calls.get() + 1);
-        }
-        Ok(AuthFlowResult {
-            user_id: "user-1".into(),
-            relay: Value::Null,
-            messages: vec![
-                "Opening your browser to sign in...".into(),
-                "If it doesn't open, visit:\n  https://aimux.app/cli-auth?callback=local\n".into(),
-            ],
-        })
-    }
-
-    fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String> {
-        Ok(if pending {
-            self.pending_security_devices.clone()
-        } else {
-            self.security_devices.clone()
-        })
-    }
-
-    fn update_remote_security_device(
-        &self,
-        device_id: &str,
-        action: &str,
-        approval_code: Option<&str>,
-    ) -> Result<Value, String> {
-        self.security_updates.borrow_mut().push((
-            device_id.to_owned(),
-            action.to_owned(),
-            approval_code.map(str::to_owned),
-        ));
-        let device = self
-            .security_devices
-            .iter()
-            .find(|device| device.get("id").and_then(Value::as_str) == Some(device_id))
-            .cloned()
-            .unwrap_or_else(|| {
-                json!({
-                    "id": device_id,
-                    "kind": "web",
-                    "name": "Browser",
-                    "platform": "macOS",
-                    "lastSeenAt": "2026-09-09T00:00:00.000Z",
-                    "approved": action == "approve",
-                    "blocked": action == "block"
-                })
-            });
-        Ok(device)
+    fn run_remote_cli_action(
+        &mut self,
+        action: RemoteCliAction,
+        output_mode: CoreCliOutputMode,
+    ) -> Result<CoreCliExecution, String> {
+        aimux::remote::cli::run_remote_cli_action(action, output_mode, self)
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -496,6 +422,91 @@ impl CoreCliRuntime for FakeRuntime {
                 files: Vec::new(),
             },
         })
+    }
+}
+
+impl RemoteCliRuntime for FakeRuntime {
+    fn credentials_for_status(&self) -> Option<Value> {
+        self.credentials.as_ref().map(|credentials| {
+            json!({
+                "relayUrl": credentials["relayUrl"].clone(),
+                "remoteEnabled": credentials["remoteEnabled"].clone(),
+            })
+        })
+    }
+
+    fn whoami_payload(&self) -> Value {
+        json!({ "credentials": self.credentials.clone() })
+    }
+
+    fn set_remote_enabled(&self, enabled: bool) -> Result<(), String> {
+        self.remote_enabled.set(Some(enabled));
+        Ok(())
+    }
+
+    fn clear_credentials(&self) -> String {
+        self.cleared_credentials
+            .set(self.cleared_credentials.get() + 1);
+        if self.credentials.is_some() {
+            "cleared".into()
+        } else {
+            "none".into()
+        }
+    }
+
+    fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String> {
+        if security_unlock {
+            self.security_unlock_calls
+                .set(self.security_unlock_calls.get() + 1);
+        } else {
+            self.login_calls.set(self.login_calls.get() + 1);
+        }
+        Ok(AuthFlowResult {
+            user_id: "user-1".into(),
+            relay: Value::Null,
+            messages: vec![
+                "Opening your browser to sign in...".into(),
+                "If it doesn't open, visit:\n  https://aimux.app/cli-auth?callback=local\n".into(),
+            ],
+        })
+    }
+
+    fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String> {
+        Ok(if pending {
+            self.pending_security_devices.clone()
+        } else {
+            self.security_devices.clone()
+        })
+    }
+
+    fn update_remote_security_device(
+        &self,
+        device_id: &str,
+        action: &str,
+        approval_code: Option<&str>,
+    ) -> Result<Value, String> {
+        self.security_updates.borrow_mut().push((
+            device_id.to_owned(),
+            action.to_owned(),
+            approval_code.map(str::to_owned),
+        ));
+        let device = self
+            .security_devices
+            .iter()
+            .find(|device| device.get("id").and_then(Value::as_str) == Some(device_id))
+            .cloned()
+            .unwrap_or_else(|| {
+                json!({
+                    "id": device_id,
+                    "kind": "web",
+                    "name": "Browser",
+                    "platform": "macOS",
+                    "lastSeenAt": "2026-09-09T00:00:00.000Z",
+                    "approved": action == "approve",
+                    "blocked": action == "block"
+                })
+            });
+        Ok(device)
     }
 }
 

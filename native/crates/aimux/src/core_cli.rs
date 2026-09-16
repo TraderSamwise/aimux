@@ -162,27 +162,7 @@ pub enum CoreCliOperation {
     ProjectsRemove,
     Restart,
     #[cfg(feature = "remote-control")]
-    RemoteStatus,
-    #[cfg(feature = "remote-control")]
-    RemoteEnable,
-    #[cfg(feature = "remote-control")]
-    RemoteDisable,
-    #[cfg(feature = "remote-control")]
-    Whoami,
-    #[cfg(feature = "remote-control")]
-    Logout,
-    #[cfg(feature = "remote-control")]
-    Login,
-    #[cfg(feature = "remote-control")]
-    SecurityUnlock,
-    #[cfg(feature = "remote-control")]
-    SecurityDevices,
-    #[cfg(feature = "remote-control")]
-    SecurityDeviceApprove,
-    #[cfg(feature = "remote-control")]
-    SecurityDeviceBlock,
-    #[cfg(feature = "remote-control")]
-    SecurityDeviceUnblock,
+    Remote(crate::remote::cli::RemoteCliOperation),
     DebugState,
 }
 
@@ -192,17 +172,7 @@ pub enum CoreCliFallback {
     None,
     StoredDaemonStatus,
     #[cfg(feature = "remote-control")]
-    RelayOff,
-    #[cfg(feature = "remote-control")]
-    NotLoggedIn,
-    #[cfg(feature = "remote-control")]
-    DisableRemoteLocally,
-    #[cfg(feature = "remote-control")]
-    IgnoreRelayDisableFailure,
-    #[cfg(feature = "remote-control")]
-    RelayDisconnected,
-    #[cfg(feature = "remote-control")]
-    RelayDeferredUntilDaemonStart,
+    Remote(crate::remote::cli::RemoteCliFallback),
     MissingDashboardTarget,
     EmptyLogTail,
 }
@@ -278,44 +248,7 @@ pub enum CoreCliAction {
         project_root: String,
     },
     #[cfg(feature = "remote-control")]
-    RemoteStatus {
-        relay_request: Option<CoreCommandCall>,
-    },
-    #[cfg(feature = "remote-control")]
-    RemoteEnable {
-        relay_request: Option<CoreCommandCall>,
-    },
-    #[cfg(feature = "remote-control")]
-    RemoteDisable {
-        relay_request: Option<CoreCommandCall>,
-    },
-    #[cfg(feature = "remote-control")]
-    Whoami,
-    #[cfg(feature = "remote-control")]
-    Logout {
-        relay_disable: Option<CoreCommandCall>,
-    },
-    #[cfg(feature = "remote-control")]
-    Login {
-        security_unlock: bool,
-        relay_enable: Option<CoreCommandCall>,
-    },
-    #[cfg(feature = "remote-control")]
-    SecurityDevices {
-        json: bool,
-    },
-    #[cfg(feature = "remote-control")]
-    SecurityDeviceApproveLive {
-        device_id: Option<String>,
-        json: bool,
-    },
-    #[cfg(feature = "remote-control")]
-    SecurityDeviceUpdate {
-        device_id: String,
-        action: &'static str,
-        approval_code: Option<String>,
-        json: bool,
-    },
+    Remote(crate::remote::cli::RemoteCliAction),
     DebugState {
         target: String,
     },
@@ -2309,140 +2242,8 @@ where
             )
         }
         #[cfg(feature = "remote-control")]
-        ("remote", "status") => {
-            let relay_request = (context.has_credentials && context.daemon_running)
-                .then(|| existing_daemon_call(CORE_COMMAND_NAMES.relay_status));
-            (
-                CoreCliOperation::RemoteStatus,
-                CoreCliAction::RemoteStatus { relay_request },
-                CoreCliFallback::RelayOff,
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        ("remote", "enable") => {
-            let relay_request = context
-                .has_credentials
-                .then(|| default_call(CORE_COMMAND_NAMES.relay_enable, None));
-            (
-                CoreCliOperation::RemoteEnable,
-                CoreCliAction::RemoteEnable { relay_request },
-                if context.has_credentials {
-                    CoreCliFallback::None
-                } else {
-                    CoreCliFallback::NotLoggedIn
-                },
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        ("remote", "disable") => {
-            let relay_request = context
-                .daemon_running
-                .then(|| existing_daemon_call(CORE_COMMAND_NAMES.relay_disable));
-            (
-                CoreCliOperation::RemoteDisable,
-                CoreCliAction::RemoteDisable { relay_request },
-                if context.daemon_running {
-                    CoreCliFallback::None
-                } else {
-                    CoreCliFallback::DisableRemoteLocally
-                },
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        ("whoami", _) => (
-            CoreCliOperation::Whoami,
-            CoreCliAction::Whoami,
-            CoreCliFallback::None,
-        ),
-        #[cfg(feature = "remote-control")]
-        ("logout", _) => (
-            CoreCliOperation::Logout,
-            CoreCliAction::Logout {
-                relay_disable: context
-                    .daemon_running
-                    .then(|| existing_daemon_call(CORE_COMMAND_NAMES.relay_disable)),
-            },
-            if context.daemon_running {
-                CoreCliFallback::IgnoreRelayDisableFailure
-            } else {
-                CoreCliFallback::None
-            },
-        ),
-        #[cfg(feature = "remote-control")]
-        ("login", _) | ("security", "unlock") => {
-            let security_unlock = command == "security";
-            let relay_enable = context
-                .daemon_running
-                .then(|| existing_daemon_call(CORE_COMMAND_NAMES.relay_enable));
-            (
-                if security_unlock {
-                    CoreCliOperation::SecurityUnlock
-                } else {
-                    CoreCliOperation::Login
-                },
-                CoreCliAction::Login {
-                    security_unlock,
-                    relay_enable,
-                },
-                if context.daemon_running {
-                    CoreCliFallback::RelayDisconnected
-                } else {
-                    CoreCliFallback::RelayDeferredUntilDaemonStart
-                },
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        ("security", "devices") if args[2..].iter().all(|arg| arg == "--json") => (
-            CoreCliOperation::SecurityDevices,
-            CoreCliAction::SecurityDevices {
-                json: args[2..].iter().any(|arg| arg == "--json"),
-            },
-            CoreCliFallback::None,
-        ),
-        #[cfg(feature = "remote-control")]
-        ("security", "device") if args.get(2).map(String::as_str) == Some("approve") => {
-            let parsed = parse_security_device_approve_live_args(&args).ok_or_else(|| {
-                CoreCliPlanError::InvalidArguments {
-                    args: args.clone(),
-                    message: "error: invalid security device approve arguments".into(),
-                }
-            })?;
-            (
-                CoreCliOperation::SecurityDeviceApprove,
-                CoreCliAction::SecurityDeviceApproveLive {
-                    device_id: parsed.device_id,
-                    json: parsed.json,
-                },
-                CoreCliFallback::None,
-            )
-        }
-        #[cfg(feature = "remote-control")]
-        ("security", "approve" | "block" | "revoke" | "unblock") => {
-            let parsed = parse_security_device_update_args(&args).ok_or_else(|| {
-                CoreCliPlanError::InvalidArguments {
-                    args: args.clone(),
-                    message: "error: invalid security device arguments".into(),
-                }
-            })?;
-            (
-                match parsed.action {
-                    "approve" => CoreCliOperation::SecurityDeviceApprove,
-                    "block" | "revoke" => CoreCliOperation::SecurityDeviceBlock,
-                    "unblock" => CoreCliOperation::SecurityDeviceUnblock,
-                    _ => unreachable!("validated security action"),
-                },
-                CoreCliAction::SecurityDeviceUpdate {
-                    device_id: parsed.device_id,
-                    action: if parsed.action == "revoke" {
-                        "block"
-                    } else {
-                        parsed.action
-                    },
-                    approval_code: parsed.approval_code,
-                    json: parsed.json,
-                },
-                CoreCliFallback::None,
-            )
+        _ if crate::remote::cli::is_remote_core_cli_command(command, subcommand) => {
+            crate::remote::cli::plan_remote_core_cli(&args, context)?
         }
         _ => return Err(CoreCliPlanError::Unsupported { args }),
     };
@@ -2453,92 +2254,6 @@ where
         output_mode: mode,
         action,
         fallback,
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg(feature = "remote-control")]
-struct SecurityDeviceApproveLiveArgs {
-    device_id: Option<String>,
-    json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg(feature = "remote-control")]
-struct SecurityDeviceUpdateArgs {
-    device_id: String,
-    action: &'static str,
-    approval_code: Option<String>,
-    json: bool,
-}
-
-#[cfg(feature = "remote-control")]
-fn parse_security_device_approve_live_args(
-    args: &[String],
-) -> Option<SecurityDeviceApproveLiveArgs> {
-    let mut device_id = None;
-    let mut json = false;
-    let mut index = 3;
-    while index < args.len() {
-        let arg = args[index].as_str();
-        if arg == "--json" {
-            json = true;
-            index += 1;
-        } else if device_id.is_none() && !arg.starts_with('-') {
-            device_id = Some(arg.to_owned());
-            index += 1;
-        } else {
-            return None;
-        }
-    }
-    Some(SecurityDeviceApproveLiveArgs { device_id, json })
-}
-
-#[cfg(feature = "remote-control")]
-fn parse_security_device_update_args(args: &[String]) -> Option<SecurityDeviceUpdateArgs> {
-    let action = match args.get(1)?.as_str() {
-        "approve" => "approve",
-        "block" => "block",
-        "revoke" => "revoke",
-        "unblock" => "unblock",
-        _ => return None,
-    };
-    let mut device_id = None;
-    let mut approval_code = None;
-    let mut json = false;
-    let mut index = 2;
-    while index < args.len() {
-        let arg = args[index].as_str();
-        if arg == "--json" {
-            json = true;
-            index += 1;
-        } else if action == "approve" && arg == "--code" {
-            let value = args.get(index + 1)?;
-            if value.starts_with('-') {
-                return None;
-            }
-            approval_code = Some(value.clone());
-            index += 2;
-        } else if action == "approve"
-            && let Some(value) = arg.strip_prefix("--code=")
-        {
-            if value.is_empty() {
-                return None;
-            }
-            approval_code = Some(value.to_owned());
-            index += 1;
-        } else if device_id.is_none() && !arg.starts_with('-') {
-            device_id = Some(arg.to_owned());
-            index += 1;
-        } else {
-            return None;
-        }
-    }
-    Some(SecurityDeviceUpdateArgs {
-        device_id: device_id?,
-        action,
-        approval_code,
-        json,
     })
 }
 

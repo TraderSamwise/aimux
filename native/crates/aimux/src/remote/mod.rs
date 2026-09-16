@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod daemon_auth_text;
 pub mod daemon_relay;
 pub mod hosted_audit;

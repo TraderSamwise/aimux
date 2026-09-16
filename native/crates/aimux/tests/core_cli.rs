@@ -9,6 +9,7 @@ use aimux::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
     CORE_SCRIBE_STATUS_TEXT_ROUTE,
 };
+use aimux::remote::cli::{RemoteCliAction, RemoteCliFallback};
 use serde_json::{Value, json};
 
 fn context(daemon_running: bool, has_credentials: bool) -> CoreCliContext {
@@ -2630,8 +2631,12 @@ fn remote_status_requests_the_relay_only_when_credentials_and_daemon_exist() {
     ] {
         let plan = classify_core_cli(&["remote", "status"], &context(daemon, credentials))
             .expect("remote status plan");
-        assert_eq!(plan.fallback, CoreCliFallback::RelayOff);
-        let CoreCliAction::RemoteStatus { relay_request } = plan.action else {
+        assert_eq!(
+            plan.fallback,
+            CoreCliFallback::Remote(RemoteCliFallback::RelayOff)
+        );
+        let CoreCliAction::Remote(RemoteCliAction::RemoteStatus { relay_request }) = plan.action
+        else {
             panic!("expected remote status action");
         };
         assert_eq!(relay_request.is_some(), expects_request);
@@ -2647,29 +2652,35 @@ fn remote_status_requests_the_relay_only_when_credentials_and_daemon_exist() {
 fn remote_enable_and_disable_preserve_credential_and_daemon_fallbacks() {
     let enable = classify_core_cli(&["remote", "enable"], &context(true, false))
         .expect("remote enable plan");
-    assert_eq!(enable.fallback, CoreCliFallback::NotLoggedIn);
+    assert_eq!(
+        enable.fallback,
+        CoreCliFallback::Remote(RemoteCliFallback::NotLoggedIn)
+    );
     assert!(matches!(
         enable.action,
-        CoreCliAction::RemoteEnable {
+        CoreCliAction::Remote(RemoteCliAction::RemoteEnable {
             relay_request: None
-        }
+        })
     ));
 
     let disable = classify_core_cli(&["remote", "disable"], &context(false, true))
         .expect("remote disable plan");
-    assert_eq!(disable.fallback, CoreCliFallback::DisableRemoteLocally);
+    assert_eq!(
+        disable.fallback,
+        CoreCliFallback::Remote(RemoteCliFallback::DisableRemoteLocally)
+    );
     assert!(matches!(
         disable.action,
-        CoreCliAction::RemoteDisable {
+        CoreCliAction::Remote(RemoteCliAction::RemoteDisable {
             relay_request: None
-        }
+        })
     ));
 
     let live_disable = classify_core_cli(&["remote", "disable"], &context(true, true))
         .expect("live remote disable plan");
-    let CoreCliAction::RemoteDisable {
+    let CoreCliAction::Remote(RemoteCliAction::RemoteDisable {
         relay_request: Some(request),
-    } = live_disable.action
+    }) = live_disable.action
     else {
         panic!("expected relay disable request");
     };
@@ -2680,36 +2691,42 @@ fn remote_enable_and_disable_preserve_credential_and_daemon_fallbacks() {
 #[test]
 fn auth_plans_capture_best_effort_relay_behavior() {
     let logout = classify_core_cli(&["logout"], &context(true, true)).expect("logout plan");
-    assert_eq!(logout.fallback, CoreCliFallback::IgnoreRelayDisableFailure);
+    assert_eq!(
+        logout.fallback,
+        CoreCliFallback::Remote(RemoteCliFallback::IgnoreRelayDisableFailure)
+    );
     assert!(matches!(
         logout.action,
-        CoreCliAction::Logout {
+        CoreCliAction::Remote(RemoteCliAction::Logout {
             relay_disable: Some(_)
-        }
+        })
     ));
 
     let login = classify_core_cli(&["login"], &context(true, false)).expect("login plan");
-    assert_eq!(login.fallback, CoreCliFallback::RelayDisconnected);
+    assert_eq!(
+        login.fallback,
+        CoreCliFallback::Remote(RemoteCliFallback::RelayDisconnected)
+    );
     assert!(matches!(
         login.action,
-        CoreCliAction::Login {
+        CoreCliAction::Remote(RemoteCliAction::Login {
             security_unlock: false,
             relay_enable: Some(_)
-        }
+        })
     ));
 
     let unlock = classify_core_cli(&["security", "unlock"], &context(false, false))
         .expect("security unlock plan");
     assert_eq!(
         unlock.fallback,
-        CoreCliFallback::RelayDeferredUntilDaemonStart
+        CoreCliFallback::Remote(RemoteCliFallback::RelayDeferredUntilDaemonStart)
     );
     assert!(matches!(
         unlock.action,
-        CoreCliAction::Login {
+        CoreCliAction::Remote(RemoteCliAction::Login {
             security_unlock: true,
             relay_enable: None
-        }
+        })
     ));
 }
 
