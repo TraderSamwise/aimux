@@ -145,30 +145,201 @@ recently_touched() {
   [ -n "$found" ]
 }
 
-process_snapshot="$(mktemp "${TMPDIR:-/tmp}/aimux-cargo-sweep-ps.XXXXXX")"
-proc_env_snapshot="$(mktemp "${TMPDIR:-/tmp}/aimux-cargo-sweep-proc-env.XXXXXX")"
+active_target_snapshot="$(mktemp "${TMPDIR:-/tmp}/aimux-cargo-sweep-active-targets.XXXXXX")"
+active_target_raw_snapshot="$(mktemp "${TMPDIR:-/tmp}/aimux-cargo-sweep-active-targets-raw.XXXXXX")"
 cleanup_temp_files() {
-  rm -f "$process_snapshot" "$proc_env_snapshot"
+  rm -f "$active_target_snapshot" "$active_target_raw_snapshot"
 }
 trap cleanup_temp_files EXIT
 
-if ! ps -axo pid=,command= >"$process_snapshot"; then
-  printf 'Refusing to sweep: could not inspect process command lines.\n' >&2
-  exit 1
+process_scan_error=""
+
+collect_proc_cargo_target_dirs() {
+  local saw_proc=0
+  local saw_readable_env=0
+  [ -d /proc ] || {
+    process_scan_error="missing /proc process environment filesystem"
+    return 1
+  }
+  for env_file in /proc/[0-9]*/environ; do
+    [ -e "$env_file" ] || continue
+    saw_proc=1
+    [ -r "$env_file" ] || continue
+    if tr '\0' '\n' <"$env_file" 2>/dev/null | sed -n 's/^CARGO_TARGET_DIR=//p' >>"$active_target_raw_snapshot"; then
+      saw_readable_env=1
+    fi
+  done
+  if [ "$saw_proc" -eq 1 ] && [ "$saw_readable_env" -eq 0 ]; then
+    process_scan_error="could not read any /proc process environments"
+    return 1
+  fi
+}
+
+collect_macos_cargo_target_dirs() {
+  local output
+  if ! output="$(python3 - "$active_target_raw_snapshot" <<'PY' 2>&1
+import ctypes
+import ctypes.util
+import errno
+import os
+import struct
+import subprocess
+import sys
+
+out_path = sys.argv[1]
+libc_path = ctypes.util.find_library("c") or "libc.dylib"
+libc = ctypes.CDLL(libc_path, use_errno=True)
+CTL_KERN = 1
+KERN_ARGMAX = 8
+KERN_PROCARGS2 = 49
+
+
+def sysctl_bytes(mib, size):
+    array_type = ctypes.c_int * len(mib)
+    name = array_type(*mib)
+    buffer = ctypes.create_string_buffer(size)
+    out_size = ctypes.c_size_t(size)
+    result = libc.sysctl(
+        name,
+        len(mib),
+        buffer,
+        ctypes.byref(out_size),
+        None,
+        0,
+    )
+    if result != 0:
+        raise OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))
+    return buffer.raw[: out_size.value]
+
+
+argmax_raw = sysctl_bytes([CTL_KERN, KERN_ARGMAX], ctypes.sizeof(ctypes.c_int))
+argmax = struct.unpack("i", argmax_raw[:4])[0]
+current_uid = os.getuid()
+ps_output = subprocess.check_output(["ps", "-axo", "pid=,uid="], text=True)
+values = []
+failed = []
+for line in ps_output.splitlines():
+    parts = line.split()
+    if len(parts) < 2:
+        continue
+    try:
+        pid = int(parts[0])
+        uid = int(parts[1])
+    except ValueError:
+        continue
+    if uid != current_uid:
+        continue
+    try:
+        raw = sysctl_bytes([CTL_KERN, KERN_PROCARGS2, pid], argmax)
+    except OSError as error:
+        if error.errno in (errno.ENOENT, errno.ESRCH):
+            continue
+        failed.append(f"pid {pid}: {error}")
+        continue
+    if len(raw) < 4:
+        failed.append(f"pid {pid}: short KERN_PROCARGS2 response")
+        continue
+    argc = struct.unpack("i", raw[:4])[0]
+    payload = raw[4:]
+    position = payload.find(b"\0")
+    if position < 0:
+        failed.append(f"pid {pid}: missing executable terminator")
+        continue
+    position += 1
+    while position < len(payload) and payload[position] == 0:
+        position += 1
+    for _ in range(max(argc, 0)):
+        next_null = payload.find(b"\0", position)
+        if next_null < 0:
+            position = len(payload)
+            break
+        position = next_null + 1
+    for entry in payload[position:].split(b"\0"):
+        if entry.startswith(b"CARGO_TARGET_DIR="):
+            values.append(entry.split(b"=", 1)[1].decode("utf-8", "surrogateescape"))
+
+if failed:
+    raise SystemExit("; ".join(failed))
+with open(out_path, "a", encoding="utf-8") as handle:
+    for value in values:
+        print(value, file=handle)
+PY
+)"; then
+    process_scan_error="macOS KERN_PROCARGS2 environment scan failed: $output"
+    return 1
+  fi
+}
+
+canonicalize_active_target_dirs() {
+  local dir
+  local canonical
+  while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    canonical="$(canonical_dir "$dir")" || continue
+    printf '%s\n' "$canonical"
+  done <"$active_target_raw_snapshot" | sort -u >"$active_target_snapshot"
+}
+
+process_scan_ok=1
+open_file_scan_required=0
+case "$(uname -s)" in
+  Darwin)
+    open_file_scan_required=1
+    collect_macos_cargo_target_dirs || process_scan_ok=0
+    ;;
+  *)
+    collect_proc_cargo_target_dirs || process_scan_ok=0
+    ;;
+esac
+if [ "$process_scan_ok" -eq 1 ]; then
+  canonicalize_active_target_dirs
 fi
 
-if [ -d /proc ]; then
-  for env_file in /proc/[0-9]*/environ; do
-    [ -r "$env_file" ] || continue
-    tr '\0' '\n' <"$env_file" 2>/dev/null | sed -n 's/^CARGO_TARGET_DIR=//p' >>"$proc_env_snapshot" || true
-  done
-fi
+open_file_scan_error=""
+target_has_open_files() {
+  local dir="$1"
+  local output
+  local errors
+  local status
+  if ! command -v lsof >/dev/null 2>&1; then
+    if [ "$open_file_scan_required" -eq 1 ]; then
+      open_file_scan_error="lsof is required on macOS to inspect open target files"
+      return 2
+    fi
+    return 1
+  fi
+  errors="$(mktemp "${TMPDIR:-/tmp}/aimux-cargo-sweep-lsof.XXXXXX")"
+  set +e
+  output="$(lsof -n +D "$dir" 2>"$errors")"
+  status="$?"
+  set -e
+  if [ -n "$output" ]; then
+    rm -f "$errors"
+    return 0
+  fi
+  if [ "$status" -eq 1 ] && [ ! -s "$errors" ]; then
+    rm -f "$errors"
+    return 1
+  fi
+  open_file_scan_error="$(cat "$errors" 2>/dev/null || true)"
+  rm -f "$errors"
+  if [ -z "$open_file_scan_error" ]; then
+    open_file_scan_error="lsof +D exited with status $status"
+  fi
+  return 2
+}
 
 actively_used() {
   local dir="$1"
-  grep -F -- "$dir" "$process_snapshot" >/dev/null 2>&1 && return 0
-  if [ -s "$proc_env_snapshot" ] && grep -Fx -- "$dir" "$proc_env_snapshot" >/dev/null 2>&1; then
+  if [ -s "$active_target_snapshot" ] && grep -Fx -- "$dir" "$active_target_snapshot" >/dev/null 2>&1; then
     return 0
+  fi
+  if target_has_open_files "$dir"; then
+    return 0
+  fi
+  local open_status="$?"
+  if [ "$process_scan_ok" -ne 1 ] || [ "$open_status" -eq 2 ]; then
+    return 2
   fi
   return 1
 }
@@ -176,6 +347,25 @@ actively_used() {
 for target_dir in "${target_dirs[@]}"; do
   if actively_used "$target_dir"; then
     printf 'Skipping active target dir: %s\n' "$target_dir"
+    continue
+  fi
+  active_status="$?"
+  if [ "$active_status" -eq 2 ]; then
+    skip_reason=""
+    if [ "$process_scan_ok" -ne 1 ]; then
+      skip_reason="$process_scan_error"
+    fi
+    if [ -n "$open_file_scan_error" ]; then
+      if [ -n "$skip_reason" ]; then
+        skip_reason="$skip_reason; $open_file_scan_error"
+      else
+        skip_reason="$open_file_scan_error"
+      fi
+    fi
+    if [ -z "$skip_reason" ]; then
+      skip_reason="could not determine active process usage"
+    fi
+    printf 'Skipping target dir because active-use scan failed: %s (%s)\n' "$target_dir" "$skip_reason" >&2
     continue
   fi
 

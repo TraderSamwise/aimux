@@ -62,10 +62,18 @@ exit 0
   };
 }
 
+function fakeWorkspace(root) {
+  const workspace = join(root, "native");
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(join(workspace, "Cargo.toml"), "[workspace]\nmembers = []\n");
+  return workspace;
+}
+
 describe("cargo sweep maintenance scripts", () => {
   it("sweeps stale target dirs once after canonicalizing /tmp aliases", () => {
     const root = scratch();
     const tmp = join(root, "tmp");
+    const workspace = fakeWorkspace(root);
     const target = join(tmp, "aimux-cargo-target-stale");
     mkdirSync(join(target, "debug"), { recursive: true });
     writeFileSync(join(target, "debug", "artifact"), "old");
@@ -75,6 +83,7 @@ describe("cargo sweep maintenance scripts", () => {
     const result = run("bash", ["scripts/cargo-sweep-stale-targets.sh", "--apply", "--days", "3", "--min-age-minutes", "0"], {
       env: {
         PATH: fake.PATH,
+        AIMUX_CARGO_SWEEP_WORKSPACE_ROOT: workspace,
         AIMUX_CARGO_SWEEP_TMP_ROOTS: `${tmp} ${tmp}`,
         AIMUX_CARGO_SWEEP_PRUNE_WORKTREES: "0",
       },
@@ -87,22 +96,19 @@ describe("cargo sweep maintenance scripts", () => {
     expect(calls[0]).toContain(`target=${canonicalTarget}`);
   });
 
-  it("skips a target dir named on an active process command line", async () => {
+  it("skips an active target whose process keeps the target path out of argv", async () => {
     const root = scratch();
     const tmp = join(root, "tmp");
+    const workspace = fakeWorkspace(root);
     const target = join(tmp, "aimux-cargo-target-active");
     mkdirSync(join(target, "debug"), { recursive: true });
-    writeFileSync(join(target, "debug", "artifact"), "active");
+    const heldFile = join(target, "debug", "artifact");
+    writeFileSync(heldFile, "active");
     const canonicalTarget = realpathSync(target);
 
-    const holder = join(root, "hold-active-target");
-    writeExecutable(
-      holder,
-      `#!/usr/bin/env bash
-sleep 20
-`,
-    );
-    const active = spawn(holder, [canonicalTarget], {
+    const active = spawn(process.execPath, ["-e", "const fs = require('node:fs'); const fd = fs.openSync('debug/artifact', 'r'); setTimeout(() => fs.closeSync(fd), 20000);"], {
+      cwd: canonicalTarget,
+      env: { ...process.env, CARGO_TARGET_DIR: canonicalTarget },
       stdio: "ignore",
       detached: false,
     });
@@ -113,6 +119,7 @@ sleep 20
       const result = run("bash", ["scripts/cargo-sweep-stale-targets.sh", "--apply", "--min-age-minutes", "0"], {
         env: {
           PATH: fake.PATH,
+          AIMUX_CARGO_SWEEP_WORKSPACE_ROOT: workspace,
           AIMUX_CARGO_SWEEP_TMP_ROOTS: tmp,
           AIMUX_CARGO_SWEEP_PRUNE_WORKTREES: "0",
         },
@@ -130,6 +137,7 @@ sleep 20
   it("git worktree prune leaves a real dirty temp worktree alone", () => {
     const root = scratch();
     const tmp = join(root, "tmp");
+    const workspace = fakeWorkspace(root);
     const repo = join(root, "repo");
     const worktree = join(tmp, "dirty-worktree");
     mkdirSync(tmp, { recursive: true });
@@ -148,6 +156,7 @@ sleep 20
     const result = run("bash", ["scripts/cargo-sweep-stale-targets.sh", "--apply"], {
       env: {
         PATH: fake.PATH,
+        AIMUX_CARGO_SWEEP_WORKSPACE_ROOT: workspace,
         AIMUX_CARGO_SWEEP_TMP_ROOTS: tmp,
         AIMUX_CARGO_SWEEP_WORKTREE_REPOS: repo,
       },
