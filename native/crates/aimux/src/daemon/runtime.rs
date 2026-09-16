@@ -117,7 +117,8 @@ use crate::recording_cleanup::{
     run_recording_cleanup,
 };
 use crate::release_version_contract::{
-    read_aimux_build_profile_from_package_root, read_aimux_runtime_version,
+    read_aimux_build_profile_from_package_root, read_aimux_build_variant_from_package_root,
+    read_aimux_runtime_version,
 };
 use crate::remote_access::{RemoteActorRole, parse_remote_actor};
 use crate::remote_credentials;
@@ -3331,6 +3332,7 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
                 generated_at: generated_at.clone(),
                 cli_version: read_aimux_runtime_version(),
                 build_profile: read_aimux_build_profile_from_package_root(package_root()),
+                build_variant: read_aimux_build_variant_from_package_root(package_root()),
                 cli_launch: aimux_cli_launch_json(cli_launch),
                 expected_project_service: expected_project_service.clone(),
                 expected_runtime_owner: get_runtime_owner_id(),

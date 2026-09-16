@@ -25,15 +25,43 @@ jobs:
         include:
           - platform: linux
             arch: x64
+            variant: full
+            asset: aimux-linux-x64
+            runner: ubuntu-latest
+          - platform: linux
+            arch: x64
+            variant: lite
+            asset: aimux-lite-linux-x64
             runner: ubuntu-latest
           - platform: linux
             arch: arm64
+            variant: full
+            asset: aimux-linux-arm64
+            runner: ubuntu-24.04-arm
+          - platform: linux
+            arch: arm64
+            variant: lite
+            asset: aimux-lite-linux-arm64
             runner: ubuntu-24.04-arm
           - platform: darwin
             arch: x64
+            variant: full
+            asset: aimux-darwin-x64
+            runner: macos-15-intel
+          - platform: darwin
+            arch: x64
+            variant: lite
+            asset: aimux-lite-darwin-x64
             runner: macos-15-intel
           - platform: darwin
             arch: arm64
+            variant: full
+            asset: aimux-darwin-arm64
+            runner: macos-14
+          - platform: darwin
+            arch: arm64
+            variant: lite
+            asset: aimux-lite-darwin-arm64
             runner: macos-14
 
     steps:
@@ -60,6 +88,7 @@ jobs:
         env:
           AIMUX_RELEASE_PLATFORM: ${{ matrix.platform }}
           AIMUX_RELEASE_ARCH: ${{ matrix.arch }}
+          AIMUX_BUILD_VARIANT: ${{ matrix.variant }}
 
       - name: Verify release asset has no source maps
         run: |
@@ -81,11 +110,19 @@ jobs:
             command -v "$1" >/dev/null 2>&1 || { echo "missing required command: $1" >&2; exit 1; }
           }
           for command in tar gzip grep; do need "$command"; done
-          ASSET="release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          ASSET="release/${{ matrix.asset }}.tar.gz"
           if tar -tzf "$ASSET" | grep -E '(^|/)[^/]+\.map$'; then
             echo "Release asset contains source maps." >&2
             exit 1
           fi
+
+      - name: Verify lite release boundary
+        if: matrix.variant == 'lite'
+        run: |
+          set -euo pipefail
+          bash scripts/check-lite-build-boundary.sh \
+            --archive release/${{ matrix.asset }}.tar.gz \
+            --platform-arch ${{ matrix.platform }}-${{ matrix.arch }}
 
       - name: Verify Darwin notifier helper
         if: matrix.platform == 'darwin'
@@ -108,7 +145,7 @@ jobs:
             command -v "$1" >/dev/null 2>&1 || { echo "missing required command: $1" >&2; exit 1; }
           }
           for command in tar gzip mktemp rm lipo; do need "$command"; done
-          ASSET="release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          ASSET="release/${{ matrix.asset }}.tar.gz"
           TMP_DIR="$(mktemp -d)"
           trap 'rm -rf "$TMP_DIR"' EXIT
           tar -xzf "$ASSET" -C "$TMP_DIR" aimux/native/darwin/aimux-notifier.app
@@ -130,13 +167,41 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
-            release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz.sha256
+            release/${{ matrix.asset }}.tar.gz
+            release/${{ matrix.asset }}.tar.gz.sha256
+
+  verify-release-assets:
+    name: Verify complete release asset set
+    runs-on: ubuntu-latest
+    needs: release-assets
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          OWNER_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-check
+          for a in \
+            aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
+            aimux-lite-darwin-arm64 aimux-lite-darwin-x64 aimux-lite-linux-arm64 aimux-lite-linux-x64
+          do
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "${a}.tar.gz" --dir release-check --clobber
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "${a}.tar.gz.sha256" --dir release-check --clobber
+          done
+
+      - name: Verify complete release assets
+        run: bash scripts/verify-release-asset-set.sh --lite-boundary-checker scripts/check-lite-build-boundary.sh release-check
 
   publish-npm:
     name: Publish to npm
     runs-on: ubuntu-latest
-    needs: release-assets
+    needs: verify-release-assets
     permissions:
       id-token: write
       contents: read
@@ -250,7 +315,7 @@ jobs:
   update-homebrew-tap:
     name: Update Homebrew tap
     runs-on: ubuntu-latest
-    needs: release-assets
+    needs: verify-release-assets
     steps:
       - name: Resolve version
         id: meta
@@ -269,7 +334,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p sha
-          for a in aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64; do
+          for a in \
+            aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
+            aimux-lite-darwin-arm64 aimux-lite-darwin-x64 aimux-lite-linux-arm64 aimux-lite-linux-x64
+          do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sha256" --dir sha --clobber
           done
@@ -286,6 +354,10 @@ jobs:
             echo "darwin_x64=$(extract aimux-darwin-x64)"
             echo "linux_arm64=$(extract aimux-linux-arm64)"
             echo "linux_x64=$(extract aimux-linux-x64)"
+            echo "lite_darwin_arm64=$(extract aimux-lite-darwin-arm64)"
+            echo "lite_darwin_x64=$(extract aimux-lite-darwin-x64)"
+            echo "lite_linux_arm64=$(extract aimux-lite-linux-arm64)"
+            echo "lite_linux_x64=$(extract aimux-lite-linux-x64)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout homebrew-aimux
@@ -303,6 +375,10 @@ jobs:
           DARWIN_X64: ${{ steps.sha.outputs.darwin_x64 }}
           LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
           LINUX_X64: ${{ steps.sha.outputs.linux_x64 }}
+          LITE_DARWIN_ARM64: ${{ steps.sha.outputs.lite_darwin_arm64 }}
+          LITE_DARWIN_X64: ${{ steps.sha.outputs.lite_darwin_x64 }}
+          LITE_LINUX_ARM64: ${{ steps.sha.outputs.lite_linux_arm64 }}
+          LITE_LINUX_X64: ${{ steps.sha.outputs.lite_linux_x64 }}
         run: |
           set -euo pipefail
           cat > tap/Formula/aimux.rb <<EOF
@@ -346,6 +422,48 @@ jobs:
             end
           end
           EOF
+          cat > tap/Formula/aimux-lite.rb <<EOF
+          class AimuxLite < Formula
+            desc "Local agent multiplexer for AI coding tools without remote control"
+            homepage "https://aimux.app"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-lite-darwin-arm64.tar.gz"
+                sha256 "${LITE_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-lite-darwin-x64.tar.gz"
+                sha256 "${LITE_DARWIN_X64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-lite-linux-arm64.tar.gz"
+                sha256 "${LITE_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-lite-linux-x64.tar.gz"
+                sha256 "${LITE_LINUX_X64}"
+              end
+            end
+
+            depends_on "tmux"
+            conflicts_with "aimux", because: "both install the aimux command"
+
+            def install
+              libexec.install Dir["*"]
+              bin.install_symlink libexec/"bin/aimux"
+            end
+
+            test do
+              assert_match "aimux", shell_output("#{bin}/aimux --help 2>&1", 0)
+            end
+          end
+          EOF
 
       - name: Commit and push
         working-directory: tap
@@ -355,10 +473,10 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet Formula/aimux.rb; then
+          if git diff --quiet Formula/aimux.rb Formula/aimux-lite.rb; then
             echo "Formula already up to date."
             exit 0
           fi
-          git add Formula/aimux.rb
+          git add Formula/aimux.rb Formula/aimux-lite.rb
           git commit -m "aimux ${TAG}"
           git push

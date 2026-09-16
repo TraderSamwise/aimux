@@ -499,6 +499,7 @@ fn fake_runtime_coherence_report() -> Value {
         "generatedAt": "now",
         "cliVersion": "test-cli",
         "buildProfile": "test",
+        "buildVariant": "full",
         "cliLaunch": {
             "command": "/tmp/aimux",
             "args": [],
