@@ -33,7 +33,8 @@ RELEASE_DIR=""
 ASSET=""
 PLATFORM_ARCH=""
 BUILD_VARIANT=""
-BUILD_PROFILE=""
+PACKAGE_PROFILE=""
+LEGACY_BUILD_PROFILE=""
 VERSION=""
 BUILD_STAMP=""
 SOURCE_REVISION=""
@@ -61,9 +62,24 @@ while [ "$#" -gt 0 ]; do
       BUILD_VARIANT="$2"
       shift 2
       ;;
+    --package-profile)
+      [ -n "${2:-}" ] && [[ "${2:-}" != --* ]] || fail "missing value for $1"
+      PACKAGE_PROFILE="$2"
+      shift 2
+      ;;
+    --legacy-build-profile)
+      [ -n "${2:-}" ] && [[ "${2:-}" != --* ]] || fail "missing value for $1"
+      LEGACY_BUILD_PROFILE="$2"
+      shift 2
+      ;;
     --profile)
       [ -n "${2:-}" ] && [[ "${2:-}" != --* ]] || fail "missing value for $1"
-      BUILD_PROFILE="$2"
+      LEGACY_BUILD_PROFILE="$2"
+      if [ "$2" = "local" ]; then
+        PACKAGE_PROFILE="${PACKAGE_PROFILE:-minimal}"
+      else
+        PACKAGE_PROFILE="${PACKAGE_PROFILE:-$2}"
+      fi
       shift 2
       ;;
     --version)
@@ -103,7 +119,8 @@ for required in \
   "asset:$ASSET" \
   "platform-arch:$PLATFORM_ARCH" \
   "variant:$BUILD_VARIANT" \
-  "profile:$BUILD_PROFILE" \
+  "package-profile:$PACKAGE_PROFILE" \
+  "legacy-build-profile:$LEGACY_BUILD_PROFILE" \
   "version:$VERSION" \
   "build-stamp:$BUILD_STAMP" \
   "source-revision:$SOURCE_REVISION"
@@ -117,9 +134,13 @@ case "$BUILD_VARIANT" in
   full | lite) ;;
   *) fail "invalid build variant: $BUILD_VARIANT" ;;
 esac
-case "$BUILD_PROFILE" in
+case "$PACKAGE_PROFILE" in
+  full | minimal) ;;
+  *) fail "invalid package profile: $PACKAGE_PROFILE" ;;
+esac
+case "$LEGACY_BUILD_PROFILE" in
   full | local) ;;
-  *) fail "invalid build profile: $BUILD_PROFILE" ;;
+  *) fail "invalid legacy build profile: $LEGACY_BUILD_PROFILE" ;;
 esac
 if ! printf '%s\n' "$SOURCE_REVISION" | grep -Eq '^[0-9a-fA-F]{40}$'; then
   fail "source revision must be a 40-character git sha: $SOURCE_REVISION"
@@ -145,7 +166,8 @@ cat > "$PROVENANCE_PATH" <<JSON
     "ref": "$(json_string "$SOURCE_REF")"
   },
   "build": {
-    "profile": "$BUILD_PROFILE",
+    "packageProfile": "$PACKAGE_PROFILE",
+    "legacyBuildProfile": "$LEGACY_BUILD_PROFILE",
     "variant": "$BUILD_VARIANT",
     "platformArch": "$(json_string "$PLATFORM_ARCH")",
     "buildStamp": "$(json_string "$BUILD_STAMP")"
@@ -153,7 +175,8 @@ cat > "$PROVENANCE_PATH" <<JSON
   "artifact": {
     "name": "$(json_string "$ASSET_BASENAME")",
     "sha256": "$ASSET_SHA256",
-    "buildProfile": "$BUILD_PROFILE",
+    "packageProfile": "$PACKAGE_PROFILE",
+    "buildProfile": "$LEGACY_BUILD_PROFILE",
     "buildVariant": "$BUILD_VARIANT",
     "platformArch": "$(json_string "$PLATFORM_ARCH")"
   },

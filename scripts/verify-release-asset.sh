@@ -74,12 +74,24 @@ trap cleanup EXIT
 tar -xzf "$ARCHIVE" -C "$TMP_DIR" aimux
 
 ARCHIVE_STAMP="$(sed -n '1{s/[[:space:]]*$//;p;}' "$TMP_DIR/aimux/BUILD_STAMP" 2>/dev/null || true)"
+ARCHIVE_PACKAGE_PROFILE="$(sed -n '1{s/[[:space:]]*$//;p;}' "$TMP_DIR/aimux/PACKAGE_PROFILE" 2>/dev/null || true)"
 ARCHIVE_VARIANT="$(sed -n '1{s/[[:space:]]*$//;p;}' "$TMP_DIR/aimux/BUILD_VARIANT" 2>/dev/null || true)"
 NATIVE_ARTIFACT="$TMP_DIR/aimux/native/$PLATFORM_ARCH/aimux"
 if [ -z "$ARCHIVE_STAMP" ]; then
   printf 'Release archive is missing BUILD_STAMP\n' >&2
   exit 1
 fi
+case "$ARCHIVE_PACKAGE_PROFILE" in
+  full | minimal) ;;
+  "")
+    printf 'Release archive is missing PACKAGE_PROFILE\n' >&2
+    exit 1
+    ;;
+  *)
+    printf 'Release archive has invalid PACKAGE_PROFILE: %s\n' "$ARCHIVE_PACKAGE_PROFILE" >&2
+    exit 1
+    ;;
+esac
 case "$ARCHIVE_VARIANT" in
   full | lite) ;;
   "")
