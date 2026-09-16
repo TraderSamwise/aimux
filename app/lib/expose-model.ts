@@ -86,6 +86,8 @@ export interface ExposeTile {
   role?: string;
   shouldShowInExpose: boolean;
   exposeOrder: number | null;
+  supervisorScoped: boolean;
+  hotkeyLabel: string;
   kind: "agent" | "service";
   status: string | null;
   statusKind: ExposeStatusKind | null;
@@ -232,6 +234,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         role: metadata.role,
       };
       const tool = agentToolName(agentDisplay);
+      const kind = metadata.kind === "service" ? "service" : "agent";
       tiles.push({
         id: `${projectRoot}:${item.target?.windowId ?? item.id ?? index}`,
         projectId: item.projectId || source.project.id,
@@ -247,7 +250,9 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         role: metadata.role,
         shouldShowInExpose: declaredShouldShow,
         exposeOrder: item.exposeOrder ?? item.roleState?.exposeOrder ?? null,
-        kind: metadata.kind === "service" ? "service" : "agent",
+        supervisorScoped: item.roleState?.lane?.kind === "supervisor",
+        hotkeyLabel: "",
+        kind,
         status: item.exposeStatus?.label || (statusKind ? cap(statusKind) : null),
         statusKind,
         worktreeName,
@@ -263,22 +268,48 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
       });
     });
   }
-  return tiles;
+  return withExposeHotkeys(tiles);
+}
+
+function withExposeHotkeys(tiles: ExposeTile[]): ExposeTile[] {
+  const next = tiles.map((tile) => ({ ...tile, hotkeyLabel: "" }));
+  let supervisorAssigned = false;
+  let worktreeOrdinal = 0;
+  for (const tile of next) {
+    if (tile.supervisorScoped) {
+      tile.hotkeyLabel = supervisorAssigned ? "" : "0";
+      supervisorAssigned = true;
+      continue;
+    }
+    if (tile.kind !== "agent") {
+      tile.hotkeyLabel = "";
+      continue;
+    }
+    worktreeOrdinal += 1;
+    tile.hotkeyLabel = worktreeOrdinal <= 9 ? String(worktreeOrdinal) : "";
+  }
+  return next;
 }
 
 export function filterExposeTiles(tiles: ExposeTile[], filter: ExposeFilter): ExposeTile[] {
   if (filter === "all") return tiles;
   if (filter === "attention")
-    return tiles.filter(
-      (tile) =>
-        tile.statusKind === "needs" || tile.statusKind === "blocked" || tile.statusKind === "error",
+    return withExposeHotkeys(
+      tiles.filter(
+        (tile) =>
+          tile.statusKind === "needs" ||
+          tile.statusKind === "blocked" ||
+          tile.statusKind === "error",
+      ),
     );
   if (filter === "ready")
-    return tiles.filter(
-      (tile) =>
-        tile.statusKind === "ready" || tile.statusKind === "idle" || tile.statusKind === "done",
+    return withExposeHotkeys(
+      tiles.filter(
+        (tile) =>
+          tile.statusKind === "ready" || tile.statusKind === "idle" || tile.statusKind === "done",
+      ),
     );
-  return tiles.filter((tile) => tile.statusKind === filter);
+  return withExposeHotkeys(tiles.filter((tile) => tile.statusKind === filter));
 }
 
 export function groupExposeTiles(tiles: ExposeTile[]): ExposeSection[] {

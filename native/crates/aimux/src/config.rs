@@ -28,6 +28,7 @@ plans/
 worktrees/
 
 ";
+const ROOT_GITIGNORE_AIMUX_BLOCK: &str = "# Aimux local runtime state\n.aimux/\n";
 
 /// Return a fresh JSON representation of the TypeScript `DEFAULT_CONFIG`.
 pub fn default_config() -> Value {
@@ -264,10 +265,51 @@ pub fn init_project_with_resolver(
     if !gitignore_path.exists() {
         write_text_atomic(gitignore_path, GITIGNORE_CONTENTS).map_err(|error| error.to_string())?;
     }
+    ensure_root_gitignore_ignores_aimux(project_root)?;
     secure_permissions::repair_project_local_store(project_root)
         .map_err(|error| error.to_string())?;
 
     Ok(())
+}
+
+fn ensure_root_gitignore_ignores_aimux(project_root: &Path) -> Result<(), String> {
+    if !project_root.join(".git").exists() {
+        return Ok(());
+    }
+    let gitignore_path = project_root.join(".gitignore");
+    let existing = match std::fs::read_to_string(&gitignore_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(format!(
+                "failed to read root gitignore {}: {error}",
+                gitignore_path.display()
+            ));
+        }
+    };
+    if root_gitignore_has_aimux_entry(&existing) {
+        return Ok(());
+    }
+    let mut next = existing;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    if !next.is_empty() {
+        next.push('\n');
+    }
+    next.push_str(ROOT_GITIGNORE_AIMUX_BLOCK);
+    write_text_atomic(gitignore_path, &next).map_err(|error| error.to_string())
+}
+
+fn root_gitignore_has_aimux_entry(contents: &str) -> bool {
+    contents.lines().any(|line| {
+        let pattern = line
+            .split_once('#')
+            .map(|(pattern, _)| pattern)
+            .unwrap_or(line)
+            .trim();
+        matches!(pattern, ".aimux/" | "/.aimux/" | ".aimux" | "/.aimux")
+    })
 }
 
 /// Normalize compatibility-sensitive config fields like `src/config.ts`.
