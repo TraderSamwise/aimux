@@ -26,7 +26,9 @@ use super::router::ProjectServiceRequestContext;
 use super::scheduler::{PeriodicTask, PeriodicTaskFuture, scheduler_now_ms};
 
 pub const AGENT_INPUT_DELIVERY_TASK_NAME: &str = "agent-input-delivery";
-pub const ACTIVE_CLIENT_DWELL_MS: i64 = 3_000;
+/// Default quiet window before Aimux may submit into an attended agent session.
+pub const USER_TYPING_QUIET_WINDOW_MS: i64 = 15_000;
+pub const ACTIVE_CLIENT_DWELL_MS: i64 = USER_TYPING_QUIET_WINDOW_MS;
 pub const MAX_AGENT_INPUT_HOLD_MS: i64 = 15_000;
 pub const DELIVERY_TASK_INTERVAL_MS: i64 = 500;
 
@@ -57,7 +59,10 @@ impl AgentInputDeliveryQueue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentInputWindowActivity {
     Unattended,
-    UnsubmittedInputVisible,
+    UnsubmittedInputVisible {
+        active_clients: usize,
+        latest_activity_ms: Option<i64>,
+    },
     Attended {
         active_clients: usize,
         latest_activity_ms: i64,
@@ -116,6 +121,57 @@ pub fn parse_agent_input_window_activity(
         return Ok(AgentInputWindowActivity::Unattended);
     }
 
+    let (matched_clients, latest_activity_secs) =
+        latest_client_activity_for_window(window_id, active_clients, clients_output)?;
+
+    Ok(AgentInputWindowActivity::Attended {
+        active_clients: matched_clients,
+        latest_activity_ms: latest_activity_secs.saturating_mul(1_000),
+    })
+}
+
+pub fn classify_agent_input_window_activity(
+    window_id: &str,
+    panes_output: &str,
+    pane_output: &str,
+    clients_output: Option<&str>,
+) -> Result<AgentInputWindowActivity, String> {
+    let active_clients = active_client_count_for_window(window_id, panes_output)?;
+    if pane_has_unsubmitted_agent_input(pane_output) {
+        if active_clients == 0 {
+            return Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+                active_clients,
+                latest_activity_ms: None,
+            });
+        }
+        let Some(clients_output) = clients_output else {
+            return Err(format!(
+                "tmux reported {active_clients} active client(s) for {window_id}, but client activity was not queried"
+            ));
+        };
+        let (matched_clients, latest_activity_secs) =
+            latest_client_activity_for_window(window_id, active_clients, clients_output)?;
+        return Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+            active_clients: matched_clients,
+            latest_activity_ms: Some(latest_activity_secs.saturating_mul(1_000)),
+        });
+    }
+    if active_clients == 0 {
+        return Ok(AgentInputWindowActivity::Unattended);
+    }
+    let Some(clients_output) = clients_output else {
+        return Err(format!(
+            "tmux reported {active_clients} active client(s) for {window_id}, but client activity was not queried"
+        ));
+    };
+    parse_agent_input_window_activity(window_id, panes_output, clients_output)
+}
+
+fn latest_client_activity_for_window(
+    window_id: &str,
+    active_clients: usize,
+    clients_output: &str,
+) -> Result<(usize, i64), String> {
     let mut latest_activity = None;
     let mut matched_clients = 0usize;
     for line in clients_output.lines() {
@@ -142,32 +198,7 @@ pub fn parse_agent_input_window_activity(
             "tmux reported {active_clients} active client(s) for {window_id}, but list-clients named none"
         ));
     };
-
-    Ok(AgentInputWindowActivity::Attended {
-        active_clients: matched_clients,
-        latest_activity_ms: latest_activity_secs.saturating_mul(1_000),
-    })
-}
-
-pub fn classify_agent_input_window_activity(
-    window_id: &str,
-    panes_output: &str,
-    pane_output: &str,
-    clients_output: Option<&str>,
-) -> Result<AgentInputWindowActivity, String> {
-    let active_clients = active_client_count_for_window(window_id, panes_output)?;
-    if pane_has_unsubmitted_agent_input(pane_output) {
-        return Ok(AgentInputWindowActivity::UnsubmittedInputVisible);
-    }
-    if active_clients == 0 {
-        return Ok(AgentInputWindowActivity::Unattended);
-    }
-    let Some(clients_output) = clients_output else {
-        return Err(format!(
-            "tmux reported {active_clients} active client(s) for {window_id}, but client activity was not queried"
-        ));
-    };
-    parse_agent_input_window_activity(window_id, panes_output, clients_output)
+    Ok((matched_clients, latest_activity_secs))
 }
 
 pub fn decide_agent_input_delivery(
@@ -181,36 +212,39 @@ pub fn decide_agent_input_delivery(
             reason: "force".into(),
         };
     }
-    let max_deliver_at_ms = created_at_ms.saturating_add(MAX_AGENT_INPUT_HOLD_MS);
+    let _ = created_at_ms;
     match activity {
-        Ok(AgentInputWindowActivity::Unattended) => {
-            let reason = if now_ms >= max_deliver_at_ms {
-                "max-hold-elapsed"
-            } else {
-                "unattended-window"
-            };
-            AgentInputDeliveryDecision::DeliverNow {
-                reason: reason.into(),
-            }
-        }
-        Ok(AgentInputWindowActivity::UnsubmittedInputVisible) => {
-            if now_ms >= max_deliver_at_ms {
+        Ok(AgentInputWindowActivity::Unattended) => AgentInputDeliveryDecision::DeliverNow {
+            reason: "unattended-window".into(),
+        },
+        Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+            latest_activity_ms: Some(latest_activity_ms),
+            ..
+        }) => {
+            let quiet_for_ms = now_ms.saturating_sub(latest_activity_ms).max(0);
+            if quiet_for_ms >= USER_TYPING_QUIET_WINDOW_MS {
                 AgentInputDeliveryDecision::DeliverNow {
-                    reason: "max-hold-elapsed".into(),
+                    reason: "visible-unsubmitted-input-idle".into(),
                 }
             } else {
                 AgentInputDeliveryDecision::Hold {
-                    reason: "visible-unsubmitted-input".into(),
-                    quiet_for_ms: None,
-                    retry_after_ms: DELIVERY_TASK_INTERVAL_MS,
+                    reason: "visible-unsubmitted-input-recent-user-input".into(),
+                    quiet_for_ms: Some(quiet_for_ms),
+                    retry_after_ms: USER_TYPING_QUIET_WINDOW_MS.saturating_sub(quiet_for_ms),
                 }
             }
         }
+        Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+            latest_activity_ms: None,
+            ..
+        }) => AgentInputDeliveryDecision::DeliverNow {
+            reason: "visible-unsubmitted-input-unattended".into(),
+        },
         Ok(AgentInputWindowActivity::Attended {
             latest_activity_ms, ..
         }) => {
             let quiet_for_ms = now_ms.saturating_sub(latest_activity_ms).max(0);
-            if quiet_for_ms >= ACTIVE_CLIENT_DWELL_MS {
+            if quiet_for_ms >= USER_TYPING_QUIET_WINDOW_MS {
                 AgentInputDeliveryDecision::DeliverNow {
                     reason: "active-client-idle".into(),
                 }
@@ -218,7 +252,7 @@ pub fn decide_agent_input_delivery(
                 AgentInputDeliveryDecision::Hold {
                     reason: "active-client-recent-input".into(),
                     quiet_for_ms: Some(quiet_for_ms),
-                    retry_after_ms: ACTIVE_CLIENT_DWELL_MS.saturating_sub(quiet_for_ms),
+                    retry_after_ms: USER_TYPING_QUIET_WINDOW_MS.saturating_sub(quiet_for_ms),
                 }
             }
         }
@@ -343,12 +377,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
                 continue;
             }
         };
-        let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
-        let decision = if force_due_to_max {
-            AgentInputDeliveryDecision::DeliverNow {
-                reason: "max-hold-elapsed".into(),
-            }
-        } else {
+        let decision = {
             let activity = runtime.agent_input_window_activity(&window_id);
             decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
         };
@@ -366,23 +395,9 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             }
             AgentInputDeliveryDecision::DeliverNow { reason } => {
                 delivery_attempts += 1;
-                if force_due_to_max {
-                    record_agent_input_delivery_failure(
-                        context,
-                        Some(&pending.session_id),
-                        "Agent input delivery forced after hold budget",
-                        format!(
-                            "Delivered queued input after holding for {}ms; last hold reason: {}",
-                            now_ms.saturating_sub(pending.created_at_ms),
-                            pending.hold_reason
-                        ),
-                    );
-                }
                 match deliver_prompt_to_tmux(runtime, &window_id, &pending.prompt) {
                     Ok(()) => {
-                        if !force_due_to_max {
-                            clear_agent_input_delivery_failure(context, &pending.session_id);
-                        }
+                        clear_agent_input_delivery_failure(context, &pending.session_id);
                         log_at(
                             LogLevel::Info,
                             "queued agent input delivered",
@@ -401,9 +416,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
                             "Agent input delivery failed",
                             error,
                         );
-                        if now_ms < pending.max_deliver_at_ms {
-                            remaining.push(pending);
-                        }
+                        remaining.push(pending);
                     }
                 }
             }
@@ -507,12 +520,7 @@ pub async fn run_pending_agent_input_deliveries_async(
                 continue;
             }
         };
-        let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
-        let decision = if force_due_to_max {
-            AgentInputDeliveryDecision::DeliverNow {
-                reason: "max-hold-elapsed".into(),
-            }
-        } else {
+        let decision = {
             let activity =
                 tmux_agent_input_window_activity_async(&window_id, DELIVERY_ACTIVITY_TIMEOUT).await;
             decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
@@ -532,18 +540,6 @@ pub async fn run_pending_agent_input_deliveries_async(
             }
             AgentInputDeliveryDecision::DeliverNow { reason } => {
                 delivery_attempts += 1;
-                if force_due_to_max {
-                    record_agent_input_delivery_failure(
-                        context,
-                        Some(&pending.session_id),
-                        "Agent input delivery forced after hold budget",
-                        format!(
-                            "Delivered queued input after holding for {}ms; last hold reason: {}",
-                            now_ms.saturating_sub(pending.created_at_ms),
-                            pending.hold_reason
-                        ),
-                    );
-                }
                 match deliver_prompt_to_tmux_async(
                     &window_id,
                     &pending.prompt,
@@ -552,9 +548,7 @@ pub async fn run_pending_agent_input_deliveries_async(
                 .await
                 {
                     Ok(()) => {
-                        if !force_due_to_max {
-                            clear_agent_input_delivery_failure(context, &pending.session_id);
-                        }
+                        clear_agent_input_delivery_failure(context, &pending.session_id);
                         log_at(
                             LogLevel::Info,
                             "queued agent input delivered",
@@ -574,9 +568,7 @@ pub async fn run_pending_agent_input_deliveries_async(
                             error.clone(),
                         );
                         failures.push(error);
-                        if now_ms < pending.max_deliver_at_ms {
-                            remaining.push(pending);
-                        }
+                        remaining.push(pending);
                     }
                 }
             }
@@ -782,13 +774,51 @@ fn is_agent_input_composer_chrome_text(text: &str) -> bool {
         .collect::<Vec<_>>()
         .join(" ")
         .to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "ask codex to do anything" | "ask claude to do anything"
-    ) || (normalized.starts_with("press up ") && normalized.contains("queued message"))
-        || (normalized.starts_with("press tab ") && normalized.contains("queue a message"))
-        || (normalized.contains("shift+tab") && normalized.contains("cycle"))
+    normalized.is_empty()
+        || matches!(
+            normalized.as_str(),
+            "ask codex to do anything" | "ask claude to do anything"
+        )
         || normalized.contains("bypass permissions")
+        || (normalized.contains("shift+tab") && normalized.contains("cycle"))
+        || {
+            let mut words = normalized.split_whitespace();
+            matches!(words.next(), Some("press"))
+                && words.next().is_some_and(is_keyboard_hint_token)
+                && normalized.contains(" to ")
+                && (normalized.contains("message")
+                    || normalized.contains("prompt")
+                    || normalized.contains("composer")
+                    || normalized.contains("input")
+                    || normalized.contains("send")
+                    || normalized.contains("queue")
+                    || normalized.contains("edit")
+                    || normalized.contains("accept")
+                    || normalized.contains("cancel"))
+        }
+}
+
+fn is_keyboard_hint_token(token: &str) -> bool {
+    matches!(
+        token.trim_matches(|ch: char| matches!(ch, ',' | '.' | ':' | ';' | '(' | ')' | '[' | ']')),
+        "up" | "down"
+            | "left"
+            | "right"
+            | "tab"
+            | "enter"
+            | "return"
+            | "esc"
+            | "escape"
+            | "space"
+            | "backspace"
+            | "delete"
+            | "ctrl+c"
+            | "ctrl+d"
+            | "ctrl+j"
+            | "ctrl+o"
+            | "ctrl+r"
+            | "shift+tab"
+    )
 }
 
 fn is_agent_input_composer_tail_chrome(line: &str) -> bool {
