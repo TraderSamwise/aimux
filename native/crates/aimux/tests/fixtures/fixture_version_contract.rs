@@ -26,7 +26,7 @@ struct Case {
 fn fixture_version_contract_is_captured() {
     let contract: Contract =
         serde_json::from_str(VERSION_CONTRACT).expect("version fixture parses");
-    assert_eq!(contract.cases.len(), 9);
+    assert_eq!(contract.cases.len(), 10);
 
     for case in contract.cases {
         assert!(!case.id.is_empty());

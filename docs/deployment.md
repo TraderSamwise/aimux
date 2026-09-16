@@ -194,10 +194,13 @@ a broken release.
    and lite `aimux-lite-{darwin,linux}-{arm64,x64}.tar.gz` archives plus
    `.sha256`, `.provenance.json`, and `.sbom.spdx.json` companion files on matching runners, after re-running
    `yarn release:readiness`. Each asset carries a `BUILD_VARIANT` stamp
-   (`full` or `lite`) separate from `BUILD_PROFILE`, is checked for stripped
-   source maps, and the Darwin assets are checked for a notifier helper of the
-   right architecture. Lite assets must pass the remote-control absence gate
-   before upload, while full assets must pass the matching presence gate so the
+   (`full` or `lite`) and a separate `PACKAGE_PROFILE` stamp, is checked for
+   stripped source maps, and the Darwin assets are checked for a notifier
+   helper of the right architecture. Package profile is tracked separately from
+   `BUILD_VARIANT`; `PACKAGE_PROFILE=full` includes UI/docs assets while
+   `PACKAGE_PROFILE=minimal` omits them. Lite assets must pass the
+   remote-control absence gate before upload, while full assets must pass the
+   matching presence gate so the
    full lane still proves it contains the expected remote-control surface. A
    Release assets and their companion files are covered by GitHub artifact
    attestations. A release asset set gate fails downstream publishing if any

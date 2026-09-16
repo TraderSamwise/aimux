@@ -73,10 +73,21 @@ require_json_string() {
   fi
 }
 
+require_json_key() {
+  local path="$1"
+  local key="$2"
+  local description="$3"
+  if ! grep -F "\"$key\":" "$path" >/dev/null 2>&1; then
+    fail "$description is missing for $ASSET"
+  fi
+}
+
 require_json_string "$PROVENANCE_PATH" "schemaVersion" "https://aimux.app/schemas/release-provenance.v1.json" "provenance schema"
 require_json_string "$PROVENANCE_PATH" "package" "aimux" "provenance package"
 require_json_string "$PROVENANCE_PATH" "name" "$ASSET" "provenance artifact name"
 require_json_string "$PROVENANCE_PATH" "sha256" "$actual_sha" "provenance sha256"
+require_json_key "$PROVENANCE_PATH" "packageProfile" "provenance package profile"
+require_json_key "$PROVENANCE_PATH" "legacyBuildProfile" "provenance legacy build profile"
 require_json_string "$PROVENANCE_PATH" "buildVariant" "$EXPECTED_VARIANT" "provenance variant"
 require_json_string "$PROVENANCE_PATH" "variant" "$EXPECTED_VARIANT" "provenance build variant"
 require_json_string "$PROVENANCE_PATH" "platformArch" "$PLATFORM_ARCH" "provenance platform-arch"

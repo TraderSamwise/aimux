@@ -207,9 +207,10 @@ Priority fixture groups:
 - `release/package-manifest.json`: package `files` allowlist for installed
   runtime scripts/native assets and retired Node payload exclusions captured by
   evaluating the TypeScript package-manifest contract.
-- `release/version.json`: installed artifact `VERSION`, `BUILD_PROFILE`, and `BUILD_VARIANT`
-  label precedence plus source-checkout fallback behavior captured by running
-  TypeScript version/build-profile helpers.
+- `release/version.json`: installed artifact `VERSION`, `PACKAGE_PROFILE`,
+  legacy `BUILD_PROFILE`, and `BUILD_VARIANT` label precedence plus
+  source-checkout fallback behavior captured by running TypeScript
+  version/package-profile helpers.
 
 ## Relay
 

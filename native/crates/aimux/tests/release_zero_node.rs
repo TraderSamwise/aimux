@@ -118,6 +118,8 @@ fn install_script_rejects_archives_without_native_cli() {
     fs::create_dir_all(&package_root).expect("create package root");
     fs::write(package_root.join("VERSION"), "local-native\n").expect("write version");
     fs::write(package_root.join("BUILD_STAMP"), "build-native\n").expect("write build stamp");
+    fs::write(package_root.join("PACKAGE_PROFILE"), "full\n").expect("write package profile");
+    fs::write(package_root.join("BUILD_PROFILE"), "full\n").expect("write legacy build profile");
     fs::write(package_root.join("BUILD_VARIANT"), "full\n").expect("write build variant");
     let archive = tar_package(&temp.0);
 
@@ -162,7 +164,7 @@ fn release_workflow_runs_inline_steps_with_bash() {
 }
 
 #[test]
-fn release_asset_compiles_native_binary_with_selected_build_profile() {
+fn release_asset_compiles_native_binary_with_selected_package_profile() {
     let repo = repo_root();
     let script =
         fs::read_to_string(repo.join("scripts/build-release-asset.sh")).expect("read script");
@@ -170,15 +172,19 @@ fn release_asset_compiles_native_binary_with_selected_build_profile() {
         fs::read_to_string(repo.join("native/crates/aimux/build.rs")).expect("read build script");
 
     assert!(
-        script.contains("export AIMUX_BUILD_PROFILE=\"$BUILD_PROFILE\""),
-        "release build must pass the selected BUILD_PROFILE into the native binary compile"
+        script.contains("export AIMUX_PACKAGE_PROFILE=\"$PACKAGE_PROFILE\""),
+        "release build must pass the selected package profile into the native binary compile"
+    );
+    assert!(
+        script.contains("export AIMUX_BUILD_PROFILE=\"$LEGACY_BUILD_PROFILE\""),
+        "release build must pass the legacy build profile into the native binary compile for compatibility"
     );
     assert!(
         script.contains("export AIMUX_BUILD_VARIANT=\"$BUILD_VARIANT\""),
         "release build must pass the selected BUILD_VARIANT into the native binary compile"
     );
     let export_profile = script
-        .find("export AIMUX_BUILD_PROFILE=\"$BUILD_PROFILE\"")
+        .find("export AIMUX_PACKAGE_PROFILE=\"$PACKAGE_PROFILE\"")
         .expect("profile export");
     let export_variant = script
         .find("export AIMUX_BUILD_VARIANT=\"$BUILD_VARIANT\"")
@@ -188,11 +194,15 @@ fn release_asset_compiles_native_binary_with_selected_build_profile() {
         .expect("cargo build");
     assert!(
         export_profile < cargo_build && export_variant < cargo_build,
-        "release asset must export the build profile and variant before compiling the native binary"
+        "release asset must export the package profile and variant before compiling the native binary"
+    );
+    assert!(
+        build_script.contains("cargo:rerun-if-env-changed=AIMUX_PACKAGE_PROFILE"),
+        "Cargo must rebuild aimux when AIMUX_PACKAGE_PROFILE changes"
     );
     assert!(
         build_script.contains("cargo:rerun-if-env-changed=AIMUX_BUILD_PROFILE"),
-        "Cargo must rebuild aimux when AIMUX_BUILD_PROFILE changes"
+        "Cargo must rebuild aimux when legacy AIMUX_BUILD_PROFILE changes"
     );
     assert!(
         build_script.contains("cargo:rerun-if-env-changed=AIMUX_BUILD_VARIANT"),
@@ -310,7 +320,7 @@ fn release_asset_builder_rejects_cross_arch_labeling_before_build() {
         .arg(repo.join("scripts/build-release-asset.sh"))
         .env("AIMUX_RELEASE_PLATFORM", platform)
         .env("AIMUX_RELEASE_ARCH", requested_arch)
-        .env("AIMUX_BUILD_PROFILE", "local")
+        .env("AIMUX_PACKAGE_PROFILE", "minimal")
         .output()
         .expect("run release builder");
 
@@ -445,6 +455,8 @@ fn create_release_archive(root: &Path) -> PathBuf {
     fs::create_dir_all(package_root.join("scripts")).expect("create scripts dir");
     fs::write(package_root.join("VERSION"), "local-native\n").expect("write version");
     fs::write(package_root.join("BUILD_STAMP"), "build-native\n").expect("write build stamp");
+    fs::write(package_root.join("PACKAGE_PROFILE"), "full\n").expect("write package profile");
+    fs::write(package_root.join("BUILD_PROFILE"), "full\n").expect("write legacy build profile");
     fs::write(package_root.join("BUILD_VARIANT"), "full\n").expect("write build variant");
     fs::write(
         package_root.join("scripts/tmux-control.sh"),
@@ -471,6 +483,8 @@ fn create_witness_archive(root: &Path, archive_stamp: &str, binary_stamp: &str) 
         format!("{archive_stamp}\n"),
     )
     .expect("write build stamp");
+    fs::write(package_root.join("PACKAGE_PROFILE"), "full\n").expect("write package profile");
+    fs::write(package_root.join("BUILD_PROFILE"), "full\n").expect("write legacy build profile");
     fs::write(package_root.join("BUILD_VARIANT"), "full\n").expect("write build variant");
     let native_bin = package_root.join(format!("native/{}/aimux", platform_arch()));
     fs::write(

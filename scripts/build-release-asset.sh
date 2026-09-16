@@ -39,21 +39,46 @@ PACKAGE_VERSION="$(awk -F'"' '/"version"[[:space:]]*:/ { print $4; exit }' "$ROO
 printf '%s\n' "$PACKAGE_VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$' \
   || { printf 'Failed to read package version from package.json\n' >&2; exit 1; }
 VERSION="${AIMUX_RELEASE_VERSION:-$PACKAGE_VERSION}"
-BUILD_PROFILE="${AIMUX_BUILD_PROFILE:-full}"
-case "$BUILD_PROFILE" in
-  full | local) ;;
-  *) printf 'Unsupported AIMUX_BUILD_PROFILE: %s\n' "$BUILD_PROFILE" >&2; exit 1 ;;
-esac
+legacy_build_profile_to_package_profile() {
+  case "$1" in
+    full) printf 'full' ;;
+    local) printf 'minimal' ;;
+    *) return 1 ;;
+  esac
+}
+package_profile_to_legacy_build_profile() {
+  case "$1" in
+    full) printf 'full' ;;
+    minimal) printf 'local' ;;
+    *) return 1 ;;
+  esac
+}
+if [ -n "${AIMUX_PACKAGE_PROFILE:-}" ]; then
+  PACKAGE_PROFILE="$AIMUX_PACKAGE_PROFILE"
+  case "$PACKAGE_PROFILE" in
+    full | minimal) ;;
+    *) printf 'Unsupported AIMUX_PACKAGE_PROFILE: %s\n' "$PACKAGE_PROFILE" >&2; exit 1 ;;
+  esac
+elif [ -n "${AIMUX_BUILD_PROFILE:-}" ]; then
+  if ! PACKAGE_PROFILE="$(legacy_build_profile_to_package_profile "$AIMUX_BUILD_PROFILE")"; then
+    printf 'Unsupported AIMUX_BUILD_PROFILE: %s\n' "$AIMUX_BUILD_PROFILE" >&2
+    exit 1
+  fi
+else
+  PACKAGE_PROFILE="full"
+fi
+LEGACY_BUILD_PROFILE="$(package_profile_to_legacy_build_profile "$PACKAGE_PROFILE")"
 BUILD_VARIANT="${AIMUX_BUILD_VARIANT:-full}"
 case "$BUILD_VARIANT" in
   full | lite) ;;
   *) printf 'Unsupported AIMUX_BUILD_VARIANT: %s\n' "$BUILD_VARIANT" >&2; exit 1 ;;
 esac
-export AIMUX_BUILD_PROFILE="$BUILD_PROFILE"
+export AIMUX_PACKAGE_PROFILE="$PACKAGE_PROFILE"
+export AIMUX_BUILD_PROFILE="$LEGACY_BUILD_PROFILE"
 export AIMUX_BUILD_VARIANT="$BUILD_VARIANT"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-"$ROOT_DIR/native/target"}"
-if [ "$BUILD_PROFILE" = "full" ]; then
+if [ "$PACKAGE_PROFILE" = "full" ]; then
   need yarn
 fi
 
@@ -102,7 +127,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$ROOT_DIR"
-if [ "$BUILD_PROFILE" = "full" ]; then
+if [ "$PACKAGE_PROFILE" = "full" ]; then
   yarn build:ui:local
 fi
 
@@ -133,7 +158,7 @@ release_build_stamp() {
     exit 1
   fi
   suffix="$(
-    printf '%s:%s:%s:%s:%s:%s\n' "$generation" "$$" "$RANDOM" "$BUILD_PROFILE" "$BUILD_VARIANT" "$source_hash" \
+    printf '%s:%s:%s:%s:%s:%s\n' "$generation" "$$" "$RANDOM" "$PACKAGE_PROFILE" "$BUILD_VARIANT" "$source_hash" \
       | shasum -a 1 \
       | awk '{ print substr($1, 1, 12) }'
   )"
@@ -158,7 +183,7 @@ mkdir -p "$PKG_DIR/bin"
 cp bin/aimux "$PKG_DIR/bin/aimux"
 mkdir -p "$PKG_DIR/native/$PLATFORM-$ARCH"
 cp "$NATIVE_BUILD_ARTIFACT" "$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
-if [ "$BUILD_PROFILE" = "full" ]; then
+if [ "$PACKAGE_PROFILE" = "full" ]; then
   cp -R dist-ui docs "$PKG_DIR/"
 fi
 mkdir -p "$PKG_DIR/scripts"
@@ -166,7 +191,8 @@ cp scripts/cargo-sweep-stale-targets.sh scripts/install-cargo-sweep-schedule.sh 
   scripts/tmux-control.sh scripts/tmux-open-hyperlink.sh scripts/tmux-statusline.sh \
   "$PKG_DIR/scripts/"
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
-printf '%s\n' "$BUILD_PROFILE" > "$PKG_DIR/BUILD_PROFILE"
+printf '%s\n' "$PACKAGE_PROFILE" > "$PKG_DIR/PACKAGE_PROFILE"
+printf '%s\n' "$LEGACY_BUILD_PROFILE" > "$PKG_DIR/BUILD_PROFILE"
 printf '%s\n' "$BUILD_VARIANT" > "$PKG_DIR/BUILD_VARIANT"
 
 NATIVE_ARTIFACT="$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
@@ -201,7 +227,8 @@ bash "$ROOT_DIR/scripts/write-release-provenance.sh" \
   --asset "$ASSET" \
   --platform-arch "$PLATFORM-$ARCH" \
   --variant "$BUILD_VARIANT" \
-  --profile "$BUILD_PROFILE" \
+  --package-profile "$PACKAGE_PROFILE" \
+  --legacy-build-profile "$LEGACY_BUILD_PROFILE" \
   --version "$VERSION" \
   --build-stamp "$BUILD_STAMP" \
   --source-revision "$SOURCE_REVISION" \

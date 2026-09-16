@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const DEFAULT_VERSION: &str = "0.0.0";
-const DEFAULT_BUILD_PROFILE: &str = "full";
+const DEFAULT_PACKAGE_PROFILE: &str = "full";
 const DEFAULT_BUILD_VARIANT: &str = "full";
 static VERSION_CONTRACT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -64,28 +64,45 @@ fn read_non_default_version(root: impl AsRef<Path>) -> Option<String> {
 pub fn read_aimux_build_profile_from_package_root(package_root: impl AsRef<Path>) -> String {
     read_aimux_build_profile_from_package_root_with_env(
         package_root,
+        std::env::var("AIMUX_PACKAGE_PROFILE").ok().as_deref(),
         std::env::var("AIMUX_BUILD_PROFILE").ok().as_deref(),
     )
 }
 
 pub fn read_aimux_build_profile_from_package_root_with_env(
     package_root: impl AsRef<Path>,
+    env_package_profile: Option<&str>,
     env_build_profile: Option<&str>,
 ) -> String {
-    if let Ok(profile) = fs::read_to_string(package_root.as_ref().join("BUILD_PROFILE"))
-        && let Some(profile) = parse_aimux_build_profile(Some(&profile))
+    let package_root = package_root.as_ref();
+    if let Ok(profile) = fs::read_to_string(package_root.join("PACKAGE_PROFILE"))
+        && let Some(profile) = parse_aimux_package_profile(Some(&profile))
     {
         return profile.to_owned();
     }
-    parse_aimux_build_profile(env_build_profile)
-        .unwrap_or(DEFAULT_BUILD_PROFILE)
+    if let Ok(profile) = fs::read_to_string(package_root.join("BUILD_PROFILE"))
+        && let Some(profile) = parse_legacy_aimux_build_profile(Some(&profile))
+    {
+        return profile.to_owned();
+    }
+    parse_aimux_package_profile(env_package_profile)
+        .or_else(|| parse_legacy_aimux_build_profile(env_build_profile))
+        .unwrap_or(DEFAULT_PACKAGE_PROFILE)
         .to_owned()
 }
 
-pub fn parse_aimux_build_profile(value: Option<&str>) -> Option<&'static str> {
+pub fn parse_aimux_package_profile(value: Option<&str>) -> Option<&'static str> {
     match value.map(str::trim) {
         Some("full") => Some("full"),
-        Some("local") => Some("local"),
+        Some("minimal") => Some("minimal"),
+        _ => None,
+    }
+}
+
+fn parse_legacy_aimux_build_profile(value: Option<&str>) -> Option<&'static str> {
+    match value.map(str::trim) {
+        Some("full") => Some("full"),
+        Some("local") => Some("minimal"),
         _ => None,
     }
 }
@@ -127,9 +144,11 @@ pub fn run_release_version_contract_case(input: &Value) -> Value {
             Value::String(read_aimux_version_from_package_root(temp.path()))
         }
         "readAimuxBuildProfileFromPackageRoot" => {
+            let env_package_profile = input.get("envPackageProfile").and_then(Value::as_str);
             let env_profile = input.get("envBuildProfile").and_then(Value::as_str);
             Value::String(read_aimux_build_profile_from_package_root_with_env(
                 temp.path(),
+                env_package_profile,
                 env_profile,
             ))
         }
