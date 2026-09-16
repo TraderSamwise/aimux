@@ -350,13 +350,38 @@ fn scope_items_build_local_and_global_requests_without_collapsing_failures_to_em
 }
 
 #[test]
-fn overseer_lookup_requests_all_scope_and_returns_first_overseer() {
+fn overseer_lookup_uses_first_supervisor_lane_instead_of_overseer_boolean() {
     let state_dir = temp_dir("overseer");
     let mut fake = FakeHttp::with_responses([json!({
         "ok": true,
         "items": [
             { "id": "normal", "target": { "windowId": "@1" } },
-            { "id": "overseer", "overseer": true, "target": { "windowId": "@2" } }
+            {
+                "id": "reviewer",
+                "overseer": false,
+                "target": { "windowId": "@9" },
+                "roleState": {
+                    "status": "resolved",
+                    "role": "reviewer",
+                    "lane": { "kind": "supervisor" },
+                    "projectControl": true,
+                    "shouldShowInExpose": true,
+                    "exposeOrder": 0
+                }
+            },
+            {
+                "id": "overseer",
+                "overseer": true,
+                "target": { "windowId": "@2" },
+                "roleState": {
+                    "status": "resolved",
+                    "role": "overseer",
+                    "lane": { "kind": "supervisor" },
+                    "projectControl": true,
+                    "shouldShowInExpose": true,
+                    "exposeOrder": 1
+                }
+            }
         ]
     })]);
     let deps = LoadExposeScopeDeps {
@@ -367,7 +392,7 @@ fn overseer_lookup_requests_all_scope_and_returns_first_overseer() {
     let item =
         load_overseer_expose_item_with(&context(), &state_dir, &deps, &mut fake).expect("lookup");
 
-    assert_eq!(item.expect("overseer")["id"], "overseer");
+    assert_eq!(item.expect("supervisor")["id"], "reviewer");
     assert!(fake.requests[0].0.contains("scope=all"));
     assert!(fake.requests[0].0.contains("includeOverseer=1"));
     cleanup(state_dir);
@@ -772,6 +797,83 @@ fn runner_moves_selection_with_n_before_closing() {
         "expected n to move selection to tile 2:\n{rendered}"
     );
     cleanup(state_dir);
+}
+
+#[test]
+fn runner_shift_o_and_zero_select_the_same_first_supervisor() {
+    let zero_state_dir = temp_dir("runner-supervisor-hotkeys-zero");
+    let shift_o_state_dir = temp_dir("runner-supervisor-hotkeys-shift-o");
+    let items = vec![
+        supervisor_hot_item("@9", "reviewer", false),
+        supervisor_hot_item("@2", "overseer", true),
+    ];
+
+    let zero_selection_file = zero_state_dir.join("zero-selection");
+    let mut zero_options = parsed_options(&zero_state_dir);
+    zero_options.selection_file = Some(zero_selection_file.clone());
+    zero_options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut zero_client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": items.clone()
+    })]);
+    let mut zero_capture = FakeCapture::default();
+    let mut zero_input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"0".to_vec()),
+    ]);
+    let mut zero_output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            zero_options,
+            &mut zero_input,
+            &mut zero_output,
+            &mut zero_client,
+            &mut zero_capture,
+        ),
+        0
+    );
+
+    let shift_o_selection_file = shift_o_state_dir.join("shift-o-selection");
+    let mut shift_o_options = parsed_options(&shift_o_state_dir);
+    shift_o_options.selection_file = Some(shift_o_selection_file.clone());
+    shift_o_options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut shift_o_client = FakeHttp::with_responses([
+        json!({
+            "ok": true,
+            "items": items.clone()
+        }),
+        json!({
+            "ok": true,
+            "items": items
+        }),
+    ]);
+    let mut shift_o_capture = FakeCapture::default();
+    let mut shift_o_input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"O".to_vec()),
+    ]);
+    let mut shift_o_output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            shift_o_options,
+            &mut shift_o_input,
+            &mut shift_o_output,
+            &mut shift_o_client,
+            &mut shift_o_capture,
+        ),
+        0
+    );
+
+    let selections = [
+        fs::read_to_string(&zero_selection_file).unwrap_or_else(|_| "<missing>".into()),
+        fs::read_to_string(&shift_o_selection_file).unwrap_or_else(|_| "<missing>".into()),
+    ];
+    assert_eq!(selections, ["@9\n", "@9\n"]);
+    assert!(shift_o_client.requests[1].0.contains("includeOverseer=1"));
+    cleanup(zero_state_dir);
+    cleanup(shift_o_state_dir);
 }
 
 #[test]
@@ -1728,6 +1830,26 @@ fn hot_item(window_id: &str, output: &str) -> Value {
             "worktreePath": "/repo"
         }
     })
+}
+
+fn supervisor_hot_item(window_id: &str, role: &str, overseer: bool) -> Value {
+    let mut item = hot_item(window_id, &format!("{role} preview\n"));
+    item["id"] = json!(format!("session-{role}"));
+    item["label"] = json!(role);
+    item["overseer"] = json!(overseer);
+    item["role"] = json!(role);
+    item["lane"] = json!({ "kind": "supervisor" });
+    item["roleState"] = json!({
+        "status": "resolved",
+        "role": role,
+        "lane": { "kind": "supervisor" },
+        "projectControl": true,
+        "shouldShowInExpose": true,
+        "exposeOrder": if overseer { 1 } else { 0 }
+    });
+    item["metadata"]["sessionId"] = json!(format!("session-{role}"));
+    item["metadata"]["role"] = json!(role);
+    item
 }
 
 fn expose_projection_topology() -> Value {

@@ -398,9 +398,19 @@
                   "command": "codex",
                   "args": [],
                   "toolConfigKey": "codex",
-                  "worktreePath": "/repo"
+                  "worktreePath": "/repo",
+                  "role": "overseer"
                 },
-                "overseer": true
+                "overseer": true,
+                "lane": { "kind": "supervisor" },
+                "roleState": {
+                  "status": "resolved",
+                  "role": "overseer",
+                  "lane": { "kind": "supervisor" },
+                  "projectControl": true,
+                  "shouldShowInExpose": true,
+                  "exposeOrder": 0
+                }
               }
             ]
           }

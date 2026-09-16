@@ -1522,9 +1522,8 @@ pub fn load_overseer_expose_item_with(
     query.push(("includeOverseer".into(), "1".into()));
     append_focus_context_query(&mut query, context);
     let url = url_with_query(&endpoint, routes::controls::SWITCHABLE_AGENTS, query);
-    Ok(request_expose_items(&url, client)?
-        .into_iter()
-        .find(|item| item.get("overseer").and_then(Value::as_bool) == Some(true)))
+    let items = request_expose_items(&url, client)?;
+    Ok(first_supervisor_expose_item(&items, items.len()).cloned())
 }
 
 pub fn focus_expose_item_with(
@@ -2448,6 +2447,17 @@ fn is_supervisor_scoped_expose_item(item: &Value) -> bool {
     expose_item_lane_kind(item) == Some("supervisor")
 }
 
+fn first_supervisor_expose_item_index(items: &[Value], visible_count: usize) -> Option<usize> {
+    items
+        .iter()
+        .take(visible_count.min(items.len()))
+        .position(is_supervisor_scoped_expose_item)
+}
+
+fn first_supervisor_expose_item(items: &[Value], visible_count: usize) -> Option<&Value> {
+    first_supervisor_expose_item_index(items, visible_count).and_then(|index| items.get(index))
+}
+
 fn expose_hotkey_badge_for_item(items: &[Value], index: usize) -> i64 {
     let Some(item) = items.get(index) else {
         return -1;
@@ -2470,10 +2480,7 @@ fn expose_hotkey_badge_for_item(items: &[Value], index: usize) -> i64 {
 fn expose_hotkey_target_index(items: &[Value], visible_count: usize, key: char) -> Option<usize> {
     let visible_count = visible_count.min(items.len());
     match key {
-        '0' => items
-            .iter()
-            .take(visible_count)
-            .position(is_supervisor_scoped_expose_item),
+        '0' => first_supervisor_expose_item_index(items, visible_count),
         '1'..='9' => {
             let target_ordinal = key.to_digit(10)? as usize;
             items
@@ -2505,11 +2512,7 @@ fn expose_supervisor_hotkey_footer_label(item: &Value) -> String {
 }
 
 fn expose_supervisor_hotkey_footer_hint(items: &[Value], visible_count: usize) -> Option<String> {
-    let visible_count = visible_count.min(items.len());
-    items
-        .iter()
-        .take(visible_count)
-        .find(|item| is_supervisor_scoped_expose_item(item))
+    first_supervisor_expose_item(items, visible_count)
         .map(|item| format!("0 {} · ", expose_supervisor_hotkey_footer_label(item)))
 }
 

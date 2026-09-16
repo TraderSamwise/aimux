@@ -175,13 +175,37 @@
             "ok": true,
             "items": [
               { "id": "agent", "target": { "windowId": "@1" } },
-              { "id": "boss", "overseer": true }
+              {
+                "id": "boss",
+                "overseer": true,
+                "lane": { "kind": "supervisor" },
+                "roleState": {
+                  "status": "resolved",
+                  "role": "overseer",
+                  "lane": { "kind": "supervisor" },
+                  "projectControl": true,
+                  "shouldShowInExpose": true,
+                  "exposeOrder": 0
+                }
+              }
             ]
           }
         ]
       },
       "output": {
-        "item": { "id": "boss", "overseer": true },
+        "item": {
+          "id": "boss",
+          "overseer": true,
+          "lane": { "kind": "supervisor" },
+          "roleState": {
+            "status": "resolved",
+            "role": "overseer",
+            "lane": { "kind": "supervisor" },
+            "projectControl": true,
+            "shouldShowInExpose": true,
+            "exposeOrder": 0
+          }
+        },
         "requests": [
           {
             "url": "http://127.0.0.1:43191/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&includeOverseer=1&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
