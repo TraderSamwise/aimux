@@ -14,9 +14,9 @@ describe("installed runtime gate wiring", () => {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 
     expect(packageJson.scripts?.["installed:gate"]).toBe("python3 scripts/installed-runtime-gate.py");
-    expect(packageJson.scripts?.["installed:lite-gate"]).toBe("python3 scripts/installed-runtime-gate.py --scenario lite");
+    expect(packageJson.scripts?.["installed:local-gate"]).toBe("python3 scripts/installed-runtime-gate.py --scenario local");
     expect(packageJson.scripts?.["release:readiness"]).toContain("yarn installed:gate");
-    expect(packageJson.scripts?.["release:readiness"]).toContain("yarn installed:lite-gate");
+    expect(packageJson.scripts?.["release:readiness"]).toContain("yarn installed:local-gate");
     expect(packageJson.scripts?.verify).toBe("yarn verify:fast");
   });
 
@@ -46,7 +46,7 @@ describe("installed runtime gate wiring", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual(["full", "lite"]);
+    expect(result.stdout.trim().split("\n")).toEqual(["full", "local"]);
   });
 
   it("exposes one mutation switch for each installed-runtime check", () => {
@@ -61,18 +61,18 @@ describe("installed runtime gate wiring", () => {
     expect(source).toContain('"sensitive-egress-nonloopback"');
   });
 
-  it("proves real lite archives through install, strings, help, cargo tree, and variant refusals", () => {
+  it("proves real local archives through install, strings, help, cargo tree, and variant refusals", () => {
     const source = readFileSync(gatePath, "utf8");
 
-    expect(source).toContain('build_release_asset(work, "lite")');
-    expect(source).toContain('install_release_asset(lite_asset, work, variant="lite")');
+    expect(source).toContain('build_release_asset(work, "local")');
+    expect(source).toContain('install_release_asset(local_asset, work, variant="local")');
     expect(source).toContain('"AIMUX_RELAY_URL"');
     expect(source).toContain('"relay.aimux.app"');
     expect(source).toContain('"tokio_tungstenite"');
     expect(source).toContain('"wss://"');
     expect(source).toContain('"cargo", "tree"');
-    expect(source).toContain("release archive BUILD_VARIANT mismatch: expected lite, got full");
-    expect(source).toContain("release archive BUILD_VARIANT mismatch: expected full, got lite");
+    expect(source).toContain("release archive BUILD_VARIANT mismatch: expected local, got full");
+    expect(source).toContain("release archive BUILD_VARIANT mismatch: expected full, got local");
   });
 
   it("keeps data-at-rest gates inside the installed runtime gate", () => {
