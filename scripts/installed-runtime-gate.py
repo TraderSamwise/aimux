@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,14 +22,39 @@ from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 PHASE8_PATH = ROOT / "scripts" / "phase8-live-residuals.py"
-CHECKS = ("loop", "input", "liveness", "transcript")
+FULL_CHECKS = ("loop", "input", "liveness", "transcript", "git-leak")
+LITE_CHECKS = ("git-leak", "sensitive-egress")
+CHECKS = ("loop", "input", "liveness", "transcript", "git-leak", "sensitive-egress")
 SCENARIOS = ("full", "lite")
+SENSITIVE_STORES = (
+    "context",
+    "history",
+    "attachments",
+    "plans",
+    "status",
+    "tasks",
+    "threads",
+    "recordings",
+    "worktrees",
+)
 MUTATIONS = (
     "loop-no-enroll",
     "input-drop",
     "liveness-skip-kill",
     "transcript-no-genuine",
+    "git-leak-no-outer-ignore",
+    "git-leak-no-attachments-rule",
+    "sensitive-egress-nonloopback",
 )
+MUTATION_TO_CHECK = {
+    "loop-no-enroll": "loop",
+    "input-drop": "input",
+    "liveness-skip-kill": "liveness",
+    "transcript-no-genuine": "transcript",
+    "git-leak-no-outer-ignore": "git-leak",
+    "git-leak-no-attachments-rule": "git-leak",
+    "sensitive-egress-nonloopback": "sensitive-egress",
+}
 
 
 class GateFailure(Exception):
@@ -476,6 +502,87 @@ def check_transcript_projection(phase8: Any, aimux_bin: Path, mutation: str | No
         print(f"transcript projection filtered chrome and preserved genuine prompt for sessions={chrome_session},{genuine_session}")
 
 
+def root_gitignore_has_aimux_entry(contents: str) -> bool:
+    for line in contents.splitlines():
+        pattern = line.split("#", 1)[0].strip()
+        if pattern in {".aimux/", "/.aimux/", ".aimux", "/.aimux"}:
+            return True
+    return False
+
+
+def remove_gitignore_line(path: Path, expected: str) -> None:
+    contents = path.read_text(encoding="utf-8")
+    lines = [line for line in contents.splitlines() if line.strip() != expected]
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def sensitive_store_fixture_paths(project: Path) -> list[Path]:
+    return [
+        project / ".aimux" / "context" / "gate-session" / "summary.md",
+        project / ".aimux" / "history" / "gate-session.jsonl",
+        project / ".aimux" / "attachments" / "gate-attachment.txt",
+        project / ".aimux" / "plans" / "gate-session.md",
+        project / ".aimux" / "status" / "gate-session.md",
+        project / ".aimux" / "tasks" / "gate-task.json",
+        project / ".aimux" / "threads" / "gate-thread.jsonl",
+        project / ".aimux" / "recordings" / "gate-session.cast",
+        project / ".aimux" / "worktrees" / "gate-worktree" / "sensitive.txt",
+    ]
+
+
+def seed_sensitive_store_fixtures(project: Path) -> list[Path]:
+    paths = sensitive_store_fixture_paths(project)
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"installed-runtime-gate sensitive fixture for {path}\n", encoding="utf-8")
+    return paths
+
+
+def assert_git_add_cannot_stage(scope: Any, paths: list[Path]) -> None:
+    relative_paths = [str(path.relative_to(scope.project)) for path in paths]
+    result = run(["git", "add", "-n", *relative_paths], cwd=scope.project, env=scope.env, timeout=30, check=False)
+    combined = f"{result.stdout}\n{result.stderr}"
+    staged = [line for line in result.stdout.splitlines() if line.startswith("add ")]
+    if result.returncode == 0 or staged:
+        raise GateFailure(
+            "sensitive .aimux data could be staged by git add -n "
+            f"exit={result.returncode} staged={staged} output={combined}"
+        )
+    if "ignored" not in combined.lower():
+        raise GateFailure(f"git add -n rejected sensitive data without proving ignore coverage: {combined}")
+
+
+def assert_sensitive_gitignore_rules(project: Path) -> None:
+    root_gitignore = project / ".gitignore"
+    inner_gitignore = project / ".aimux" / ".gitignore"
+    root_contents = root_gitignore.read_text(encoding="utf-8")
+    inner_contents = inner_gitignore.read_text(encoding="utf-8")
+    if not root_gitignore_has_aimux_entry(root_contents):
+        raise GateFailure(f"{root_gitignore} does not contain a root .aimux/ ignore entry")
+    missing = [store for store in SENSITIVE_STORES if f"{store}/" not in inner_contents]
+    if missing:
+        raise GateFailure(f"{inner_gitignore} is missing sensitive store ignore rules: {missing}")
+
+
+def check_git_leak(phase8: Any, aimux_bin: Path, mutation: str | None) -> None:
+    with create_scope(phase8, aimux_bin, "git-leak") as scope:
+        run(["git", "config", "core.excludesFile", "/dev/null"], cwd=scope.project, env=scope.env, timeout=10)
+        aimux(scope, ["init"], timeout=60)
+        root_gitignore = scope.project / ".gitignore"
+        inner_gitignore = scope.project / ".aimux" / ".gitignore"
+        if mutation == "git-leak-no-outer-ignore":
+            remove_gitignore_line(root_gitignore, ".aimux/")
+        if mutation == "git-leak-no-attachments-rule":
+            remove_gitignore_line(inner_gitignore, "attachments/")
+        assert_sensitive_gitignore_rules(scope.project)
+        fixture_paths = seed_sensitive_store_fixtures(scope.project)
+        assert_git_add_cannot_stage(scope, fixture_paths)
+        print(
+            "git leak gate verified first-use root .aimux/ ignore and generated sensitive store rules "
+            f"for {len(fixture_paths)} representative paths"
+        )
+
+
 def install_variant_refusal(asset: Path, install_variant: str, expected: str) -> None:
     with tempfile.TemporaryDirectory(prefix=f"aimux-installed-runtime-gate-refusal-{install_variant}-") as temp:
         root = Path(temp)
@@ -562,6 +669,165 @@ def assert_lite_cargo_tree_has_no_remote_dependencies() -> None:
         raise GateFailure(f"lite cargo tree contains remote-control dependencies: {hits}")
 
 
+def assert_sensitive_store_egress_static_boundary() -> None:
+    boundary_source = (ROOT / "scripts" / "check-lite-build-boundary.sh").read_text(encoding="utf-8")
+    required_forbidden_strings = (
+        "AIMUX_RELAY_URL",
+        "relay[.]aimux[.]app",
+        "maybe_host_published_attachment",
+        "attachments/hosted",
+        "tokio[-_]tungstenite",
+        "tungstenite",
+        "ureq",
+    )
+    missing = [needle for needle in required_forbidden_strings if needle not in boundary_source]
+    if missing:
+        raise GateFailure(f"lite boundary script no longer checks remote egress strings: {missing}")
+    runtime_source = (ROOT / "native" / "crates" / "aimux" / "src" / "daemon_state.rs").read_text(encoding="utf-8")
+    if "AIMUX_DAEMON_HOST must be loopback" not in runtime_source:
+        raise GateFailure("daemon host loopback-only guard is missing from daemon_state.rs")
+    print(f"sensitive-store egress static boundary covers stores={','.join(SENSITIVE_STORES)}")
+
+
+def collect_pid_values(value: Any) -> set[int]:
+    pids: set[int] = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "pid" and isinstance(child, int) and child > 0:
+                pids.add(child)
+            else:
+                pids.update(collect_pid_values(child))
+    elif isinstance(value, list):
+        for child in value:
+            pids.update(collect_pid_values(child))
+    return pids
+
+
+def live_pid(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def control_plane_pids(scope: Any) -> set[int]:
+    pids: set[int] = set()
+    for path in [scope.aimux_home / "daemon" / "daemon.json", scope.aimux_home / "daemon" / "state.json"]:
+        try:
+            pids.update(collect_pid_values(json.loads(path.read_text(encoding="utf-8"))))
+        except FileNotFoundError:
+            continue
+        except json.JSONDecodeError as error:
+            raise GateFailure(f"could not parse runtime pid file {path}: {error}") from error
+    pids.update(scope.project_service_pids())
+    return {pid for pid in pids if live_pid(pid)}
+
+
+def lsof_tcp_rows_for_pids(pids: set[int]) -> list[str]:
+    if not pids:
+        return []
+    lsof = shutil.which("lsof")
+    if not lsof:
+        raise GateFailure("lsof is required for sensitive-store egress runtime proof")
+    result = subprocess.run(
+        [lsof, "-nP", "-a", "-iTCP", "-p", ",".join(str(pid) for pid in sorted(pids))],
+        cwd=str(ROOT),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=20,
+    )
+    if result.stderr:
+        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n", file=sys.stderr)
+    if result.returncode not in {0, 1}:
+        raise GateFailure(f"lsof failed with exit {result.returncode}: {result.stderr}")
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    return lines[1:] if lines and lines[0].startswith("COMMAND") else lines
+
+
+def lsof_name(row: str) -> str:
+    parts = row.split()
+    return " ".join(parts[8:]) if len(parts) >= 9 else row
+
+
+def endpoint_is_loopback(endpoint: str) -> bool:
+    lowered = endpoint.lower()
+    return (
+        "127.0.0.1:" in lowered
+        or "localhost:" in lowered
+        or "[::1]:" in lowered
+        or lowered.startswith("::1:")
+    )
+
+
+def tcp_name_is_loopback_only(name: str) -> bool:
+    endpoints = name.split("->")
+    return all(endpoint_is_loopback(endpoint.split(" (", 1)[0]) for endpoint in endpoints)
+
+
+def start_nonloopback_listener(scope: Any) -> int:
+    helper = scope.root / "bin" / "nonloopback-listener.py"
+    port_file = scope.root / "nonloopback-listener-port"
+    helper.write_text(
+        textwrap.dedent(
+            """\
+            import socket
+            import sys
+            import time
+            from pathlib import Path
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("0.0.0.0", 0))
+            sock.listen(1)
+            Path(sys.argv[1]).write_text(str(sock.getsockname()[1]), encoding="utf-8")
+            time.sleep(60)
+            """
+        ),
+        encoding="utf-8",
+    )
+    proc = scope.popen([sys.executable, str(helper), str(port_file)])
+    wait_until("non-loopback mutation listener", 5, 0.1, lambda: port_file.exists())
+    return int(proc.pid)
+
+
+def assert_no_non_loopback_network_surface(scope: Any, extra_pids: set[int] | None = None) -> None:
+    pids = wait_until("lite control-plane pids", 10, 0.25, lambda: control_plane_pids(scope))
+    if extra_pids:
+        pids = set(pids) | extra_pids
+    rows = lsof_tcp_rows_for_pids(set(pids))
+    violations = [row for row in rows if not tcp_name_is_loopback_only(lsof_name(row))]
+    print(f"lite egress lsof sampled pids={sorted(pids)} tcp_rows={len(rows)} non_loopback={len(violations)}")
+    if violations:
+        raise GateFailure(
+            "lite runtime exposed a non-loopback network surface while sensitive stores existed:\n"
+            + "\n".join(violations)
+        )
+
+
+def check_sensitive_store_egress(phase8: Any, aimux_bin: Path, mutation: str | None) -> None:
+    assert_sensitive_store_egress_static_boundary()
+    with create_scope(phase8, aimux_bin, "sensitive-egress") as scope:
+        aimux(scope, ["init"], timeout=60)
+        fixture_paths = seed_sensitive_store_fixtures(scope.project)
+        aimux(scope, ["daemon", "ensure"], timeout=60)
+        extra_pids = {start_nonloopback_listener(scope)} if mutation == "sensitive-egress-nonloopback" else None
+        assert_no_non_loopback_network_surface(scope, extra_pids)
+        session_id = spawn_session(scope)
+        wait_for_ready(scope, session_id)
+        find_session(ps(scope), session_id)
+        for _ in range(3):
+            assert_no_non_loopback_network_surface(scope)
+            time.sleep(0.5)
+        print(
+            "sensitive-store egress gate verified lite runtime has no non-loopback surface "
+            f"while {len(fixture_paths)} sensitive fixtures exist"
+        )
+
+
 def check_lite_functioning_runtime(phase8: Any, aimux_bin: Path) -> None:
     with create_scope(phase8, aimux_bin, "lite") as scope:
         aimux(scope, ["init"], timeout=60)
@@ -575,7 +841,7 @@ def check_lite_functioning_runtime(phase8: Any, aimux_bin: Path) -> None:
         print(f"lite installed runtime initialized project and ps reported session={session_id} status={status}")
 
 
-def run_lite_scenario(phase8: Any, work: Path) -> None:
+def run_lite_scenario(phase8: Any, work: Path, only: str, mutation: str | None) -> None:
     platform_arch = host_platform_arch()
     print(f"building full archive for real variant-refusal proof on {platform_arch}")
     full_asset = build_release_asset(work, "full")
@@ -606,10 +872,21 @@ def run_lite_scenario(phase8: Any, work: Path) -> None:
     assert_no_remote_help(aimux_bin)
     assert_lite_cargo_tree_has_no_remote_dependencies()
     check_lite_functioning_runtime(phase8, aimux_bin)
+    lite_runners = {
+        "git-leak": check_git_leak,
+        "sensitive-egress": check_sensitive_store_egress,
+    }
+    for name in selected_checks(only, LITE_CHECKS):
+        if mutation and MUTATION_TO_CHECK[mutation] != name:
+            continue
+        print(f"\n== installed-runtime-gate:{name}:lite ==")
+        lite_runners[name](phase8, aimux_bin, mutation)
 
 
-def selected_checks(only: str) -> tuple[str, ...]:
-    return CHECKS if only == "all" else (only,)
+def selected_checks(only: str, available: tuple[str, ...]) -> tuple[str, ...]:
+    if only == "all":
+        return available
+    return (only,) if only in available else ()
 
 
 def main() -> int:
@@ -630,14 +907,20 @@ def main() -> int:
         return 0
     if args.asset and args.scenario != "full":
         raise GateFailure("--asset is only supported with --scenario full")
-    if args.mutate and args.scenario != "full":
-        raise GateFailure("--mutate is only supported with --scenario full")
-    if args.only != "all" and args.scenario != "full":
-        raise GateFailure("--only is only supported with --scenario full")
 
-    mutation_check = args.mutate.split("-", 1)[0] if args.mutate else None
+    scenario_checks = {
+        "full": FULL_CHECKS,
+        "lite": LITE_CHECKS,
+        "all": CHECKS,
+    }[args.scenario]
+    if args.only != "all" and args.only not in scenario_checks:
+        raise GateFailure(f"--only {args.only} is not available for --scenario {args.scenario}")
+
+    mutation_check = MUTATION_TO_CHECK.get(args.mutate) if args.mutate else None
     if args.mutate and args.only not in {"all", mutation_check}:
         raise GateFailure(f"--mutate {args.mutate} only applies to --only {mutation_check}")
+    if mutation_check and mutation_check not in scenario_checks:
+        raise GateFailure(f"--mutate {args.mutate} is not available for --scenario {args.scenario}")
 
     phase8 = load_phase8()
     with tempfile.TemporaryDirectory(prefix="aimux-installed-runtime-gate-") as temp:
@@ -655,15 +938,16 @@ def main() -> int:
                 "input": check_input_delivery,
                 "liveness": check_liveness,
                 "transcript": check_transcript_projection,
+                "git-leak": check_git_leak,
             }
-            for name in selected_checks(args.only):
+            for name in selected_checks(args.only, FULL_CHECKS):
                 if mutation_check is not None and name != mutation_check:
                     continue
                 print(f"\n== installed-runtime-gate:{name} ==")
                 runners[name](phase8, aimux_bin, args.mutate)
         if args.scenario in {"lite", "all"}:
             print("\n== installed-runtime-gate:lite ==")
-            run_lite_scenario(phase8, work)
+            run_lite_scenario(phase8, work, args.only, args.mutate)
     return 0
 
 

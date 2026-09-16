@@ -28,7 +28,14 @@ describe("installed runtime gate wiring", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual(["loop", "input", "liveness", "transcript"]);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "loop",
+      "input",
+      "liveness",
+      "transcript",
+      "git-leak",
+      "sensitive-egress",
+    ]);
   });
 
   it("documents the installed runtime gate scenarios", () => {
@@ -49,6 +56,9 @@ describe("installed runtime gate wiring", () => {
     expect(source).toContain('"input-drop"');
     expect(source).toContain('"liveness-skip-kill"');
     expect(source).toContain('"transcript-no-genuine"');
+    expect(source).toContain('"git-leak-no-outer-ignore"');
+    expect(source).toContain('"git-leak-no-attachments-rule"');
+    expect(source).toContain('"sensitive-egress-nonloopback"');
   });
 
   it("proves real lite archives through install, strings, help, cargo tree, and variant refusals", () => {
@@ -63,5 +73,18 @@ describe("installed runtime gate wiring", () => {
     expect(source).toContain('"cargo", "tree"');
     expect(source).toContain("release archive BUILD_VARIANT mismatch: expected lite, got full");
     expect(source).toContain("release archive BUILD_VARIANT mismatch: expected full, got lite");
+  });
+
+  it("keeps data-at-rest gates inside the installed runtime gate", () => {
+    const source = readFileSync(gatePath, "utf8");
+
+    expect(source).toContain("SENSITIVE_STORES");
+    expect(source).toContain('"attachments"');
+    expect(source).toContain('"worktrees"');
+    expect(source).toContain('"git", "config", "core.excludesFile", "/dev/null"');
+    expect(source).toContain('"git", "add", "-n"');
+    expect(source).toContain("root_gitignore_has_aimux_entry");
+    expect(source).toContain("AIMUX_DAEMON_HOST");
+    expect(source).toContain("assert_no_non_loopback_network_surface");
   });
 });
