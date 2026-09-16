@@ -1,6 +1,6 @@
 use crate::dashboard_model::{
     DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
-    WorktreeGroup, is_dashboard_project_control_session,
+    WorktreeGroup, dashboard_session_role_display_order, is_dashboard_project_control_session,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -590,7 +590,19 @@ fn supervisor_sessions(snapshot: &DesktopStateSnapshot) -> Vec<&DashboardSession
             sessions.push(session);
         }
     }
-    sessions
+    let mut keyed = sessions
+        .into_iter()
+        .enumerate()
+        .map(|(index, session)| {
+            (
+                dashboard_session_role_display_order(session),
+                index,
+                session,
+            )
+        })
+        .collect::<Vec<_>>();
+    keyed.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    keyed.into_iter().map(|(_, _, session)| session).collect()
 }
 
 struct NavigationWorktreeInput<'a> {

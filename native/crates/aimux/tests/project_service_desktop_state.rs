@@ -237,6 +237,83 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
 }
 
 #[test]
+fn supervisor_lane_sessions_use_declared_role_order_without_reordering_worktree_agents() {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-05T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-scribe", "rigId": "rig-1", "logicalId": "scribe", "toolConfigKey": "claude", "cwd": "/repo", "createdAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "node-main", "rigId": "rig-1", "logicalId": "main-agent", "toolConfigKey": "codex", "cwd": "/repo", "createdAt": "2026-09-05T00:00:01.000Z" },
+            { "id": "node-overseer", "rigId": "rig-1", "logicalId": "overseer", "toolConfigKey": "claude", "cwd": "/repo", "createdAt": "2026-09-05T00:00:02.000Z" },
+            { "id": "node-worker", "rigId": "rig-1", "logicalId": "worker-agent", "toolConfigKey": "codex", "cwd": "/repo/.aimux/worktrees/feature", "createdAt": "2026-09-05T00:00:03.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-scribe", "nodeId": "node-scribe", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "claude", "updatedAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "binding-main", "nodeId": "node-main", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:01.000Z" },
+            { "id": "binding-overseer", "nodeId": "node-overseer", "tmuxSession": "aimux-repo", "tmuxWindowId": "@3", "tmuxWindowIndex": 3, "tmuxWindowName": "claude", "updatedAt": "2026-09-05T00:00:02.000Z" },
+            { "id": "binding-worker", "nodeId": "node-worker", "tmuxSession": "aimux-repo", "tmuxWindowId": "@4", "tmuxWindowIndex": 4, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:03.000Z" }
+        ],
+        "sessions": [
+            { "id": "scribe", "nodeId": "node-scribe", "status": "running", "command": "claude", "team": { "role": "scribe" }, "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "main-agent", "nodeId": "node-main", "status": "running", "command": "codex", "worktreePath": "/repo", "createdAt": "2026-09-05T00:00:01.000Z", "updatedAt": "2026-09-05T00:00:01.000Z" },
+            { "id": "overseer", "nodeId": "node-overseer", "status": "running", "command": "claude", "team": { "role": "overseer" }, "createdAt": "2026-09-05T00:00:02.000Z", "updatedAt": "2026-09-05T00:00:02.000Z" },
+            { "id": "worker-agent", "nodeId": "node-worker", "status": "running", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/feature", "createdAt": "2026-09-05T00:00:03.000Z", "updatedAt": "2026-09-05T00:00:03.000Z" }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "main", "rigId": "rig-1", "path": "/repo", "name": "Main Checkout", "status": "active", "branch": "master", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "feature", "rigId": "rig-1", "path": "/repo/.aimux/worktrees/feature", "name": "feature", "status": "active", "branch": "feature", "createdAt": "2026-09-05T00:00:01.000Z", "updatedAt": "2026-09-05T00:00:01.000Z" }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: "/repo".into(),
+            topology: &topology,
+            metadata_sessions: &BTreeMap::from([
+                (
+                    "scribe".to_owned(),
+                    json!({ "scribe": true, "projectControl": true }),
+                ),
+                (
+                    "overseer".to_owned(),
+                    json!({ "overseer": true, "projectControl": true }),
+                ),
+            ]),
+            exchange: &json!({}),
+        },
+        Some(&support::live_window_ids(&["@1", "@2", "@3", "@4"])),
+    );
+
+    let supervisor_sessions = state["supervisorLane"]["sessions"].as_array().unwrap();
+    assert_eq!(
+        ids(supervisor_sessions),
+        vec!["overseer".to_owned(), "scribe".to_owned()]
+    );
+    assert_eq!(supervisor_sessions[0]["roleState"]["exposeOrder"], 0);
+
+    let groups = state["worktreeGroups"].as_array().unwrap();
+    assert_eq!(
+        ids(groups[0]["sessions"].as_array().unwrap()),
+        vec!["main-agent".to_owned()]
+    );
+    assert_eq!(
+        ids(groups[1]["sessions"].as_array().unwrap()),
+        vec!["worker-agent".to_owned()]
+    );
+}
+
+#[test]
 fn desktop_state_drops_services_without_live_tmux_windows() {
     let topology = topology_fixture();
     let metadata = metadata_fixture();

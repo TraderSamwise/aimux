@@ -175,6 +175,12 @@ pub fn is_dashboard_scribe_session(session: &DashboardSession) -> bool {
     crate::team_contract::is_scribe_session(Some(&dashboard_session_classifier_probe(session)))
 }
 
+pub fn dashboard_session_role_display_order(session: &DashboardSession) -> i64 {
+    crate::team_contract::agent_role_display_order(Some(&dashboard_session_classifier_probe(
+        session,
+    )))
+}
+
 fn dashboard_session_classifier_probe(session: &DashboardSession) -> Value {
     let mut probe = Map::new();
     if let Some(role) = session

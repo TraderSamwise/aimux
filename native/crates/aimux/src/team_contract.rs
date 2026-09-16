@@ -1,29 +1,29 @@
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-const DEFAULT_EXPOSE_ORDER: i64 = 1_000;
+const DEFAULT_ROLE_DISPLAY_ORDER: i64 = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentRoleDefinition {
     pub role: &'static str,
     pub should_show_in_expose: bool,
-    pub expose_order: i64,
+    pub display_order: i64,
 }
 
 const CODER_ROLE: AgentRoleDefinition = AgentRoleDefinition {
     role: "coder",
     should_show_in_expose: true,
-    expose_order: DEFAULT_EXPOSE_ORDER,
+    display_order: DEFAULT_ROLE_DISPLAY_ORDER,
 };
 const OVERSEER_ROLE: AgentRoleDefinition = AgentRoleDefinition {
     role: "overseer",
     should_show_in_expose: true,
-    expose_order: 0,
+    display_order: 0,
 };
 const SCRIBE_ROLE: AgentRoleDefinition = AgentRoleDefinition {
     role: "scribe",
     should_show_in_expose: false,
-    expose_order: DEFAULT_EXPOSE_ORDER,
+    display_order: DEFAULT_ROLE_DISPLAY_ORDER,
 };
 
 pub fn agent_role_definition(role: &str) -> AgentRoleDefinition {
@@ -34,7 +34,7 @@ pub fn agent_role_definition(role: &str) -> AgentRoleDefinition {
         _ => AgentRoleDefinition {
             role: "unknown",
             should_show_in_expose: false,
-            expose_order: DEFAULT_EXPOSE_ORDER,
+            display_order: DEFAULT_ROLE_DISPLAY_ORDER,
         },
     }
 }
@@ -191,8 +191,12 @@ pub fn agent_should_show_in_expose(session: Option<&Value>) -> bool {
 }
 
 pub fn agent_expose_order(session: Option<&Value>) -> i64 {
+    agent_role_display_order(session)
+}
+
+pub fn agent_role_display_order(session: Option<&Value>) -> i64 {
     let role = agent_role(session);
-    agent_role_definition(&role).expose_order
+    agent_role_definition(&role).display_order
 }
 
 pub fn agent_lane(session: Option<&Value>) -> Value {
@@ -236,7 +240,7 @@ pub fn agent_role_state(session: Option<&Value>) -> Value {
             "effectiveRole": effective_role,
             "effectiveLane": effective_lane,
             "shouldShowInExpose": role_definition.should_show_in_expose,
-            "exposeOrder": role_definition.expose_order,
+            "exposeOrder": role_definition.display_order,
             "runtimeWorkingDirectory": string_field(session, "runtimeWorkingDirectory"),
         });
     }
@@ -246,7 +250,7 @@ pub fn agent_role_state(session: Option<&Value>) -> Value {
         "lane": lane,
         "projectControl": is_project_control_session(Some(session)),
         "shouldShowInExpose": role_definition.should_show_in_expose,
-        "exposeOrder": role_definition.expose_order,
+        "exposeOrder": role_definition.display_order,
     })
 }
 
