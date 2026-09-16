@@ -1,5 +1,3 @@
-#[cfg(feature = "remote-control")]
-use std::sync::Weak;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -151,28 +149,6 @@ pub fn spawn_daemon_scheduler(
         handle,
         periodic::PeriodicSchedulerLogLabels::daemon(),
     );
-}
-
-#[cfg(feature = "remote-control")]
-pub fn hosted_prune_callback(
-    state: &Arc<crate::remote::hosted_server::HostedServerState>,
-) -> HostedPruneCallback {
-    let state = Arc::downgrade(state);
-    Arc::new(move || match Weak::upgrade(&state) {
-        Some(state) => state.prune_for_scheduler(),
-        None => Ok(()),
-    })
-}
-
-#[cfg(feature = "remote-control")]
-pub fn hosted_outbox_drain_callback(
-    state: &Arc<crate::remote::hosted_server::HostedServerState>,
-) -> HostedOutboxDrainCallback {
-    let state = Arc::downgrade(state);
-    Arc::new(move || match Weak::upgrade(&state) {
-        Some(state) => state.drain_outbox_for_scheduler(),
-        None => Ok(()),
-    })
 }
 
 struct DaemonTaskAdapter {

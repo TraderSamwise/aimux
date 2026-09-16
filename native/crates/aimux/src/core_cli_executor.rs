@@ -33,8 +33,6 @@ use crate::core_text::{
     render_core_projects_list_lines,
 };
 use crate::daemon::routing::DaemonRouteUrl;
-#[cfg(feature = "remote-control")]
-use crate::daemon::text::auth::AuthFlowResult;
 use crate::daemon::text::operations::RestartControlPlaneTextResult;
 use crate::daemon_state::EnsureDaemonRunningOptions;
 use crate::daemon_state::{
@@ -63,6 +61,8 @@ use crate::logs::{
 };
 use crate::paths::{PathResolver, is_git_project_root, project_checkout_required_message};
 use crate::project_service_manifest::get_project_service_manifest;
+#[cfg(feature = "remote-control")]
+use crate::remote::daemon_auth_text::AuthFlowResult;
 #[cfg(feature = "remote-control")]
 use crate::remote::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
 #[cfg(feature = "remote-control")]

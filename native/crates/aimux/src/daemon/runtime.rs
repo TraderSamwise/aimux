@@ -51,10 +51,6 @@ use crate::daemon::stream::{
     maybe_handle_project_event_stream_request_async,
 };
 use crate::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
-#[cfg(feature = "remote-control")]
-use crate::daemon::text::auth::{
-    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
-};
 use crate::daemon::text::collaboration::DaemonCollaborationTextRuntime;
 use crate::daemon::text::host_agent::DaemonHostAgentTextRuntime;
 use crate::daemon::text::metadata::DaemonMetadataTextRuntime;
@@ -119,6 +115,10 @@ use crate::recording_cleanup::{
 use crate::release_version_contract::{
     read_aimux_build_profile_from_package_root, read_aimux_build_variant_from_package_root,
     read_aimux_runtime_version,
+};
+#[cfg(feature = "remote-control")]
+use crate::remote::daemon_auth_text::{
+    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
 };
 #[cfg(feature = "remote-control")]
 use crate::remote::remote_credentials;

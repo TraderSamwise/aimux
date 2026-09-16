@@ -8,9 +8,6 @@ use aimux::daemon::runtime::{RealDaemonRuntime, handle_daemon_runtime_request_wi
 use aimux::daemon::server::DaemonHttpRequest;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
-use aimux::daemon::text::auth::{
-    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
-};
 use aimux::daemon::text::collaboration::DaemonCollaborationTextRuntime;
 use aimux::daemon::text::host_agent::DaemonHostAgentTextRuntime;
 use aimux::daemon::text::metadata::DaemonMetadataTextRuntime;
@@ -28,6 +25,9 @@ use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
 use aimux::paths::PathResolver;
+use aimux::remote::daemon_auth_text::{
+    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
+};
 use aimux::remote::hosted_audit::HostedAuditStore;
 use aimux::remote::hosted_config::{HostedConfig, HostedRateLimitConfig};
 use aimux::remote::hosted_events::{HostedEventDelivery, HostedEventDeliveryConfig};

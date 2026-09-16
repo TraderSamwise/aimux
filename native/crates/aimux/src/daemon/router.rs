@@ -1,13 +1,12 @@
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::daemon::core_commands::{DaemonCoreCommandRuntime, route_core_command};
 use crate::daemon::json::{DaemonJsonRouteRuntime, route_json_daemon_request};
+use crate::daemon::remote_control::{MaybeDaemonRemoteTextRuntime, route_remote_text_request};
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, local_auth_routes, local_cli_text_routes,
 };
 use crate::daemon::status::{DaemonStatusRuntime, route_status_request};
 use crate::daemon::text::agents::{DaemonAgentTextRuntime, route_agent_text_request};
-#[cfg(feature = "remote-control")]
-use crate::daemon::text::auth::{DaemonAuthTextRuntime, route_auth_text_request};
 use crate::daemon::text::collaboration::{
     DaemonCollaborationTextRuntime, route_collaboration_text_request,
 };
@@ -30,18 +29,6 @@ use crate::request_actor::RemoteAccessDecision;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-#[cfg(feature = "remote-control")]
-pub trait MaybeDaemonAuthTextRuntime: DaemonAuthTextRuntime {}
-
-#[cfg(feature = "remote-control")]
-impl<T> MaybeDaemonAuthTextRuntime for T where T: DaemonAuthTextRuntime {}
-
-#[cfg(not(feature = "remote-control"))]
-pub trait MaybeDaemonAuthTextRuntime {}
-
-#[cfg(not(feature = "remote-control"))]
-impl<T> MaybeDaemonAuthTextRuntime for T {}
-
 pub trait DaemonRouteRuntime:
     DaemonStatusRuntime
     + DaemonCoreCommandRuntime
@@ -57,7 +44,7 @@ pub trait DaemonRouteRuntime:
     + DaemonWorktreeTextRuntime
     + DaemonCollaborationTextRuntime
     + DaemonProjectContentTextRuntime
-    + MaybeDaemonAuthTextRuntime
+    + MaybeDaemonRemoteTextRuntime
     + DaemonJsonRouteRuntime
 {
 }
@@ -77,7 +64,7 @@ impl<T> DaemonRouteRuntime for T where
         + DaemonWorktreeTextRuntime
         + DaemonCollaborationTextRuntime
         + DaemonProjectContentTextRuntime
-        + MaybeDaemonAuthTextRuntime
+        + MaybeDaemonRemoteTextRuntime
         + DaemonJsonRouteRuntime
 {
 }
@@ -193,8 +180,7 @@ pub fn route_daemon_request(
     if let Some(response) = route_project_content_text_request(runtime, method, path, body) {
         return response;
     }
-    #[cfg(feature = "remote-control")]
-    if let Some(response) = route_auth_text_request(runtime, method, path) {
+    if let Some(response) = route_remote_text_request(runtime, method, path) {
         return response;
     }
     if let Some(response) = route_json_daemon_request(

@@ -2,12 +2,12 @@ use aimux::config::default_config;
 use aimux::core_cli::{CoreCommandCall, CoreCommandOk, CoreLoopActorContext};
 use aimux::core_cli_executor::{CoreCliRuntime, run_core_cli_with};
 use aimux::core_cli_routing::is_core_cli_command;
-use aimux::daemon::text::auth::AuthFlowResult;
 use aimux::daemon::text::operations::RestartControlPlaneTextResult;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
 use aimux::native_cli_dispatch::{
     native_root_tool_launch_args_for_config, normalize_root_dispatch_args,
 };
+use aimux::remote::daemon_auth_text::AuthFlowResult;
 use aimux::root_session_launch::{RootSessionLaunchMode, parse_root_resume_args};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
