@@ -35,6 +35,8 @@ describe("installed runtime gate wiring", () => {
       "transcript",
       "git-leak",
       "sensitive-egress",
+      "structural-boundary",
+      "source-review",
     ]);
   });
 
@@ -59,6 +61,8 @@ describe("installed runtime gate wiring", () => {
     expect(source).toContain('"git-leak-no-outer-ignore"');
     expect(source).toContain('"git-leak-no-attachments-rule"');
     expect(source).toContain('"sensitive-egress-nonloopback"');
+    expect(source).toContain('"structural-boundary-remote-compiled"');
+    expect(source).toContain('"source-review-missing-provenance"');
   });
 
   it("proves real local archives through install, strings, help, cargo tree, and variant refusals", () => {
@@ -73,6 +77,27 @@ describe("installed runtime gate wiring", () => {
     expect(source).toContain('"cargo", "tree"');
     expect(source).toContain("release archive BUILD_VARIANT mismatch: expected local, got full");
     expect(source).toContain("release archive BUILD_VARIANT mismatch: expected full, got local");
+  });
+
+  it("wires the structural remote boundary into the installed local gate", () => {
+    const source = readFileSync(gatePath, "utf8");
+
+    expect(source).toContain('"structural-boundary"');
+    expect(source).toContain('"node"');
+    expect(source).toContain('"scripts/check-remote-structural-boundary.mjs"');
+    expect(source).toContain('"--variant"');
+    expect(source).toContain('"local"');
+    expect(source).toContain('"structural-boundary-remote-compiled"');
+  });
+
+  it("adds the reviewer source-build path to the installed local gate", () => {
+    const source = readFileSync(gatePath, "utf8");
+
+    expect(source).toContain('"source-review"');
+    expect(source).toContain('"git", "clone", "--quiet"');
+    expect(source).toContain('"scripts/build-local-release-from-source.sh"');
+    expect(source).toContain("reviewer source build matched release-lane local artifact surfaces");
+    expect(source).toContain('"source-review-missing-provenance"');
   });
 
   it("keeps data-at-rest gates inside the installed runtime gate", () => {

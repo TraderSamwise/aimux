@@ -23,8 +23,17 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[1]
 PHASE8_PATH = ROOT / "scripts" / "phase8-live-residuals.py"
 FULL_CHECKS = ("loop", "input", "liveness", "transcript", "git-leak")
-LOCAL_CHECKS = ("git-leak", "sensitive-egress")
-CHECKS = ("loop", "input", "liveness", "transcript", "git-leak", "sensitive-egress")
+LOCAL_CHECKS = ("structural-boundary", "source-review", "git-leak", "sensitive-egress")
+CHECKS = (
+    "loop",
+    "input",
+    "liveness",
+    "transcript",
+    "git-leak",
+    "sensitive-egress",
+    "structural-boundary",
+    "source-review",
+)
 SCENARIOS = ("full", "local")
 SENSITIVE_STORES = (
     "context",
@@ -45,6 +54,8 @@ MUTATIONS = (
     "git-leak-no-outer-ignore",
     "git-leak-no-attachments-rule",
     "sensitive-egress-nonloopback",
+    "structural-boundary-remote-compiled",
+    "source-review-missing-provenance",
 )
 MUTATION_TO_CHECK = {
     "loop-no-enroll": "loop",
@@ -54,6 +65,8 @@ MUTATION_TO_CHECK = {
     "git-leak-no-outer-ignore": "git-leak",
     "git-leak-no-attachments-rule": "git-leak",
     "sensitive-egress-nonloopback": "sensitive-egress",
+    "structural-boundary-remote-compiled": "structural-boundary",
+    "source-review-missing-provenance": "source-review",
 }
 
 
@@ -135,7 +148,7 @@ def build_release_asset(work: Path, variant: str = "full") -> Path:
     env.setdefault("CARGO_INCREMENTAL", "0")
     env.setdefault(
         "CARGO_TARGET_DIR",
-        f"/tmp/aimux-installed-gate-target-{os.environ.get('AIMUX_SESSION_ID', 'manual')}",
+        installed_gate_cargo_target_dir(),
     )
     run(["yarn", "release:asset"], env=env, timeout=900)
     pattern = "aimux-local-*.tar.gz" if variant == "local" else "aimux-*.tar.gz"
@@ -150,6 +163,10 @@ def build_release_asset(work: Path, variant: str = "full") -> Path:
     if not assets:
         raise GateFailure(f"{variant} release asset was not produced in {release_dir}")
     return assets[-1]
+
+
+def installed_gate_cargo_target_dir() -> str:
+    return f"/tmp/aimux-installed-gate-target-{os.environ.get('AIMUX_SESSION_ID', 'manual')}"
 
 
 def install_release_asset(asset: Path, work: Path, *, variant: str = "full") -> Path:
@@ -669,6 +686,131 @@ def assert_local_cargo_tree_has_no_remote_dependencies() -> None:
         raise GateFailure(f"local cargo tree contains remote-control dependencies: {hits}")
 
 
+def assert_remote_structural_boundary(variant: str, mutation: str | None = None) -> None:
+    args = [
+        "node",
+        "scripts/check-remote-structural-boundary.mjs",
+        "--variant",
+        variant,
+        "--target-dir",
+        installed_gate_cargo_target_dir(),
+    ]
+    with tempfile.TemporaryDirectory(prefix="aimux-installed-gate-structural-mutation-") as temp:
+        if mutation == "structural-boundary-remote-compiled":
+            temp_dir = Path(temp)
+            dep_info = temp_dir / "dep-info.d"
+            cargo_tree = temp_dir / "cargo-tree.txt"
+            dep_info.write_text(
+                "target: native/crates/aimux/src/lib.rs "
+                "native/crates/aimux/src/remote/relay_client.rs\n",
+                encoding="utf-8",
+            )
+            cargo_tree.write_text("aimux v0.1.0\n", encoding="utf-8")
+            args.extend(
+                [
+                    "--skip-build",
+                    "--dep-info-file",
+                    str(dep_info),
+                    "--cargo-tree-file",
+                    str(cargo_tree),
+                ]
+            )
+        run(args, timeout=900)
+
+
+def check_remote_structural_boundaries(mutation: str | None) -> None:
+    assert_remote_structural_boundary("local", mutation)
+    if mutation is None:
+        assert_remote_structural_boundary("full")
+
+
+def archive_text(asset: Path, member: str) -> str:
+    result = run(["tar", "-xOzf", str(asset), f"aimux/{member}"], timeout=60)
+    return result.stdout.strip()
+
+
+def read_json_file(path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise GateFailure(f"{label} is not readable JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise GateFailure(f"{label} JSON is not an object: {value!r}")
+    return value
+
+
+def assert_release_artifact_surfaces_match(release_asset: Path, reviewer_asset: Path, platform_arch: str) -> None:
+    for asset, label in [(release_asset, "release-lane"), (reviewer_asset, "reviewer-source")]:
+        if archive_text(asset, "BUILD_VARIANT") != "local":
+            raise GateFailure(f"{label} archive is not BUILD_VARIANT=local: {asset}")
+        if archive_text(asset, "PACKAGE_PROFILE") != "minimal":
+            raise GateFailure(f"{label} archive is not PACKAGE_PROFILE=minimal: {asset}")
+        run(["bash", "scripts/verify-release-asset.sh", str(asset), platform_arch], timeout=120)
+        provenance = asset.with_name(f"{asset.name}.provenance.json")
+        sbom = asset.with_name(f"{asset.name}.sbom.spdx.json")
+        if not provenance.is_file():
+            raise GateFailure(f"{label} archive is missing provenance companion: {provenance}")
+        if not sbom.is_file():
+            raise GateFailure(f"{label} archive is missing SBOM companion: {sbom}")
+
+    release_provenance = read_json_file(release_asset.with_name(f"{release_asset.name}.provenance.json"), "release provenance")
+    reviewer_provenance = read_json_file(
+        reviewer_asset.with_name(f"{reviewer_asset.name}.provenance.json"),
+        "reviewer provenance",
+    )
+    comparisons = {
+        "source.revision": (
+            release_provenance.get("source", {}).get("revision"),
+            reviewer_provenance.get("source", {}).get("revision"),
+        ),
+        "artifact.buildVariant": (
+            release_provenance.get("artifact", {}).get("buildVariant"),
+            reviewer_provenance.get("artifact", {}).get("buildVariant"),
+        ),
+        "artifact.packageProfile": (
+            release_provenance.get("artifact", {}).get("packageProfile"),
+            reviewer_provenance.get("artifact", {}).get("packageProfile"),
+        ),
+        "artifact.platformArch": (
+            release_provenance.get("artifact", {}).get("platformArch"),
+            reviewer_provenance.get("artifact", {}).get("platformArch"),
+        ),
+    }
+    mismatches = {
+        key: values
+        for key, values in comparisons.items()
+        if not values[0] or not values[1] or values[0] != values[1]
+    }
+    if mismatches:
+        raise GateFailure(f"reviewer source build does not match release-lane artifact surfaces: {mismatches}")
+    print(
+        "reviewer source build matched release-lane local artifact surfaces: "
+        f"revision={comparisons['source.revision'][0]} platform={platform_arch}"
+    )
+
+
+def check_source_review_build(release_asset: Path, work: Path, platform_arch: str, mutation: str | None) -> None:
+    source_root = work / "reviewer-source"
+    release_dir = work / "reviewer-release"
+    source_revision = run(["git", "rev-parse", "--verify", "HEAD"], timeout=30).stdout.strip()
+    run(["git", "clone", "--quiet", str(ROOT), str(source_root)], timeout=300)
+    run(["git", "checkout", "--quiet", "--detach", source_revision], cwd=source_root, timeout=60)
+    env = os.environ.copy()
+    env["AIMUX_RELEASE_DIR"] = str(release_dir)
+    env["CARGO_INCREMENTAL"] = "0"
+    env["CARGO_TARGET_DIR"] = str(work / "reviewer-target")
+    run(
+        ["bash", "scripts/build-local-release-from-source.sh"],
+        cwd=source_root,
+        env=env,
+        timeout=900,
+    )
+    reviewer_asset = release_dir / f"aimux-local-{platform_arch}.tar.gz"
+    if mutation == "source-review-missing-provenance":
+        reviewer_asset.with_name(f"{reviewer_asset.name}.provenance.json").unlink(missing_ok=True)
+    assert_release_artifact_surfaces_match(release_asset, reviewer_asset, platform_arch)
+
+
 def assert_sensitive_store_egress_static_boundary() -> None:
     boundary_source = (ROOT / "scripts" / "check-local-build-boundary.sh").read_text(encoding="utf-8")
     required_forbidden_strings = (
@@ -873,6 +1015,13 @@ def run_local_scenario(phase8: Any, work: Path, only: str, mutation: str | None)
     assert_local_cargo_tree_has_no_remote_dependencies()
     check_local_functioning_runtime(phase8, aimux_bin)
     local_runners = {
+        "structural-boundary": check_remote_structural_boundaries,
+        "source-review": lambda current_mutation: check_source_review_build(
+            local_asset,
+            work,
+            platform_arch,
+            current_mutation,
+        ),
         "git-leak": check_git_leak,
         "sensitive-egress": check_sensitive_store_egress,
     }
@@ -880,7 +1029,10 @@ def run_local_scenario(phase8: Any, work: Path, only: str, mutation: str | None)
         if mutation and MUTATION_TO_CHECK[mutation] != name:
             continue
         print(f"\n== installed-runtime-gate:{name}:local ==")
-        local_runners[name](phase8, aimux_bin, mutation)
+        if name in {"structural-boundary", "source-review"}:
+            local_runners[name](mutation)
+        else:
+            local_runners[name](phase8, aimux_bin, mutation)
 
 
 def selected_checks(only: str, available: tuple[str, ...]) -> tuple[str, ...]:
