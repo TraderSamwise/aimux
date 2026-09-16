@@ -15,8 +15,6 @@ use aimux::debug_logging::{
     LogLevel, configure_daemon_logging, configure_process_logging, log_at,
     parse_logging_cli_options,
 };
-#[cfg(feature = "remote-control")]
-use aimux::hosted_cli::run_hosted_cli_command;
 use aimux::launcher_env::{CliEntry, cli_entry_for, prepare_stable_process_env};
 use aimux::local_ui_server::{
     DEFAULT_LOCAL_UI_HOST, DEFAULT_LOCAL_UI_PORT, LocalUiConfig, LocalUiServerOptions,
@@ -33,6 +31,8 @@ use aimux::project_service::process::{
 };
 use aimux::project_service_manifest::get_project_service_manifest;
 use aimux::release_version_contract::read_aimux_runtime_version;
+#[cfg(feature = "remote-control")]
+use aimux::remote::hosted_cli::run_hosted_cli_command;
 use aimux::root_session_launch::{
     RootResumeRequest, parse_root_resume_args, resume_saved_sessions,
 };

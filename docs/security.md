@@ -4,26 +4,24 @@ Aimux remote access is an account-security surface. Security events are separate
 from ordinary agent notifications and should reach the owner even when optional
 agent alerts are disabled.
 
-## Local Build Profile
+## Local Build Variant And Package Profile
 
-Aimux has two native build profiles:
+Aimux has two independent native build axes:
 
-- `full` is the default release profile. It includes local TUI/runtime code,
-  the app bundle, owner remote access, relay attachment hosting, hosted mode,
-  mobile push forwarding, and remote security-device commands.
-- `local` is the TUI/runtime profile for machines where remote access should be
-  visibly absent. It starts the same daemon, project service, tmux runtime, and
-  dashboard, but uses no-op remote adapters and does not package `dist-ui` or
-  docs.
+- Build variant is the security/code axis. It controls whether remote-control
+  code exists in the native binary.
+- Package profile is the packaging axis. `full` is the default release package
+  and includes UI/docs assets. `minimal` packages the TUI/runtime without those
+  optional assets.
 
 Security-sensitive local implementation lives in the native daemon and
 project-service. Root-level `src/` keeps only app-required contracts and
 parsers; it must not perform remote network IO or credential storage.
 
-Build the local package with:
+Build the minimal package with:
 
 ```bash
-AIMUX_BUILD_PROFILE=local yarn release:asset
+AIMUX_PACKAGE_PROFILE=minimal yarn release:asset
 ```
 
 The local release path runs `scripts/check-local-build-boundary.mjs`, which

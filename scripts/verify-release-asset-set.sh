@@ -59,6 +59,7 @@ verify_archive_shape() {
   for entry in \
     aimux/VERSION \
     aimux/BUILD_STAMP \
+    aimux/PACKAGE_PROFILE \
     aimux/BUILD_VARIANT \
     "aimux/native/$platform_arch/aimux"
   do

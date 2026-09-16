@@ -1,7 +1,7 @@
 use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::launcher_env::DEFAULT_WEB_APP_URL;
 use crate::paths::PathResolver;
-use crate::remote_credentials::{AimuxCredentials, save_credentials_at};
+use crate::remote::remote_credentials::{AimuxCredentials, save_credentials_at};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Read};

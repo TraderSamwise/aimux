@@ -5,7 +5,7 @@ use crate::daemon::router::DaemonRouteRequestContext;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon_projects::ProjectsRouteProject;
 use crate::proxy_project_binding::{parse_proxy_target, resolve_project_root_for_service_target};
-use crate::remote_access::{
+use crate::request_actor::{
     RemoteAccessContext, RemoteAccessDecision, RemoteActor, RemoteActorRole,
     assert_operator_stream_allowed, assert_remote_access_allowed, parse_remote_actor,
 };

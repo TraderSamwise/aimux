@@ -3,12 +3,12 @@
 //! payload shape is worth pinning.
 
 use aimux::daemon_state::{MetadataState, save_metadata_state};
-use aimux::mobile_push_bridge::{
-    build_push_payload, push_payload_for_alert_with_config, relay_notification,
-};
 use aimux::notification_delivery_guard::{
     TEST_NOTIFICATION_SOURCE_FIELD, TEST_NOTIFICATION_SOURCE_VALUE,
     fixture_notification_refusal_reason_for_payload,
+};
+use aimux::remote::mobile_push_bridge::{
+    build_push_payload, push_payload_for_alert_with_config, relay_notification,
 };
 use serde_json::json;
 use std::collections::BTreeMap;

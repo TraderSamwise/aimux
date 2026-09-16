@@ -7,7 +7,7 @@ use crate::daemon::text::host_agent::{
     AgentOutputSseTextHandler, AgentOutputStreamError, DaemonHostAgentTextRuntime,
     HostAgentStreamResolution, resolve_host_agent_stream_text_route,
 };
-use crate::remote_access::{RemoteAccessContext, assert_remote_access_allowed, parse_remote_actor};
+use crate::request_actor::{RemoteAccessContext, assert_remote_access_allowed, parse_remote_actor};
 use crate::{
     daemon::access::resolve_authorized_project_event_stream,
     proxy_project_binding::parse_proxy_target,

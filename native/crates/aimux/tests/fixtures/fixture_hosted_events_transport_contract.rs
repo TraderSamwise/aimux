@@ -1,10 +1,10 @@
-use aimux::hosted_events::{
+use aimux::paths::PathResolver;
+use aimux::remote::hosted_events::{
     DeviceRecord, DevicesState, HostedDevicesStore, HostedEvent, HostedEventDelivery,
     HostedEventDeliveryConfig, HostedEventSender, SeenDeviceInput, client_address,
     device_fingerprint, sign_hosted_event,
 };
-use aimux::mobile_push_bridge::build_push_payload;
-use aimux::paths::PathResolver;
+use aimux::remote::mobile_push_bridge::build_push_payload;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};

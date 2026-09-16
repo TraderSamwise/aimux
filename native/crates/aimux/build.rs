@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=AIMUX_PACKAGE_PROFILE");
     println!("cargo:rerun-if-env-changed=AIMUX_BUILD_PROFILE");
     println!("cargo:rerun-if-env-changed=AIMUX_BUILD_VARIANT");
     println!("cargo:rerun-if-env-changed=AIMUX_RELEASE_BUILD_STAMP");

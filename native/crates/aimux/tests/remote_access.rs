@@ -1,6 +1,6 @@
 use aimux::daemon::routing::DaemonRouteUrl;
 use aimux::project_api_contract::routes as project_routes;
-use aimux::remote_access::{
+use aimux::request_actor::{
     RemoteAccessContext, RemoteActor, RemoteActorRole, RemoteOperatorGrant,
     RemoteOperatorPrincipal, assert_operator_stream_allowed, assert_remote_access_allowed,
     parse_remote_actor,
@@ -63,7 +63,7 @@ fn allow(
     query: &str,
     body: Option<&serde_json::Value>,
     project_root: Option<&str>,
-) -> aimux::remote_access::RemoteAccessDecision {
+) -> aimux::request_actor::RemoteAccessDecision {
     let full_path = format!("{path}{query}");
     let route_url = DaemonRouteUrl::parse(&full_path);
     assert_remote_access_allowed(

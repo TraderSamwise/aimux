@@ -32,12 +32,6 @@ use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, save_metadata_state,
 };
-use aimux::hosted_audit::HostedAuditStore;
-use aimux::hosted_config::HostedConfig;
-use aimux::hosted_principals::{HostedGrant, HostedPrincipalsStore};
-use aimux::hosted_server::{
-    HostedServerState, HostedStreamLimits, handle_hosted_daemon_stream_async,
-};
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::AgentInputWindowActivity;
@@ -48,17 +42,23 @@ use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
 };
 use aimux::project_service::router::ProjectServiceRequestContext;
-use aimux::relay_runner::{
+use aimux::remote::hosted_audit::HostedAuditStore;
+use aimux::remote::hosted_config::HostedConfig;
+use aimux::remote::hosted_principals::{HostedGrant, HostedPrincipalsStore};
+use aimux::remote::hosted_server::{
+    HostedServerState, HostedStreamLimits, handle_hosted_daemon_stream_async,
+};
+use aimux::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
+};
+use aimux::remote::websocket::{
+    BoxFuture, WebSocketConnectionParts, WebSocketConnector, WebSocketError, WebSocketEvent,
+    WebSocketReader, WebSocketWriter,
 };
 use aimux::runtime_topology::{
     coerce_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
 use aimux::tmux::{CapturePaneOptions, TmuxTarget};
-use aimux::websocket::{
-    BoxFuture, WebSocketConnectionParts, WebSocketConnector, WebSocketError, WebSocketEvent,
-    WebSocketReader, WebSocketWriter,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

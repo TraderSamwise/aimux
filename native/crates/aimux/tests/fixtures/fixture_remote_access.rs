@@ -1,5 +1,5 @@
 use aimux::daemon::routing::DaemonRouteUrl;
-use aimux::remote_access::{
+use aimux::request_actor::{
     RemoteAccessContext, RemoteAccessDecision, RemoteActor, RemoteActorRole, RemoteOperatorGrant,
     RemoteOperatorPrincipal, assert_operator_stream_allowed, assert_remote_access_allowed,
     parse_remote_actor,

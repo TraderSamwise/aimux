@@ -13,7 +13,7 @@ pub fn build_info() -> BuildInfo {
     BuildInfo {
         package: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),
-        profile: option_env!("AIMUX_BUILD_PROFILE").unwrap_or("native-dev"),
+        profile: embedded_package_profile(),
         variant: option_env!("AIMUX_BUILD_VARIANT").unwrap_or(
             if cfg!(feature = "remote-control") {
                 "full"
@@ -22,5 +22,16 @@ pub fn build_info() -> BuildInfo {
             },
         ),
         zero_node_cli_target: true,
+    }
+}
+
+fn embedded_package_profile() -> &'static str {
+    if let Some(profile) = option_env!("AIMUX_PACKAGE_PROFILE") {
+        return profile;
+    }
+    match option_env!("AIMUX_BUILD_PROFILE") {
+        Some("local") => "minimal",
+        Some(profile) => profile,
+        None => "native-dev",
     }
 }

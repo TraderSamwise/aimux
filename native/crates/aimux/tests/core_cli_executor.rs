@@ -565,7 +565,7 @@ fn fake_text_response(path: &str) -> String {
         concat!(
             "Aimux Versions\n",
             "  cli version: test-cli\n",
-            "  build profile: test\n",
+            "  package profile: test\n",
             "  build variant: full\n",
             "  cli launcher: /tmp/aimux\n",
             "  cli current entry: /tmp/aimux\n",

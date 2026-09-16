@@ -16,16 +16,16 @@ This section is historical. It describes the proof available when Phase 8 deleti
 
 Smoke root: `/tmp/aimux-phase8-smoke.qLJElN`
 
-Method: built `AIMUX_BUILD_PROFILE=local` from a detached clean worktree at `08f2476b`, installed with `AIMUX_INSTALL_ROOT=/tmp/aimux-phase8-smoke.qLJElN/install-root` and `AIMUX_BIN_DIR=/tmp/aimux-phase8-smoke.qLJElN/bin`, then ran the installed shim with `PATH=/tmp/aimux-phase8-smoke.qLJElN/bin:/tmp/aimux-phase8-smoke.qLJElN/tools:/usr/bin:/bin:/usr/sbin:/sbin`. That `PATH` had `tmux` available via a temp symlink and no `node`.
+Method: built the package-profile equivalent of today's `AIMUX_PACKAGE_PROFILE=minimal` from a detached clean worktree at `08f2476b`, installed with `AIMUX_INSTALL_ROOT=/tmp/aimux-phase8-smoke.qLJElN/install-root` and `AIMUX_BIN_DIR=/tmp/aimux-phase8-smoke.qLJElN/bin`, then ran the installed shim with `PATH=/tmp/aimux-phase8-smoke.qLJElN/bin:/tmp/aimux-phase8-smoke.qLJElN/tools:/usr/bin:/bin:/usr/sbin:/sbin`. That `PATH` had `tmux` available via a temp symlink and no `node`.
 
 Results:
 
 | Check | Result | Evidence |
 | --- | --- | --- |
 | `node` absent from runtime `PATH` | Pass | `nodePresentInSmokePath: false` |
-| Release install with `dist` withheld | Pass | local-profile archive installed; `find install-root -path '*/dist/*'` returned none |
+| Release install with `dist` withheld | Pass | minimal package-profile archive installed; `find install-root -path '*/dist/*'` returned none |
 | `aimux --version` | Pass | printed `phase8-smoke-08f2476b` |
-| `aimux build-info --json` | Pass | reported `profile: "local"` and `zero_node_cli_target: true` |
+| `aimux build-info --json` | Pass | reported the minimal package profile and `zero_node_cli_target: true` |
 | `aimux daemon run` | Pass | temp daemon served `/health` on isolated port `55262` |
 | Project-service startup | Pass | temp service published `metadata-api.txt` and served `/health` |
 | Hooks | Pass | POST `/hooks/codex?action=stop&sessionId=codex-smoke` returned `{}` through the temp project-service |

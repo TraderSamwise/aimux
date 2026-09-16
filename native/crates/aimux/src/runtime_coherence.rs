@@ -254,7 +254,7 @@ pub fn render_runtime_coherence_report(report: &Value) -> String {
             string_at(report, &["cliVersion"]).unwrap_or_default()
         ),
         format!(
-            "  build profile: {}",
+            "  package profile: {}",
             string_at(report, &["buildProfile"]).unwrap_or_default()
         ),
         format!(

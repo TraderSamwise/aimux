@@ -2,7 +2,7 @@
   "version": 1,
   "source": "src/version.test.ts",
   "generatedBy": "scripts/capture-version-contract.mjs",
-  "description": "Installed artifact version, build-profile label, and build-variant label precedence captured by running TypeScript version/build-profile/build-variant helpers against temporary package roots.",
+  "description": "Installed artifact version, package-profile label, legacy build-profile label, and build-variant label precedence captured by running TypeScript version/package-profile/build-variant helpers against temporary package roots.",
   "cases": [
     {
       "id": "release-version-001",
@@ -39,17 +39,17 @@
     },
     {
       "id": "release-version-004",
-      "name": "prefers the installed artifact BUILD_PROFILE label",
+      "name": "prefers the installed artifact PACKAGE_PROFILE label",
       "source": "src/version.test.ts",
-      "sourceName": "prefers the installed artifact BUILD_PROFILE label",
+      "sourceName": "prefers the installed artifact PACKAGE_PROFILE label",
       "api": "readAimuxBuildProfileFromPackageRoot",
-      "input": { "api": "readAimuxBuildProfileFromPackageRoot", "files": { "BUILD_PROFILE": "local\n" } },
-      "output": "local",
+      "input": { "api": "readAimuxBuildProfileFromPackageRoot", "files": { "PACKAGE_PROFILE": "minimal\n", "BUILD_PROFILE": "full\n" } },
+      "output": "minimal",
       "inputSha256": "eb9181b4705ab89d4aaf651ab544d1c23a5cba1535050396511b19d78a961f25"
     },
     {
       "id": "release-version-005",
-      "name": "falls back to full for source checkouts and older installs",
+      "name": "falls back to full package profile for source checkouts and older installs",
       "source": "src/version.test.ts",
       "sourceName": "falls back to full for source checkouts and older installs",
       "api": "readAimuxBuildProfileFromPackageRoot",
@@ -59,16 +59,26 @@
     },
     {
       "id": "release-version-006",
-      "name": "ignores unknown artifact labels",
+      "name": "maps legacy BUILD_PROFILE local labels to minimal",
       "source": "src/version.test.ts",
-      "sourceName": "ignores unknown artifact labels",
+      "sourceName": "maps legacy BUILD_PROFILE local labels to minimal",
       "api": "readAimuxBuildProfileFromPackageRoot",
-      "input": { "api": "readAimuxBuildProfileFromPackageRoot", "files": { "BUILD_PROFILE": "enterprise\n" } },
-      "output": "full",
+      "input": { "api": "readAimuxBuildProfileFromPackageRoot", "files": { "BUILD_PROFILE": "local\n" } },
+      "output": "minimal",
       "inputSha256": "bdbf092606d5599548d87ddf595c5b2d1abe21b45ec9cba8ead3f1ec8602f59f"
     },
     {
       "id": "release-version-007",
+      "name": "falls back to AIMUX_PACKAGE_PROFILE for source checkouts",
+      "source": "src/version.test.ts",
+      "sourceName": "falls back to AIMUX_PACKAGE_PROFILE for source checkouts",
+      "api": "readAimuxBuildProfileFromPackageRoot",
+      "input": { "api": "readAimuxBuildProfileFromPackageRoot", "envPackageProfile": "minimal", "envBuildProfile": "full", "files": {} },
+      "output": "minimal",
+      "inputSha256": "715ad5f74255f5cbf1d1fcae2979d84fe62be4f32733c4994308fdf8a8a07ac9"
+    },
+    {
+      "id": "release-version-008",
       "name": "prefers the installed artifact BUILD_VARIANT label",
       "source": "src/version.test.ts",
       "sourceName": "prefers the installed artifact BUILD_VARIANT label",
@@ -78,7 +88,7 @@
       "inputSha256": "962cf19f2abb65d7e9976b442a8409dc1417ac93436f20f8c386a8068976a05f"
     },
     {
-      "id": "release-version-008",
+      "id": "release-version-009",
       "name": "falls back to full build variant for source checkouts and older installs",
       "source": "src/version.test.ts",
       "sourceName": "falls back to full build variant for source checkouts and older installs",
@@ -88,7 +98,7 @@
       "inputSha256": "5624b36f6e591f2e7b8a30abd3ecb5c351106d837b45657f811b43fb751752d5"
     },
     {
-      "id": "release-version-009",
+      "id": "release-version-010",
       "name": "ignores unknown build variant labels",
       "source": "src/version.test.ts",
       "sourceName": "ignores unknown build variant labels",
