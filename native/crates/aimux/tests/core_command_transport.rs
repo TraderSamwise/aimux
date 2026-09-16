@@ -336,16 +336,6 @@ fn loopback_transport_reports_configured_read_timeout() {
 
     let error = execute_loopback_json_request(&request).expect_err("request must time out");
     match error {
-        CoreCommandTransportError::TransientIoExhausted {
-            operation,
-            attempts,
-            timeout_ms,
-            ..
-        } => {
-            assert_eq!(operation, "read");
-            assert!(attempts > 0);
-            assert_eq!(timeout_ms, 20);
-        }
         CoreCommandTransportError::Timeout { timeout_ms } => assert_eq!(timeout_ms, 20),
         other => panic!("request should report the configured read bound, got {other}"),
     }

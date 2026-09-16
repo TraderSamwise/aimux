@@ -1063,8 +1063,7 @@ fn loop_done_returns_promptly_when_runtime_event_stalls_after_durable_state_writ
         text_body(&done)
     );
     assert!(
-        text_body(&done).contains("daemon loopback read retried transient error")
-            && text_body(&done).contains("over 500ms"),
+        text_body(&done).contains("request timed out after 500ms"),
         "body: {}",
         text_body(&done)
     );

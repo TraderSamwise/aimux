@@ -942,6 +942,7 @@ fn post_restart_daemon_verify_error_is_retryable(error: &CoreCommandTransportErr
     matches!(
         error,
         CoreCommandTransportError::TransientIoExhausted { .. }
+            | CoreCommandTransportError::Timeout { .. }
     )
 }
 
@@ -1693,10 +1694,20 @@ fn loop_self_report_recorded_error(
     error: impl std::fmt::Display,
     spool_path: impl AsRef<Path>,
 ) -> String {
+    let error = error.to_string();
+    let recovery = if loop_self_report_delivery_error_suggests_busy_daemon(&error) {
+        "The daemon may still be healthy but too busy to answer this request; aimux will replay pending loop self-reports on the next loop self-report attempt."
+    } else {
+        "Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt."
+    };
     format!(
-        "loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at {}: {error}. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt.",
-        spool_path.as_ref().display()
+        "loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at {}: {error}. {recovery}",
+        spool_path.as_ref().display(),
     )
+}
+
+fn loop_self_report_delivery_error_suggests_busy_daemon(error: &str) -> bool {
+    error.contains("request timed out after")
 }
 
 fn loop_self_report_record_failure_error(
@@ -2492,6 +2503,36 @@ mod tests {
             ),
             "{error}"
         );
+    }
+
+    #[test]
+    fn post_restart_daemon_verify_waits_through_loopback_timeouts_until_success() {
+        let attempts = RefCell::new(0);
+        let sleeps = RefCell::new(0);
+        let elapsed_ms = RefCell::new(0_u64);
+
+        let health = request_restarted_daemon_health_until_ready(
+            30_000,
+            || {
+                let mut attempts = attempts.borrow_mut();
+                *attempts += 1;
+                if *attempts <= 2 {
+                    Err(CoreCommandTransportError::Timeout { timeout_ms: 2_500 })
+                } else {
+                    Ok(json!({ "pid": 42, "serviceInfo": { "buildStamp": "ok" } }))
+                }
+            },
+            || {
+                *sleeps.borrow_mut() += 1;
+                *elapsed_ms.borrow_mut() += 2_500;
+            },
+            || *elapsed_ms.borrow(),
+        )
+        .expect("post-restart health timeouts should be allowed to settle");
+
+        assert_eq!(health["pid"], json!(42));
+        assert_eq!(*attempts.borrow(), 3);
+        assert_eq!(*sleeps.borrow(), 2);
     }
 
     #[test]
