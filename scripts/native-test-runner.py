@@ -37,6 +37,7 @@ DEFAULT_NATIVE_TEST_LOCK_STALE_MS = 30 * 60 * 1_000
 DEFAULT_NATIVE_TEST_WAIT_LOG_MS = 10_000
 DEFAULT_NATIVE_TEST_WAIT_TIMEOUT_MS = 60 * 60 * 1_000
 NATIVE_TEST_HEARTBEAT_MS = 5_000
+MACHINE_NATIVE_TEST_LOCKS_DIR = Path("/tmp/aimux-native-test-locks")
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,10 @@ def aimux_home() -> Path:
     return Path(os.environ.get("AIMUX_HOME") or (Path.home() / ".aimux"))
 
 
+def native_test_locks_dir() -> Path:
+    return MACHINE_NATIVE_TEST_LOCKS_DIR
+
+
 @contextlib.contextmanager
 def native_test_slot(label: str = "native:test") -> Iterator[NativeTestSlot]:
     slot = acquire_native_test_slot(label)
@@ -119,8 +124,8 @@ def native_test_slot(label: str = "native:test") -> Iterator[NativeTestSlot]:
 
 def acquire_native_test_slot(label: str = "native:test") -> NativeTestSlot:
     jobs = native_test_jobs()
-    locks_dir = aimux_home() / "locks"
-    locks_dir.mkdir(parents=True, exist_ok=True)
+    locks_dir = native_test_locks_dir()
+    locks_dir.mkdir(mode=0o777, parents=True, exist_ok=True)
     started = time.monotonic()
     next_log = started
     wait_log_ms = int(
@@ -168,23 +173,22 @@ def acquire_native_test_slot(label: str = "native:test") -> NativeTestSlot:
 
 def touch_native_test_slot(slot: NativeTestSlot, label: str) -> None:
     owner = read_native_test_slot_owner(slot.path)
-    if owner.get("token") != slot.token:
+    if not owner or owner.get("token") != slot.token:
         return
     write_native_test_slot_owner(slot.path, slot.token, label)
 
 
 def release_native_test_slot(slot: NativeTestSlot) -> None:
     owner = read_native_test_slot_owner(slot.path)
-    if owner.get("token") == slot.token:
+    if owner and owner.get("token") == slot.token:
         shutil.rmtree(slot.path, ignore_errors=True)
 
 
 def reclaim_native_test_slot_if_stale(slot_path: Path, stale_ms: int) -> None:
     owner = read_native_test_slot_owner(slot_path)
-    pid = owner.get("pid")
+    pid = owner.get("pid") if owner else None
     pid_is_dead = isinstance(pid, int) and not pid_alive(pid)
-    stale = native_test_slot_age_ms(slot_path) > stale_ms
-    if not pid_is_dead and not stale:
+    if not pid_is_dead:
         return
 
     steal_path = slot_path.with_name(f"{slot_path.name}.steal")
@@ -201,10 +205,9 @@ def reclaim_native_test_slot_if_stale(slot_path: Path, stale_ms: int) -> None:
 
     try:
         current_owner = read_native_test_slot_owner(slot_path)
-        current_pid = current_owner.get("pid")
+        current_pid = current_owner.get("pid") if current_owner else None
         current_pid_is_dead = isinstance(current_pid, int) and not pid_alive(current_pid)
-        current_stale = native_test_slot_age_ms(slot_path) > stale_ms
-        if current_pid_is_dead or current_stale:
+        if current_pid_is_dead:
             shutil.rmtree(slot_path, ignore_errors=True)
             print(
                 "[aimux] reclaimed stale native test lock "
@@ -232,11 +235,11 @@ def write_native_test_slot_owner(slot_path: Path, token: str, label: str) -> Non
     os.utime(slot_path, None)
 
 
-def read_native_test_slot_owner(slot_path: Path) -> dict:
+def read_native_test_slot_owner(slot_path: Path) -> dict | None:
     try:
         return json.loads((slot_path / "owner.json").read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
+        return None
 
 
 def pid_alive(pid: int) -> bool:
@@ -274,8 +277,8 @@ def native_test_slot_summary(locks_dir: Path, jobs: int) -> str:
         if not slot_path.exists():
             continue
         owner = read_native_test_slot_owner(slot_path)
-        pid = owner.get("pid", "unknown")
-        label = owner.get("label", "unknown")
+        pid = owner.get("pid", "unknown") if owner else "unreadable"
+        label = owner.get("label", "unknown") if owner else "unreadable"
         owners.append(
             f"slot {slot}: pid={pid} label={label} "
             f"age={format_ms(native_test_slot_age_ms(slot_path))}"

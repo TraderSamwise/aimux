@@ -44,7 +44,13 @@ case "$BUILD_PROFILE" in
   full | local) ;;
   *) printf 'Unsupported AIMUX_BUILD_PROFILE: %s\n' "$BUILD_PROFILE" >&2; exit 1 ;;
 esac
+BUILD_VARIANT="${AIMUX_BUILD_VARIANT:-full}"
+case "$BUILD_VARIANT" in
+  full | lite) ;;
+  *) printf 'Unsupported AIMUX_BUILD_VARIANT: %s\n' "$BUILD_VARIANT" >&2; exit 1 ;;
+esac
 export AIMUX_BUILD_PROFILE="$BUILD_PROFILE"
+export AIMUX_BUILD_VARIANT="$BUILD_VARIANT"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-"$ROOT_DIR/native/target"}"
 if [ "$BUILD_PROFILE" = "full" ]; then
@@ -82,7 +88,11 @@ if [ "$PLATFORM" != "$HOST_PLATFORM" ] || [ "$ARCH" != "$HOST_ARCH" ]; then
     "$HOST_PLATFORM" "$HOST_ARCH" "$PLATFORM" "$ARCH" >&2
   exit 1
 fi
-ASSET="aimux-${PLATFORM}-${ARCH}.tar.gz"
+if [ "$BUILD_VARIANT" = "lite" ]; then
+  ASSET="aimux-lite-${PLATFORM}-${ARCH}.tar.gz"
+else
+  ASSET="aimux-${PLATFORM}-${ARCH}.tar.gz"
+fi
 OUT_DIR="${AIMUX_RELEASE_DIR:-"$ROOT_DIR/release"}"
 TMP_DIR="$(mktemp -d)"
 
@@ -123,7 +133,7 @@ release_build_stamp() {
     exit 1
   fi
   suffix="$(
-    printf '%s:%s:%s:%s:%s\n' "$generation" "$$" "$RANDOM" "$BUILD_PROFILE" "$source_hash" \
+    printf '%s:%s:%s:%s:%s:%s\n' "$generation" "$$" "$RANDOM" "$BUILD_PROFILE" "$BUILD_VARIANT" "$source_hash" \
       | shasum -a 1 \
       | awk '{ print substr($1, 1, 12) }'
   )"
@@ -133,7 +143,11 @@ release_build_stamp() {
 BUILD_STAMP="$(release_build_stamp)"
 export AIMUX_RELEASE_BUILD_STAMP="$BUILD_STAMP"
 
-cargo build --manifest-path native/Cargo.toml -p aimux --release
+if [ "$BUILD_VARIANT" = "lite" ]; then
+  cargo build --manifest-path native/Cargo.toml -p aimux --release --no-default-features
+else
+  cargo build --manifest-path native/Cargo.toml -p aimux --release
+fi
 NATIVE_BUILD_ARTIFACT="$CARGO_TARGET_ROOT/release/aimux"
 
 PKG_DIR="$TMP_DIR/aimux"
@@ -153,6 +167,7 @@ cp scripts/cargo-sweep-stale-targets.sh scripts/install-cargo-sweep-schedule.sh 
   "$PKG_DIR/scripts/"
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 printf '%s\n' "$BUILD_PROFILE" > "$PKG_DIR/BUILD_PROFILE"
+printf '%s\n' "$BUILD_VARIANT" > "$PKG_DIR/BUILD_VARIANT"
 
 NATIVE_ARTIFACT="$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
 printf '%s\n' "$BUILD_STAMP" > "$PKG_DIR/BUILD_STAMP"

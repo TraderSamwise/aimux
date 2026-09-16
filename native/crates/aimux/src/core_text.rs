@@ -20,11 +20,12 @@ pub use collaboration::{
 };
 pub use worktrees::{
     render_core_graveyard_agent_lines, render_core_graveyard_cleanup_lines,
-    render_core_graveyard_lines, render_core_work_outline_entries_lines,
-    render_core_worktree_cache_cleanup_lines, render_core_worktree_create_lines,
-    render_core_worktree_delete_graveyard_lines, render_core_worktree_graveyard_lines,
-    render_core_worktree_list_lines, render_core_worktree_prune_lines,
-    render_core_worktree_remove_lines, render_core_worktree_resurrect_lines,
+    render_core_graveyard_lines, render_core_graveyard_reap_dead_lines,
+    render_core_work_outline_entries_lines, render_core_worktree_cache_cleanup_lines,
+    render_core_worktree_create_lines, render_core_worktree_delete_graveyard_lines,
+    render_core_worktree_graveyard_lines, render_core_worktree_list_lines,
+    render_core_worktree_prune_lines, render_core_worktree_remove_lines,
+    render_core_worktree_resurrect_lines,
 };
 
 fn field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {

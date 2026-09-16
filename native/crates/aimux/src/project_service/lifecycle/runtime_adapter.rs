@@ -4,7 +4,7 @@ use crate::backend_session_ids::{
 };
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
-    AIMUX_TMUX_SOCKET_PATH_ENV, CapturePaneOptions, TmuxRuntimeManager, TmuxTarget,
+    AIMUX_TMUX_SOCKET_PATH_ENV, CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo,
     clear_history_argv, kill_window_argv, new_window_argv, rename_window_argv,
     set_window_option_argv, tmux_command_from_env,
 };
@@ -16,6 +16,12 @@ use tokio::process::Command as TokioCommand;
 
 const LIFECYCLE_SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedPullRequestWorktree {
+    pub branch: String,
+    pub head_oid: String,
+}
+
 pub trait ProjectLifecycleRuntime {
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String>;
     fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String>;
@@ -26,6 +32,23 @@ pub trait ProjectLifecycleRuntime {
         name: &str,
         target_path: &str,
     ) -> Result<(), String>;
+    fn prepare_pull_request_worktree(
+        &mut self,
+        main_repo: &str,
+        name: &str,
+        pr: u64,
+    ) -> Result<PreparedPullRequestWorktree, String> {
+        let _ = (main_repo, name, pr);
+        Err("pull request worktree creation is not supported by this runtime".into())
+    }
+    fn create_worktree_from_branch(
+        &mut self,
+        main_repo: &str,
+        branch: &str,
+        target_path: &str,
+    ) -> Result<(), String> {
+        self.create_worktree(main_repo, branch, target_path)
+    }
     fn create_window(
         &mut self,
         session_name: &str,
@@ -39,6 +62,10 @@ pub trait ProjectLifecycleRuntime {
     fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String>;
     fn clear_history(&mut self, window_id: &str) -> Result<(), String>;
     fn has_window(&mut self, target: &TmuxTarget) -> bool;
+    fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
+        let _ = session_name;
+        Err("tmux runtime does not support verified window listing".into())
+    }
     fn capture_window(&mut self, target: &TmuxTarget) -> Option<String> {
         let _ = target;
         None
@@ -121,6 +148,24 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
         create_git_worktree(main_repo, name, target_path)
     }
 
+    fn prepare_pull_request_worktree(
+        &mut self,
+        main_repo: &str,
+        name: &str,
+        pr: u64,
+    ) -> Result<PreparedPullRequestWorktree, String> {
+        prepare_git_pull_request_worktree(main_repo, name, pr)
+    }
+
+    fn create_worktree_from_branch(
+        &mut self,
+        main_repo: &str,
+        branch: &str,
+        target_path: &str,
+    ) -> Result<(), String> {
+        create_git_worktree_from_branch(main_repo, branch, target_path)
+    }
+
     fn create_window(
         &mut self,
         session_name: &str,
@@ -158,6 +203,10 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
 
     fn has_window(&mut self, target: &TmuxTarget) -> bool {
         TmuxRuntimeManager::new().has_window(target)
+    }
+
+    fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
+        TmuxRuntimeManager::new().list_windows(session_name)
     }
 
     fn capture_window(&mut self, target: &TmuxTarget) -> Option<String> {
@@ -444,6 +493,285 @@ fn create_git_worktree(main_repo: &str, name: &str, target_path: &str) -> Result
             format!("git worktree add exited for {target_path}"),
         )
     }
+}
+
+fn create_git_worktree_from_branch(
+    main_repo: &str,
+    branch: &str,
+    target_path: &str,
+) -> Result<(), String> {
+    run_git_argv(
+        main_repo,
+        &["worktree", "add", target_path, branch],
+        format!("git worktree add exited for {target_path}"),
+    )
+}
+
+fn prepare_git_pull_request_worktree(
+    main_repo: &str,
+    name: &str,
+    pr: u64,
+) -> Result<PreparedPullRequestWorktree, String> {
+    ensure_origin_remote(main_repo)?;
+    let pr_info = github_pull_request_info(main_repo, pr)?;
+    if pr_info.state != "OPEN" {
+        return Err(format!(
+            "Pull request #{pr} is {}; only open pull requests can be checked out",
+            pr_info.state
+        ));
+    }
+    if pr_info.head_oid.trim().is_empty() {
+        return Err(format!("Pull request #{pr} did not include a head commit"));
+    }
+
+    let branch = pull_request_branch_name(pr, name);
+    let storage_ref = pull_request_storage_ref(pr, name);
+    let refspec = format!("refs/pull/{pr}/head:{storage_ref}");
+    run_git_argv(
+        main_repo,
+        &["fetch", "--no-tags", "origin", &refspec],
+        format!("git fetch failed for pull request #{pr}"),
+    )
+    .map_err(|error| classify_git_pr_fetch_error(pr, error))?;
+
+    let fetched_oid = git_ref_oid(main_repo, &storage_ref).map_err(|error| {
+        format!("Fetched pull request #{pr}, but could not read {storage_ref}: {error}")
+    })?;
+    if fetched_oid != pr_info.head_oid {
+        return Err(format!(
+            "Fetched pull request #{pr} head {fetched_oid} did not match GitHub head {}",
+            pr_info.head_oid
+        ));
+    }
+
+    ensure_local_pull_request_branch(main_repo, &branch, &storage_ref, &fetched_oid, pr)?;
+    Ok(PreparedPullRequestWorktree {
+        branch,
+        head_oid: fetched_oid,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubPullRequestInfo {
+    state: String,
+    head_oid: String,
+}
+
+fn github_pull_request_info(main_repo: &str, pr: u64) -> Result<GithubPullRequestInfo, String> {
+    let output = run_gh_pr_view(
+        main_repo,
+        &["pr", "view", &pr.to_string(), "--json", "state,headRefOid"],
+        format!("gh pr view failed for pull request #{pr}"),
+    )
+    .map_err(|error| classify_gh_pr_view_error(pr, error))?;
+    let json: Value = serde_json::from_str(&output)
+        .map_err(|error| format!("gh returned invalid JSON for pull request #{pr}: {error}"))?;
+    let state = json
+        .get("state")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("gh response for pull request #{pr} omitted state"))?;
+    let head_oid = json
+        .get("headRefOid")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("gh response for pull request #{pr} omitted headRefOid"))?;
+    Ok(GithubPullRequestInfo {
+        state: state.to_owned(),
+        head_oid: head_oid.to_owned(),
+    })
+}
+
+fn ensure_origin_remote(main_repo: &str) -> Result<(), String> {
+    run_git_argv_output(
+        main_repo,
+        &["remote", "get-url", "origin"],
+        "git remote origin is required to resolve pull requests".to_owned(),
+    )
+    .map(|_| ())
+    .map_err(|error| format!("Git remote \"origin\" is required to resolve pull requests: {error}"))
+}
+
+fn ensure_local_pull_request_branch(
+    main_repo: &str,
+    branch: &str,
+    storage_ref: &str,
+    fetched_oid: &str,
+    pr: u64,
+) -> Result<(), String> {
+    if branch_exists_in_repo(main_repo, branch) {
+        if let Some(path) = branch_checkout_path(main_repo, branch)? {
+            return Err(format!(
+                "Local branch \"{branch}\" is already checked out at {path}"
+            ));
+        }
+        let existing_oid = git_ref_oid(main_repo, &format!("refs/heads/{branch}"))?;
+        if existing_oid != fetched_oid {
+            return Err(format!(
+                "Local branch \"{branch}\" already exists at {existing_oid}, but pull request #{pr} head is {fetched_oid}"
+            ));
+        }
+        return Ok(());
+    }
+    run_git_argv(
+        main_repo,
+        &["branch", branch, storage_ref],
+        format!("git branch failed for pull request #{pr}"),
+    )
+}
+
+fn branch_checkout_path(main_repo: &str, branch: &str) -> Result<Option<String>, String> {
+    let output = run_git_argv_output(
+        main_repo,
+        &["worktree", "list", "--porcelain"],
+        "git worktree list failed while checking branch ownership".to_owned(),
+    )?;
+    let expected_branch = format!("refs/heads/{branch}");
+    let mut current_path: Option<String> = None;
+    for line in output.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            current_path = Some(path.to_owned());
+            continue;
+        }
+        if let Some(found_branch) = line.strip_prefix("branch ") {
+            if found_branch == expected_branch {
+                return Ok(current_path);
+            }
+            continue;
+        }
+        if line.trim().is_empty() {
+            current_path = None;
+        }
+    }
+    Ok(None)
+}
+
+fn git_ref_oid(main_repo: &str, reference: &str) -> Result<String, String> {
+    run_git_argv_output(
+        main_repo,
+        &["rev-parse", reference],
+        format!("git rev-parse failed for {reference}"),
+    )
+    .map(|output| output.trim().to_owned())
+}
+
+fn pull_request_branch_name(pr: u64, name: &str) -> String {
+    format!("aimux/pr-{pr}/{}", sanitize_ref_component(name))
+}
+
+fn pull_request_storage_ref(pr: u64, name: &str) -> String {
+    format!("refs/aimux/pr/{pr}/{}", sanitize_ref_component(name))
+}
+
+fn sanitize_ref_component(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_was_dash = false;
+    for character in value.chars() {
+        let allowed = character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-');
+        let next = if allowed { character } else { '-' };
+        if next == '-' {
+            if last_was_dash {
+                continue;
+            }
+            last_was_dash = true;
+        } else {
+            last_was_dash = false;
+        }
+        output.push(next);
+    }
+    let trimmed = output
+        .trim_matches(|character| matches!(character, '.' | '-' | '/'))
+        .replace("..", "-");
+    if trimmed.is_empty() || trimmed.ends_with(".lock") {
+        "worktree".into()
+    } else {
+        trimmed
+    }
+}
+
+fn run_gh_pr_view(cwd: &str, argv: &[&str], fallback_error: String) -> Result<String, String> {
+    match gh_command(cwd).args(argv).output() {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if stderr.is_empty() {
+                Err(fallback_error)
+            } else {
+                Err(stderr)
+            }
+        }
+        Err(error) => Err(format!("{fallback_error}: {error}")),
+    }
+}
+
+fn gh_command(cwd: &str) -> AsyncCommand {
+    let mut command = AsyncCommand::new("gh");
+    command.current_dir(cwd);
+    for key in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(key);
+    }
+    command
+}
+
+fn classify_gh_pr_view_error(pr: u64, error: String) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("no such file") || (lower.contains("not found") && lower.contains("gh")) {
+        return format!("GitHub CLI `gh` is required to resolve pull request #{pr}: {error}");
+    }
+    if lower.contains("authentication")
+        || lower.contains("authenticate")
+        || lower.contains("authorization")
+        || lower.contains("login")
+        || lower.contains("oauth")
+    {
+        return format!("GitHub authentication is required to resolve pull request #{pr}: {error}");
+    }
+    if lower.contains("could not resolve host")
+        || lower.contains("network")
+        || lower.contains("timed out")
+        || lower.contains("connection")
+    {
+        return format!("Network error while resolving pull request #{pr}: {error}");
+    }
+    if lower.contains("not found")
+        || lower.contains("could not resolve")
+        || lower.contains("no pull requests found")
+    {
+        return format!("Pull request #{pr} was not found: {error}");
+    }
+    format!("Failed to resolve pull request #{pr}: {error}")
+}
+
+fn classify_git_pr_fetch_error(pr: u64, error: String) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("couldn't find remote ref") || lower.contains("could not find remote ref") {
+        return format!(
+            "Pull request #{pr} was not found while fetching refs/pull/{pr}/head: {error}"
+        );
+    }
+    if lower.contains("could not resolve host")
+        || lower.contains("network")
+        || lower.contains("timed out")
+        || lower.contains("connection")
+    {
+        return format!("Network error while fetching pull request #{pr}: {error}");
+    }
+    if lower.contains("authentication")
+        || lower.contains("permission denied")
+        || lower.contains("could not read username")
+        || lower.contains("repository not found")
+    {
+        return format!("GitHub authentication is required to fetch pull request #{pr}: {error}");
+    }
+    format!("Failed to fetch pull request #{pr}: {error}")
 }
 
 fn branch_exists_in_repo(cwd: &str, branch: &str) -> bool {

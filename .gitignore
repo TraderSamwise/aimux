@@ -12,6 +12,7 @@ src-tauri/target/
 native/target/
 native/darwin/aimux-notifier.app/
 scripts/__pycache__/
+app/perf/generated/
 
 # Secrets and local env
 .env

@@ -533,6 +533,7 @@ fn fake_text_response(path: &str) -> String {
             "Aimux Versions\n",
             "  cli version: test-cli\n",
             "  build profile: test\n",
+            "  build variant: full\n",
             "  cli launcher: /tmp/aimux\n",
             "  cli current entry: /tmp/aimux\n",
             "  cli stable shim: /tmp/stable/aimux\n",
@@ -2830,6 +2831,17 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
         &args(&["worktree", "create", "feature", "--project=/repo"]),
         &mut runtime,
     );
+    let create_pr = run_core_cli_with(
+        &args(&[
+            "worktree",
+            "create",
+            "review-123",
+            "--project=/repo",
+            "--pr",
+            "123",
+        ]),
+        &mut runtime,
+    );
     let cleanup = run_core_cli_with(
         &args(&[
             "worktree",
@@ -2870,6 +2882,10 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
         &args(&["graveyard", "send", "claude-1", "--project=/repo", "--json"]),
         &mut runtime,
     );
+    let graveyard_reap_dead = run_core_cli_with(
+        &args(&["graveyard", "reap-dead", "codex-dead", "--project=/repo"]),
+        &mut runtime,
+    );
     let graveyard_resurrect = run_core_cli_with(
         &args(&["graveyard", "resurrect", "claude-1", "--project=/repo"]),
         &mut runtime,
@@ -2882,6 +2898,7 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
     for execution in [
         list,
         create,
+        create_pr,
         cleanup,
         remove,
         graveyard_worktree,
@@ -2889,6 +2906,7 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
         delete_worktree,
         graveyard_list,
         graveyard_send,
+        graveyard_reap_dead,
         graveyard_resurrect,
         graveyard_cleanup,
     ] {
@@ -2904,6 +2922,10 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
             (
                 "/core/worktree/create-text".into(),
                 Some(json!({ "project": "/repo", "name": "feature" })),
+            ),
+            (
+                "/core/worktree/create-text".into(),
+                Some(json!({ "project": "/repo", "name": "review-123", "pr": 123 })),
             ),
             (
                 "/core/worktree/cache-cleanup-text?json=1".into(),
@@ -2933,6 +2955,10 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
             (
                 "/core/graveyard/send-text?json=1".into(),
                 Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+            ),
+            (
+                "/core/graveyard/reap-dead-text".into(),
+                Some(json!({ "project": "/repo", "sessionId": "codex-dead" })),
             ),
             (
                 "/core/graveyard/resurrect-text".into(),

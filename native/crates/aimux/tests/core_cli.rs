@@ -1252,6 +1252,19 @@ fn worktree_and_graveyard_commands_plan_native_text_routes() {
             body: Some(json!({ "project": "/repo", "name": "feature" })),
         }
     );
+    let create_pr = classify_core_cli(
+        &["worktree", "create", "review-123", "--pr", "123"],
+        &context(true, true),
+    )
+    .expect("worktree create pr plan");
+    assert_eq!(create_pr.operation, CoreCliOperation::WorktreeCreate);
+    assert_eq!(
+        create_pr.action,
+        CoreCliAction::TextRoute {
+            path: "/core/worktree/create-text".into(),
+            body: Some(json!({ "project": "/repo", "name": "review-123", "pr": 123 })),
+        }
+    );
 
     let prune = classify_core_cli(
         &[
@@ -1354,6 +1367,33 @@ fn worktree_and_graveyard_commands_plan_native_text_routes() {
         CoreCliAction::TextRoute {
             path: "/core/graveyard/send-text".into(),
             body: Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+        }
+    );
+
+    let reap_dead = classify_core_cli(
+        &["graveyard", "reap-dead", "codex-dead", "--project=/repo"],
+        &context(true, true),
+    )
+    .expect("graveyard reap-dead plan");
+    assert_eq!(reap_dead.operation, CoreCliOperation::GraveyardReapDead);
+    assert_eq!(
+        reap_dead.action,
+        CoreCliAction::TextRoute {
+            path: "/core/graveyard/reap-dead-text".into(),
+            body: Some(json!({ "project": "/repo", "sessionId": "codex-dead" })),
+        }
+    );
+
+    let reap_dead_all = classify_core_cli(
+        &["graveyard", "reap-dead", "--project=/repo", "--json"],
+        &context(true, true),
+    )
+    .expect("graveyard reap-dead all plan");
+    assert_eq!(
+        reap_dead_all.action,
+        CoreCliAction::TextRoute {
+            path: "/core/graveyard/reap-dead-text?json=1".into(),
+            body: Some(json!({ "project": "/repo" })),
         }
     );
 

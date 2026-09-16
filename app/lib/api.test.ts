@@ -63,6 +63,7 @@ import {
   removeShareParticipant,
   revokeShareInvite,
   putPlan,
+  reapDeadGraveyardAgents,
   reopenTask,
   requestReviewChanges,
   refreshStatusline,
@@ -823,6 +824,7 @@ describe("api relay routing", () => {
       currentClientSession: "client-1",
       currentWindowId: "@7",
     });
+    await reapDeadGraveyardAgents(endpoint, { sessionId: "codex-dead" });
     await cleanupGraveyard(endpoint, { dryRun: true });
     await listPendingInteractions(endpoint, "agent-1");
     await respondToInteraction(endpoint, { id: "interaction-1", response: { approved: true } });
@@ -918,6 +920,11 @@ describe("api relay routing", () => {
         method: "GET",
         path: "/proxy/127.0.0.1/43210/control/switchable-agents?currentClientSession=client-1&currentWindowId=%407",
         payload: undefined,
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/graveyard/reap-dead-agents",
+        payload: { sessionId: "codex-dead" },
       },
       {
         method: "POST",

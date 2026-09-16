@@ -48,7 +48,9 @@ pub(crate) use restore_snapshot::{
 };
 #[cfg(test)]
 pub(crate) use runtime_adapter::AsyncProjectLifecycleRuntime;
-pub use runtime_adapter::{ProjectLifecycleRuntime, SystemProjectLifecycleRuntime};
+pub use runtime_adapter::{
+    PreparedPullRequestWorktree, ProjectLifecycleRuntime, SystemProjectLifecycleRuntime,
+};
 use services::*;
 use session_state::*;
 use teammates::*;
@@ -257,6 +259,9 @@ fn route_lifecycle_request_unqueued(
         routes::services::REMOVE => Some(route_service_remove(context, body, runtime)),
         routes::graveyard_actions::RESURRECT_AGENT => {
             Some(route_graveyard_agent_resurrect(context, body))
+        }
+        routes::graveyard_actions::REAP_DEAD_AGENTS => {
+            Some(route_graveyard_reap_dead_agents(context, body, runtime))
         }
         routes::worktree_actions::CREATE => Some(route_worktree_create(context, body, runtime)),
         routes::worktree_actions::CACHE_CLEANUP => {

@@ -39,6 +39,10 @@ fn keeps_shared_tui_app_screen_routes_stable() {
         routes::graveyard_actions::RESURRECT_WORKTREE,
         "/graveyard/worktrees/resurrect"
     );
+    assert_eq!(
+        routes::graveyard_actions::REAP_DEAD_AGENTS,
+        "/graveyard/reap-dead-agents"
+    );
     assert_eq!(routes::live_pane::OUTPUT, "/live-pane/output");
     assert_eq!(routes::live_pane::INPUT, "/live-pane/input");
     assert_eq!(routes::live_pane::INTERRUPT, "/live-pane/interrupt");

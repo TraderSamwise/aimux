@@ -18,7 +18,8 @@ use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
 
 use super::json_helpers::*;
 use super::runtime_adapter::{
-    ProjectLifecycleRuntime, prune_git_worktrees, remove_git_worktree_checkout,
+    PreparedPullRequestWorktree, ProjectLifecycleRuntime, prune_git_worktrees,
+    remove_git_worktree_checkout,
 };
 use super::{
     LIVE_STATUSES, ensure_rig, json_error, lifecycle_response, live_window_id_for_service,
@@ -160,31 +161,83 @@ pub(super) fn route_worktree_create(
         );
         return json_error(500, message);
     }
+    if Path::new(&target_path).exists() {
+        let message = format!("Worktree \"{name}\" already exists at {target_path}");
+        record_worktree_operation_failure(
+            &project_state_dir,
+            "create",
+            format!("Failed to create worktree \"{name}\""),
+            message.clone(),
+            &target_path,
+            Some(&name),
+        );
+        return json_error(500, message);
+    }
     clear_worktree_operation_failure(&project_state_dir, "create", &target_path);
+    let pr = match pull_request_number_from_body(body) {
+        Ok(pr) => pr,
+        Err(error) => return json_error(400, error),
+    };
+    let prepared_pr = match pr {
+        Some(pr) => match runtime.prepare_pull_request_worktree(&main_repo, &name, pr) {
+            Ok(prepared) => Some((pr, prepared)),
+            Err(error) => {
+                record_worktree_operation_failure(
+                    &project_state_dir,
+                    "create",
+                    format!("Failed to create worktree \"{name}\" from pull request #{pr}"),
+                    error.clone(),
+                    &target_path,
+                    Some(&name),
+                );
+                return json_error(500, error);
+            }
+        },
+        None => None,
+    };
     let created_at = now_iso();
+    let branch = prepared_pr
+        .as_ref()
+        .map(|(_, prepared)| prepared.branch.as_str())
+        .unwrap_or(&name);
     let topology_input = WorktreeCreateTopologyInput {
         project_state_dir: &project_state_dir,
         project_root: &project_root,
         main_repo: &main_repo,
         name: &name,
+        branch,
         target_path: &target_path,
         created_at: &created_at,
     };
     if let Err(error) = upsert_created_worktree_topology(&topology_input, "creating", None) {
         return json_error(500, error);
     }
-    match runtime.create_worktree(&main_repo, &name, &target_path) {
+    let create_result = match &prepared_pr {
+        Some((_, PreparedPullRequestWorktree { branch, .. })) => {
+            runtime.create_worktree_from_branch(&main_repo, branch, &target_path)
+        }
+        None => runtime.create_worktree(&main_repo, &name, &target_path),
+    };
+    match create_result {
         Ok(()) => {
             if let Err(error) = upsert_created_worktree_topology(&topology_input, "active", None) {
                 return json_error(500, error);
             }
             clear_worktree_operation_failure(&project_state_dir, "create", &target_path);
-            lifecycle_response(
-                json!({ "path": target_path, "status": "created" }),
-                "worktree.create",
-                "worktree",
-                Some(&target_path),
-            )
+            let mut payload = json!({
+                "path": target_path.clone(),
+                "status": "created",
+                "branch": branch,
+            });
+            if let Some((pr, prepared)) = &prepared_pr {
+                object_insert_mut(&mut payload, "pr", json!(pr));
+                object_insert_mut(
+                    &mut payload,
+                    "headOid",
+                    Value::String(prepared.head_oid.clone()),
+                );
+            }
+            lifecycle_response(payload, "worktree.create", "worktree", Some(&target_path))
         }
         Err(error) => {
             let _ = upsert_created_worktree_topology(&topology_input, "error", Some(&error));
@@ -199,6 +252,32 @@ pub(super) fn route_worktree_create(
             json_error(500, error)
         }
     }
+}
+
+fn pull_request_number_from_body(body: &Value) -> Result<Option<u64>, String> {
+    let Some(value) = body.get("pr") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let number = if let Some(number) = value.as_u64() {
+        number
+    } else if let Some(text) = value.as_str() {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        trimmed
+            .parse::<u64>()
+            .map_err(|_| "pr must be a positive pull request number".to_owned())?
+    } else {
+        return Err("pr must be a positive pull request number".into());
+    };
+    if number == 0 {
+        return Err("pr must be a positive pull request number".into());
+    }
+    Ok(Some(number))
 }
 
 pub(super) fn route_worktree_cache_cleanup(
@@ -648,6 +727,7 @@ pub(super) struct WorktreeCreateTopologyInput<'a> {
     pub(super) project_root: &'a str,
     pub(super) main_repo: &'a str,
     pub(super) name: &'a str,
+    pub(super) branch: &'a str,
     pub(super) target_path: &'a str,
     pub(super) created_at: &'a str,
 }
@@ -667,7 +747,7 @@ pub(super) fn upsert_created_worktree_topology(
                 "rigId": rig_id,
                 "path": input.target_path,
                 "name": input.name,
-                "branch": input.name,
+                "branch": input.branch,
                 "status": status,
                 "createdAt": input.created_at,
                 "updatedAt": now,

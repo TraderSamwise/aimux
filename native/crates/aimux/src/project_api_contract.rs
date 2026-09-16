@@ -107,6 +107,7 @@ pub mod routes {
 
     pub mod graveyard_actions {
         pub const RESURRECT_AGENT: &str = "/graveyard/resurrect";
+        pub const REAP_DEAD_AGENTS: &str = "/graveyard/reap-dead-agents";
         pub const RESURRECT_WORKTREE: &str = "/graveyard/worktrees/resurrect";
         pub const DELETE_WORKTREE: &str = "/graveyard/worktrees/delete";
         pub const CLEANUP: &str = "/graveyard/cleanup";
@@ -349,7 +350,8 @@ pub fn project_api_views_for_mutation_route(
         | agents::RESUME_TEAMMATE
         | agents::KILL_TEAMMATE
         | agents::RESURRECT_TEAMMATE
-        | graveyard_actions::RESURRECT_AGENT => invalidations::AGENT_LIFECYCLE,
+        | graveyard_actions::RESURRECT_AGENT
+        | graveyard_actions::REAP_DEAD_AGENTS => invalidations::AGENT_LIFECYCLE,
 
         services::CREATE | services::STOP | services::RESUME | services::REMOVE => {
             invalidations::SERVICE_LIFECYCLE
@@ -477,6 +479,7 @@ pub fn collect_project_api_routes() -> Vec<&'static str> {
         worktree_actions::REMOVE,
         worktree_actions::GRAVEYARD,
         graveyard_actions::RESURRECT_AGENT,
+        graveyard_actions::REAP_DEAD_AGENTS,
         graveyard_actions::RESURRECT_WORKTREE,
         graveyard_actions::DELETE_WORKTREE,
         graveyard_actions::CLEANUP,

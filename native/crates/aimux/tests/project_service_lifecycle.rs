@@ -3,7 +3,8 @@ use aimux::dashboard_model::DesktopStateSnapshot;
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle::{
-    ProjectLifecycleRuntime, ensure_default_scribe_agent, route_lifecycle_request_with_runtime,
+    PreparedPullRequestWorktree, ProjectLifecycleRuntime, SystemProjectLifecycleRuntime,
+    ensure_default_scribe_agent, route_lifecycle_request_with_runtime,
 };
 use aimux::project_service::operation_failures::list_dashboard_operation_failures;
 use aimux::project_service::process::{ProjectServiceStartup, run_project_service_startup_tasks};
@@ -19,9 +20,14 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, remove_dir_all};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::Command;
+use std::sync::{
+    Mutex, OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Default)]
 struct FakeLifecycleRuntime {
@@ -38,6 +44,10 @@ struct FakeLifecycleRuntime {
     codex_backend_ids_by_cwd: BTreeMap<String, Result<BTreeSet<String>, String>>,
     main_repo: Option<String>,
     worktrees_created: Vec<FakeCreateWorktree>,
+    prepared_pull_requests: Vec<FakePreparePullRequest>,
+    pull_request_prepare_result: Option<Result<PreparedPullRequestWorktree, String>>,
+    branch_worktrees_created: Vec<FakeCreateWorktree>,
+    create_worktree_from_branch_error: Option<String>,
     create_worktree_error: Option<String>,
     create_window_error: Option<String>,
 }
@@ -57,6 +67,13 @@ struct FakeCreateWorktree {
     main_repo: String,
     name: String,
     target_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FakePreparePullRequest {
+    main_repo: String,
+    name: String,
+    pr: u64,
 }
 
 impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
@@ -86,6 +103,42 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             target_path: target_path.to_owned(),
         });
         match &self.create_worktree_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
+
+    fn prepare_pull_request_worktree(
+        &mut self,
+        main_repo: &str,
+        name: &str,
+        pr: u64,
+    ) -> Result<PreparedPullRequestWorktree, String> {
+        self.prepared_pull_requests.push(FakePreparePullRequest {
+            main_repo: main_repo.to_owned(),
+            name: name.to_owned(),
+            pr,
+        });
+        self.pull_request_prepare_result.clone().unwrap_or_else(|| {
+            Ok(PreparedPullRequestWorktree {
+                branch: format!("aimux/pr-{pr}/{name}"),
+                head_oid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            })
+        })
+    }
+
+    fn create_worktree_from_branch(
+        &mut self,
+        main_repo: &str,
+        branch: &str,
+        target_path: &str,
+    ) -> Result<(), String> {
+        self.branch_worktrees_created.push(FakeCreateWorktree {
+            main_repo: main_repo.to_owned(),
+            name: branch.to_owned(),
+            target_path: target_path.to_owned(),
+        });
+        match &self.create_worktree_from_branch_error {
             Some(error) => Err(error.clone()),
             None => Ok(()),
         }
@@ -306,7 +359,8 @@ fn agent_stop_marks_codex_without_backend_history_fresh_relaunchable() {
     let project = temp_project("agent-stop-codex-fresh");
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@agent", "@service"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1247,12 +1301,56 @@ fn teammate_create_launches_agent_with_team_metadata_and_extra_args() {
 }
 
 #[test]
+fn teammate_create_refuses_when_agent_liveness_cannot_be_verified() {
+    let project = temp_project("teammate-create-liveness-error");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let worktree = project.join("wt");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("tmux list-windows timed out");
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-live",
+            "role": "reviewer",
+            "label": "Review lane",
+            "tool": "mock",
+            "sessionId": "mock-reviewer",
+            "worktreePath": worktree,
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 503);
+    assert_eq!(
+        response.body["error"],
+        "could not verify agent tmux liveness: tmux list-windows timed out"
+    );
+    assert!(runtime.created.is_empty());
+    assert!(
+        read_topology(&state_dir)["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|session| session["id"] != "mock-reviewer")
+    );
+    cleanup(project);
+}
+
+#[test]
 fn teammate_create_rejects_nested_team_parent() {
     let project = temp_project("teammate-create-nested");
     write_project_tool_config(&project);
     let state_dir = project.join("state");
     write_teammate_parent_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(Vec::<String>::new());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1283,7 +1381,8 @@ fn teammate_create_with_initial_task_persists_task_and_thread() {
     write_project_tool_config(&project);
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@agent", "@service"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1326,7 +1425,8 @@ fn teammate_create_initial_task_requires_prompt_or_body() {
     write_project_tool_config(&project);
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@agent", "@service"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1357,7 +1457,8 @@ fn teammate_stop_routes_through_agent_stop_with_parent_metadata() {
     let project = temp_project("teammate-stop");
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@child"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1387,11 +1488,46 @@ fn teammate_stop_routes_through_agent_stop_with_parent_metadata() {
 }
 
 #[test]
+fn teammate_stop_refuses_when_agent_liveness_cannot_be_verified() {
+    let project = temp_project("teammate-stop-liveness-error");
+    let state_dir = project.join("state");
+    write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("tmux list-windows failed");
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::STOP_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-parent",
+            "teammateSessionId": "codex-child"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 503);
+    assert_eq!(
+        response.body["error"],
+        "could not verify agent tmux liveness: tmux list-windows failed"
+    );
+    assert!(runtime.killed.is_empty());
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-child")["status"],
+        "running"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn teammate_resume_routes_through_agent_resume_with_parent_metadata() {
     let project = temp_project("teammate-resume");
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "offline", Some("backend-child"));
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(Vec::<String>::new());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1421,7 +1557,8 @@ fn teammate_kill_routes_through_agent_kill_with_parent_metadata() {
     let project = temp_project("teammate-kill");
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@child"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1451,7 +1588,8 @@ fn teammate_resurrect_routes_through_graveyard_resurrect_with_parent_metadata() 
     let project = temp_project("teammate-resurrect");
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "graveyard", Some("backend-child"));
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(Vec::<String>::new());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -2802,6 +2940,199 @@ fn worktree_create_runs_git_and_persists_active_topology_entry() {
 }
 
 #[test]
+fn worktree_create_pr_fetches_head_branch_and_persists_aimux_worktree() {
+    let project = temp_project("worktree-create-pr");
+    let state_dir = project.join("state");
+    write_worktree_create_topology(&state_dir, json!([]));
+    let expected_path = project
+        .join(".aimux/worktrees/review-123")
+        .to_string_lossy()
+        .into_owned();
+    let project_root = project.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project_root.clone()),
+        pull_request_prepare_result: Some(Ok(PreparedPullRequestWorktree {
+            branch: "aimux/pr-123/review-123".into(),
+            head_oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        })),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "review-123", "pr": 123 })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "created");
+    assert_eq!(response.body["path"], expected_path);
+    assert_eq!(response.body["branch"], "aimux/pr-123/review-123");
+    assert_eq!(response.body["pr"], 123);
+    assert_eq!(
+        runtime.prepared_pull_requests,
+        vec![FakePreparePullRequest {
+            main_repo: project_root.clone(),
+            name: "review-123".into(),
+            pr: 123,
+        }]
+    );
+    assert!(runtime.worktrees_created.is_empty());
+    assert_eq!(
+        runtime.branch_worktrees_created,
+        vec![FakeCreateWorktree {
+            main_repo: project_root.clone(),
+            name: "aimux/pr-123/review-123".into(),
+            target_path: expected_path.clone(),
+        }]
+    );
+    let topology = read_topology(&state_dir);
+    let worktree = &topology["worktrees"][0];
+    assert_eq!(worktree["path"], expected_path);
+    assert_eq!(worktree["name"], "review-123");
+    assert_eq!(worktree["branch"], "aimux/pr-123/review-123");
+    assert_eq!(worktree["basePath"], project_root);
+    assert_eq!(worktree["status"], "active");
+    cleanup(project);
+}
+
+#[test]
+fn worktree_create_pr_real_route_creates_worktree_on_pull_request_head() {
+    let _env_guard = ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("env lock");
+    let root = temp_plain_project("worktree-create-pr-real-route");
+    let repo = root.join("repo");
+    let origin = root.join("origin.git");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&repo).expect("repo dir");
+    run_command(&repo, "git", &["init", "-b", "master"]);
+    run_command(&repo, "git", &["config", "user.email", "test@example.com"]);
+    run_command(&repo, "git", &["config", "user.name", "Aimux Test"]);
+    fs::write(repo.join("README.md"), "base\n").expect("base file");
+    run_command(&repo, "git", &["add", "README.md"]);
+    run_command(&repo, "git", &["commit", "-m", "base"]);
+    run_command(&root, "git", &["init", "--bare", "origin.git"]);
+    run_command(
+        &repo,
+        "git",
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    fs::write(repo.join("pr.txt"), "pull request\n").expect("pr file");
+    run_command(&repo, "git", &["add", "pr.txt"]);
+    run_command(&repo, "git", &["commit", "-m", "pr head"]);
+    let pr_head = command_output(&repo, "git", &["rev-parse", "HEAD"]);
+    run_command(&repo, "git", &["push", "origin", "HEAD:refs/pull/123/head"]);
+    run_command(&repo, "git", &["reset", "--hard", "HEAD~1"]);
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("bin dir");
+    let gh_path = bin_dir.join("gh");
+    fs::write(
+        &gh_path,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' '{{\"state\":\"OPEN\",\"headRefOid\":\"{pr_head}\"}}'\n"
+        ),
+    )
+    .expect("write fake gh");
+    run_command(&root, "chmod", &["+x", gh_path.to_str().unwrap()]);
+    let old_path = std::env::var_os("PATH");
+    let next_path = match old_path.as_ref() {
+        Some(path) => {
+            let mut paths = std::env::split_paths(path).collect::<Vec<_>>();
+            paths.insert(0, bin_dir.clone());
+            std::env::join_paths(paths).expect("join path")
+        }
+        None => bin_dir.clone().into_os_string(),
+    };
+    unsafe {
+        std::env::set_var("PATH", &next_path);
+    }
+
+    write_worktree_create_topology(&state_dir, json!([]));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&repo, &state_dir);
+    let mut runtime = SystemProjectLifecycleRuntime;
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "review-123", "pr": 123 })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    if let Some(path) = old_path {
+        unsafe {
+            std::env::set_var("PATH", path);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("PATH");
+        }
+    }
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    let worktree_path = repo.join(".aimux/worktrees/review-123");
+    let worktree_head = command_output(&worktree_path, "git", &["rev-parse", "HEAD"]);
+    assert_eq!(worktree_head, pr_head);
+    let common_dir = command_output(&worktree_path, "git", &["rev-parse", "--git-common-dir"]);
+    assert_eq!(
+        fs::canonicalize(PathBuf::from(common_dir)).expect("canonical common dir"),
+        fs::canonicalize(repo.join(".git")).expect("canonical repo git dir")
+    );
+    let topology = read_topology(&state_dir);
+    let worktree = &topology["worktrees"][0];
+    assert_eq!(worktree["name"], "review-123");
+    assert_eq!(worktree["branch"], "aimux/pr-123/review-123");
+    assert_eq!(worktree["status"], "active");
+    cleanup(root);
+}
+
+#[test]
+fn worktree_create_pr_failure_does_not_create_or_mark_creating() {
+    let project = temp_project("worktree-create-pr-missing");
+    let state_dir = project.join("state");
+    write_worktree_create_topology(&state_dir, json!([]));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project.to_string_lossy().into_owned()),
+        pull_request_prepare_result: Some(Err("Pull request #404 was not found".into())),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "missing-pr", "pr": 404 })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["error"], "Pull request #404 was not found");
+    assert_eq!(runtime.prepared_pull_requests.len(), 1);
+    assert!(runtime.worktrees_created.is_empty());
+    assert!(runtime.branch_worktrees_created.is_empty());
+    assert_eq!(
+        read_topology(&state_dir)["worktrees"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["message"], "Pull request #404 was not found");
+    cleanup(project);
+}
+
+#[test]
 fn worktree_create_rejects_existing_non_pending_worktree() {
     let project = temp_project("worktree-create-duplicate");
     let state_dir = project.join("state");
@@ -2850,6 +3181,50 @@ fn worktree_create_rejects_existing_non_pending_worktree() {
         failures[0]["worktreePath"],
         target_path.to_string_lossy().as_ref()
     );
+    cleanup(project);
+}
+
+#[test]
+fn worktree_create_pr_name_collision_rejects_before_fetch() {
+    let project = temp_project("worktree-create-pr-duplicate");
+    let state_dir = project.join("state");
+    let target_path = project.join(".aimux/worktrees/review-123");
+    write_worktree_create_topology(
+        &state_dir,
+        json!([{
+            "id": "wt-review-123",
+            "rigId": "rig-1",
+            "path": target_path.to_string_lossy().as_ref(),
+            "name": "review-123",
+            "branch": "aimux/pr-123/review-123",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }]),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "review-123", "pr": 123 })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert_eq!(
+        response.body["error"],
+        "Worktree \"review-123\" already exists"
+    );
+    assert!(runtime.prepared_pull_requests.is_empty());
+    assert!(runtime.worktrees_created.is_empty());
+    assert!(runtime.branch_worktrees_created.is_empty());
     cleanup(project);
 }
 
@@ -4387,6 +4762,35 @@ fn temp_plain_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+fn run_command(cwd: &Path, program: &str, args: &[&str]) {
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .unwrap_or_else(|error| panic!("{program} failed to start: {error}"));
+    assert!(
+        output.status.success(),
+        "{program} {args:?} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn command_output(cwd: &Path, program: &str, args: &[&str]) -> String {
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .unwrap_or_else(|error| panic!("{program} failed to start: {error}"));
+    assert!(
+        output.status.success(),
+        "{program} {args:?} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
 fn expected_shell_rc_path(state_dir: &Path) -> PathBuf {

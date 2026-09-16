@@ -1,11 +1,11 @@
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::{
     render_core_graveyard_agent_lines, render_core_graveyard_cleanup_lines,
-    render_core_graveyard_lines, render_core_worktree_cache_cleanup_lines,
-    render_core_worktree_create_lines, render_core_worktree_delete_graveyard_lines,
-    render_core_worktree_graveyard_lines, render_core_worktree_list_lines,
-    render_core_worktree_prune_lines, render_core_worktree_remove_lines,
-    render_core_worktree_resurrect_lines,
+    render_core_graveyard_lines, render_core_graveyard_reap_dead_lines,
+    render_core_worktree_cache_cleanup_lines, render_core_worktree_create_lines,
+    render_core_worktree_delete_graveyard_lines, render_core_worktree_graveyard_lines,
+    render_core_worktree_list_lines, render_core_worktree_prune_lines,
+    render_core_worktree_remove_lines, render_core_worktree_resurrect_lines,
 };
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, required_param, text_error,
@@ -115,6 +115,9 @@ pub fn route_worktree_text_request(
             graveyard_resurrect_input(),
         ));
     }
+    if method == "POST" && pathname == CORE_API_ROUTES.graveyard_reap_dead_text {
+        return Some(graveyard_reap_dead_text_route(runtime, &route_url, body));
+    }
     if method == "POST" && pathname == CORE_API_ROUTES.graveyard_cleanup_text {
         return Some(graveyard_cleanup_text_route(runtime, &route_url, body));
     }
@@ -162,10 +165,27 @@ pub fn worktree_create_text_route(
         Ok(name) => name,
         Err(response) => return response,
     };
+    let pr = route_url
+        .search_param("pr")
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            body.and_then(|body| body.get("pr")).and_then(|value| {
+                value
+                    .as_u64()
+                    .map(|number| number.to_string())
+                    .or_else(|| value.as_str().map(ToOwned::to_owned))
+            })
+        })
+        .filter(|value| !value.trim().is_empty());
+    let mut request_body = Map::new();
+    request_body.insert("name".into(), Value::String(name.clone()));
+    if let Some(pr) = pr {
+        request_body.insert("pr".into(), Value::String(pr));
+    }
     let result = runtime.post_project_service_json(
         &project,
         project_routes::worktree_actions::CREATE,
-        json!({ "name": name }),
+        Value::Object(request_body),
         None,
     );
     let (json, project_root) = match unwrap_project_result(result) {
@@ -187,6 +207,7 @@ pub fn worktree_create_text_route(
         "path": path,
         "status": status,
         "projectRoot": project_root,
+        "pr": json.get("pr").cloned().unwrap_or(Value::Null),
     });
     text_or_json_lines(
         route_url,
@@ -411,6 +432,52 @@ pub fn graveyard_agent_text_route(
         route_url,
         payload.clone(),
         &render_core_graveyard_agent_lines(&payload),
+    )
+}
+
+pub fn graveyard_reap_dead_text_route(
+    runtime: &mut impl DaemonWorktreeTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let session_id = required_param(route_url, body, "sessionId").ok();
+    let mut request = Map::new();
+    if let Some(session_id) = session_id {
+        request.insert("sessionId".to_owned(), Value::String(session_id));
+    }
+    let result = runtime.post_project_service_json(
+        &project,
+        project_routes::graveyard_actions::REAP_DEAD_AGENTS,
+        Value::Object(request),
+        Some(CLI_PROJECT_MUTATION_TIMEOUT_MS),
+    );
+    let (json, project_root) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    let reaped = match required_project_service_array(&json, "graveyard reap-dead", "reaped") {
+        Ok(reaped) => reaped,
+        Err(response) => return response,
+    };
+    let skipped = match required_project_service_array(&json, "graveyard reap-dead", "skipped") {
+        Ok(skipped) => skipped,
+        Err(response) => return response,
+    };
+    let payload = json!({
+        "ok": true,
+        "projectRoot": project_root,
+        "status": json.get("status").and_then(Value::as_str).unwrap_or("unchanged"),
+        "reaped": reaped,
+        "skipped": skipped,
+    });
+    text_or_json_lines(
+        route_url,
+        payload.clone(),
+        &render_core_graveyard_reap_dead_lines(&payload),
     )
 }
 

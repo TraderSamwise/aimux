@@ -10,6 +10,7 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
             subcommand: "list".to_owned(),
             project: None,
             name: None,
+            pr: None,
             path: None,
             yes: false,
             include_active: false,
@@ -40,6 +41,7 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
         .to_owned(),
         project: None,
         name: None,
+        pr: None,
         path: None,
         yes: false,
         include_active: false,
@@ -60,6 +62,19 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
         }
         if let Some(value) = arg.strip_prefix("--project=") {
             parsed.project = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
+        if matches!(subcommand, "add" | "create") && arg == "--pr" {
+            let value = required_non_flag_value(args, index)?;
+            parsed.pr = Some(parse_positive_pr(value)?);
+            index += 2;
+            continue;
+        }
+        if matches!(subcommand, "add" | "create")
+            && let Some(value) = arg.strip_prefix("--pr=")
+        {
+            parsed.pr = Some(parse_positive_pr(non_flag_inline_value(value)?)?);
             index += 1;
             continue;
         }
@@ -107,19 +122,27 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
     Some(parsed)
 }
 
+fn parse_positive_pr(value: &str) -> Option<u64> {
+    let number = value.parse::<u64>().ok()?;
+    (number > 0).then_some(number)
+}
+
 pub fn parse_core_graveyard_args<S: AsRef<str>>(args: &[S]) -> Option<CoreGraveyardArgs> {
     if args.first().map(AsRef::as_ref) != Some("graveyard") {
         return None;
     }
     let (subcommand, mut index) = match args.get(1).map(AsRef::as_ref) {
         None => ("list", 1),
-        Some("list" | "send" | "resurrect" | "cleanup") => (args[1].as_ref(), 2),
+        Some("list" | "send" | "reap-dead" | "resurrect" | "cleanup") => (args[1].as_ref(), 2),
         Some(arg) if arg == "--json" || arg == "--project" || arg.starts_with("--project=") => {
             ("list", 1)
         }
         _ => return None,
     };
-    if !matches!(subcommand, "list" | "send" | "resurrect" | "cleanup") {
+    if !matches!(
+        subcommand,
+        "list" | "send" | "reap-dead" | "resurrect" | "cleanup"
+    ) {
         return None;
     }
     let mut parsed = CoreGraveyardArgs {
@@ -154,7 +177,7 @@ pub fn parse_core_graveyard_args<S: AsRef<str>>(args: &[S]) -> Option<CoreGravey
         if arg.starts_with('-') {
             return None;
         }
-        if matches!(subcommand, "send" | "resurrect") {
+        if matches!(subcommand, "send" | "reap-dead" | "resurrect") {
             if parsed.session_id.is_some() {
                 return None;
             }

@@ -113,6 +113,22 @@ impl DaemonWorktreeTextRuntime for FakeWorktreeRuntime {
                 "/repo",
                 json!({ "ok": true, "sessionId": body["sessionId"].clone(), "status": "offline" }),
             ),
+            project_routes::graveyard_actions::REAP_DEAD_AGENTS => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "ok": true,
+                    "status": "reaped",
+                    "reaped": [{
+                        "sessionId": body.get("sessionId").cloned().unwrap_or_else(|| json!("codex-dead")),
+                        "previousStatus": "running",
+                        "status": "graveyard",
+                        "expected": "aimux-repo @dead",
+                        "found": "window absent",
+                        "reason": "confirmed-dead: inventoried session's tmux window is absent after a successful runtime query"
+                    }],
+                    "skipped": []
+                }),
+            ),
             project_routes::graveyard_actions::CLEANUP => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({
@@ -199,6 +215,39 @@ fn worktree_list_and_create_match_text_and_json_contracts() {
     assert_eq!(
         text_body(created),
         "Created worktree \"feature\" at /repo/.aimux/worktrees/feature\n"
+    );
+    assert_eq!(
+        runtime.calls.last().unwrap(),
+        &(
+            "/repo".into(),
+            project_routes::worktree_actions::CREATE.into(),
+            Some(json!({ "name": "feature" })),
+            None,
+        )
+    );
+
+    let created_pr = route_worktree_text_request(
+        &mut runtime,
+        "POST",
+        &format!(
+            "{}?project=/repo&name=review-123&pr=123",
+            CORE_API_ROUTES.worktree_create_text
+        ),
+        None,
+    )
+    .expect("worktree create pr");
+    assert_eq!(
+        text_body(created_pr),
+        "Created worktree \"review-123\" at /repo/.aimux/worktrees/review-123\n"
+    );
+    assert_eq!(
+        runtime.calls.last().unwrap(),
+        &(
+            "/repo".into(),
+            project_routes::worktree_actions::CREATE.into(),
+            Some(json!({ "name": "review-123", "pr": "123" })),
+            None,
+        )
     );
 }
 
@@ -380,6 +429,20 @@ fn graveyard_routes_match_project_service_proxy_contract() {
     )
     .expect("graveyard send");
     assert_eq!(text_body(sent), "graveyarded claude-1\n");
+
+    let reaped = route_worktree_text_request(
+        &mut runtime,
+        "POST",
+        &format!(
+            "{}?project=/repo&sessionId=codex-dead",
+            CORE_API_ROUTES.graveyard_reap_dead_text
+        ),
+        None,
+    )
+    .expect("graveyard reap dead");
+    assert!(text_body(reaped).contains(
+        "reaped codex-dead: expected aimux-repo @dead; found window absent; moved to graveyard"
+    ));
 
     let cleanup = route_worktree_text_request(
         &mut runtime,

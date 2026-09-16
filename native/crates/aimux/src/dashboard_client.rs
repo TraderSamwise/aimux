@@ -216,6 +216,7 @@ fn dashboard_action_timeout_ms(path: &str) -> u64 {
         | routes::worktree_actions::REMOVE
         | routes::worktree_actions::GRAVEYARD => 180_000,
         routes::graveyard_actions::RESURRECT_AGENT
+        | routes::graveyard_actions::REAP_DEAD_AGENTS
         | routes::graveyard_actions::RESURRECT_WORKTREE
         | routes::graveyard_actions::DELETE_WORKTREE => 10_000,
         _ => 2_000,

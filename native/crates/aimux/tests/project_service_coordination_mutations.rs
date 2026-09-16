@@ -264,6 +264,59 @@ fn teammate_task_assigns_direct_teammate_without_tmux_prompt_delivery() {
 }
 
 #[test]
+fn teammate_task_refuses_when_agent_liveness_cannot_be_verified() {
+    let project = temp_project("teammate-task-liveness-error");
+    let state_dir = project.join("state");
+    write_teammate_topology(
+        &state_dir,
+        &[
+            ("claude-lead", "@lead", None, "/repo"),
+            (
+                "codex-worker",
+                "@worker",
+                Some("claude-lead"),
+                "/repo/.aimux/worktrees/review",
+            ),
+        ],
+    );
+    let isolation = support::TestIsolation::new("coordination-teammate-task-liveness-error");
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_window_ids_error("tmux socket busy");
+    let mut runtime = FakeDeliveryRuntime::default();
+
+    let response = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE_TASK,
+        Some(&json!({
+            "parentSessionId": "claude-lead",
+            "teammateSessionId": "codex-worker",
+            "body": "Audit parser state drift"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 503);
+    assert_eq!(response.body["ok"], false);
+    assert_eq!(
+        response.body["error"],
+        "could not verify agent tmux liveness: tmux socket busy"
+    );
+    assert_eq!(response.body["tmuxLiveWindowQuery"]["ok"], false);
+    assert_eq!(
+        response.body["tmuxLiveWindowQuery"]["error"],
+        "tmux socket busy"
+    );
+    assert!(runtime.actions.is_empty());
+    let exchange = read_exchange(&state_dir);
+    assert!(exchange["tasks"].as_array().is_none_or(Vec::is_empty));
+    assert!(exchange["threads"].as_array().is_none_or(Vec::is_empty));
+    cleanup(project);
+}
+
+#[test]
 fn teammate_task_rejects_missing_teammate_session_id() {
     let project = temp_project("teammate-task-missing-teammate");
     let state_dir = project.join("state");

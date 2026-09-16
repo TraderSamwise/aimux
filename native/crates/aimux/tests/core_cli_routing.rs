@@ -1316,6 +1316,7 @@ fn worktree_and_graveyard_parsers_match_cli_forms() {
             subcommand: "cleanup-caches".into(),
             project: Some("/repo".into()),
             name: None,
+            pr: None,
             path: None,
             yes: true,
             include_active: true,
@@ -1326,6 +1327,14 @@ fn worktree_and_graveyard_parsers_match_cli_forms() {
     let create =
         parse_core_worktree_args(&["worktree", "create", "feature"]).expect("worktree create args");
     assert_eq!(create.name.as_deref(), Some("feature"));
+    assert_eq!(create.pr, None);
+
+    let create_pr = parse_core_worktree_args(&["worktree", "create", "review", "--pr", "123"])
+        .expect("worktree create pr args");
+    assert_eq!(create_pr.name.as_deref(), Some("review"));
+    assert_eq!(create_pr.pr, Some(123));
+    assert!(parse_core_worktree_args(&["worktree", "create", "review", "--pr", "0"]).is_none());
+    assert!(parse_core_worktree_args(&["worktree", "create", "review", "--pr", "abc"]).is_none());
 
     let prune = parse_core_worktree_args(&["worktree", "prune", "--project=/repo", "--yes"])
         .expect("worktree prune args");
@@ -1362,6 +1371,21 @@ fn worktree_and_graveyard_parsers_match_cli_forms() {
     let cleanup_graveyard = parse_core_graveyard_args(&["graveyard", "cleanup", "--dry-run"])
         .expect("graveyard cleanup args");
     assert!(cleanup_graveyard.dry_run);
+    let reap_dead_all = parse_core_graveyard_args(&["graveyard", "reap-dead", "--project=/repo"])
+        .expect("graveyard reap-dead all args");
+    assert_eq!(reap_dead_all.subcommand, "reap-dead");
+    assert_eq!(reap_dead_all.project.as_deref(), Some("/repo"));
+    assert!(reap_dead_all.session_id.is_none());
+    let reap_dead_one = parse_core_graveyard_args(&[
+        "graveyard",
+        "reap-dead",
+        "codex-dead",
+        "--project=/repo",
+        "--json",
+    ])
+    .expect("graveyard reap-dead one args");
+    assert_eq!(reap_dead_one.session_id.as_deref(), Some("codex-dead"));
+    assert!(reap_dead_one.json);
 
     assert!(parse_core_worktree_args(&["worktree", "create"]).is_none());
     assert!(parse_core_worktree_args(&["worktree", "remove", "--project", "/repo"]).is_none());

@@ -20,8 +20,9 @@ use crate::tmux::TmuxTarget;
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::{
     LiveWindowIdsProjection, topology_desktop_session_list,
-    topology_desktop_session_list_for_context, topology_desktop_session_list_for_context_async,
+    topology_desktop_session_list_for_context_async,
     topology_desktop_session_list_with_live_window_projection,
+    topology_desktop_session_projection_for_context,
 };
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::expose_ordering::{
@@ -185,10 +186,11 @@ pub fn route_switchable_agent_request_with_runtime(
         );
     }
     let metadata = load_metadata_state(&project_state_dir);
-    let entries = topology_switchable_entries_for_context(context, &topology, &metadata.sessions);
+    let entries_projection =
+        topology_switchable_entries_for_context(context, &topology, &metadata.sessions);
     let last_used = load_last_used_state(&project_state_dir);
     let mut items = list_switchable_agent_items(
-        &entries,
+        &entries_projection.entries,
         &metadata.sessions,
         &switch_context,
         &options,
@@ -199,9 +201,7 @@ pub fn route_switchable_agent_request_with_runtime(
     } else {
         ExposeSublabel::None
     };
-    let mut live_window_projection_error = context
-        .live_window_ids_status()
-        .and_then(|result| result.err().map(str::to_owned));
+    let mut live_window_projection_error = entries_projection.live_window_query_error;
     if expose && live_window_projection_error.is_none() && items.is_empty() {
         let fallback_entries = topology_switchable_entries_with_live_window_projection(
             &topology,
@@ -425,11 +425,22 @@ pub fn topology_switchable_entries_for_context(
     context: &ProjectServiceRequestContext,
     topology: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
-) -> Vec<ManagedWindowEntry> {
+) -> SwitchableEntriesProjection {
     let tools = default_tools_config();
-    let sessions =
-        topology_desktop_session_list_for_context(context, topology, metadata_sessions, &tools);
-    topology_switchable_entries_from_sessions(sessions, topology, metadata_sessions)
+    let projection = topology_desktop_session_projection_for_context(
+        context,
+        topology,
+        metadata_sessions,
+        &tools,
+    );
+    SwitchableEntriesProjection {
+        entries: topology_switchable_entries_from_sessions(
+            projection.sessions,
+            topology,
+            metadata_sessions,
+        ),
+        live_window_query_error: projection.live_window_query_error,
+    }
 }
 
 pub struct SwitchableEntriesProjection {
