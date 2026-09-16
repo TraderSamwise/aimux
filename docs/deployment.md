@@ -260,6 +260,62 @@ brew update && brew info aimux
 brew info aimux-local
 ```
 
+### Homebrew staging dry-run
+
+A true end-to-end Homebrew proof needs Sam to cut a real tag and publish the
+tap commit; until then the GitHub release URLs do not exist. Before cutting a
+release, stage the same formulas against local release assets and ask real
+Homebrew to parse and fetch the current-platform assets:
+
+```bash
+yarn release:source --variant full --release-dir /tmp/aimux-release
+yarn release:source:local --release-dir /tmp/aimux-release
+yarn release:homebrew:dry-run --release-dir /tmp/aimux-release --host-only
+```
+
+`release:homebrew:dry-run` renders `aimux.rb` and `aimux-local.rb` with local
+`file://` URLs in a temporary local Homebrew tap, runs Ruby parsing, runs
+`brew fetch --formula` for the host platform full and local formulas, and
+deliberately stages a mismatched SHA formula to prove Homebrew refuses it.
+Without `--host-only`, it first verifies the complete eight-archive asset set
+with checksums, archive shape, provenance, SBOMs, and variant stamps.
+`--host-only` is for the source-review build above: it verifies only the
+current platform's full/local archives and does not claim the missing platform
+URLs are proven.
+
+To exercise the live-prefix install and conflict behavior, use the explicit
+install mode on a machine where neither Homebrew formula is already installed:
+
+```bash
+yarn release:homebrew:dry-run --release-dir /tmp/aimux-release --host-only --live-install
+```
+
+Live install mode refuses to run if `aimux` or `aimux-local` is already
+installed by Homebrew. When allowed, it installs the staged full formula,
+proves `aimux-local` is refused by `conflicts_with`, uninstalls it, installs the
+staged local formula, proves the installed command is still `aimux`, checks
+`aimux doctor versions` reports build variant `local`, then proves the full
+formula is refused while local is installed. The script uninstalls only formulas
+it installed itself.
+
+After Sam authorizes and cuts the real release, the public hop is still his
+release-day check:
+
+```bash
+brew update
+brew fetch aimux
+brew fetch aimux-local
+brew install aimux
+brew uninstall aimux
+brew install aimux-local
+aimux doctor versions
+brew uninstall aimux-local
+```
+
+Those commands are the first point where the public GitHub release URLs and
+published `TraderSamwise/homebrew-aimux` tap commit can be tested, because they
+do not exist before publishing.
+
 The three surfaces should agree on the version. `scripts/install.sh` pulls the
 same full GitHub Release asset by default, so a standalone install of
 `AIMUX_VERSION=v<version>` is the fourth check. Local installs must set

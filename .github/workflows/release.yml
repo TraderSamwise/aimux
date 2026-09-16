@@ -404,6 +404,7 @@ jobs:
         env:
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
+          AIMUX_HOMEBREW_FORMULA_DIR: tap/Formula
           DARWIN_ARM64: ${{ steps.sha.outputs.darwin_arm64 }}
           DARWIN_X64: ${{ steps.sha.outputs.darwin_x64 }}
           LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
@@ -414,89 +415,7 @@ jobs:
           LOCAL_LINUX_X64: ${{ steps.sha.outputs.local_linux_x64 }}
         run: |
           set -euo pipefail
-          cat > tap/Formula/aimux.rb <<EOF
-          class Aimux < Formula
-            desc "Local agent multiplexer for AI coding tools with native TUIs"
-            homepage "https://aimux.app"
-            version "${VERSION}"
-            license "MIT"
-
-            on_macos do
-              on_arm do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-darwin-arm64.tar.gz"
-                sha256 "${DARWIN_ARM64}"
-              end
-              on_intel do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-darwin-x64.tar.gz"
-                sha256 "${DARWIN_X64}"
-              end
-            end
-
-            on_linux do
-              on_arm do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-linux-arm64.tar.gz"
-                sha256 "${LINUX_ARM64}"
-              end
-              on_intel do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-linux-x64.tar.gz"
-                sha256 "${LINUX_X64}"
-              end
-            end
-
-            depends_on "tmux"
-
-            def install
-              libexec.install Dir["*"]
-              bin.install_symlink libexec/"bin/aimux"
-            end
-
-            test do
-              assert_match "aimux", shell_output("#{bin}/aimux --help 2>&1", 0)
-            end
-          end
-          EOF
-          cat > tap/Formula/aimux-local.rb <<EOF
-          class AimuxLocal < Formula
-            desc "Local agent multiplexer for AI coding tools without remote control"
-            homepage "https://aimux.app"
-            version "${VERSION}"
-            license "MIT"
-
-            on_macos do
-              on_arm do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-local-darwin-arm64.tar.gz"
-                sha256 "${LOCAL_DARWIN_ARM64}"
-              end
-              on_intel do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-local-darwin-x64.tar.gz"
-                sha256 "${LOCAL_DARWIN_X64}"
-              end
-            end
-
-            on_linux do
-              on_arm do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-local-linux-arm64.tar.gz"
-                sha256 "${LOCAL_LINUX_ARM64}"
-              end
-              on_intel do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-local-linux-x64.tar.gz"
-                sha256 "${LOCAL_LINUX_X64}"
-              end
-            end
-
-            depends_on "tmux"
-            conflicts_with "aimux", because: "both install the aimux command"
-
-            def install
-              libexec.install Dir["*"]
-              bin.install_symlink libexec/"bin/aimux"
-            end
-
-            test do
-              assert_match "aimux", shell_output("#{bin}/aimux --help 2>&1", 0)
-            end
-          end
-          EOF
+          bash scripts/render-homebrew-formulas.sh
 
       - name: Commit and push
         working-directory: tap
