@@ -172,12 +172,12 @@ fn supervisor_group_does_not_change_resolved_worktree_session_membership() {
     scribe.project_control = Some(true);
 
     snapshot.sessions = vec![
-        overseer.clone(),
+        scribe.clone(),
         main_agent.clone(),
         worker_agent.clone(),
-        scribe.clone(),
+        overseer.clone(),
     ];
-    snapshot.worktree_groups[0].sessions = vec![overseer, main_agent];
+    snapshot.worktree_groups[0].sessions = vec![main_agent, overseer];
     snapshot.worktree_groups[1].sessions = vec![worker_agent, scribe];
 
     let groups = dashboard_navigation_groups(&snapshot);

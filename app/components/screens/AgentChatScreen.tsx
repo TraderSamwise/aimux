@@ -106,6 +106,11 @@ import {
   userMessageAcknowledgesComposerSend,
 } from "@/lib/composer-protocol";
 import {
+  COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+  mergeAcceptedComposerEchoes,
+  type AcceptedComposerEcho,
+} from "@/lib/composer-echo";
+import {
   formatLivePaneInputDeliveryNotice,
   formatLivePaneInputResponseRefusal,
   formatPostActionTranscriptRefreshResult,
@@ -346,13 +351,7 @@ type PendingComposerAck = {
   timedOut: boolean;
 };
 
-type AcceptedComposerMessage = {
-  baselineMessageCount: number;
-  clientMessageId: string;
-  message: ChatMessage;
-  pending: PendingComposerAck;
-  settled?: boolean;
-};
+type AcceptedComposerMessage = AcceptedComposerEcho;
 
 const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
 type JotaiStore = ReturnType<typeof useStore>;
@@ -438,78 +437,6 @@ function buildAcceptedComposerMessage(opts: {
     parts,
     text,
   };
-}
-
-function messageAcknowledgesPendingComposerMessage(
-  message: ChatMessage,
-  pending: PendingComposerAck,
-): boolean {
-  return userMessageAcknowledgesComposerSend([message], {
-    ...pending,
-    baselineUserMessageCount: 0,
-  });
-}
-
-function acceptedComposerMatchIndex(
-  messages: readonly ChatMessage[],
-  pending: PendingComposerAck,
-  replacedIndexes?: ReadonlySet<number>,
-): number {
-  let userIndex = -1;
-  return messages.findIndex((message, index) => {
-    if (replacedIndexes?.has(index) || message.role !== "user") return false;
-    userIndex += 1;
-    return (
-      userIndex >= pending.baselineUserMessageCount &&
-      messageAcknowledgesPendingComposerMessage(message, pending)
-    );
-  });
-}
-
-function mergeAcceptedComposerMessage(parsed: ChatMessage, accepted: ChatMessage): ChatMessage {
-  const acceptedParts = accepted.parts ?? [];
-  const parsedParts = parsed.parts ?? [];
-  const acceptedTextParts = acceptedParts.filter((part) => part.type === "text");
-  const acceptedAttachmentParts = acceptedParts.filter((part) => part.type !== "text");
-  const parsedAttachmentParts = parsedParts.filter(
-    (part) => part.type === "image_reference" || part.type === "attachment_reference",
-  );
-  return {
-    ...accepted,
-    id: parsed.id ?? accepted.id,
-    latest: parsed.latest,
-    parts: [
-      ...acceptedTextParts,
-      ...(parsedAttachmentParts.length > 0 ? parsedAttachmentParts : acceptedAttachmentParts),
-    ],
-  };
-}
-
-function mergeAcceptedComposerMessages(
-  parsedMessages: readonly ChatMessage[],
-  acceptedMessages: readonly AcceptedComposerMessage[],
-): ChatMessage[] {
-  if (acceptedMessages.length === 0) return [...parsedMessages];
-  const next = [...parsedMessages];
-  const replacedIndexes = new Set<number>();
-  let inserted = 0;
-
-  for (const accepted of acceptedMessages) {
-    const replacement = accepted.message;
-    const matchIndex = acceptedComposerMatchIndex(next, accepted.pending, replacedIndexes);
-    if (matchIndex >= 0) {
-      next[matchIndex] = mergeAcceptedComposerMessage(next[matchIndex]!, replacement);
-      replacedIndexes.add(matchIndex);
-      continue;
-    }
-
-    if (accepted.settled) continue;
-    const insertAt = Math.min(accepted.baselineMessageCount + inserted, next.length);
-    next.splice(insertAt, 0, replacement);
-    inserted += 1;
-  }
-
-  return next;
 }
 
 function isMultiplexedShare(summary: SharedSessionSummary | null): boolean {
@@ -1068,8 +995,18 @@ export default function ChatScreen() {
       }),
     [transcript, sessionKey, isSharedConversation],
   );
+  const parsedMessageCount = parsedMessages.length;
+  const parsedUserMessageCount = useMemo(
+    () => parsedMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
+    [parsedMessages],
+  );
+  const parsedMessageCountRef = useRef(parsedMessageCount);
+  const parsedUserMessageCountRef = useRef(parsedUserMessageCount);
   const allMessages = useMemo<ChatMessage[]>(() => {
-    return mergeAcceptedComposerMessages(parsedMessages, acceptedComposerMessages);
+    return mergeAcceptedComposerEchoes(parsedMessages, acceptedComposerMessages, {
+      nowMs: 0,
+      timeoutMs: Number.POSITIVE_INFINITY,
+    }).messages;
   }, [acceptedComposerMessages, parsedMessages]);
   const chatPlaceholderState = useMemo(
     () =>
@@ -1084,29 +1021,51 @@ export default function ChatScreen() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- parsed transcript updates settle local accepted composer echoes
     setAcceptedComposerMessages((current) => {
-      let changed = false;
-      const next = current.flatMap((accepted) => {
-        const hasParsedMatch = acceptedComposerMatchIndex(parsedMessages, accepted.pending) >= 0;
-        if (hasParsedMatch && !accepted.settled) {
-          changed = true;
-          return [{ ...accepted, settled: true }];
-        }
-        if (!hasParsedMatch && accepted.settled) {
-          changed = true;
-          return [];
-        }
-        return [accepted];
+      const result = mergeAcceptedComposerEchoes(parsedMessages, current, {
+        nowMs: Date.now(),
+        timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
       });
-      return changed ? next : current;
+      return result.echoes === current ? current : result.echoes;
     });
   }, [parsedMessages]);
+
+  useEffect(() => {
+    parsedMessageCountRef.current = parsedMessageCount;
+    parsedUserMessageCountRef.current = parsedUserMessageCount;
+  }, [parsedMessageCount, parsedUserMessageCount]);
+
+  useEffect(() => {
+    const pendingEchoes = acceptedComposerMessages.filter((message) => !message.settled);
+    if (pendingEchoes.length === 0) return;
+    const now = Date.now();
+    const nextExpiryMs = Math.min(
+      ...pendingEchoes.map(
+        (message) => message.createdAtMs + COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+      ),
+    );
+    const timer = setTimeout(
+      () => {
+        setAcceptedComposerMessages((current) => {
+          const result = mergeAcceptedComposerEchoes(parsedMessages, current, {
+            nowMs: Date.now(),
+            timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+          });
+          if (result.droppedUnconfirmedCount > 0) {
+            setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
+          }
+          return result.echoes;
+        });
+      },
+      Math.max(0, nextExpiryMs - now),
+    );
+    return () => clearTimeout(timer);
+  }, [acceptedComposerMessages, parsedMessages]);
 
   const userMessageCount = useMemo(
     () => allMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
     [allMessages],
   );
   const userMessageCountRef = useRef(userMessageCount);
-  const allMessageCountRef = useRef(allMessages.length);
   const composerSendAcknowledged = pendingComposerAck
     ? userMessageAcknowledgesComposerSend(allMessages, pendingComposerAck)
     : false;
@@ -1114,8 +1073,7 @@ export default function ChatScreen() {
 
   useLayoutEffect(() => {
     userMessageCountRef.current = userMessageCount;
-    allMessageCountRef.current = allMessages.length;
-  }, [allMessages.length, userMessageCount]);
+  }, [userMessageCount]);
 
   useEffect(() => {
     if (!pendingComposerAck) return;
@@ -1244,7 +1202,8 @@ export default function ChatScreen() {
       const sendComposerDraftKey = composerDraftKey;
       clearLocalInterruptHold(sessionId);
       const baselineUserMessageCount = userMessageCountRef.current;
-      const baselineMessageCount = allMessageCountRef.current;
+      const baselineParsedMessageCount = parsedMessageCountRef.current;
+      const baselineParsedUserMessageCount = parsedUserMessageCountRef.current;
       chatViewportRef.current?.showNewest();
       setSendBusy(true);
       setSendError(null);
@@ -1324,10 +1283,11 @@ export default function ChatScreen() {
           [
             ...current,
             {
-              baselineMessageCount,
+              baselineMessageCount: baselineParsedMessageCount,
+              baselineUserMessageCount: baselineParsedUserMessageCount,
               clientMessageId,
+              createdAtMs: Date.now(),
               message: acceptedMessage,
-              pending: acceptedPending,
             },
           ].slice(-20),
         );

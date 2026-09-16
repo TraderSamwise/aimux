@@ -15,7 +15,7 @@ use crate::runtime_topology::{
     runtime_topology_path,
 };
 use crate::team_contract::{
-    agent_lane, agent_role, agent_role_state,
+    agent_lane, agent_role, agent_role_display_order, agent_role_state,
     is_project_control_session as team_is_project_control_session,
 };
 use crate::tmux::TmuxTarget;
@@ -1008,10 +1008,22 @@ fn dashboard_session(
 }
 
 fn supervisor_lane_from_sessions(sessions: &[Value]) -> Option<Value> {
-    let sessions = sessions
+    let mut sessions = sessions
         .iter()
-        .filter(|session| team_is_project_control_session(Some(session)))
-        .cloned()
+        .enumerate()
+        .filter(|(_, session)| team_is_project_control_session(Some(session)))
+        .map(|(index, session)| {
+            (
+                agent_role_display_order(Some(session)),
+                index,
+                session.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let sessions = sessions
+        .into_iter()
+        .map(|(_, _, session)| session)
         .collect::<Vec<_>>();
     (!sessions.is_empty()).then(|| json!({ "sessions": sessions }))
 }
