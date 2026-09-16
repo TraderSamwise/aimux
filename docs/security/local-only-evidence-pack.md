@@ -29,8 +29,8 @@ remote-control feature is absent?"
 
 Primary source check:
 
-- `native/crates/aimux/src/lib.rs` should contain one gated remote module
-  declaration:
+- `native/crates/aimux/src/lib.rs` should contain the single gated entry point
+  for the remote implementation module tree:
 
   ```rust
   #[cfg(feature = "remote-control")]
@@ -40,6 +40,11 @@ Primary source check:
 - `native/crates/aimux/src/remote/mod.rs` should be the module tree that
   re-exports relay, hosted, login, remote credential, remote security-device,
   mobile push bridge, and websocket code.
+- This does not claim there is only one `#[cfg(feature = "remote-control")]`
+  site in the source tree. Call-site gates still exist where local and full
+  builds choose different CLI, daemon, or dispatch behavior. A reviewer should
+  grep those sites and confirm they are adapters into the remote module tree or
+  local/full selection points, not scattered remote implementation islands.
 - `native/crates/aimux/src/request_actor.rs` should remain outside
   `src/remote`; it is core request-context/shared-chat actor plumbing, not a
   remote-control transport module.
@@ -52,15 +57,18 @@ Independent confirmation:
 
 ```bash
 rg -n 'cfg\(feature = "remote-control"\)|pub mod remote' native/crates/aimux/src
+rg -l '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src | sort
 sed -n '1,80p' native/crates/aimux/Cargo.toml
 sed -n '1,120p' native/crates/aimux/src/lib.rs
 sed -n '1,160p' native/crates/aimux/src/remote/mod.rs
 ```
 
 Expected result: the reviewer should be able to explain remote reachability from
-one module gate plus the Cargo feature graph. If scattered remote-control module
-declarations reappear outside this boundary, this source-review claim is weaker
-and this document should be treated as stale.
+one remote implementation module gate, reviewed call-site gates, and the Cargo
+feature graph. If grep shows remote implementation modules outside `src/remote`
+or hidden behind independent gates, this source-review claim fails. If the
+remaining call-site count changes, update the reviewed count here rather than
+claiming "one gate" without qualification.
 
 ## Self-Build Verification Path
 
@@ -133,7 +141,9 @@ build and the source-owned gate that verifies the resulting binary.
 
 Property: relay, hosted mode, remote login, remote credentials, remote security
 devices, remote attachment hosting, mobile push bridge, and websocket transport
-live under the remote-control feature boundary.
+live under the remote implementation module gated from `lib.rs`. Remaining
+`remote-control` cfg sites outside `src/remote` must be call-site adapters or
+local/full selection points, not independent remote implementation modules.
 
 Source locations:
 
@@ -148,6 +158,8 @@ Independent confirmation:
 ```bash
 rg -n 'relay|hosted|remote_login|remote_credentials|remote_security|mobile_push_bridge|websocket' \
   native/crates/aimux/src/remote native/crates/aimux/src/lib.rs native/crates/aimux/Cargo.toml
+rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src
+rg -l '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src | sort
 sed -n '1,120p' native/crates/aimux/src/request_actor.rs
 
 cargo tree --manifest-path native/Cargo.toml -p aimux --no-default-features
@@ -156,7 +168,10 @@ cargo tree --manifest-path native/Cargo.toml -p aimux
 
 Expected result: the local tree should not include remote-control dependency
 crates such as `tokio-tungstenite`, `tungstenite`, or `ureq`; the full tree
-should include them.
+should include them. The cfg grep is expected to return reviewed call-site
+gates as well as `src/lib.rs` and `src/remote`. Each non-remote hit should be
+read, not waved away; a hit that defines remote transport behavior outside
+`src/remote` invalidates this claim.
 
 ### 2. Local Build Has No Remote-Control Dependency Graph
 
@@ -262,11 +277,16 @@ failure as "no listeners."
 ### 6. Sensitive Aimux Stores Are Owner-Only
 
 Property: sensitive Aimux-created stores are `0700` directories and `0600`
-files, including existing files repaired during upgrade/startup. This covers
-project-local `.aimux` stores, home-level `~/.aimux/projects` state, runtime
-exchange/topology, context/history, attachments, plans, status, tasks, threads,
-recordings, logs, and graveyard. Intentionally executable/source artifacts are
-explicit exceptions: `.aimux/worktrees`, `.aimux/plugins`, and `~/.aimux/native`.
+files on Unix platforms, including existing files repaired during
+upgrade/startup. This covers the project-local `.aimux` sensitive directories
+enumerated by `LOCAL_AIMUX_SENSITIVE_DIRS` (`attachments`, `context`,
+`history`, `logs`, `plans`, `recordings`, `session-input-ops`,
+`session-messages`, `status`, `tasks`, and `threads`), home-level `~/.aimux`
+state except `native`, and project-state/runtime trees including runtime
+exchange and runtime topology. Graveyard entries stored in runtime topology are
+covered by the project-state repair path. Intentionally executable/source
+artifacts are explicit exceptions: `.aimux/worktrees`, `.aimux/plugins`, and
+`~/.aimux/native`.
 
 Source locations:
 
@@ -294,7 +314,10 @@ including registered inactive projects.
 
 What this does not claim: retention is not uniform across every sensitive store.
 The data-at-rest audit found mixed retention policies. Owner-only permissions
-are now enforced; retention should remain a separate review item.
+are now enforced for the enumerated Unix stores; retention should remain a
+separate review item. This also does not claim a separate project-local
+`.aimux/graveyard/` directory is protected unless that store is added to
+`LOCAL_AIMUX_SENSITIVE_DIRS` and the permission test fixture.
 
 ### 7. Project `.aimux` Stores Are Ignored By Default
 
