@@ -39,12 +39,18 @@ Primary source check:
 
 - `native/crates/aimux/src/remote/mod.rs` should be the module tree that
   re-exports relay, hosted, login, remote credential, remote security-device,
-  mobile push bridge, and websocket code.
+  mobile push bridge, websocket, and remote CLI code. Phase 1 moved the 20
+  remote-control implementation modules under `src/remote/`; phase 1c also
+  moved the remote CLI surface there rather than hiding it behind a macro.
 - This does not claim there is only one `#[cfg(feature = "remote-control")]`
-  site in the source tree. Call-site gates still exist where local and full
-  builds choose different CLI, daemon, or dispatch behavior. A reviewer should
-  grep those sites and confirm they are adapters into the remote module tree or
-  local/full selection points, not scattered remote implementation islands.
+  site in the source tree. Grep for `cfg(feature = "remote-control")` and the
+  build-variant reporter and you should find 88 sites across 11 source files.
+  Sixty of those are concentrated in three files: `daemon/runtime.rs` (31),
+  `daemon/remote_control.rs` (15), and `attachment_hosting.rs` (14). The next
+  largest clusters are `core_cli_executor.rs` (8), `async_runtime.rs` (5),
+  `core_cli.rs` (4), and `bin/aimux.rs` (4), with 7 more across four files.
+  Those sites are call-site adapters or local/full selection points, not
+  scattered remote implementation islands.
 - `native/crates/aimux/src/request_actor.rs` should remain outside
   `src/remote`; it is core request-context/shared-chat actor plumbing, not a
   remote-control transport module.
@@ -58,6 +64,7 @@ Independent confirmation:
 ```bash
 rg -n 'cfg\(feature = "remote-control"\)|pub mod remote' native/crates/aimux/src
 rg -l '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src | sort
+rg -n 'cfg!\(feature = "remote-control"\)' native/crates/aimux/src/build_info.rs
 sed -n '1,80p' native/crates/aimux/Cargo.toml
 sed -n '1,120p' native/crates/aimux/src/lib.rs
 sed -n '1,160p' native/crates/aimux/src/remote/mod.rs
@@ -67,8 +74,8 @@ Expected result: the reviewer should be able to explain remote reachability from
 one remote implementation module gate, reviewed call-site gates, and the Cargo
 feature graph. If grep shows remote implementation modules outside `src/remote`
 or hidden behind independent gates, this source-review claim fails. If the
-remaining call-site count changes, update the reviewed count here rather than
-claiming "one gate" without qualification.
+reviewed count is not 88 sites across 11 files, update this document before
+using it in a review.
 
 ## Self-Build Verification Path
 
@@ -84,13 +91,23 @@ yarn release:source:local
 ```
 
 `release:source:local` is defined in `package.json` as the local wrapper around
+`scripts/build-local-release-from-source.sh`, which execs
 `scripts/build-release-from-source.sh --variant local`. That source helper sets
 `AIMUX_BUILD_VARIANT=local` and `AIMUX_PACKAGE_PROFILE=minimal`, builds
 `release/aimux-local-<platform>-<arch>.tar.gz`, verifies release provenance and
 SBOMs, runs the local boundary check, and installs into an isolated temporary
 root with `AIMUX_SKIP_POST_INSTALL_RESTART=1`. The local-only security claim is
 the build variant and feature set; the package profile controls archive
-contents such as UI/docs assets.
+contents such as UI/docs assets. The package-profile axis is `full|minimal`;
+`local` names the build variant, not the package profile.
+
+Independent source check for that command path:
+
+```bash
+node -e 'const p=require("./package.json"); console.log(p.scripts["release:source:local"])'
+sed -n '1,80p' scripts/build-local-release-from-source.sh
+sed -n '1,180p' scripts/build-release-from-source.sh
+```
 
 Independent decomposition of the same source property:
 
@@ -124,7 +141,9 @@ The first command should prove absence of remote-control dependencies, CLI
 surface, and binary identities. The second should prove the full variant still
 contains the remote-control surface. Proving the opposite side matters: it
 guards against a broken check that always passes because it never finds remote
-code in any build.
+code in any build. The installed local gate also runs the structural remote-tree
+check, so it proves that a local build did not compile `src/remote` units, not
+only that strings and `--help` output were absent.
 
 Release archives, if reviewed, should be treated as a reproducibility target:
 
@@ -141,17 +160,24 @@ build and the source-owned gate that verifies the resulting binary.
 
 Property: relay, hosted mode, remote login, remote credentials, remote security
 devices, remote attachment hosting, mobile push bridge, and websocket transport
-live under the remote implementation module gated from `lib.rs`. Remaining
-`remote-control` cfg sites outside `src/remote` must be call-site adapters or
-local/full selection points, not independent remote implementation modules.
+live under the remote implementation module gated from `lib.rs`. Phase 1 moved
+the 20 remote-control implementation modules under `src/remote`; phase 1c keeps
+the remote CLI cluster under that same remote tree rather than using a macro.
+Remaining `remote-control` cfg sites outside `src/remote` must be call-site
+adapters or local/full selection points, not independent remote implementation
+modules.
 
 Source locations:
 
 - `native/crates/aimux/src/lib.rs`
 - `native/crates/aimux/src/remote/mod.rs`
 - `native/crates/aimux/src/remote/`
+- `native/crates/aimux/src/remote/cli.rs`
 - `native/crates/aimux/src/request_actor.rs`
 - `native/crates/aimux/Cargo.toml`
+- `scripts/check-remote-structural-boundary.mjs`
+- `scripts/check-local-build-boundary.sh`
+- `scripts/installed-runtime-gate.py`
 
 Independent confirmation:
 
@@ -160,6 +186,8 @@ rg -n 'relay|hosted|remote_login|remote_credentials|remote_security|mobile_push_
   native/crates/aimux/src/remote native/crates/aimux/src/lib.rs native/crates/aimux/Cargo.toml
 rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src
 rg -l '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src | sort
+rg -n 'cfg!\(feature = "remote-control"\)' native/crates/aimux/src/build_info.rs
+find native/crates/aimux/src/remote -maxdepth 1 -name '*.rs' -type f | sort
 sed -n '1,120p' native/crates/aimux/src/request_actor.rs
 
 cargo tree --manifest-path native/Cargo.toml -p aimux --no-default-features
@@ -168,10 +196,13 @@ cargo tree --manifest-path native/Cargo.toml -p aimux
 
 Expected result: the local tree should not include remote-control dependency
 crates such as `tokio-tungstenite`, `tungstenite`, or `ureq`; the full tree
-should include them. The cfg grep is expected to return reviewed call-site
-gates as well as `src/lib.rs` and `src/remote`. Each non-remote hit should be
-read, not waved away; a hit that defines remote transport behavior outside
-`src/remote` invalidates this claim.
+should include them. The cfg grep plus the `cfg!` reporter should account for
+88 reviewed sites across 11 files. Each non-remote hit should be read, not
+waved away; a hit that defines remote transport behavior outside `src/remote`
+invalidates this claim. The structural checker should fail if old remote files
+such as `relay_client.rs`, `hosted_server.rs`, or `mobile_push_bridge.rs`
+reappear outside `src/remote`, or if local dep-info shows compiled
+`src/remote` units.
 
 ### 2. Local Build Has No Remote-Control Dependency Graph
 
@@ -206,6 +237,7 @@ Source locations:
 
 - `native/crates/aimux/src/bin/aimux.rs`
 - `native/crates/aimux/src/native_cli_dispatch.rs`
+- `native/crates/aimux/src/remote/cli.rs`
 - `scripts/check-local-build-boundary.sh`
 
 Independent confirmation:
@@ -213,12 +245,18 @@ Independent confirmation:
 ```bash
 /tmp/aimux-local-review-target/release/aimux --help
 rg -n 'remote|hosted|login|logout|whoami|security|remote-control' \
-  native/crates/aimux/src/bin/aimux.rs native/crates/aimux/src/native_cli_dispatch.rs
+  native/crates/aimux/src/bin/aimux.rs \
+  native/crates/aimux/src/core_cli.rs \
+  native/crates/aimux/src/core_cli_executor.rs \
+  native/crates/aimux/src/native_cli_dispatch.rs \
+  native/crates/aimux/src/remote/cli.rs
 ```
 
 Expected result: remote commands are feature-gated out of local help and command
-dispatch. The boundary script should fail if those commands appear in local help
-output.
+dispatch. The remote CLI cluster is intentionally a normal gated module at
+`src/remote/cli.rs`, not a macro, so a source reviewer can read the full remote
+command surface in one place. The boundary script should fail if those commands
+appear in local help output.
 
 ### 4. Local Build Has No Remote-Control Binary Identities
 
@@ -355,19 +393,21 @@ and project-service processes, not spawned agent CLIs.
 Source locations:
 
 - `scripts/installed-runtime-gate.py`
+- `scripts/check-remote-structural-boundary.mjs`
 - `package.json`
 
 Independent confirmation:
 
 ```bash
-rg -n 'sensitive-egress|nonloopback|lsof|control_plane_pids|installed:local-gate' \
-  scripts/installed-runtime-gate.py package.json
+rg -n 'structural-boundary|check-remote-structural-boundary|sensitive-egress|nonloopback|lsof|control_plane_pids|installed:local-gate' \
+  scripts/installed-runtime-gate.py scripts/check-remote-structural-boundary.mjs package.json
 ```
 
 Expected result: the installed-runtime gate builds/installs an isolated local
-variant, creates sensitive stores, samples Aimux control-plane PIDs, and fails
-if any sampled TCP row is non-loopback. The mutation path injects a temporary
-non-loopback listener and expects the gate to fail.
+variant, runs the structural remote-tree boundary check, creates sensitive
+stores, samples Aimux control-plane PIDs, and fails if any sampled TCP row is
+non-loopback. The mutation paths inject a compiled-remote dep-info row and a
+temporary non-loopback listener, and expect the gate to fail in each case.
 
 ### 9. Release Lane Keeps Full And Local Variants Distinct
 
