@@ -1519,7 +1519,6 @@ pub fn load_overseer_expose_item_with(
         ("labelFormat".into(), "raw".into()),
     ];
     query.extend(common_expose_query());
-    query.push(("includeOverseer".into(), "1".into()));
     append_focus_context_query(&mut query, context);
     let url = url_with_query(&endpoint, routes::controls::SWITCHABLE_AGENTS, query);
     let items = request_expose_items(&url, client)?;
@@ -2012,17 +2011,54 @@ fn order_items(
 ) -> Vec<Value> {
     let items = &view.items;
     let mut ordered = items.to_vec();
-    if sort_mode != ExposeSortMode::RecentOutput {
-        return ordered;
+    if sort_mode == ExposeSortMode::RecentOutput {
+        ordered.sort_by(|left, right| {
+            let left_timestamp = item_recency_at(left);
+            let right_timestamp = item_recency_at(right);
+            right_timestamp
+                .cmp(left_timestamp)
+                .then_with(|| item_recent_rank(left).cmp(&item_recent_rank(right)))
+        });
     }
-    ordered.sort_by(|left, right| {
-        let left_timestamp = item_recency_at(left);
-        let right_timestamp = item_recency_at(right);
-        right_timestamp
-            .cmp(left_timestamp)
-            .then_with(|| item_recent_rank(left).cmp(&item_recent_rank(right)))
+    order_items_by_supervisor_priority(ordered)
+}
+
+fn order_items_by_supervisor_priority(items: Vec<Value>) -> Vec<Value> {
+    let mut keyed = items
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let supervisor_scoped = is_supervisor_scoped_expose_item(&item);
+            (
+                if supervisor_scoped { 0 } else { 1 },
+                if supervisor_scoped {
+                    item_expose_order(&item)
+                } else {
+                    0
+                },
+                index,
+                item,
+            )
+        })
+        .collect::<Vec<_>>();
+    keyed.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.cmp(&right.1))
+            .then_with(|| left.2.cmp(&right.2))
     });
-    ordered
+    keyed.into_iter().map(|(_, _, _, item)| item).collect()
+}
+
+fn item_expose_order(item: &Value) -> i64 {
+    item.get("exposeOrder")
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            item.get("roleState")
+                .and_then(|state| state.get("exposeOrder"))
+                .and_then(Value::as_i64)
+        })
+        .unwrap_or(1000)
 }
 
 fn assign_value_worktree_tones(items: &[Value], project_root: &Path) -> BTreeMap<String, i64> {
@@ -2050,6 +2086,13 @@ fn tile_context_for_value(
     if sublabel == ExposeSublabel::None {
         return TileContext {
             worktree: String::new(),
+            project: None,
+            tone: None,
+        };
+    }
+    if is_supervisor_scoped_expose_item(item) {
+        return TileContext {
+            worktree: expose_supervisor_hotkey_footer_label(item),
             project: None,
             tone: None,
         };
@@ -2241,7 +2284,9 @@ fn project_service_endpoint(
 
 fn common_expose_query() -> Vec<(String, String)> {
     vec![
+        ("expose".into(), "1".into()),
         ("includePreview".into(), "1".into()),
+        ("includeOverseer".into(), "1".into()),
         ("clientKind".into(), "expose".into()),
         (
             "clientId".into(),
@@ -2505,6 +2550,12 @@ fn expose_supervisor_hotkey_footer_label(item: &Value) -> String {
                 .and_then(Value::as_str)
         })
         .or_else(|| item.get("label").and_then(Value::as_str))
+        .or_else(|| {
+            item.get("metadata")
+                .and_then(|metadata| metadata.get("label"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| item.get("id").and_then(Value::as_str))
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("supervisor")
@@ -2728,5 +2779,85 @@ mod tests {
 
         assert!(rendered.contains("0 reviewer"));
         assert!(!rendered.contains("0 overseer"));
+    }
+
+    #[test]
+    fn expose_order_places_supervisor_in_first_tile_and_preserves_worktree_order() {
+        let mut worker_one = expose_item("worker-1", "worktree");
+        worker_one["exposeOrder"] = json!(-10);
+        let items = vec![
+            worker_one,
+            expose_item("worker-2", "worktree"),
+            expose_item("overseer", "supervisor"),
+            expose_item("worker-3", "worktree"),
+        ];
+        let view = ExposeScopeView {
+            scope: ExposeScope::Project,
+            items,
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+        };
+
+        let ordered = order_items(&view, Path::new("/repo"), ExposeSortMode::Default);
+        let labels = ordered
+            .iter()
+            .map(|item| item.get("label").and_then(Value::as_str).unwrap_or(""))
+            .collect::<Vec<_>>();
+        let badges = (0..ordered.len())
+            .map(|index| expose_hotkey_badge_for_item(&ordered, index))
+            .collect::<Vec<_>>();
+
+        assert_eq!(labels, vec!["overseer", "worker-1", "worker-2", "worker-3"]);
+        assert_eq!(badges, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn supervisor_tile_context_uses_role_label_instead_of_main_worktree() {
+        let mut item = expose_item("overseer", "supervisor");
+        item.as_object_mut()
+            .expect("object item")
+            .remove("exposeContext");
+        item["metadata"]["worktreePath"] = json!("/repo");
+
+        let context = tile_context_for_value(
+            &item,
+            ExposeSublabel::Worktree,
+            Path::new("/repo"),
+            &BTreeMap::new(),
+        );
+
+        assert_eq!(context.worktree, "overseer");
+        assert_ne!(context.worktree, "main");
+        assert_eq!(context.project, None);
+    }
+
+    #[test]
+    fn supervisor_role_label_matches_gui_resolution_order() {
+        let mut item = expose_item("overseer", "supervisor");
+        item["roleState"]["role"] = Value::Null;
+        item["metadata"]["role"] = json!("reviewer");
+        item["label"] = json!("tile-label");
+        item["metadata"]["label"] = json!("metadata-label");
+        item["id"] = json!("item-id");
+        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "reviewer");
+
+        item["metadata"]["role"] = Value::Null;
+        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "tile-label");
+
+        item["label"] = Value::Null;
+        assert_eq!(
+            expose_supervisor_hotkey_footer_label(&item),
+            "metadata-label"
+        );
+
+        item["metadata"]["label"] = Value::Null;
+        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "item-id");
+
+        item["id"] = Value::Null;
+        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "supervisor");
+
+        item["roleState"]["role"] = json!("   ");
+        item["metadata"]["role"] = json!("reviewer");
+        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "supervisor");
     }
 }

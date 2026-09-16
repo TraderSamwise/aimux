@@ -333,7 +333,9 @@ fn scope_items_build_local_and_global_requests_without_collapsing_failures_to_em
     assert!(local_url.starts_with("http://127.0.0.1:45000/control/switchable-agents?"));
     assert!(local_url.contains("scope=worktree"));
     assert!(local_url.contains("labelFormat=raw"));
+    assert!(local_url.contains("expose=1"));
     assert!(local_url.contains("includePreview=1"));
+    assert!(local_url.contains("includeOverseer=1"));
     assert!(local_url.contains("clientKind=expose"));
     assert!(local_url.contains("clientTtlMs=10000"));
     assert!(local_url.contains("currentClientSession=aimux-test-client-12345678"));
@@ -344,7 +346,9 @@ fn scope_items_build_local_and_global_requests_without_collapsing_failures_to_em
 
     let global_url = &fake.requests[3].0;
     assert!(global_url.starts_with("http://127.0.0.1:43190/core/expose/items?"));
+    assert!(global_url.contains("expose=1"));
     assert!(global_url.contains("includePreview=1"));
+    assert!(global_url.contains("includeOverseer=1"));
     assert!(!global_url.contains("currentWindow"));
     cleanup(state_dir);
 }
@@ -1744,6 +1748,87 @@ fn runner_reloads_items_every_fifth_timeout_tick() {
     )
     .expect("reloaded snapshot");
     assert_eq!(cached.items[0]["target"]["windowId"], "@2");
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_keeps_supervisor_present_across_repeated_refreshes() {
+    let state_dir = temp_dir("runner-supervisor-refresh-stable");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut overseer = supervisor_hot_item("@0", "overseer", true);
+    overseer["roleState"]["exposeOrder"] = json!(0);
+    let worker_one = hot_item("@1", "worker one preview\n");
+    let worker_two = hot_item("@2", "worker two preview\n");
+    let mut client = FakeHttp::with_responses([
+        json!({
+            "ok": true,
+            "items": [worker_one.clone(), worker_two.clone(), overseer.clone()]
+        }),
+        json!({
+            "ok": true,
+            "items": [worker_one, worker_two, overseer]
+        }),
+    ]);
+    let mut capture = FakeCapture::default();
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    assert_eq!(client.requests.len(), 2);
+    for (url, _) in &client.requests {
+        assert!(
+            url.contains("expose=1"),
+            "every initial and refresh request must use Exposé role visibility: {url}"
+        );
+        assert!(
+            url.contains("includeOverseer=1"),
+            "every initial and refresh request must include supervisor-scoped agents: {url}"
+        );
+    }
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let frames = synchronized_frames(&rendered);
+    let loaded_frames = frames
+        .iter()
+        .copied()
+        .filter(|frame| frame.contains("all worktrees") && !frame.contains("Loading sessions"))
+        .collect::<Vec<_>>();
+    let first_frame = loaded_frames.first().expect("first loaded frame");
+    let last_frame = loaded_frames.last().expect("last loaded frame");
+    assert!(
+        loaded_frames.len() >= 2,
+        "expected initial and refreshed loaded frames:\n{rendered}"
+    );
+    assert!(
+        first_frame.contains("all worktrees (3)"),
+        "first loaded frame did not show all three items:\n{first_frame}"
+    );
+    assert!(
+        last_frame.contains("all worktrees (3)"),
+        "last loaded frame did not show all three items:\n{last_frame}"
+    );
+    assert!(last_frame.contains("overseer"));
+    assert!(last_frame.contains("0"));
     cleanup(state_dir);
 }
 
