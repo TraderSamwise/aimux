@@ -69,7 +69,8 @@ pub fn default_config() -> Value {
                 "overseerOther": false,
                 "scribe": false,
                 "scribeStuck": true
-            }
+            },
+            "notifyWhenWatchedByOverseer": false
         },
         "statusline": {
             "defaultPlugins": {

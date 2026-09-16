@@ -5,11 +5,14 @@ use aimux::debug_logging::{
 };
 use aimux::notification_delivery_guard::{
     TEST_NOTIFICATION_SOURCE_FIELD, TEST_NOTIFICATION_SOURCE_VALUE,
+    WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON,
     external_notification_refusal_reason_for_event,
     external_notification_refusal_reason_for_payload,
     fixture_notification_refusal_reason_for_event, fixture_notification_refusal_reason_for_payload,
+    watched_by_overseer_notification_refusal_reason_for_state,
 };
 use serde_json::json;
+use std::collections::BTreeSet;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, remove_file};
 use std::path::PathBuf;
 
@@ -113,6 +116,106 @@ fn unmarked_temp_aimux_home_state_dir_does_not_refuse_fixture_delivery() {
 }
 
 #[test]
+fn watched_agent_with_verified_live_overseer_refuses_external_notification() {
+    let event = json!({ "kind": "needs_input", "sessionId": "worker-1" });
+    let metadata = watched_metadata(false);
+    let sessions = watched_sessions("running", Some("@overseer"));
+    let live_window_ids = live_window_ids(&["@overseer"]);
+
+    assert_eq!(
+        watched_by_overseer_notification_refusal_reason_for_state(
+            &event,
+            &json!({}),
+            &metadata,
+            &sessions,
+            Ok(&live_window_ids),
+        ),
+        Some(WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON)
+    );
+}
+
+#[test]
+fn unwatched_agent_keeps_external_notification_delivery() {
+    let event = json!({ "kind": "needs_input", "sessionId": "worker-1" });
+    let mut metadata = watched_metadata(false);
+    metadata["sessions"]["worker-1"]["loop"]["active"] = json!(false);
+    let sessions = watched_sessions("running", Some("@overseer"));
+    let live_window_ids = live_window_ids(&["@overseer"]);
+
+    assert_eq!(
+        watched_by_overseer_notification_refusal_reason_for_state(
+            &event,
+            &json!({}),
+            &metadata,
+            &sessions,
+            Ok(&live_window_ids),
+        ),
+        None
+    );
+}
+
+#[test]
+fn watched_agent_notifies_when_overseer_liveness_cannot_be_verified() {
+    let event = json!({ "kind": "needs_input", "sessionId": "worker-1" });
+    let metadata = watched_metadata(false);
+    let sessions = watched_sessions("running", Some("@overseer"));
+
+    assert_eq!(
+        watched_by_overseer_notification_refusal_reason_for_state(
+            &event,
+            &json!({}),
+            &metadata,
+            &sessions,
+            Err("tmux socket busy"),
+        ),
+        None
+    );
+
+    let live_window_ids = live_window_ids(&["@other"]);
+    assert_eq!(
+        watched_by_overseer_notification_refusal_reason_for_state(
+            &event,
+            &json!({}),
+            &metadata,
+            &sessions,
+            Ok(&live_window_ids),
+        ),
+        None
+    );
+}
+
+#[test]
+fn watched_agent_project_or_agent_override_forces_external_notification_delivery() {
+    let event = json!({ "kind": "needs_input", "sessionId": "worker-1" });
+    let metadata = watched_metadata(false);
+    let sessions = watched_sessions("running", Some("@overseer"));
+    let live_window_ids = live_window_ids(&["@overseer"]);
+
+    assert_eq!(
+        watched_by_overseer_notification_refusal_reason_for_state(
+            &event,
+            &json!({ "notifyWhenWatchedByOverseer": true }),
+            &metadata,
+            &sessions,
+            Ok(&live_window_ids),
+        ),
+        None
+    );
+
+    let metadata = watched_metadata(true);
+    assert_eq!(
+        watched_by_overseer_notification_refusal_reason_for_state(
+            &event,
+            &json!({}),
+            &metadata,
+            &sessions,
+            Ok(&live_window_ids),
+        ),
+        None
+    );
+}
+
+#[test]
 fn cargo_test_process_refuses_external_event_delivery_without_fixture_marker() {
     let event = json!({
         "kind": "needs_input",
@@ -165,4 +268,46 @@ fn refused_external_payload_delivery_is_debug_logged() {
     assert!(raw.contains("\"reason\":\"cargo test harness\""));
     assert!(raw.contains("\"category\":\"notifications\""));
     let _ = remove_dir_all(log_dir);
+}
+
+fn watched_metadata(agent_override: bool) -> serde_json::Value {
+    json!({
+        "sessions": {
+            "worker-1": {
+                "loop": {
+                    "active": true,
+                    "since": "2026-09-16T00:00:00.000Z",
+                    "source": "overseer"
+                },
+                "notifications": {
+                    "notifyWhenWatchedByOverseer": agent_override
+                }
+            },
+            "overseer-1": {
+                "overseer": true
+            }
+        }
+    })
+}
+
+fn watched_sessions(
+    overseer_status: &str,
+    overseer_window_id: Option<&str>,
+) -> Vec<serde_json::Value> {
+    let mut overseer = json!({
+        "id": "overseer-1",
+        "status": overseer_status
+    });
+    if let Some(window_id) = overseer_window_id {
+        overseer["tmuxTarget"] = json!({
+            "sessionName": "aimux-repo",
+            "windowId": window_id,
+            "windowIndex": 1
+        });
+    }
+    vec![json!({ "id": "worker-1", "status": "idle" }), overseer]
+}
+
+fn live_window_ids(ids: &[&str]) -> BTreeSet<String> {
+    ids.iter().map(|id| (*id).to_owned()).collect()
 }

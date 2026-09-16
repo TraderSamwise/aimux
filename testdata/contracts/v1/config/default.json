@@ -35,7 +35,8 @@
       "overseerOther": false,
       "scribe": false,
       "scribeStuck": true
-    }
+    },
+    "notifyWhenWatchedByOverseer": false
   },
   "statusline": {
     "defaultPlugins": {
