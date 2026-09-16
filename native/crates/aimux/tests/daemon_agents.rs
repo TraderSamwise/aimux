@@ -5,7 +5,7 @@ use aimux::daemon::text::agents::{
     DaemonAgentTextRuntime, ProjectServicePostOptions, route_agent_text_request,
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
-use aimux::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
+use aimux::native_cli_dispatch::{CORE_SERVICE_CREATE_TEXT_ROUTE, CORE_SERVICE_REMOVE_TEXT_ROUTE};
 use aimux::project_api_contract::routes as project_routes;
 use serde_json::{Value, json};
 
@@ -123,6 +123,10 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             project_routes::services::CREATE => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "serviceId": "service-1", "status": "running" }),
+            ),
+            project_routes::services::REMOVE => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({ "serviceId": body["serviceId"].clone(), "status": "removed" }),
             ),
             project_routes::agents::STOP => ProjectServiceJsonResult::ok(
                 "/repo",
@@ -258,6 +262,23 @@ fn lifecycle_routes_match_agent_project_service_contracts() {
     assert_eq!(
         service_call.body.as_ref().unwrap(),
         &json!({ "command": "yarn dev", "worktreePath": "/repo/wt" })
+    );
+
+    let removed = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_SERVICE_REMOVE_TEXT_ROUTE,
+        Some(&json!({ "project": ".", "serviceId": "service-1" })),
+    )
+    .expect("service remove route");
+    assert_eq!(text_body(removed), "removed service service-1\n");
+    let remove_call = runtime.calls.last().unwrap();
+    assert_eq!(remove_call.project, ".");
+    assert_eq!(remove_call.route_path, project_routes::services::REMOVE);
+    assert_eq!(remove_call.ensure_project, Some(false));
+    assert_eq!(
+        remove_call.body.as_ref().unwrap(),
+        &json!({ "serviceId": "service-1" })
     );
 
     let stopped = route_agent_text_request(

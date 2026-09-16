@@ -86,6 +86,8 @@ use std::time::{Duration, Instant};
 
 const DAEMON_RESTART_SIGNAL: &str = "SIGHUP";
 const LOOP_SELF_REPORT_SPOOL_RELATIVE_PATH: &str = "daemon/pending-loop-self-reports.jsonl";
+const LOOP_SELF_REPORT_DAEMON_TIMEOUT_MS: u64 = 10_000;
+const LOOP_MANAGEMENT_DAEMON_TIMEOUT_MS: u64 = 60_000;
 const POST_RESTART_DAEMON_VERIFY_TIMEOUT_MS: u64 = 30_000;
 const POST_RESTART_DAEMON_VERIFY_RETRY_SLEEP_MS: u64 = 250;
 
@@ -150,7 +152,29 @@ pub trait CoreCliRuntime {
     ) -> Result<String, String> {
         self.request_daemon_text(path, body)
     }
-    fn replay_pending_loop_self_reports(&mut self) -> Result<usize, String> {
+    fn request_daemon_text_with_timeout(
+        &mut self,
+        path: &str,
+        body: Option<Value>,
+        timeout_ms: Option<u64>,
+    ) -> Result<String, String> {
+        let _ = timeout_ms;
+        self.request_daemon_text(path, body)
+    }
+    fn request_existing_daemon_text_with_timeout(
+        &mut self,
+        path: &str,
+        body: Option<Value>,
+        timeout_ms: Option<u64>,
+    ) -> Result<String, String> {
+        let _ = timeout_ms;
+        self.request_existing_daemon_text(path, body)
+    }
+    fn replay_pending_loop_self_reports(
+        &mut self,
+        timeout_ms: Option<u64>,
+    ) -> Result<usize, String> {
+        let _ = timeout_ms;
         Ok(0)
     }
     fn record_pending_loop_self_report(
@@ -319,12 +343,22 @@ impl CoreCliRuntime for RealCoreCliRuntime {
     }
 
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {
+        self.request_daemon_text_with_timeout(path, body, None)
+    }
+
+    fn request_daemon_text_with_timeout(
+        &mut self,
+        path: &str,
+        body: Option<Value>,
+        timeout_ms: Option<u64>,
+    ) -> Result<String, String> {
         let method = daemon_text_route_method(path, body.as_ref());
         request_daemon_text_with_lazy_ensure(
             path,
             DaemonRequestInit {
                 method: Some(method),
                 body: body.map(|value| value.to_string()),
+                timeout_ms,
                 ..DaemonRequestInit::default()
             },
             || {
@@ -341,20 +375,35 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         path: &str,
         body: Option<Value>,
     ) -> Result<String, String> {
+        self.request_existing_daemon_text_with_timeout(path, body, None)
+    }
+
+    fn request_existing_daemon_text_with_timeout(
+        &mut self,
+        path: &str,
+        body: Option<Value>,
+        timeout_ms: Option<u64>,
+    ) -> Result<String, String> {
         let method = daemon_text_route_method(path, body.as_ref());
         request_daemon_text(
             path,
             DaemonRequestInit {
                 method: Some(method),
                 body: body.map(|value| value.to_string()),
+                timeout_ms,
                 ..DaemonRequestInit::default()
             },
         )
         .map_err(|error| error.to_string())
     }
 
-    fn replay_pending_loop_self_reports(&mut self) -> Result<usize, String> {
-        replay_pending_loop_self_reports(|path, body| self.request_existing_daemon_text(path, body))
+    fn replay_pending_loop_self_reports(
+        &mut self,
+        timeout_ms: Option<u64>,
+    ) -> Result<usize, String> {
+        replay_pending_loop_self_reports(|path, body| {
+            self.request_existing_daemon_text_with_timeout(path, body, timeout_ms)
+        })
     }
 
     fn record_pending_loop_self_report(
@@ -567,6 +616,7 @@ const POST_TEXT_ROUTES: &[&str] = &[
     CORE_API_ROUTES.lifecycle_kill_text,
     CORE_API_ROUTES.lifecycle_spawn_text,
     CORE_API_ROUTES.lifecycle_stop_text,
+    crate::native_cli_dispatch::CORE_SERVICE_REMOVE_TEXT_ROUTE,
     CORE_API_ROUTES.login_start_text,
     CORE_API_ROUTES.login_text,
     CORE_API_ROUTES.login_wait_text,
@@ -1548,22 +1598,30 @@ fn run_text_route(
     body: Option<Value>,
     runtime: &mut impl CoreCliRuntime,
 ) -> Result<CoreCliExecution, String> {
+    let timeout_ms = loop_text_route_timeout_ms(operation);
     if operation_allows_build_skew_text_route(operation) {
         let replay_warning = runtime
-            .replay_pending_loop_self_reports()
+            .replay_pending_loop_self_reports(timeout_ms)
             .err()
             .map(|error| format!("Warning: pending loop self-report replay failed: {error}"));
-        let text = match runtime.request_existing_daemon_text(path, body.clone()) {
-            Ok(text) => text,
-            Err(error) => {
-                let spool_path = runtime
-                    .record_pending_loop_self_report(path, body.as_ref(), &error)
-                    .map_err(|record_error| {
-                        loop_self_report_record_failure_error(&error, &record_error)
-                    })?;
-                return Err(loop_self_report_recorded_error(&error, &spool_path));
-            }
-        };
+        let text =
+            match runtime.request_existing_daemon_text_with_timeout(path, body.clone(), timeout_ms)
+            {
+                Ok(text) => text,
+                Err(error) => {
+                    let delivery_error =
+                        loop_text_route_wait_error(operation, path, timeout_ms, &error);
+                    let spool_path = runtime
+                        .record_pending_loop_self_report(path, body.as_ref(), &delivery_error)
+                        .map_err(|record_error| {
+                            loop_self_report_record_failure_error(&delivery_error, &record_error)
+                        })?;
+                    return Err(loop_self_report_recorded_error(
+                        &delivery_error,
+                        &spool_path,
+                    ));
+                }
+            };
         let mut execution =
             CoreCliExecution::ok(vec![text.strip_suffix('\n').unwrap_or(&text).to_owned()]);
         if let Some(warning) = replay_warning {
@@ -1571,10 +1629,55 @@ fn run_text_route(
         }
         return Ok(execution);
     }
-    let text = runtime.request_daemon_text(path, body)?;
+    let text = runtime
+        .request_daemon_text_with_timeout(path, body, timeout_ms)
+        .map_err(|error| match timeout_ms {
+            Some(_) => loop_text_route_wait_error(operation, path, timeout_ms, &error),
+            None => error,
+        })?;
     Ok(CoreCliExecution::ok(vec![
         text.strip_suffix('\n').unwrap_or(&text).to_owned(),
     ]))
+}
+
+fn loop_text_route_timeout_ms(operation: CoreCliOperation) -> Option<u64> {
+    match operation {
+        CoreCliOperation::LoopDone | CoreCliOperation::LoopBlock => {
+            Some(LOOP_SELF_REPORT_DAEMON_TIMEOUT_MS)
+        }
+        CoreCliOperation::LoopAdd
+        | CoreCliOperation::LoopRemove
+        | CoreCliOperation::LoopPause
+        | CoreCliOperation::LoopUnpause => Some(LOOP_MANAGEMENT_DAEMON_TIMEOUT_MS),
+        _ => None,
+    }
+}
+
+fn loop_text_route_wait_error(
+    operation: CoreCliOperation,
+    path: &str,
+    timeout_ms: Option<u64>,
+    error: &str,
+) -> String {
+    let label = loop_text_route_operation_label(operation);
+    match timeout_ms {
+        Some(timeout_ms) => format!(
+            "{label} request to aimux daemon route {path} failed while waiting up to {timeout_ms}ms for daemon response: {error}"
+        ),
+        None => format!("{label} request to aimux daemon route {path} failed: {error}"),
+    }
+}
+
+fn loop_text_route_operation_label(operation: CoreCliOperation) -> &'static str {
+    match operation {
+        CoreCliOperation::LoopAdd => "loop add",
+        CoreCliOperation::LoopRemove => "loop remove",
+        CoreCliOperation::LoopPause => "loop pause",
+        CoreCliOperation::LoopUnpause => "loop unpause",
+        CoreCliOperation::LoopDone => "loop done",
+        CoreCliOperation::LoopBlock => "loop block",
+        _ => "daemon text route",
+    }
 }
 
 fn operation_allows_build_skew_text_route(operation: CoreCliOperation) -> bool {

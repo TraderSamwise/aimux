@@ -7,6 +7,7 @@ use crate::core_text::{
     render_core_loop_done_lines, render_core_loop_list_lines, render_core_loop_pause_lines,
     render_core_loop_remove_lines, render_core_loop_unpause_lines,
     render_core_overseer_status_lines, render_core_scribe_status_lines,
+    render_core_service_remove_lines,
 };
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, required_param, string_param, text_error,
@@ -18,7 +19,7 @@ use crate::daemon::text::params::{
 };
 use crate::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_SCRIBE_STATUS_TEXT_ROUTE,
-    CORE_SERVICE_CREATE_TEXT_ROUTE,
+    CORE_SERVICE_CREATE_TEXT_ROUTE, CORE_SERVICE_REMOVE_TEXT_ROUTE,
 };
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
@@ -78,6 +79,13 @@ impl ProjectServicePostOptions {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct ServiceStatusInput {
+    pub action: &'static str,
+    pub route_path: &'static str,
+    pub render: fn(&Value) -> Vec<String>,
+}
+
 pub fn route_agent_text_request(
     runtime: &mut impl DaemonAgentTextRuntime,
     method: &str,
@@ -92,6 +100,18 @@ pub fn route_agent_text_request(
     }
     if method == "POST" && pathname == CORE_SERVICE_CREATE_TEXT_ROUTE {
         return Some(service_create_text_route(runtime, &route_url, body));
+    }
+    if method == "POST" && pathname == CORE_SERVICE_REMOVE_TEXT_ROUTE {
+        return Some(service_status_text_route(
+            runtime,
+            &route_url,
+            body,
+            ServiceStatusInput {
+                action: "remove",
+                route_path: project_routes::services::REMOVE,
+                render: render_core_service_remove_lines,
+            },
+        ));
     }
     if method == "POST" && pathname == CORE_API_ROUTES.lifecycle_stop_text {
         return Some(lifecycle_status_text_route(
@@ -286,6 +306,47 @@ pub fn service_create_text_route(
         payload,
         &[format!("service {service_id} running")],
     )
+}
+
+pub fn service_status_text_route(
+    runtime: &mut impl DaemonAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+    input: ServiceStatusInput,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let service_id = match required_param(route_url, body, "serviceId") {
+        Ok(service_id) => service_id,
+        Err(response) => return response,
+    };
+    let (json, project_root) = match unwrap_project_result(runtime.post_project_service_json(
+        &project,
+        input.route_path,
+        json!({ "serviceId": service_id }),
+        ProjectServicePostOptions::skip_ensure(),
+    )) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    let returned_service_id =
+        match required_project_service_string(&json, input.action, "serviceId") {
+            Ok(service_id) => service_id,
+            Err(response) => return response,
+        };
+    let status = match required_project_service_string(&json, input.action, "status") {
+        Ok(status) => status,
+        Err(response) => return response,
+    };
+    let payload = json!({
+        "ok": true,
+        "projectRoot": project_root,
+        "serviceId": returned_service_id,
+        "status": status,
+    });
+    text_or_json_lines(route_url, payload.clone(), &(input.render)(&payload))
 }
 
 pub fn lifecycle_spawn_text_route(

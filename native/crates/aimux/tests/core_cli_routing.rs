@@ -19,9 +19,9 @@ use aimux::core_cli_routing::{
     parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
     parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_repair_args,
     parse_core_restart_args, parse_core_runtime_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
-    parse_core_task_args_result, parse_core_team_args, parse_core_thread_args,
-    parse_core_thread_args_result, parse_core_worktree_args,
+    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_service_status_args,
+    parse_core_task_args, parse_core_task_args_result, parse_core_team_args,
+    parse_core_thread_args, parse_core_thread_args_result, parse_core_worktree_args,
 };
 
 #[test]
@@ -565,6 +565,28 @@ fn service_create_parser_matches_top_level_shell_dispatch_forms() {
     assert!(parse_core_service_create_args(&["service"]).is_none());
     assert!(parse_core_service_create_args(&["service", "create", "--worktree"]).is_none());
     assert!(parse_core_service_create_args(&["service", "create", "--bad"]).is_none());
+    assert!(parse_core_service_create_args(&["service", "create", "--", "--help"]).is_none());
+    assert!(
+        parse_core_service_create_args(&["service", "create", "--command", "--help"]).is_none()
+    );
+
+    let remove = parse_core_service_status_args(
+        &[
+            "service",
+            "remove",
+            "service-1",
+            "--project",
+            "/repo",
+            "--json",
+        ],
+        "remove",
+    )
+    .expect("service remove");
+    assert_eq!(remove.service_id, "service-1");
+    assert_eq!(remove.project.as_deref(), Some("/repo"));
+    assert!(remove.json);
+    assert!(parse_core_service_status_args(&["service", "remove"], "remove").is_none());
+    assert!(parse_core_service_status_args(&["service", "remove", "--bad"], "remove").is_none());
 }
 
 #[test]
@@ -603,6 +625,24 @@ fn root_dispatch_delimiter_and_tool_forms_match_native_contract() {
     assert_eq!(
         native_tool_launch_args_for_config(&["shell".to_owned()], &config),
         Some(vec!["service".to_owned(), "create".to_owned()])
+    );
+    assert_eq!(
+        native_tool_launch_args_for_config(
+            &["shell".to_owned(), "echo".to_owned(), "--help".to_owned()],
+            &config
+        ),
+        Some(vec![
+            "service".to_owned(),
+            "create".to_owned(),
+            "--".to_owned(),
+            "echo".to_owned(),
+            "--help".to_owned()
+        ])
+    );
+    assert_eq!(
+        native_tool_launch_args_for_config(&["shell".to_owned(), "--help".to_owned()], &config),
+        None,
+        "aimux shell --help must stay a help request, not become a service"
     );
     assert_eq!(
         native_tool_launch_args_for_config(&["projects".to_owned()], &config),

@@ -19,7 +19,8 @@ use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::{
-    LiveWindowIdsProjection, topology_desktop_session_list,
+    LiveWindowIdsProjection, live_services_with_window_projection,
+    live_window_projection_for_owned_ids, topology_desktop_session_list,
     topology_desktop_session_list_for_context_async,
     topology_desktop_session_list_with_live_window_projection,
     topology_desktop_session_projection_for_context,
@@ -452,6 +453,10 @@ pub fn topology_switchable_entries_for_context(
             projection.sessions,
             topology,
             metadata_sessions,
+            live_window_projection_for_owned_ids(
+                projection.live_window_ids.as_ref(),
+                projection.live_window_query_error.as_deref(),
+            ),
         ),
         live_window_query_error: projection.live_window_query_error,
     }
@@ -480,6 +485,10 @@ pub async fn topology_switchable_entries_for_context_async(
             projection.sessions,
             topology,
             metadata_sessions,
+            live_window_projection_for_owned_ids(
+                projection.live_window_ids.as_ref(),
+                projection.live_window_query_error.as_deref(),
+            ),
         ),
         live_window_query_error: projection.live_window_query_error,
     }
@@ -491,7 +500,12 @@ pub fn topology_switchable_entries_with_live_window_normalization(
 ) -> Vec<ManagedWindowEntry> {
     let tools = default_tools_config();
     let sessions = topology_desktop_session_list(topology, metadata_sessions, &tools);
-    topology_switchable_entries_from_sessions(sessions, topology, metadata_sessions)
+    topology_switchable_entries_from_sessions(
+        sessions,
+        topology,
+        metadata_sessions,
+        LiveWindowIdsProjection::Unavailable("tmux live-window query not retained"),
+    )
 }
 
 pub fn topology_switchable_entries_with_live_window_projection(
@@ -506,13 +520,19 @@ pub fn topology_switchable_entries_with_live_window_projection(
         &tools,
         live_window_ids,
     );
-    topology_switchable_entries_from_sessions(sessions, topology, metadata_sessions)
+    topology_switchable_entries_from_sessions(
+        sessions,
+        topology,
+        metadata_sessions,
+        live_window_ids,
+    )
 }
 
 fn topology_switchable_entries_from_sessions(
     sessions: Vec<Value>,
     topology: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
+    live_window_ids: LiveWindowIdsProjection<'_>,
 ) -> Vec<ManagedWindowEntry> {
     let mut entries = Vec::new();
     for session in sessions.into_iter().filter(|session| {
@@ -522,7 +542,10 @@ fn topology_switchable_entries_from_sessions(
             entries.push(entry);
         }
     }
-    for service in list_topology_service_states(topology, Some(LIVE_SERVICE_STATUSES)) {
+    for service in live_services_with_window_projection(
+        list_topology_service_states(topology, Some(LIVE_SERVICE_STATUSES)),
+        live_window_ids,
+    ) {
         if let Some(entry) = service_switchable_entry(&service) {
             entries.push(entry);
         }

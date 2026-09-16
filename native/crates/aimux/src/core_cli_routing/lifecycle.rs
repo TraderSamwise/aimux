@@ -1,6 +1,6 @@
 use super::args::{
     CoreLifecycleForkArgs, CoreLifecycleSpawnArgs, CoreLifecycleStatusArgs, CoreMigrationArgs,
-    CoreServiceCreateArgs,
+    CoreServiceCreateArgs, CoreServiceStatusArgs,
 };
 use super::common::required_value;
 
@@ -231,6 +231,10 @@ pub fn parse_core_service_create_args<S: AsRef<str>>(args: &[S]) -> Option<CoreS
     while index < args.len() {
         let arg = args[index].as_ref();
         if arg == "--" {
+            let first_command_arg = args.get(index + 1)?.as_ref();
+            if first_command_arg.starts_with('-') {
+                return None;
+            }
             command = args[index + 1..]
                 .iter()
                 .map(AsRef::as_ref)
@@ -244,11 +248,18 @@ pub fn parse_core_service_create_args<S: AsRef<str>>(args: &[S]) -> Option<CoreS
             continue;
         }
         if arg == "--command" {
-            command = args.get(index + 1)?.as_ref().to_owned();
+            let value = args.get(index + 1)?.as_ref();
+            if value.starts_with('-') {
+                return None;
+            }
+            command = value.to_owned();
             index += 2;
             continue;
         }
         if let Some(value) = arg.strip_prefix("--command=") {
+            if value.starts_with('-') {
+                return None;
+            }
             command = value.to_owned();
             index += 1;
             continue;
@@ -293,6 +304,56 @@ pub fn parse_core_service_create_args<S: AsRef<str>>(args: &[S]) -> Option<CoreS
         command,
         project,
         worktree,
+        json,
+    })
+}
+
+pub fn parse_core_service_status_args<S: AsRef<str>>(
+    args: &[S],
+    subcommand: &str,
+) -> Option<CoreServiceStatusArgs> {
+    if args.first().map(AsRef::as_ref) != Some("service")
+        || args.get(1).map(AsRef::as_ref) != Some(subcommand)
+    {
+        return None;
+    }
+    let mut service_id = None;
+    let mut project = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || service_id.is_some() {
+            return None;
+        }
+        service_id = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreServiceStatusArgs {
+        service_id: service_id?,
+        project,
         json,
     })
 }
