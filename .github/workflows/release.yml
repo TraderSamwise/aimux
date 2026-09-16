@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 defaults:
   run:
@@ -169,6 +171,17 @@ jobs:
           files: |
             release/${{ matrix.asset }}.tar.gz
             release/${{ matrix.asset }}.tar.gz.sha256
+            release/${{ matrix.asset }}.tar.gz.provenance.json
+            release/${{ matrix.asset }}.tar.gz.sbom.spdx.json
+
+      - name: Attest release asset provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release/${{ matrix.asset }}.tar.gz
+            release/${{ matrix.asset }}.tar.gz.sha256
+            release/${{ matrix.asset }}.tar.gz.provenance.json
+            release/${{ matrix.asset }}.tar.gz.sbom.spdx.json
 
   verify-release-assets:
     name: Verify complete release asset set
@@ -193,10 +206,30 @@ jobs:
               --pattern "${a}.tar.gz" --dir release-check --clobber
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sha256" --dir release-check --clobber
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "${a}.tar.gz.provenance.json" --dir release-check --clobber
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "${a}.tar.gz.sbom.spdx.json" --dir release-check --clobber
           done
 
       - name: Verify complete release assets
         run: bash scripts/verify-release-asset-set.sh release-check
+
+      - name: Verify release asset attestations
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for a in \
+            aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
+            aimux-lite-darwin-arm64 aimux-lite-darwin-x64 aimux-lite-linux-arm64 aimux-lite-linux-x64
+          do
+            gh attestation verify "release-check/${a}.tar.gz" --repo "$OWNER_REPO"
+            gh attestation verify "release-check/${a}.tar.gz.sha256" --repo "$OWNER_REPO"
+            gh attestation verify "release-check/${a}.tar.gz.provenance.json" --repo "$OWNER_REPO"
+            gh attestation verify "release-check/${a}.tar.gz.sbom.spdx.json" --repo "$OWNER_REPO"
+          done
 
   publish-npm:
     name: Publish to npm

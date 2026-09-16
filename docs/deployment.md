@@ -192,17 +192,20 @@ a broken release.
 
 1. **Release assets** — builds full `aimux-{darwin,linux}-{arm64,x64}.tar.gz`
    and lite `aimux-lite-{darwin,linux}-{arm64,x64}.tar.gz` archives plus
-   `.sha256` files on matching runners, after re-running
+   `.sha256`, `.provenance.json`, and `.sbom.spdx.json` companion files on matching runners, after re-running
    `yarn release:readiness`. Each asset carries a `BUILD_VARIANT` stamp
    (`full` or `lite`) separate from `BUILD_PROFILE`, is checked for stripped
    source maps, and the Darwin assets are checked for a notifier helper of the
    right architecture. Lite assets must pass the remote-control absence gate
    before upload, while full assets must pass the matching presence gate so the
    full lane still proves it contains the expected remote-control surface. A
-   release asset set gate fails downstream publishing if any variant/platform
-   archive or SHA file is missing, if any SHA does not match its artifact, or if
-   any artifact is not a readable archive with the expected `BUILD_VARIANT` and
-   native binary path.
+   Release assets and their companion files are covered by GitHub artifact
+   attestations. A release asset set gate fails downstream publishing if any
+   variant/platform archive, SHA file, provenance file, or SBOM is missing, if
+   any SHA does not match its artifact, if any provenance record names a stale
+   artifact digest, or if any artifact is not a readable archive with the
+   expected `BUILD_VARIANT` and native binary path. The release verification job
+   also verifies the published attestations before npm or Homebrew jobs run.
 2. **npm** — publishes `aimux-cli` with `--provenance` through npm trusted
    publishing (OIDC, no stored token). It fails fast if `package.json`'s version
    does not match the tag, and stages the native CLI binaries plus macOS
@@ -221,7 +224,7 @@ build, missing asset, checksum mismatch, or corrupt archive publishes nothing.
 
 ```bash
 gh run watch                            # or: gh run list --workflow=release.yml
-gh release view v<version>              # eight assets + eight .sha256 files
+gh release view v<version>              # eight assets + sha256/provenance/SBOM companions
 npm view aimux-cli version
 brew update && brew info aimux
 brew info aimux-lite

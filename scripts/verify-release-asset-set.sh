@@ -22,10 +22,11 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-for command in grep shasum tar mktemp rm sed; do
+for command in grep shasum tar mktemp rm sed node; do
   need "$command"
 done
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -89,6 +90,8 @@ for platform in darwin linux; do
       fi
       asset_path="$RELEASE_DIR/$asset"
       sha_path="$RELEASE_DIR/$asset.sha256"
+      provenance_path="$RELEASE_DIR/$asset.provenance.json"
+      sbom_path="$RELEASE_DIR/$asset.sbom.spdx.json"
 
       if [ ! -f "$asset_path" ]; then
         printf 'missing release asset: %s\n' "$asset_path" >&2
@@ -111,6 +114,25 @@ for platform in darwin linux; do
       fi
       if [ -f "$asset_path" ] && ! verify_archive_shape "$asset_path" "${platform}-${arch}" "$variant"; then
         missing=1
+      fi
+      if [ ! -f "$provenance_path" ]; then
+        printf 'missing release provenance file: %s\n' "$provenance_path" >&2
+        missing=1
+      elif [ ! -r "$provenance_path" ]; then
+        printf 'release provenance file is not readable: %s\n' "$provenance_path" >&2
+        missing=1
+      fi
+      if [ ! -f "$sbom_path" ]; then
+        printf 'missing release SBOM file: %s\n' "$sbom_path" >&2
+        missing=1
+      elif [ ! -r "$sbom_path" ]; then
+        printf 'release SBOM file is not readable: %s\n' "$sbom_path" >&2
+        missing=1
+      fi
+      if [ -f "$asset_path" ] && [ -f "$sha_path" ] && [ -f "$provenance_path" ] && [ -f "$sbom_path" ]; then
+        if ! node "$ROOT_DIR/scripts/verify-release-provenance.mjs" "$RELEASE_DIR" "$asset" "${platform}-${arch}" "$variant"; then
+          missing=1
+        fi
       fi
     done
   done
