@@ -967,6 +967,10 @@ fn advertised_subcommands_without_specific_help_render_group_scoped_help() {
             vec!["graveyard", "list", "--help"],
             "Usage: aimux graveyard [options] [command]",
         ),
+        (
+            vec!["graveyard", "reap-dead", "--help"],
+            "Usage: aimux graveyard reap-dead [id] [options]",
+        ),
     ]
     .into_iter()
     .enumerate()

@@ -133,13 +133,16 @@ pub fn parse_core_graveyard_args<S: AsRef<str>>(args: &[S]) -> Option<CoreGravey
     }
     let (subcommand, mut index) = match args.get(1).map(AsRef::as_ref) {
         None => ("list", 1),
-        Some("list" | "send" | "resurrect" | "cleanup") => (args[1].as_ref(), 2),
+        Some("list" | "send" | "reap-dead" | "resurrect" | "cleanup") => (args[1].as_ref(), 2),
         Some(arg) if arg == "--json" || arg == "--project" || arg.starts_with("--project=") => {
             ("list", 1)
         }
         _ => return None,
     };
-    if !matches!(subcommand, "list" | "send" | "resurrect" | "cleanup") {
+    if !matches!(
+        subcommand,
+        "list" | "send" | "reap-dead" | "resurrect" | "cleanup"
+    ) {
         return None;
     }
     let mut parsed = CoreGraveyardArgs {
@@ -174,7 +177,7 @@ pub fn parse_core_graveyard_args<S: AsRef<str>>(args: &[S]) -> Option<CoreGravey
         if arg.starts_with('-') {
             return None;
         }
-        if matches!(subcommand, "send" | "resurrect") {
+        if matches!(subcommand, "send" | "reap-dead" | "resurrect") {
             if parsed.session_id.is_some() {
                 return None;
             }

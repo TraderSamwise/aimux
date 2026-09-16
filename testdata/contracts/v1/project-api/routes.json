@@ -87,6 +87,7 @@
     "/worktrees/remove",
     "/worktrees/graveyard",
     "/graveyard/resurrect",
+    "/graveyard/reap-dead-agents",
     "/graveyard/worktrees/resurrect",
     "/graveyard/worktrees/delete",
     "/graveyard/cleanup",

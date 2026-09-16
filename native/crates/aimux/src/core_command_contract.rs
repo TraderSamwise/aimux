@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    107,
+    108,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -120,6 +120,7 @@ define_string_contract!(
         whoami_text => ("whoamiText", "/core/whoami-text"),
         graveyard_cleanup_text => ("graveyardCleanupText", "/core/graveyard/cleanup-text"),
         graveyard_list_text => ("graveyardListText", "/core/graveyard/list-text"),
+        graveyard_reap_dead_text => ("graveyardReapDeadText", "/core/graveyard/reap-dead-text"),
         graveyard_resurrect_text => ("graveyardResurrectText", "/core/graveyard/resurrect-text"),
         graveyard_send_text => ("graveyardSendText", "/core/graveyard/send-text"),
         thread_list_text => ("threadListText", "/core/thread/list-text"),

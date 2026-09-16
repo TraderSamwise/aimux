@@ -2881,6 +2881,10 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
         &args(&["graveyard", "send", "claude-1", "--project=/repo", "--json"]),
         &mut runtime,
     );
+    let graveyard_reap_dead = run_core_cli_with(
+        &args(&["graveyard", "reap-dead", "codex-dead", "--project=/repo"]),
+        &mut runtime,
+    );
     let graveyard_resurrect = run_core_cli_with(
         &args(&["graveyard", "resurrect", "claude-1", "--project=/repo"]),
         &mut runtime,
@@ -2901,6 +2905,7 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
         delete_worktree,
         graveyard_list,
         graveyard_send,
+        graveyard_reap_dead,
         graveyard_resurrect,
         graveyard_cleanup,
     ] {
@@ -2949,6 +2954,10 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
             (
                 "/core/graveyard/send-text?json=1".into(),
                 Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+            ),
+            (
+                "/core/graveyard/reap-dead-text".into(),
+                Some(json!({ "project": "/repo", "sessionId": "codex-dead" })),
             ),
             (
                 "/core/graveyard/resurrect-text".into(),

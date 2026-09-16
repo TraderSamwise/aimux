@@ -19,7 +19,7 @@ use aimux::runtime_topology::{
     coerce_runtime_topology, empty_runtime_topology, read_runtime_topology, runtime_topology_path,
     write_runtime_topology,
 };
-use aimux::tmux::TmuxTarget;
+use aimux::tmux::{TmuxTarget, TmuxWindowInfo};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
@@ -816,12 +816,173 @@ fn route_agent_spawn_reports_window_disappearing_before_topology_success() {
     cleanup(project);
 }
 
+#[test]
+fn graveyard_reap_dead_agents_reaps_only_verified_missing_windows() {
+    let isolation = support::TestIsolation::new("reap-dead-agents");
+    let project = temp_project("reap-dead-agents");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &reap_dead_topology_fixture(&[
+            ("codex-dead", "node-dead", "aimux-repo", "@dead", "running"),
+            ("codex-live", "node-live", "aimux-repo", "@live", "running"),
+        ]),
+    )
+    .unwrap();
+
+    let context = isolation.project_context(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        window_lists: BTreeMap::from([(
+            "aimux-repo".to_owned(),
+            Ok(vec![tmux_window("@live", 2, "codex-live")]),
+        )]),
+        ..FakeLifecycleRuntime::default()
+    };
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::REAP_DEAD_AGENTS,
+        Some(&json!({})),
+        &mut runtime,
+    )
+    .expect("reap-dead route handles request");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "reaped");
+    assert_eq!(response.body["reaped"][0]["sessionId"], "codex-dead");
+    assert_eq!(response.body["reaped"][0]["found"], "window absent");
+    assert_eq!(response.body["skipped"][0]["sessionId"], "codex-live");
+    assert_eq!(response.body["skipped"][0]["reason"], "live-window-present");
+    assert!(runtime.calls.iter().any(|call| call
+        == &json!({
+            "method": "list_windows",
+            "sessionName": "aimux-repo"
+        })));
+
+    let topology = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    let sessions = topology["sessions"].as_array().unwrap();
+    let dead = find(sessions, "codex-dead");
+    let live = find(sessions, "codex-live");
+    assert_eq!(dead["status"], "graveyard");
+    assert_eq!(
+        dead["graveyardReason"],
+        "reaped confirmed-dead agent: expected tmux window was absent after a successful runtime query"
+    );
+    assert_eq!(live["status"], "running");
+    cleanup(project);
+}
+
+#[test]
+fn graveyard_reap_dead_agents_never_reaps_when_runtime_is_unqueryable() {
+    let isolation = support::TestIsolation::new("reap-dead-unqueryable");
+    let project = temp_project("reap-dead-unqueryable");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &reap_dead_topology_fixture(&[(
+            "codex-unverified",
+            "node-unverified",
+            "aimux-repo",
+            "@maybe",
+            "running",
+        )]),
+    )
+    .unwrap();
+
+    let context = isolation.project_context(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        window_lists: BTreeMap::from([(
+            "aimux-repo".to_owned(),
+            Err("tmux socket refused connection".to_owned()),
+        )]),
+        ..FakeLifecycleRuntime::default()
+    };
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::REAP_DEAD_AGENTS,
+        Some(&json!({})),
+        &mut runtime,
+    )
+    .expect("reap-dead route handles request");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "unchanged");
+    assert!(response.body["reaped"].as_array().unwrap().is_empty());
+    assert_eq!(response.body["skipped"][0]["sessionId"], "codex-unverified");
+    assert_eq!(response.body["skipped"][0]["reason"], "runtime-unqueryable");
+    assert_eq!(
+        response.body["skipped"][0]["found"],
+        "could not query tmux runtime for session aimux-repo: tmux socket refused connection"
+    );
+    let topology = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    let sessions = topology["sessions"].as_array().unwrap();
+    assert_eq!(find(sessions, "codex-unverified")["status"], "running");
+    cleanup(project);
+}
+
 fn agent_launch_outcomes(state_dir: &Path) -> Vec<Value> {
     std::fs::read_to_string(state_dir.join("agent-launch-outcomes.jsonl"))
         .expect("agent launch outcomes")
         .lines()
         .map(|line| serde_json::from_str(line).expect("launch outcome json"))
         .collect()
+}
+
+fn reap_dead_topology_fixture(sessions: &[(&str, &str, &str, &str, &str)]) -> Value {
+    coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "nodes": sessions.iter().map(|(_, node_id, _, _, _)| json!({
+            "id": node_id,
+            "rigId": "rig-1",
+            "logicalId": node_id,
+            "toolConfigKey": "codex",
+            "createdAt": "2026-01-01T00:00:00.000Z"
+        })).collect::<Vec<_>>(),
+        "edges": [],
+        "bindings": sessions.iter().enumerate().map(|(index, (_, node_id, tmux_session, window_id, _))| json!({
+            "id": format!("binding-{index}"),
+            "nodeId": node_id,
+            "tmuxSession": tmux_session,
+            "tmuxWindowId": window_id,
+            "tmuxWindowIndex": i64::try_from(index + 1).unwrap(),
+            "tmuxWindowName": "codex",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        })).collect::<Vec<_>>(),
+        "sessions": sessions.iter().map(|(session_id, node_id, _, _, status)| json!({
+            "id": session_id,
+            "nodeId": node_id,
+            "status": status,
+            "command": "codex",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        })).collect::<Vec<_>>(),
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("valid reap-dead topology")
+}
+
+fn tmux_window(id: &str, index: i64, name: &str) -> TmuxWindowInfo {
+    TmuxWindowInfo {
+        id: id.to_owned(),
+        index,
+        name: name.to_owned(),
+        active: false,
+        activity: None,
+        pane_dead: None,
+    }
 }
 
 fn topology_fixture() -> Value {
@@ -971,6 +1132,7 @@ struct FakeLifecycleRuntime {
     fail_metadata_write: bool,
     window_visible_after_launch: bool,
     capture: Option<String>,
+    window_lists: BTreeMap<String, Result<Vec<TmuxWindowInfo>, String>>,
 }
 
 impl Default for FakeLifecycleRuntime {
@@ -980,6 +1142,7 @@ impl Default for FakeLifecycleRuntime {
             fail_metadata_write: false,
             window_visible_after_launch: true,
             capture: None,
+            window_lists: BTreeMap::new(),
         }
     }
 }
@@ -1086,6 +1249,17 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             "windowId": target.window_id
         }));
         self.window_visible_after_launch
+    }
+
+    fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
+        self.calls.push(json!({
+            "method": "list_windows",
+            "sessionName": session_name
+        }));
+        self.window_lists
+            .get(session_name)
+            .cloned()
+            .unwrap_or_else(|| Ok(Vec::new()))
     }
 
     fn capture_window(&mut self, target: &TmuxTarget) -> Option<String> {

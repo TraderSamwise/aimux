@@ -77,6 +77,8 @@ import {
   type ProjectHealthResponse,
   type ProjectObservabilityResponse,
   type ProjectTopologyResponse,
+  type ReapDeadAgentsInput,
+  type ReapDeadAgentsResponse,
   type RenameAgentInput,
   type RenameAgentResponse,
   type RemoveServiceResponse,
@@ -1550,6 +1552,20 @@ export async function resurrectGraveyardAgent(
     PROJECT_API_ROUTES.graveyardActions.resurrectAgent,
     opts,
     { sessionId },
+  );
+}
+
+export async function reapDeadGraveyardAgents(
+  endpoint: ServiceEndpoint,
+  input: ReapDeadAgentsInput = {},
+  opts?: ApiOpts,
+): Promise<ReapDeadAgentsResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.reapDeadAgents,
+    opts,
+    input,
   );
 }
 

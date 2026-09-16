@@ -529,6 +529,7 @@ const POST_TEXT_ROUTES: &[&str] = &[
     CORE_API_ROUTES.attachment_publish_text,
     CORE_API_ROUTES.dashboard_reload_text,
     CORE_API_ROUTES.graveyard_cleanup_text,
+    CORE_API_ROUTES.graveyard_reap_dead_text,
     CORE_API_ROUTES.graveyard_resurrect_text,
     CORE_API_ROUTES.graveyard_send_text,
     CORE_API_ROUTES.handoff_accept_text,
@@ -919,6 +920,7 @@ fn operation_requires_current_git_project(operation: CoreCliOperation) -> bool {
             | CoreCliOperation::WorktreeDeleteGraveyard
             | CoreCliOperation::GraveyardList
             | CoreCliOperation::GraveyardSend
+            | CoreCliOperation::GraveyardReapDead
             | CoreCliOperation::GraveyardResurrect
             | CoreCliOperation::GraveyardCleanup
     )

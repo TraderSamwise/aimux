@@ -100,6 +100,7 @@ export const PROJECT_API_ROUTES = {
   },
   graveyardActions: {
     resurrectAgent: "/graveyard/resurrect",
+    reapDeadAgents: "/graveyard/reap-dead-agents",
     resurrectWorktree: "/graveyard/worktrees/resurrect",
     deleteWorktree: "/graveyard/worktrees/delete",
     cleanup: "/graveyard/cleanup",
@@ -320,6 +321,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.agents.killTeammate:
     case PROJECT_API_ROUTES.agents.resurrectTeammate:
     case PROJECT_API_ROUTES.graveyardActions.resurrectAgent:
+    case PROJECT_API_ROUTES.graveyardActions.reapDeadAgents:
       return [...PROJECT_API_VIEW_INVALIDATIONS.agentLifecycle];
 
     case PROJECT_API_ROUTES.services.create:
@@ -1146,6 +1148,7 @@ export type ProjectLifecycleTransitionOperation =
   | "worktree.remove"
   | "worktree.graveyard"
   | "graveyard.agent.resurrect"
+  | "graveyard.agent.reapDead"
   | "graveyard.worktree.resurrect"
   | "graveyard.worktree.delete"
   | "graveyard.cleanup";
@@ -1303,6 +1306,25 @@ export interface KillAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "graveyard";
   previousStatus: "running" | "offline";
+}
+
+export interface ReapDeadAgentRecord {
+  sessionId: string;
+  status: string;
+  expected: string;
+  found: string;
+  reason: string;
+  previousStatus?: string;
+}
+
+export interface ReapDeadAgentsInput {
+  sessionId?: string;
+}
+
+export interface ReapDeadAgentsResponse extends ProjectLifecycleTransitionResponse {
+  status: "reaped" | "unchanged";
+  reaped: ReapDeadAgentRecord[];
+  skipped: ReapDeadAgentRecord[];
 }
 
 export interface ResurrectAgentResponse extends ProjectLifecycleTransitionResponse {

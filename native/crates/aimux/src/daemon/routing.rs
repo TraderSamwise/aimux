@@ -273,6 +273,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.doctor_versions_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_cleanup_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
+    crate::core_command_contract::CORE_API_ROUTES.graveyard_reap_dead_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_resurrect_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_send_text,
     crate::core_command_contract::CORE_API_ROUTES.handoff_accept_text,

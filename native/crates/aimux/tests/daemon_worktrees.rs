@@ -113,6 +113,22 @@ impl DaemonWorktreeTextRuntime for FakeWorktreeRuntime {
                 "/repo",
                 json!({ "ok": true, "sessionId": body["sessionId"].clone(), "status": "offline" }),
             ),
+            project_routes::graveyard_actions::REAP_DEAD_AGENTS => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "ok": true,
+                    "status": "reaped",
+                    "reaped": [{
+                        "sessionId": body.get("sessionId").cloned().unwrap_or_else(|| json!("codex-dead")),
+                        "previousStatus": "running",
+                        "status": "graveyard",
+                        "expected": "aimux-repo @dead",
+                        "found": "window absent",
+                        "reason": "confirmed-dead: inventoried session's tmux window is absent after a successful runtime query"
+                    }],
+                    "skipped": []
+                }),
+            ),
             project_routes::graveyard_actions::CLEANUP => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({
@@ -413,6 +429,20 @@ fn graveyard_routes_match_project_service_proxy_contract() {
     )
     .expect("graveyard send");
     assert_eq!(text_body(sent), "graveyarded claude-1\n");
+
+    let reaped = route_worktree_text_request(
+        &mut runtime,
+        "POST",
+        &format!(
+            "{}?project=/repo&sessionId=codex-dead",
+            CORE_API_ROUTES.graveyard_reap_dead_text
+        ),
+        None,
+    )
+    .expect("graveyard reap dead");
+    assert!(text_body(reaped).contains(
+        "reaped codex-dead: expected aimux-repo @dead; found window absent; moved to graveyard"
+    ));
 
     let cleanup = route_worktree_text_request(
         &mut runtime,

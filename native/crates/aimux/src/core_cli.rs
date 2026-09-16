@@ -122,6 +122,7 @@ pub enum CoreCliOperation {
     WorktreeDeleteGraveyard,
     GraveyardList,
     GraveyardSend,
+    GraveyardReapDead,
     GraveyardResurrect,
     GraveyardCleanup,
     Metadata,
@@ -1666,6 +1667,18 @@ where
                     text_route_path(CORE_API_ROUTES.graveyard_resurrect_text, parsed.json),
                     Some(json!({ "project": project_root, "sessionId": parsed.session_id })),
                 ),
+                "reap-dead" => {
+                    let mut body = Map::new();
+                    body.insert("project".to_owned(), Value::String(project_root.clone()));
+                    if let Some(session_id) = parsed.session_id {
+                        body.insert("sessionId".to_owned(), Value::String(session_id));
+                    }
+                    (
+                        CoreCliOperation::GraveyardReapDead,
+                        text_route_path(CORE_API_ROUTES.graveyard_reap_dead_text, parsed.json),
+                        Some(Value::Object(body)),
+                    )
+                }
                 "cleanup" => (
                     CoreCliOperation::GraveyardCleanup,
                     text_route_path(CORE_API_ROUTES.graveyard_cleanup_text, parsed.json),

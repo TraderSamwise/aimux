@@ -10,7 +10,7 @@
       "source": "src/project-api-contract.test.ts",
       "api": "routeInvariants",
       "input": {},
-      "output": { "count": 126, "allAbsolute": true, "uniqueCount": 126 },
+      "output": { "count": 127, "allAbsolute": true, "uniqueCount": 127 },
       "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
     },
     {

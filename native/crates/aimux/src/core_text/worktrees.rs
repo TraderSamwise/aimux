@@ -309,6 +309,41 @@ pub fn render_core_graveyard_agent_lines(payload: &Value) -> Vec<String> {
     )]
 }
 
+pub fn render_core_graveyard_reap_dead_lines(payload: &Value) -> Vec<String> {
+    let reaped = field(payload, "reaped")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let skipped = field(payload, "skipped")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let project_root = coalesce_string(field(payload, "projectRoot"), "(unknown project)");
+    let mut lines = vec![format!(
+        "Reaped {} confirmed-dead agent session(s) in {project_root}; {} skipped.",
+        reaped.len(),
+        skipped.len()
+    )];
+    for item in reaped {
+        lines.push(format!(
+            "reaped {}: expected {}; found {}; moved to graveyard",
+            coalesce_string(item.get("sessionId"), "?"),
+            coalesce_string(item.get("expected"), "?"),
+            coalesce_string(item.get("found"), "?")
+        ));
+    }
+    for item in skipped {
+        lines.push(format!(
+            "skipped {}: expected {}; found {}; reason={}",
+            coalesce_string(item.get("sessionId"), "?"),
+            coalesce_string(item.get("expected"), "?"),
+            coalesce_string(item.get("found"), "?"),
+            coalesce_string(item.get("reason"), "?")
+        ));
+    }
+    lines
+}
+
 pub fn render_core_graveyard_cleanup_lines(payload: &Value) -> Vec<String> {
     let result = object(payload, "result");
     let plan = result
