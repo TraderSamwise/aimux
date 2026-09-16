@@ -8,9 +8,10 @@ use aimux::osc_notifications::OscNotificationParser;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::{
     ACTIVE_CLIENT_DWELL_MS, AgentInputWindowActivity, MAX_AGENT_INPUT_HOLD_MS,
-    agent_input_delivery_backlog_snapshot, agent_input_delivery_queue_path,
-    classify_agent_input_window_activity, enqueue_agent_input_delivery,
-    pane_has_unsubmitted_agent_input, run_pending_agent_input_deliveries_with_runtime,
+    USER_TYPING_QUIET_WINDOW_MS, agent_input_delivery_backlog_snapshot,
+    agent_input_delivery_queue_path, classify_agent_input_window_activity,
+    enqueue_agent_input_delivery, pane_has_unsubmitted_agent_input,
+    run_pending_agent_input_deliveries_with_runtime,
 };
 use aimux::project_service::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, MAX_AGENT_OUTPUT_CAPTURE_LINES,
@@ -200,7 +201,10 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
     ) -> Result<AgentInputWindowActivity, String> {
         self.input_activity.pop_front().unwrap_or_else(|| {
             if pane_has_unsubmitted_agent_input(&self.inner.output) {
-                Ok(AgentInputWindowActivity::UnsubmittedInputVisible)
+                Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+                    active_clients: 0,
+                    latest_activity_ms: None,
+                })
             } else {
                 Ok(AgentInputWindowActivity::Unattended)
             }
@@ -2089,6 +2093,44 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
 }
 
 #[test]
+fn agent_input_delivers_immediately_when_active_client_already_quiet() {
+    let project = temp_project("active-client-already-quiet");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Attended {
+            active_clients: 1,
+            latest_activity_ms: now_ms - USER_TYPING_QUIET_WINDOW_MS,
+        })]),
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "deliver now" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "deliver now".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "idle active clients must not add an extra queue tick"
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
 fn queued_duplicate_loop_checks_are_delivered_once() {
     let project = temp_project("duplicate-loop-check-queue");
     let state_dir = project.join("state");
@@ -2206,8 +2248,8 @@ fn queued_duplicate_manual_inputs_remain_distinct() {
 }
 
 #[test]
-fn agent_input_holds_visible_draft_even_without_active_client() {
-    let project = temp_project("visible-draft-no-client-hold");
+fn agent_input_delivers_stale_visible_draft_without_active_client() {
+    let project = temp_project("visible-draft-no-client-deliver");
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
@@ -2221,7 +2263,7 @@ fn agent_input_holds_visible_draft_even_without_active_client() {
         ..Default::default()
     };
 
-    let held = route_agent_output_request_with_runtime(
+    let response = route_agent_output_request_with_runtime(
         &context,
         "POST",
         routes::agents::INPUT,
@@ -2230,17 +2272,23 @@ fn agent_input_holds_visible_draft_even_without_active_client() {
     )
     .unwrap();
 
-    assert_eq!(held.status, 200);
-    assert_eq!(held.body["delivery"]["state"], "held");
-    assert_eq!(held.body["delivery"]["reason"], "visible-unsubmitted-input");
-    assert!(runtime.inner.actions.is_empty());
-    assert!(agent_input_delivery_queue_path(&state_dir).exists());
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "loop update".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "visible stale text is not user typing when no client is active"
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
     cleanup(project);
 }
 
 #[test]
-fn agent_input_holds_multiline_composer_draft_even_without_active_client() {
-    let project = temp_project("multiline-draft-no-client-hold");
+fn agent_input_delivers_stale_multiline_draft_without_active_client() {
+    let project = temp_project("multiline-draft-no-client-deliver");
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
@@ -2253,7 +2301,7 @@ fn agent_input_holds_multiline_composer_draft_even_without_active_client() {
         ..Default::default()
     };
 
-    let held = route_agent_output_request_with_runtime(
+    let response = route_agent_output_request_with_runtime(
         &context,
         "POST",
         routes::agents::INPUT,
@@ -2262,11 +2310,17 @@ fn agent_input_holds_multiline_composer_draft_even_without_active_client() {
     )
     .unwrap();
 
-    assert_eq!(held.status, 200);
-    assert_eq!(held.body["delivery"]["state"], "held");
-    assert_eq!(held.body["delivery"]["reason"], "visible-unsubmitted-input");
-    assert!(runtime.inner.actions.is_empty());
-    assert!(agent_input_delivery_queue_path(&state_dir).exists());
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "loop update".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "a stale multiline draft must not block without active typing"
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
     cleanup(project);
 }
 
@@ -2314,7 +2368,12 @@ fn composer_chrome_hint_does_not_mask_real_unsubmitted_input() {
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
     let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+            active_clients: 1,
+            latest_activity_ms: Some(now_ms),
+        })]),
         inner: FakeCaptureRuntime {
             output: "Ready\n❯ Sam is actually typing\n  Press up to edit queued messages\n──────────────────────────────\nsam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context)"
                 .into(),
@@ -2334,12 +2393,24 @@ fn composer_chrome_hint_does_not_mask_real_unsubmitted_input() {
 
     assert_eq!(held.status, 200);
     assert_eq!(held.body["delivery"]["state"], "held");
-    assert_eq!(held.body["delivery"]["reason"], "visible-unsubmitted-input");
+    assert_eq!(
+        held.body["delivery"]["reason"],
+        "visible-unsubmitted-input-recent-user-input"
+    );
     assert!(runtime.inner.actions.is_empty());
     assert!(agent_input_delivery_queue_path(&state_dir).exists());
 
-    let deliver_at_ms = queued_max_deliver_at_ms(&state_dir);
-    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
+    runtime
+        .input_activity
+        .push_back(Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+            active_clients: 1,
+            latest_activity_ms: Some(now_ms),
+        }));
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + USER_TYPING_QUIET_WINDOW_MS + 1,
+    );
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -2355,7 +2426,7 @@ fn composer_chrome_hint_does_not_mask_real_unsubmitted_input() {
 #[test]
 fn active_client_with_visible_draft_holds_instead_of_idle_delivery() {
     let panes = "@1\t1\n";
-    let clients = "client-1\t1000\t@1\n";
+    let clients = "client-1\t1\t@1\n";
     let pane = "Ready\n› Sam paused with a draft\n\n  gpt-5.5 medium · ~/workspace/project";
 
     let activity = classify_agent_input_window_activity("@1", panes, pane, Some(clients)).unwrap();
@@ -2369,9 +2440,9 @@ fn active_client_with_visible_draft_holds_instead_of_idle_delivery() {
     assert_eq!(
         decision,
         aimux::project_service::agent_input_delivery::AgentInputDeliveryDecision::Hold {
-            reason: "visible-unsubmitted-input".into(),
-            quiet_for_ms: None,
-            retry_after_ms: aimux::project_service::agent_input_delivery::DELIVERY_TASK_INTERVAL_MS,
+            reason: "visible-unsubmitted-input-recent-user-input".into(),
+            quiet_for_ms: Some(9_000),
+            retry_after_ms: USER_TYPING_QUIET_WINDOW_MS - 9_000,
         }
     );
 }
@@ -2379,7 +2450,7 @@ fn active_client_with_visible_draft_holds_instead_of_idle_delivery() {
 #[test]
 fn active_client_with_claude_visible_draft_above_footer_holds() {
     let panes = "@1\t1\n";
-    let clients = "client-1\t1000\t@1\n";
+    let clients = "client-1\t1\t@1\n";
     let pane = "❯ Sam paused with a Claude draft\n──────────────────────────────\nsam@sam-mbp /Users/sam/cs/aimux feat/async-cutover ... Opus 5 (1M context) [[aimux] overseer]\n⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents\n⧉  port-gap-closure · rail-hardening · async-cutover";
 
     let activity = classify_agent_input_window_activity("@1", panes, pane, Some(clients)).unwrap();
@@ -2393,9 +2464,9 @@ fn active_client_with_claude_visible_draft_above_footer_holds() {
     assert_eq!(
         decision,
         aimux::project_service::agent_input_delivery::AgentInputDeliveryDecision::Hold {
-            reason: "visible-unsubmitted-input".into(),
-            quiet_for_ms: None,
-            retry_after_ms: aimux::project_service::agent_input_delivery::DELIVERY_TASK_INTERVAL_MS,
+            reason: "visible-unsubmitted-input-recent-user-input".into(),
+            quiet_for_ms: Some(9_000),
+            retry_after_ms: USER_TYPING_QUIET_WINDOW_MS - 9_000,
         }
     );
 }
@@ -2410,8 +2481,8 @@ fn active_client_with_empty_composer_can_deliver_after_dwell() {
     let decision = aimux::project_service::agent_input_delivery::decide_agent_input_delivery(
         false,
         Ok(activity),
-        5_000,
-        5_000,
+        20_000,
+        20_000,
     );
 
     assert_eq!(
@@ -2432,8 +2503,8 @@ fn active_client_with_empty_claude_composer_can_deliver_after_dwell() {
     let decision = aimux::project_service::agent_input_delivery::decide_agent_input_delivery(
         false,
         Ok(activity),
-        5_000,
-        5_000,
+        20_000,
+        20_000,
     );
 
     assert_eq!(
@@ -2583,18 +2654,17 @@ fn agent_input_auto_unpauses_loop_alerts_before_accepting_real_work() {
 }
 
 #[test]
-fn queued_visible_draft_releases_after_hold_budget() {
-    let project = temp_project("visible-draft-hold-budget");
+fn queued_visible_draft_releases_after_user_typing_quiet_window() {
+    let project = temp_project("visible-draft-quiet-window");
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
     let mut runtime = FakeActivityRuntime {
-        inner: FakeCaptureRuntime {
-            output:
-                "Ready\n› Sam is still typing this prompt\n\n  gpt-5.5 medium · ~/workspace/project"
-                    .into(),
-            ..Default::default()
-        },
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+            active_clients: 1,
+            latest_activity_ms: Some(now_ms),
+        })]),
         ..Default::default()
     };
 
@@ -2608,10 +2678,46 @@ fn queued_visible_draft_releases_after_hold_budget() {
     .unwrap();
     assert_eq!(held.status, 200);
     assert_eq!(held.body["delivery"]["state"], "held");
+    assert_eq!(
+        held.body["delivery"]["reason"],
+        "visible-unsubmitted-input-recent-user-input"
+    );
+    assert!(
+        held.body["delivery"]["quietForMs"]
+            .as_i64()
+            .is_some_and(|quiet| (0..1_000).contains(&quiet)),
+        "the first hold should reflect very recent user typing"
+    );
     assert!(runtime.inner.actions.is_empty());
-    let deliver_at_ms = queued_max_deliver_at_ms(&state_dir);
 
-    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
+    runtime
+        .input_activity
+        .push_back(Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+            active_clients: 1,
+            latest_activity_ms: Some(now_ms),
+        }));
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + USER_TYPING_QUIET_WINDOW_MS - 1,
+    );
+    assert!(
+        runtime.inner.actions.is_empty(),
+        "queued input must still wait until the user has been quiet for the full window"
+    );
+    assert_eq!(queued_delivery_count(&state_dir), 1);
+
+    runtime
+        .input_activity
+        .push_back(Ok(AgentInputWindowActivity::UnsubmittedInputVisible {
+            active_clients: 1,
+            latest_activity_ms: Some(now_ms),
+        }));
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + USER_TYPING_QUIET_WINDOW_MS + 1,
+    );
 
     assert_eq!(
         runtime.inner.actions,
@@ -2625,8 +2731,8 @@ fn queued_visible_draft_releases_after_hold_budget() {
 }
 
 #[test]
-fn queued_agent_input_releases_after_hold_budget_even_with_fresh_typing() {
-    let project = temp_project("typing-releases-after-hold-budget");
+fn queued_agent_input_remains_held_when_user_keeps_typing_past_old_hold_budget() {
+    let project = temp_project("typing-held-past-old-hold-budget");
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
@@ -2659,25 +2765,26 @@ fn queued_agent_input_releases_after_hold_budget_even_with_fresh_typing() {
         }));
     run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
 
-    assert_eq!(
-        runtime.inner.actions,
-        vec![
-            FakeRuntimeAction::Text("@1".into(), "loop update".into()),
-            FakeRuntimeAction::CarriageReturn("@1".into()),
-        ]
+    assert!(
+        runtime.inner.actions.is_empty(),
+        "old maxDeliverAtMs must not force delivery while the user is still typing"
     );
-    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    assert_eq!(queued_delivery_count(&state_dir), 1);
     cleanup(project);
 }
 
 #[test]
-fn expired_queued_input_does_not_probe_activity_before_forced_delivery() {
-    let project = temp_project("expired-skips-activity-probe");
+fn expired_queued_input_reprobes_activity_before_delivery() {
+    let project = temp_project("expired-reprobes-activity");
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
     let mut runtime = FakeActivityRuntime {
-        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::UnsubmittedInputVisible)]),
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Attended {
+            active_clients: 1,
+            latest_activity_ms: now_ms,
+        })]),
         ..Default::default()
     };
 
@@ -2693,25 +2800,21 @@ fn expired_queued_input_does_not_probe_activity_before_forced_delivery() {
     assert_eq!(held.body["delivery"]["state"], "held");
     let deliver_at_ms = queued_max_deliver_at_ms(&state_dir);
 
-    runtime.input_activity.push_back(Err(
-        "activity probe should not run after maxDeliverAtMs".into()
-    ));
+    runtime
+        .input_activity
+        .push_back(Ok(AgentInputWindowActivity::Attended {
+            active_clients: 1,
+            latest_activity_ms: deliver_at_ms + 1,
+        }));
     run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
 
-    assert_eq!(
-        runtime.inner.actions,
-        vec![
-            FakeRuntimeAction::Text("@1".into(), "bounded loop update".into()),
-            FakeRuntimeAction::CarriageReturn("@1".into()),
-        ],
-        "expired held input should deliver from the bound without consulting tmux again"
-    );
+    assert!(runtime.inner.actions.is_empty());
     assert_eq!(
         runtime.input_activity.len(),
-        1,
-        "expired delivery must not be blocked behind another activity probe"
+        0,
+        "expired queued delivery must still ask whether the user is typing now"
     );
-    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    assert_eq!(queued_delivery_count(&state_dir), 1);
     cleanup(project);
 }
 
@@ -2742,6 +2845,7 @@ fn expired_failed_delivery_persists_remaining_queue_after_one_attempt() {
     )
     .expect("enqueue second expired input");
     let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Unattended)]),
         inner: FakeCaptureRuntime {
             submit_outcome: FakeSubmitOutcome::Dropped,
             ..Default::default()
@@ -2762,15 +2866,15 @@ fn expired_failed_delivery_persists_remaining_queue_after_one_attempt() {
     );
     assert_eq!(
         queued_delivery_count(&state_dir),
-        1,
-        "a failed expired send must not let the same tick drop later queued input"
+        2,
+        "a failed queued send must remain visible and must not drop later queued input"
     );
     cleanup(project);
 }
 
 #[test]
-fn queued_probe_failure_releases_after_hold_budget() {
-    let project = temp_project("probe-failure-max-release");
+fn queued_probe_failure_stays_queued_and_visible_after_hold_budget() {
+    let project = temp_project("probe-failure-stays-queued");
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
@@ -2796,19 +2900,15 @@ fn queued_probe_failure_releases_after_hold_budget() {
         .push_back(Err("tmux socket still busy".into()));
     run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
 
-    assert_eq!(
-        runtime.inner.actions,
-        vec![
-            FakeRuntimeAction::Text("@1".into(), "queued through probe error".into()),
-            FakeRuntimeAction::CarriageReturn("@1".into()),
-        ]
-    );
-    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    assert!(runtime.inner.actions.is_empty());
+    assert_eq!(queued_delivery_count(&state_dir), 1);
     let failures = list_dashboard_operation_failures(&state_dir);
     assert!(
         failures
             .iter()
-            .any(|failure| failure["title"] == "Agent input delivery forced after hold budget")
+            .any(|failure| failure["title"] == "Agent input delivery held"
+                && failure["message"]
+                    == "tmux client activity probe failed: tmux socket still busy")
     );
     cleanup(project);
 }
