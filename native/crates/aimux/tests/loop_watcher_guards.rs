@@ -1411,6 +1411,95 @@ fn a_looped_agent_that_self_reports_done_raises_completion_notification_once() {
 }
 
 #[test]
+fn spooled_loop_self_report_replay_with_same_report_id_does_not_re_notify() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) =
+        self_exited_session_with_status("worker", Some("offline"), "done");
+    worker_meta["loopLastAction"]["reportId"] = json!("loop-self-report-123");
+    let input = input_with_config(
+        vec![boss.clone(), worker.clone()],
+        json!({ "sessions": { "boss": boss_meta.clone(), "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].kind, LoopSendKind::LoopExit);
+    assert!(briefing_mentions(&sends[0], "worker"));
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+
+    worker_meta["loopLastAction"]["at"] = json!("2026-09-09T00:11:00.000Z");
+    let replayed = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+    assert!(
+        watcher.plan_sends(&replayed, NOW + 1).is_empty(),
+        "a spooled replay of an already-surfaced report must deliver state without re-notifying"
+    );
+}
+
+#[test]
+fn self_report_that_first_surfaces_on_replay_notifies_once() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) =
+        self_exited_session_with_status("worker", Some("offline"), "done");
+    worker_meta["loopLastAction"]["reportId"] = json!("loop-self-report-replayed");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].kind, LoopSendKind::LoopExit);
+    assert!(sends[0].text.contains("self-reported done"));
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+    assert!(
+        watcher.plan_sends(&input, NOW + 1).is_empty(),
+        "the first successful surface of a replayed report must remain one-shot"
+    );
+}
+
+#[test]
+fn self_report_with_indeterminate_surface_identity_still_notifies_on_replay() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) =
+        self_exited_session_with_status("worker", Some("offline"), "done");
+    let input = input_with_config(
+        vec![boss.clone(), worker.clone()],
+        json!({ "sessions": { "boss": boss_meta.clone(), "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+
+    worker_meta["loopLastAction"]["at"] = json!("2026-09-09T00:11:00.000Z");
+    let replayed = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+    let replay_sends = watcher.plan_sends(&replayed, NOW + 1);
+    assert_eq!(replay_sends.len(), 1);
+    assert_eq!(replay_sends[0].kind, LoopSendKind::LoopExit);
+    assert!(
+        replay_sends[0].text.contains("self-reported done"),
+        "without a stable reportId the watcher cannot prove this was surfaced, so it must notify"
+    );
+}
+
+#[test]
 fn a_looped_agent_that_self_reports_block_raises_blocked_notification_once() {
     let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
     boss_meta["overseer"] = json!(true);

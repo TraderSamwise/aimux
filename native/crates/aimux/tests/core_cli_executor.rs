@@ -598,6 +598,14 @@ fn fake_text_response(path: &str) -> String {
     }
 }
 
+fn remove_loop_report_id(body: &mut Value) -> String {
+    body.as_object_mut()
+        .and_then(|object| object.remove("reportId"))
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .filter(|value| value.starts_with("loop-self-report-"))
+        .expect("loop self-report body has generated reportId")
+}
+
 fn daemon_info() -> AimuxDaemonInfo {
     AimuxDaemonInfo {
         pid: 9001,
@@ -1530,28 +1538,36 @@ fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
             (format!("{CORE_LOOP_LIST_TEXT_ROUTE}?project=%2Frepo"), None,),
         ]
     );
+    let mut loop_done_body = runtime.existing_daemon_text_routes[0].1.clone().unwrap();
+    let done_report_id = remove_loop_report_id(&mut loop_done_body);
+    let mut loop_block_body = runtime.existing_daemon_text_routes[1].1.clone().unwrap();
+    let block_report_id = remove_loop_report_id(&mut loop_block_body);
+    assert_ne!(done_report_id, block_report_id);
     assert_eq!(
-        runtime.existing_daemon_text_routes,
-        [
-            (
-                "/core/loop/done-text".into(),
-                Some(json!({
-                    "project": "/repo",
-                    "sessionId": "claude-1",
-                    "source": "agent",
-                    "reason": "done",
-                })),
-            ),
-            (
-                "/core/loop/block-text".into(),
-                Some(json!({
-                    "project": "/repo",
-                    "sessionId": "claude-1",
-                    "source": "agent",
-                    "reason": "blocked",
-                })),
-            ),
-        ]
+        runtime.existing_daemon_text_routes[0].0,
+        "/core/loop/done-text"
+    );
+    assert_eq!(
+        loop_done_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "claude-1",
+            "source": "agent",
+            "reason": "done",
+        })
+    );
+    assert_eq!(
+        runtime.existing_daemon_text_routes[1].0,
+        "/core/loop/block-text"
+    );
+    assert_eq!(
+        loop_block_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "claude-1",
+            "source": "agent",
+            "reason": "blocked",
+        })
     );
     assert_eq!(
         runtime.text_route_timeouts,
@@ -1656,17 +1672,20 @@ fn loop_done_passes_reachable_git_head_without_extra_friction() {
         [("/repo".into(), "/repo".into(), "master".into())]
     );
     assert!(runtime.text_routes.is_empty());
+    let mut loop_done_body = runtime.existing_daemon_text_routes[0].1.clone().unwrap();
+    remove_loop_report_id(&mut loop_done_body);
     assert_eq!(
-        runtime.existing_daemon_text_routes,
-        [(
-            "/core/loop/done-text".into(),
-            Some(json!({
-                "project": "/repo",
-                "sessionId": "claude-1",
-                "source": "agent",
-                "reason": "done",
-            })),
-        )]
+        runtime.existing_daemon_text_routes[0].0,
+        "/core/loop/done-text"
+    );
+    assert_eq!(
+        loop_done_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "claude-1",
+            "source": "agent",
+            "reason": "done",
+        })
     );
 }
 
@@ -1696,20 +1715,23 @@ fn loop_done_uses_actor_project_root_as_delivery_target() {
         )]
     );
     assert!(runtime.text_routes.is_empty());
+    let mut loop_done_body = runtime.existing_daemon_text_routes[0].1.clone().unwrap();
+    remove_loop_report_id(&mut loop_done_body);
     assert_eq!(
-        runtime.existing_daemon_text_routes,
-        [(
-            "/core/loop/done-text".into(),
-            Some(json!({
-                "project": "/repo",
-                "sessionId": "codex-1",
-                "source": "agent",
-                "updatedBy": "codex-1",
-                "updatedBySessionId": "codex-1",
-                "reason": "done",
-                "deliveryRef": "master",
-            })),
-        )]
+        runtime.existing_daemon_text_routes[0].0,
+        "/core/loop/done-text"
+    );
+    assert_eq!(
+        loop_done_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "codex-1",
+            "source": "agent",
+            "updatedBy": "codex-1",
+            "updatedBySessionId": "codex-1",
+            "reason": "done",
+            "deliveryRef": "master",
+        })
     );
 }
 
@@ -1729,17 +1751,20 @@ fn loop_block_does_not_require_delivery_check() {
     assert_eq!(execution.stdout, ["loop ok"]);
     assert!(runtime.delivery_checks.into_inner().is_empty());
     assert!(runtime.text_routes.is_empty());
+    let mut loop_block_body = runtime.existing_daemon_text_routes[0].1.clone().unwrap();
+    remove_loop_report_id(&mut loop_block_body);
     assert_eq!(
-        runtime.existing_daemon_text_routes,
-        [(
-            "/core/loop/block-text".into(),
-            Some(json!({
-                "project": "/repo",
-                "sessionId": "claude-1",
-                "source": "agent",
-                "reason": "blocked",
-            })),
-        )]
+        runtime.existing_daemon_text_routes[0].0,
+        "/core/loop/block-text"
+    );
+    assert_eq!(
+        loop_block_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "claude-1",
+            "source": "agent",
+            "reason": "blocked",
+        })
     );
 }
 
@@ -1809,17 +1834,20 @@ fn loop_self_report_uses_existing_daemon_across_build_skew() {
     assert_eq!(done.stdout, ["loop ok"]);
     assert!(done.stderr.is_empty());
     assert!(runtime.text_routes.is_empty());
+    let mut loop_done_body = runtime.existing_daemon_text_routes[0].1.clone().unwrap();
+    remove_loop_report_id(&mut loop_done_body);
     assert_eq!(
-        runtime.existing_daemon_text_routes,
-        [(
-            "/core/loop/done-text".into(),
-            Some(json!({
-                "project": "/repo",
-                "sessionId": "codex-1",
-                "source": "agent",
-                "reason": "finished",
-            })),
-        )]
+        runtime.existing_daemon_text_routes[0].0,
+        "/core/loop/done-text"
+    );
+    assert_eq!(
+        loop_done_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "codex-1",
+            "source": "agent",
+            "reason": "finished",
+        })
     );
 }
 
@@ -1871,28 +1899,27 @@ fn undelivered_loop_self_report_records_pending_retry() {
         ],
     );
     assert!(runtime.text_routes.is_empty());
+    let attempted_body = runtime.existing_daemon_text_routes[0].1.clone().unwrap();
+    let spooled = runtime.pending_loop_self_reports.into_inner();
     assert_eq!(
-        runtime.existing_daemon_text_routes,
-        [(
-            "/core/loop/done-text".into(),
-            Some(json!({
-                "project": "/repo",
-                "sessionId": "codex-1",
-                "source": "agent",
-            })),
-        )]
+        runtime.existing_daemon_text_routes[0].0,
+        "/core/loop/done-text"
+    );
+    assert_eq!(spooled[0].0, "/core/loop/done-text");
+    assert_eq!(spooled[0].1, Some(attempted_body.clone()));
+    let mut normalized_body = attempted_body;
+    remove_loop_report_id(&mut normalized_body);
+    assert_eq!(
+        normalized_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "codex-1",
+            "source": "agent",
+        })
     );
     assert_eq!(
-        runtime.pending_loop_self_reports.into_inner(),
-        [(
-            "/core/loop/done-text".into(),
-            Some(json!({
-                "project": "/repo",
-                "sessionId": "codex-1",
-                "source": "agent",
-            })),
-            "loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: connection refused".into()
-        )]
+        spooled[0].2,
+        "loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: connection refused"
     );
     assert_eq!(runtime.existing_daemon_text_timeouts, [Some(10_000)]);
 }
@@ -1917,17 +1944,23 @@ fn loop_self_report_timeout_records_pending_retry_with_named_wait() {
             "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms. The daemon may still be healthy but too busy to answer this request; aimux will replay pending loop self-reports on the next loop self-report attempt."
         ],
     );
+    let attempted_body = runtime.existing_daemon_text_routes[0].1.clone().unwrap();
+    let spooled = runtime.pending_loop_self_reports.into_inner();
+    assert_eq!(spooled[0].0, "/core/loop/done-text");
+    assert_eq!(spooled[0].1, Some(attempted_body.clone()));
+    let mut normalized_body = attempted_body;
+    remove_loop_report_id(&mut normalized_body);
     assert_eq!(
-        runtime.pending_loop_self_reports.into_inner(),
-        [(
-            "/core/loop/done-text".into(),
-            Some(json!({
-                "project": "/repo",
-                "sessionId": "codex-1",
-                "source": "agent",
-            })),
-            "loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms".into()
-        )]
+        normalized_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "codex-1",
+            "source": "agent",
+        })
+    );
+    assert_eq!(
+        spooled[0].2,
+        "loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms"
     );
     assert_eq!(runtime.existing_daemon_text_timeouts, [Some(10_000)]);
 }
@@ -1952,17 +1985,23 @@ fn loop_block_timeout_records_pending_retry_with_distinct_operation() {
             "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: loop block request to aimux daemon route /core/loop/block-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms. The daemon may still be healthy but too busy to answer this request; aimux will replay pending loop self-reports on the next loop self-report attempt."
         ],
     );
+    let attempted_body = runtime.existing_daemon_text_routes[0].1.clone().unwrap();
+    let spooled = runtime.pending_loop_self_reports.into_inner();
+    assert_eq!(spooled[0].0, "/core/loop/block-text");
+    assert_eq!(spooled[0].1, Some(attempted_body.clone()));
+    let mut normalized_body = attempted_body;
+    remove_loop_report_id(&mut normalized_body);
     assert_eq!(
-        runtime.pending_loop_self_reports.into_inner(),
-        [(
-            "/core/loop/block-text".into(),
-            Some(json!({
-                "project": "/repo",
-                "sessionId": "codex-1",
-                "source": "agent",
-            })),
-            "loop block request to aimux daemon route /core/loop/block-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms".into()
-        )]
+        normalized_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "codex-1",
+            "source": "agent",
+        })
+    );
+    assert_eq!(
+        spooled[0].2,
+        "loop block request to aimux daemon route /core/loop/block-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms"
     );
     assert_eq!(runtime.existing_daemon_text_timeouts, [Some(10_000)]);
 }
@@ -1977,6 +2016,7 @@ fn pending_loop_self_reports_replay_before_current_self_report() {
             "sessionId": "codex-old",
             "source": "agent",
             "reason": "already finished",
+            "reportId": "loop-self-report-old",
         })),
         "connection refused".into(),
     ));
@@ -1989,27 +2029,40 @@ fn pending_loop_self_reports_replay_before_current_self_report() {
     assert_eq!(done.code, 0);
     assert_eq!(done.stdout, ["loop ok"]);
     assert!(runtime.text_routes.is_empty());
+    let mut replayed_body = runtime.existing_daemon_text_routes[0].1.clone().unwrap();
     assert_eq!(
-        runtime.existing_daemon_text_routes,
-        [
-            (
-                "/core/loop/done-text".into(),
-                Some(json!({
-                    "project": "/repo",
-                    "sessionId": "codex-old",
-                    "source": "agent",
-                    "reason": "already finished",
-                })),
-            ),
-            (
-                "/core/loop/done-text".into(),
-                Some(json!({
-                    "project": "/repo",
-                    "sessionId": "codex-new",
-                    "source": "agent",
-                })),
-            ),
-        ]
+        replayed_body
+            .as_object_mut()
+            .and_then(|object| object.remove("reportId")),
+        Some(json!("loop-self-report-old"))
+    );
+    assert_eq!(
+        replayed_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "codex-old",
+            "source": "agent",
+            "reason": "already finished",
+        })
+    );
+    let mut current_body = runtime.existing_daemon_text_routes[1].1.clone().unwrap();
+    let current_report_id = remove_loop_report_id(&mut current_body);
+    assert_ne!(current_report_id, "loop-self-report-old");
+    assert_eq!(
+        runtime.existing_daemon_text_routes[0].0,
+        "/core/loop/done-text"
+    );
+    assert_eq!(
+        runtime.existing_daemon_text_routes[1].0,
+        "/core/loop/done-text"
+    );
+    assert_eq!(
+        current_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "codex-new",
+            "source": "agent",
+        })
     );
     assert!(runtime.pending_loop_self_reports.borrow().is_empty());
 }

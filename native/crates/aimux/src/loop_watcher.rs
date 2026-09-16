@@ -1766,20 +1766,36 @@ fn instruction_cadence_signature(candidate: &Value) -> Option<String> {
 fn candidate_signature(candidates: &[Value]) -> String {
     let mut ids = candidates
         .iter()
-        .map(|candidate| {
-            [
-                str_field(candidate, "id"),
-                str_field(candidate, "condition"),
-                str_field(candidate, "loopSince"),
-                str_field(candidate, "loopActionAt"),
-                optional_str(candidate, "goal").unwrap_or_default(),
-                optional_str(candidate, "loopSource").unwrap_or_default(),
-            ]
-            .join("\u{1f}")
-        })
+        .map(candidate_signature_part)
         .collect::<Vec<_>>();
     ids.sort();
     ids.join("\u{1e}")
+}
+
+fn candidate_signature_part(candidate: &Value) -> String {
+    let loop_exit_report_id = candidate
+        .get("loopLastAction")
+        .and_then(|action| optional_str(action, "reportId"));
+    if let Some(report_id) = loop_exit_report_id
+        && !report_id.is_empty()
+    {
+        return [
+            str_field(candidate, "id"),
+            str_field(candidate, "condition"),
+            "report",
+            report_id,
+        ]
+        .join("\u{1f}");
+    }
+    [
+        str_field(candidate, "id"),
+        str_field(candidate, "condition"),
+        str_field(candidate, "loopSince"),
+        str_field(candidate, "loopActionAt"),
+        optional_str(candidate, "goal").unwrap_or_default(),
+        optional_str(candidate, "loopSource").unwrap_or_default(),
+    ]
+    .join("\u{1f}")
 }
 
 fn loop_exit_candidate_signature(candidate: &Value) -> String {

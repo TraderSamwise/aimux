@@ -605,7 +605,7 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
         &mut runtime,
         "POST",
         CORE_API_ROUTES.loop_done_text,
-        Some(&json!({ "project": "/repo", "sessionId": "claude-1" })),
+        Some(&json!({ "project": "/repo", "sessionId": "claude-1", "reportId": "loop-self-report-route" })),
     )
     .expect("loop done");
     assert_eq!(text_body(done), "loop done claude-1\n");
@@ -617,6 +617,7 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
         &json!({
             "sessionId": "claude-1",
             "source": "agent",
+            "reportId": "loop-self-report-route",
             "active": false,
             "action": "done"
         })

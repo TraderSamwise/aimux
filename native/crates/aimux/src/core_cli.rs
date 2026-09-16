@@ -26,8 +26,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const CORE_DIAGNOSTIC_TIMEOUT_MS: u64 = 1_000;
+static LOOP_SELF_REPORT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 mod paths;
 mod transport;
@@ -817,6 +819,7 @@ where
             let mut body = serde_json::Map::from_iter([
                 ("project".into(), Value::String(project_root)),
                 ("sessionId".into(), Value::String(session_id)),
+                ("reportId".into(), Value::String(loop_self_report_id())),
             ]);
             body.extend(loop_actor_payload(&context.loop_actor, "agent"));
             if let Some(reason) = parsed.reason {
@@ -2266,5 +2269,15 @@ fn json_without_null_fields(value: Value) -> Value {
             .into_iter()
             .filter(|(_, value)| !value.is_null())
             .collect::<Map<_, _>>(),
+    )
+}
+
+fn loop_self_report_id() -> String {
+    let sequence = LOOP_SELF_REPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = time::OffsetDateTime::now_utc().unix_timestamp_nanos();
+    format!(
+        "loop-self-report-{}-{:x}-{sequence:x}",
+        std::process::id(),
+        nanos
     )
 }

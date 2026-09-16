@@ -1043,6 +1043,11 @@ fn loop_base_request(
     request.insert("source".into(), Value::String(source));
     insert_string_if_some(
         &mut request,
+        "reportId",
+        optional_string(route_url, body, "reportId"),
+    );
+    insert_string_if_some(
+        &mut request,
         "updatedBy",
         optional_string(route_url, body, "updatedBy"),
     );

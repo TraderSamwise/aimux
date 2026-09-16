@@ -882,6 +882,7 @@ fn provenance(body: &Value) -> Map<String, Value> {
         ("updatedBy", 500usize),
         ("updatedBySessionId", 500),
         ("updatedByRole", 500),
+        ("reportId", 500),
         ("reason", 2000),
     ] {
         if let Some(value) = body_trimmed_string(body, key).filter(|value| !value.is_empty()) {
@@ -900,6 +901,7 @@ fn copy_provenance(from: &Map<String, Value>, to: &mut Map<String, Value>) {
         "updatedBy",
         "updatedBySessionId",
         "updatedByRole",
+        "reportId",
         "reason",
     ] {
         if let Some(value) = from.get(key) {
