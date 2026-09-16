@@ -131,7 +131,7 @@ pub fn read_aimux_build_variant_from_package_root_with_env(
 pub fn parse_aimux_build_variant(value: Option<&str>) -> Option<&'static str> {
     match value.map(str::trim) {
         Some("full") => Some("full"),
-        Some("lite") => Some("lite"),
+        Some("local") => Some("local"),
         _ => None,
     }
 }

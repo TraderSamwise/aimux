@@ -83,9 +83,9 @@
       "source": "src/version.test.ts",
       "sourceName": "prefers the installed artifact BUILD_VARIANT label",
       "api": "readAimuxBuildVariantFromPackageRoot",
-      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": "full", "files": { "BUILD_VARIANT": "lite\n" } },
-      "output": "lite",
-      "inputSha256": "962cf19f2abb65d7e9976b442a8409dc1417ac93436f20f8c386a8068976a05f"
+      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": "full", "files": { "BUILD_VARIANT": "local\n" } },
+      "output": "local",
+      "inputSha256": "37ef23d6b970faff68f33bd232dbe091373ab546c46e1f7ef5f0a5db2af8f87c"
     },
     {
       "id": "release-version-009",
@@ -103,9 +103,9 @@
       "source": "src/version.test.ts",
       "sourceName": "ignores unknown build variant labels",
       "api": "readAimuxBuildVariantFromPackageRoot",
-      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": "lite", "files": { "BUILD_VARIANT": "enterprise\n" } },
-      "output": "lite",
-      "inputSha256": "6c433c905500a9fcd1257dfd5994db6371dcb5c0780f08477e8540dfb71e79ce"
+      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": "local", "files": { "BUILD_VARIANT": "enterprise\n" } },
+      "output": "local",
+      "inputSha256": "ee747a5788f700f6c37ca5cd1156c0e7e0f552162ab4ec064664da42a49f8937"
     }
   ]
 }
