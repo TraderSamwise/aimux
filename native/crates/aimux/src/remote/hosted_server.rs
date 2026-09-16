@@ -18,22 +18,26 @@ use crate::daemon::stream::{
     HostAgentStreamError, HostAgentStreamRequestOptions, ProjectEventStreamChunk,
     open_project_event_stream_from_url, open_project_event_stream_from_url_async,
 };
-use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore, HostedPromptRecord, hash_prompt};
-use crate::hosted_auth::{authenticate_hosted, strip_trusted_headers};
-use crate::hosted_config::{HostedConfig, validate_hosted_startup};
-use crate::hosted_events::{
-    HostedDevicesStore, HostedEvent, HostedEventDelivery, SeenDeviceInput, client_address,
-};
-use crate::hosted_lockdown::HostedLockdownStore;
-use crate::hosted_outbox::HostedOutboxStore;
-use crate::hosted_principals::{
-    HostedGrant, HostedPrincipal, HostedPrincipalsStore, principal_has_grant,
-};
-use crate::hosted_rate_limit::{HostedLimitOutcome, HostedRateLimitOptions, HostedRateLimiter};
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes as project_routes;
 use crate::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
-use crate::remote_access::{RemoteAccessDecision, RemoteActor};
+use crate::remote::hosted_audit::{
+    HostedAuditRecord, HostedAuditStore, HostedPromptRecord, hash_prompt,
+};
+use crate::remote::hosted_auth::{authenticate_hosted, strip_trusted_headers};
+use crate::remote::hosted_config::{HostedConfig, validate_hosted_startup};
+use crate::remote::hosted_events::{
+    HostedDevicesStore, HostedEvent, HostedEventDelivery, SeenDeviceInput, client_address,
+};
+use crate::remote::hosted_lockdown::HostedLockdownStore;
+use crate::remote::hosted_outbox::HostedOutboxStore;
+use crate::remote::hosted_principals::{
+    HostedGrant, HostedPrincipal, HostedPrincipalsStore, principal_has_grant,
+};
+use crate::remote::hosted_rate_limit::{
+    HostedLimitOutcome, HostedRateLimitOptions, HostedRateLimiter,
+};
+use crate::request_actor::{RemoteAccessDecision, RemoteActor};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -2081,7 +2085,7 @@ fn unix_millis(time: SystemTime) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hosted_events::HostedEventDeliveryConfig;
+    use crate::remote::hosted_events::HostedEventDeliveryConfig;
     use std::io::Read;
     use std::net::TcpStream;
     use std::path::PathBuf;

@@ -1,7 +1,7 @@
 use crate::atomic_write::atomic_write_with_mode;
-use crate::hosted_config::HostedConfig;
-use crate::hosted_lock::{HostedLockOptions, with_hosted_lock};
 use crate::paths::PathResolver;
+use crate::remote::hosted_config::HostedConfig;
+use crate::remote::hosted_lock::{HostedLockOptions, with_hosted_lock};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

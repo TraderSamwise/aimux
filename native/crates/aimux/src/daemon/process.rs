@@ -3,7 +3,7 @@ use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::router::DaemonRouteRequestContext;
 use crate::daemon::router::{DaemonRouteRuntime, route_daemon_request};
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
-use crate::remote_access::{RemoteAccessDecision, RemoteActorRole, parse_remote_actor};
+use crate::request_actor::{RemoteAccessDecision, RemoteActorRole, parse_remote_actor};
 use std::cell::RefCell;
 
 pub fn handle_daemon_runtime_request(

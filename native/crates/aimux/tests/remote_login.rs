@@ -1,5 +1,5 @@
-use aimux::remote_credentials::load_credentials_at;
-use aimux::remote_login::{LoginAction, build_auth_url, handle_login_callback};
+use aimux::remote::remote_credentials::load_credentials_at;
+use aimux::remote::remote_login::{LoginAction, build_auth_url, handle_login_callback};
 use std::fs::{self, remove_dir_all};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

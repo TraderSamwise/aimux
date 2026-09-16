@@ -1,10 +1,10 @@
 use crate::backlog_metrics::{
     BacklogMetricSnapshot, HOSTED_OUTBOX_BACKLOG, backlog_metric, record_backlog_error,
 };
-use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore};
-pub use crate::hosted_events::HostedEvent;
-use crate::hosted_lock::{HostedLockOptions, with_hosted_lock};
 use crate::paths::PathResolver;
+use crate::remote::hosted_audit::{HostedAuditRecord, HostedAuditStore};
+pub use crate::remote::hosted_events::HostedEvent;
+use crate::remote::hosted_lock::{HostedLockOptions, with_hosted_lock};
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde_json::json;

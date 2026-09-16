@@ -17,12 +17,12 @@ use tokio::sync::Notify;
 use crate::backlog_metrics::{
     BacklogMetric, BacklogMetricSnapshot, BacklogMetricStatus, RELAY_OUTBOX_BACKLOG, backlog_metric,
 };
-use crate::relay_client::{
+use crate::remote::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
     decide_connect_error, handle_frame, project_events_error_frame,
     project_events_subscribed_frame, response_frame,
 };
-use crate::websocket::{
+use crate::remote::websocket::{
     BoxFuture, INITIAL_RETRY_MS, MAX_HANDSHAKE_FAILURES, WebSocketConnectionParts,
     WebSocketConnector, WebSocketEvent, WebSocketReader, WebSocketWriter, next_retry_ms,
     relay_subprotocols,
@@ -363,7 +363,7 @@ impl RelayRunner {
         _reader: &mut dyn WebSocketReader,
         writer: &mut dyn WebSocketWriter,
         subscriptions: &mut RelaySubscriptions,
-        event: Result<WebSocketEvent, crate::websocket::WebSocketError>,
+        event: Result<WebSocketEvent, crate::remote::websocket::WebSocketError>,
     ) -> Option<CloseInfo> {
         match event {
             Ok(WebSocketEvent::Text(text)) => {
@@ -472,7 +472,7 @@ impl RelayRunner {
     /// next drain. A titleless notification is dropped rather than sent blank,
     /// matching what Node did.
     pub fn push_notification(&self, notification: &Value) -> Result<(), String> {
-        let Some(frame) = crate::relay_client::notification_push_frame(notification) else {
+        let Some(frame) = crate::remote::relay_client::notification_push_frame(notification) else {
             return Err("notification_missing_title".to_owned());
         };
         self.queue(frame)
@@ -528,7 +528,7 @@ impl RelayRunner {
     async fn send_next_outbox_frame(
         &self,
         writer: &mut dyn WebSocketWriter,
-    ) -> Result<bool, crate::websocket::WebSocketError> {
+    ) -> Result<bool, crate::remote::websocket::WebSocketError> {
         let Some(frame) = self.peek_outbox_frame() else {
             return Ok(false);
         };
@@ -555,7 +555,7 @@ impl RelayRunner {
         }
     }
 
-    fn write_failed(&self, error: crate::websocket::WebSocketError) -> CloseInfo {
+    fn write_failed(&self, error: crate::remote::websocket::WebSocketError) -> CloseInfo {
         let message = error.message().into_owned();
         self.set_status(RelayStatus::Reconnecting, Some(message.clone()));
         CloseInfo {
@@ -790,7 +790,7 @@ mod tests {
         ProjectEventStreamItem, RelayRunner, RelaySubscriptions, push_front_outbox_frame,
         push_outbox_frame,
     };
-    use crate::websocket::{
+    use crate::remote::websocket::{
         BoxFuture, WebSocketConnectionParts, WebSocketError, WebSocketEvent, WebSocketReader,
         WebSocketWriter,
     };

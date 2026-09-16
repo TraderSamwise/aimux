@@ -1,10 +1,12 @@
 use aimux::config::merge_config_layers;
-use aimux::hosted_config::{
+use aimux::remote::hosted_config::{
     HostedConfig, hosted_config_to_value, is_loopback_bind_address,
     load_hosted_config_from_global_path, normalize_hosted_config, normalize_hosted_config_value,
     validate_hosted_startup,
 };
-use aimux::hosted_rate_limit::{HostedLimitOutcome, HostedRateLimitOptions, HostedRateLimiter};
+use aimux::remote::hosted_rate_limit::{
+    HostedLimitOutcome, HostedRateLimitOptions, HostedRateLimiter,
+};
 use aimux::tmux_expose::{
     crop_expose_preview_footer as production_crop_expose_preview_footer,
     expose_preview_footer_crop_rows as production_expose_preview_footer_crop_rows,

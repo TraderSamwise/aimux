@@ -5,12 +5,12 @@
 //! It lives here rather than in `src/` so nothing can mistake it for the
 //! implementation.
 
-use aimux::daemon::relay::resolve_project_event_stream;
-use aimux::relay_client::{RelayStatus, project_event_frame, project_events_error_frame};
-use aimux::relay_runner::{
+use aimux::remote::daemon_relay::resolve_project_event_stream;
+use aimux::remote::relay_client::{RelayStatus, project_event_frame, project_events_error_frame};
+use aimux::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
 };
-use aimux::websocket::{
+use aimux::remote::websocket::{
     BoxFuture, WebSocketConnectionParts, WebSocketConnector, WebSocketError, WebSocketEvent,
     WebSocketReader, WebSocketWriter,
 };
@@ -140,12 +140,12 @@ fn subscribe_case(input: &Value) -> Value {
     // The ack is produced by the runner, not by this adapter — injecting it
     // here was hiding that production never sent one at all.
     let mut sent = vec![
-        serde_json::from_str::<Value>(&aimux::relay_client::project_events_subscribed_frame(
-            subscription_id,
-        ))
+        serde_json::from_str::<Value>(
+            &aimux::remote::relay_client::project_events_subscribed_frame(subscription_id),
+        )
         .expect("ack is json"),
     ];
-    let (frames, _remainder) = aimux::relay_client::split_sse_frames(stream);
+    let (frames, _remainder) = aimux::remote::relay_client::split_sse_frames(stream);
     for frame in frames {
         if let Some(payload) = project_event_frame(subscription_id, &frame) {
             sent.push(serde_json::from_str(&payload).expect("frame is json"));

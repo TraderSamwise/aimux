@@ -176,7 +176,7 @@ pub fn doctor_tasks_report() -> AsyncRuntimeDoctorReport {
     #[cfg(feature = "remote-control")]
     let mut backlogs = backlog_snapshots();
     #[cfg(feature = "remote-control")]
-    let hosted_backlog = crate::hosted_outbox::hosted_outbox_backlog_snapshot_from_env();
+    let hosted_backlog = crate::remote::hosted_outbox::hosted_outbox_backlog_snapshot_from_env();
     #[cfg(feature = "remote-control")]
     backlogs.retain(|backlog| backlog.name != hosted_backlog.name);
     #[cfg(feature = "remote-control")]

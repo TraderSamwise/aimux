@@ -9,7 +9,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::atomic_write::{atomic_write, write_json_atomic};
 use crate::project_api_contract::routes;
-use crate::remote_access::{RemoteActorRole, parse_remote_actor};
+use crate::request_actor::{RemoteActorRole, parse_remote_actor};
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
 use super::agent_input::hosted_attachment_from_body;

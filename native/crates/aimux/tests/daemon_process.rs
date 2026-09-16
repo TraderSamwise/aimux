@@ -27,16 +27,16 @@ use aimux::daemon::text::team::DaemonTeamTextRuntime;
 use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
-use aimux::hosted_audit::HostedAuditStore;
-use aimux::hosted_config::{HostedConfig, HostedRateLimitConfig};
-use aimux::hosted_events::{HostedEventDelivery, HostedEventDeliveryConfig};
-use aimux::hosted_principals::{HostedGrant, HostedPrincipalsStore};
-use aimux::hosted_server::{
+use aimux::paths::PathResolver;
+use aimux::remote::hosted_audit::HostedAuditStore;
+use aimux::remote::hosted_config::{HostedConfig, HostedRateLimitConfig};
+use aimux::remote::hosted_events::{HostedEventDelivery, HostedEventDeliveryConfig};
+use aimux::remote::hosted_principals::{HostedGrant, HostedPrincipalsStore};
+use aimux::remote::hosted_server::{
     HostedServerState, HostedStreamLimits, handle_hosted_daemon_request,
     handle_hosted_daemon_request_from_peer, handle_hosted_daemon_stream,
     handle_hosted_daemon_stream_async, start_hosted_server_background,
 };
-use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs;
@@ -1702,7 +1702,7 @@ fn hosted_listener_connection_cap_does_not_consume_request_peer_slot() {
 
 #[test]
 fn hosted_background_workers_are_named_runtime_tasks_not_bare_threads() {
-    let source = include_str!("../src/hosted_server.rs");
+    let source = include_str!("../src/remote/hosted_server.rs");
     let production_source = source
         .split("#[cfg(test)]")
         .next()

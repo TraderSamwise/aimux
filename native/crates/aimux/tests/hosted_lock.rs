@@ -1,4 +1,4 @@
-use aimux::hosted_lock::{HostedLockOptions, lock_path_for, with_hosted_lock};
+use aimux::remote::hosted_lock::{HostedLockOptions, lock_path_for, with_hosted_lock};
 use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

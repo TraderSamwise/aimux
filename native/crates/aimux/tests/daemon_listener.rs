@@ -11,7 +11,7 @@ use aimux::daemon::listener::{
 };
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::server::handle_daemon_http_request;
-use aimux::remote_access::RemoteAccessDecision;
+use aimux::request_actor::RemoteAccessDecision;
 use serde_json::json;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
