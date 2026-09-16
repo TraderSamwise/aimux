@@ -3,7 +3,7 @@ use aimux::daemon::access::{
     resolve_authorized_project_event_stream, resolve_hosted_operator_stream,
 };
 use aimux::daemon_projects::ProjectsRouteProject;
-use aimux::remote_access::{
+use aimux::request_actor::{
     RemoteAccessDecision, RemoteActor, RemoteActorRole, RemoteOperatorGrant,
     RemoteOperatorPrincipal,
 };

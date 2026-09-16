@@ -1,8 +1,8 @@
-use aimux::hosted_audit::{
+use aimux::paths::PathResolver;
+use aimux::remote::hosted_audit::{
     HOSTED_AUDIT_MAX_BYTES, HostedAuditRecord, HostedAuditStore, HostedPromptRecord, hash_prompt,
     pending_path_for, pending_staged_path_for,
 };
-use aimux::paths::PathResolver;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs;

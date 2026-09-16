@@ -1,5 +1,5 @@
 use aimux::paths::PathResolver;
-use aimux::remote_credentials::{
+use aimux::remote::remote_credentials::{
     AimuxCredentials, ClearCredentialsResult, clear_credentials_at, load_credentials,
     load_credentials_at, save_credentials_at, set_remote_enabled_at,
 };

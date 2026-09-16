@@ -6,8 +6,6 @@ pub mod http;
 pub mod json;
 pub mod listener;
 pub mod process;
-#[cfg(feature = "remote-control")]
-pub mod relay;
 pub mod router;
 pub mod routing;
 pub mod runtime;

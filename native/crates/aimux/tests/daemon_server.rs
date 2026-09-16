@@ -3,7 +3,7 @@ use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::router::DaemonRouteRequestContext;
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
-use aimux::remote_access::RemoteAccessDecision;
+use aimux::request_actor::RemoteAccessDecision;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::BTreeMap;

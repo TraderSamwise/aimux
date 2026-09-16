@@ -1395,7 +1395,7 @@ fn unified_router_applies_remote_access_decision_before_route_dispatch() {
         &DaemonRouteRequestContext {
             actor_present: true,
             headers: BTreeMap::new(),
-            access_decision: Some(aimux::remote_access::RemoteAccessDecision::deny(
+            access_decision: Some(aimux::request_actor::RemoteAccessDecision::deny(
                 418,
                 "remote denied",
             )),

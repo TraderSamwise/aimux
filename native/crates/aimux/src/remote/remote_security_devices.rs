@@ -1,6 +1,6 @@
 use crate::async_subprocess::AsyncCommand;
 use crate::paths::PathResolver;
-use crate::remote_credentials::load_credentials;
+use crate::remote::remote_credentials::load_credentials;
 use serde_json::Value;
 
 pub fn list_remote_security_devices(pending: bool) -> Result<Vec<Value>, String> {

@@ -44,6 +44,8 @@ function createInstallArchive(root, variant = "full") {
   mkdirSync(nativeDir, { recursive: true });
   writeFileSync(join(packageRoot, "VERSION"), "local-test\n");
   writeFileSync(join(packageRoot, "BUILD_STAMP"), "test-stamp\n");
+  writeFileSync(join(packageRoot, "PACKAGE_PROFILE"), "full\n");
+  writeFileSync(join(packageRoot, "BUILD_PROFILE"), "full\n");
   writeFileSync(join(packageRoot, "BUILD_VARIANT"), `${variant}\n`);
   const nativeBinary = join(nativeDir, "aimux");
   writeFileSync(
@@ -76,6 +78,8 @@ function createReleaseArchive(root, stamp = "test-release-stamp", variant = "ful
   const nativeDir = join(packageRoot, "native", platformArch());
   mkdirSync(nativeDir, { recursive: true });
   writeFileSync(join(packageRoot, "BUILD_STAMP"), `${stamp}\n`);
+  writeFileSync(join(packageRoot, "PACKAGE_PROFILE"), "full\n");
+  writeFileSync(join(packageRoot, "BUILD_PROFILE"), "full\n");
   writeFileSync(join(packageRoot, "BUILD_VARIANT"), `${variant}\n`);
   const nativeBinary = join(nativeDir, "aimux");
   writeFileSync(nativeBinary, `#!/usr/bin/env sh\nAIMUX_EMBEDDED_BUILD_STAMP=${stamp}\nexit 0\n`);
@@ -220,7 +224,7 @@ esac
   );
   return {
     PATH: bin,
-    AIMUX_BUILD_PROFILE: "local",
+    AIMUX_PACKAGE_PROFILE: "minimal",
     AIMUX_RELEASE_VERSION: "local-test",
     AIMUX_RELEASE_DIR: join(root, "release"),
     CARGO_TARGET_DIR: join(root, "target"),
@@ -348,6 +352,11 @@ describe("build-release-asset.sh", () => {
       expect(readFileSync(join(root, "cargo-args.txt"), "utf8")).not.toContain("--no-default-features");
       const stamp = readFileSync(join(root, "release", "aimux-linux-x64.tar.gz.sha256"), "utf8");
       expect(stamp).toContain("aimux-linux-x64.tar.gz");
+      const extractDir = join(root, "extract-full");
+      mkdirSync(extractDir);
+      runOk("tar", ["-xzf", join(root, "release", "aimux-linux-x64.tar.gz"), "-C", extractDir]);
+      expect(readFileSync(join(extractDir, "aimux", "PACKAGE_PROFILE"), "utf8").trim()).toBe("minimal");
+      expect(readFileSync(join(extractDir, "aimux", "BUILD_PROFILE"), "utf8").trim()).toBe("local");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -366,6 +375,8 @@ describe("build-release-asset.sh", () => {
       const extractDir = join(root, "extract");
       mkdirSync(extractDir);
       runOk("tar", ["-xzf", join(root, "release", "aimux-local-linux-x64.tar.gz"), "-C", extractDir]);
+      expect(readFileSync(join(extractDir, "aimux", "PACKAGE_PROFILE"), "utf8").trim()).toBe("minimal");
+      expect(readFileSync(join(extractDir, "aimux", "BUILD_PROFILE"), "utf8").trim()).toBe("local");
       expect(readFileSync(join(extractDir, "aimux", "BUILD_VARIANT"), "utf8").trim()).toBe("local");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -420,6 +431,8 @@ describe("verify-release-asset.sh", () => {
       const nativeDir = join(packageRoot, "native", platformArch());
       mkdirSync(nativeDir, { recursive: true });
       writeFileSync(join(packageRoot, "BUILD_STAMP"), "stamp\n");
+      writeFileSync(join(packageRoot, "PACKAGE_PROFILE"), "full\n");
+      writeFileSync(join(packageRoot, "BUILD_PROFILE"), "full\n");
       const nativeBinary = join(nativeDir, "aimux");
       writeFileSync(nativeBinary, "#!/usr/bin/env sh\nAIMUX_EMBEDDED_BUILD_STAMP=stamp\nexit 0\n");
       chmodSync(nativeBinary, 0o755);
@@ -436,6 +449,32 @@ describe("verify-release-asset.sh", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 30000);
+
+  it("rejects a release asset without a package profile stamp", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-verify-script-"));
+    try {
+      const archiveRoot = join(root, "archive");
+      const packageRoot = join(archiveRoot, "aimux");
+      const nativeDir = join(packageRoot, "native", platformArch());
+      mkdirSync(nativeDir, { recursive: true });
+      writeFileSync(join(packageRoot, "BUILD_STAMP"), "stamp\n");
+      writeFileSync(join(packageRoot, "BUILD_VARIANT"), "full\n");
+      const nativeBinary = join(nativeDir, "aimux");
+      writeFileSync(nativeBinary, "#!/usr/bin/env sh\nAIMUX_EMBEDDED_BUILD_STAMP=stamp\nexit 0\n");
+      chmodSync(nativeBinary, 0o755);
+      const archive = join(root, "missing-package-profile.tar.gz");
+      runOk("tar", ["-czf", archive, "-C", archiveRoot, "aimux"]);
+
+      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset.sh"), archive, platformArch()], {
+        env: releaseScriptEnv(root),
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Release archive is missing PACKAGE_PROFILE");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
 });
 
 describe("verify-release-asset-set.sh", () => {
@@ -446,6 +485,8 @@ describe("verify-release-asset-set.sh", () => {
     mkdirSync(nativeDir, { recursive: true });
     writeFileSync(join(packageRoot, "VERSION"), "0.1.34\n");
     writeFileSync(join(packageRoot, "BUILD_STAMP"), `stamp-${asset}\n`);
+    writeFileSync(join(packageRoot, "PACKAGE_PROFILE"), "full\n");
+    writeFileSync(join(packageRoot, "BUILD_PROFILE"), "full\n");
     writeFileSync(join(packageRoot, "BUILD_VARIANT"), `${variant}\n`);
     const nativeBinary = join(nativeDir, "aimux");
     writeFileSync(nativeBinary, `#!/usr/bin/env sh\nprintf 'fixture ${asset}\\n'\n`);
@@ -467,7 +508,8 @@ describe("verify-release-asset-set.sh", () => {
             ref: "v0.1.34",
           },
           build: {
-            profile: "full",
+            packageProfile: "full",
+            legacyBuildProfile: "full",
             variant,
             platformArch,
             buildStamp: `stamp-${asset}`,
@@ -475,6 +517,7 @@ describe("verify-release-asset-set.sh", () => {
           artifact: {
             name: asset,
             sha256: shaValue,
+            packageProfile: "full",
             buildProfile: "full",
             buildVariant: variant,
             platformArch,
@@ -662,7 +705,7 @@ describe("verify-release-asset-set.sh", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 });
 
 describe("check-local-build-boundary.sh", () => {

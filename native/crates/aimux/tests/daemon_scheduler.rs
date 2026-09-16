@@ -14,15 +14,15 @@ use aimux::daemon::scheduler::{
 };
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::AimuxDaemonInfo;
-use aimux::hosted_audit::{HostedAuditRecord, HostedAuditStore};
-use aimux::hosted_config::HostedConfig;
-use aimux::hosted_events::{DeviceRecord, DevicesState, HostedDevicesStore};
-use aimux::hosted_server::{
+use aimux::install_cleanup::InstallReferenceText;
+use aimux::paths::PathResolver;
+use aimux::remote::hosted_audit::{HostedAuditRecord, HostedAuditStore};
+use aimux::remote::hosted_config::HostedConfig;
+use aimux::remote::hosted_events::{DeviceRecord, DevicesState, HostedDevicesStore};
+use aimux::remote::hosted_server::{
     HOSTED_OUTBOX_DRAIN_TASK_NAME, HOSTED_PRUNE_TASK_NAME, HostedOutboxDrainTask, HostedPruneTask,
     HostedServerState,
 };
-use aimux::install_cleanup::InstallReferenceText;
-use aimux::paths::PathResolver;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::ffi::CString;

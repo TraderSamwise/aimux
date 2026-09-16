@@ -28,7 +28,7 @@ use aimux::dashboard_command_spec::get_dashboard_command_spec;
 use aimux::dashboard_readiness::get_runtime_owner_id;
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
-use aimux::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
+use aimux::remote::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
 use aimux::runtime_coherence::{RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use aimux::tmux::{

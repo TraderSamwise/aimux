@@ -194,10 +194,13 @@ a broken release.
    and local `aimux-local-{darwin,linux}-{arm64,x64}.tar.gz` archives plus
    `.sha256`, `.provenance.json`, and `.sbom.spdx.json` companion files on matching runners, after re-running
    `yarn release:readiness`. Each asset carries a `BUILD_VARIANT` stamp
-   (`full` or `local`) separate from `BUILD_PROFILE`, is checked for stripped
-   source maps, and the Darwin assets are checked for a notifier helper of the
-   right architecture. Local assets must pass the remote-control absence gate
-   before upload, while full assets must pass the matching presence gate so the
+   (`full` or `local`) and a separate `PACKAGE_PROFILE` stamp, is checked for
+   stripped source maps, and the Darwin assets are checked for a notifier
+   helper of the right architecture. Package profile is tracked separately from
+   `BUILD_VARIANT`; `PACKAGE_PROFILE=full` includes UI/docs assets while
+   `PACKAGE_PROFILE=minimal` omits them. Local assets must pass the
+   remote-control absence gate before upload, while full assets must pass the
+   matching presence gate so the
    full lane still proves it contains the expected remote-control surface. A
    Release assets and their companion files are covered by GitHub artifact
    attestations. A release asset set gate fails downstream publishing if any
@@ -241,12 +244,11 @@ isolated install smoke with `AIMUX_INSTALL_VARIANT=local`. The generic
 variant and produces the existing unsuffixed `aimux-<platform>-<arch>.tar.gz`
 archive.
 
-The local source-build script currently requests `AIMUX_BUILD_PROFILE=local`
-only to keep UI/docs out of the reviewer archive. That is packaging shape, not
-the local-only security claim; the security lane is the archive
-`BUILD_VARIANT=local` stamp. Recommendation: rename the packaging axis to
-`PACKAGE_PROFILE=full|minimal` in a follow-up while preserving compatibility
-reads for legacy `BUILD_PROFILE=full|local`.
+The local source-build script requests `AIMUX_PACKAGE_PROFILE=minimal` to keep
+UI/docs out of the reviewer archive. That is packaging shape, not the
+local-only security claim; the security lane is the archive
+`BUILD_VARIANT=local` stamp. `AIMUX_BUILD_PROFILE=local` remains a legacy
+compatibility input for the same minimal packaging profile.
 
 ### Verify a release
 

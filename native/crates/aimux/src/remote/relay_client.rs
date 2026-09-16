@@ -6,7 +6,7 @@
 
 use serde_json::{Value, json};
 
-use crate::websocket::WebSocketError;
+use crate::remote::websocket::WebSocketError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RelayStatus {

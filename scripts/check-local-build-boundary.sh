@@ -96,6 +96,64 @@ append_standard_path_dirs
 need grep
 need strings
 
+check_source_remote_gate() {
+  local src_dir lib_file gate_count ungated_remote old_path
+  src_dir="$ROOT_DIR/native/crates/aimux/src"
+  lib_file="$src_dir/lib.rs"
+  gate_count="$(
+    awk '
+      /^#\[cfg\(feature = "remote-control"\)\]$/ { previous_cfg = 1; next }
+      /^pub mod remote;$/ && previous_cfg == 1 { count += 1 }
+      { previous_cfg = 0 }
+      END { print count + 0 }
+    ' "$lib_file"
+  )"
+  if [ "$gate_count" != "1" ]; then
+    printf 'Source boundary expected exactly one gated remote module declaration, found %s\n' "$gate_count" >&2
+    printf 'Expected shape: #[cfg(feature = "remote-control")] followed by pub mod remote; in %s\n' "$lib_file" >&2
+    exit 1
+  fi
+  ungated_remote="$(
+    awk '
+      /^#\[cfg\(feature = "remote-control"\)\]$/ { previous_cfg = 1; next }
+      /^pub mod remote;$/ && previous_cfg != 1 { print FNR ": " $0 }
+      { previous_cfg = 0 }
+    ' "$lib_file"
+  )"
+  if [ -n "$ungated_remote" ]; then
+    printf 'Source boundary found an ungated remote module declaration in %s:\n%s\n' "$lib_file" "$ungated_remote" >&2
+    exit 1
+  fi
+  for old_path in \
+    hosted_audit.rs \
+    hosted_auth.rs \
+    hosted_cli.rs \
+    hosted_config.rs \
+    hosted_events.rs \
+    hosted_lock.rs \
+    hosted_lockdown.rs \
+    hosted_outbox.rs \
+    hosted_principals.rs \
+    hosted_rate_limit.rs \
+    hosted_server.rs \
+    mobile_push_bridge.rs \
+    relay_client.rs \
+    relay_runner.rs \
+    remote_credentials.rs \
+    remote_login.rs \
+    remote_security_devices.rs \
+    websocket.rs \
+    daemon/relay.rs
+  do
+    if [ -e "$src_dir/$old_path" ]; then
+      printf 'Source boundary found remote-control code outside src/remote: %s\n' "$src_dir/$old_path" >&2
+      exit 1
+    fi
+  done
+}
+
+check_source_remote_gate
+
 TMP_DIR=""
 cleanup() {
   if [ -n "$TMP_DIR" ]; then
