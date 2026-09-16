@@ -114,7 +114,7 @@ do
 done
 
 case "$BUILD_VARIANT" in
-  full | lite) ;;
+  full | local) ;;
   *) fail "invalid build variant: $BUILD_VARIANT" ;;
 esac
 case "$BUILD_PROFILE" in
@@ -159,7 +159,7 @@ cat > "$PROVENANCE_PATH" <<JSON
   },
   "gates": {
     "assetSet": "scripts/verify-release-asset-set.sh",
-    "boundary": "scripts/check-lite-build-boundary.sh --variant $BUILD_VARIANT --archive release/$(json_string "$ASSET_BASENAME") --platform-arch $(json_string "$PLATFORM_ARCH")",
+    "boundary": "scripts/check-local-build-boundary.sh --variant $BUILD_VARIANT --archive release/$(json_string "$ASSET_BASENAME") --platform-arch $(json_string "$PLATFORM_ARCH")",
     "attestation": "gh attestation verify $(json_string "$ASSET_BASENAME") --repo TraderSamwise/aimux"
   },
   "generatedAt": "$CREATED_AT"

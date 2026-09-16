@@ -15,7 +15,7 @@ need() {
 }
 
 if [ "$#" -ne 4 ]; then
-  fail "usage: scripts/verify-release-provenance.sh <release-dir> <asset> <platform-arch> <full|lite>"
+  fail "usage: scripts/verify-release-provenance.sh <release-dir> <asset> <platform-arch> <full|local>"
 fi
 
 for command in awk grep python3 shasum sed; do
@@ -27,7 +27,7 @@ ASSET="$2"
 PLATFORM_ARCH="$3"
 EXPECTED_VARIANT="$4"
 case "$EXPECTED_VARIANT" in
-  full | lite) ;;
+  full | local) ;;
   *) fail "invalid expected variant: $EXPECTED_VARIANT" ;;
 esac
 

@@ -43,10 +43,10 @@ require_job_needs() {
   fi
 }
 
-check_lite_boundary() {
-  local path="scripts/check-lite-build-boundary.sh"
+check_local_boundary() {
+  local path="scripts/check-local-build-boundary.sh"
   for dependency in tokio-tungstenite tungstenite ureq reqwest hyper h2 native-tls openssl curl; do
-    require_contains "$path" "$dependency" "lite remote/network dependency denylist entry $dependency"
+    require_contains "$path" "$dependency" "local remote/network dependency denylist entry $dependency"
   done
   for identity in \
     AIMUX_RELAY_URL \
@@ -60,7 +60,7 @@ check_lite_boundary() {
     maybe_host_published_attachment \
     'attachments/hosted'
   do
-    require_contains "$path" "$identity" "lite remote identity denylist entry $identity"
+    require_contains "$path" "$identity" "local remote identity denylist entry $identity"
   done
   require_contains "$path" "Full cargo tree is missing remote-control dependencies" "full-variant presence gate"
 }
@@ -73,7 +73,7 @@ check_release_provenance_gate() {
   require_contains "scripts/verify-release-asset-set.sh" "verify-release-provenance.sh" "provenance/SBOM asset-set verification"
   require_contains "scripts/verify-release-provenance.sh" "generate-cargo-sbom.py" "regenerated SBOM dependency-set verification"
   require_contains "scripts/generate-cargo-sbom.py" "SBOM dependency set mismatch" "loud SBOM dependency mismatch error"
-  require_contains "scripts/generate-cargo-sbom.py" "no-default-features" "lite SBOM feature-set separation"
+  require_contains "scripts/generate-cargo-sbom.py" "no-default-features" "local SBOM feature-set separation"
   require_contains "scripts/verify-release-asset-set.sh" "missing release SBOM file" "distinct missing SBOM error"
   require_contains "scripts/verify-release-asset-set.sh" "missing release provenance file" "distinct missing provenance error"
 
@@ -96,7 +96,7 @@ check_source_local_only_gates() {
   require_contains "native/crates/aimux/src/project_service/process.rs" 'StdTcpListener::bind(("127.0.0.1"' "project service loopback bind"
 }
 
-check_lite_boundary
+check_local_boundary
 check_release_provenance_gate
 check_source_local_only_gates
 

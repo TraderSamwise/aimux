@@ -71,13 +71,13 @@ pub fn route_core_command(
     }
     let command = command_string.expect("validated command");
     #[cfg(not(feature = "remote-control"))]
-    if lite_rejects_remote_core_command(command) {
+    if local_rejects_remote_core_command(command) {
         return DaemonRouteResponse::json(
             400,
             command_error(
                 &id,
                 Some(command),
-                "remote control commands are not available in the lite build",
+                "remote control commands are not available in the local build",
             ),
         );
     }
@@ -284,7 +284,7 @@ pub fn route_core_command(
 }
 
 #[cfg(not(feature = "remote-control"))]
-fn lite_rejects_remote_core_command(command: &str) -> bool {
+fn local_rejects_remote_core_command(command: &str) -> bool {
     command == CORE_COMMAND_NAMES.relay_status
         || command == CORE_COMMAND_NAMES.relay_enable
         || command == CORE_COMMAND_NAMES.relay_disable
