@@ -1,301 +1,481 @@
-# Aimux Lite Local-Only Evidence Pack
+# Aimux Local Source Review Evidence Pack
 
-Audience: corporate security reviewers evaluating whether the Aimux lite build
-lane is suitable for a work laptop where Aimux remote control is not allowed.
+Audience: corporate security reviewers reading the Aimux source tree to decide
+whether the local build variant is acceptable on a work laptop.
+
+This is a source-review guide, not an artifact-release checklist. The intended
+workflow is that a reviewer reads the named source files, builds the local
+variant themselves, and reruns the same checks from the same checkout. Prebuilt
+release artifacts and provenance files are supporting release-lane evidence;
+they are not the primary trust anchor for this review.
 
 ## Honest Boundary
 
-This evidence pack is scoped to the Aimux binary, release artifacts,
-and Aimux-managed local control plane. Runtime network claims apply to the
-installed Aimux binary and its child control-plane processes; install/update
-scripts are provenance and integrity surfaces, not runtime local-only proof.
-Aimux launches user-selected agent CLIs
-such as Codex, Claude, Aider, and shells. Those tools are separate executables
-and may be network clients. Installing `aimux-lite` does not make spawned agent
-tools local-only; it makes the Aimux control plane and release lane enforce the
-properties below.
+This evidence pack is scoped to the Aimux binary and Aimux-managed local control
+plane: the daemon, per-project service, CLI, dashboard/TUI state, tmux runtime
+integration, local HTTP listeners, and files Aimux writes.
 
-## Reviewer Entry Points
+Aimux launches user-selected agent CLIs such as Codex, Claude, Aider, and
+shells. Those tools are separate executables and may be network clients. A local
+Aimux build does not make the machine offline and does not prove that spawned
+agent tools are local-only. The agent processes remain a separate user and
+corporate trust decision.
 
-Run these from a clean checkout:
+## Reviewer Starting Point
+
+Start with the source separation. The first local-only review question is not
+"which artifact did Aimux publish?" It is "which source is reachable when the
+remote-control feature is absent?"
+
+Primary source check:
+
+- `native/crates/aimux/src/lib.rs` should contain the single gated entry point
+  for the remote implementation module tree:
+
+  ```rust
+  #[cfg(feature = "remote-control")]
+  pub mod remote;
+  ```
+
+- `native/crates/aimux/src/remote/mod.rs` should be the module tree that
+  re-exports relay, hosted, login, remote credential, remote security-device,
+  mobile push bridge, websocket, and remote CLI code. Phase 1 moved the 20
+  remote-control implementation modules under `src/remote/`; phase 1c also
+  moved the remote CLI surface there rather than hiding it behind a macro.
+- This does not claim there is only one `#[cfg(feature = "remote-control")]`
+  site in the source tree. Grep for `cfg(feature = "remote-control")` and the
+  build-variant reporter and you should find 88 sites across 11 source files.
+  Sixty of those are concentrated in three files: `daemon/runtime.rs` (31),
+  `daemon/remote_control.rs` (15), and `attachment_hosting.rs` (14). The next
+  largest clusters are `core_cli_executor.rs` (8), `async_runtime.rs` (5),
+  `core_cli.rs` (4), and `bin/aimux.rs` (4), with 7 more across four files.
+  Those sites are call-site adapters or local/full selection points, not
+  scattered remote implementation islands.
+- `native/crates/aimux/src/request_actor.rs` should remain outside
+  `src/remote`; it is core request-context/shared-chat actor plumbing, not a
+  remote-control transport module.
+- `native/crates/aimux/Cargo.toml` should make `remote-control` a default
+  feature and should attach remote network crates only to that feature.
+- A local build must use `--no-default-features`; a full build uses the default
+  feature set.
+
+Independent confirmation:
 
 ```bash
-yarn security:local-only:gate
-CARGO_INCREMENTAL=0 bash scripts/check-lite-build-boundary.sh --variant lite
-CARGO_INCREMENTAL=0 bash scripts/check-lite-build-boundary.sh --variant full
-bash scripts/verify-release-asset-set.sh <release-dir>
+rg -n 'cfg\(feature = "remote-control"\)|pub mod remote' native/crates/aimux/src
+rg -l '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src | sort
+rg -n 'cfg!\(feature = "remote-control"\)' native/crates/aimux/src/build_info.rs
+sed -n '1,80p' native/crates/aimux/Cargo.toml
+sed -n '1,120p' native/crates/aimux/src/lib.rs
+sed -n '1,160p' native/crates/aimux/src/remote/mod.rs
 ```
 
-For a published release, also verify GitHub artifact attestations:
+Expected result: the reviewer should be able to explain remote reachability from
+one remote implementation module gate, reviewed call-site gates, and the Cargo
+feature graph. If grep shows remote implementation modules outside `src/remote`
+or hidden behind independent gates, this source-review claim fails. If the
+reviewed count is not 88 sites across 11 files, update this document before
+using it in a review.
+
+## Self-Build Verification Path
+
+A source reviewer should build from the reviewed checkout rather than trust a
+prebuilt Aimux artifact.
+
+Primary source-build sequence:
 
 ```bash
-gh attestation verify <asset> --repo TraderSamwise/aimux
-gh attestation verify <asset>.sha256 --repo TraderSamwise/aimux
-gh attestation verify <asset>.provenance.json --repo TraderSamwise/aimux
-gh attestation verify <asset>.sbom.spdx.json --repo TraderSamwise/aimux
+yarn install --frozen-lockfile
+yarn --cwd app install --frozen-lockfile
+yarn release:source:local
 ```
 
-## Enforced Claims
+`release:source:local` is defined in `package.json` as the local wrapper around
+`scripts/build-local-release-from-source.sh`, which execs
+`scripts/build-release-from-source.sh --variant local`. That source helper sets
+`AIMUX_BUILD_VARIANT=local` and `AIMUX_PACKAGE_PROFILE=minimal`, builds
+`release/aimux-local-<platform>-<arch>.tar.gz`, verifies release provenance and
+SBOMs, runs the local boundary check, and installs into an isolated temporary
+root with `AIMUX_SKIP_POST_INSTALL_RESTART=1`. The local-only security claim is
+the build variant and feature set; the package profile controls archive
+contents such as UI/docs assets. The package-profile axis is `full|minimal`;
+`local` names the build variant, not the package profile.
 
-### Lite Has No Non-Loopback Remote-Control Dependency Graph
-
-Property: the `lite` native feature closure must not include remote-control
-network client crates used by Aimux relay or hosted paths. This is not a
-"no sockets" claim: lite legitimately contains local bind/listen/connect and
-name-resolution machinery for the daemon, project service, and loopback
-proxy/stream paths.
-
-Enforcing check:
+Independent source check for that command path:
 
 ```bash
-CARGO_INCREMENTAL=0 bash scripts/check-lite-build-boundary.sh --variant lite
+node -e 'const p=require("./package.json"); console.log(p.scripts["release:source:local"])'
+sed -n '1,80p' scripts/build-local-release-from-source.sh
+sed -n '1,180p' scripts/build-release-from-source.sh
 ```
 
-The check runs `cargo tree --no-default-features` and fails if the lite graph
-contains `tokio-tungstenite`, `tungstenite`, `ureq`, `reqwest`, `hyper`, `h2`,
-`native-tls`, `openssl`, or `curl`. It deliberately does not ban `tokio`,
-`mio`, or `socket2`, because Aimux still needs local loopback listeners.
-
-Violation behavior: the check prints
-`Lite cargo tree contains remote-control dependencies:` followed by the matched
-dependency lines and exits nonzero.
-
-### Lite Has No Remote-Control CLI Surface
-
-Property: `aimux-lite` must not advertise remote-control commands.
-
-Enforcing check:
+Independent decomposition of the same source property:
 
 ```bash
-bash scripts/check-lite-build-boundary.sh --variant lite --archive <lite-asset> --platform-arch <platform>-<arch>
+CARGO_INCREMENTAL=0 \
+  CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
+  cargo build --manifest-path native/Cargo.toml -p aimux --release --no-default-features
+
+CARGO_INCREMENTAL=0 \
+  CARGO_TARGET_DIR=/tmp/aimux-full-review-target \
+  cargo build --manifest-path native/Cargo.toml -p aimux --release
 ```
 
-The check runs `aimux --help` from the archive and fails if `remote`, `hosted`,
-`login`, `logout`, `whoami`, or `security` appear as top-level commands.
-
-Violation behavior: the check prints
-`Lite --help lists remote-control commands:` with the offending help rows and
-exits nonzero.
-
-### Lite Has No Remote/Hosted Runtime Identities
-
-Property: `aimux-lite` must not contain Aimux relay, hosted-mode, non-loopback
-remote-control, or attachment-hosting identities in the binary.
-
-Enforcing check:
+Then run the local boundary check against the reviewer-built local binary:
 
 ```bash
-bash scripts/check-lite-build-boundary.sh --variant lite --archive <lite-asset> --platform-arch <platform>-<arch>
+bash scripts/check-local-build-boundary.sh \
+  --variant local \
+  --binary /tmp/aimux-local-review-target/release/aimux
 ```
 
-The string denylist includes relay URL/config identities, WebSocket schemes,
-relay modules, hosted modules, remote login/security modules, and hosted
-attachment publishing identities.
-
-Violation behavior: the check prints
-`Lite binary contains remote-control strings:` followed by each match and exits
-nonzero.
-
-### Full Variant Still Proves Its Opposite
-
-Property: the full lane must remain full. It must still contain the expected
-remote-control dependency, help, and relay URL/config surface.
-
-Enforcing check:
+And run the opposite check against the reviewer-built full binary:
 
 ```bash
-CARGO_INCREMENTAL=0 bash scripts/check-lite-build-boundary.sh --variant full
+bash scripts/check-local-build-boundary.sh \
+  --variant full \
+  --binary /tmp/aimux-full-review-target/release/aimux
 ```
 
-Violation behavior: the check prints one of:
+The first command should prove absence of remote-control dependencies, CLI
+surface, and binary identities. The second should prove the full variant still
+contains the remote-control surface. Proving the opposite side matters: it
+guards against a broken check that always passes because it never finds remote
+code in any build. The installed local gate also runs the structural remote-tree
+check, so it proves that a local build did not compile `src/remote` units, not
+only that strings and `--help` output were absent.
 
-- `Full cargo tree is missing remote-control dependencies`
-- `Full --help is missing remote-control commands`
-- `Full binary is missing relay URL/config strings`
-
-This is the full-variant equivalent of the lite absence check. It prevents a
-broken release from accidentally publishing a neutered full binary under the
-existing full artifact names.
-
-### Install Lane Rejects Variant Mismatch
-
-Property: a full archive cannot be installed through the lite path, and a lite
-archive cannot be installed through the full path.
-
-Enforcing checks:
+Release archives, if reviewed, should be treated as a reproducibility target:
 
 ```bash
-AIMUX_INSTALL_VARIANT=lite bash scripts/install.sh <archive>
-AIMUX_INSTALL_VARIANT=full bash scripts/install.sh <archive>
+yarn release:source:local
 ```
 
-Violation behavior: the installer exits nonzero with
-`release archive BUILD_VARIANT mismatch: expected <lane>, got <stamp>`.
+The archive path is secondary. The source property is the `--no-default-features`
+build and the source-owned gate that verifies the resulting binary.
 
-### Release Assets Are Complete And Untampered
+## Enforced Source Claims
 
-Property: a release cannot publish downstream if any full/lite platform asset,
-checksum, provenance file, or SBOM is missing, unreadable, stale, corrupt, or
-assigned to the wrong variant.
+### 1. Remote-Control Source Is Structurally Separated
 
-Enforcing check:
+Property: relay, hosted mode, remote login, remote credentials, remote security
+devices, remote attachment hosting, mobile push bridge, and websocket transport
+live under the remote implementation module gated from `lib.rs`. Phase 1 moved
+the 20 remote-control implementation modules under `src/remote`; phase 1c keeps
+the remote CLI cluster under that same remote tree rather than using a macro.
+Remaining `remote-control` cfg sites outside `src/remote` must be call-site
+adapters or local/full selection points, not independent remote implementation
+modules.
+
+Source locations:
+
+- `native/crates/aimux/src/lib.rs`
+- `native/crates/aimux/src/remote/mod.rs`
+- `native/crates/aimux/src/remote/`
+- `native/crates/aimux/src/remote/cli.rs`
+- `native/crates/aimux/src/request_actor.rs`
+- `native/crates/aimux/Cargo.toml`
+- `scripts/check-remote-structural-boundary.mjs`
+- `scripts/check-local-build-boundary.sh`
+- `scripts/installed-runtime-gate.py`
+
+Independent confirmation:
 
 ```bash
-bash scripts/verify-release-asset-set.sh <release-dir>
+rg -n 'relay|hosted|remote_login|remote_credentials|remote_security|mobile_push_bridge|websocket' \
+  native/crates/aimux/src/remote native/crates/aimux/src/lib.rs native/crates/aimux/Cargo.toml
+rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src
+rg -l '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src | sort
+rg -n 'cfg!\(feature = "remote-control"\)' native/crates/aimux/src/build_info.rs
+find native/crates/aimux/src/remote -maxdepth 1 -name '*.rs' -type f | sort
+sed -n '1,120p' native/crates/aimux/src/request_actor.rs
+
+cargo tree --manifest-path native/Cargo.toml -p aimux --no-default-features
+cargo tree --manifest-path native/Cargo.toml -p aimux
 ```
 
-The gate verifies:
+Expected result: the local tree should not include remote-control dependency
+crates such as `tokio-tungstenite`, `tungstenite`, or `ureq`; the full tree
+should include them. The cfg grep plus the `cfg!` reporter should account for
+88 reviewed sites across 11 files. Each non-remote hit should be read, not
+waved away; a hit that defines remote transport behavior outside `src/remote`
+invalidates this claim. The structural checker should fail if old remote files
+such as `relay_client.rs`, `hosted_server.rs`, or `mobile_push_bridge.rs`
+reappear outside `src/remote`, or if local dep-info shows compiled
+`src/remote` units.
 
-- every full and lite platform archive exists;
-- every `.sha256` file exists, names the expected asset, and passes `shasum -c`;
-- every archive is a readable tarball containing `VERSION`, `BUILD_STAMP`,
-  `BUILD_VARIANT`, and `native/<platform>-<arch>/aimux`;
-- every archive `BUILD_VARIANT` matches its lane;
-- every `.provenance.json` exists and names the same artifact, SHA256,
-  variant, platform, and git revision;
-- every `.sbom.spdx.json` exists, is SPDX 2.3, and matches the Cargo
-  dependency graph for that asset's `full` or `lite` feature set.
+### 2. Local Build Has No Remote-Control Dependency Graph
 
-Violation behavior: the gate exits nonzero and names the exact asset and
-comparison, for example `checksum mismatch for release asset`, `release asset
-is not a readable tar.gz archive`, `missing release SBOM file`,
-`provenance sha256 mismatch`, or `SBOM dependency set mismatch`.
+Property: a local build must not depend on Aimux's remote-control network client
+crates. This is not a "no sockets" claim: the local daemon and project services
+still use local loopback sockets.
 
-### Full And Lite SBOMs Are Reproducible
+Source locations:
 
-Property: the full and lite release lanes publish separate standard SPDX 2.3
-SBOMs generated from the same Cargo graph used to compile that lane. Lite SBOMs
-are generated with `--no-default-features`; full SBOMs are generated with the
-default feature set. A reviewer can rerun the generator from the tagged source
-without installing `cargo-cyclonedx` or any Node helper:
+- `native/crates/aimux/Cargo.toml`
+- `scripts/check-local-build-boundary.sh`
+
+Independent confirmation:
 
 ```bash
-python3 scripts/generate-cargo-sbom.py \
-  --manifest-path native/Cargo.toml \
-  --asset aimux-lite-darwin-arm64.tar.gz \
-  --asset-sha256 <archive-sha256> \
-  --version <release-version> \
-  --source-revision <tag-commit-sha> \
-  --variant lite \
-  --platform-arch darwin-arm64 \
-  --output /tmp/aimux-lite-darwin-arm64.tar.gz.sbom.spdx.json
+cargo tree --manifest-path native/Cargo.toml -p aimux --no-default-features
+rg -n 'tokio-tungstenite|tungstenite|ureq' \
+  scripts/check-local-build-boundary.sh native/crates/aimux/Cargo.toml
 ```
 
-Enforcing checks:
+Expected result: the boundary script denylist names the remote-control client
+dependencies it rejects in the local variant, and those dependencies are tied to
+the `remote-control` feature in Cargo. This is not a rejection of local loopback
+HTTP dependencies used by Aimux's same-machine control plane.
+
+### 3. Local Build Has No Remote-Control CLI Surface
+
+Property: local `aimux --help` must not advertise remote-control commands such
+as `remote`, `hosted`, `login`, `logout`, `whoami`, or `security`.
+
+Source locations:
+
+- `native/crates/aimux/src/bin/aimux.rs`
+- `native/crates/aimux/src/native_cli_dispatch.rs`
+- `native/crates/aimux/src/remote/cli.rs`
+- `scripts/check-local-build-boundary.sh`
+
+Independent confirmation:
 
 ```bash
-bash scripts/verify-release-provenance.sh <release-dir> <asset> <platform-arch> <variant>
-bash scripts/verify-release-asset-set.sh <release-dir>
+/tmp/aimux-local-review-target/release/aimux --help
+rg -n 'remote|hosted|login|logout|whoami|security|remote-control' \
+  native/crates/aimux/src/bin/aimux.rs \
+  native/crates/aimux/src/core_cli.rs \
+  native/crates/aimux/src/core_cli_executor.rs \
+  native/crates/aimux/src/native_cli_dispatch.rs \
+  native/crates/aimux/src/remote/cli.rs
 ```
 
-`verify-release-provenance.sh` regenerates the expected SPDX package set with
-`scripts/generate-cargo-sbom.py` and rejects a published SBOM whose package or
-dependency relationship set does not match the selected variant.
+Expected result: remote commands are feature-gated out of local help and command
+dispatch. The remote CLI cluster is intentionally a normal gated module at
+`src/remote/cli.rs`, not a macro, so a source reviewer can read the full remote
+command surface in one place. The boundary script should fail if those commands
+appear in local help output.
 
-### Release Artifacts Carry Verifiable Provenance
+### 4. Local Build Has No Remote-Control Binary Identities
 
-Property: reviewers can connect a git tag and workflow identity to the exact
-asset, checksum, provenance, and SBOM files they download.
+Property: local Aimux must not contain relay, hosted, remote-login, or hosted
+attachment publishing identities in the compiled binary.
 
-Enforcing checks:
+Source locations:
+
+- `scripts/check-local-build-boundary.sh`
+- `native/crates/aimux/src/remote/`
+
+Independent confirmation:
 
 ```bash
-bash scripts/write-release-provenance.sh ...
-bash scripts/verify-release-provenance.sh <release-dir> <asset> <platform-arch> <variant>
-gh attestation verify <asset> --repo TraderSamwise/aimux
+strings /tmp/aimux-local-review-target/release/aimux \
+  | rg 'AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|hosted_server|hosted_cli|remote_login|remote_security_devices|attachments/hosted'
 ```
 
-The release workflow generates per-asset provenance JSON and a per-variant SPDX
-SBOM, uploads both beside the archive, and uses GitHub artifact attestations for
-the archive plus companion files. The `verify-release-assets` job downloads the
-complete set, verifies content locally, then verifies the published
-attestations before npm or Homebrew jobs can run.
+Expected result: no matches in the local binary. The same strings should be
+present in the full binary, and the boundary script should check both
+directions.
 
-Violation behavior: missing or stale provenance/SBOM files fail
-`verify-release-asset-set.sh`; missing or invalid attestations fail the release
-workflow at `Verify release asset attestations`.
+### 5. Control-Plane Network Scope Is Loopback
 
-### Homebrew And npm Consume Only Verified Assets
+Property: local Aimux may open local sockets, but daemon/project-service
+control-plane listeners and proxy targets must be loopback-scoped.
 
-Property: formula checksums and npm native binaries must be derived only after
-the complete release asset set passes verification.
+Source locations:
 
-Enforcing check:
+- `native/crates/aimux/src/daemon_state.rs`
+- `native/crates/aimux/src/project_service/process.rs`
+- `native/crates/aimux/tests/daemon_state.rs`
+- `native/crates/aimux/tests/project_service_process.rs`
+- `scripts/installed-runtime-gate.py`
 
-```bash
-yarn security:local-only:gate
-```
-
-The source gate asserts both `publish-npm` and `update-homebrew-tap` depend on
-`verify-release-assets`, and that the workflow uploads/downloads provenance and
-SBOM companions for every asset. npm remains full-only; `aimux-lite` is a
-Homebrew formula that downloads only lite artifacts and conflicts with the full
-formula while installing the command as `aimux`.
-
-Violation behavior: the gate prints `Local-only release gate failed:` followed
-by the missing workflow dependency or asset companion and exits nonzero.
-
-### Runtime Control-Plane Network Scope Is Loopback
-
-Property: Aimux lite may open local sockets, but control-plane HTTP listeners
-and proxy targets must be loopback-only and must not establish non-loopback
-runtime remote-control connections.
-
-Enforcing checks:
+Independent confirmation:
 
 ```bash
-CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-cargo-target-$AIMUX_SESSION_ID \
+rg -n 'AIMUX_DAEMON_HOST must be loopback|127\\.0\\.0\\.1|localhost|0\\.0\\.0\\.0' \
+  native/crates/aimux/src/daemon_state.rs \
+  native/crates/aimux/src/project_service/process.rs \
+  native/crates/aimux/tests/daemon_state.rs \
+  native/crates/aimux/tests/project_service_process.rs
+
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
   cargo test --manifest-path native/Cargo.toml -p aimux --test daemon_state
 
-CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-cargo-target-$AIMUX_SESSION_ID \
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
   cargo test --manifest-path native/Cargo.toml -p aimux --test project_service_process
 ```
 
-The daemon host parser rejects `AIMUX_DAEMON_HOST=0.0.0.0`, and the project
-service binds `127.0.0.1`. Proxy and stream tests separately reject non-loopback
-upstream targets. gqaapg-137 also ran an isolated runtime smoke with isolated
-`AIMUX_HOME`, `AIMUX_DAEMON_PORT`, and `AIMUX_TMUX_SOCKET_PATH`; it observed
-only `127.0.0.1` daemon/project-service listeners and no non-loopback `lsof`
-connections. That smoke should be promoted into a stable script gate before
-claiming runtime monitoring is fully automated.
+Expected result: non-loopback daemon host values are rejected, project service
+binding is loopback, and tests cover the inverse case rather than treating query
+failure as "no listeners."
 
-Violation behavior: the Rust tests fail with messages naming the non-loopback
-host or the expected loopback endpoint.
+### 6. Sensitive Aimux Stores Are Owner-Only
 
-### Project `.aimux` Stores Are Ignored By Default
+Property: sensitive Aimux-created stores are `0700` directories and `0600`
+files on Unix platforms, including existing files repaired during
+upgrade/startup. This covers the project-local `.aimux` sensitive directories
+enumerated by `LOCAL_AIMUX_SENSITIVE_DIRS` (`attachments`, `context`,
+`history`, `logs`, `plans`, `recordings`, `session-input-ops`,
+`session-messages`, `status`, `tasks`, and `threads`), home-level `~/.aimux`
+state except `native`, and project-state/runtime trees including runtime
+exchange and runtime topology. Graveyard entries stored in runtime topology are
+covered by the project-state repair path. Intentionally executable/source
+artifacts are explicit exceptions: `.aimux/worktrees`, `.aimux/plugins`, and
+`~/.aimux/native`.
+
+Source locations:
+
+- `native/crates/aimux/src/secure_permissions.rs`
+- `native/crates/aimux/src/atomic_write.rs`
+- `native/crates/aimux/src/config.rs`
+- `native/crates/aimux/src/daemon/runtime.rs`
+- `native/crates/aimux/src/project_service/process.rs`
+- `native/crates/aimux/tests/secure_permissions.rs`
+
+Independent confirmation:
+
+```bash
+sed -n '1,260p' native/crates/aimux/src/secure_permissions.rs
+rg -n 'repair_global_aimux_home|repair_registered_project_local_stores|repair_project_state_store|ensure_private_dir|PRIVATE_FILE_MODE|PRIVATE_DIR_MODE' \
+  native/crates/aimux/src native/crates/aimux/tests/secure_permissions.rs
+
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
+  cargo test --manifest-path native/Cargo.toml -p aimux --test secure_permissions -- --test-threads=1
+```
+
+Expected result: the test creates stores under permissive `umask`, asserts
+`0700`/`0600`, and separately asserts upgrade repair of stale public modes,
+including registered inactive projects.
+
+What this does not claim: retention is not uniform across every sensitive store.
+The data-at-rest audit found mixed retention policies. Owner-only permissions
+are now enforced for the enumerated Unix stores; retention should remain a
+separate review item. This also does not claim a separate project-local
+`.aimux/graveyard/` directory is protected unless that store is added to
+`LOCAL_AIMUX_SENSITIVE_DIRS` and the permission test fixture.
+
+### 7. Project `.aimux` Stores Are Ignored By Default
 
 Property: initialized project-local Aimux stores must not be accidentally staged
 into the user's repository.
 
-Enforcing checks:
+Source locations:
+
+- `native/crates/aimux/src/config.rs`
+- `native/crates/aimux/tests/config.rs`
+- `scripts/check-local-build-boundary.mjs`
+- `scripts/installed-runtime-gate.py`
+
+Independent confirmation:
 
 ```bash
-yarn check:local-build-boundary
-CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-cargo-target-$AIMUX_SESSION_ID \
+rg -n 'context/|history/|tasks/|status/|threads/|attachments/|graveyard/|recordings/|plans/|worktrees/|ROOT_GITIGNORE' \
+  native/crates/aimux/src/config.rs native/crates/aimux/tests/config.rs scripts/check-local-build-boundary.mjs
+
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
   cargo test --manifest-path native/Cargo.toml -p aimux --test config
 ```
 
-The initialized `.aimux/.gitignore` template ignores context, history, tasks,
-status, threads, attachments, graveyard, recordings, plans, worktrees, and
-state files.
+Expected result: project init creates both the inner `.aimux/.gitignore` store
+template and the root `.gitignore` containment rule for `.aimux/`, including
+attachments and graveyard. The installed runtime gate mutates the ignore path to
+prove the check can fail.
 
-Violation behavior: `yarn check:local-build-boundary` reports which store is no
-longer ignored, and the Rust config test fails if the generated template drifts.
+### 8. Local Runtime Egress Gate Samples The Installed Control Plane
 
-## Required Sibling Gates Not Claimed Green Here
+Property: while sensitive stores exist, the installed local Aimux control plane
+must not expose a non-loopback network surface. This claim is about Aimux daemon
+and project-service processes, not spawned agent CLIs.
 
-The data-at-rest audit found that some non-secret transcript, attachment,
-project-state, and log stores still use umask defaults today. `~/.aimux/auth.json`
-and several hosted secret/audit files already use `0600`, but the owner-only
-construction/repair guarantee for all sensitive stores is owned by gqaapg-144.
-Once that lands, this evidence pack should reference its stable command as an
-enforcing check for:
+Source locations:
 
-- project `.aimux/context`, `.aimux/history`, `.aimux/attachments`,
-  `.aimux/graveyard`, and runtime exchange files;
-- `~/.aimux/projects/*` state and log files;
-- repair of existing permissive files on startup/upgrade;
-- inverse proof under permissive `umask` that `0644`/`0755` construction fails.
+- `scripts/installed-runtime-gate.py`
+- `scripts/check-remote-structural-boundary.mjs`
+- `package.json`
 
-Until that gate is green, the local-only claim must not be expanded to
-"all Aimux local state is owner-only by construction."
+Independent confirmation:
+
+```bash
+rg -n 'structural-boundary|check-remote-structural-boundary|sensitive-egress|nonloopback|lsof|control_plane_pids|installed:local-gate' \
+  scripts/installed-runtime-gate.py scripts/check-remote-structural-boundary.mjs package.json
+```
+
+Expected result: the installed-runtime gate builds/installs an isolated local
+variant, runs the structural remote-tree boundary check, creates sensitive
+stores, samples Aimux control-plane PIDs, and fails if any sampled TCP row is
+non-loopback. The mutation paths inject a compiled-remote dep-info row and a
+temporary non-loopback listener, and expect the gate to fail in each case.
+
+### 9. Release Lane Keeps Full And Local Variants Distinct
+
+Property: full and local variants are built from the same source tree but with
+different feature sets, archive names, formula names, and dependency graphs.
+
+Source locations:
+
+- `.github/workflows/release.yml`
+- `package.json`
+- `scripts/build-release-from-source.sh`
+- `scripts/build-local-release-from-source.sh`
+- `scripts/build-release-asset.sh`
+- `scripts/install.sh`
+- `scripts/verify-release-asset-set.sh`
+- `scripts/generate-cargo-sbom.py`
+- `scripts/verify-release-provenance.sh`
+- `docs/deployment.md`
+
+Independent confirmation:
+
+```bash
+rg -n 'release:source:local|AIMUX_BUILD_VARIANT|AIMUX_PACKAGE_PROFILE|aimux-local|BUILD_VARIANT|PACKAGE_PROFILE|no-default-features|Formula/aimux-local' \
+  package.json .github/workflows/release.yml scripts docs/deployment.md
+
+bash scripts/verify-release-asset-set.sh <release-dir>
+```
+
+Expected result: the local archive uses the local variant stamp and
+`--no-default-features`; full uses the default feature set. The installer should
+reject a full archive through the local install path and reject a local archive
+through the full path.
+
+### 10. SBOMs Are Reproducible From Source
+
+Property: full and local release lanes publish separate SPDX 2.3 SBOMs generated
+from the same Cargo dependency graph used to compile that lane. A reviewer can
+regenerate the expected package set from the source checkout without trusting a
+prebuilt artifact.
+
+Source locations:
+
+- `scripts/generate-cargo-sbom.py`
+- `scripts/verify-release-provenance.sh`
+- `scripts/verify-release-asset-set.sh`
+
+Independent confirmation:
+
+```bash
+python3 scripts/generate-cargo-sbom.py \
+  --manifest-path native/Cargo.toml \
+  --asset aimux-local-<platform>-<arch>.tar.gz \
+  --asset-sha256 <archive-sha256> \
+  --version <release-version> \
+  --source-revision <reviewed-commit-sha> \
+  --variant local \
+  --platform-arch <platform>-<arch> \
+  --output /tmp/aimux-local.sbom.spdx.json
+```
+
+Expected result: local SBOM generation uses `--no-default-features`; full SBOM
+generation uses the default graph. `verify-release-provenance.sh` should reject
+an SBOM whose package or relationship set does not match the selected variant.
+
+## What Is Still Not Claimed
+
+- This document does not claim spawned agent CLIs are local-only.
+- This document does not claim the machine is offline.
+- This document does not claim every sensitive store has a uniform retention
+  policy. Owner-only permissions are enforced; retention is a separate policy
+  surface.
