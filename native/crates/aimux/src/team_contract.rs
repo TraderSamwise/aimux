@@ -498,6 +498,29 @@ mod tests {
     }
 
     #[test]
+    fn unknown_project_control_role_is_hidden_from_expose_by_default() {
+        let session = json!({
+            "id": "qa-1",
+            "projectControl": true,
+            "role": "qa"
+        });
+
+        assert_eq!(agent_role(Some(&session)), "qa");
+        assert!(!agent_should_show_in_expose(Some(&session)));
+        assert_eq!(
+            agent_role_state(Some(&session)),
+            json!({
+                "status": "resolved",
+                "role": "qa",
+                "lane": { "kind": "supervisor" },
+                "projectControl": true,
+                "shouldShowInExpose": false,
+                "exposeOrder": 1000
+            })
+        );
+    }
+
+    #[test]
     fn overseer_role_declares_expose_visibility_and_first_slot_order() {
         let session = json!({
             "id": "overseer-1",
