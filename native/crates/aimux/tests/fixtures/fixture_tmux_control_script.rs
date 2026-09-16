@@ -262,7 +262,17 @@ fn assert_expose_resize_relaunch_exits_zero(runner: TmuxControlRunner) {
         .as_str()
         .unwrap_or_default();
     assert!(
-        debug.contains("expose resize relaunch limit reached after settled client sizes"),
+        debug.contains("expose resize relaunch requested after settled client size count=1"),
+        "{actual:#}"
+    );
+    assert!(
+        debug.contains("expose resize relaunch limit reached after 6 settled client sizes"),
+        "{actual:#}"
+    );
+    assert!(
+        debug.contains(
+            "expose kept asking to relaunch after terminal resize (6 settled relaunches)"
+        ),
         "{actual:#}"
     );
 }

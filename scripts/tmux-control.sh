@@ -938,13 +938,15 @@ show_local_expose() {
         return 1
       fi
       popup_retry_count=$((popup_retry_count + 1))
-      popup_settled_resize_relaunches=$((popup_settled_resize_relaunches + 1))
-      if [ "$popup_settled_resize_relaunches" -gt 5 ]; then
-        debug_log_line "expose resize relaunch limit reached after settled client sizes"
-        control_failure_reason="expose kept asking to relaunch after terminal resize; see $debug_log"
+      next_settled_resize_relaunches=$((popup_settled_resize_relaunches + 1))
+      debug_log_line "expose resize relaunch requested after settled client size count=$next_settled_resize_relaunches tty=${popup_client_tty:-<none>}"
+      if [ "$next_settled_resize_relaunches" -gt 5 ]; then
+        debug_log_line "expose resize relaunch limit reached after $next_settled_resize_relaunches settled client sizes"
+        control_failure_reason="expose kept asking to relaunch after terminal resize ($next_settled_resize_relaunches settled relaunches); see $debug_log"
         control_failure_exits_nonzero=0
         return 1
       fi
+      popup_settled_resize_relaunches="$next_settled_resize_relaunches"
       continue
     fi
     popup_settled_resize_relaunches=0

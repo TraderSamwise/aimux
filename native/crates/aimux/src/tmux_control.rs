@@ -1043,18 +1043,29 @@ impl TmuxControl {
                     self.control_failure_exits_nonzero = false;
                     return false;
                 }
-                settled_resize_relaunches += 1;
-                if settled_resize_relaunches > EXPOSE_RESIZE_SETTLED_RELAUNCH_LIMIT {
-                    self.control_failure_reason = Some(
-                        "expose kept asking to relaunch after terminal resize; see tmux control log"
-                            .to_owned(),
-                    );
+                let next_settled_resize_relaunches = settled_resize_relaunches + 1;
+                self.debug_log_line(&format!(
+                    "expose resize relaunch requested after settled client size count={} tty={}",
+                    next_settled_resize_relaunches,
+                    if popup_client_tty.is_empty() {
+                        "<none>"
+                    } else {
+                        popup_client_tty.as_str()
+                    },
+                ));
+                if next_settled_resize_relaunches > EXPOSE_RESIZE_SETTLED_RELAUNCH_LIMIT {
+                    self.control_failure_reason = Some(format!(
+                        "expose kept asking to relaunch after terminal resize ({} settled relaunches); see tmux control log",
+                        next_settled_resize_relaunches,
+                    ));
                     self.control_failure_exits_nonzero = false;
-                    self.debug_log_line(
-                        "expose resize relaunch limit reached after settled client sizes",
-                    );
+                    self.debug_log_line(&format!(
+                        "expose resize relaunch limit reached after {} settled client sizes",
+                        next_settled_resize_relaunches,
+                    ));
                     return false;
                 }
+                settled_resize_relaunches = next_settled_resize_relaunches;
                 continue;
             }
             break status;
