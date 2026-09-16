@@ -414,6 +414,7 @@ export type AgentRoleState =
       projectControl: boolean;
       shouldShowInExpose?: boolean;
       exposeOrder?: number;
+      showRoleSuffix?: boolean;
       supervisorRole?: AgentSupervisorRole;
     }
   | {
@@ -427,6 +428,7 @@ export type AgentRoleState =
       effectiveLane: AgentLane;
       shouldShowInExpose?: boolean;
       exposeOrder?: number;
+      showRoleSuffix?: boolean;
       runtimeWorkingDirectory?: string;
     }
   | {
@@ -438,6 +440,7 @@ export type AgentRoleState =
       projectControl?: boolean;
       shouldShowInExpose?: boolean;
       exposeOrder?: number;
+      showRoleSuffix?: boolean;
     };
 
 export type DaemonProjectReadError =

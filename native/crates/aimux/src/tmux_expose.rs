@@ -637,14 +637,14 @@ pub fn draw_tile(input: DrawTileInput<'_>) -> String {
         .filter(|value| !value.is_empty())
         .map(|project| style(&format!("{project} / "), Tone::Muted))
         .unwrap_or_default();
-    let label = item.get("label").and_then(Value::as_str).unwrap_or("?");
+    let label = expose_agent_display_label(item);
     let lead = if !context.worktree.is_empty() {
         format!("{project_str}{}", toned(&context.worktree, context.tone))
     } else {
-        style(label, Tone::Strong)
+        style(&label, Tone::Strong)
     };
     let trailing = if !context.worktree.is_empty() {
-        label
+        label.as_str()
     } else {
         ""
     };
@@ -1876,10 +1876,11 @@ fn render_grid_expose(
     } else {
         "default order"
     };
+    let scope_label = expose_scope_label_for_items(&view.scope_label, items);
     let title = truncate_ansi(
         &format!(
             "\x1b[1mExposé · {} ({}) · {sort_label}{RESET}",
-            view.scope_label,
+            scope_label,
             items.len()
         ),
         cols.saturating_sub(2) as usize,
@@ -2072,7 +2073,7 @@ fn assign_value_worktree_tones(items: &[Value], project_root: &Path) -> BTreeMap
         let key = value_worktree_tone_key(item, &root);
         tones
             .entry(key.clone())
-            .or_insert_with(|| worktree_color_code_for_path(&key));
+            .or_insert_with(|| worktree_color_code_for_key(Some(&key), "default"));
     }
     tones
 }
@@ -2090,18 +2091,19 @@ fn tile_context_for_value(
             tone: None,
         };
     }
-    if is_supervisor_scoped_expose_item(item) {
-        return TileContext {
-            worktree: expose_supervisor_hotkey_footer_label(item),
-            project: None,
-            tone: None,
-        };
-    }
     let root = item
         .get("projectRoot")
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .unwrap_or_else(|| project_root.to_path_buf());
+    if is_supervisor_scoped_expose_item(item) {
+        let key = value_worktree_tone_key(item, &root);
+        return TileContext {
+            worktree: supervisor_lane_label().to_owned(),
+            project: None,
+            tone: tones.get(&key).copied(),
+        };
+    }
     let key = value_worktree_tone_key(item, &root);
     let project = if sublabel == ExposeSublabel::ProjectWorktree {
         item.get("projectName")
@@ -2137,6 +2139,13 @@ fn short_value_worktree(item: &Value, project_root: &Path) -> String {
 }
 
 fn value_worktree_tone_key(item: &Value, project_root: &Path) -> String {
+    if is_supervisor_scoped_expose_item(item) {
+        return format!(
+            "project-root:{}\0name:{}",
+            clean_worktree_color_part(&lexical_resolve(project_root).to_string_lossy()),
+            supervisor_lane_label()
+        );
+    }
     let path = item
         .get("metadata")
         .and_then(|metadata| metadata.get("worktreePath"))
@@ -2144,7 +2153,10 @@ fn value_worktree_tone_key(item: &Value, project_root: &Path) -> String {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| project_root.to_path_buf());
-    lexical_resolve(path).to_string_lossy().into_owned()
+    format!(
+        "path:{}",
+        clean_worktree_color_part(&lexical_resolve(path).to_string_lossy())
+    )
 }
 
 fn resolve_scoped_worktree_path(project_root: &Path, current_path: Option<&str>) -> String {
@@ -2377,13 +2389,6 @@ fn worktree_color_ansi_for_code(code: i64) -> String {
     format!("38;2;{r};{g};{b}")
 }
 
-fn worktree_color_code_for_path(path: &str) -> i64 {
-    worktree_color_code_for_key(
-        Some(&format!("path:{}", clean_worktree_color_part(path))),
-        "default",
-    )
-}
-
 fn clean_worktree_color_part(value: &str) -> String {
     let trimmed = value.trim();
     let mut output = String::with_capacity(trimmed.len());
@@ -2491,6 +2496,31 @@ fn is_supervisor_scoped_expose_item(item: &Value) -> bool {
     expose_item_lane_kind(item) == Some("supervisor")
 }
 
+fn expose_scope_label_for_items(scope_label: &str, items: &[Value]) -> String {
+    let supervisor_count = items
+        .iter()
+        .filter(|item| is_supervisor_scoped_expose_item(item))
+        .count();
+    if supervisor_count == 0 {
+        return scope_label.to_owned();
+    }
+
+    let supervisor_label = if supervisor_count == 1 {
+        "supervisor"
+    } else {
+        "supervisors"
+    };
+    if supervisor_count == items.len() {
+        return supervisor_label.to_owned();
+    }
+
+    match scope_label {
+        "all worktrees" => format!("{supervisor_label} + worktrees"),
+        "all projects" => format!("{supervisor_label} + projects"),
+        other => format!("{supervisor_label} + {other}"),
+    }
+}
+
 fn first_supervisor_expose_item_index(items: &[Value], visible_count: usize) -> Option<usize> {
     items
         .iter()
@@ -2539,7 +2569,11 @@ fn expose_hotkey_target_index(items: &[Value], visible_count: usize, key: char) 
     }
 }
 
-fn expose_supervisor_hotkey_footer_label(item: &Value) -> String {
+fn supervisor_lane_label() -> &'static str {
+    "supervisor"
+}
+
+fn expose_role_label(item: &Value) -> Option<&str> {
     item.get("roleState")
         .and_then(|role_state| role_state.get("role"))
         .and_then(Value::as_str)
@@ -2548,22 +2582,42 @@ fn expose_supervisor_hotkey_footer_label(item: &Value) -> String {
                 .and_then(|metadata| metadata.get("role"))
                 .and_then(Value::as_str)
         })
-        .or_else(|| item.get("label").and_then(Value::as_str))
-        .or_else(|| {
-            item.get("metadata")
-                .and_then(|metadata| metadata.get("label"))
-                .and_then(Value::as_str)
-        })
-        .or_else(|| item.get("id").and_then(Value::as_str))
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("supervisor")
-        .to_owned()
+}
+
+fn expose_item_shows_role_suffix(item: &Value) -> bool {
+    item.get("roleState")
+        .and_then(|role_state| role_state.get("showRoleSuffix"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn expose_agent_display_label(item: &Value) -> String {
+    let label = item.get("label").and_then(Value::as_str).unwrap_or("agent");
+    let base = strip_role_suffix(label).unwrap_or(label).trim();
+    let base = if base.is_empty() { "agent" } else { base };
+    let Some(role) = expose_role_label(item) else {
+        return base.to_owned();
+    };
+    if !expose_item_shows_role_suffix(item) {
+        return base.to_owned();
+    }
+    format!("{base} ({role})")
 }
 
 fn expose_supervisor_hotkey_footer_hint(items: &[Value], visible_count: usize) -> Option<String> {
     first_supervisor_expose_item(items, visible_count)
-        .map(|item| format!("0 {} · ", expose_supervisor_hotkey_footer_label(item)))
+        .map(|_| format!("0 {} · ", supervisor_lane_label()))
+}
+
+fn strip_role_suffix(label: &str) -> Option<&str> {
+    let trimmed = label.trim_end();
+    if !trimmed.ends_with(')') {
+        return None;
+    }
+    let open = trimmed.rfind('(')?;
+    Some(trimmed[..open].trim_end())
 }
 
 fn status_tone(kind: &str) -> Tone {
@@ -2690,21 +2744,27 @@ mod tests {
     use super::*;
 
     fn expose_item(label: &str, lane_kind: &str) -> Value {
+        let role = if lane_kind == "supervisor" {
+            label
+        } else {
+            "coder"
+        };
         json!({
             "label": label,
             "target": { "windowId": format!("@{label}") },
             "metadata": {
-                "role": label,
+                "role": role,
                 "sessionId": label,
                 "worktreePath": format!("/repo/{label}")
             },
             "roleState": {
                 "status": "resolved",
-                "role": label,
+                "role": role,
                 "lane": { "kind": lane_kind },
                 "projectControl": lane_kind == "supervisor",
                 "shouldShowInExpose": true,
-                "exposeOrder": if lane_kind == "supervisor" { 0 } else { 100 }
+                "exposeOrder": if lane_kind == "supervisor" { 0 } else { 100 },
+                "showRoleSuffix": lane_kind == "supervisor"
             },
             "exposeContext": {
                 "worktree": label
@@ -2740,7 +2800,7 @@ mod tests {
     }
 
     #[test]
-    fn expose_footer_names_the_first_visible_supervisor_role() {
+    fn expose_footer_names_the_supervisor_lane() {
         let items = vec![
             expose_item("reviewer", "supervisor"),
             expose_item("overseer", "supervisor"),
@@ -2775,9 +2835,102 @@ mod tests {
         )
         .expect("render expose grid");
         let rendered = String::from_utf8(output).expect("utf8 expose render");
+        let plain = crate::tui_render::text::strip_ansi(&rendered);
 
-        assert!(rendered.contains("0 reviewer"));
+        assert!(plain.contains("0 supervisor"));
         assert!(!rendered.contains("0 overseer"));
+    }
+
+    #[test]
+    fn expose_header_names_mixed_supervisor_worktree_set_and_renders_role_suffix() {
+        let mut overseer = expose_item("overseer", "supervisor");
+        overseer["label"] = json!("claude");
+        overseer["metadata"]["role"] = json!("overseer");
+        overseer["metadata"]["command"] = json!("claude");
+        overseer["metadata"]["toolConfigKey"] = json!("claude");
+        overseer["roleState"]["role"] = json!("overseer");
+        overseer["roleState"]["showRoleSuffix"] = json!(true);
+        let items = vec![overseer, expose_item("worker", "worktree")];
+        let view = ExposeScopeView {
+            scope: ExposeScope::Project,
+            items: items.clone(),
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+        };
+        let options = TmuxExposeOptions {
+            project_root: PathBuf::from("/repo"),
+            project_state_dir: PathBuf::from("/repo/.aimux"),
+            columns: Some(100),
+            rows: Some(24),
+            ..TmuxExposeOptions::default()
+        };
+        let mut output = Vec::new();
+
+        render_grid_expose(
+            &mut output,
+            &view,
+            &items,
+            &BTreeMap::new(),
+            0,
+            &options,
+            RenderGridExposeState {
+                sort_mode: ExposeSortMode::Default,
+                loading: false,
+            },
+        )
+        .expect("render expose grid");
+        let rendered = String::from_utf8(output).expect("utf8 expose render");
+        let plain = crate::tui_render::text::strip_ansi(&rendered);
+        let supervisor_tone = worktree_color_ansi_for_code(worktree_color_code_for_key(
+            Some("project-root:/repo\0name:supervisor"),
+            "default",
+        ));
+
+        assert!(rendered.contains("Exposé · supervisor + worktrees (2) · default order"));
+        assert!(!rendered.contains("Exposé · all worktrees (2) · default order"));
+        assert!(plain.contains("0 supervisor"));
+        assert!(plain.contains("claude (overseer)"));
+        assert!(rendered.contains(&supervisor_tone));
+    }
+
+    #[test]
+    fn expose_header_keeps_worktree_label_when_only_worktree_agents_are_visible() {
+        let items = vec![
+            expose_item("worker-one", "worktree"),
+            expose_item("worker-two", "worktree"),
+        ];
+        let view = ExposeScopeView {
+            scope: ExposeScope::Project,
+            items: items.clone(),
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+        };
+        let options = TmuxExposeOptions {
+            project_root: PathBuf::from("/repo"),
+            project_state_dir: PathBuf::from("/repo/.aimux"),
+            columns: Some(100),
+            rows: Some(24),
+            ..TmuxExposeOptions::default()
+        };
+        let mut output = Vec::new();
+
+        render_grid_expose(
+            &mut output,
+            &view,
+            &items,
+            &BTreeMap::new(),
+            0,
+            &options,
+            RenderGridExposeState {
+                sort_mode: ExposeSortMode::Default,
+                loading: false,
+            },
+        )
+        .expect("render expose grid");
+        let rendered = String::from_utf8(output).expect("utf8 expose render");
+
+        assert!(rendered.contains("Exposé · all worktrees (2) · default order"));
+        assert!(!rendered.contains("supervisor + worktrees"));
     }
 
     #[test]
@@ -2811,7 +2964,7 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_tile_context_uses_role_label_instead_of_main_worktree() {
+    fn supervisor_tile_context_uses_supervisor_lane_instead_of_main_worktree() {
         let mut item = expose_item("overseer", "supervisor");
         item.as_object_mut()
             .expect("object item")
@@ -2825,38 +2978,83 @@ mod tests {
             &BTreeMap::new(),
         );
 
-        assert_eq!(context.worktree, "overseer");
+        assert_eq!(context.worktree, "supervisor");
         assert_ne!(context.worktree, "main");
         assert_eq!(context.project, None);
     }
 
     #[test]
-    fn supervisor_role_label_matches_gui_resolution_order() {
-        let mut item = expose_item("overseer", "supervisor");
-        item["roleState"]["role"] = Value::Null;
-        item["metadata"]["role"] = json!("reviewer");
-        item["label"] = json!("tile-label");
-        item["metadata"]["label"] = json!("metadata-label");
-        item["id"] = json!("item-id");
-        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "reviewer");
+    fn role_suffix_rule_is_independent_from_lane() {
+        let mut coder = expose_item("codex", "worktree");
+        coder["roleState"]["role"] = json!("coder");
+        coder["roleState"]["showRoleSuffix"] = json!(false);
+        let mut relocated_overseer = expose_item("claude", "worktree");
+        relocated_overseer["metadata"]["role"] = json!("overseer");
+        relocated_overseer["roleState"]["role"] = json!("overseer");
+        relocated_overseer["roleState"]["showRoleSuffix"] = json!(true);
+        relocated_overseer["exposeContext"]["worktree"] = json!("main");
+        let mut scribe = expose_item("claude", "worktree");
+        scribe["metadata"]["role"] = json!("scribe");
+        scribe["roleState"]["role"] = json!("scribe");
+        scribe["roleState"]["showRoleSuffix"] = json!(true);
 
-        item["metadata"]["role"] = Value::Null;
-        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "tile-label");
-
-        item["label"] = Value::Null;
+        assert_eq!(expose_agent_display_label(&coder), "codex");
         assert_eq!(
-            expose_supervisor_hotkey_footer_label(&item),
-            "metadata-label"
+            expose_agent_display_label(&relocated_overseer),
+            "claude (overseer)"
         );
+        assert_eq!(expose_agent_display_label(&scribe), "claude (scribe)");
 
-        item["metadata"]["label"] = Value::Null;
-        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "item-id");
+        let layout = GridLayout {
+            tile_cols: 1,
+            tile_width: 64,
+            tile_height: 8,
+            body_lines: 2,
+            visible_count: 1,
+            grid_top_row: 2,
+            grid_height: 8,
+        };
+        let context = TileContext {
+            worktree: "main".to_owned(),
+            project: None,
+            tone: Some(worktree_color_code_for_key(
+                Some("project-root:/repo\0name:main"),
+                "default",
+            )),
+        };
+        let options = TmuxExposeOptions {
+            current_window_id: Some("@none".to_owned()),
+            ..TmuxExposeOptions::default()
+        };
+        let coder_tile = crate::tui_render::text::strip_ansi(&draw_tile(DrawTileInput {
+            item: &coder,
+            preview: &[],
+            badge: 1,
+            selected: false,
+            top: 1,
+            left: 1,
+            width: 64,
+            layout: &layout,
+            context: &context,
+            options: &options,
+        }));
+        let overseer_tile = crate::tui_render::text::strip_ansi(&draw_tile(DrawTileInput {
+            item: &relocated_overseer,
+            preview: &[],
+            badge: 1,
+            selected: false,
+            top: 1,
+            left: 1,
+            width: 64,
+            layout: &layout,
+            context: &context,
+            options: &options,
+        }));
 
-        item["id"] = Value::Null;
-        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "supervisor");
-
-        item["roleState"]["role"] = json!("   ");
-        item["metadata"]["role"] = json!("reviewer");
-        assert_eq!(expose_supervisor_hotkey_footer_label(&item), "supervisor");
+        assert!(coder_tile.contains("1 main"));
+        assert!(coder_tile.contains("codex"));
+        assert!(!coder_tile.contains("codex (coder)"));
+        assert!(overseer_tile.contains("1 main"));
+        assert!(overseer_tile.contains("claude (overseer)"));
     }
 }

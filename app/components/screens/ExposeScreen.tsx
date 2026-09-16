@@ -18,6 +18,7 @@ import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
   buildExposeTiles,
   cropExposeTerminalPreviewFooter,
+  exposeSetLabel,
   filterExposeTiles,
   summarizeExposeTiles,
   type ExposeFilter,
@@ -276,15 +277,17 @@ function ExposeTileCard({
                 >
                   {tile.semanticTitle || tile.label}
                 </Text>
-                <Text
-                  className={cn(
-                    "shrink-0 font-mono text-[#8b8d97]",
-                    dense ? "text-[10px]" : "text-[11px] leading-4",
-                  )}
-                  numberOfLines={1}
-                >
-                  {tile.displayLabel}
-                </Text>
+                {tile.displayLabel ? (
+                  <Text
+                    className={cn(
+                      "shrink-0 font-mono text-[#8b8d97]",
+                      dense ? "text-[10px]" : "text-[11px] leading-4",
+                    )}
+                    numberOfLines={1}
+                  >
+                    {tile.displayLabel}
+                  </Text>
+                ) : null}
               </View>
               {compactTileHeader ? null : (
                 <Text
@@ -704,6 +707,13 @@ export default function ExposeScreen() {
   const summary = useMemo(() => summarizeExposeTiles(currentTiles), [currentTiles]);
   const filterOptions = useMemo(() => buildFilterOptions(summary), [summary]);
   const offlineProjects = currentProjectResults.filter((result) => result.error);
+  const exposeTitle = useMemo(
+    () =>
+      scope === "global"
+        ? exposeSetLabel(currentTiles, "All Worktrees")
+        : (currentProject?.name ?? "Project Exposé"),
+    [currentProject?.name, currentTiles, scope],
+  );
   const relayReadyForRequests = relayStatus !== "connecting";
 
   useEffect(() => {
@@ -792,7 +802,7 @@ export default function ExposeScreen() {
       width={width}
       height={height}
       foregroundIconColor={foregroundIconColor}
-      title={scope === "global" ? "All Worktrees" : (currentProject?.name ?? "Project Exposé")}
+      title={exposeTitle}
       pending={pending}
       tiles={currentTiles}
       offlineProjects={offlineProjects}

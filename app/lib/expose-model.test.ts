@@ -3,6 +3,7 @@ import type { DaemonProject } from "@/lib/api";
 import {
   buildExposeTiles,
   cropExposeTerminalPreviewFooter,
+  exposeSetLabel,
   filterExposeTiles,
   groupExposeTiles,
   summarizeExposeTiles,
@@ -66,6 +67,7 @@ function supervisorItem(
       projectControl: true,
       shouldShowInExpose,
       exposeOrder,
+      showRoleSuffix: role !== "coder",
     },
   };
 }
@@ -147,7 +149,7 @@ describe("expose model", () => {
     });
     expect(custom).toMatchObject({
       label: "overseer",
-      displayLabel: "overseer",
+      displayLabel: "claude",
       sessionId: "claude-k9czzb",
     });
   });
@@ -165,10 +167,126 @@ describe("expose model", () => {
       role: "overseer",
       shouldShowInExpose: true,
       exposeOrder: 0,
-      semanticTitle: "overseer",
+      semanticTitle: "supervisor",
       contextSubtitle: "Supervisor Lane",
-      sectionLabel: "overseer",
+      sectionLabel: "supervisor",
     });
+  });
+
+  it("describes mixed supervisor and worktree Exposé sets without calling the supervisor a worktree", () => {
+    const tiles = buildExposeTiles([
+      {
+        project,
+        items: [supervisorItem("0", "overseer", 0), item("1", "main", 0)],
+      },
+    ]);
+
+    expect(exposeSetLabel(tiles, "All Worktrees")).toBe("Supervisor + Worktrees");
+    expect(summarizeExposeTiles(tiles).total).toBe(2);
+  });
+
+  it("keeps the worktree Exposé label unchanged when only worktree agents are visible", () => {
+    const tiles = buildExposeTiles([
+      {
+        project,
+        items: [item("1", "main", 0), item("2", "e2e", 1)],
+      },
+    ]);
+
+    expect(exposeSetLabel(tiles, "All Worktrees")).toBe("All Worktrees");
+  });
+
+  it("renders supervisor lane and non-coder role suffix independently", () => {
+    const [tile] = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...supervisorItem("0", "overseer", 0),
+            label: "claude(overseer)",
+            metadata: {
+              ...supervisorItem("0", "overseer", 0).metadata,
+              role: "overseer",
+              command: "claude",
+              toolConfigKey: "claude",
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(tile).toMatchObject({
+      semanticTitle: "supervisor",
+      worktreeName: "supervisor",
+      displayLabel: "claude (overseer)",
+    });
+    expect(tile?.tone).toBe(
+      worktreeTone({
+        name: "supervisor",
+        projectRoot: project.path,
+        projectName: project.name,
+      }),
+    );
+  });
+
+  it("renders coder worktree agents without suffix and relocated non-coders with suffix", () => {
+    const [coder, overseer, scribe] = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...item("1", "main", 0),
+            label: "codex",
+            metadata: { ...item("1", "main", 0).metadata, role: "coder", toolConfigKey: "codex" },
+            roleState: {
+              status: "resolved",
+              role: "coder",
+              lane: { kind: "worktree", worktreePath: "/repo/main" },
+              projectControl: false,
+              shouldShowInExpose: true,
+              exposeOrder: 1000,
+              showRoleSuffix: false,
+            },
+          },
+          {
+            ...item("2", "main", 0),
+            label: "claude",
+            metadata: {
+              ...item("2", "main", 0).metadata,
+              role: "overseer",
+              toolConfigKey: "claude",
+            },
+            roleState: {
+              status: "resolved",
+              role: "overseer",
+              lane: { kind: "worktree", worktreePath: "/repo/main" },
+              projectControl: false,
+              shouldShowInExpose: true,
+              exposeOrder: 0,
+              showRoleSuffix: true,
+            },
+          },
+          {
+            ...item("3", "main", 0),
+            label: "claude",
+            metadata: { ...item("3", "main", 0).metadata, role: "scribe", toolConfigKey: "claude" },
+            roleState: {
+              status: "resolved",
+              role: "scribe",
+              lane: { kind: "worktree", worktreePath: "/repo/main" },
+              projectControl: false,
+              shouldShowInExpose: true,
+              exposeOrder: 1000,
+              showRoleSuffix: true,
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(coder).toMatchObject({ semanticTitle: "main", displayLabel: "codex" });
+    expect(overseer).toMatchObject({ semanticTitle: "main", displayLabel: "claude (overseer)" });
+    expect(scribe).toMatchObject({ semanticTitle: "main", displayLabel: "claude (scribe)" });
   });
 
   it("sorts visible supervisors by Exposé order before worktrees and keeps worktree hotkeys on 1-9", () => {
@@ -228,7 +346,7 @@ describe("expose model", () => {
       expect(tiles[0]).toMatchObject({
         sessionId: "claude-overseer",
         hotkeyLabel: "0",
-        semanticTitle: "overseer",
+        semanticTitle: "supervisor",
         contextSubtitle: "Supervisor Lane",
       });
     }
