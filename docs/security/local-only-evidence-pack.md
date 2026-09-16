@@ -38,8 +38,8 @@ Primary source check:
   ```
 
 - `native/crates/aimux/src/remote/mod.rs` should be the module tree that
-  re-exports relay, hosted, login, remote credential, and remote security-device
-  code.
+  re-exports relay, hosted, login, remote credential, remote security-device,
+  mobile push bridge, and websocket code.
 - `native/crates/aimux/src/request_actor.rs` should remain outside
   `src/remote`; it is core request-context/shared-chat actor plumbing, not a
   remote-control transport module.
@@ -130,8 +130,8 @@ build and the source-owned gate that verifies the resulting binary.
 ### 1. Remote-Control Source Is Structurally Separated
 
 Property: relay, hosted mode, remote login, remote credentials, remote security
-devices, and remote attachment hosting live under the remote-control feature
-boundary.
+devices, remote attachment hosting, mobile push bridge, and websocket transport
+live under the remote-control feature boundary.
 
 Source locations:
 
@@ -144,7 +144,7 @@ Source locations:
 Independent confirmation:
 
 ```bash
-rg -n 'relay|hosted|remote_login|remote_credentials|remote_security' \
+rg -n 'relay|hosted|remote_login|remote_credentials|remote_security|mobile_push_bridge|websocket' \
   native/crates/aimux/src/remote native/crates/aimux/src/lib.rs native/crates/aimux/Cargo.toml
 sed -n '1,120p' native/crates/aimux/src/request_actor.rs
 
