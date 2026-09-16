@@ -308,14 +308,22 @@ pub fn topology_desktop_session_list(
     }
 }
 
-pub fn topology_desktop_session_list_for_context(
+pub fn topology_desktop_verified_session_list_for_context(
     context: &ProjectServiceRequestContext,
     topology: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
     tools: &Map<String, Value>,
-) -> Vec<Value> {
-    topology_desktop_session_projection_for_context(context, topology, metadata_sessions, tools)
-        .sessions
+) -> Result<Vec<Value>, String> {
+    let projection = topology_desktop_session_projection_for_context(
+        context,
+        topology,
+        metadata_sessions,
+        tools,
+    );
+    match projection.live_window_query_error {
+        Some(error) => Err(error),
+        None => Ok(projection.sessions),
+    }
 }
 
 pub fn topology_desktop_session_projection_for_context(

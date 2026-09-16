@@ -672,14 +672,15 @@ fn load_control_model(context: &ProjectServiceRequestContext) -> Result<ControlM
     let topology = load_topology(context)?;
     let project_state_dir = context.project_state_dir();
     let metadata = load_metadata_state(&project_state_dir);
-    let entries = topology_switchable_entries_for_context(context, &topology, &metadata.sessions);
+    let entries_projection =
+        topology_switchable_entries_for_context(context, &topology, &metadata.sessions);
     let last_used = load_last_used_state(&project_state_dir);
     let switch_context = SwitchableContext {
         project_root: context.project_root().to_string_lossy().into_owned(),
         ..SwitchableContext::default()
     };
     let items = list_switchable_agent_items(
-        &entries,
+        &entries_projection.entries,
         &metadata.sessions,
         &switch_context,
         &SwitchableListOptions {
@@ -692,12 +693,10 @@ fn load_control_model(context: &ProjectServiceRequestContext) -> Result<ControlM
     Ok(ControlModel {
         topology,
         metadata,
-        entries,
+        entries: entries_projection.entries,
         items,
         last_used,
-        live_window_query_error: context
-            .live_window_ids_status()
-            .and_then(|status| status.err().map(str::to_owned)),
+        live_window_query_error: entries_projection.live_window_query_error,
     })
 }
 

@@ -359,7 +359,8 @@ fn agent_stop_marks_codex_without_backend_history_fresh_relaunchable() {
     let project = temp_project("agent-stop-codex-fresh");
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@agent", "@service"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1300,12 +1301,56 @@ fn teammate_create_launches_agent_with_team_metadata_and_extra_args() {
 }
 
 #[test]
+fn teammate_create_refuses_when_agent_liveness_cannot_be_verified() {
+    let project = temp_project("teammate-create-liveness-error");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let worktree = project.join("wt");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("tmux list-windows timed out");
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::CREATE_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-live",
+            "role": "reviewer",
+            "label": "Review lane",
+            "tool": "mock",
+            "sessionId": "mock-reviewer",
+            "worktreePath": worktree,
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 503);
+    assert_eq!(
+        response.body["error"],
+        "could not verify agent tmux liveness: tmux list-windows timed out"
+    );
+    assert!(runtime.created.is_empty());
+    assert!(
+        read_topology(&state_dir)["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|session| session["id"] != "mock-reviewer")
+    );
+    cleanup(project);
+}
+
+#[test]
 fn teammate_create_rejects_nested_team_parent() {
     let project = temp_project("teammate-create-nested");
     write_project_tool_config(&project);
     let state_dir = project.join("state");
     write_teammate_parent_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(Vec::<String>::new());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1336,7 +1381,8 @@ fn teammate_create_with_initial_task_persists_task_and_thread() {
     write_project_tool_config(&project);
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@agent", "@service"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1379,7 +1425,8 @@ fn teammate_create_initial_task_requires_prompt_or_body() {
     write_project_tool_config(&project);
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@agent", "@service"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1410,7 +1457,8 @@ fn teammate_stop_routes_through_agent_stop_with_parent_metadata() {
     let project = temp_project("teammate-stop");
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@child"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1440,11 +1488,46 @@ fn teammate_stop_routes_through_agent_stop_with_parent_metadata() {
 }
 
 #[test]
+fn teammate_stop_refuses_when_agent_liveness_cannot_be_verified() {
+    let project = temp_project("teammate-stop-liveness-error");
+    let state_dir = project.join("state");
+    write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("tmux list-windows failed");
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::STOP_TEAMMATE,
+        Some(&json!({
+            "parentSessionId": "codex-parent",
+            "teammateSessionId": "codex-child"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 503);
+    assert_eq!(
+        response.body["error"],
+        "could not verify agent tmux liveness: tmux list-windows failed"
+    );
+    assert!(runtime.killed.is_empty());
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-child")["status"],
+        "running"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn teammate_resume_routes_through_agent_resume_with_parent_metadata() {
     let project = temp_project("teammate-resume");
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "offline", Some("backend-child"));
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(Vec::<String>::new());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1474,7 +1557,8 @@ fn teammate_kill_routes_through_agent_kill_with_parent_metadata() {
     let project = temp_project("teammate-kill");
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@child"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1504,7 +1588,8 @@ fn teammate_resurrect_routes_through_graveyard_resurrect_with_parent_metadata() 
     let project = temp_project("teammate-resurrect");
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "graveyard", Some("backend-child"));
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(Vec::<String>::new());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
