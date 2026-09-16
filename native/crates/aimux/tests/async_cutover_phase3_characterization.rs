@@ -11,9 +11,6 @@ use aimux::daemon::stream::{
     pipe_project_event_stream_from_url_async,
 };
 use aimux::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
-use aimux::daemon::text::auth::{
-    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
-};
 use aimux::daemon::text::collaboration::DaemonCollaborationTextRuntime;
 use aimux::daemon::text::host_agent::DaemonHostAgentTextRuntime;
 use aimux::daemon::text::metadata::DaemonMetadataTextRuntime;
@@ -42,6 +39,9 @@ use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
 };
 use aimux::project_service::router::ProjectServiceRequestContext;
+use aimux::remote::daemon_auth_text::{
+    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
+};
 use aimux::remote::hosted_audit::HostedAuditStore;
 use aimux::remote::hosted_config::HostedConfig;
 use aimux::remote::hosted_principals::{HostedGrant, HostedPrincipalsStore};

@@ -17,7 +17,6 @@ use aimux::daemon::runtime::{
 };
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::DaemonAgentTextRuntime;
-use aimux::daemon::text::auth::DaemonAuthTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, ProjectServiceState,
@@ -28,6 +27,7 @@ use aimux::dashboard_command_spec::get_dashboard_command_spec;
 use aimux::dashboard_readiness::get_runtime_owner_id;
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
+use aimux::remote::daemon_auth_text::DaemonAuthTextRuntime;
 use aimux::remote::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
 use aimux::runtime_coherence::{RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};

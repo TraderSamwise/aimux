@@ -1,7 +1,7 @@
 use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::routing::DaemonRouteResponse;
-use aimux::daemon::text::auth::{
+use aimux::remote::daemon_auth_text::{
     AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
     route_auth_text_request,
 };
