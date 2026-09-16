@@ -9967,6 +9967,8 @@
                 "-E",
                 "old_stty=$(stty -g 2>/dev/null || true); stty raw -echo 2>/dev/null || true; pipe=$(mktemp \"${TMPDIR:-/tmp}/aimux-expose-stdin.XXXXXX\") || exit 1; rm -f \"$pipe\"; mkfifo \"$pipe\" || exit 1; feeder=; cleanup() { [ -n \"$feeder\" ] && kill \"$feeder\" 2>/dev/null || true; [ -n \"$feeder\" ] && wait \"$feeder\" 2>/dev/null || true; rm -f \"$pipe\"; if [ -n \"$old_stty\" ]; then stty \"$old_stty\" 2>/dev/null || true; else stty sane 2>/dev/null || true; fi; }; trap cleanup EXIT HUP INT TERM; { cat '<tempfile>'; cat /dev/tty; } >\"$pipe\" & feeder=$!; nc -U '<temp1>/project/expose.sock' <\"$pipe\"; nc_status=$?; exit $nc_status"
               ],
+              ["list-clients", "-F", "#{client_tty} #{client_width}x#{client_height}"],
+              ["list-clients", "-F", "#{client_tty} #{client_width}x#{client_height}"],
               ["list-clients", "-F", "#{client_tty} #{client_width}|#{client_height}"],
               [
                 "display-popup",
@@ -10388,7 +10390,7 @@
                 "display-message",
                 "-t",
                 "%1",
-                "#[fg=colour203,bold]aimux#[default] couldn't expose sessions - no local tmux target available"
+                "#[fg=colour203,bold]aimux#[default] couldn't expose sessions - expose popup failed with status 1; see <temp1>/aimux-debug.log"
               ]
             ],
             "curlLog": [],
@@ -10414,7 +10416,7 @@
               "panes": {}
             },
             "rootFiles": {
-              "aimux-debug.log": "aimux-control: control failure action=expose reason=no local tmux target available\n"
+              "aimux-debug.log": "aimux-control: expose display-popup failed status=1 output=<empty>\naimux-control: control failure action=expose reason=expose popup failed with status 1; see <temp1>/aimux-debug.log\n"
             },
             "projectFiles": {
               "expose.sock": "",

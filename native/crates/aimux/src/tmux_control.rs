@@ -16,8 +16,10 @@ use std::process::Stdio;
 use std::thread;
 use std::time::{Duration, Instant};
 
-const EXPOSE_RESIZE_RELAUNCH_DEADLINE: Duration = Duration::from_secs(5);
 const EXPOSE_RESIZE_RELAUNCH_SLEEP: Duration = Duration::from_millis(50);
+const EXPOSE_RESIZE_SETTLE_TIMEOUT: Duration = Duration::from_secs(30);
+const EXPOSE_RESIZE_SETTLE_SAMPLE_DELAY: Duration = Duration::from_millis(120);
+const EXPOSE_RESIZE_SETTLED_RELAUNCH_LIMIT: usize = 5;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TmuxControlOptions {
@@ -956,7 +958,7 @@ impl TmuxControl {
                 )
             };
         let current_project_control = self.current_window_project_control();
-        let resize_relaunch_started_at = Instant::now();
+        let mut settled_resize_relaunches = 0_usize;
         let mut selected_expose_window = String::new();
         let popup_status = loop {
             let Some(expose_status) = create_temp_file() else {
@@ -1014,7 +1016,10 @@ impl TmuxControl {
                 "-E".to_owned(),
                 expose_cmd,
             ]);
-            let mut status = self.tmux_status(&args.iter().map(String::as_str).collect::<Vec<_>>());
+            let mut status = self.tmux_status_with_failure_log(
+                &args.iter().map(String::as_str).collect::<Vec<_>>(),
+                "expose display-popup",
+            );
             if let Ok(contents) = fs::read_to_string(&expose_status) {
                 let file_status = contents.trim();
                 if !file_status.is_empty() {
@@ -1030,10 +1035,26 @@ impl TmuxControl {
             let _ = fs::remove_file(&expose_context);
             let _ = fs::remove_file(&expose_status);
             let _ = fs::remove_file(&expose_selection);
-            if status == 75
-                && resize_relaunch_started_at.elapsed() < EXPOSE_RESIZE_RELAUNCH_DEADLINE
-            {
-                thread::sleep(EXPOSE_RESIZE_RELAUNCH_SLEEP);
+            if status == 75 {
+                if !self.wait_for_expose_client_resize_settle(&popup_client_tty) {
+                    self.control_failure_reason = Some(
+                        "expose terminal resize did not settle; close and reopen Exposé when resizing stops".to_owned(),
+                    );
+                    self.control_failure_exits_nonzero = false;
+                    return false;
+                }
+                settled_resize_relaunches += 1;
+                if settled_resize_relaunches > EXPOSE_RESIZE_SETTLED_RELAUNCH_LIMIT {
+                    self.control_failure_reason = Some(
+                        "expose kept asking to relaunch after terminal resize; see tmux control log"
+                            .to_owned(),
+                    );
+                    self.control_failure_exits_nonzero = false;
+                    self.debug_log_line(
+                        "expose resize relaunch limit reached after settled client sizes",
+                    );
+                    return false;
+                }
                 continue;
             }
             break status;
@@ -1047,9 +1068,12 @@ impl TmuxControl {
             if popup_status == 75 {
                 self.control_failure_reason =
                     Some("expose did not settle after terminal resize".to_owned());
-                self.control_failure_exits_nonzero = true;
+                self.control_failure_exits_nonzero = false;
             } else {
-                self.control_failure_reason = Some("no local tmux target available".to_owned());
+                self.control_failure_reason = Some(format!(
+                    "expose popup failed with status {popup_status}; see {}",
+                    self.debug_log.display()
+                ));
             }
             return false;
         }
@@ -1068,6 +1092,44 @@ impl TmuxControl {
             self.tmux_output(&["show-window-options", "-v", "-t", &window_id, "@aimux-meta"])?;
         let metadata = serde_json::from_str::<Value>(&raw).ok()?;
         Some(expose_project_control_flag_from_metadata(&metadata))
+    }
+
+    fn wait_for_expose_client_resize_settle(&mut self, tty: &str) -> bool {
+        if tty.is_empty() {
+            thread::sleep(EXPOSE_RESIZE_RELAUNCH_SLEEP);
+            return true;
+        }
+        let started = Instant::now();
+        let mut previous = self.client_size_label(tty);
+        loop {
+            thread::sleep(EXPOSE_RESIZE_SETTLE_SAMPLE_DELAY);
+            let current = self.client_size_label(tty);
+            if !current.is_empty() && current == previous {
+                return true;
+            }
+            previous = current;
+            if started.elapsed() >= EXPOSE_RESIZE_SETTLE_TIMEOUT {
+                self.debug_log_line(&format!(
+                    "expose resize settle timed out tty={tty} last_size={previous}"
+                ));
+                return false;
+            }
+        }
+    }
+
+    fn client_size_label(&mut self, tty: &str) -> String {
+        let Some(listing) = self.tmux_output(&[
+            "list-clients",
+            "-F",
+            "#{client_tty} #{client_width}x#{client_height}",
+        ]) else {
+            return String::new();
+        };
+        listing
+            .lines()
+            .filter_map(|line| line.split_once(' '))
+            .find_map(|(client_tty, size)| (client_tty == tty).then(|| size.to_owned()))
+            .unwrap_or_default()
     }
 
     fn resolve_local_target(&mut self) -> TargetResolution {
@@ -2027,6 +2089,26 @@ impl TmuxControl {
         command_status("tmux", args.iter().copied())
     }
 
+    fn tmux_status_with_failure_log(&mut self, args: &[&str], label: &str) -> i32 {
+        let output = command_output_status("tmux", args.iter().copied());
+        if output.status != 0 {
+            let stdout = output.stdout.trim();
+            let stderr = output.stderr.trim();
+            let detail = if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                "<empty>"
+            };
+            self.debug_log_line(&format!(
+                "{label} failed status={} output={detail}",
+                output.status
+            ));
+        }
+        output.status
+    }
+
     fn switch_client_to_target(&mut self, target: &str, tty: &str) -> bool {
         if !tty.is_empty() {
             self.tmux_success(&["switch-client", "-c", tty, "-t", target])
@@ -2127,20 +2209,37 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    command_output_status(program, args).status
+}
+
+struct CommandOutputStatus {
+    status: i32,
+    stdout: String,
+    stderr: String,
+}
+
+fn command_output_status<I, S>(program: &str, args: I) -> CommandOutputStatus
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let mut command = if program == "tmux" {
         tmux_command_from_env()
     } else {
         AsyncCommand::new(program)
     };
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .ok()
-        .and_then(|status| status.code())
-        .unwrap_or(1)
+    match command.args(args).stdin(Stdio::null()).output() {
+        Ok(output) => CommandOutputStatus {
+            status: output.status.code().unwrap_or(1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        },
+        Err(error) => CommandOutputStatus {
+            status: 1,
+            stdout: String::new(),
+            stderr: error.to_string(),
+        },
+    }
 }
 
 fn persistent_aimux_executable() -> String {

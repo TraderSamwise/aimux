@@ -148,6 +148,36 @@ debug_log_line() {
   printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
 }
 
+client_size_label() {
+  label_tty="$1"
+  [ -n "$label_tty" ] || return 1
+  tmux list-clients -F '#{client_tty} #{client_width}x#{client_height}' 2>/dev/null |
+    awk -v tty="$label_tty" '$1 == tty { print $2; exit }'
+}
+
+wait_for_expose_client_resize_settle() {
+  settle_tty="$1"
+  [ -n "$settle_tty" ] || {
+    sleep 0.05
+    return 0
+  }
+  settle_start=$(date +%s 2>/dev/null || printf '0')
+  settle_previous=$(client_size_label "$settle_tty" || true)
+  while :; do
+    sleep 0.12
+    settle_current=$(client_size_label "$settle_tty" || true)
+    if [ -n "$settle_current" ] && [ "$settle_current" = "$settle_previous" ]; then
+      return 0
+    fi
+    settle_previous="$settle_current"
+    settle_now=$(date +%s 2>/dev/null || printf '0')
+    if [ $((settle_now - settle_start)) -ge 30 ]; then
+      debug_log_line "expose resize settle timed out tty=$settle_tty last_size=$settle_previous"
+      return 1
+    fi
+  done
+}
+
 shell_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
 }
@@ -841,13 +871,15 @@ show_local_expose() {
     expose_daemon_endpoint="http://$daemon_host:$daemon_port"
   fi
   popup_retry_count=0
+  popup_settled_resize_relaunches=0
   selected_expose_window=""
   while :; do
     expose_status=$(mktemp 2>/dev/null || true)
     expose_context=$(mktemp 2>/dev/null || true)
     expose_selection=$(mktemp 2>/dev/null || true)
-    if [ -z "$expose_status" ] || [ -z "$expose_context" ] || [ -z "$expose_selection" ]; then
-      for temp_path in "$expose_status" "$expose_context" "$expose_selection"; do
+    expose_error=$(mktemp 2>/dev/null || true)
+    if [ -z "$expose_status" ] || [ -z "$expose_context" ] || [ -z "$expose_selection" ] || [ -z "$expose_error" ]; then
+      for temp_path in "$expose_status" "$expose_context" "$expose_selection" "$expose_error"; do
         [ -n "$temp_path" ] && rm -f "$temp_path"
       done
       return 1
@@ -881,11 +913,15 @@ show_local_expose() {
     } > "$expose_context"
     expose_cmd="old_stty=\$(stty -g 2>/dev/null || true); stty raw -echo 2>/dev/null || true; pipe=\$(mktemp \"\${TMPDIR:-/tmp}/aimux-expose-stdin.XXXXXX\") || exit 1; rm -f \"\$pipe\"; mkfifo \"\$pipe\" || exit 1; feeder=; cleanup() { [ -n \"\$feeder\" ] && kill \"\$feeder\" 2>/dev/null || true; [ -n \"\$feeder\" ] && wait \"\$feeder\" 2>/dev/null || true; rm -f \"\$pipe\"; if [ -n \"\$old_stty\" ]; then stty \"\$old_stty\" 2>/dev/null || true; else stty sane 2>/dev/null || true; fi; }; trap cleanup EXIT HUP INT TERM; { cat $(shell_quote "$expose_context"); cat /dev/tty; } >\"\$pipe\" & feeder=\$!; nc -U $(shell_quote "$expose_socket") <\"\$pipe\"; nc_status=\$?; exit \$nc_status"
     if [ -n "$popup_client_tty" ]; then
-      tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
+      tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >"$expose_error" 2>&1
       popup_status=$?
     else
-      tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
+      tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >"$expose_error" 2>&1
       popup_status=$?
+    fi
+    if [ "$popup_status" != 0 ]; then
+      popup_error_output=$(cat "$expose_error" 2>/dev/null || true)
+      debug_log_line "expose display-popup failed status=$popup_status output=${popup_error_output:-<empty>}"
     fi
     if [ -s "$expose_status" ]; then
       popup_status=$(cat "$expose_status" 2>/dev/null || printf '%s' "$popup_status")
@@ -894,11 +930,24 @@ show_local_expose() {
     if [ "$popup_status" = 0 ] && [ -s "$expose_selection" ]; then
       selected_expose_window=$(head -n 1 "$expose_selection" 2>/dev/null || true)
     fi
-    rm -f "$expose_context" "$expose_status" "$expose_selection"
-    if [ "$popup_status" = 75 ] && [ "$popup_retry_count" -lt 100 ]; then
+    rm -f "$expose_context" "$expose_status" "$expose_selection" "$expose_error"
+    if [ "$popup_status" = 75 ]; then
+      if ! wait_for_expose_client_resize_settle "$popup_client_tty"; then
+        control_failure_reason="expose terminal resize did not settle; close and reopen Exposé when resizing stops"
+        control_failure_exits_nonzero=0
+        return 1
+      fi
       popup_retry_count=$((popup_retry_count + 1))
+      popup_settled_resize_relaunches=$((popup_settled_resize_relaunches + 1))
+      if [ "$popup_settled_resize_relaunches" -gt 5 ]; then
+        debug_log_line "expose resize relaunch limit reached after settled client sizes"
+        control_failure_reason="expose kept asking to relaunch after terminal resize; see $debug_log"
+        control_failure_exits_nonzero=0
+        return 1
+      fi
       continue
     fi
+    popup_settled_resize_relaunches=0
     break
   done
   if [ "$popup_status" = 76 ]; then
@@ -908,9 +957,9 @@ show_local_expose() {
   if [ "$popup_status" != 0 ]; then
     if [ "$popup_status" = 75 ]; then
       control_failure_reason="expose did not settle after terminal resize"
-      control_failure_exits_nonzero=1
+      control_failure_exits_nonzero=0
     else
-      control_failure_reason="no local tmux target available"
+      control_failure_reason="expose popup failed with status $popup_status; see $debug_log"
     fi
     return 1
   fi

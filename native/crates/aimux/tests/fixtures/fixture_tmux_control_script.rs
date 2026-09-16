@@ -49,6 +49,18 @@ fn dashboard_reload_reports_shell_husk_instead_of_silently_switching_to_it() {
 }
 
 #[test]
+fn expose_resize_relaunch_exits_zero_instead_of_crashing_control() {
+    assert_expose_resize_relaunch_exits_zero(TmuxControlRunner::ShellScript);
+    assert_expose_resize_relaunch_exits_zero(TmuxControlRunner::Native);
+}
+
+#[test]
+fn expose_popup_failure_logs_child_error() {
+    assert_expose_popup_failure_logs_child_error(TmuxControlRunner::ShellScript);
+    assert_expose_popup_failure_logs_child_error(TmuxControlRunner::Native);
+}
+
+#[test]
 fn dashboard_reload_failure_names_missing_tmux_session() {
     assert_dashboard_reload_failure_names_missing_tmux_session(TmuxControlRunner::ShellScript);
     assert_dashboard_reload_failure_names_missing_tmux_session(TmuxControlRunner::Native);
@@ -222,6 +234,172 @@ fn assert_dashboard_reload_failure_names_missing_tmux_session(runner: TmuxContro
         "{actual:#}"
     );
     assert!(!tmux_log.contains("new-window"), "{actual:#}");
+}
+
+fn assert_expose_resize_relaunch_exits_zero(runner: TmuxControlRunner) {
+    let actual = run_case(
+        &expose_control_case(json!({
+            "TMUX_FAKE_DISPLAY_POPUP_RUN_COMMAND": "1",
+            "TMUX_FAKE_NC_STATUS_SEQUENCE_FILE": "<temp2>/nc-status-sequence",
+        })),
+        runner,
+    );
+    assert_eq!(actual["thrown"], Value::Null, "{actual:#}");
+    let root = &actual["roots"].as_array().expect("roots")[1];
+    let tmux_log = root["tmuxLog"].as_array().expect("tmux log");
+    let popup_count = tmux_log
+        .iter()
+        .filter(|entry| {
+            entry
+                .as_array()
+                .and_then(|args| args.first())
+                .and_then(Value::as_str)
+                == Some("display-popup")
+        })
+        .count();
+    assert!(popup_count >= 2, "{actual:#}");
+    let debug = root["rootFiles"]["aimux-debug.log"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        debug.contains("expose resize relaunch limit reached after settled client sizes"),
+        "{actual:#}"
+    );
+}
+
+fn assert_expose_popup_failure_logs_child_error(runner: TmuxControlRunner) {
+    let actual = run_case(
+        &expose_control_case(json!({
+            "TMUX_FAKE_DISPLAY_POPUP_EXIT": "1",
+            "TMUX_FAKE_DISPLAY_POPUP_STDERR": "synthetic expose child failure",
+        })),
+        runner,
+    );
+    assert_eq!(actual["thrown"], Value::Null, "{actual:#}");
+    let root = &actual["roots"].as_array().expect("roots")[1];
+    let debug = root["rootFiles"]["aimux-debug.log"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        debug.contains("synthetic expose child failure"),
+        "{actual:#}"
+    );
+    assert!(
+        debug.contains("expose display-popup failed status=1"),
+        "{actual:#}"
+    );
+    let tmux_log = serde_json::to_string(&root["tmuxLog"]).expect("tmux log");
+    assert!(
+        tmux_log.contains("expose popup failed with status 1"),
+        "{actual:#}"
+    );
+    assert!(tmux_log.contains("aimux-debug.log"), "{actual:#}");
+}
+
+fn expose_control_case(env: Value) -> Value {
+    let mut env_map = Map::new();
+    env_map.insert(
+        "AIMUX_BIN".into(),
+        Value::String("<temp2>/bin/aimux".into()),
+    );
+    env_map.insert("PATH".into(), Value::String("<path>".into()));
+    if let Some(extra) = env.as_object() {
+        for (key, value) in extra {
+            env_map.insert(key.clone(), value.clone());
+        }
+    }
+    json!({
+        "input": {
+            "execCalls": [{
+                "command": "sh",
+                "args": [
+                    "<repo>/scripts/tmux-control.sh",
+                    "expose",
+                    "--daemon-host",
+                    "127.0.0.1",
+                    "--daemon-port",
+                    NORMALIZED_DAEMON_PORT,
+                    "--project-state-dir",
+                    "<temp2>/project",
+                    "--project-root",
+                    "<temp1>",
+                    "--current-client-session",
+                    "aimux-proj-client-1234abcd",
+                    "--client-tty",
+                    "/dev/live",
+                    "--current-window",
+                    "shell",
+                    "--current-window-id",
+                    "@shell",
+                    "--current-path",
+                    "<temp1>",
+                    "--pane-id",
+                    "%1",
+                    "--aimux-home",
+                    "<temp2>/home"
+                ],
+                "cwd": "<repo>",
+                "env": Value::Object(env_map),
+                "beforeRoot": {
+                    "root": "<temp2>",
+                    "tmuxLog": [],
+                    "curlLog": [],
+                    "aimuxLog": [],
+                    "state": expose_tmux_state(),
+                    "rootFiles": {
+                        "expose.sock": "",
+                        "nc-status-sequence": "75,75,75,75,75,75,75\n"
+                    },
+                    "projectFiles": {
+                        "expose.sock.path": "<temp2>/expose.sock\n",
+                        "project-root.txt": "<temp1>\n"
+                    }
+                },
+                "status": 0,
+                "stdout": ""
+            }]
+        },
+        "output": {
+            "roots": [
+                { "root": "<temp1>", "rootFiles": {}, "curlLog": [], "aimuxLog": [], "tmuxLog": [] },
+                {
+                    "root": "<temp2>",
+                    "rootFiles": {},
+                    "curlLog": [],
+                    "aimuxLog": [],
+                    "tmuxLog": []
+                }
+            ]
+        }
+    })
+}
+
+fn expose_tmux_state() -> Value {
+    json!({
+        "clients": [{ "tty": "/dev/live", "sessionName": "aimux-proj-client-1234abcd", "windowId": "@shell", "width": 120, "height": 30 }],
+        "windows": {
+            "aimux-proj-client-1234abcd": [
+                { "id": "@shell", "index": 3, "name": "shell" }
+            ]
+        },
+        "sessionOptions": {
+            "aimux-proj-client-1234abcd": {
+                "@aimux-project-root": "<temp1>",
+                "@aimux-project-state-dir": "<temp2>/project"
+            }
+        },
+        "windowOptions": {},
+        "panes": {
+            "%1": {
+                "sessionName": "aimux-proj-client-1234abcd",
+                "windowId": "@shell",
+                "windowName": "shell",
+                "clientTty": "/dev/live",
+                "currentPath": "<temp1>",
+                "currentCommand": "aimux"
+            }
+        }
+    })
 }
 
 fn dashboard_reload_case(
@@ -1418,6 +1596,8 @@ elif command == "display-menu":
     if os.environ.get("TMUX_FAKE_DISPLAY_MENU_EXIT") == "1":
         fail()
 elif command == "display-popup":
+    if os.environ.get("TMUX_FAKE_DISPLAY_POPUP_STDERR"):
+        print(os.environ["TMUX_FAKE_DISPLAY_POPUP_STDERR"], file=sys.stderr)
     if os.environ.get("TMUX_FAKE_DISPLAY_POPUP_EXIT"):
         sys.exit(int(os.environ["TMUX_FAKE_DISPLAY_POPUP_EXIT"]))
     if os.environ.get("TMUX_FAKE_DISPLAY_POPUP_RUN_COMMAND") == "1":
