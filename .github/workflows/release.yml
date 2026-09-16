@@ -32,8 +32,8 @@ jobs:
             runner: ubuntu-latest
           - platform: linux
             arch: x64
-            variant: lite
-            asset: aimux-lite-linux-x64
+            variant: local
+            asset: aimux-local-linux-x64
             runner: ubuntu-latest
           - platform: linux
             arch: arm64
@@ -42,8 +42,8 @@ jobs:
             runner: ubuntu-24.04-arm
           - platform: linux
             arch: arm64
-            variant: lite
-            asset: aimux-lite-linux-arm64
+            variant: local
+            asset: aimux-local-linux-arm64
             runner: ubuntu-24.04-arm
           - platform: darwin
             arch: x64
@@ -52,8 +52,8 @@ jobs:
             runner: macos-15-intel
           - platform: darwin
             arch: x64
-            variant: lite
-            asset: aimux-lite-darwin-x64
+            variant: local
+            asset: aimux-local-darwin-x64
             runner: macos-15-intel
           - platform: darwin
             arch: arm64
@@ -62,8 +62,8 @@ jobs:
             runner: macos-14
           - platform: darwin
             arch: arm64
-            variant: lite
-            asset: aimux-lite-darwin-arm64
+            variant: local
+            asset: aimux-local-darwin-arm64
             runner: macos-14
 
     steps:
@@ -121,7 +121,7 @@ jobs:
       - name: Verify release variant boundary
         run: |
           set -euo pipefail
-          bash scripts/check-lite-build-boundary.sh \
+          bash scripts/check-local-build-boundary.sh \
             --variant ${{ matrix.variant }} \
             --archive release/${{ matrix.asset }}.tar.gz \
             --platform-arch ${{ matrix.platform }}-${{ matrix.arch }}
@@ -200,7 +200,7 @@ jobs:
           mkdir -p release-check
           for a in \
             aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-lite-darwin-arm64 aimux-lite-darwin-x64 aimux-lite-linux-arm64 aimux-lite-linux-x64
+            aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz" --dir release-check --clobber
@@ -223,7 +223,7 @@ jobs:
           set -euo pipefail
           for a in \
             aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-lite-darwin-arm64 aimux-lite-darwin-x64 aimux-lite-linux-arm64 aimux-lite-linux-x64
+            aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
           do
             gh attestation verify "release-check/${a}.tar.gz" --repo "$OWNER_REPO"
             gh attestation verify "release-check/${a}.tar.gz.sha256" --repo "$OWNER_REPO"
@@ -369,7 +369,7 @@ jobs:
           mkdir -p sha
           for a in \
             aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-lite-darwin-arm64 aimux-lite-darwin-x64 aimux-lite-linux-arm64 aimux-lite-linux-x64
+            aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sha256" --dir sha --clobber
@@ -387,10 +387,10 @@ jobs:
             echo "darwin_x64=$(extract aimux-darwin-x64)"
             echo "linux_arm64=$(extract aimux-linux-arm64)"
             echo "linux_x64=$(extract aimux-linux-x64)"
-            echo "lite_darwin_arm64=$(extract aimux-lite-darwin-arm64)"
-            echo "lite_darwin_x64=$(extract aimux-lite-darwin-x64)"
-            echo "lite_linux_arm64=$(extract aimux-lite-linux-arm64)"
-            echo "lite_linux_x64=$(extract aimux-lite-linux-x64)"
+            echo "local_darwin_arm64=$(extract aimux-local-darwin-arm64)"
+            echo "local_darwin_x64=$(extract aimux-local-darwin-x64)"
+            echo "local_linux_arm64=$(extract aimux-local-linux-arm64)"
+            echo "local_linux_x64=$(extract aimux-local-linux-x64)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout homebrew-aimux
@@ -408,10 +408,10 @@ jobs:
           DARWIN_X64: ${{ steps.sha.outputs.darwin_x64 }}
           LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
           LINUX_X64: ${{ steps.sha.outputs.linux_x64 }}
-          LITE_DARWIN_ARM64: ${{ steps.sha.outputs.lite_darwin_arm64 }}
-          LITE_DARWIN_X64: ${{ steps.sha.outputs.lite_darwin_x64 }}
-          LITE_LINUX_ARM64: ${{ steps.sha.outputs.lite_linux_arm64 }}
-          LITE_LINUX_X64: ${{ steps.sha.outputs.lite_linux_x64 }}
+          LOCAL_DARWIN_ARM64: ${{ steps.sha.outputs.local_darwin_arm64 }}
+          LOCAL_DARWIN_X64: ${{ steps.sha.outputs.local_darwin_x64 }}
+          LOCAL_LINUX_ARM64: ${{ steps.sha.outputs.local_linux_arm64 }}
+          LOCAL_LINUX_X64: ${{ steps.sha.outputs.local_linux_x64 }}
         run: |
           set -euo pipefail
           cat > tap/Formula/aimux.rb <<EOF
@@ -455,8 +455,8 @@ jobs:
             end
           end
           EOF
-          cat > tap/Formula/aimux-lite.rb <<EOF
-          class AimuxLite < Formula
+          cat > tap/Formula/aimux-local.rb <<EOF
+          class AimuxLocal < Formula
             desc "Local agent multiplexer for AI coding tools without remote control"
             homepage "https://aimux.app"
             version "${VERSION}"
@@ -464,23 +464,23 @@ jobs:
 
             on_macos do
               on_arm do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-lite-darwin-arm64.tar.gz"
-                sha256 "${LITE_DARWIN_ARM64}"
+                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-local-darwin-arm64.tar.gz"
+                sha256 "${LOCAL_DARWIN_ARM64}"
               end
               on_intel do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-lite-darwin-x64.tar.gz"
-                sha256 "${LITE_DARWIN_X64}"
+                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-local-darwin-x64.tar.gz"
+                sha256 "${LOCAL_DARWIN_X64}"
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-lite-linux-arm64.tar.gz"
-                sha256 "${LITE_LINUX_ARM64}"
+                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-local-linux-arm64.tar.gz"
+                sha256 "${LOCAL_LINUX_ARM64}"
               end
               on_intel do
-                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-lite-linux-x64.tar.gz"
-                sha256 "${LITE_LINUX_X64}"
+                url "https://github.com/TraderSamwise/aimux/releases/download/${TAG}/aimux-local-linux-x64.tar.gz"
+                sha256 "${LOCAL_LINUX_X64}"
               end
             end
 
@@ -506,10 +506,10 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet Formula/aimux.rb Formula/aimux-lite.rb; then
+          if git diff --quiet Formula/aimux.rb Formula/aimux-local.rb; then
             echo "Formula already up to date."
             exit 0
           fi
-          git add Formula/aimux.rb Formula/aimux-lite.rb
+          git add Formula/aimux.rb Formula/aimux-local.rb
           git commit -m "aimux ${TAG}"
           git push

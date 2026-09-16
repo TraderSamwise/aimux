@@ -182,7 +182,11 @@ esac
     join(bin, "cargo"),
     `#!/bin/sh
 if [ "$1" = "metadata" ]; then
-  printf '%s\\n' '{"packages":[{"id":"path+file:///fixture#aimux@0.0.0","name":"aimux","version":"0.0.0","authors":["Aimux"],"license":"MIT"}],"resolve":{"root":"path+file:///fixture#aimux@0.0.0"}}'
+  printf '%s\\n' '{"packages":[{"id":"path+file:///fixture#aimux@0.0.0","name":"aimux","version":"0.0.0","authors":["Aimux"],"license":"MIT"}],"workspace_members":["path+file:///fixture#aimux@0.0.0"],"resolve":{"root":"path+file:///fixture#aimux@0.0.0","nodes":[{"id":"path+file:///fixture#aimux@0.0.0","deps":[]}]}}'
+  exit 0
+fi
+if [ "$1" = "tree" ]; then
+  printf '%s\\n' 'aimux v0.0.0 (/fixture)'
   exit 0
 fi
 mkdir -p "$CARGO_TARGET_DIR/release"
@@ -198,8 +202,20 @@ chmod +x "$CARGO_TARGET_DIR/release/aimux"
   writeExecutable(
     join(bin, "yarn"),
     `#!/bin/sh
-printf 'unexpected yarn command: %s\\n' "$*" >&2
-exit 127
+case "$1" in
+  release:asset)
+    exec ${realCommands.bash} ${join(repoRoot, "scripts/build-release-asset.sh")}
+    ;;
+  build:ui:local)
+    mkdir -p ${join(repoRoot, "dist-ui")}
+    printf '<!doctype html>\\n' > ${join(repoRoot, "dist-ui", "index.html")}
+    exit 0
+    ;;
+  *)
+    printf 'unexpected yarn command: %s\\n' "$*" >&2
+    exit 127
+    ;;
+esac
 `,
   );
   return {
@@ -265,7 +281,7 @@ describe("install.sh", () => {
     }
   }, 30000);
 
-  it("refuses a full archive through the lite install path", () => {
+  it("refuses a full archive through the local install path", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-install-script-"));
     try {
       const archive = createInstallArchive(root, "full");
@@ -273,28 +289,28 @@ describe("install.sh", () => {
         cwd: root,
         env: {
           ...installEnv(root, 0),
-          AIMUX_INSTALL_VARIANT: "lite",
+          AIMUX_INSTALL_VARIANT: "local",
         },
       });
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("release archive BUILD_VARIANT mismatch: expected lite, got full");
+      expect(result.stderr).toContain("release archive BUILD_VARIANT mismatch: expected local, got full");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   }, 30000);
 
-  it("refuses a lite archive through the full install path", () => {
+  it("refuses a local archive through the full install path", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-install-script-"));
     try {
-      const archive = createInstallArchive(root, "lite");
+      const archive = createInstallArchive(root, "local");
       const result = run("sh", [join(repoRoot, "scripts/install.sh"), archive], {
         cwd: root,
         env: installEnv(root, 0),
       });
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("release archive BUILD_VARIANT mismatch: expected full, got lite");
+      expect(result.stderr).toContain("release archive BUILD_VARIANT mismatch: expected full, got local");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -337,20 +353,43 @@ describe("build-release-asset.sh", () => {
     }
   }, 30000);
 
-  it("builds a lite release asset with the lite variant stamp and feature lane", () => {
+  it("builds a local release asset with the local variant stamp and feature lane", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-script-"));
     try {
       const result = run("bash", [join(repoRoot, "scripts/build-release-asset.sh")], {
-        env: releaseScriptEnv(root, { AIMUX_BUILD_VARIANT: "lite" }),
+        env: releaseScriptEnv(root, { AIMUX_BUILD_VARIANT: "local" }),
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(existsSync(join(root, "release", "aimux-lite-linux-x64.tar.gz"))).toBe(true);
+      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz"))).toBe(true);
       expect(readFileSync(join(root, "cargo-args.txt"), "utf8")).toContain("--no-default-features");
       const extractDir = join(root, "extract");
       mkdirSync(extractDir);
-      runOk("tar", ["-xzf", join(root, "release", "aimux-lite-linux-x64.tar.gz"), "-C", extractDir]);
-      expect(readFileSync(join(extractDir, "aimux", "BUILD_VARIANT"), "utf8").trim()).toBe("lite");
+      runOk("tar", ["-xzf", join(root, "release", "aimux-local-linux-x64.tar.gz"), "-C", extractDir]);
+      expect(readFileSync(join(extractDir, "aimux", "BUILD_VARIANT"), "utf8").trim()).toBe("local");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+});
+
+describe("build-release-from-source.sh", () => {
+  it("builds, verifies, and install-smokes the local variant from source", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-source-release-script-"));
+    try {
+      const result = run("bash", [join(repoRoot, "scripts/build-local-release-from-source.sh")], {
+        env: releaseScriptEnv(root, { AIMUX_RELEASE_VERSION: "source-test" }),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Building Aimux local variant from source revision");
+      expect(result.stdout).toContain("aimux local build boundary check passed");
+      expect(result.stdout).toContain("Install smoke passed for local variant");
+      expect(result.stdout).toContain("Aimux source release build verified");
+      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz"))).toBe(true);
+      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.sha256"))).toBe(true);
+      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.provenance.json"))).toBe(true);
+      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.sbom.spdx.json"))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -442,7 +481,7 @@ describe("verify-release-asset-set.sh", () => {
           },
           gates: {
             assetSet: "scripts/verify-release-asset-set.sh",
-            boundary: "scripts/check-lite-build-boundary.sh",
+            boundary: "scripts/check-local-build-boundary.sh",
             attestation: `gh attestation verify ${asset} --repo TraderSamwise/aimux`,
           },
           generatedAt: "2026-09-16T00:00:00.000Z",
@@ -475,9 +514,9 @@ describe("verify-release-asset-set.sh", () => {
   function writeAssetSet(root, omitted = undefined) {
     for (const platform of ["darwin", "linux"]) {
       for (const arch of ["arm64", "x64"]) {
-        for (const variant of ["full", "lite"]) {
+        for (const variant of ["full", "local"]) {
           const asset =
-            variant === "lite" ? `aimux-lite-${platform}-${arch}.tar.gz` : `aimux-${platform}-${arch}.tar.gz`;
+            variant === "local" ? `aimux-local-${platform}-${arch}.tar.gz` : `aimux-${platform}-${arch}.tar.gz`;
           if (asset === omitted) continue;
           writeReleaseSetArchive(root, asset, `${platform}-${arch}`, variant);
         }
@@ -485,7 +524,7 @@ describe("verify-release-asset-set.sh", () => {
     }
   }
 
-  it("accepts a complete full and lite release asset set", () => {
+  it("accepts a complete full and local release asset set", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
       writeAssetSet(root);
@@ -497,15 +536,15 @@ describe("verify-release-asset-set.sh", () => {
     }
   });
 
-  it("fails when any lite artifact is missing", () => {
+  it("fails when any local artifact is missing", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
-      writeAssetSet(root, "aimux-lite-darwin-arm64.tar.gz");
+      writeAssetSet(root, "aimux-local-darwin-arm64.tar.gz");
       const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("missing release asset");
-      expect(result.stderr).toContain("aimux-lite-darwin-arm64.tar.gz");
+      expect(result.stderr).toContain("aimux-local-darwin-arm64.tar.gz");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -517,7 +556,7 @@ describe("verify-release-asset-set.sh", () => {
       writeAssetSet(root);
       for (const platform of ["darwin", "linux"]) {
         for (const arch of ["arm64", "x64"]) {
-          for (const prefix of ["aimux", "aimux-lite"]) {
+          for (const prefix of ["aimux", "aimux-local"]) {
             const asset = `${prefix}-${platform}-${arch}.tar.gz`;
             writeFileSync(join(root, asset), `not a tar archive: ${asset}\n`);
             writeFileSync(join(root, `${asset}.sha256`), `${"0".repeat(64)}  ${asset}\n`);
@@ -572,7 +611,7 @@ describe("verify-release-asset-set.sh", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
       writeAssetSet(root);
-      const asset = "aimux-lite-linux-x64.tar.gz";
+      const asset = "aimux-local-linux-x64.tar.gz";
       const provenancePath = join(root, `${asset}.provenance.json`);
       const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
       provenance.artifact.sha256 = "0".repeat(64);
@@ -593,7 +632,7 @@ describe("verify-release-asset-set.sh", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
       writeAssetSet(root);
-      const asset = "aimux-lite-linux-x64.tar.gz";
+      const asset = "aimux-local-linux-x64.tar.gz";
       const sbomPath = join(root, `${asset}.sbom.spdx.json`);
       const sbom = JSON.parse(readFileSync(sbomPath, "utf8"));
       sbom.packages = sbom.packages.filter((entry) => entry.name === "aimux");
@@ -613,22 +652,22 @@ describe("verify-release-asset-set.sh", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
       writeAssetSet(root);
-      writeReleaseSetArchive(root, "aimux-lite-darwin-arm64.tar.gz", "darwin-arm64", "full");
+      writeReleaseSetArchive(root, "aimux-local-darwin-arm64.tar.gz", "darwin-arm64", "full");
 
       const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("release asset BUILD_VARIANT mismatch");
-      expect(result.stderr).toContain("expected lite, got full");
+      expect(result.stderr).toContain("expected local, got full");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 });
 
-describe("check-lite-build-boundary.sh", () => {
-  it("rejects lite binaries containing hosted or remote-control identities", () => {
-    const root = mkdtempSync(join(tmpdir(), "aimux-lite-boundary-"));
+describe("check-local-build-boundary.sh", () => {
+  it("rejects local binaries containing hosted or remote-control identities", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-local-boundary-"));
     try {
       const binary = join(root, "aimux");
       writeExecutable(
@@ -643,24 +682,24 @@ printf 'hosted_server\\n'
       );
 
       const result = run("bash", [
-        join(repoRoot, "scripts/check-lite-build-boundary.sh"),
+        join(repoRoot, "scripts/check-local-build-boundary.sh"),
         "--variant",
-        "lite",
+        "local",
         "--binary",
         binary,
         "--skip-cargo-tree",
       ]);
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Lite binary contains remote-control strings");
+      expect(result.stderr).toContain("Local binary contains remote-control strings");
       expect(result.stderr).toContain("hosted_server");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("accepts a lite binary with no remote-control help or strings", () => {
-    const root = mkdtempSync(join(tmpdir(), "aimux-lite-boundary-"));
+  it("accepts a local binary with no remote-control help or strings", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-local-boundary-"));
     try {
       const binary = join(root, "aimux");
       writeExecutable(
@@ -675,16 +714,16 @@ printf 'local aimux fixture\\n'
       );
 
       const result = run("bash", [
-        join(repoRoot, "scripts/check-lite-build-boundary.sh"),
+        join(repoRoot, "scripts/check-local-build-boundary.sh"),
         "--variant",
-        "lite",
+        "local",
         "--binary",
         binary,
         "--skip-cargo-tree",
       ]);
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("aimux lite build boundary check passed");
+      expect(result.stdout).toContain("aimux local build boundary check passed");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -696,15 +735,24 @@ describe("release workflow", () => {
     const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
     const buildReleaseAsset = readFileSync(join(repoRoot, "scripts/build-release-asset.sh"), "utf8");
     const verifyReleaseAssetSet = readFileSync(join(repoRoot, "scripts/verify-release-asset-set.sh"), "utf8");
+    const sourceRelease = readFileSync(join(repoRoot, "scripts/build-release-from-source.sh"), "utf8");
 
     expect(packageJson.scripts["security:local-only:gate"]).toBe("bash scripts/check-local-only-release-gate.sh");
+    expect(packageJson.scripts["release:source"]).toBe("bash scripts/build-release-from-source.sh");
+    expect(packageJson.scripts["release:source:local"]).toBe("bash scripts/build-local-release-from-source.sh");
     expect(buildReleaseAsset).toContain('bash "$ROOT_DIR/scripts/write-release-provenance.sh"');
     expect(verifyReleaseAssetSet).toContain('bash "$ROOT_DIR/scripts/verify-release-provenance.sh"');
+    expect(sourceRelease).toContain('bash "$ROOT_DIR/scripts/verify-release-provenance.sh"');
+    expect(sourceRelease).toContain('bash "$ROOT_DIR/scripts/check-local-build-boundary.sh"');
+    expect(sourceRelease).toContain("AIMUX_SKIP_POST_INSTALL_RESTART=1");
     expect(
       [
         packageJson.scripts["security:local-only:gate"],
+        packageJson.scripts["release:source"],
+        packageJson.scripts["release:source:local"],
         buildReleaseAsset,
         verifyReleaseAssetSet,
+        sourceRelease,
       ].join("\n"),
     ).not.toMatch(/node\s+["']?\$?[^;\n]*scripts\/(?:check-local-only-release-gate|write-release-provenance|verify-release-provenance)\.mjs/);
   });
@@ -736,7 +784,7 @@ describe("release workflow", () => {
 
     expect(workflow).toContain("AIMUX_BUILD_VARIANT: ${{ matrix.variant }}");
     expect(workflow).toContain("- name: Verify release variant boundary");
-    expect(workflow).toContain("bash scripts/check-lite-build-boundary.sh");
+    expect(workflow).toContain("bash scripts/check-local-build-boundary.sh");
     expect(workflow).toContain("--variant ${{ matrix.variant }}");
     expect(workflow).toContain("--archive release/${{ matrix.asset }}.tar.gz");
     expect(workflow).toContain("--platform-arch ${{ matrix.platform }}-${{ matrix.arch }}");
@@ -745,25 +793,25 @@ describe("release workflow", () => {
     expect(workflow).toContain("release/${{ matrix.asset }}.tar.gz.sbom.spdx.json");
     expect(workflow).toContain("actions/attest-build-provenance@v2");
     expect(workflow).toContain('gh attestation verify "release-check/${a}.tar.gz"');
-    expect(workflow).not.toContain("--lite-boundary-checker");
+    expect(workflow).not.toContain("--local-boundary-checker");
   });
 
-  it("publishes both full and lite Homebrew formulas while npm remains full-only", () => {
+  it("publishes both full and local Homebrew formulas while npm remains full-only", () => {
     const workflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
 
     const npmJob = workflow.slice(workflow.indexOf("  publish-npm:"), workflow.indexOf("  update-homebrew-tap:"));
     const tapJob = workflow.slice(workflow.indexOf("  update-homebrew-tap:"));
     expect(npmJob).toContain("needs: verify-release-assets");
     expect(tapJob).toContain("needs: verify-release-assets");
-    expect(workflow).toContain("tap/Formula/aimux-lite.rb");
+    expect(workflow).toContain("tap/Formula/aimux-local.rb");
     expect(workflow).toContain('conflicts_with "aimux", because: "both install the aimux command"');
-    expect(workflow).toContain("aimux-lite-darwin-arm64.tar.gz");
+    expect(workflow).toContain("aimux-local-darwin-arm64.tar.gz");
     expect(workflow).toContain('bin.install_symlink libexec/"bin/aimux"');
     const npmStage = workflow.slice(
       workflow.indexOf("- name: Stage macOS native assets for npm package"),
       workflow.indexOf("- name: Verify npm package has no source maps"),
     );
     expect(npmStage).toContain("aimux-darwin-${arch}.tar.gz");
-    expect(npmStage).not.toContain("aimux-lite");
+    expect(npmStage).not.toContain("aimux-local");
   });
 });

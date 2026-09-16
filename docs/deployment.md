@@ -191,12 +191,12 @@ a broken release.
 ### What the tag triggers
 
 1. **Release assets** — builds full `aimux-{darwin,linux}-{arm64,x64}.tar.gz`
-   and lite `aimux-lite-{darwin,linux}-{arm64,x64}.tar.gz` archives plus
+   and local `aimux-local-{darwin,linux}-{arm64,x64}.tar.gz` archives plus
    `.sha256`, `.provenance.json`, and `.sbom.spdx.json` companion files on matching runners, after re-running
    `yarn release:readiness`. Each asset carries a `BUILD_VARIANT` stamp
-   (`full` or `lite`) separate from `BUILD_PROFILE`, is checked for stripped
+   (`full` or `local`) separate from `BUILD_PROFILE`, is checked for stripped
    source maps, and the Darwin assets are checked for a notifier helper of the
-   right architecture. Lite assets must pass the remote-control absence gate
+   right architecture. Local assets must pass the remote-control absence gate
    before upload, while full assets must pass the matching presence gate so the
    full lane still proves it contains the expected remote-control surface. A
    Release assets and their companion files are covered by GitHub artifact
@@ -210,15 +210,43 @@ a broken release.
    publishing (OIDC, no stored token). It fails fast if `package.json`'s version
    does not match the tag, and stages the native CLI binaries plus macOS
    notifier helpers from the full release assets so the npm package carries
-   them. There is no lite npm package.
-3. **Homebrew tap** — rewrites `Formula/aimux.rb` and `Formula/aimux-lite.rb`
+   them. There is no local npm package.
+3. **Homebrew tap** — rewrites `Formula/aimux.rb` and `Formula/aimux-local.rb`
    in `TraderSamwise/homebrew-aimux` with the new version, URLs, and SHA256
-   values, using the `HOMEBREW_TAP_TOKEN` secret. The lite formula downloads
-   only lite assets, conflicts with the full formula, and still installs the
+   values, using the `HOMEBREW_TAP_TOKEN` secret. The local formula downloads
+   only local assets, conflicts with the full formula, and still installs the
    command as `aimux`.
 
 The npm and tap jobs both depend on the complete asset-set gate, so a failed
 build, missing asset, checksum mismatch, or corrupt archive publishes nothing.
+
+### Local source review build
+
+For a source review, the reviewer should build the local variant from the
+checked-out source rather than trusting a prebuilt archive:
+
+```bash
+yarn install --frozen-lockfile
+yarn --cwd app install --frozen-lockfile
+yarn release:source:local
+```
+
+`yarn release:source:local` runs
+`scripts/build-local-release-from-source.sh`. It builds
+`release/aimux-local-<platform>-<arch>.tar.gz` with `BUILD_VARIANT=local`,
+generates the `.sha256`, `.provenance.json`, and `.sbom.spdx.json` companions,
+then verifies the archive shape, provenance/SBOM, local-only boundary, and an
+isolated install smoke with `AIMUX_INSTALL_VARIANT=local`. The generic
+`yarn release:source --variant full` path performs the same checks for the full
+variant and produces the existing unsuffixed `aimux-<platform>-<arch>.tar.gz`
+archive.
+
+The local source-build script currently requests `AIMUX_BUILD_PROFILE=local`
+only to keep UI/docs out of the reviewer archive. That is packaging shape, not
+the local-only security claim; the security lane is the archive
+`BUILD_VARIANT=local` stamp. Recommendation: rename the packaging axis to
+`PACKAGE_PROFILE=full|minimal` in a follow-up while preserving compatibility
+reads for legacy `BUILD_PROFILE=full|local`.
 
 ### Verify a release
 
@@ -227,13 +255,13 @@ gh run watch                            # or: gh run list --workflow=release.yml
 gh release view v<version>              # eight assets + sha256/provenance/SBOM companions
 npm view aimux-cli version
 brew update && brew info aimux
-brew info aimux-lite
+brew info aimux-local
 ```
 
 The three surfaces should agree on the version. `scripts/install.sh` pulls the
 same full GitHub Release asset by default, so a standalone install of
-`AIMUX_VERSION=v<version>` is the fourth check. Lite installs must set
-`AIMUX_INSTALL_VARIANT=lite`; the installer refuses an archive whose
+`AIMUX_VERSION=v<version>` is the fourth check. Local installs must set
+`AIMUX_INSTALL_VARIANT=local`; the installer refuses an archive whose
 `BUILD_VARIANT` does not match the requested install lane.
 
 ## Architecture
