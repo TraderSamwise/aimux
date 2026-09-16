@@ -101,15 +101,12 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "graveyard"
             | "handoff"
             | "host"
-            | "hosted"
             | "id"
             | "init"
             | "input"
             | "kill"
             | "list"
             | "list-notifications"
-            | "login"
-            | "logout"
             | "logs"
             | "loop"
             | "message"
@@ -123,7 +120,6 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "projects"
             | "ps"
             | "read-notifications"
-            | "remote"
             | "rename"
             | "repair"
             | "restart"
@@ -131,7 +127,6 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "review"
             | "rewrite"
             | "scribe"
-            | "security"
             | "serve"
             | "service"
             | "spawn"
@@ -141,12 +136,24 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "thread"
             | "threads"
             | "ui"
-            | "whoami"
             | "worktree"
             | "__dashboard-internal-native"
             | "__tmux-control-internal"
             | "__tmux-statusline-internal"
             | "__tmux-open-hyperlink-internal"
             | "__project-service-internal"
+    ) || remote_control_command_word(word)
+}
+
+#[cfg(feature = "remote-control")]
+fn remote_control_command_word(word: &str) -> bool {
+    matches!(
+        word,
+        "hosted" | "login" | "logout" | "remote" | "security" | "whoami"
     )
+}
+
+#[cfg(not(feature = "remote-control"))]
+fn remote_control_command_word(_word: &str) -> bool {
+    false
 }

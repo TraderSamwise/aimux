@@ -66,6 +66,33 @@
       "input": { "api": "readAimuxBuildProfileFromPackageRoot", "files": { "BUILD_PROFILE": "enterprise\n" } },
       "output": "full",
       "inputSha256": "bdbf092606d5599548d87ddf595c5b2d1abe21b45ec9cba8ead3f1ec8602f59f"
+    },
+    {
+      "id": "release-version-007",
+      "name": "prefers the installed artifact BUILD_VARIANT label",
+      "source": "src/version.test.ts",
+      "sourceName": "prefers the installed artifact BUILD_VARIANT label",
+      "api": "readAimuxBuildVariantFromPackageRoot",
+      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "files": { "BUILD_VARIANT": "lite\n" } },
+      "output": "lite"
+    },
+    {
+      "id": "release-version-008",
+      "name": "falls back to env build variant for source checkouts",
+      "source": "src/version.test.ts",
+      "sourceName": "falls back to env build variant for source checkouts",
+      "api": "readAimuxBuildVariantFromPackageRoot",
+      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": "lite", "files": {} },
+      "output": "lite"
+    },
+    {
+      "id": "release-version-009",
+      "name": "ignores unknown variant labels",
+      "source": "src/version.test.ts",
+      "sourceName": "ignores unknown variant labels",
+      "api": "readAimuxBuildVariantFromPackageRoot",
+      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": "enterprise", "files": { "BUILD_VARIANT": "work\n" } },
+      "output": "full"
     }
   ]
 }

@@ -158,16 +158,27 @@ pub enum CoreCliOperation {
     ProjectsList,
     ProjectsRemove,
     Restart,
+    #[cfg(feature = "remote-control")]
     RemoteStatus,
+    #[cfg(feature = "remote-control")]
     RemoteEnable,
+    #[cfg(feature = "remote-control")]
     RemoteDisable,
+    #[cfg(feature = "remote-control")]
     Whoami,
+    #[cfg(feature = "remote-control")]
     Logout,
+    #[cfg(feature = "remote-control")]
     Login,
+    #[cfg(feature = "remote-control")]
     SecurityUnlock,
+    #[cfg(feature = "remote-control")]
     SecurityDevices,
+    #[cfg(feature = "remote-control")]
     SecurityDeviceApprove,
+    #[cfg(feature = "remote-control")]
     SecurityDeviceBlock,
+    #[cfg(feature = "remote-control")]
     SecurityDeviceUnblock,
     DebugState,
 }
@@ -177,11 +188,17 @@ pub enum CoreCliOperation {
 pub enum CoreCliFallback {
     None,
     StoredDaemonStatus,
+    #[cfg(feature = "remote-control")]
     RelayOff,
+    #[cfg(feature = "remote-control")]
     NotLoggedIn,
+    #[cfg(feature = "remote-control")]
     DisableRemoteLocally,
+    #[cfg(feature = "remote-control")]
     IgnoreRelayDisableFailure,
+    #[cfg(feature = "remote-control")]
     RelayDisconnected,
+    #[cfg(feature = "remote-control")]
     RelayDeferredUntilDaemonStart,
     MissingDashboardTarget,
     EmptyLogTail,
@@ -257,30 +274,39 @@ pub enum CoreCliAction {
     Compact {
         project_root: String,
     },
+    #[cfg(feature = "remote-control")]
     RemoteStatus {
         relay_request: Option<CoreCommandCall>,
     },
+    #[cfg(feature = "remote-control")]
     RemoteEnable {
         relay_request: Option<CoreCommandCall>,
     },
+    #[cfg(feature = "remote-control")]
     RemoteDisable {
         relay_request: Option<CoreCommandCall>,
     },
+    #[cfg(feature = "remote-control")]
     Whoami,
+    #[cfg(feature = "remote-control")]
     Logout {
         relay_disable: Option<CoreCommandCall>,
     },
+    #[cfg(feature = "remote-control")]
     Login {
         security_unlock: bool,
         relay_enable: Option<CoreCommandCall>,
     },
+    #[cfg(feature = "remote-control")]
     SecurityDevices {
         json: bool,
     },
+    #[cfg(feature = "remote-control")]
     SecurityDeviceApproveLive {
         device_id: Option<String>,
         json: bool,
     },
+    #[cfg(feature = "remote-control")]
     SecurityDeviceUpdate {
         device_id: String,
         action: &'static str,
@@ -2230,6 +2256,7 @@ where
                 CoreCliFallback::None,
             )
         }
+        #[cfg(feature = "remote-control")]
         ("remote", "status") => {
             let relay_request = (context.has_credentials && context.daemon_running)
                 .then(|| existing_daemon_call(CORE_COMMAND_NAMES.relay_status));
@@ -2239,6 +2266,7 @@ where
                 CoreCliFallback::RelayOff,
             )
         }
+        #[cfg(feature = "remote-control")]
         ("remote", "enable") => {
             let relay_request = context
                 .has_credentials
@@ -2253,6 +2281,7 @@ where
                 },
             )
         }
+        #[cfg(feature = "remote-control")]
         ("remote", "disable") => {
             let relay_request = context
                 .daemon_running
@@ -2267,11 +2296,13 @@ where
                 },
             )
         }
+        #[cfg(feature = "remote-control")]
         ("whoami", _) => (
             CoreCliOperation::Whoami,
             CoreCliAction::Whoami,
             CoreCliFallback::None,
         ),
+        #[cfg(feature = "remote-control")]
         ("logout", _) => (
             CoreCliOperation::Logout,
             CoreCliAction::Logout {
@@ -2285,6 +2316,7 @@ where
                 CoreCliFallback::None
             },
         ),
+        #[cfg(feature = "remote-control")]
         ("login", _) | ("security", "unlock") => {
             let security_unlock = command == "security";
             let relay_enable = context
@@ -2307,6 +2339,7 @@ where
                 },
             )
         }
+        #[cfg(feature = "remote-control")]
         ("security", "devices") if args[2..].iter().all(|arg| arg == "--json") => (
             CoreCliOperation::SecurityDevices,
             CoreCliAction::SecurityDevices {
@@ -2314,6 +2347,7 @@ where
             },
             CoreCliFallback::None,
         ),
+        #[cfg(feature = "remote-control")]
         ("security", "device") if args.get(2).map(String::as_str) == Some("approve") => {
             let parsed = parse_security_device_approve_live_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
@@ -2330,6 +2364,7 @@ where
                 CoreCliFallback::None,
             )
         }
+        #[cfg(feature = "remote-control")]
         ("security", "approve" | "block" | "revoke" | "unblock") => {
             let parsed = parse_security_device_update_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
@@ -2370,12 +2405,14 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(feature = "remote-control")]
 struct SecurityDeviceApproveLiveArgs {
     device_id: Option<String>,
     json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(feature = "remote-control")]
 struct SecurityDeviceUpdateArgs {
     device_id: String,
     action: &'static str,
@@ -2383,6 +2420,7 @@ struct SecurityDeviceUpdateArgs {
     json: bool,
 }
 
+#[cfg(feature = "remote-control")]
 fn parse_security_device_approve_live_args(
     args: &[String],
 ) -> Option<SecurityDeviceApproveLiveArgs> {
@@ -2404,6 +2442,7 @@ fn parse_security_device_approve_live_args(
     Some(SecurityDeviceApproveLiveArgs { device_id, json })
 }
 
+#[cfg(feature = "remote-control")]
 fn parse_security_device_update_args(args: &[String]) -> Option<SecurityDeviceUpdateArgs> {
     let action = match args.get(1)?.as_str() {
         "approve" => "approve",

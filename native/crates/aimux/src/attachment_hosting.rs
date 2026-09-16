@@ -5,7 +5,9 @@
 //! published record carries the relay's URL instead. When remote is off this is
 //! a no-op — publishing still works, the attachment is just local-only.
 
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(feature = "remote-control")]
+use serde_json::json;
 use std::path::Path;
 
 /// Longest we wait for the relay to take an upload. Publishing is interactive,
@@ -49,6 +51,7 @@ pub enum AttachmentHostingResult {
 }
 
 impl AttachmentHostingResult {
+    #[cfg(feature = "remote-control")]
     fn local_only(reason: impl Into<String>) -> Self {
         Self::LocalOnly {
             warning: format!("relay attachment hosting failed: {}", reason.into()),
@@ -62,6 +65,7 @@ impl AttachmentHostingResult {
 /// on the same host. Returns `None` for anything that is not a relay URL we
 /// recognise, so a malformed credential cannot become a request to some other
 /// scheme or host.
+#[cfg(feature = "remote-control")]
 pub fn relay_http_url(relay_url: &str) -> Option<String> {
     let trimmed = relay_url.trim();
     let (scheme, rest) = trimmed.split_once("://")?;
@@ -78,6 +82,7 @@ pub fn relay_http_url(relay_url: &str) -> Option<String> {
 }
 
 /// The upload body. Split out so the shape is testable without a relay.
+#[cfg(feature = "remote-control")]
 pub fn upload_body(filename: &str, mime_type: &str, data_base64: &str, session_id: &str) -> Value {
     json!({
         "filename": filename,
@@ -91,6 +96,7 @@ pub fn upload_body(filename: &str, mime_type: &str, data_base64: &str, session_i
 ///
 /// A 200 with `ok: true` and no `contentUrl` is a relay that agreed to nothing;
 /// treating it as success would publish an attachment pointing at nowhere.
+#[cfg(feature = "remote-control")]
 pub fn parse_hosted_response(status: u16, body: &Value) -> Result<HostedAttachment, String> {
     if status >= 400 {
         return Err(error_message(body).unwrap_or_else(|| format!("HTTP {status}")));
@@ -124,6 +130,7 @@ pub fn parse_hosted_response(status: u16, body: &Value) -> Result<HostedAttachme
     })
 }
 
+#[cfg(feature = "remote-control")]
 fn validate_hosted_content_url(content_url: &str) -> Result<String, String> {
     let trimmed = content_url.trim();
     if trimmed.is_empty() {
@@ -152,6 +159,7 @@ fn validate_hosted_content_url(content_url: &str) -> Result<String, String> {
     }
 }
 
+#[cfg(feature = "remote-control")]
 fn hosted_content_url_authority(rest: &str) -> Option<&str> {
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     if authority.is_empty() || authority.contains('@') {
@@ -160,6 +168,7 @@ fn hosted_content_url_authority(rest: &str) -> Option<&str> {
     Some(authority)
 }
 
+#[cfg(feature = "remote-control")]
 fn is_loopback_authority(authority: &str) -> bool {
     let host = if let Some(rest) = authority.strip_prefix('[') {
         let (host, _) = rest.split_once(']').unwrap_or((rest, ""));
@@ -173,6 +182,7 @@ fn is_loopback_authority(authority: &str) -> bool {
     )
 }
 
+#[cfg(feature = "remote-control")]
 fn error_message(body: &Value) -> Option<String> {
     body.get("error")
         .and_then(Value::as_str)
@@ -181,6 +191,7 @@ fn error_message(body: &Value) -> Option<String> {
 }
 
 /// Base64 without a dependency, so one small encoder does not pull a crate in.
+#[cfg(feature = "remote-control")]
 pub fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -248,8 +259,10 @@ pub trait AttachmentUploader {
     fn post_json(&self, url: &str, token: &str, body: &Value) -> Result<(u16, Value), String>;
 }
 
+#[cfg(feature = "remote-control")]
 pub struct HttpAttachmentUploader;
 
+#[cfg(feature = "remote-control")]
 impl AttachmentUploader for HttpAttachmentUploader {
     fn post_json(&self, url: &str, token: &str, body: &Value) -> Result<(u16, Value), String> {
         let response = ureq::post(url)
@@ -286,6 +299,7 @@ pub struct PublishedAttachmentHostInput<'a> {
 ///
 /// Every failure here is non-fatal by design: publishing must still work when
 /// the relay is off, unreachable, or refuses the file.
+#[cfg(feature = "remote-control")]
 pub fn maybe_host_published_attachment(
     input: &PublishedAttachmentHostInput<'_>,
     relay_url: &str,
@@ -323,4 +337,15 @@ pub fn maybe_host_published_attachment(
             AttachmentHostingResult::local_only(error)
         }
     }
+}
+
+#[cfg(not(feature = "remote-control"))]
+pub fn maybe_host_published_attachment(
+    _input: &PublishedAttachmentHostInput<'_>,
+    _relay_url: &str,
+    _token: &str,
+    _remote_enabled: bool,
+    _uploader: &dyn AttachmentUploader,
+) -> AttachmentHostingResult {
+    AttachmentHostingResult::Skipped
 }

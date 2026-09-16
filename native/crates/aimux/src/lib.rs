@@ -57,16 +57,27 @@ pub mod expose_pane_output_tap;
 pub mod expose_socket;
 pub mod git_clone_guard;
 pub mod git_delivery;
+#[cfg(feature = "remote-control")]
 pub mod hosted_audit;
+#[cfg(feature = "remote-control")]
 pub mod hosted_auth;
+#[cfg(feature = "remote-control")]
 pub mod hosted_cli;
+#[cfg(feature = "remote-control")]
 pub mod hosted_config;
+#[cfg(feature = "remote-control")]
 pub mod hosted_events;
+#[cfg(feature = "remote-control")]
 pub mod hosted_lock;
+#[cfg(feature = "remote-control")]
 pub mod hosted_lockdown;
+#[cfg(feature = "remote-control")]
 pub mod hosted_outbox;
+#[cfg(feature = "remote-control")]
 pub mod hosted_principals;
+#[cfg(feature = "remote-control")]
 pub mod hosted_rate_limit;
+#[cfg(feature = "remote-control")]
 pub mod hosted_server;
 pub mod inbox_cleanup;
 pub mod install_cleanup;
@@ -77,6 +88,7 @@ pub mod local_ui_server;
 pub mod logs;
 pub mod loop_watcher;
 pub mod managed_launch_env;
+#[cfg(feature = "remote-control")]
 pub mod mobile_push_bridge;
 pub mod native_cli_dispatch;
 pub mod native_plugin_gh_pr_context;
@@ -99,12 +111,17 @@ pub mod project_service;
 pub mod project_service_manifest;
 pub mod proxy_project_binding;
 pub mod recording_cleanup;
+#[cfg(feature = "remote-control")]
 pub mod relay_client;
+#[cfg(feature = "remote-control")]
 pub mod relay_runner;
 pub mod release_version_contract;
 pub mod remote_access;
+#[cfg(feature = "remote-control")]
 pub mod remote_credentials;
+#[cfg(feature = "remote-control")]
 pub mod remote_login;
+#[cfg(feature = "remote-control")]
 pub mod remote_security_devices;
 pub mod repair_events;
 pub mod root_session_launch;
@@ -154,6 +171,7 @@ pub mod tui_render;
 pub mod tui_screen_renderers;
 pub mod user_facing_errors;
 pub mod visual_client_leases;
+#[cfg(feature = "remote-control")]
 pub mod websocket;
 
 pub use build_info::{BuildInfo, build_info};

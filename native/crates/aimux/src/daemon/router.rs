@@ -6,6 +6,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::status::{DaemonStatusRuntime, route_status_request};
 use crate::daemon::text::agents::{DaemonAgentTextRuntime, route_agent_text_request};
+#[cfg(feature = "remote-control")]
 use crate::daemon::text::auth::{DaemonAuthTextRuntime, route_auth_text_request};
 use crate::daemon::text::collaboration::{
     DaemonCollaborationTextRuntime, route_collaboration_text_request,
@@ -29,6 +30,18 @@ use crate::remote_access::RemoteAccessDecision;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+#[cfg(feature = "remote-control")]
+pub trait MaybeDaemonAuthTextRuntime: DaemonAuthTextRuntime {}
+
+#[cfg(feature = "remote-control")]
+impl<T> MaybeDaemonAuthTextRuntime for T where T: DaemonAuthTextRuntime {}
+
+#[cfg(not(feature = "remote-control"))]
+pub trait MaybeDaemonAuthTextRuntime {}
+
+#[cfg(not(feature = "remote-control"))]
+impl<T> MaybeDaemonAuthTextRuntime for T {}
+
 pub trait DaemonRouteRuntime:
     DaemonStatusRuntime
     + DaemonCoreCommandRuntime
@@ -44,7 +57,7 @@ pub trait DaemonRouteRuntime:
     + DaemonWorktreeTextRuntime
     + DaemonCollaborationTextRuntime
     + DaemonProjectContentTextRuntime
-    + DaemonAuthTextRuntime
+    + MaybeDaemonAuthTextRuntime
     + DaemonJsonRouteRuntime
 {
 }
@@ -64,7 +77,7 @@ impl<T> DaemonRouteRuntime for T where
         + DaemonWorktreeTextRuntime
         + DaemonCollaborationTextRuntime
         + DaemonProjectContentTextRuntime
-        + DaemonAuthTextRuntime
+        + MaybeDaemonAuthTextRuntime
         + DaemonJsonRouteRuntime
 {
 }
@@ -180,6 +193,7 @@ pub fn route_daemon_request(
     if let Some(response) = route_project_content_text_request(runtime, method, path, body) {
         return response;
     }
+    #[cfg(feature = "remote-control")]
     if let Some(response) = route_auth_text_request(runtime, method, path) {
         return response;
     }
