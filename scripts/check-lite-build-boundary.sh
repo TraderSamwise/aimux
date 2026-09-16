@@ -5,7 +5,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/check-lite-build-boundary.sh [options]
 
-Checks that a lite aimux binary does not contain remote-control surfaces.
+Checks that an aimux binary matches the full/lite local-only build boundary.
 
 Options:
   --variant <lite|full>          Boundary to check (default: lite)
@@ -152,9 +152,9 @@ if [ "$SKIP_CARGO_TREE" -eq 0 ]; then
   fi
 fi
 
-remote_dependency_pattern='(^|[[:space:]])(tokio-tungstenite|tungstenite|ureq)[[:space:]]+v'
+remote_dependency_pattern='(^|[[:space:]])(tokio-tungstenite|tungstenite|ureq|reqwest|hyper|h2|native-tls|openssl|curl)[[:space:]]+v'
 remote_help_pattern='^[[:space:]]{2}(remote|hosted|login|logout|whoami|security)([[:space:]]|$)'
-remote_string_pattern='AIMUX_RELAY_URL|wss://relay[.]aimux[.]app|relay_client|relay_runner|daemon::relay|daemon/relay|tokio[-_]tungstenite|tungstenite|ureq'
+remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|tokio[-_]tungstenite|tungstenite|ureq|hosted_server|hosted_cli|remote_login|remote_security_devices|maybe_host_published_attachment|attachments/hosted'
 
 if [ "$VARIANT" = "lite" ]; then
   if [ "$SKIP_CARGO_TREE" -eq 0 ] && grep -E "$remote_dependency_pattern" "$TREE_FILE" >/dev/null; then
@@ -169,7 +169,7 @@ if [ "$VARIANT" = "lite" ]; then
   fi
   if grep -E "$remote_string_pattern" "$STRINGS_FILE" >/dev/null; then
     printf 'Lite binary contains remote-control strings:\n' >&2
-    grep -E "$remote_string_pattern" "$STRINGS_FILE" | head -20 >&2
+    grep -E "$remote_string_pattern" "$STRINGS_FILE" >&2
     exit 1
   fi
 else

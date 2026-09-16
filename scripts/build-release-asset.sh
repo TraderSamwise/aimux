@@ -30,7 +30,7 @@ need() {
 
 append_standard_path_dirs
 
-for command in dirname awk grep uname mktemp date cat shasum find sort cargo mkdir cp tar gzip bash chmod rm; do
+for command in dirname awk grep uname mktemp date cat shasum find sort cargo mkdir cp tar gzip bash chmod rm node; do
   need "$command"
 done
 
@@ -191,5 +191,20 @@ bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$OUT_DIR/$ASSET" "$PLATFORM-$A
   cd "$OUT_DIR"
   shasum -a 256 "$ASSET" > "$ASSET.sha256"
 )
+SOURCE_REVISION="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)"
+SOURCE_REF_ARGS=()
+if [ -n "${GITHUB_REF_NAME:-}" ]; then
+  SOURCE_REF_ARGS=(--source-ref "$GITHUB_REF_NAME")
+fi
+node "$ROOT_DIR/scripts/write-release-provenance.mjs" \
+  --release-dir "$OUT_DIR" \
+  --asset "$ASSET" \
+  --platform-arch "$PLATFORM-$ARCH" \
+  --variant "$BUILD_VARIANT" \
+  --profile "$BUILD_PROFILE" \
+  --version "$VERSION" \
+  --build-stamp "$BUILD_STAMP" \
+  --source-revision "$SOURCE_REVISION" \
+  "${SOURCE_REF_ARGS[@]}"
 
 printf 'Built %s\n' "$OUT_DIR/$ASSET"

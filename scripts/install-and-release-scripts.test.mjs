@@ -123,6 +123,7 @@ function releaseScriptEnv(root, extra = {}) {
     grep: runOk("bash", ["-lc", "command -v grep"]).stdout.trim(),
     mkdir: runOk("bash", ["-lc", "command -v mkdir"]).stdout.trim(),
     mktemp: runOk("bash", ["-lc", "command -v mktemp"]).stdout.trim(),
+    node: runOk("bash", ["-lc", "command -v node"]).stdout.trim(),
     rm: runOk("bash", ["-lc", "command -v rm"]).stdout.trim(),
     sed: runOk("bash", ["-lc", "command -v sed"]).stdout.trim(),
     shasum: runOk("bash", ["-lc", "command -v shasum"]).stdout.trim(),
@@ -179,6 +180,10 @@ esac
   writeExecutable(
     join(bin, "cargo"),
     `#!/bin/sh
+if [ "$1" = "metadata" ]; then
+  printf '%s\\n' '{"packages":[{"id":"path+file:///fixture#aimux@0.0.0","name":"aimux","version":"0.0.0","authors":["Aimux"],"license":"MIT"}],"resolve":{"root":"path+file:///fixture#aimux@0.0.0"}}'
+  exit 0
+fi
 mkdir -p "$CARGO_TARGET_DIR/release"
 printf '%s\\n' "$*" > "${root}/cargo-args.txt"
 {
@@ -408,6 +413,75 @@ describe("verify-release-asset-set.sh", () => {
     runOk("tar", ["-czf", join(root, asset), "-C", archiveRoot, "aimux"]);
     const sha = runOk("shasum", ["-a", "256", asset], { cwd: root }).stdout;
     writeFileSync(join(root, `${asset}.sha256`), sha);
+    const shaValue = sha.split(/\s+/)[0];
+    writeFileSync(
+      join(root, `${asset}.provenance.json`),
+      `${JSON.stringify(
+        {
+          schemaVersion: "https://aimux.app/schemas/release-provenance.v1.json",
+          package: "aimux",
+          version: "0.1.34",
+          source: {
+            repository: "https://github.com/TraderSamwise/aimux",
+            revision: "1234567890abcdef1234567890abcdef12345678",
+            ref: "v0.1.34",
+          },
+          build: {
+            profile: "full",
+            variant,
+            platformArch,
+            buildStamp: `stamp-${asset}`,
+          },
+          artifact: {
+            name: asset,
+            sha256: shaValue,
+            buildProfile: "full",
+            buildVariant: variant,
+            platformArch,
+          },
+          gates: {
+            assetSet: "scripts/verify-release-asset-set.sh",
+            boundary: "scripts/check-lite-build-boundary.sh",
+            attestation: `gh attestation verify ${asset} --repo TraderSamwise/aimux`,
+          },
+          generatedAt: "2026-09-16T00:00:00.000Z",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(
+      join(root, `${asset}.sbom.spdx.json`),
+      `${JSON.stringify(
+        {
+          spdxVersion: "SPDX-2.3",
+          dataLicense: "CC0-1.0",
+          SPDXID: "SPDXRef-DOCUMENT",
+          name: `${asset}.sbom`,
+          documentNamespace: `https://aimux.app/sbom/test/${asset}/${shaValue}`,
+          creationInfo: {
+            created: "2026-09-16T00:00:00Z",
+            creators: ["Tool: fixture"],
+          },
+          documentDescribes: ["SPDXRef-aimux"],
+          packages: [
+            {
+              name: "aimux",
+              SPDXID: "SPDXRef-aimux",
+              versionInfo: "0.1.34",
+              downloadLocation: "NOASSERTION",
+              filesAnalyzed: false,
+              supplier: "Organization: Aimux",
+              licenseConcluded: "NOASSERTION",
+              licenseDeclared: "MIT",
+              copyrightText: "NOASSERTION",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
   }
 
   function writeAssetSet(root, omitted = undefined) {
@@ -490,6 +564,43 @@ describe("verify-release-asset-set.sh", () => {
     }
   });
 
+  it("distinguishes a missing provenance file from checksum and archive failures", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
+    try {
+      writeAssetSet(root);
+      rmSync(join(root, "aimux-linux-x64.tar.gz.provenance.json"));
+
+      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("missing release provenance file");
+      expect(result.stderr).toContain("aimux-linux-x64.tar.gz.provenance.json");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stale provenance that names the old artifact digest", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
+    try {
+      writeAssetSet(root);
+      const asset = "aimux-lite-linux-x64.tar.gz";
+      const provenancePath = join(root, `${asset}.provenance.json`);
+      const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
+      provenance.artifact.sha256 = "0".repeat(64);
+      writeFileSync(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`);
+
+      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("release provenance verification failed");
+      expect(result.stderr).toContain("provenance sha256 mismatch");
+      expect(result.stderr).toContain(asset);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an archive whose BUILD_VARIANT does not match its asset lane", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
@@ -501,6 +612,71 @@ describe("verify-release-asset-set.sh", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("release asset BUILD_VARIANT mismatch");
       expect(result.stderr).toContain("expected lite, got full");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("check-lite-build-boundary.sh", () => {
+  it("rejects lite binaries containing hosted or remote-control identities", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-lite-boundary-"));
+    try {
+      const binary = join(root, "aimux");
+      writeExecutable(
+        binary,
+        `#!/usr/bin/env sh
+if [ "$1" = "--help" ]; then
+  printf 'Usage: aimux\\n\\nCommands:\\n  init\\n'
+  exit 0
+fi
+printf 'hosted_server\\n'
+`,
+      );
+
+      const result = run("bash", [
+        join(repoRoot, "scripts/check-lite-build-boundary.sh"),
+        "--variant",
+        "lite",
+        "--binary",
+        binary,
+        "--skip-cargo-tree",
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Lite binary contains remote-control strings");
+      expect(result.stderr).toContain("hosted_server");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a lite binary with no remote-control help or strings", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-lite-boundary-"));
+    try {
+      const binary = join(root, "aimux");
+      writeExecutable(
+        binary,
+        `#!/usr/bin/env sh
+if [ "$1" = "--help" ]; then
+  printf 'Usage: aimux\\n\\nCommands:\\n  init\\n'
+  exit 0
+fi
+printf 'local aimux fixture\\n'
+`,
+      );
+
+      const result = run("bash", [
+        join(repoRoot, "scripts/check-lite-build-boundary.sh"),
+        "--variant",
+        "lite",
+        "--binary",
+        binary,
+        "--skip-cargo-tree",
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("aimux lite build boundary check passed");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -540,6 +716,10 @@ describe("release workflow", () => {
     expect(workflow).toContain("--archive release/${{ matrix.asset }}.tar.gz");
     expect(workflow).toContain("--platform-arch ${{ matrix.platform }}-${{ matrix.arch }}");
     expect(workflow).toContain("bash scripts/verify-release-asset-set.sh release-check");
+    expect(workflow).toContain("release/${{ matrix.asset }}.tar.gz.provenance.json");
+    expect(workflow).toContain("release/${{ matrix.asset }}.tar.gz.sbom.spdx.json");
+    expect(workflow).toContain("actions/attest-build-provenance@v2");
+    expect(workflow).toContain('gh attestation verify "release-check/${a}.tar.gz"');
     expect(workflow).not.toContain("--lite-boundary-checker");
   });
 

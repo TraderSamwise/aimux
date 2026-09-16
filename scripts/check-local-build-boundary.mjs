@@ -98,9 +98,31 @@ function checkRuntimeScripts() {
   );
 }
 
+function checkProjectGitignoreBoundary() {
+  const config = read("native/crates/aimux/src/config.rs");
+  const requiredIgnoredStores = [
+    "context/",
+    "history/",
+    "tasks/",
+    "status/",
+    "threads/",
+    "attachments/",
+    "graveyard/",
+    "recordings/",
+    "plans/",
+    "worktrees/",
+  ];
+  for (const store of requiredIgnoredStores) {
+    if (!config.includes(store)) {
+      fail(`project .aimux/.gitignore template does not ignore ${store}`);
+    }
+  }
+}
+
 checkSourceBoundary();
 checkPackageBoundary();
 checkRuntimeScripts();
+checkProjectGitignoreBoundary();
 
 if (failures.length > 0) {
   console.error("Local build boundary check failed:");
