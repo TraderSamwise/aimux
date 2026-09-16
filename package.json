@@ -77,7 +77,7 @@
     "native:clippy": "CARGO_INCREMENTAL=0 cargo clippy --manifest-path native/Cargo.toml -p aimux -- -D warnings",
     "native:clippy:all-targets": "CARGO_INCREMENTAL=0 cargo clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
     "native:lite-boundary": "CARGO_INCREMENTAL=0 bash scripts/check-lite-build-boundary.sh",
-    "security:local-only:gate": "node scripts/check-local-only-release-gate.mjs",
+    "security:local-only:gate": "bash scripts/check-local-only-release-gate.sh",
     "native:fmt": "cargo fmt --manifest-path native/Cargo.toml",
     "native:fmt:check": "cargo fmt --manifest-path native/Cargo.toml --check",
     "native:fmt:staged": "bash scripts/check-staged-rustfmt.sh",

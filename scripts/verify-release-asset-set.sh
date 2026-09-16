@@ -22,7 +22,7 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-for command in grep shasum tar mktemp rm sed node; do
+for command in grep shasum tar mktemp rm sed; do
   need "$command"
 done
 
@@ -130,7 +130,7 @@ for platform in darwin linux; do
         missing=1
       fi
       if [ -f "$asset_path" ] && [ -f "$sha_path" ] && [ -f "$provenance_path" ] && [ -f "$sbom_path" ]; then
-        if ! node "$ROOT_DIR/scripts/verify-release-provenance.mjs" "$RELEASE_DIR" "$asset" "${platform}-${arch}" "$variant"; then
+        if ! bash "$ROOT_DIR/scripts/verify-release-provenance.sh" "$RELEASE_DIR" "$asset" "${platform}-${arch}" "$variant"; then
           missing=1
         fi
       fi

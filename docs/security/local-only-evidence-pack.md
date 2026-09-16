@@ -168,8 +168,8 @@ asset, checksum, provenance, and SBOM files they download.
 Enforcing checks:
 
 ```bash
-node scripts/write-release-provenance.mjs ...
-node scripts/verify-release-provenance.mjs <release-dir> <asset> <platform-arch> <variant>
+bash scripts/write-release-provenance.sh ...
+bash scripts/verify-release-provenance.sh <release-dir> <asset> <platform-arch> <variant>
 gh attestation verify <asset> --repo TraderSamwise/aimux
 ```
 
@@ -267,4 +267,3 @@ enforcing check for:
 
 Until that gate is green, the local-only claim must not be expanded to
 "all Aimux local state is owner-only by construction."
-
