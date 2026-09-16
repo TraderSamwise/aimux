@@ -118,6 +118,7 @@ rewrite_contract
 runtime_topology
 runtime_topology_state_save
 scribe_watcher_guards
+secure_permissions
 session_launch
 state_update_lock
 terminal_key_parser_contract

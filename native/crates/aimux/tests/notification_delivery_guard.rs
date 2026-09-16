@@ -10,7 +10,7 @@ use aimux::notification_delivery_guard::{
     fixture_notification_refusal_reason_for_event, fixture_notification_refusal_reason_for_payload,
 };
 use serde_json::json;
-use std::fs::{read_to_string, remove_file};
+use std::fs::{create_dir_all, read_to_string, remove_dir_all, remove_file};
 use std::path::PathBuf;
 
 #[test]
@@ -129,11 +129,13 @@ fn cargo_test_process_refuses_external_event_delivery_without_fixture_marker() {
 
 #[test]
 fn refused_external_payload_delivery_is_debug_logged() {
-    let log_path = std::env::temp_dir().join(format!(
-        "aimux-notification-delivery-guard-{}-{}.jsonl",
+    let log_dir = std::env::temp_dir().join(format!(
+        "aimux-notification-delivery-guard-{}-{}",
         std::process::id(),
         0
     ));
+    create_dir_all(&log_dir).expect("create debug log dir");
+    let log_path = log_dir.join("debug.jsonl");
     let _ = remove_file(&log_path);
     configure_logging(LoggingRuntimeConfig {
         enabled: true,
@@ -162,5 +164,5 @@ fn refused_external_payload_delivery_is_debug_logged() {
     assert!(raw.contains("external notification delivery refused"));
     assert!(raw.contains("\"reason\":\"cargo test harness\""));
     assert!(raw.contains("\"category\":\"notifications\""));
-    let _ = remove_file(log_path);
+    let _ = remove_dir_all(log_dir);
 }

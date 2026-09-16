@@ -271,7 +271,7 @@ fn corrupt_repair_history_errors_and_is_not_overwritten() {
 }
 
 #[test]
-fn repair_history_write_failure_is_reported_and_preserves_attempts() {
+fn repair_history_readonly_file_is_repaired_and_preserves_attempts() {
     with_home(|home| {
         record_attempt_result(home, "/p", 120_000, 1_000).expect("initial record");
         let path = history_path(home);
@@ -280,13 +280,14 @@ fn repair_history_write_failure_is_reported_and_preserves_attempts() {
         readonly_permissions.set_readonly(true);
         fs::set_permissions(&path, readonly_permissions).expect("make history read only");
 
-        let error = record_attempt_result(home, "/p", 120_000, 2_000).unwrap_err();
+        let attempts =
+            record_attempt_result(home, "/p", 120_000, 2_000).expect("readonly history repaired");
 
         fs::set_permissions(&path, original_permissions).expect("restore history permissions");
-        assert!(error.contains("could not write runtime guard repair history"));
+        assert_eq!(attempts, vec![1_000, 2_000]);
         assert_eq!(
             load_attempts_result(home, "/p", 120_000, 2_000).unwrap(),
-            vec![1_000]
+            attempts
         );
         json!(null)
     });

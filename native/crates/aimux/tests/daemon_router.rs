@@ -979,10 +979,12 @@ fn unified_router_refuses_temp_project_root_before_dispatch() {
 
 #[test]
 fn unified_router_logs_materialization_refusals() {
-    let log_path = std::env::temp_dir().join(format!(
-        "aimux-daemon-router-refusal-{}.jsonl",
+    let log_dir = std::env::temp_dir().join(format!(
+        "aimux-daemon-router-refusal-{}",
         std::process::id()
     ));
+    fs::create_dir_all(&log_dir).expect("create debug log dir");
+    let log_path = log_dir.join("debug.jsonl");
     let _ = remove_file(&log_path);
     configure_logging(LoggingRuntimeConfig {
         enabled: true,
@@ -1015,7 +1017,7 @@ fn unified_router_logs_materialization_refusals() {
     assert!(raw.contains("\"category\":\"materialization\""));
     assert!(raw.contains("\"reason\":\"temporary project\""));
     assert!(raw.contains("/private/tmp/aimux-expose-dashboard-cmd.0VRgam/repo"));
-    let _ = remove_file(log_path);
+    let _ = fs::remove_dir_all(log_dir);
 }
 
 #[test]

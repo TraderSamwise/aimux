@@ -212,8 +212,8 @@ fn corrupt_exchange_makes_notification_routes_fail_instead_of_empty() {
 }
 
 #[test]
-fn notification_write_failure_is_reported_not_counted_successful() {
-    let project = temp_project("write-failure");
+fn notification_write_repairs_readonly_state_dir_and_counts_successful() {
+    let project = temp_project("write-repair");
     let state_dir = project.join("state");
     seed_exchange(&state_dir);
     set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).expect("lock state dir");
@@ -227,15 +227,9 @@ fn notification_write_failure_is_reported_not_counted_successful() {
     );
 
     set_permissions(&state_dir, std::fs::Permissions::from_mode(0o700)).expect("unlock state dir");
-    assert_eq!(response.status, 500);
-    assert_eq!(response.body["ok"], false);
-    assert!(
-        response.body["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("failed to update notification store")),
-        "write failure must be visible, not counted as cleared: {}",
-        response.body
-    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(response.body["cleared"], 1);
     let snapshot = list_notification_snapshot(
         &state_dir,
         NotificationQuery {
@@ -244,6 +238,19 @@ fn notification_write_failure_is_reported_not_counted_successful() {
         },
     );
     assert_eq!(snapshot.total, 2);
+    assert_eq!(
+        snapshot
+            .notifications
+            .iter()
+            .filter(|record| {
+                record
+                    .get("cleared")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+            })
+            .count(),
+        1
+    );
     cleanup(project);
 }
 
