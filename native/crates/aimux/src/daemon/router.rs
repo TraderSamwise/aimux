@@ -26,7 +26,7 @@ use crate::daemon::text::system::{DaemonSystemTextRuntime, route_system_text_req
 use crate::daemon::text::team::{DaemonTeamTextRuntime, route_team_text_request};
 use crate::daemon::text::worktrees::{DaemonWorktreeTextRuntime, route_worktree_text_request};
 use crate::debug_logging::{LogLevel, log_at};
-use crate::remote_access::RemoteAccessDecision;
+use crate::request_actor::RemoteAccessDecision;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 

@@ -155,7 +155,7 @@ pub fn spawn_daemon_scheduler(
 
 #[cfg(feature = "remote-control")]
 pub fn hosted_prune_callback(
-    state: &Arc<crate::hosted_server::HostedServerState>,
+    state: &Arc<crate::remote::hosted_server::HostedServerState>,
 ) -> HostedPruneCallback {
     let state = Arc::downgrade(state);
     Arc::new(move || match Weak::upgrade(&state) {
@@ -166,7 +166,7 @@ pub fn hosted_prune_callback(
 
 #[cfg(feature = "remote-control")]
 pub fn hosted_outbox_drain_callback(
-    state: &Arc<crate::hosted_server::HostedServerState>,
+    state: &Arc<crate::remote::hosted_server::HostedServerState>,
 ) -> HostedOutboxDrainCallback {
     let state = Arc::downgrade(state);
     Arc::new(move || match Weak::upgrade(&state) {

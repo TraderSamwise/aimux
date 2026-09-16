@@ -1,7 +1,7 @@
 //! The pieces of the relay socket that are decided without a server: how the
 //! token reaches the relay, and how fast we come back after a drop.
 
-use aimux::websocket::{
+use aimux::remote::websocket::{
     INITIAL_RETRY_MS, MAX_RETRY_MS, TOKEN_PROTOCOL_PREFIX, WebSocketError, next_retry_ms,
     relay_subprotocols,
 };

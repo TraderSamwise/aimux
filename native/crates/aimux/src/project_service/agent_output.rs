@@ -11,7 +11,7 @@ use crate::expose_pane_output_tap::EXPOSE_PANE_TAP_MAX_BYTES;
 use crate::loop_watcher::clear_loop_alert_pause_for_work;
 use crate::osc_notifications::{OscNotificationOutput, has_osc_start};
 use crate::project_api_contract::routes;
-use crate::remote_access::{RemoteActor, RemoteActorRole, parse_remote_actor};
+use crate::request_actor::{RemoteActor, RemoteActorRole, parse_remote_actor};
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };

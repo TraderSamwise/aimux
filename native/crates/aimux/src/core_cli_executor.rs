@@ -64,11 +64,13 @@ use crate::logs::{
 use crate::paths::{PathResolver, is_git_project_root, project_checkout_required_message};
 use crate::project_service_manifest::get_project_service_manifest;
 #[cfg(feature = "remote-control")]
-use crate::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
+use crate::remote::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
 #[cfg(feature = "remote-control")]
-use crate::remote_login::{LoginAction, run_login_flow};
+use crate::remote::remote_login::{LoginAction, run_login_flow};
 #[cfg(feature = "remote-control")]
-use crate::remote_security_devices::{list_remote_security_devices, update_remote_security_device};
+use crate::remote::remote_security_devices::{
+    list_remote_security_devices, update_remote_security_device,
+};
 use crate::runtime_migration::{
     build_runtime_migration_report, import_runtime_migration,
     render_runtime_migration_import_result, render_runtime_migration_report,

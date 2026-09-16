@@ -1,9 +1,9 @@
-use aimux::hosted_lock::lock_path_for;
-use aimux::hosted_principals::{
+use aimux::paths::PathResolver;
+use aimux::remote::hosted_lock::lock_path_for;
+use aimux::remote::hosted_principals::{
     HOSTED_HASH_PREFIX, HOSTED_TOKEN_PREFIX, HostedGrant, HostedPrincipal, HostedPrincipalsState,
     HostedPrincipalsStore, clear_hosted_principals_cache, hash_hosted_token, principal_has_grant,
 };
-use aimux::paths::PathResolver;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
