@@ -22,7 +22,8 @@ use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::{
-    LiveWindowIdsProjection, topology_desktop_session_list_with_live_window_projection,
+    LiveWindowIdsProjection, live_services_with_window_projection,
+    topology_desktop_session_list_with_live_window_projection,
     try_live_window_ids_for_session_projection, try_live_window_ids_for_session_projection_async,
 };
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -407,7 +408,11 @@ pub fn build_desktop_state_with_live_window_projection(
     set_indexes(&mut sessions);
     set_indexes(&mut teammates);
     let supervisor_lane = supervisor_lane_from_sessions(&sessions);
-    let services = list_topology_service_states(input.topology, Some(DASHBOARD_SERVICE_STATUSES))
+    let service_states = live_services_with_window_projection(
+        list_topology_service_states(input.topology, Some(DASHBOARD_SERVICE_STATUSES)),
+        live_window_ids,
+    );
+    let services = service_states
         .iter()
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
         .collect::<Vec<_>>();
@@ -495,7 +500,11 @@ async fn build_desktop_state_with_live_window_projection_async(
     set_indexes(&mut sessions);
     set_indexes(&mut teammates);
     let supervisor_lane = supervisor_lane_from_sessions(&sessions);
-    let services = list_topology_service_states(input.topology, Some(DASHBOARD_SERVICE_STATUSES))
+    let service_states = live_services_with_window_projection(
+        list_topology_service_states(input.topology, Some(DASHBOARD_SERVICE_STATUSES)),
+        live_window_ids,
+    );
+    let services = service_states
         .iter()
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
         .collect::<Vec<_>>();

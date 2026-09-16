@@ -25,6 +25,7 @@ const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline
 /// The dashboard's "needs input" label is derived from metadata rather than
 /// stored here, so it rides on one of these underlying statuses.
 const LIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle"];
+const LIVE_SERVICE_WINDOW_STATUSES: &[&str] = &["starting", "running"];
 
 #[derive(Clone, Copy)]
 pub enum LiveWindowIdsProjection<'a> {
@@ -42,12 +43,56 @@ pub fn session_is_backed_by_live_window(
     session: &Value,
     live_window_ids: &BTreeSet<String>,
 ) -> bool {
-    session
+    value_is_backed_by_live_window(session, live_window_ids)
+}
+
+pub fn value_is_backed_by_live_window(value: &Value, live_window_ids: &BTreeSet<String>) -> bool {
+    value
         .get("tmuxTarget")
         .and_then(|target| target.get("windowId"))
         .and_then(Value::as_str)
         .map(|window_id| live_window_ids.contains(window_id))
         .unwrap_or(false)
+}
+
+pub fn live_window_projection_for_owned_ids<'a>(
+    live_window_ids: Option<&'a BTreeSet<String>>,
+    live_window_query_error: Option<&'a str>,
+) -> LiveWindowIdsProjection<'a> {
+    match live_window_ids {
+        Some(live_window_ids) => LiveWindowIdsProjection::Known(live_window_ids),
+        None => LiveWindowIdsProjection::Unavailable(
+            live_window_query_error.unwrap_or("tmux live-window query did not return ids"),
+        ),
+    }
+}
+
+pub fn live_service_is_backed_by_verified_window(
+    service: &Value,
+    live_window_ids: LiveWindowIdsProjection<'_>,
+) -> bool {
+    match live_window_ids {
+        LiveWindowIdsProjection::Known(live_window_ids) => service
+            .get("tmuxTarget")
+            .and_then(|target| target.get("windowId"))
+            .and_then(Value::as_str)
+            .map(|window_id| live_window_ids.contains(window_id))
+            .unwrap_or(true),
+        LiveWindowIdsProjection::Unavailable(_) => true,
+    }
+}
+
+pub fn live_services_with_window_projection(
+    services: Vec<Value>,
+    live_window_ids: LiveWindowIdsProjection<'_>,
+) -> Vec<Value> {
+    services
+        .into_iter()
+        .filter(|service| {
+            !LIVE_SERVICE_WINDOW_STATUSES.contains(&string_field(service, "status").unwrap_or(""))
+                || live_service_is_backed_by_verified_window(service, live_window_ids)
+        })
+        .collect()
 }
 
 pub fn try_live_window_ids_for_session_projection(
@@ -257,6 +302,7 @@ pub async fn route_agent_read_request_async(
 
 pub struct TopologyDesktopSessionProjection {
     pub sessions: Vec<Value>,
+    pub live_window_ids: Option<BTreeSet<String>>,
     pub live_window_query_error: Option<String>,
 }
 
@@ -340,6 +386,7 @@ pub fn topology_desktop_session_projection_for_context(
                 tools,
                 live_window_ids,
             ),
+            live_window_ids: Some(live_window_ids.clone()),
             live_window_query_error: None,
         },
         Some(Err(error)) => TopologyDesktopSessionProjection {
@@ -349,18 +396,23 @@ pub fn topology_desktop_session_projection_for_context(
                 tools,
                 LiveWindowIdsProjection::Unavailable(error),
             ),
+            live_window_ids: None,
             live_window_query_error: Some(error.to_owned()),
         },
         None => match try_live_window_ids_for_session_projection("topology-desktop-session-list") {
-            Ok(live_window_ids) => TopologyDesktopSessionProjection {
-                sessions: topology_desktop_session_list_with_live_window_ids(
+            Ok(live_window_ids) => {
+                let sessions = topology_desktop_session_list_with_live_window_ids(
                     topology,
                     metadata_sessions,
                     tools,
                     &live_window_ids,
-                ),
-                live_window_query_error: None,
-            },
+                );
+                TopologyDesktopSessionProjection {
+                    sessions,
+                    live_window_ids: Some(live_window_ids),
+                    live_window_query_error: None,
+                }
+            }
             Err(error) => TopologyDesktopSessionProjection {
                 sessions: topology_desktop_session_list_with_live_window_projection(
                     topology,
@@ -368,6 +420,7 @@ pub fn topology_desktop_session_projection_for_context(
                     tools,
                     LiveWindowIdsProjection::Unavailable(&error),
                 ),
+                live_window_ids: None,
                 live_window_query_error: Some(error),
             },
         },
@@ -388,6 +441,7 @@ pub async fn topology_desktop_session_list_for_context_async(
                 tools,
                 live_window_ids,
             ),
+            live_window_ids: Some(live_window_ids.clone()),
             live_window_query_error: None,
         },
         Some(Err(error)) => TopologyDesktopSessionProjection {
@@ -397,21 +451,26 @@ pub async fn topology_desktop_session_list_for_context_async(
                 tools,
                 LiveWindowIdsProjection::Unavailable(error),
             ),
+            live_window_ids: None,
             live_window_query_error: Some(error.to_owned()),
         },
         None => {
             match try_live_window_ids_for_session_projection_async("topology-desktop-session-list")
                 .await
             {
-                Ok(live_window_ids) => TopologyDesktopSessionProjection {
-                    sessions: topology_desktop_session_list_with_live_window_ids(
+                Ok(live_window_ids) => {
+                    let sessions = topology_desktop_session_list_with_live_window_ids(
                         topology,
                         metadata_sessions,
                         tools,
                         &live_window_ids,
-                    ),
-                    live_window_query_error: None,
-                },
+                    );
+                    TopologyDesktopSessionProjection {
+                        sessions,
+                        live_window_ids: Some(live_window_ids),
+                        live_window_query_error: None,
+                    }
+                }
                 Err(error) => TopologyDesktopSessionProjection {
                     sessions: topology_desktop_session_list_with_live_window_projection(
                         topology,
@@ -419,6 +478,7 @@ pub async fn topology_desktop_session_list_for_context_async(
                         tools,
                         LiveWindowIdsProjection::Unavailable(&error),
                     ),
+                    live_window_ids: None,
                     live_window_query_error: Some(error),
                 },
             }

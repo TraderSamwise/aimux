@@ -358,6 +358,13 @@ pub fn render_core_remote_disable_lines(daemon_disconnected: bool) -> Vec<String
     }]
 }
 
+pub fn render_core_service_remove_lines(payload: &Value) -> Vec<String> {
+    vec![format!(
+        "removed service {}",
+        coalesce_string(field(payload, "serviceId"), "")
+    )]
+}
+
 pub fn render_core_whoami_lines(payload: &Value) -> Vec<String> {
     let Some(credentials) = object(payload, "credentials") else {
         return vec!["Not logged in. Run `aimux login` to enable remote access.".into()];

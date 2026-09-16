@@ -218,7 +218,8 @@ fn agent_stop_takes_session_offline_and_kills_window() {
     let project = temp_project("agent-stop");
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@agent"]);
     let mut runtime = FakeLifecycleRuntime::default();
     assert!(set_prompt_context(&state_dir, "codex-live", "form=event").is_some());
 
@@ -386,7 +387,8 @@ fn agent_stop_records_discovered_codex_backend_before_taking_offline() {
     let project = temp_project("agent-stop-codex-discovered");
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@agent"]);
     let mut runtime = FakeLifecycleRuntime::default();
     let project_cwd = project.to_string_lossy().into_owned();
     runtime.codex_backend_ids_by_cwd.insert(
@@ -2561,7 +2563,8 @@ fn service_lifecycle_status_surfaces_in_gui_read_models() {
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
     move_fixture_service_to_project_root(&state_dir, &project);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@service", "@11"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     assert_gui_service_status(&context, "svc-web", "running");

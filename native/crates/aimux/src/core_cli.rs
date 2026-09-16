@@ -13,13 +13,14 @@ use crate::core_cli_routing::{
     parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
     parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_projects_remove_args,
     parse_core_repair_args, parse_core_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args_result,
-    parse_core_team_args, parse_core_thread_args_result, parse_core_worktree_args,
+    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_service_status_args,
+    parse_core_task_args_result, parse_core_team_args, parse_core_thread_args_result,
+    parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
-    CORE_SCRIBE_STATUS_TEXT_ROUTE, CORE_SERVICE_CREATE_TEXT_ROUTE,
+    CORE_SCRIBE_STATUS_TEXT_ROUTE, CORE_SERVICE_CREATE_TEXT_ROUTE, CORE_SERVICE_REMOVE_TEXT_ROUTE,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -62,6 +63,7 @@ pub enum CoreCliOperation {
     AgentPs,
     LifecycleSpawn,
     ServiceCreate,
+    ServiceRemove,
     LifecycleStop,
     LifecycleKill,
     LifecycleFork,
@@ -689,6 +691,30 @@ where
                         "project": project_root,
                         "command": parsed.command,
                         "worktreePath": parsed.worktree,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("service", "remove") => {
+            let parsed = parse_core_service_status_args(&args, "remove").ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid service remove arguments".into(),
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::ServiceRemove,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_SERVICE_REMOVE_TEXT_ROUTE, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "serviceId": parsed.service_id,
                     })),
                 },
                 CoreCliFallback::None,

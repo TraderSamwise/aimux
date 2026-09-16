@@ -7,10 +7,9 @@ use aimux::daemon::text::operations::{
 };
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
 use aimux::git_delivery::{GitCheckoutCoherence, GitCheckoutCoherenceStatus, GitDeliveryCheck};
-use aimux::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
 use aimux::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
-    CORE_SCRIBE_STATUS_TEXT_ROUTE,
+    CORE_SCRIBE_STATUS_TEXT_ROUTE, CORE_SERVICE_CREATE_TEXT_ROUTE, CORE_SERVICE_REMOVE_TEXT_ROUTE,
 };
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
@@ -523,6 +522,8 @@ fn fake_text_response(path: &str) -> String {
         "spawned claude-1\n".into()
     } else if path.starts_with(CORE_SERVICE_CREATE_TEXT_ROUTE) {
         "service service-1 running\n".into()
+    } else if path.starts_with(CORE_SERVICE_REMOVE_TEXT_ROUTE) {
+        "removed service service-1\n".into()
     } else if path.starts_with("/core/lifecycle/stop-text") {
         "stopped claude-1\n".into()
     } else if path.starts_with("/core/lifecycle/kill-text") {
@@ -1398,6 +1399,8 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
         &args(&["service", "create", "--", "yarn", "dev"]),
         &mut runtime,
     );
+    let service_remove =
+        run_core_cli_with(&args(&["service", "remove", "service-1"]), &mut runtime);
     let kill = run_core_cli_with(&args(&["kill", "claude-1"]), &mut runtime);
     let fork = run_core_cli_with(
         &args(&[
@@ -1415,6 +1418,7 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
     assert_eq!(spawn.stdout, ["spawned claude-1"]);
     assert_eq!(stop.stdout, ["stopped claude-1"]);
     assert_eq!(service.stdout, ["service service-1 running"]);
+    assert_eq!(service_remove.stdout, ["removed service service-1"]);
     assert_eq!(kill.stdout, ["graveyarded claude-1"]);
     assert_eq!(fork.stdout, ["forked codex-2\nthread thread-1"]);
     assert_eq!(default_tool_fork.code, 1);
@@ -1444,6 +1448,10 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
                     "command": "yarn dev",
                     "worktreePath": null,
                 })),
+            ),
+            (
+                CORE_SERVICE_REMOVE_TEXT_ROUTE.into(),
+                Some(json!({ "project": "/repo", "serviceId": "service-1" })),
             ),
             (
                 "/core/lifecycle/kill-text".into(),

@@ -616,6 +616,7 @@ const POST_TEXT_ROUTES: &[&str] = &[
     CORE_API_ROUTES.lifecycle_kill_text,
     CORE_API_ROUTES.lifecycle_spawn_text,
     CORE_API_ROUTES.lifecycle_stop_text,
+    crate::native_cli_dispatch::CORE_SERVICE_REMOVE_TEXT_ROUTE,
     CORE_API_ROUTES.login_start_text,
     CORE_API_ROUTES.login_text,
     CORE_API_ROUTES.login_wait_text,
