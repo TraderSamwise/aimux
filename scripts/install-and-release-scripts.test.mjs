@@ -111,6 +111,85 @@ function writeExecutable(path, body) {
   chmodSync(path, 0o755);
 }
 
+function writeFakeBrew(binDir) {
+  writeExecutable(
+    join(binDir, "brew"),
+    `#!/bin/sh
+if [ -n "\${AIMUX_FAKE_BREW_LOG:-}" ]; then
+  printf '%s\\n' "$*" >> "$AIMUX_FAKE_BREW_LOG"
+fi
+case "$1" in
+  --repo)
+    if [ -z "\${AIMUX_FAKE_BREW_TAP_REPO:-}" ] || [ ! -d "\${AIMUX_FAKE_BREW_TAP_REPO:-}" ]; then
+      exit 1
+    fi
+    printf '%s\\n' "$AIMUX_FAKE_BREW_TAP_REPO"
+    exit 0
+    ;;
+  tap-new)
+    if [ -z "\${AIMUX_FAKE_BREW_TAP_REPO:-}" ]; then
+      printf 'missing AIMUX_FAKE_BREW_TAP_REPO\\n' >&2
+      exit 2
+    fi
+    mkdir -p "$AIMUX_FAKE_BREW_TAP_REPO/Formula"
+    exit 0
+    ;;
+  tap)
+    if [ -n "\${AIMUX_FAKE_BREW_TAP_REPO:-}" ] && [ -d "$AIMUX_FAKE_BREW_TAP_REPO" ]; then
+      printf 'aimux/dry-run-fixture\\n'
+    fi
+    exit 0
+    ;;
+  untap)
+    exit 0
+    ;;
+  ruby)
+    exit 0
+    ;;
+  fetch)
+    formula=""
+    previous=""
+    for arg in "$@"; do
+      if [ "$previous" = "--formula" ]; then
+        formula="$arg"
+        break
+      fi
+      previous="$arg"
+    done
+    if [ -z "$formula" ]; then
+      printf 'missing --formula\\n' >&2
+      exit 2
+    fi
+    case "$formula" in
+      */aimux-local) formula="$AIMUX_FAKE_BREW_TAP_REPO/Formula/aimux-local.rb" ;;
+      */aimux) formula="$AIMUX_FAKE_BREW_TAP_REPO/Formula/aimux.rb" ;;
+    esac
+    if grep -F 'sha256 "0000000000000000000000000000000000000000000000000000000000000000"' "$formula" >/dev/null 2>&1; then
+      printf 'SHA256 mismatch for %s\\n' "$formula" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  list)
+    formula=""
+    for arg in "$@"; do
+      formula="$arg"
+    done
+    if [ "\${AIMUX_FAKE_BREW_INSTALLED_FORMULA:-}" = "$formula" ]; then
+      printf '%s 0.0.0\\n' "$formula"
+      exit 0
+    fi
+    exit 1
+    ;;
+  *)
+    printf 'unexpected fake brew command: %s\\n' "$*" >&2
+    exit 127
+    ;;
+esac
+`,
+  );
+}
+
 function releaseScriptEnv(root, extra = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
@@ -707,6 +786,86 @@ describe("verify-release-asset-set.sh", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 30000);
+
+  it("stages Homebrew formulas, fetches them, and proves mismatched SHA refusal", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-dry-run-"));
+    try {
+      writeAssetSet(root);
+      const stage = join(root, "stage");
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeFakeBrew(bin);
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_LOG: join(root, "brew.log"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          stage,
+          "--tag",
+          "v0.0.0-test",
+          "--version",
+          "0.0.0",
+        ],
+        { env },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(`Homebrew fetch for aimux ${platformArch()} passed`);
+      expect(result.stdout).toContain(`Homebrew fetch for aimux-local ${platformArch()} passed`);
+      expect(result.stdout).toContain("Homebrew bad-sha proof passed");
+      expect(result.stdout).toContain("live install: 0");
+      const localFormula = readFileSync(join(stage, "aimux-local.rb"), "utf8");
+      expect(localFormula).toContain('url "file://');
+      expect(localFormula).toContain("aimux-local-linux-x64.tar.gz");
+      expect(localFormula).toContain('conflicts_with "aimux", because: "both install the aimux command"');
+      expect(readFileSync(join(root, "brew.log"), "utf8")).toContain("fetch --formula");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("refuses live Homebrew install proof when aimux is already installed", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-dry-run-"));
+    try {
+      writeAssetSet(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeFakeBrew(bin);
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_INSTALLED_FORMULA: "aimux",
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--live-install",
+        ],
+        { env },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("--live-install refused: aimux is already installed by Homebrew");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
 });
 
 describe("check-local-build-boundary.sh", () => {
@@ -842,15 +1001,19 @@ describe("release workflow", () => {
 
   it("publishes both full and local Homebrew formulas while npm remains full-only", () => {
     const workflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
+    const renderer = readFileSync(join(repoRoot, "scripts/render-homebrew-formulas.sh"), "utf8");
+    const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 
     const npmJob = workflow.slice(workflow.indexOf("  publish-npm:"), workflow.indexOf("  update-homebrew-tap:"));
     const tapJob = workflow.slice(workflow.indexOf("  update-homebrew-tap:"));
     expect(npmJob).toContain("needs: verify-release-assets");
     expect(tapJob).toContain("needs: verify-release-assets");
-    expect(workflow).toContain("tap/Formula/aimux-local.rb");
-    expect(workflow).toContain('conflicts_with "aimux", because: "both install the aimux command"');
-    expect(workflow).toContain("aimux-local-darwin-arm64.tar.gz");
-    expect(workflow).toContain('bin.install_symlink libexec/"bin/aimux"');
+    expect(packageJson.scripts["release:homebrew:dry-run"]).toBe("bash scripts/homebrew-release-dry-run.sh");
+    expect(workflow).toContain("bash scripts/render-homebrew-formulas.sh");
+    expect(workflow).toContain("AIMUX_HOMEBREW_FORMULA_DIR: tap/Formula");
+    expect(renderer).toContain('conflicts_with "aimux", because: "both install the aimux command"');
+    expect(renderer).toContain("aimux-local-darwin-arm64.tar.gz");
+    expect(renderer).toContain('bin.install_symlink libexec/"bin/aimux"');
     const npmStage = workflow.slice(
       workflow.indexOf("- name: Stage macOS native assets for npm package"),
       workflow.indexOf("- name: Verify npm package has no source maps"),
