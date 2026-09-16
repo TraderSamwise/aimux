@@ -2010,6 +2010,31 @@ fn lifecycle_commands_plan_native_text_routes() {
         }
     );
 
+    let service_remove = classify_core_cli_with_project_resolver(
+        &[
+            "service",
+            "remove",
+            "service-1",
+            "--project",
+            "./child",
+            "--json",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("service remove plan");
+    assert_eq!(service_remove.operation, CoreCliOperation::ServiceRemove);
+    assert_eq!(
+        service_remove.action,
+        CoreCliAction::TextRoute {
+            path: "/core/services/remove-text?json=1".into(),
+            body: Some(json!({
+                "project": "/resolved/./child",
+                "serviceId": "service-1",
+            })),
+        }
+    );
+
     let stop = classify_core_cli(&["stop", "claude-1"], &context(true, true)).expect("stop plan");
     assert_eq!(stop.operation, CoreCliOperation::LifecycleStop);
     assert_eq!(

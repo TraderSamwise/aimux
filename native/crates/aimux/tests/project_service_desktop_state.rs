@@ -237,6 +237,33 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
 }
 
 #[test]
+fn desktop_state_drops_services_without_live_tmux_windows() {
+    let topology = topology_fixture();
+    let metadata = metadata_fixture();
+    let exchange = exchange_fixture();
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: "/repo".into(),
+            topology: &topology,
+            metadata_sessions: &metadata,
+            exchange: &exchange,
+        },
+        Some(&support::live_window_ids(&["@1", "@2", "@3"])),
+    );
+
+    let services = state["services"].as_array().unwrap();
+    assert_eq!(ids(services), vec!["svc-dead".to_owned()]);
+    let groups = state["worktreeGroups"].as_array().unwrap();
+    let feature = find_group(groups, "/repo/.aimux/worktrees/feature-a");
+    assert_eq!(
+        ids(feature["services"].as_array().unwrap()),
+        Vec::<String>::new(),
+        "a service with a verified-absent tmux window must not remain in GUI service groups"
+    );
+}
+
+#[test]
 fn route_desktop_state_reads_catalog_files_and_preserves_existing_snapshot_shape() {
     let project = temp_project("route");
     let state_dir = project.join("state");
@@ -384,6 +411,11 @@ fn route_desktop_state_preserves_live_sessions_and_reports_tmux_liveness_query_e
     assert_eq!(
         live["tmuxWindowId"], "@1",
         "a tmux query error must not remove the focus binding"
+    );
+    let services = response.body["services"].as_array().expect("services");
+    assert!(
+        ids(services).contains(&"svc-live".to_owned()),
+        "a tmux query error must preserve claimed-live services instead of silently dropping them"
     );
     let failures = response.body["operationFailures"]
         .as_array()

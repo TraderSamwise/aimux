@@ -118,6 +118,15 @@ pub struct CoreServiceCreateArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CoreServiceStatusArgs {
+    pub service_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreLifecycleForkArgs {
     pub source_session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -542,6 +542,95 @@ fn route_switchable_agents_reads_topology_metadata_and_last_used() {
 }
 
 #[test]
+fn route_switchable_agents_drops_services_without_live_tmux_windows() {
+    let project = temp_project("route-switchable-service-live-window-filter");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology_fixture()).unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([("boss".into(), json!({ "overseer": true }))]),
+        },
+    )
+    .unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2"]));
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/control/switchable-agents?scope=all&currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1",
+        None,
+    );
+
+    assert_eq!(response.status, 200);
+    let items = response.body["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["boss", "codex-live"]
+    );
+    assert!(
+        items.iter().all(|item| item["id"] != "svc-live"),
+        "a service with a verified-absent tmux window must not render as an unreadable Expose tile"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn route_switchable_agents_preserves_services_when_live_window_query_is_unavailable() {
+    let project = temp_project("route-switchable-service-live-window-unavailable");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology_fixture()).unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([("boss".into(), json!({ "overseer": true }))]),
+        },
+    )
+    .unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("tmux socket busy");
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/control/switchable-agents?scope=all&currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1",
+        None,
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["tmuxLiveWindowQuery"]["ok"], false);
+    assert_eq!(
+        response.body["tmuxLiveWindowQuery"]["error"],
+        "tmux socket busy"
+    );
+    let items = response.body["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["boss", "codex-live", "svc-live"]
+    );
+    cleanup(project);
+}
+
+#[test]
 fn route_switchable_agents_topology_read_failure_is_error_not_empty_expose_tiles() {
     let project = temp_project("route-switchable-topology-unavailable");
     let state_dir = project.join("state");
