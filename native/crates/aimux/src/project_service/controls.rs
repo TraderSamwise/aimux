@@ -538,6 +538,7 @@ fn route_switch_agent<R: ProjectControlRuntime>(
     let options = SwitchableListOptions {
         scope: AgentListScope::Worktree,
         include_overseer: false,
+        use_expose_role_visibility: false,
         raw_labels: true,
         display_order_ids: Vec::new(),
     };
@@ -593,6 +594,7 @@ async fn route_switch_agent_async<R: AsyncProjectControlRuntime>(
     let options = SwitchableListOptions {
         scope: AgentListScope::Worktree,
         include_overseer: false,
+        use_expose_role_visibility: false,
         raw_labels: true,
         display_order_ids: Vec::new(),
     };

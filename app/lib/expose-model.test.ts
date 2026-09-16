@@ -122,6 +122,64 @@ describe("expose model", () => {
     });
   });
 
+  it("uses the server-declared Exposé role property instead of project-control inference", () => {
+    const tiles = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...item("0", "main", 0),
+            label: "Project Overseer",
+            shouldShowInExpose: true,
+            exposeOrder: 0,
+            metadata: {
+              ...item("0", "main", 0).metadata,
+              sessionId: "claude-overseer",
+              command: "claude",
+              toolConfigKey: "claude",
+              role: "overseer",
+            },
+            roleState: {
+              status: "resolved",
+              role: "overseer",
+              lane: { kind: "supervisor" },
+              projectControl: true,
+              shouldShowInExpose: true,
+              exposeOrder: 0,
+            },
+          },
+          {
+            ...item("1", "main", 0),
+            label: "Project Scribe",
+            shouldShowInExpose: false,
+            metadata: {
+              ...item("1", "main", 0).metadata,
+              sessionId: "claude-scribe",
+              command: "claude",
+              toolConfigKey: "claude",
+              role: "scribe",
+            },
+            roleState: {
+              status: "resolved",
+              role: "scribe",
+              lane: { kind: "supervisor" },
+              projectControl: true,
+              shouldShowInExpose: false,
+              exposeOrder: 1000,
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(tiles.map((tile) => tile.sessionId)).toEqual(["claude-overseer"]);
+    expect(tiles[0]).toMatchObject({
+      role: "overseer",
+      shouldShowInExpose: true,
+      exposeOrder: 0,
+    });
+  });
+
   it("keeps Expose tones stable when the API order or server tone changes", () => {
     const first = buildExposeTiles([
       {

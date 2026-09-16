@@ -1,6 +1,44 @@
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
+const DEFAULT_EXPOSE_ORDER: i64 = 1_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentRoleDefinition {
+    pub role: &'static str,
+    pub should_show_in_expose: bool,
+    pub expose_order: i64,
+}
+
+const CODER_ROLE: AgentRoleDefinition = AgentRoleDefinition {
+    role: "coder",
+    should_show_in_expose: true,
+    expose_order: DEFAULT_EXPOSE_ORDER,
+};
+const OVERSEER_ROLE: AgentRoleDefinition = AgentRoleDefinition {
+    role: "overseer",
+    should_show_in_expose: true,
+    expose_order: 0,
+};
+const SCRIBE_ROLE: AgentRoleDefinition = AgentRoleDefinition {
+    role: "scribe",
+    should_show_in_expose: false,
+    expose_order: DEFAULT_EXPOSE_ORDER,
+};
+
+pub fn agent_role_definition(role: &str) -> AgentRoleDefinition {
+    match role.trim() {
+        "coder" => CODER_ROLE,
+        "overseer" => OVERSEER_ROLE,
+        "scribe" => SCRIBE_ROLE,
+        _ => AgentRoleDefinition {
+            role: "unknown",
+            should_show_in_expose: false,
+            expose_order: DEFAULT_EXPOSE_ORDER,
+        },
+    }
+}
+
 pub fn select_orphan_teammate_ids(sessions: &[Value], known_parent_ids: &[String]) -> Vec<String> {
     let parents = known_parent_ids.iter().cloned().collect::<BTreeSet<_>>();
     let mut by_id = BTreeMap::new();
@@ -147,6 +185,16 @@ pub fn agent_role(session: Option<&Value>) -> String {
     }
 }
 
+pub fn agent_should_show_in_expose(session: Option<&Value>) -> bool {
+    let role = agent_role(session);
+    agent_role_definition(&role).should_show_in_expose
+}
+
+pub fn agent_expose_order(session: Option<&Value>) -> i64 {
+    let role = agent_role(session);
+    agent_role_definition(&role).expose_order
+}
+
 pub fn agent_lane(session: Option<&Value>) -> Value {
     let Some(session) = session else {
         return json!({ "kind": "unknown", "reason": "session-unavailable" });
@@ -168,6 +216,7 @@ pub fn agent_role_state(session: Option<&Value>) -> Value {
         });
     };
     let role = agent_role(Some(session));
+    let role_definition = agent_role_definition(&role);
     let lane = agent_lane(Some(session));
     if bool_field(session, "pendingRelaunchForRole") == Some(true) {
         let effective_role = string_field(session, "effectiveRole")
@@ -186,14 +235,18 @@ pub fn agent_role_state(session: Option<&Value>) -> Value {
             "declaredLane": lane,
             "effectiveRole": effective_role,
             "effectiveLane": effective_lane,
+            "shouldShowInExpose": role_definition.should_show_in_expose,
+            "exposeOrder": role_definition.expose_order,
             "runtimeWorkingDirectory": string_field(session, "runtimeWorkingDirectory"),
         });
     }
     json!({
         "status": "resolved",
-        "role": role,
+        "role": role.clone(),
         "lane": lane,
         "projectControl": is_project_control_session(Some(session)),
+        "shouldShowInExpose": role_definition.should_show_in_expose,
+        "exposeOrder": role_definition.expose_order,
     })
 }
 
@@ -412,9 +465,12 @@ mod tests {
                 "status": "resolved",
                 "role": "coder",
                 "lane": { "kind": "worktree", "worktreePath": "/repo/wt" },
-                "projectControl": false
+                "projectControl": false,
+                "shouldShowInExpose": true,
+                "exposeOrder": 1000
             })
         );
+        assert!(agent_should_show_in_expose(Some(&session)));
     }
 
     #[test]
@@ -433,7 +489,34 @@ mod tests {
                 "status": "resolved",
                 "role": "scribe",
                 "lane": { "kind": "supervisor" },
-                "projectControl": true
+                "projectControl": true,
+                "shouldShowInExpose": false,
+                "exposeOrder": 1000
+            })
+        );
+        assert!(!agent_should_show_in_expose(Some(&session)));
+    }
+
+    #[test]
+    fn overseer_role_declares_expose_visibility_and_first_slot_order() {
+        let session = json!({
+            "id": "overseer-1",
+            "overseer": true,
+            "projectControl": true
+        });
+
+        assert_eq!(agent_role(Some(&session)), "overseer");
+        assert!(agent_should_show_in_expose(Some(&session)));
+        assert_eq!(agent_expose_order(Some(&session)), 0);
+        assert_eq!(
+            agent_role_state(Some(&session)),
+            json!({
+                "status": "resolved",
+                "role": "overseer",
+                "lane": { "kind": "supervisor" },
+                "projectControl": true,
+                "shouldShowInExpose": true,
+                "exposeOrder": 0
             })
         );
     }

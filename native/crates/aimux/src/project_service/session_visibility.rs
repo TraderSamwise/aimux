@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-use crate::team_contract::{is_overseer_session, is_scribe_session};
+use crate::team_contract::{agent_should_show_in_expose, is_overseer_session, is_scribe_session};
 
 pub const LIVE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
 pub const DASHBOARD_SESSION_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
@@ -33,6 +33,7 @@ pub enum SessionRolePolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchableRolePolicy {
     pub include_overseer: bool,
+    pub use_expose_role_visibility: bool,
     pub scope_all_worktrees: bool,
     pub scoped_worktree_path: String,
     pub current_window_id: Option<String>,
@@ -95,18 +96,24 @@ fn switchable_roles_allow(policy: &SwitchableRolePolicy, input: &AgentVisibility
     if !input.alive && input.window_id != policy.current_window_id.as_deref() {
         return false;
     }
-    if is_scribe_session(Some(input.metadata)) {
-        return false;
-    }
-    let overseer = is_overseer_session(Some(input.metadata));
-    if !policy.include_overseer && overseer {
-        return false;
-    }
-    if policy.include_overseer && overseer {
-        if policy.scope_all_worktrees {
-            return true;
+    if policy.use_expose_role_visibility {
+        if input.kind != Some("service") && !agent_should_show_in_expose(Some(input.metadata)) {
+            return false;
         }
-        return input_worktree_matches_scope(input, &policy.scoped_worktree_path);
+    } else {
+        if is_scribe_session(Some(input.metadata)) {
+            return false;
+        }
+        let overseer = is_overseer_session(Some(input.metadata));
+        if !policy.include_overseer && overseer {
+            return false;
+        }
+        if policy.include_overseer && overseer {
+            if policy.scope_all_worktrees {
+                return true;
+            }
+            return input_worktree_matches_scope(input, &policy.scoped_worktree_path);
+        }
     }
     if let Some(parent_session_id) = policy.teammate_parent_session_id.as_deref()
         && !policy.scope_all_worktrees

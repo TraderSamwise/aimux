@@ -287,6 +287,7 @@ fn list_project_switchable_items(
     let options = SwitchableListOptions {
         scope: input.scope,
         raw_labels: true,
+        use_expose_role_visibility: true,
         ..SwitchableListOptions::default()
     };
     list_switchable_agent_items(&entries, &metadata.sessions, &context, &options, &last_used)

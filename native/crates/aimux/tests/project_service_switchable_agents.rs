@@ -124,6 +124,7 @@ fn shared_visibility_rule_keeps_liveness_parameterized_for_expose_and_dashboard(
 
     let expose_rule = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
         include_overseer: false,
+        use_expose_role_visibility: true,
         scope_all_worktrees: true,
         scoped_worktree_path: "/repo".into(),
         current_window_id: None,
@@ -161,6 +162,7 @@ fn shared_visibility_rule_makes_role_exclusion_an_explicit_parameter() {
     };
     let excluded = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
         include_overseer: false,
+        use_expose_role_visibility: false,
         scope_all_worktrees: false,
         scoped_worktree_path: "/repo".into(),
         current_window_id: None,
@@ -168,6 +170,7 @@ fn shared_visibility_rule_makes_role_exclusion_an_explicit_parameter() {
     });
     let included = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
         include_overseer: true,
+        use_expose_role_visibility: false,
         scope_all_worktrees: false,
         scoped_worktree_path: "/repo".into(),
         current_window_id: None,
@@ -465,8 +468,12 @@ fn serialization_and_status_chips_match_fast_control_shapes() {
                 "status": "resolved",
                 "role": "coder",
                 "lane": { "kind": "worktree", "worktreePath": "/repo" },
-                "projectControl": false
-            }
+                "projectControl": false,
+                "shouldShowInExpose": true,
+                "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
         })
     );
     assert_eq!(
@@ -522,15 +529,15 @@ fn route_switchable_agents_reads_topology_metadata_and_last_used() {
             .iter()
             .map(|item| item["id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec!["codex-live", "svc-live"]
+        vec!["boss", "codex-live", "svc-live"]
     );
     assert_eq!(
-        items[0]["exposeStatus"],
+        items[1]["exposeStatus"],
         json!({ "kind": "needs", "label": "Needs input" })
     );
-    assert_eq!(items[1]["label"], "shell[svc]");
-    assert_eq!(items[1]["lastUsedAt"], "2026-09-05T00:00:00.000Z");
-    assert_eq!(items[1]["recentRank"], 0);
+    assert_eq!(items[2]["label"], "shell[svc]");
+    assert_eq!(items[2]["lastUsedAt"], "2026-09-05T00:00:00.000Z");
+    assert_eq!(items[2]["recentRank"], 0);
     cleanup(project);
 }
 
@@ -682,8 +689,90 @@ fn route_switchable_agents_expose_liveness_policy_excludes_offline_sessions() {
             .iter()
             .map(|item| item["id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec!["codex-live", "svc-live"]
+        vec!["boss", "codex-live", "svc-live"]
     );
+    cleanup(project);
+}
+
+#[test]
+fn route_switchable_agents_expose_uses_role_visibility_and_orders_overseer_first() {
+    let project = temp_project("route-switchable-expose-role-visibility");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let mut topology = topology_fixture();
+    topology["nodes"].as_array_mut().unwrap().push(json!({
+        "id": "node-scribe",
+        "rigId": "rig-1",
+        "logicalId": "scribe",
+        "toolConfigKey": "claude",
+        "cwd": "/repo/wt",
+        "label": "Project Scribe",
+        "createdAt": "2026-09-05T00:00:00.000Z"
+    }));
+    topology["bindings"].as_array_mut().unwrap().push(json!({
+        "id": "binding-scribe",
+        "nodeId": "node-scribe",
+        "tmuxSession": "aimux-repo",
+        "tmuxWindowId": "@4",
+        "tmuxWindowIndex": 4,
+        "tmuxWindowName": "scribe",
+        "updatedAt": "2026-09-05T00:00:00.000Z"
+    }));
+    topology["sessions"].as_array_mut().unwrap().push(json!({
+        "id": "scribe",
+        "nodeId": "node-scribe",
+        "status": "running",
+        "tool": "claude",
+        "command": "claude",
+        "worktreePath": "/repo/wt",
+        "label": "Project Scribe",
+        "scribe": true,
+        "projectControl": true,
+        "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" },
+        "createdAt": "2026-09-05T00:00:00.000Z",
+        "updatedAt": "2026-09-05T00:00:00.000Z"
+    }));
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                ("boss".into(), json!({ "overseer": true })),
+                ("scribe".into(), json!({ "scribe": true })),
+            ]),
+        },
+    )
+    .unwrap();
+
+    let context = support::TestIsolation::new("switchable-expose-role-visibility")
+        .project_context(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3", "@4"]));
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/control/switchable-agents?scope=all&currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1",
+        None,
+    );
+
+    assert_eq!(response.status, 200);
+    let items = response.body["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["boss", "codex-live", "svc-live"]
+    );
+    assert_eq!(items[0]["role"], "overseer");
+    assert_eq!(items[0]["shouldShowInExpose"], true);
+    assert_eq!(items[0]["roleState"]["shouldShowInExpose"], true);
+    assert_eq!(items[0]["exposeOrder"], 0);
+    assert!(items.iter().all(|item| item["id"] != "scribe"));
     cleanup(project);
 }
 
@@ -836,6 +925,14 @@ fn route_switchable_agents_attaches_expose_previews_through_capture_cache() {
     assert_eq!(
         runtime.calls,
         vec![
+            (
+                "@2".to_owned(),
+                CapturePaneOptions {
+                    start_line: Some(-40),
+                    end_line: None,
+                    include_escapes: true,
+                },
+            ),
             (
                 "@1".to_owned(),
                 CapturePaneOptions {

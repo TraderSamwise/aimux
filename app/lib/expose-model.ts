@@ -8,6 +8,7 @@ import { toChatMessages } from "@/lib/transcript-view";
 import { worktreeTone } from "@/lib/worktree-tone";
 import { cropExposePreviewFooter } from "../../src/expose-preview-crop";
 import type {
+  AgentRoleState,
   ExposeChatPreview,
   ExposePreviewSnapshot,
   PreviewCaptureMarker,
@@ -51,6 +52,9 @@ export interface ExposeSourceItem {
   previewSnapshot?: ExposePreviewSnapshot;
   previewCapture?: PreviewCaptureMarker;
   chatPreview?: ExposeChatPreview | { messages?: AgentTranscriptMessage[] };
+  roleState?: AgentRoleState;
+  shouldShowInExpose?: boolean;
+  exposeOrder?: number;
   exposeContext?: {
     worktree?: string;
     project?: string;
@@ -80,6 +84,8 @@ export interface ExposeTile {
   displayLabel: string;
   tool: string;
   role?: string;
+  shouldShowInExpose: boolean;
+  exposeOrder: number | null;
   kind: "agent" | "service";
   status: string | null;
   statusKind: ExposeStatusKind | null;
@@ -204,6 +210,9 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
   const tiles: ExposeTile[] = [];
   for (const source of sources) {
     source.items.forEach((item, index) => {
+      const declaredShouldShow =
+        item.shouldShowInExpose ?? item.roleState?.shouldShowInExpose ?? true;
+      if (declaredShouldShow === false) return;
       const metadata = item.metadata ?? {};
       const context = item.exposeContext ?? {};
       const projectName = context.project || item.projectName || source.project.name;
@@ -234,6 +243,8 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         displayLabel: metadata.kind === "service" ? label : agentCompactIdentity(agentDisplay),
         tool,
         role: metadata.role,
+        shouldShowInExpose: declaredShouldShow,
+        exposeOrder: item.exposeOrder ?? item.roleState?.exposeOrder ?? null,
         kind: metadata.kind === "service" ? "service" : "agent",
         status: item.exposeStatus?.label || (statusKind ? cap(statusKind) : null),
         statusKind,
