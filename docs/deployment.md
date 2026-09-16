@@ -196,9 +196,13 @@ a broken release.
    `yarn release:readiness`. Each asset carries a `BUILD_VARIANT` stamp
    (`full` or `lite`) separate from `BUILD_PROFILE`, is checked for stripped
    source maps, and the Darwin assets are checked for a notifier helper of the
-   right architecture. Lite assets must also pass the remote-control absence
-   gate before upload. A release asset set gate fails downstream publishing if
-   any variant/platform archive or SHA file is missing.
+   right architecture. Lite assets must pass the remote-control absence gate
+   before upload, while full assets must pass the matching presence gate so the
+   full lane still proves it contains the expected remote-control surface. A
+   release asset set gate fails downstream publishing if any variant/platform
+   archive or SHA file is missing, if any SHA does not match its artifact, or if
+   any artifact is not a readable archive with the expected `BUILD_VARIANT` and
+   native binary path.
 2. **npm** — publishes `aimux-cli` with `--provenance` through npm trusted
    publishing (OIDC, no stored token). It fails fast if `package.json`'s version
    does not match the tag, and stages the native CLI binaries plus macOS
@@ -210,8 +214,8 @@ a broken release.
    only lite assets, conflicts with the full formula, and still installs the
    command as `aimux`.
 
-The npm and tap jobs both depend on the asset job, so a failed build publishes
-nothing.
+The npm and tap jobs both depend on the complete asset-set gate, so a failed
+build, missing asset, checksum mismatch, or corrupt archive publishes nothing.
 
 ### Verify a release
 

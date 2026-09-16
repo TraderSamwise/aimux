@@ -394,6 +394,22 @@ describe("verify-release-asset.sh", () => {
 });
 
 describe("verify-release-asset-set.sh", () => {
+  function writeReleaseSetArchive(root, asset, platformArch, variant) {
+    const archiveRoot = join(root, `pkg-${asset}`);
+    const packageRoot = join(archiveRoot, "aimux");
+    const nativeDir = join(packageRoot, "native", platformArch);
+    mkdirSync(nativeDir, { recursive: true });
+    writeFileSync(join(packageRoot, "VERSION"), "0.1.34\n");
+    writeFileSync(join(packageRoot, "BUILD_STAMP"), `stamp-${asset}\n`);
+    writeFileSync(join(packageRoot, "BUILD_VARIANT"), `${variant}\n`);
+    const nativeBinary = join(nativeDir, "aimux");
+    writeFileSync(nativeBinary, `#!/usr/bin/env sh\nprintf 'fixture ${asset}\\n'\n`);
+    chmodSync(nativeBinary, 0o755);
+    runOk("tar", ["-czf", join(root, asset), "-C", archiveRoot, "aimux"]);
+    const sha = runOk("shasum", ["-a", "256", asset], { cwd: root }).stdout;
+    writeFileSync(join(root, `${asset}.sha256`), sha);
+  }
+
   function writeAssetSet(root, omitted = undefined) {
     for (const platform of ["darwin", "linux"]) {
       for (const arch of ["arm64", "x64"]) {
@@ -401,8 +417,7 @@ describe("verify-release-asset-set.sh", () => {
           const asset =
             variant === "lite" ? `aimux-lite-${platform}-${arch}.tar.gz` : `aimux-${platform}-${arch}.tar.gz`;
           if (asset === omitted) continue;
-          writeFileSync(join(root, asset), "asset\n");
-          writeFileSync(join(root, `${asset}.sha256`), `0123456789abcdef  ${asset}\n`);
+          writeReleaseSetArchive(root, asset, `${platform}-${arch}`, variant);
         }
       }
     }
@@ -434,77 +449,58 @@ describe("verify-release-asset-set.sh", () => {
     }
   });
 
-  it("runs the lite boundary checker before publication and fails on a relay-marked lite artifact", () => {
+  it("rejects the reviewer probe: non-tar assets with stale zero checksums", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
       writeAssetSet(root);
-      writeFileSync(join(root, "aimux-lite-darwin-arm64.tar.gz"), "AIMUX_RELAY_URL\n");
-      const checker = join(root, "fake-lite-boundary-checker.sh");
-      writeExecutable(
-        checker,
-        `#!/bin/sh
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --archive) archive="$2"; shift 2 ;;
-    --platform-arch) platform_arch="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if grep -q 'AIMUX_RELAY_URL' "$archive"; then
-  printf 'fake checker rejected relay symbol in %s for %s\\n' "$archive" "$platform_arch" >&2
-  exit 42
-fi
-exit 0
-`,
-      );
+      for (const platform of ["darwin", "linux"]) {
+        for (const arch of ["arm64", "x64"]) {
+          for (const prefix of ["aimux", "aimux-lite"]) {
+            const asset = `${prefix}-${platform}-${arch}.tar.gz`;
+            writeFileSync(join(root, asset), `not a tar archive: ${asset}\n`);
+            writeFileSync(join(root, `${asset}.sha256`), `${"0".repeat(64)}  ${asset}\n`);
+          }
+        }
+      }
 
-      const result = run("bash", [
-        join(repoRoot, "scripts/verify-release-asset-set.sh"),
-        "--lite-boundary-checker",
-        checker,
-        root,
-      ]);
+      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("fake checker rejected relay symbol");
-      expect(result.stderr).toContain("lite boundary checker rejected release asset");
-      expect(result.stderr).toContain("aimux-lite-darwin-arm64.tar.gz");
+      expect(result.stderr).toContain("checksum mismatch for release asset: aimux-darwin-arm64.tar.gz");
+      expect(result.stderr).toContain("release asset is not a readable tar.gz archive");
+      expect(result.stderr).toContain("aimux-darwin-arm64.tar.gz");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("passes complete release assets when the lite boundary checker accepts them", () => {
+  it("distinguishes a missing checksum file from other release asset failures", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
       writeAssetSet(root);
-      const checker = join(root, "fake-lite-boundary-checker.sh");
-      writeExecutable(
-        checker,
-        `#!/bin/sh
-archive=
-platform_arch=
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --archive) archive="$2"; shift 2 ;;
-    --platform-arch) platform_arch="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-[ -n "$archive" ] || exit 2
-[ -n "$platform_arch" ] || exit 2
-exit 0
-`,
-      );
+      rmSync(join(root, "aimux-linux-x64.tar.gz.sha256"));
 
-      const result = run("bash", [
-        join(repoRoot, "scripts/verify-release-asset-set.sh"),
-        "--lite-boundary-checker",
-        checker,
-        root,
-      ]);
+      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
 
-      expect(result.status, result.stderr).toBe(0);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("missing release checksum file");
+      expect(result.stderr).toContain("aimux-linux-x64.tar.gz.sha256");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an archive whose BUILD_VARIANT does not match its asset lane", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
+    try {
+      writeAssetSet(root);
+      writeReleaseSetArchive(root, "aimux-lite-darwin-arm64.tar.gz", "darwin-arm64", "full");
+
+      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("release asset BUILD_VARIANT mismatch");
+      expect(result.stderr).toContain("expected lite, got full");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -534,21 +530,26 @@ describe("release workflow", () => {
     }
   });
 
-  it("runs the lite boundary check against every lite matrix artifact", () => {
+  it("runs the variant boundary check against every matrix artifact", () => {
     const workflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
 
     expect(workflow).toContain("AIMUX_BUILD_VARIANT: ${{ matrix.variant }}");
+    expect(workflow).toContain("- name: Verify release variant boundary");
     expect(workflow).toContain("bash scripts/check-lite-build-boundary.sh");
+    expect(workflow).toContain("--variant ${{ matrix.variant }}");
     expect(workflow).toContain("--archive release/${{ matrix.asset }}.tar.gz");
     expect(workflow).toContain("--platform-arch ${{ matrix.platform }}-${{ matrix.arch }}");
-    expect(workflow).toContain(
-      "bash scripts/verify-release-asset-set.sh --lite-boundary-checker scripts/check-lite-build-boundary.sh release-check",
-    );
+    expect(workflow).toContain("bash scripts/verify-release-asset-set.sh release-check");
+    expect(workflow).not.toContain("--lite-boundary-checker");
   });
 
   it("publishes both full and lite Homebrew formulas while npm remains full-only", () => {
     const workflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
 
+    const npmJob = workflow.slice(workflow.indexOf("  publish-npm:"), workflow.indexOf("  update-homebrew-tap:"));
+    const tapJob = workflow.slice(workflow.indexOf("  update-homebrew-tap:"));
+    expect(npmJob).toContain("needs: verify-release-assets");
+    expect(tapJob).toContain("needs: verify-release-assets");
     expect(workflow).toContain("tap/Formula/aimux-lite.rb");
     expect(workflow).toContain('conflicts_with "aimux", because: "both install the aimux command"');
     expect(workflow).toContain("aimux-lite-darwin-arm64.tar.gz");
