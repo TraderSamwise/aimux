@@ -5,6 +5,7 @@ use crate::core_command_transport::{
 };
 use crate::daemon::core_commands::DaemonCoreCommandRuntime;
 use crate::daemon::http::DaemonResponseBody;
+use crate::daemon::remote_control::route_remote_json_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::project_api_contract::routes as project_routes;
 use crate::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
@@ -75,41 +76,8 @@ pub fn route_json_daemon_request(
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
 
-    #[cfg(feature = "remote-control")]
-    if method == "GET" && pathname == "/relay/status" {
-        return Some(DaemonRouteResponse::json(
-            200,
-            json!({ "ok": true, "relay": runtime.relay_status() }),
-        ));
-    }
-
-    #[cfg(feature = "remote-control")]
-    if method == "POST" && pathname == "/relay/enable" {
-        if !runtime.has_remote_credentials() {
-            return Some(DaemonRouteResponse::json(
-                401,
-                json!({ "ok": false, "error": "Not logged in. Run `aimux login` first." }),
-            ));
-        }
-        let relay = runtime.enable_relay_for_user_request();
-        if relay.get("status").and_then(Value::as_str) == Some("auth_failed") {
-            return Some(DaemonRouteResponse::json(
-                401,
-                json!({ "ok": false, "error": runtime.relay_auth_failed_message(&relay), "relay": relay }),
-            ));
-        }
-        return Some(DaemonRouteResponse::json(
-            200,
-            json!({ "ok": true, "relay": relay }),
-        ));
-    }
-
-    #[cfg(feature = "remote-control")]
-    if method == "POST" && pathname == "/relay/disable" {
-        return Some(DaemonRouteResponse::json(
-            200,
-            json!({ "ok": true, "relay": runtime.disable_relay() }),
-        ));
+    if let Some(response) = route_remote_json_request(runtime, method, pathname) {
+        return Some(response);
     }
 
     if method == "POST" && pathname == "/internal/push" {

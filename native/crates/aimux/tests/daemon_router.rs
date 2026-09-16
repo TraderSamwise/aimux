@@ -11,9 +11,6 @@ use aimux::daemon::router::{DaemonRouteRequestContext, route_daemon_request};
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
-use aimux::daemon::text::auth::{
-    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
-};
 use aimux::daemon::text::collaboration::DaemonCollaborationTextRuntime;
 use aimux::daemon::text::host_agent::DaemonHostAgentTextRuntime;
 use aimux::daemon::text::metadata::DaemonMetadataTextRuntime;
@@ -34,6 +31,9 @@ use aimux::debug_logging::{
     LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
 };
 use aimux::project_api_contract::routes as project_routes;
+use aimux::remote::daemon_auth_text::{
+    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
+};
 use aimux::runtime_safety_guard::{
     TEST_HARNESS_HEADER, TEST_ISOLATION_MARKER, daemon_test_harness_header_for_url_with_home,
 };

@@ -1,7 +1,6 @@
 use aimux::core_cli::{CoreCommandCall, CoreCommandOk, CoreLoopActorContext};
 use aimux::core_cli_executor::{CoreCliRuntime, run_core_cli_with};
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
-use aimux::daemon::text::auth::AuthFlowResult;
 use aimux::daemon::text::operations::{
     RestartControlPlaneTextResult, render_runtime_restart_result,
 };
@@ -11,6 +10,7 @@ use aimux::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
     CORE_SCRIBE_STATUS_TEXT_ROUTE, CORE_SERVICE_CREATE_TEXT_ROUTE, CORE_SERVICE_REMOVE_TEXT_ROUTE,
 };
+use aimux::remote::daemon_auth_text::AuthFlowResult;
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 use std::fs;
