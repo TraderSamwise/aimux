@@ -208,6 +208,35 @@ function toneFor(
   });
 }
 
+function supervisorRoleLabel(item: ExposeSourceItem): string {
+  const role =
+    item.roleState?.role ??
+    item.metadata?.role ??
+    item.label ??
+    item.metadata?.label ??
+    item.id ??
+    "supervisor";
+  const trimmed = role.trim();
+  return trimmed || "supervisor";
+}
+
+function orderedExposeTiles(tiles: ExposeTile[]): ExposeTile[] {
+  return tiles
+    .map((tile, index) => ({ tile, index }))
+    .sort((left, right) => {
+      if (left.tile.supervisorScoped !== right.tile.supervisorScoped) {
+        return left.tile.supervisorScoped ? -1 : 1;
+      }
+      if (left.tile.supervisorScoped && right.tile.supervisorScoped) {
+        const leftOrder = left.tile.exposeOrder ?? Number.POSITIVE_INFINITY;
+        const rightOrder = right.tile.exposeOrder ?? Number.POSITIVE_INFINITY;
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      }
+      return left.index - right.index;
+    })
+    .map(({ tile }) => tile);
+}
+
 export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
   const tiles: ExposeTile[] = [];
   for (const source of sources) {
@@ -221,8 +250,15 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
       const context = item.exposeContext ?? {};
       const projectName = context.project || item.projectName || source.project.name;
       const projectRoot = item.projectRoot || source.project.path;
-      const worktreeName = context.worktree || "main";
-      const semanticTitle = context.project ? `${projectName} / ${worktreeName}` : worktreeName;
+      const rawWorktreeName = context.worktree || "main";
+      const supervisorScoped = item.roleState?.lane?.kind === "supervisor";
+      const supervisorLabel = supervisorScoped ? supervisorRoleLabel(item) : null;
+      const worktreeName = supervisorLabel ?? rawWorktreeName;
+      const semanticTitle = supervisorLabel
+        ? supervisorLabel
+        : context.project
+          ? `${projectName} / ${worktreeName}`
+          : worktreeName;
       const statusKind = normalizeStatusKind(item.exposeStatus?.kind);
       const label = item.label || metadata.label || item.id || "agent";
       const sessionId = metadata.sessionId || item.id || label;
@@ -250,7 +286,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         role: metadata.role,
         shouldShowInExpose: declaredShouldShow,
         exposeOrder: item.exposeOrder ?? item.roleState?.exposeOrder ?? null,
-        supervisorScoped: item.roleState?.lane?.kind === "supervisor",
+        supervisorScoped,
         hotkeyLabel: "",
         kind,
         status: item.exposeStatus?.label || (statusKind ? cap(statusKind) : null),
@@ -258,8 +294,14 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         worktreeName,
         worktreePath: metadata.worktreePath,
         semanticTitle,
-        contextSubtitle: context.project ? projectName : source.project.name,
-        sectionKey: `${projectRoot}:${semanticTitle}`,
+        contextSubtitle: supervisorLabel
+          ? "Supervisor Lane"
+          : context.project
+            ? projectName
+            : source.project.name,
+        sectionKey: supervisorLabel
+          ? `${projectRoot}:supervisor:${supervisorLabel}`
+          : `${projectRoot}:${semanticTitle}`,
         sectionLabel: semanticTitle,
         tone: toneFor(item, projectRoot, worktreeName, projectName),
         terminalPreviewLines: previewLinesFor(item),
@@ -268,7 +310,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
       });
     });
   }
-  return withExposeHotkeys(tiles);
+  return withExposeHotkeys(orderedExposeTiles(tiles));
 }
 
 function withExposeHotkeys(tiles: ExposeTile[]): ExposeTile[] {

@@ -41,6 +41,35 @@ function item(id: string, worktree: string, tone: number, kind = "working"): Exp
   };
 }
 
+function supervisorItem(
+  id: string,
+  role: string,
+  exposeOrder: number,
+  shouldShowInExpose = true,
+): ExposeSourceItem {
+  return {
+    ...item(id, "main", 0),
+    label: `Project ${role}`,
+    shouldShowInExpose,
+    exposeOrder,
+    metadata: {
+      ...item(id, "main", 0).metadata,
+      sessionId: `claude-${role}`,
+      command: "claude",
+      toolConfigKey: "claude",
+      role,
+    },
+    roleState: {
+      status: "resolved",
+      role,
+      lane: { kind: "supervisor" },
+      projectControl: true,
+      shouldShowInExpose,
+      exposeOrder,
+    },
+  };
+}
+
 describe("expose model", () => {
   it("preserves the API item order and renders server Exposé context", () => {
     const tiles = buildExposeTiles([
@@ -127,49 +156,7 @@ describe("expose model", () => {
     const tiles = buildExposeTiles([
       {
         project,
-        items: [
-          {
-            ...item("0", "main", 0),
-            label: "Project Overseer",
-            shouldShowInExpose: true,
-            exposeOrder: 0,
-            metadata: {
-              ...item("0", "main", 0).metadata,
-              sessionId: "claude-overseer",
-              command: "claude",
-              toolConfigKey: "claude",
-              role: "overseer",
-            },
-            roleState: {
-              status: "resolved",
-              role: "overseer",
-              lane: { kind: "supervisor" },
-              projectControl: true,
-              shouldShowInExpose: true,
-              exposeOrder: 0,
-            },
-          },
-          {
-            ...item("1", "main", 0),
-            label: "Project Scribe",
-            shouldShowInExpose: false,
-            metadata: {
-              ...item("1", "main", 0).metadata,
-              sessionId: "claude-scribe",
-              command: "claude",
-              toolConfigKey: "claude",
-              role: "scribe",
-            },
-            roleState: {
-              status: "resolved",
-              role: "scribe",
-              lane: { kind: "supervisor" },
-              projectControl: true,
-              shouldShowInExpose: false,
-              exposeOrder: 1000,
-            },
-          },
-        ],
+        items: [supervisorItem("0", "overseer", 0), supervisorItem("1", "scribe", 1000, false)],
       },
     ]);
 
@@ -178,10 +165,13 @@ describe("expose model", () => {
       role: "overseer",
       shouldShowInExpose: true,
       exposeOrder: 0,
+      semanticTitle: "overseer",
+      contextSubtitle: "Supervisor Lane",
+      sectionLabel: "overseer",
     });
   });
 
-  it("assigns 0 to the first visible supervisor and keeps worktree hotkeys on 1-9", () => {
+  it("sorts visible supervisors by Exposé order before worktrees and keeps worktree hotkeys on 1-9", () => {
     const worktreeItems = Array.from({ length: 10 }, (_, index) =>
       item(`${index + 1}`, `worktree-${index + 1}`, index),
     );
@@ -189,41 +179,14 @@ describe("expose model", () => {
       {
         project,
         items: [
+          worktreeItems[0]!,
           {
-            ...item("0", "main", 0),
-            label: "Project Overseer",
-            metadata: {
-              ...item("0", "main", 0).metadata,
-              sessionId: "claude-overseer",
-              role: "overseer",
-            },
-            roleState: {
-              status: "resolved",
-              role: "overseer",
-              lane: { kind: "supervisor" },
-              projectControl: true,
-              shouldShowInExpose: true,
-              exposeOrder: 0,
-            },
+            ...supervisorItem("99", "reviewer", 1),
+            exposeStatus: { kind: "ready", label: "Ready" },
           },
-          {
-            ...item("99", "main", 0, "ready"),
-            label: "Project Reviewer",
-            metadata: {
-              ...item("99", "main", 0, "ready").metadata,
-              sessionId: "claude-reviewer",
-              role: "reviewer",
-            },
-            roleState: {
-              status: "resolved",
-              role: "reviewer",
-              lane: { kind: "supervisor" },
-              projectControl: true,
-              shouldShowInExpose: true,
-              exposeOrder: 1,
-            },
-          },
-          ...worktreeItems,
+          ...worktreeItems.slice(1, 4),
+          supervisorItem("0", "overseer", 0),
+          ...worktreeItems.slice(4),
         ],
       },
     ]);
@@ -245,6 +208,30 @@ describe("expose model", () => {
       { sessionId: "session-10", supervisorScoped: false, hotkeyLabel: "" },
     ]);
     expect(filterExposeTiles(tiles, "ready").map((tile) => tile.hotkeyLabel)).toEqual(["0"]);
+  });
+
+  it("keeps the supervisor role label stable across Exposé refresh order changes", () => {
+    const first = buildExposeTiles([
+      {
+        project,
+        items: [item("1", "main", 0), item("2", "e2e", 1), supervisorItem("0", "overseer", 0)],
+      },
+    ]);
+    const refresh = buildExposeTiles([
+      {
+        project,
+        items: [item("2", "e2e", 1), supervisorItem("0", "overseer", 0), item("1", "main", 0)],
+      },
+    ]);
+
+    for (const tiles of [first, refresh]) {
+      expect(tiles[0]).toMatchObject({
+        sessionId: "claude-overseer",
+        hotkeyLabel: "0",
+        semanticTitle: "overseer",
+        contextSubtitle: "Supervisor Lane",
+      });
+    }
   });
 
   it("hides items when Exposé visibility is absent, matching the TUI unknown-role default", () => {
