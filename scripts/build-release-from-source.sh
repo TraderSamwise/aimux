@@ -98,17 +98,17 @@ ARCH="${AIMUX_RELEASE_ARCH:-$(detect_arch)}"
 PLATFORM_ARCH="$PLATFORM-$ARCH"
 if [ "$VARIANT" = "local" ]; then
   ASSET="aimux-local-${PLATFORM_ARCH}.tar.gz"
-  DEFAULT_BUILD_PROFILE="local"
+  DEFAULT_PACKAGE_PROFILE="minimal"
 else
   ASSET="aimux-${PLATFORM_ARCH}.tar.gz"
-  DEFAULT_BUILD_PROFILE="full"
+  DEFAULT_PACKAGE_PROFILE="full"
 fi
 ASSET_PATH="$RELEASE_DIR/$ASSET"
 
 SOURCE_REVISION="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)"
 SOURCE_SHORT="$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
 export AIMUX_BUILD_VARIANT="$VARIANT"
-export AIMUX_BUILD_PROFILE="${AIMUX_BUILD_PROFILE:-$DEFAULT_BUILD_PROFILE}"
+export AIMUX_PACKAGE_PROFILE="${AIMUX_PACKAGE_PROFILE:-$DEFAULT_PACKAGE_PROFILE}"
 export AIMUX_RELEASE_DIR="$RELEASE_DIR"
 export AIMUX_RELEASE_VERSION="${AIMUX_RELEASE_VERSION:-source-$SOURCE_SHORT}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
@@ -116,7 +116,7 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-"/tmp/aimux-cargo-target-${AIMUX_SE
 
 printf 'Building Aimux %s variant from source revision %s\n' "$VARIANT" "$SOURCE_REVISION"
 printf 'Release directory: %s\n' "$RELEASE_DIR"
-printf 'Package profile: %s\n' "$AIMUX_BUILD_PROFILE"
+printf 'Package profile: %s\n' "$AIMUX_PACKAGE_PROFILE"
 
 cd "$ROOT_DIR"
 yarn release:asset

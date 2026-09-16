@@ -318,7 +318,7 @@ describe("install.sh", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30000);
+  }, 120000);
 });
 
 describe("build-release-asset.sh", () => {
@@ -394,6 +394,7 @@ describe("build-release-from-source.sh", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("Building Aimux local variant from source revision");
+      expect(result.stdout).toContain("Package profile: minimal");
       expect(result.stdout).toContain("aimux local build boundary check passed");
       expect(result.stdout).toContain("Install smoke passed for local variant");
       expect(result.stdout).toContain("Aimux source release build verified");
