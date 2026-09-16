@@ -7,7 +7,7 @@ import argparse
 import importlib.util
 import json
 import os
-import shutil
+import platform
 import subprocess
 import sys
 import tempfile
@@ -22,6 +22,7 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[1]
 PHASE8_PATH = ROOT / "scripts" / "phase8-live-residuals.py"
 CHECKS = ("loop", "input", "liveness", "transcript")
+SCENARIOS = ("full", "lite")
 MUTATIONS = (
     "loop-no-enroll",
     "input-drop",
@@ -98,36 +99,73 @@ def wait_until(label: str, timeout: float, interval: float, probe: Callable[[], 
     raise GateFailure(f"timed out waiting for {label}")
 
 
-def build_release_asset(work: Path) -> Path:
+def build_release_asset(work: Path, variant: str = "full") -> Path:
     release_dir = work / "release"
     env = os.environ.copy()
     env["AIMUX_BUILD_PROFILE"] = "local"
+    env["AIMUX_BUILD_VARIANT"] = variant
     env["AIMUX_RELEASE_DIR"] = str(release_dir)
-    env["AIMUX_RELEASE_VERSION"] = f"0.0.0-installed-gate.{os.getpid()}.{int(time.time())}"
+    env["AIMUX_RELEASE_VERSION"] = f"0.0.0-installed-gate-{variant}.{os.getpid()}.{int(time.time())}"
     env.setdefault("CARGO_INCREMENTAL", "0")
     env.setdefault(
         "CARGO_TARGET_DIR",
         f"/tmp/aimux-installed-gate-target-{os.environ.get('AIMUX_SESSION_ID', 'manual')}",
     )
     run(["yarn", "release:asset"], env=env, timeout=900)
-    assets = sorted(release_dir.glob("aimux-*.tar.gz"), key=lambda path: path.stat().st_mtime)
+    pattern = "aimux-lite-*.tar.gz" if variant == "lite" else "aimux-*.tar.gz"
+    assets = sorted(
+        [
+            path
+            for path in release_dir.glob(pattern)
+            if variant == "lite" or not path.name.startswith("aimux-lite-")
+        ],
+        key=lambda path: path.stat().st_mtime,
+    )
     if not assets:
-        raise GateFailure(f"release asset was not produced in {release_dir}")
+        raise GateFailure(f"{variant} release asset was not produced in {release_dir}")
     return assets[-1]
 
 
-def install_release_asset(asset: Path, work: Path) -> Path:
+def install_release_asset(asset: Path, work: Path, *, variant: str = "full") -> Path:
     install_root = work / "install-root"
     bin_dir = work / "bin"
     env = os.environ.copy()
     env["AIMUX_INSTALL_ROOT"] = str(install_root)
     env["AIMUX_BIN_DIR"] = str(bin_dir)
     env["AIMUX_SKIP_POST_INSTALL_RESTART"] = "1"
+    env["AIMUX_INSTALL_VARIANT"] = variant
     run(["bash", "scripts/install.sh", str(asset)], env=env, timeout=120)
     aimux_bin = bin_dir / "aimux"
     if not aimux_bin.is_file():
         raise GateFailure(f"installed aimux shim missing at {aimux_bin}")
     return aimux_bin
+
+
+def installed_native_binary(work: Path) -> Path:
+    matches = sorted((work / "install-root").glob("*/native/*/aimux"))
+    if len(matches) != 1:
+        raise GateFailure(f"expected one installed native binary, found {matches}")
+    if not matches[0].is_file():
+        raise GateFailure(f"installed native binary missing at {matches[0]}")
+    return matches[0]
+
+
+def host_platform_arch() -> str:
+    system = platform.system()
+    machine = platform.machine().lower()
+    if system == "Darwin":
+        host_platform = "darwin"
+    elif system == "Linux":
+        host_platform = "linux"
+    else:
+        raise GateFailure(f"unsupported platform for lite gate: {system}")
+    if machine in {"x86_64", "amd64"}:
+        arch = "x64"
+    elif machine in {"arm64", "aarch64"}:
+        arch = "arm64"
+    else:
+        raise GateFailure(f"unsupported architecture for lite gate: {machine}")
+    return f"{host_platform}-{arch}"
 
 
 def write_config(scope: Any) -> None:
@@ -438,6 +476,138 @@ def check_transcript_projection(phase8: Any, aimux_bin: Path, mutation: str | No
         print(f"transcript projection filtered chrome and preserved genuine prompt for sessions={chrome_session},{genuine_session}")
 
 
+def install_variant_refusal(asset: Path, install_variant: str, expected: str) -> None:
+    with tempfile.TemporaryDirectory(prefix=f"aimux-installed-runtime-gate-refusal-{install_variant}-") as temp:
+        root = Path(temp)
+        env = os.environ.copy()
+        env["AIMUX_INSTALL_ROOT"] = str(root / "install-root")
+        env["AIMUX_BIN_DIR"] = str(root / "bin")
+        env["AIMUX_SKIP_POST_INSTALL_RESTART"] = "1"
+        env["AIMUX_INSTALL_VARIANT"] = install_variant
+        result = run(["bash", "scripts/install.sh", str(asset)], env=env, timeout=120, check=False)
+        if result.returncode == 0:
+            raise GateFailure(f"{expected} was accepted unexpectedly by {install_variant} install path")
+        combined = f"{result.stdout}\n{result.stderr}"
+        if expected not in combined:
+            raise GateFailure(
+                f"{install_variant} install refusal did not name variant mismatch {expected!r}: {combined}"
+            )
+        print(f"{install_variant} install path rejected {asset.name}: {expected}")
+
+
+def string_count(binary: Path, needle: str) -> int:
+    print(f"$ strings {binary} | count {needle}")
+    result = subprocess.run(
+        ["strings", str(binary)],
+        cwd=str(ROOT),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+    )
+    if result.stderr:
+        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n", file=sys.stderr)
+    print(f"exit={result.returncode}")
+    if result.returncode != 0:
+        raise GateFailure(f"strings failed with exit {result.returncode}: {binary}")
+    return result.stdout.count(needle)
+
+
+def assert_no_remote_strings(binary: Path) -> None:
+    needles = ("AIMUX_RELAY_URL", "relay.aimux.app", "tokio_tungstenite", "wss://")
+    counts = {needle: string_count(binary, needle) for needle in needles}
+    for needle, count in counts.items():
+        print(f"lite strings count {needle}={count}")
+    nonzero = {needle: count for needle, count in counts.items() if count != 0}
+    if nonzero:
+        raise GateFailure(f"lite binary contains remote-control strings: {nonzero}")
+
+
+def assert_no_remote_help(aimux_bin: Path) -> None:
+    result = run([str(aimux_bin), "--help"], timeout=30)
+    forbidden = {"remote", "hosted", "login", "logout", "whoami", "security"}
+    command_lines = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        command = stripped.split()[0]
+        if command in forbidden:
+            command_lines.append(line)
+    print(f"lite forbidden help commands found={len(command_lines)}")
+    if command_lines:
+        raise GateFailure(f"lite --help lists remote-control commands: {command_lines}")
+
+
+def assert_lite_cargo_tree_has_no_remote_dependencies() -> None:
+    args = ["cargo", "tree", "--manifest-path", "native/Cargo.toml", "-p", "aimux", "--no-default-features"]
+    print(f"$ {' '.join(args)}")
+    result = subprocess.run(
+        args,
+        cwd=str(ROOT),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+    )
+    if result.stderr:
+        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n", file=sys.stderr)
+    print(f"exit={result.returncode}")
+    if result.returncode != 0:
+        raise GateFailure(f"cargo tree failed with exit {result.returncode}")
+    forbidden = ("tungstenite", "ureq")
+    hits = [line for line in result.stdout.splitlines() if any(name in line for name in forbidden)]
+    print(f"lite cargo tree remote dependency hits={len(hits)}")
+    if hits:
+        raise GateFailure(f"lite cargo tree contains remote-control dependencies: {hits}")
+
+
+def check_lite_functioning_runtime(phase8: Any, aimux_bin: Path) -> None:
+    with create_scope(phase8, aimux_bin, "lite") as scope:
+        aimux(scope, ["init"], timeout=60)
+        aimux(scope, ["daemon", "ensure"], timeout=60)
+        session_id = spawn_session(scope)
+        wait_for_ready(scope, session_id)
+        live = find_session(ps(scope), session_id)
+        status = str(live.get("status") or "")
+        if status not in {"starting", "running", "idle"}:
+            raise GateFailure(f"lite installed runtime spawned session has unexpected status {status}: {live}")
+        print(f"lite installed runtime initialized project and ps reported session={session_id} status={status}")
+
+
+def run_lite_scenario(phase8: Any, work: Path) -> None:
+    platform_arch = host_platform_arch()
+    print(f"building full archive for real variant-refusal proof on {platform_arch}")
+    full_asset = build_release_asset(work, "full")
+    print(f"building lite archive through release:asset on {platform_arch}")
+    lite_asset = build_release_asset(work, "lite")
+
+    install_variant_refusal(full_asset, "lite", "release archive BUILD_VARIANT mismatch: expected lite, got full")
+    install_variant_refusal(lite_asset, "full", "release archive BUILD_VARIANT mismatch: expected full, got lite")
+
+    aimux_bin = install_release_asset(lite_asset, work, variant="lite")
+    native_bin = installed_native_binary(work)
+    print(f"installed lite runtime under {aimux_bin}")
+    print(f"installed lite native binary {native_bin}")
+
+    run(
+        [
+            "bash",
+            "scripts/check-lite-build-boundary.sh",
+            "--archive",
+            str(lite_asset),
+            "--platform-arch",
+            platform_arch,
+            "--skip-cargo-tree",
+        ],
+        timeout=120,
+    )
+    assert_no_remote_strings(native_bin)
+    assert_no_remote_help(aimux_bin)
+    assert_lite_cargo_tree_has_no_remote_dependencies()
+    check_lite_functioning_runtime(phase8, aimux_bin)
+
+
 def selected_checks(only: str) -> tuple[str, ...]:
     return CHECKS if only == "all" else (only,)
 
@@ -446,13 +616,24 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--asset", type=Path, help="install this release asset instead of building one")
     parser.add_argument("--only", choices=("all", *CHECKS), default="all")
+    parser.add_argument("--scenario", choices=("all", *SCENARIOS), default="full")
     parser.add_argument("--mutate", choices=MUTATIONS, help="deliberately sabotage one check for fail-proofing")
     parser.add_argument("--list-checks", action="store_true", help="print gate check names and exit")
+    parser.add_argument("--list-scenarios", action="store_true", help="print gate scenario names and exit")
     args = parser.parse_args()
 
     if args.list_checks:
         print("\n".join(CHECKS))
         return 0
+    if args.list_scenarios:
+        print("\n".join(SCENARIOS))
+        return 0
+    if args.asset and args.scenario != "full":
+        raise GateFailure("--asset is only supported with --scenario full")
+    if args.mutate and args.scenario != "full":
+        raise GateFailure("--mutate is only supported with --scenario full")
+    if args.only != "all" and args.scenario != "full":
+        raise GateFailure("--only is only supported with --scenario full")
 
     mutation_check = args.mutate.split("-", 1)[0] if args.mutate else None
     if args.mutate and args.only not in {"all", mutation_check}:
@@ -461,24 +642,28 @@ def main() -> int:
     phase8 = load_phase8()
     with tempfile.TemporaryDirectory(prefix="aimux-installed-runtime-gate-") as temp:
         work = Path(temp)
-        asset = args.asset.resolve() if args.asset else build_release_asset(work)
-        if not asset.is_file():
-            raise GateFailure(f"release asset does not exist: {asset}")
-        print(f"using release asset {asset}")
-        aimux_bin = install_release_asset(asset, work)
-        print(f"installed runtime under {aimux_bin}")
+        if args.scenario in {"full", "all"}:
+            asset = args.asset.resolve() if args.asset else build_release_asset(work, "full")
+            if not asset.is_file():
+                raise GateFailure(f"release asset does not exist: {asset}")
+            print(f"using release asset {asset}")
+            aimux_bin = install_release_asset(asset, work)
+            print(f"installed runtime under {aimux_bin}")
 
-        runners = {
-            "loop": check_loop_notification,
-            "input": check_input_delivery,
-            "liveness": check_liveness,
-            "transcript": check_transcript_projection,
-        }
-        for name in selected_checks(args.only):
-            if mutation_check is not None and name != mutation_check:
-                continue
-            print(f"\n== installed-runtime-gate:{name} ==")
-            runners[name](phase8, aimux_bin, args.mutate)
+            runners = {
+                "loop": check_loop_notification,
+                "input": check_input_delivery,
+                "liveness": check_liveness,
+                "transcript": check_transcript_projection,
+            }
+            for name in selected_checks(args.only):
+                if mutation_check is not None and name != mutation_check:
+                    continue
+                print(f"\n== installed-runtime-gate:{name} ==")
+                runners[name](phase8, aimux_bin, args.mutate)
+        if args.scenario in {"lite", "all"}:
+            print("\n== installed-runtime-gate:lite ==")
+            run_lite_scenario(phase8, work)
     return 0
 
 
