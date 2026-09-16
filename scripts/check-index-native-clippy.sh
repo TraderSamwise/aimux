@@ -5,16 +5,33 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-if ! git diff --cached --name-only --diff-filter=ACMR -- 'native/**/*.rs' '*.rs' | grep -q .; then
+STAGED_PATHS_FILE="$(mktemp "${TMPDIR:-/tmp}/aimux-index-native-clippy-paths.XXXXXX")"
+TMP_ROOT=""
+cleanup() {
+  rm -f "$STAGED_PATHS_FILE"
+  if [ -n "$TMP_ROOT" ]; then
+    rm -rf "$TMP_ROOT"
+  fi
+}
+trap cleanup EXIT
+
+git diff --cached --name-only -z -- >"$STAGED_PATHS_FILE"
+has_native_clippy_input_change=0
+while IFS= read -r -d '' staged_path; do
+  case "$staged_path" in
+    *.rs | Cargo.toml | */Cargo.toml | Cargo.lock | */Cargo.lock)
+      has_native_clippy_input_change=1
+      break
+      ;;
+  esac
+done <"$STAGED_PATHS_FILE"
+
+if [ "$has_native_clippy_input_change" -eq 0 ]; then
   exit 0
 fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aimux-index-native-clippy-XXXXXX")"
-cleanup() {
-  rm -rf "$TMP_ROOT"
-}
-trap cleanup EXIT
 
 cd "$ROOT"
 git checkout-index --all --force --prefix="$TMP_ROOT/"

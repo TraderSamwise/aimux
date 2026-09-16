@@ -81,9 +81,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 const DAEMON_RESTART_SIGNAL: &str = "SIGHUP";
 const LOOP_SELF_REPORT_SPOOL_RELATIVE_PATH: &str = "daemon/pending-loop-self-reports.jsonl";
+const POST_RESTART_DAEMON_VERIFY_ATTEMPTS: usize = 4;
+const POST_RESTART_DAEMON_VERIFY_RETRY_SLEEP_MS: u64 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreCliExecution {
@@ -799,14 +803,7 @@ where
 fn verify_restarted_daemon_matches_cli_manifest() -> Result<(), String> {
     let expected = get_project_service_manifest()
         .map_err(|error| format!("post-restart daemon verification failed: {error}"))?;
-    let health = request_daemon_json(
-        "/health",
-        DaemonRequestInit {
-            timeout_ms: Some(DAEMON_HEALTH_PROBE_TIMEOUT_MS),
-            ..DaemonRequestInit::default()
-        },
-    )
-    .map_err(|error| format!("post-restart daemon verification failed: {error}"))?;
+    let health = request_restarted_daemon_health()?;
     if !is_matching_daemon_health(&health, &expected) {
         return Err(format!(
             "post-restart daemon build mismatch: expected buildStamp {} apiVersion {}, got buildStamp {} apiVersion {} (pid {})",
@@ -833,6 +830,63 @@ fn verify_restarted_daemon_matches_cli_manifest() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn request_restarted_daemon_health() -> Result<Value, String> {
+    request_restarted_daemon_health_with_retry(
+        POST_RESTART_DAEMON_VERIFY_ATTEMPTS,
+        || {
+            request_daemon_json(
+                "/health",
+                DaemonRequestInit {
+                    timeout_ms: Some(DAEMON_HEALTH_PROBE_TIMEOUT_MS),
+                    ..DaemonRequestInit::default()
+                },
+            )
+        },
+        || {
+            thread::sleep(Duration::from_millis(
+                POST_RESTART_DAEMON_VERIFY_RETRY_SLEEP_MS,
+            ))
+        },
+    )
+}
+
+fn request_restarted_daemon_health_with_retry<Request, Sleep>(
+    max_attempts: usize,
+    mut request: Request,
+    mut sleep: Sleep,
+) -> Result<Value, String>
+where
+    Request: FnMut() -> Result<Value, CoreCommandTransportError>,
+    Sleep: FnMut(),
+{
+    let max_attempts = max_attempts.max(1);
+    let mut transient_failures = 0;
+    loop {
+        match request() {
+            Ok(health) => return Ok(health),
+            Err(error) if post_restart_daemon_verify_error_is_retryable(&error) => {
+                transient_failures += 1;
+                if transient_failures >= max_attempts {
+                    return Err(format!(
+                        "post-restart daemon verification failed after {transient_failures} transient loopback attempt(s): {error}"
+                    ));
+                }
+                sleep();
+            }
+            Err(error) => {
+                return Err(format!("post-restart daemon verification failed: {error}"));
+            }
+        }
+    }
+}
+
+fn post_restart_daemon_verify_error_is_retryable(error: &CoreCommandTransportError) -> bool {
+    matches!(
+        error,
+        CoreCommandTransportError::TransientIoExhausted { .. }
+    )
 }
 
 fn daemon_health_build_stamp(health: &Value) -> String {
@@ -2259,6 +2313,66 @@ mod tests {
         assert_eq!(result, "[]\n");
         assert_eq!(*ensure_calls.borrow(), 1);
         assert_eq!(*attempts.borrow(), 2);
+    }
+
+    #[test]
+    fn post_restart_daemon_verify_retries_transient_loopback_exhaustion_until_success() {
+        let attempts = RefCell::new(0);
+        let sleeps = RefCell::new(0);
+
+        let health = request_restarted_daemon_health_with_retry(
+            4,
+            || {
+                let mut attempts = attempts.borrow_mut();
+                *attempts += 1;
+                if *attempts == 1 {
+                    Err(CoreCommandTransportError::TransientIoExhausted {
+                        operation: "read",
+                        attempts: 1,
+                        timeout_ms: 2_500,
+                        source: io::Error::from_raw_os_error(libc::EAGAIN),
+                    })
+                } else {
+                    Ok(json!({ "pid": 42, "serviceInfo": { "buildStamp": "ok" } }))
+                }
+            },
+            || *sleeps.borrow_mut() += 1,
+        )
+        .expect("transient post-restart EAGAIN should be retried");
+
+        assert_eq!(health["pid"], json!(42));
+        assert_eq!(*attempts.borrow(), 2);
+        assert_eq!(*sleeps.borrow(), 1);
+    }
+
+    #[test]
+    fn post_restart_daemon_verify_reports_persistent_transient_loopback_exhaustion() {
+        let attempts = RefCell::new(0);
+        let sleeps = RefCell::new(0);
+
+        let error = request_restarted_daemon_health_with_retry(
+            3,
+            || {
+                *attempts.borrow_mut() += 1;
+                Err(CoreCommandTransportError::TransientIoExhausted {
+                    operation: "read",
+                    attempts: 7,
+                    timeout_ms: 2_500,
+                    source: io::Error::from_raw_os_error(libc::EAGAIN),
+                })
+            },
+            || *sleeps.borrow_mut() += 1,
+        )
+        .expect_err("persistent post-restart EAGAIN should remain loud");
+
+        assert_eq!(*attempts.borrow(), 3);
+        assert_eq!(*sleeps.borrow(), 2);
+        assert!(
+            error.contains(
+                "post-restart daemon verification failed after 3 transient loopback attempt(s): daemon loopback read retried transient error 7 times over 2500ms"
+            ),
+            "{error}"
+        );
     }
 
     #[test]

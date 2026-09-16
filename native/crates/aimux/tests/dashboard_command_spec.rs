@@ -81,6 +81,7 @@ fn command_uses_native_dashboard_entrypoint_by_default() {
     assert_eq!(spec.dashboard_command.cwd, "/tmp/repo");
     assert_eq!(spec.dashboard_command.args[0], "-lc");
     assert!(command.contains("__dashboard-internal-native"));
+    assert!(command.contains("'--project-root' '/tmp/repo'"));
     assert!(!command.contains("--tmux-dashboard-internal"));
     assert!(command.contains(&spec.script_path));
     assert!(!command.contains("Starting Aimux dashboard..."));

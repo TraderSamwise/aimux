@@ -272,7 +272,7 @@
                 "command": "bash",
                 "args": [
                   "-lc",
-                  "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '/Users/sam/cs/aimux/.aimux/worktrees/rust-translation-v1/dist/launcher-bin.js' '__dashboard-internal-native'"
+                  "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '/Users/sam/cs/aimux/.aimux/worktrees/rust-translation-v1/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/Users/sam/cs/glyde-frontend'"
                 ]
               }
             ]
@@ -289,7 +289,7 @@
                 "command": "bash",
                 "args": [
                   "-lc",
-                  "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '/Users/sam/cs/aimux/.aimux/worktrees/rust-translation-v1/dist/launcher-bin.js' '__dashboard-internal-native'"
+                  "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '/Users/sam/cs/aimux/.aimux/worktrees/rust-translation-v1/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/Users/sam/cs/glyde-frontend'"
                 ]
               }
             ]
@@ -355,7 +355,7 @@
                 "command": "bash",
                 "args": [
                   "-lc",
-                  "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '/Users/sam/cs/aimux/.aimux/worktrees/rust-translation-v1/dist/launcher-bin.js' '__dashboard-internal-native'"
+                  "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '/Users/sam/cs/aimux/.aimux/worktrees/rust-translation-v1/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/Users/sam/cs/glyde-frontend'"
                 ]
               },
               { "option": "@aimux-dashboard-ready", "value": "acacad52ee2b1a20-d620036557b5ade5", "timeoutMs": 20000 }

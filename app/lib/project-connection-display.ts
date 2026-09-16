@@ -21,6 +21,12 @@ export function projectStateErrorCopy(error: string): {
   title: string;
   detail: string;
 } {
+  if (isRuntimeInventoryUnavailableError(error)) {
+    return {
+      title: "Runtime inventory unavailable.",
+      detail: `Aimux could not verify tmux window liveness. ${error}`,
+    };
+  }
   if (isProjectHostOfflineError(error)) {
     return {
       title: "Project host not running.",
@@ -52,6 +58,12 @@ export function projectStateErrorCopy(error: string): {
 
 export function isDevicePendingApprovalError(error: string): boolean {
   return /pending security approval/i.test(error);
+}
+
+export function isRuntimeInventoryUnavailableError(error: string): boolean {
+  return /could not verify agent tmux liveness|tmux window query failed|tmux live[- ]window|live-window inventory|tmuxLiveWindowQuery/i.test(
+    error,
+  );
 }
 
 export function isProjectHostOfflineError(error: string) {

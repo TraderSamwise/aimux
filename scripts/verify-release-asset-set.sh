@@ -10,39 +10,73 @@ fail() {
   exit 1
 }
 
-LITE_BOUNDARY_CHECKER=""
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --lite-boundary-checker)
-      [ "$#" -ge 2 ] || fail "--lite-boundary-checker requires a path"
-      LITE_BOUNDARY_CHECKER="$2"
-      shift 2
-      ;;
-    --)
-      shift
-      break
-      ;;
-    -*)
-      printf 'Usage: %s [--lite-boundary-checker <path>] <release-dir>\n' "$0" >&2
-      exit 2
-      ;;
-    *)
-      break
-      ;;
-  esac
-done
-
 if [ "$#" -ne 1 ]; then
-  printf 'Usage: %s [--lite-boundary-checker <path>] <release-dir>\n' "$0" >&2
+  printf 'Usage: %s <release-dir>\n' "$0" >&2
   exit 2
 fi
 
 RELEASE_DIR="$1"
 [ -d "$RELEASE_DIR" ] || fail "release directory not found: $RELEASE_DIR"
-if [ -n "$LITE_BOUNDARY_CHECKER" ] && [ ! -x "$LITE_BOUNDARY_CHECKER" ]; then
-  fail "lite boundary checker is not executable: $LITE_BOUNDARY_CHECKER"
-fi
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+for command in grep shasum tar mktemp rm sed; do
+  need "$command"
+done
+
+TMP_DIR="$(mktemp -d)"
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+verify_checksum() {
+  local asset="$1"
+  local sha_path="$2"
+  local output
+
+  if ! output="$(cd "$RELEASE_DIR" && shasum -a 256 -c "$(basename "$sha_path")" 2>&1)"; then
+    printf 'checksum mismatch for release asset: %s\n%s\n' "$asset" "$output" >&2
+    return 1
+  fi
+}
+
+verify_archive_shape() {
+  local asset_path="$1"
+  local platform_arch="$2"
+  local expected_variant="$3"
+  local list_path variant
+
+  list_path="$TMP_DIR/$(basename "$asset_path").list"
+  if ! tar -tzf "$asset_path" > "$list_path" 2>"$list_path.err"; then
+    printf 'release asset is not a readable tar.gz archive: %s\n' "$asset_path" >&2
+    sed 's/^/  /' "$list_path.err" >&2
+    return 1
+  fi
+  for entry in \
+    aimux/VERSION \
+    aimux/BUILD_STAMP \
+    aimux/BUILD_VARIANT \
+    "aimux/native/$platform_arch/aimux"
+  do
+    if ! grep -Fx "$entry" "$list_path" >/dev/null 2>&1; then
+      printf 'release asset is missing expected archive entry: %s in %s\n' "$entry" "$asset_path" >&2
+      return 1
+    fi
+  done
+  if ! variant="$(tar -xOzf "$asset_path" aimux/BUILD_VARIANT 2>"$list_path.variant.err" | sed -n '1{s/[[:space:]]*$//;p;}')"; then
+    printf 'could not read BUILD_VARIANT from release asset: %s\n' "$asset_path" >&2
+    sed 's/^/  /' "$list_path.variant.err" >&2
+    return 1
+  fi
+  if [ "$variant" != "$expected_variant" ]; then
+    printf 'release asset BUILD_VARIANT mismatch for %s: expected %s, got %s\n' \
+      "$asset_path" "$expected_variant" "$variant" >&2
+    return 1
+  fi
+}
 
 missing=0
 for platform in darwin linux; do
@@ -53,22 +87,30 @@ for platform in darwin linux; do
       else
         asset="aimux-${platform}-${arch}.tar.gz"
       fi
-      for path in "$RELEASE_DIR/$asset" "$RELEASE_DIR/$asset.sha256"; do
-        if [ ! -f "$path" ]; then
-          printf 'missing release asset: %s\n' "$path" >&2
-          missing=1
-        fi
-      done
+      asset_path="$RELEASE_DIR/$asset"
       sha_path="$RELEASE_DIR/$asset.sha256"
-      if [ -f "$sha_path" ] && ! grep -F " $asset" "$sha_path" >/dev/null 2>&1; then
-        printf 'release sha file does not name its asset: %s\n' "$sha_path" >&2
+
+      if [ ! -f "$asset_path" ]; then
+        printf 'missing release asset: %s\n' "$asset_path" >&2
+        missing=1
+      elif [ ! -r "$asset_path" ]; then
+        printf 'release asset is not readable: %s\n' "$asset_path" >&2
         missing=1
       fi
-      if [ "$variant" = "lite" ] && [ -n "$LITE_BOUNDARY_CHECKER" ] && [ -f "$RELEASE_DIR/$asset" ]; then
-        if ! "$LITE_BOUNDARY_CHECKER" --archive "$RELEASE_DIR/$asset" --platform-arch "${platform}-${arch}"; then
-          printf 'lite boundary checker rejected release asset: %s\n' "$RELEASE_DIR/$asset" >&2
-          missing=1
-        fi
+      if [ ! -f "$sha_path" ]; then
+        printf 'missing release checksum file: %s\n' "$sha_path" >&2
+        missing=1
+      elif [ ! -r "$sha_path" ]; then
+        printf 'release checksum file is not readable: %s\n' "$sha_path" >&2
+        missing=1
+      elif ! grep -F " $asset" "$sha_path" >/dev/null 2>&1; then
+        printf 'release sha file does not name its asset: %s\n' "$sha_path" >&2
+        missing=1
+      elif [ -f "$asset_path" ] && ! verify_checksum "$asset" "$sha_path"; then
+        missing=1
+      fi
+      if [ -f "$asset_path" ] && ! verify_archive_shape "$asset_path" "${platform}-${arch}" "$variant"; then
+        missing=1
       fi
     done
   done

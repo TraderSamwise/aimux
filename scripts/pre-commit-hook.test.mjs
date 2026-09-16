@@ -196,6 +196,10 @@ exit 127
     `#!/bin/sh
 printf '%s|%s\\n' "$PWD" "$*" >> "$CARGO_LOG"
 if [ "$1" = "clippy" ]; then
+  if grep -q '^pub mod removable;' native/crates/aimux/src/lib.rs >/dev/null 2>&1 && [ ! -f native/crates/aimux/src/removable.rs ]; then
+    printf 'fixture clippy rejected missing removable module\\n' >&2
+    exit 101
+  fi
   if grep -R "CLIPPY_FAIL" native/crates/aimux/tests >/dev/null 2>&1; then
     printf 'fixture clippy rejected staged Rust\\n' >&2
     exit 101
@@ -211,6 +215,7 @@ exit 127
   mkdirSync(join(root, "native/crates/aimux/src"), { recursive: true });
   mkdirSync(join(root, "native/crates/aimux/tests"), { recursive: true });
   writeFileSync(join(root, "native/Cargo.toml"), "[workspace]\nmembers = [\"crates/aimux\"]\n");
+  writeFileSync(join(root, "native/Cargo.lock"), "# lockfile fixture\n");
   writeFileSync(join(root, "native/crates/aimux/Cargo.toml"), "[package]\nname = \"aimux\"\nversion = \"0.1.0\"\nedition = \"2024\"\n");
   writeFileSync(join(root, "native/crates/aimux/src/lib.rs"), "pub fn native() {}\n");
 
@@ -365,6 +370,103 @@ describe("pre-commit hook", () => {
       );
       const tree = commitTree(root);
       expect(commitBody(root)).toContain(`Aimux-Pre-Commit: ${tree}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a deletion-only Rust change that breaks the clippy index checkout", () => {
+    const { root, realGit } = setupRepo();
+    try {
+      writeFileSync(join(root, "native/crates/aimux/src/lib.rs"), "pub mod removable;\npub fn native() {}\n");
+      writeFileSync(join(root, "native/crates/aimux/src/removable.rs"), "pub fn removable() {}\n");
+      runOk(root, "git", ["add", "native/crates/aimux/src/lib.rs", "native/crates/aimux/src/removable.rs"]);
+      runOk(root, "git", ["commit", "-m", "add removable module"], {
+        env: hookEnv(root, realGit),
+      });
+
+      runOk(root, "git", ["rm", "native/crates/aimux/src/removable.rs"]);
+
+      const result = run(root, "git", ["commit", "-m", "delete referenced module"], {
+        env: hookEnv(root, realGit),
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("fixture clippy rejected missing removable module");
+      expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a Rust rename that leaves the index checkout broken", () => {
+    const { root, realGit } = setupRepo();
+    try {
+      writeFileSync(join(root, "native/crates/aimux/src/lib.rs"), "pub mod removable;\npub fn native() {}\n");
+      writeFileSync(join(root, "native/crates/aimux/src/removable.rs"), "pub fn removable() {}\n");
+      runOk(root, "git", ["add", "native/crates/aimux/src/lib.rs", "native/crates/aimux/src/removable.rs"]);
+      runOk(root, "git", ["commit", "-m", "add removable module"], {
+        env: hookEnv(root, realGit),
+      });
+
+      runOk(root, "git", ["mv", "native/crates/aimux/src/removable.rs", "native/crates/aimux/src/moved.rs"]);
+
+      const result = run(root, "git", ["commit", "-m", "rename referenced module"], {
+        env: hookEnv(root, realGit),
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("fixture clippy rejected missing removable module");
+      expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows a deletion-only Rust change when the clippy index checkout stays clean", () => {
+    const { root, realGit } = setupRepo();
+    try {
+      writeFileSync(join(root, "native/crates/aimux/tests/obsolete.rs"), "const OBSOLETE: bool = true;\n");
+      runOk(root, "git", ["add", "native/crates/aimux/tests/obsolete.rs"]);
+      runOk(root, "git", ["commit", "-m", "add obsolete test"], {
+        env: hookEnv(root, realGit),
+      });
+
+      runOk(root, "git", ["rm", "native/crates/aimux/tests/obsolete.rs"]);
+      const result = run(root, "git", ["commit", "-m", "delete obsolete test"], {
+        env: hookEnv(root, realGit),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
+      );
+      const tree = commitTree(root);
+      expect(commitBody(root)).toContain(`Aimux-Pre-Commit: ${tree}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the clippy index gate for staged Cargo metadata changes", () => {
+    const { root, realGit } = setupRepo();
+    try {
+      writeFileSync(join(root, "native/crates/aimux/Cargo.toml"), "[package]\nname = \"aimux\"\nversion = \"0.1.1\"\nedition = \"2024\"\n");
+      writeFileSync(join(root, "native/Cargo.lock"), "# lockfile fixture\n# metadata changed\n");
+      runOk(root, "git", ["add", "native/crates/aimux/Cargo.toml", "native/Cargo.lock"]);
+
+      const result = run(root, "git", ["commit", "-m", "change cargo metadata"], {
+        env: hookEnv(root, realGit),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

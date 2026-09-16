@@ -819,9 +819,16 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         }
                         scroll_offset = frame.scroll_offset;
                         if !ready_marked {
-                            let _ = mark_native_dashboard_ready(&options.project_root);
-                            ready_marked = true;
-                            dashboard_ready_since = Some(Instant::now());
+                            match mark_native_dashboard_ready(&options.project_root) {
+                                Ok(true) => {
+                                    ready_marked = true;
+                                    dashboard_ready_since = Some(Instant::now());
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    eprintln!("dashboard ready marker failed: {error}");
+                                }
+                            }
                         }
                         latest_hidden_offline_agent_count =
                             visible_model.hidden_offline_agent_count;
@@ -880,6 +887,18 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             &request_outcomes_tx,
                         );
                         scroll_offset = frame.scroll_offset;
+                        if !ready_marked {
+                            match mark_native_dashboard_ready(&options.project_root) {
+                                Ok(true) => {
+                                    ready_marked = true;
+                                    dashboard_ready_since = Some(Instant::now());
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    eprintln!("dashboard ready marker failed: {error}");
+                                }
+                            }
+                        }
                         refresh_state.complete_refresh();
                         reconcile_dashboard_event_stream(
                             &mut event_stream,

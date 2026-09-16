@@ -18,6 +18,7 @@ import {
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
+import { isRuntimeInventoryUnavailableError } from "@/lib/project-connection-display";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { formatTmuxUnavailable } from "@/lib/unavailable-state";
 import { cn } from "@/lib/utils";
@@ -300,7 +301,7 @@ export function TeammatePanel({
                 />
               ))
             ) : (
-              <Text className="text-xs text-muted-foreground">No teammates</Text>
+              <TeammateListStateMessage error={error} />
             )}
           </View>
         </View>
@@ -411,6 +412,17 @@ export function TeammatePanel({
       {status ? <Text className="mt-3 text-xs text-muted-foreground">{status}</Text> : null}
     </Card>
   );
+}
+
+export function TeammateListStateMessage({ error }: { error: string | null }) {
+  if (error && isRuntimeInventoryUnavailableError(error)) {
+    return (
+      <Text className="text-xs text-amber-200">
+        Runtime inventory unavailable; teammate liveness could not be verified.
+      </Text>
+    );
+  }
+  return <Text className="text-xs text-muted-foreground">No teammates</Text>;
 }
 
 function PanelLabel({ label }: { label: string }) {

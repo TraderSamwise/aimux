@@ -33,7 +33,7 @@
           "command": "bash",
           "args": [
             "-lc",
-            "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+            "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
           ]
         },
         "derived": {
@@ -72,7 +72,7 @@
           "command": "bash",
           "args": [
             "-lc",
-            "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/tmp/custom'\"'\"'home; echo unsafe' AIMUX_DAEMON_PORT='43219' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+            "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/tmp/custom'\"'\"'home; echo unsafe' AIMUX_DAEMON_PORT='43219' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
           ]
         },
         "derived": {
@@ -111,7 +111,7 @@
           "command": "bash",
           "args": [
             "-lc",
-            "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/tmp/aimux' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+            "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/tmp/aimux' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
           ]
         },
         "derived": {
@@ -154,7 +154,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_DAEMON_PORT='43190' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_DAEMON_PORT='43190' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -178,7 +178,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_DAEMON_PORT='43191' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_DAEMON_PORT='43191' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -222,7 +222,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -246,7 +246,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_ENV='production' AIMUX_WEB_APP_URL='https://aimux.app' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_ENV='production' AIMUX_WEB_APP_URL='https://aimux.app' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -284,7 +284,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -308,7 +308,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' AIMUX_WEB_APP_URL='https://aimux.app' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' AIMUX_WEB_APP_URL='https://aimux.app' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -355,7 +355,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_ENV='production' AIMUX_WEB_APP_URL='https://aimux.app' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_ENV='production' AIMUX_WEB_APP_URL='https://aimux.app' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -379,7 +379,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_ENV='development' AIMUX_WEB_APP_URL='http://localhost:8081' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_ENV='development' AIMUX_WEB_APP_URL='http://localhost:8081' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -420,7 +420,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -444,7 +444,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -485,7 +485,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
@@ -509,7 +509,7 @@
             "command": "bash",
             "args": [
               "-lc",
-              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native'"
+              "env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '__dashboard-internal-native' '--project-root' '/tmp/repo'"
             ]
           },
           "derived": {
