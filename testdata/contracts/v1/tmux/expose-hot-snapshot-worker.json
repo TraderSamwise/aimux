@@ -295,8 +295,12 @@
                   "kind": "worktree",
                   "worktreePath": "/repo"
                 },
-                "projectControl": false
-              }
+                "projectControl": false,
+                "shouldShowInExpose": true,
+                "exposeOrder": 1000
+              },
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
             },
             {
               "target": {
@@ -342,8 +346,12 @@
                   "kind": "worktree",
                   "worktreePath": "/repo"
                 },
-                "projectControl": false
-              }
+                "projectControl": false,
+                "shouldShowInExpose": true,
+                "exposeOrder": 1000
+              },
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
             }
           ]
         },
@@ -396,8 +404,12 @@
                   "kind": "worktree",
                   "worktreePath": "/repo"
                 },
-                "projectControl": false
-              }
+                "projectControl": false,
+                "shouldShowInExpose": true,
+                "exposeOrder": 1000
+              },
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
             },
             {
               "target": {
@@ -443,8 +455,12 @@
                   "kind": "worktree",
                   "worktreePath": "/repo"
                 },
-                "projectControl": false
-              }
+                "projectControl": false,
+                "shouldShowInExpose": true,
+                "exposeOrder": 1000
+              },
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
             }
           ]
         },
@@ -497,8 +513,12 @@
                   "kind": "worktree",
                   "worktreePath": "/repo"
                 },
-                "projectControl": false
-              }
+                "projectControl": false,
+                "shouldShowInExpose": true,
+                "exposeOrder": 1000
+              },
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
             },
             {
               "target": {
@@ -544,8 +564,12 @@
                   "kind": "worktree",
                   "worktreePath": "/repo"
                 },
-                "projectControl": false
-              }
+                "projectControl": false,
+                "shouldShowInExpose": true,
+                "exposeOrder": 1000
+              },
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
             }
           ]
         },

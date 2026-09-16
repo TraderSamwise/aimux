@@ -112,8 +112,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ],
         "includeOverseer": [
@@ -150,8 +154,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           },
           {
             "target": {
@@ -189,8 +197,12 @@
               "lane": {
                 "kind": "supervisor"
               },
-              "projectControl": true
-            }
+              "projectControl": true,
+              "shouldShowInExpose": true,
+              "exposeOrder": 0
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 0
           }
         ]
       },
@@ -306,8 +318,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ],
         "next": null,
@@ -417,8 +433,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ]
       },
@@ -592,8 +612,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/.aimux/worktrees/tealchart-cleanup-11"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           },
           {
             "target": {
@@ -628,8 +652,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/.aimux/worktrees/tealchart-cleanup-11"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ]
       },
@@ -729,8 +757,12 @@
                 "kind": "worktree",
                 "worktreePath": "/private/tmp/tealstreet-pr5180"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           },
           {
             "target": {
@@ -766,8 +798,12 @@
                 "kind": "worktree",
                 "worktreePath": "/private/tmp/tealstreet-pr5180"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ]
       },
@@ -869,8 +905,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/wt"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           },
           {
             "target": {
@@ -906,8 +946,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/wt"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ]
       },
@@ -1039,8 +1083,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/wt"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           },
           {
             "target": {
@@ -1076,8 +1124,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/wt"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ],
         "next": {
@@ -1114,8 +1166,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/wt"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         },
         "prev": {
           "target": {
@@ -1151,8 +1207,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/wt"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         }
       },
       "inputSha256": "9973a0958bfb18069bd876eab2e56b80a60c7c83d1f49c251d3dddb49971293f"
@@ -1337,8 +1397,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/wt"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           },
           {
             "target": {
@@ -1380,8 +1444,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/other"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ],
         "next": {
@@ -1424,8 +1492,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/wt"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         },
         "prev": {
           "target": {
@@ -1467,8 +1539,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/wt"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         }
       },
       "inputSha256": "9266a3247497da2e9877df97a70903b6f3251d5663f07ad329d718b096cb398b"
@@ -1636,8 +1712,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/other"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ],
         "next": {
@@ -1680,8 +1760,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/other"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         },
         "prev": {
           "target": {
@@ -1723,8 +1807,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/other"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         }
       },
       "inputSha256": "ebd2233064fb16375f345aa89618ee4ad63f8a3bc69411b665c54d58dea1d37c"
@@ -1850,8 +1938,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/wt"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           },
           {
             "target": {
@@ -1887,8 +1979,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/wt"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ],
         "next": {
@@ -1925,8 +2021,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/wt"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         },
         "prev": {
           "target": {
@@ -1962,8 +2062,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/wt"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         }
       },
       "inputSha256": "957d45be7af13d3254b1a45f1c2da104023dd6f8017879adc9750cffbcc75519"
@@ -2089,8 +2193,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/wt"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           },
           {
             "target": {
@@ -2126,8 +2234,12 @@
                 "kind": "worktree",
                 "worktreePath": "<root>/repo/wt"
               },
-              "projectControl": false
-            }
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "exposeOrder": 1000
+            },
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
           }
         ],
         "next": {
@@ -2164,8 +2276,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/wt"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         },
         "prev": {
           "target": {
@@ -2201,8 +2317,12 @@
               "kind": "worktree",
               "worktreePath": "<root>/repo/wt"
             },
-            "projectControl": false
-          }
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
+          },
+          "shouldShowInExpose": true,
+          "exposeOrder": 1000
         }
       },
       "inputSha256": "bfb4ba77482b981f28ca9df8d562c8c6e2876d49dfe02cc65b9fd337dd3cb6dd"
