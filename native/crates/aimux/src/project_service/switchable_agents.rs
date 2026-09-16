@@ -63,7 +63,6 @@ pub struct SwitchableContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchableListOptions {
     pub scope: AgentListScope,
-    pub include_overseer: bool,
     pub use_expose_role_visibility: bool,
     pub raw_labels: bool,
     pub display_order_ids: Vec<String>,
@@ -73,7 +72,6 @@ impl Default for SwitchableListOptions {
     fn default() -> Self {
         Self {
             scope: AgentListScope::Worktree,
-            include_overseer: false,
             use_expose_role_visibility: false,
             raw_labels: false,
             display_order_ids: Vec::new(),
@@ -156,9 +154,6 @@ pub fn route_switchable_agent_request_with_runtime(
         } else {
             AgentListScope::Worktree
         },
-        include_overseer: params
-            .get("includeOverseer")
-            .is_some_and(|value| value == "1"),
         raw_labels: params
             .get("labelFormat")
             .is_some_and(|value| value == "raw"),
@@ -314,9 +309,6 @@ pub async fn route_switchable_agent_request_async(
         } else {
             AgentListScope::Worktree
         },
-        include_overseer: params
-            .get("includeOverseer")
-            .is_some_and(|value| value == "1"),
         raw_labels: params
             .get("labelFormat")
             .is_some_and(|value| value == "raw"),
@@ -717,7 +709,6 @@ fn build_switchable_agent_items(
         .map(str::to_owned);
     let scoped_worktree_path = resolve_context_worktree_path(context, current_managed_window);
     let visibility_rule = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
-        include_overseer: options.include_overseer,
         use_expose_role_visibility: options.use_expose_role_visibility,
         scope_all_worktrees: options.scope == AgentListScope::All,
         scoped_worktree_path: scoped_worktree_path.clone(),

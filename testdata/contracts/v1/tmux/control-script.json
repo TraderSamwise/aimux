@@ -1084,7 +1084,7 @@
           "env": {
             "AIMUX_BIN": "<temp1>/bin/aimux",
             "PATH": "<path>",
-            "TMUX_FAKE_SWITCHABLE_RESPONSE": "{\"ok\":true,\"items\":[{\"label\":\"Overseer\",\"overseer\":true,\"target\":{\"windowId\":\"@overseer\",\"windowName\":\"codex\"},\"metadata\":{\"sessionId\":\"codex-overseer\",\"command\":\"codex\",\"worktreePath\":\"/repo/project\",\"overseer\":true}}]}"
+            "TMUX_FAKE_SWITCHABLE_RESPONSE": "{\"ok\":true,\"items\":[{\"label\":\"Overseer\",\"overseer\":true,\"roleState\":{\"lane\":{\"kind\":\"supervisor\"}},\"target\":{\"windowId\":\"@overseer\",\"windowName\":\"codex\"},\"metadata\":{\"sessionId\":\"codex-overseer\",\"command\":\"codex\",\"worktreePath\":\"/repo/project\",\"overseer\":true}}]}"
           },
           "beforeRoot": {
             "root": "<temp1>",
@@ -1142,7 +1142,7 @@
             "root": "<temp1>",
             "tmuxLog": [],
             "curlLog": [
-              "-fsS --max-time 4 http://127.0.0.1:43444/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&includeOverseer=1&currentClientSession=aimux-proj-client-1234abcd&currentWindow=shell&currentWindowId=%40shell&currentPath=%2Frepo%2Fproject%2Fworktree",
+              "-fsS --max-time 4 http://127.0.0.1:43444/control/switchable-agents?scope=all&labelFormat=raw&expose=1&includePreview=1&currentClientSession=aimux-proj-client-1234abcd&currentWindow=shell&currentWindowId=%40shell&currentPath=%2Frepo%2Fproject%2Fworktree",
               "-fsS --max-time 4 -H content-type: application/json --data-binary {\"windowId\": \"@overseer\", \"focus\": true, \"currentClientSession\": \"aimux-proj-client-1234abcd\", \"clientTty\": \"/dev/live\"} http://127.0.0.1:43444/control/focus-window"
             ],
             "aimuxLog": [],
@@ -1215,7 +1215,7 @@
             "env": {
               "AIMUX_BIN": "<temp1>/bin/aimux",
               "PATH": "<path>",
-              "TMUX_FAKE_SWITCHABLE_RESPONSE": "{\"ok\":true,\"items\":[{\"label\":\"Overseer\",\"overseer\":true,\"target\":{\"windowId\":\"@overseer\",\"windowName\":\"codex\"},\"metadata\":{\"sessionId\":\"codex-overseer\",\"command\":\"codex\",\"worktreePath\":\"/repo/project\",\"overseer\":true}}]}"
+              "TMUX_FAKE_SWITCHABLE_RESPONSE": "{\"ok\":true,\"items\":[{\"label\":\"Overseer\",\"overseer\":true,\"roleState\":{\"lane\":{\"kind\":\"supervisor\"}},\"target\":{\"windowId\":\"@overseer\",\"windowName\":\"codex\"},\"metadata\":{\"sessionId\":\"codex-overseer\",\"command\":\"codex\",\"worktreePath\":\"/repo/project\",\"overseer\":true}}]}"
             },
             "beforeRoot": {
               "root": "<temp1>",
@@ -1377,7 +1377,7 @@
               ["send-keys", "-t", "aimux-proj-client-1234abcd:0", "O"]
             ],
             "curlLog": [
-              "-fsS --max-time 4 http://127.0.0.1:43444/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&includeOverseer=1&currentClientSession=aimux-proj-client-1234abcd&currentWindow=shell&currentWindowId=%40shell&currentPath=%2Frepo%2Fproject%2Fworktree"
+              "-fsS --max-time 4 http://127.0.0.1:43444/control/switchable-agents?scope=all&labelFormat=raw&expose=1&includePreview=1&currentClientSession=aimux-proj-client-1234abcd&currentWindow=shell&currentWindowId=%40shell&currentPath=%2Frepo%2Fproject%2Fworktree"
             ],
             "aimuxLog": [],
             "state": {
@@ -1607,7 +1607,7 @@
               ["send-keys", "-t", "aimux-proj-client-1234abcd:0", "O"]
             ],
             "curlLog": [
-              "-fsS --max-time 4 http://127.0.0.1:43444/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&includeOverseer=1&currentClientSession=aimux-proj-client-1234abcd&currentWindow=shell&currentWindowId=%40shell&currentPath=%3Ctemp1%3E%2Fworktree",
+              "-fsS --max-time 4 http://127.0.0.1:43444/control/switchable-agents?scope=all&labelFormat=raw&expose=1&includePreview=1&currentClientSession=aimux-proj-client-1234abcd&currentWindow=shell&currentWindowId=%40shell&currentPath=%3Ctemp1%3E%2Fworktree",
               "-fsS --max-time 8 -H content-type: application/json --data-binary {\"focus\": true, \"forceReload\": true, \"clientTty\": \"/dev/live\", \"currentClientSession\": \"aimux-proj-client-1234abcd\", \"currentWindowId\": \"@shell\"} http://127.0.0.1:43444/control/open-dashboard"
             ],
             "aimuxLog": [],

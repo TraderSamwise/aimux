@@ -93,12 +93,12 @@ fn filters_project_control_and_keeps_services_in_worktree_scope() {
     );
     assert_eq!(items[1].recent_rank, 0);
 
-    let include_overseer = SwitchableListOptions {
-        include_overseer: true,
+    let expose_visible = SwitchableListOptions {
+        use_expose_role_visibility: true,
         ..SwitchableListOptions::default()
     };
     let items =
-        list_switchable_agent_items(&entries, &metadata, &context, &include_overseer, &last_used);
+        list_switchable_agent_items(&entries, &metadata, &context, &expose_visible, &last_used);
     assert_eq!(
         ids(&items),
         vec!["coder".to_owned(), "boss".to_owned(), "shell-1".to_owned()]
@@ -123,7 +123,6 @@ fn shared_visibility_rule_keeps_liveness_parameterized_for_expose_and_dashboard(
     };
 
     let expose_rule = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
-        include_overseer: false,
         use_expose_role_visibility: true,
         scope_all_worktrees: true,
         scoped_worktree_path: "/repo".into(),
@@ -143,7 +142,7 @@ fn shared_visibility_rule_keeps_liveness_parameterized_for_expose_and_dashboard(
 }
 
 #[test]
-fn shared_visibility_rule_makes_role_exclusion_an_explicit_parameter() {
+fn shared_visibility_rule_uses_surface_role_visibility_for_project_control_sessions() {
     let overseer = json!({
         "kind": "agent",
         "sessionId": "boss",
@@ -160,25 +159,23 @@ fn shared_visibility_rule_makes_role_exclusion_an_explicit_parameter() {
         window_name: Some("claude"),
         window_id: Some("@2"),
     };
-    let excluded = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
-        include_overseer: false,
+    let switcher = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
         use_expose_role_visibility: false,
         scope_all_worktrees: false,
         scoped_worktree_path: "/repo".into(),
         current_window_id: None,
         teammate_parent_session_id: None,
     });
-    let included = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
-        include_overseer: true,
-        use_expose_role_visibility: false,
+    let expose = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
+        use_expose_role_visibility: true,
         scope_all_worktrees: false,
         scoped_worktree_path: "/repo".into(),
         current_window_id: None,
         teammate_parent_session_id: None,
     });
 
-    assert!(!excluded.allows(input));
-    assert!(included.allows(input));
+    assert!(!switcher.allows(input));
+    assert!(expose.allows(input));
 }
 
 #[test]
@@ -274,7 +271,7 @@ fn stored_control_flags_classify_without_polluting_serialized_metadata() {
     });
     let metadata = BTreeMap::from([("boss".into(), json!({ "overseer": true }))]);
     let options = SwitchableListOptions {
-        include_overseer: true,
+        use_expose_role_visibility: true,
         ..SwitchableListOptions::default()
     };
 

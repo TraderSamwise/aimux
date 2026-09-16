@@ -148,10 +148,6 @@ fn options_from_value(value: &Value) -> SwitchableListOptions {
         } else {
             AgentListScope::Worktree
         },
-        include_overseer: value
-            .get("includeOverseer")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
         use_expose_role_visibility: value
             .get("useExposeRoleVisibility")
             .and_then(Value::as_bool)

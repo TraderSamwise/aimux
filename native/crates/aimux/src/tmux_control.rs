@@ -648,8 +648,8 @@ impl TmuxControl {
         let params = vec![
             ("scope", "all".to_owned()),
             ("labelFormat", "raw".to_owned()),
+            ("expose", "1".to_owned()),
             ("includePreview", "1".to_owned()),
-            ("includeOverseer", "1".to_owned()),
             (
                 "currentClientSession",
                 self.options.current_client_session.clone(),
@@ -672,7 +672,13 @@ impl TmuxControl {
         }
         let items = payload.get("items")?.as_array()?;
         for item in items {
-            if item.get("overseer").and_then(Value::as_bool) != Some(true) {
+            if item
+                .get("roleState")
+                .and_then(|role_state| role_state.get("lane"))
+                .and_then(|lane| lane.get("kind"))
+                .and_then(Value::as_str)
+                != Some("supervisor")
+            {
                 continue;
             }
             let Some(target) = item.get("target").and_then(Value::as_object) else {

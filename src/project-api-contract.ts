@@ -1658,7 +1658,6 @@ export interface SwitchableAgentsInput {
   scope?: "all" | "worktree";
   includePreview?: "1";
   includeChatPreview?: "1";
-  includeOverseer?: "1";
   expose?: "1";
   labelFormat?: "raw";
   clientKind?: "tui" | "web" | "mobile" | "expose" | "api";

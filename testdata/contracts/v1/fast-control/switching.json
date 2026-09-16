@@ -6,7 +6,7 @@
   "cases": [
     {
       "id": "fast-control-001",
-      "name": "omits the overseer from switchable agents unless explicitly requested",
+      "name": "omits project-control sessions from switching unless Exposé role visibility is requested",
       "source": "src/fast-control.test.ts",
       "input": {
         "scenario": "overseer-filter",
@@ -69,10 +69,10 @@
             "fn": "list"
           },
           {
-            "name": "includeOverseer",
+            "name": "exposeVisible",
             "fn": "list",
             "options": {
-              "includeOverseer": true
+              "useExposeRoleVisibility": true
             }
           }
         ]
@@ -120,7 +120,7 @@
             "exposeOrder": 1000
           }
         ],
-        "includeOverseer": [
+        "exposeVisible": [
           {
             "target": {
               "sessionName": "aimux-repo-abc",

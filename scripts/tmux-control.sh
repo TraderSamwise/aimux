@@ -604,8 +604,8 @@ if not endpoint:
 params = {
     "scope": "all",
     "labelFormat": "raw",
+    "expose": "1",
     "includePreview": "1",
-    "includeOverseer": "1",
     "currentClientSession": current_client_session,
     "currentWindow": current_window,
     "currentWindowId": current_window_id,
@@ -627,7 +627,11 @@ if not payload.get("ok") or not isinstance(items, list):
     raise SystemExit(1)
 
 for item in items:
-    if not isinstance(item, dict) or item.get("overseer") is not True:
+    if not isinstance(item, dict):
+        continue
+    role_state = item.get("roleState")
+    lane = role_state.get("lane") if isinstance(role_state, dict) else None
+    if not isinstance(lane, dict) or lane.get("kind") != "supervisor":
         continue
     target = item.get("target")
     if not isinstance(target, dict):

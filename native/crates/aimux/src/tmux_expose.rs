@@ -2286,7 +2286,6 @@ fn common_expose_query() -> Vec<(String, String)> {
     vec![
         ("expose".into(), "1".into()),
         ("includePreview".into(), "1".into()),
-        ("includeOverseer".into(), "1".into()),
         ("clientKind".into(), "expose".into()),
         (
             "clientId".into(),

@@ -142,19 +142,19 @@
         ],
         "requests": [
           {
-            "url": "http://127.0.0.1:43191/control/switchable-agents?scope=worktree&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
+            "url": "http://127.0.0.1:43191/control/switchable-agents?scope=worktree&labelFormat=raw&expose=1&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
             "method": "GET",
             "body": null,
             "timeoutMs": 4000
           },
           {
-            "url": "http://127.0.0.1:43191/control/switchable-agents?scope=all&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
+            "url": "http://127.0.0.1:43191/control/switchable-agents?scope=all&labelFormat=raw&expose=1&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
             "method": "GET",
             "body": null,
             "timeoutMs": 4000
           },
           {
-            "url": "http://127.0.0.1:43190/core/expose/items?expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000",
+            "url": "http://127.0.0.1:43190/core/expose/items?expose=1&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000",
             "method": "GET",
             "body": null,
             "timeoutMs": 4000
@@ -208,7 +208,7 @@
         },
         "requests": [
           {
-            "url": "http://127.0.0.1:43191/control/switchable-agents?scope=all&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
+            "url": "http://127.0.0.1:43191/control/switchable-agents?scope=all&labelFormat=raw&expose=1&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-test-client-12345678&currentWindow=codex&currentWindowId=%402&currentPath=%2Frepo%2Fworktree",
             "method": "GET",
             "body": null,
             "timeoutMs": 4000

@@ -335,7 +335,7 @@ fn scope_items_build_local_and_global_requests_without_collapsing_failures_to_em
     assert!(local_url.contains("labelFormat=raw"));
     assert!(local_url.contains("expose=1"));
     assert!(local_url.contains("includePreview=1"));
-    assert!(local_url.contains("includeOverseer=1"));
+    assert!(!local_url.contains("includeOverseer"));
     assert!(local_url.contains("clientKind=expose"));
     assert!(local_url.contains("clientTtlMs=10000"));
     assert!(local_url.contains("currentClientSession=aimux-test-client-12345678"));
@@ -348,7 +348,7 @@ fn scope_items_build_local_and_global_requests_without_collapsing_failures_to_em
     assert!(global_url.starts_with("http://127.0.0.1:43190/core/expose/items?"));
     assert!(global_url.contains("expose=1"));
     assert!(global_url.contains("includePreview=1"));
-    assert!(global_url.contains("includeOverseer=1"));
+    assert!(!global_url.contains("includeOverseer"));
     assert!(!global_url.contains("currentWindow"));
     cleanup(state_dir);
 }
@@ -398,7 +398,8 @@ fn overseer_lookup_uses_first_supervisor_lane_instead_of_overseer_boolean() {
 
     assert_eq!(item.expect("supervisor")["id"], "reviewer");
     assert!(fake.requests[0].0.contains("scope=all"));
-    assert!(fake.requests[0].0.contains("includeOverseer=1"));
+    assert!(fake.requests[0].0.contains("expose=1"));
+    assert!(!fake.requests[0].0.contains("includeOverseer"));
     cleanup(state_dir);
 }
 
@@ -875,7 +876,8 @@ fn runner_shift_o_and_zero_select_the_same_first_supervisor() {
         fs::read_to_string(&shift_o_selection_file).unwrap_or_else(|_| "<missing>".into()),
     ];
     assert_eq!(selections, ["@9\n", "@9\n"]);
-    assert!(shift_o_client.requests[1].0.contains("includeOverseer=1"));
+    assert!(shift_o_client.requests[1].0.contains("expose=1"));
+    assert!(!shift_o_client.requests[1].0.contains("includeOverseer"));
     cleanup(zero_state_dir);
     cleanup(shift_o_state_dir);
 }
@@ -1802,8 +1804,8 @@ fn runner_keeps_supervisor_present_across_repeated_refreshes() {
             "every initial and refresh request must use Exposé role visibility: {url}"
         );
         assert!(
-            url.contains("includeOverseer=1"),
-            "every initial and refresh request must include supervisor-scoped agents: {url}"
+            !url.contains("includeOverseer"),
+            "includeOverseer must not be threaded through Exposé queries: {url}"
         );
     }
     let rendered = String::from_utf8(output).expect("utf8 output");
