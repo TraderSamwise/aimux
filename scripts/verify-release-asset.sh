@@ -74,11 +74,23 @@ trap cleanup EXIT
 tar -xzf "$ARCHIVE" -C "$TMP_DIR" aimux
 
 ARCHIVE_STAMP="$(sed -n '1{s/[[:space:]]*$//;p;}' "$TMP_DIR/aimux/BUILD_STAMP" 2>/dev/null || true)"
+ARCHIVE_VARIANT="$(sed -n '1{s/[[:space:]]*$//;p;}' "$TMP_DIR/aimux/BUILD_VARIANT" 2>/dev/null || true)"
 NATIVE_ARTIFACT="$TMP_DIR/aimux/native/$PLATFORM_ARCH/aimux"
 if [ -z "$ARCHIVE_STAMP" ]; then
   printf 'Release archive is missing BUILD_STAMP\n' >&2
   exit 1
 fi
+case "$ARCHIVE_VARIANT" in
+  full | lite) ;;
+  "")
+    printf 'Release archive is missing BUILD_VARIANT\n' >&2
+    exit 1
+    ;;
+  *)
+    printf 'Release archive has invalid BUILD_VARIANT: %s\n' "$ARCHIVE_VARIANT" >&2
+    exit 1
+    ;;
+esac
 if [ ! -x "$NATIVE_ARTIFACT" ]; then
   printf 'Release archive is missing executable native aimux binary: native/%s/aimux\n' "$PLATFORM_ARCH" >&2
   exit 1

@@ -260,6 +260,9 @@ fn route_lifecycle_request_unqueued(
         routes::graveyard_actions::RESURRECT_AGENT => {
             Some(route_graveyard_agent_resurrect(context, body))
         }
+        routes::graveyard_actions::REAP_DEAD_AGENTS => {
+            Some(route_graveyard_reap_dead_agents(context, body, runtime))
+        }
         routes::worktree_actions::CREATE => Some(route_worktree_create(context, body, runtime)),
         routes::worktree_actions::CACHE_CLEANUP => {
             Some(route_worktree_cache_cleanup(context, body, runtime))

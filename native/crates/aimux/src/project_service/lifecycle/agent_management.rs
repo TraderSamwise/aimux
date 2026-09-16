@@ -1,4 +1,5 @@
 use serde_json::{Map, Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::daemon_state::load_metadata_state;
@@ -14,6 +15,7 @@ use crate::runtime_topology::{
     update_runtime_topology,
 };
 use crate::team_contract::{is_project_control_session, session_with_stored_control_flags};
+use crate::tmux::TmuxTarget;
 
 use super::LIVE_STATUSES;
 use super::LifecycleMutationProgress;
@@ -439,6 +441,48 @@ fn should_prune_restore_eligibility_after_stop(
     !is_project_control_session(Some(&classified_session))
 }
 
+fn live_tmux_target_for_session(topology: &Value, session: &Value) -> Option<TmuxTarget> {
+    if !LIVE_STATUSES.contains(&string_field(session, "status").as_str()) {
+        return None;
+    }
+    let node_id = string_field(session, "nodeId");
+    let binding = array_field(topology, "bindings")
+        .into_iter()
+        .find(|binding| string_field(binding, "nodeId") == node_id)?;
+    let session_name = trimmed_string(binding.get("tmuxSession"))?;
+    let window_id = trimmed_string(binding.get("tmuxWindowId"))?;
+    Some(TmuxTarget {
+        session_name,
+        window_id,
+        window_index: binding
+            .get("tmuxWindowIndex")
+            .and_then(Value::as_i64)
+            .unwrap_or(-1),
+        window_name: string_field(&binding, "tmuxWindowName"),
+        pane_dead: None,
+    })
+}
+
+fn expected_tmux_window(target: &TmuxTarget) -> String {
+    format!("{} {}", target.session_name, target.window_id)
+}
+
+fn reap_skip_record(
+    session_id: &str,
+    status: &str,
+    reason: &str,
+    expected: &str,
+    found: &str,
+) -> Value {
+    json!({
+        "sessionId": session_id,
+        "status": status,
+        "reason": reason,
+        "expected": expected,
+        "found": found,
+    })
+}
+
 pub(super) fn route_agent_rename(
     context: &ProjectServiceRequestContext,
     body: &Value,
@@ -518,6 +562,167 @@ pub(super) fn route_record_backend_session(
     ProjectServiceDispatchResponse::json(
         200,
         json!({ "ok": true, "sessionId": session_id, "backendSessionId": backend_session_id }),
+    )
+}
+
+pub(super) fn route_graveyard_reap_dead_agents(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let requested_session_id = trimmed_string(body.get("sessionId"));
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    if let Some(session_id) = requested_session_id.as_deref()
+        && find_by_id(&topology, "sessions", session_id).is_none()
+    {
+        return json_error(404, format!("Unknown session \"{session_id}\""));
+    }
+
+    let mut candidates_by_session: BTreeMap<String, Vec<(Value, TmuxTarget)>> = BTreeMap::new();
+    let mut skipped = Vec::new();
+    for session in array_field(&topology, "sessions") {
+        let session_id = string_field(&session, "id");
+        if requested_session_id
+            .as_deref()
+            .is_some_and(|requested| requested != session_id)
+        {
+            continue;
+        }
+        let status = string_field(&session, "status");
+        if !LIVE_STATUSES.contains(&status.as_str()) {
+            skipped.push(reap_skip_record(
+                &session_id,
+                &status,
+                "not-live-inventory",
+                "live inventoried session",
+                &format!("inventory status is {status}"),
+            ));
+            continue;
+        }
+        let Some(target) = live_tmux_target_for_session(&topology, &session) else {
+            skipped.push(reap_skip_record(
+                &session_id,
+                &status,
+                "unverified-missing-binding",
+                "tmux session and window binding",
+                "no tmux binding was recorded, so liveness could not be verified",
+            ));
+            continue;
+        };
+        candidates_by_session
+            .entry(target.session_name.clone())
+            .or_default()
+            .push((session, target));
+    }
+
+    let mut reaped = Vec::new();
+    let mut reaped_ids = BTreeSet::new();
+    for (tmux_session, candidates) in candidates_by_session {
+        match runtime.list_windows(&tmux_session) {
+            Ok(windows) => {
+                let live_window_ids = windows
+                    .iter()
+                    .map(|window| window.id.as_str())
+                    .collect::<BTreeSet<_>>();
+                for (session, target) in candidates {
+                    let session_id = string_field(&session, "id");
+                    let status = string_field(&session, "status");
+                    let expected = expected_tmux_window(&target);
+                    if live_window_ids.contains(target.window_id.as_str()) {
+                        skipped.push(reap_skip_record(
+                            &session_id,
+                            &status,
+                            "live-window-present",
+                            &expected,
+                            "window present",
+                        ));
+                        continue;
+                    }
+                    reaped_ids.insert(session_id.clone());
+                    reaped.push(json!({
+                        "sessionId": session_id,
+                        "previousStatus": status,
+                        "status": "graveyard",
+                        "expected": expected,
+                        "found": "window absent",
+                        "reason": "confirmed-dead: inventoried session's tmux window is absent after a successful runtime query",
+                    }));
+                }
+            }
+            Err(error) => {
+                for (session, target) in candidates {
+                    let session_id = string_field(&session, "id");
+                    let status = string_field(&session, "status");
+                    skipped.push(reap_skip_record(
+                        &session_id,
+                        &status,
+                        "runtime-unqueryable",
+                        &expected_tmux_window(&target),
+                        &format!(
+                            "could not query tmux runtime for session {tmux_session}: {error}"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    if !reaped_ids.is_empty() {
+        let result = update_runtime_topology(
+            runtime_topology_path(&project_state_dir),
+            |topology| {
+                let now = now_iso();
+                map_topology_array(topology, "sessions", |mut current| {
+                    let session_id = string_field(&current, "id");
+                    if reaped_ids.contains(&session_id) {
+                        object_insert_mut(
+                            &mut current,
+                            "status",
+                            Value::String("graveyard".into()),
+                        );
+                        object_insert_mut(&mut current, "updatedAt", Value::String(now.clone()));
+                        if current.get("graveyardedAt").is_none() {
+                            object_insert_mut(
+                                &mut current,
+                                "graveyardedAt",
+                                Value::String(now.clone()),
+                            );
+                        }
+                        object_insert_mut(&mut current, "restoreBlockedReason", Value::Null);
+                        object_insert_mut(
+                            &mut current,
+                            "graveyardReason",
+                            Value::String(
+                                "reaped confirmed-dead agent: expected tmux window was absent after a successful runtime query".into(),
+                            ),
+                        );
+                    }
+                    current
+                })
+            },
+        );
+        if let Err(error) = result {
+            return json_error(500, error);
+        }
+        for session_id in &reaped_ids {
+            clear_prompt_context(&project_state_dir, session_id);
+            prune_restore_eligibility(&project_state_dir, session_id);
+        }
+    }
+
+    lifecycle_response(
+        json!({
+            "status": if reaped.is_empty() { "unchanged" } else { "reaped" },
+            "reaped": reaped,
+            "skipped": skipped,
+        }),
+        "graveyard.agent.reapDead",
+        "agent",
+        requested_session_id.as_deref(),
     )
 }
 

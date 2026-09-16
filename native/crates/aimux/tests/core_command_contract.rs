@@ -99,6 +99,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("whoamiText", "/core/whoami-text"),
         ("graveyardCleanupText", "/core/graveyard/cleanup-text"),
         ("graveyardListText", "/core/graveyard/list-text"),
+        ("graveyardReapDeadText", "/core/graveyard/reap-dead-text"),
         ("graveyardResurrectText", "/core/graveyard/resurrect-text"),
         ("graveyardSendText", "/core/graveyard/send-text"),
         ("threadListText", "/core/thread/list-text"),

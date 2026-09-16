@@ -39,9 +39,13 @@ pub trait DaemonCoreCommandRuntime: DaemonStatusRuntime {
         let _ = (project_root, force, wait_for_capture);
         Ok(None)
     }
+    #[cfg(feature = "remote-control")]
     fn has_remote_credentials(&self) -> bool;
+    #[cfg(feature = "remote-control")]
     fn enable_relay_for_user_request(&mut self) -> Value;
+    #[cfg(feature = "remote-control")]
     fn disable_relay(&mut self) -> Value;
+    #[cfg(feature = "remote-control")]
     fn relay_auth_failed_message(&self, relay: &Value) -> String;
 }
 
@@ -66,6 +70,17 @@ pub fn route_core_command(
         );
     }
     let command = command_string.expect("validated command");
+    #[cfg(not(feature = "remote-control"))]
+    if lite_rejects_remote_core_command(command) {
+        return DaemonRouteResponse::json(
+            400,
+            command_error(
+                &id,
+                Some(command),
+                "remote control commands are not available in the lite build",
+            ),
+        );
+    }
     let payload = body.and_then(|body| body.get("payload"));
 
     let result = match command {
@@ -232,9 +247,11 @@ pub fn route_core_command(
                     result
                 })
         }
+        #[cfg(feature = "remote-control")]
         command if command == CORE_COMMAND_NAMES.relay_status => {
             Ok(json!({ "relay": runtime.relay_status() }))
         }
+        #[cfg(feature = "remote-control")]
         command if command == CORE_COMMAND_NAMES.relay_enable => {
             if !runtime.has_remote_credentials() {
                 return DaemonRouteResponse::json(
@@ -253,6 +270,7 @@ pub fn route_core_command(
             }
             Ok(json!({ "relay": relay }))
         }
+        #[cfg(feature = "remote-control")]
         command if command == CORE_COMMAND_NAMES.relay_disable => {
             Ok(json!({ "relay": runtime.disable_relay() }))
         }
@@ -263,6 +281,13 @@ pub fn route_core_command(
         Ok(result) => DaemonRouteResponse::json(200, command_ok(&id, command, issued_at, result)),
         Err(error) => DaemonRouteResponse::json(500, command_error(&id, Some(command), error)),
     }
+}
+
+#[cfg(not(feature = "remote-control"))]
+fn lite_rejects_remote_core_command(command: &str) -> bool {
+    command == CORE_COMMAND_NAMES.relay_status
+        || command == CORE_COMMAND_NAMES.relay_enable
+        || command == CORE_COMMAND_NAMES.relay_disable
 }
 
 fn restart_lock_owner_pid(payload: Option<&Value>) -> Option<i32> {

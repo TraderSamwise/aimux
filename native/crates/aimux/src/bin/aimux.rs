@@ -15,6 +15,7 @@ use aimux::debug_logging::{
     LogLevel, configure_daemon_logging, configure_process_logging, log_at,
     parse_logging_cli_options,
 };
+#[cfg(feature = "remote-control")]
 use aimux::hosted_cli::run_hosted_cli_command;
 use aimux::launcher_env::{CliEntry, cli_entry_for, prepare_stable_process_env};
 use aimux::local_ui_server::{
@@ -213,6 +214,7 @@ fn main() -> Result<ExitCode> {
             if let Some(args) = native_tool_launch_args(&stripped_args) {
                 return run_root_tool_launch_command(&args);
             }
+            #[cfg(feature = "remote-control")]
             if stripped_args.first().map(String::as_str) == Some("hosted") {
                 let execution = run_hosted_cli_command(&stripped_args);
                 for line in execution.stdout {
@@ -383,10 +385,16 @@ fn aimux_package_version() -> String {
 }
 
 fn print_root_help() {
-    println!(
-        "Usage: aimux [options] [command] [tool] [args...]\n\nNative CLI agent multiplexer\n\nArguments:\n  tool                         Tool to run (e.g. claude, codex, aider)\n  args                         Arguments to pass to the tool\n\nOptions:\n  --resume                     Resume previous sessions using native tool resume\n  --restore                    Start fresh sessions with injected history context\n  --debug                      Enable debug logging for this process\n  -V, --version                output the version number\n  -h, --help                   display help for command\n\nCommands:\n  init                         Initialize .aimux directory\n  restart                      Restart the Aimux control plane\n  dashboard-reload             Reload or open the dashboard\n  stop [sessionId]             Stop an agent or the current project service\n  restart-runtime              Restart the tmux runtime service\n  host                         Advanced project-service inspection commands\n  ui                           Run the first-party local web UI\n  serve                        Ensure the daemon-backed project control service is running\n  daemon                       Advanced: manage the global aimux control-plane daemon\n  projects                     Inspect known aimux projects\n  compact                      Compact session history using LLM summarization\n  worktree                     Manage git worktrees\n  thread                       Inspect and manage orchestration threads\n  threads                      List orchestration threads\n  input                        Send input to a running agent\n  attachment                   Manage session attachments\n  ps                           List running agent sessions\n  list                         List agents grouped by worktree\n  id <sessionId>               Resolve an Aimux agent id to its canonical tool and native backend id\n  loop                         Manage agents in an overseer-managed loop\n  message                      Send directed orchestration messages\n  handoff                      Send an explicit orchestration handoff\n  task                         Create and manage orchestrated tasks\n  review                       Manage review workflow tasks\n  spawn                        Spawn a new agent\n  overseer                     Manage the project overseer\n  scribe                       Manage the project scribe\n  fork                         Fork an agent session\n  graveyard                    Manage killed agents\n  rename <sessionId>           Rename an agent session\n  kill <sessionId>             Kill an agent session\n  migrate <sessionId>          Move an agent to another worktree\n  doctor                       Inspect aimux runtime state\n  notifications                Manage desktop notification delivery\n  repair                       Repair the current project runtime in place\n  migration                    Audit and migrate runtime state\n  logs                         Inspect aimux logs\n  metadata                     Inspect and mutate session metadata\n  outline                      Inspect and update work outlines\n  team                         Manage agent team roles\n  remote                       Manage remote access\n  security                     Manage aimux security controls\n  hosted                       Manage hosted mode\n  debug-state                  Read a debug snapshot\n  notify                       Send a notification\n  list-notifications           List notifications\n  clear-notifications          Clear notifications\n  read-notifications           Mark notifications read\n"
-    );
+    print!("{ROOT_HELP_PREFIX}");
+    #[cfg(feature = "remote-control")]
+    print!("{ROOT_HELP_REMOTE_COMMANDS}");
+    println!("{ROOT_HELP_SUFFIX}");
 }
+
+const ROOT_HELP_PREFIX: &str = "Usage: aimux [options] [command] [tool] [args...]\n\nNative CLI agent multiplexer\n\nArguments:\n  tool                         Tool to run (e.g. claude, codex, aider)\n  args                         Arguments to pass to the tool\n\nOptions:\n  --resume                     Resume previous sessions using native tool resume\n  --restore                    Start fresh sessions with injected history context\n  --debug                      Enable debug logging for this process\n  -V, --version                output the version number\n  -h, --help                   display help for command\n\nCommands:\n  init                         Initialize .aimux directory\n  restart                      Restart the Aimux control plane\n  dashboard-reload             Reload or open the dashboard\n  stop [sessionId]             Stop an agent or the current project service\n  restart-runtime              Restart the tmux runtime service\n  host                         Advanced project-service inspection commands\n  ui                           Run the first-party local web UI\n  serve                        Ensure the daemon-backed project control service is running\n  daemon                       Advanced: manage the global aimux control-plane daemon\n  projects                     Inspect known aimux projects\n  compact                      Compact session history using LLM summarization\n  worktree                     Manage git worktrees\n  thread                       Inspect and manage orchestration threads\n  threads                      List orchestration threads\n  input                        Send input to a running agent\n  attachment                   Manage session attachments\n  ps                           List running agent sessions\n  list                         List agents grouped by worktree\n  id <sessionId>               Resolve an Aimux agent id to its canonical tool and native backend id\n  loop                         Manage agents in an overseer-managed loop\n  message                      Send directed orchestration messages\n  handoff                      Send an explicit orchestration handoff\n  task                         Create and manage orchestrated tasks\n  review                       Manage review workflow tasks\n  spawn                        Spawn a new agent\n  overseer                     Manage the project overseer\n  scribe                       Manage the project scribe\n  fork                         Fork an agent session\n  graveyard                    Manage killed agents\n  rename <sessionId>           Rename an agent session\n  kill <sessionId>             Kill an agent session\n  migrate <sessionId>          Move an agent to another worktree\n  doctor                       Inspect aimux runtime state\n  notifications                Manage desktop notification delivery\n  repair                       Repair the current project runtime in place\n  migration                    Audit and migrate runtime state\n  logs                         Inspect aimux logs\n  metadata                     Inspect and mutate session metadata\n  outline                      Inspect and update work outlines\n  team                         Manage agent team roles\n";
+#[cfg(feature = "remote-control")]
+const ROOT_HELP_REMOTE_COMMANDS: &str = "  remote                       Manage remote access\n  security                     Manage aimux security controls\n  hosted                       Manage hosted mode\n";
+const ROOT_HELP_SUFFIX: &str = "  debug-state                  Read a debug snapshot\n  notify                       Send a notification\n  list-notifications           List notifications\n  clear-notifications          Clear notifications\n  read-notifications           Mark notifications read";
 
 fn core_command_help(args: &[String]) -> Option<&'static str> {
     let help_requested = args
@@ -398,6 +406,7 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         .skip(1)
         .find(|arg| !arg.starts_with('-'))
         .map(String::as_str);
+    #[cfg(feature = "remote-control")]
     if matches!(command, "hosted")
         && matches!(subcommand, Some("token" | "audit"))
         && !help_requested
@@ -497,6 +506,7 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         ("worktree", Some("resurrect"), true) => Some(WORKTREE_RESURRECT_HELP),
         ("worktree", Some("cleanup-caches"), true) => Some(WORKTREE_CLEANUP_HELP),
         ("graveyard", Some("send"), true) => Some(GRAVEYARD_SEND_HELP),
+        ("graveyard", Some("reap-dead"), true) => Some(GRAVEYARD_REAP_DEAD_HELP),
         ("graveyard", Some("resurrect"), true) => Some(GRAVEYARD_RESURRECT_HELP),
         ("graveyard", Some("cleanup"), true) => Some(GRAVEYARD_CLEANUP_HELP),
         ("fork", _, true) => Some(FORK_HELP),
@@ -514,26 +524,47 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         ("list-notifications", _, true) => Some(LIST_NOTIFICATIONS_HELP),
         ("clear-notifications", _, true) => Some(CLEAR_NOTIFICATIONS_HELP),
         ("read-notifications", _, true) => Some(READ_NOTIFICATIONS_HELP),
+        #[cfg(feature = "remote-control")]
         ("remote", None, _) => Some(REMOTE_HELP),
+        #[cfg(feature = "remote-control")]
         ("remote", Some("status"), true) => Some(REMOTE_STATUS_HELP),
+        #[cfg(feature = "remote-control")]
         ("remote", Some("enable"), true) => Some(REMOTE_ENABLE_HELP),
+        #[cfg(feature = "remote-control")]
         ("remote", Some("disable"), true) => Some(REMOTE_DISABLE_HELP),
+        #[cfg(feature = "remote-control")]
         ("whoami", _, true) => Some(WHOAMI_HELP),
+        #[cfg(feature = "remote-control")]
         ("login", _, true) => Some(LOGIN_HELP),
+        #[cfg(feature = "remote-control")]
         ("logout", _, true) => Some(LOGOUT_HELP),
+        #[cfg(feature = "remote-control")]
         ("security", None, _) => Some(SECURITY_HELP),
+        #[cfg(feature = "remote-control")]
         ("security", Some("unlock"), true) => Some(SECURITY_UNLOCK_HELP),
+        #[cfg(feature = "remote-control")]
         ("security", Some("devices"), true) => Some(SECURITY_DEVICES_HELP),
+        #[cfg(feature = "remote-control")]
         ("security", Some("device"), true) => Some(SECURITY_DEVICE_HELP),
+        #[cfg(feature = "remote-control")]
         ("security", Some("approve"), true) => Some(SECURITY_APPROVE_HELP),
+        #[cfg(feature = "remote-control")]
         ("security", Some("block" | "revoke"), true) => Some(SECURITY_BLOCK_HELP),
+        #[cfg(feature = "remote-control")]
         ("security", Some("unblock"), true) => Some(SECURITY_UNBLOCK_HELP),
+        #[cfg(feature = "remote-control")]
         ("hosted", None, _) => Some(HOSTED_HELP),
+        #[cfg(feature = "remote-control")]
         ("hosted", Some("status"), true) => Some(HOSTED_STATUS_HELP),
+        #[cfg(feature = "remote-control")]
         ("hosted", Some("grant"), true) => Some(HOSTED_GRANT_HELP),
+        #[cfg(feature = "remote-control")]
         ("hosted", Some("ungrant"), true) => Some(HOSTED_UNGRANT_HELP),
+        #[cfg(feature = "remote-control")]
         ("hosted", Some("lockdown"), true) => Some(HOSTED_LOCKDOWN_HELP),
+        #[cfg(feature = "remote-control")]
         ("hosted", Some("token"), _) => Some(HOSTED_TOKEN_HELP),
+        #[cfg(feature = "remote-control")]
         ("hosted", Some("audit"), _) => Some(HOSTED_AUDIT_HELP),
         _ if help_requested => known_subcommand_group_help(command, subcommand),
         _ => None,
@@ -638,7 +669,7 @@ const MESSAGE_HELP: &str = "Usage: aimux message [options] [command]\n\nSend dir
 const HANDOFF_HELP: &str = "Usage: aimux handoff [options] [command]\n\nSend explicit orchestration handoffs\n\nCommands:\n  send <context>              Send a handoff to an agent\n  accept <threadId>           Accept a handoff\n  complete <threadId>         Complete a handoff";
 const TASK_HELP: &str = "Usage: aimux task [options] [command]\n\nCreate and manage orchestrated tasks\n\nCommands:\n  list                        List tasks\n  show <taskId>               Show one task\n  assign <description>        Assign a task\n  accept <taskId>             Accept a task\n  block <taskId>              Mark a task blocked\n  cancel <taskId>             Cancel a task\n  complete <taskId>           Complete a task\n  reopen <taskId>             Reopen a task";
 const REVIEW_HELP: &str = "Usage: aimux review [options] [command]\n\nManage review workflow tasks\n\nCommands:\n  list                        List review tasks\n  approve <taskId>            Approve a review\n  request-changes <taskId>    Request changes on a review";
-const GRAVEYARD_HELP: &str = "Usage: aimux graveyard [options] [command]\n\nManage killed agents\n\nCommands:\n  list                        List graveyard entries\n  send <id>                   Send an agent to the graveyard\n  resurrect <id>              Resurrect an agent\n  cleanup                     Remove expired graveyard entries";
+const GRAVEYARD_HELP: &str = "Usage: aimux graveyard [options] [command]\n\nManage killed agents\n\nCommands:\n  list                        List graveyard entries\n  send <id>                   Send an agent to the graveyard\n  reap-dead [id]              Reap inventoried agents whose tmux window is verified absent\n  resurrect <id>              Resurrect an agent\n  cleanup                     Remove expired graveyard entries";
 const DEBUG_STATE_HELP: &str = "Usage: aimux debug-state <sessionId>\n\nRead a debug snapshot";
 const OUTLINE_HELP: &str = "Usage: aimux outline [options] [command]\n\nManage project scribe notes\n\nCommands:\n  list                        List scribe notes\n  show <entryId>              Show one scribe note\n  update                      Create or update a scribe note";
 const OUTLINE_LIST_HELP: &str = "Usage: aimux outline list [options]\n\nList scribe notes\n\nOptions:\n  --project <path>            Project path\n  --session <sessionId>       Filter by Aimux session id\n  --worktree <path>           Filter by worktree path\n  --status <status>           Filter by status: active, done, superseded, stale\n  --search <query>            Search title, summary, topic key, worktree, and sessions\n  --limit <count>             Maximum entries to print\n  --json                      Emit JSON";
@@ -659,6 +690,7 @@ const WORKTREE_GRAVEYARD_HELP: &str = "Usage: aimux worktree graveyard <path> [o
 const WORKTREE_RESURRECT_HELP: &str = "Usage: aimux worktree resurrect <path> [options]\n\nRestore a graveyarded worktree to the active worktree list\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
 const WORKTREE_CLEANUP_HELP: &str = "Usage: aimux worktree cleanup-caches [options]\n\nRemove generated cache directories from Aimux-managed worktrees\n\nOptions:\n  --project <path>            Project path\n  --yes                       Delete instead of dry run\n  --include-active            Include active worktrees\n  --json                      Emit JSON";
 const GRAVEYARD_SEND_HELP: &str = "Usage: aimux graveyard send <id> [options]\n\nSend an agent to the graveyard\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const GRAVEYARD_REAP_DEAD_HELP: &str = "Usage: aimux graveyard reap-dead [id] [options]\n\nMove confirmed-dead inventoried agents to the graveyard. A session is reaped only after its tmux session is queried successfully and its expected window is absent.\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
 const GRAVEYARD_RESURRECT_HELP: &str = "Usage: aimux graveyard resurrect <id> [options]\n\nResurrect an agent from the graveyard\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
 const GRAVEYARD_CLEANUP_HELP: &str = "Usage: aimux graveyard cleanup [options]\n\nRemove expired graveyard agents and worktrees\n\nOptions:\n  --project <path>            Project path\n  --dry-run                   Show what would be removed\n  --json                      Emit JSON";
 const FORK_HELP: &str = "Usage: aimux fork <sourceSessionId> --tool <toolKey> [options]\n\nFork an existing agent into a new agent with handed-off context\n\nOptions:\n  --tool <toolKey>            Configured target tool key\n  --project <path>            Project path\n  --instruction <text>        Extra instruction\n  --worktree <path>           Target worktree path\n  --no-open                   Do not switch into the forked agent window\n  --json                      Emit JSON";
@@ -677,26 +709,47 @@ const NOTIFY_HELP: &str = "Usage: aimux notify [options]\n\nSend a project notif
 const LIST_NOTIFICATIONS_HELP: &str = "Usage: aimux list-notifications [options]\n\nList project notifications\n\nOptions:\n  --unread                    Show only unread notifications\n  --session <sessionId>       Filter by session id\n  --project <path>            Project root\n  --json                      Emit JSON output";
 const CLEAR_NOTIFICATIONS_HELP: &str = "Usage: aimux clear-notifications [options]\n\nClear project notifications\n\nOptions:\n  --id <notificationId>       Clear one notification\n  --ids <notificationIds>     Comma-separated notification ids\n  --session <sessionId>       Clear only notifications for a session\n  --project <path>            Project root\n  --json                      Emit JSON output";
 const READ_NOTIFICATIONS_HELP: &str = "Usage: aimux read-notifications [options]\n\nMark project notifications as read\n\nOptions:\n  --id <notificationId>       Mark one notification as read\n  --ids <notificationIds>     Comma-separated notification ids\n  --session <sessionId>       Mark only notifications for a session as read\n  --project <path>            Project root\n  --json                      Emit JSON output";
+#[cfg(feature = "remote-control")]
 const REMOTE_HELP: &str = "Usage: aimux remote [options] [command]\n\nManage remote access\n\nCommands:\n  status                      Show remote access status\n  enable                      Enable remote access\n  disable                     Disable remote access";
+#[cfg(feature = "remote-control")]
 const REMOTE_STATUS_HELP: &str = "Usage: aimux remote status [options]\n\nShow remote access status\n\nOptions:\n  --json                      Emit JSON";
+#[cfg(feature = "remote-control")]
 const REMOTE_ENABLE_HELP: &str = "Usage: aimux remote enable\n\nEnable remote access";
+#[cfg(feature = "remote-control")]
 const REMOTE_DISABLE_HELP: &str = "Usage: aimux remote disable\n\nDisable remote access";
+#[cfg(feature = "remote-control")]
 const WHOAMI_HELP: &str = "Usage: aimux whoami [options]\n\nShow current remote access identity\n\nOptions:\n  --json                      Emit JSON";
+#[cfg(feature = "remote-control")]
 const LOGIN_HELP: &str = "Usage: aimux login\n\nAuthenticate remote access";
+#[cfg(feature = "remote-control")]
 const LOGOUT_HELP: &str = "Usage: aimux logout\n\nClear remote access credentials";
+#[cfg(feature = "remote-control")]
 const SECURITY_HELP: &str = "Usage: aimux security [options] [command]\n\nManage aimux security controls\n\nCommands:\n  devices                     List remote client devices\n  device                      Approve a live remote client device\n  approve <deviceId>          Approve a remote client device\n  block <deviceId>            Block a remote client device\n  unblock <deviceId>          Unblock a remote client device\n  unlock                      Unlock security credentials";
+#[cfg(feature = "remote-control")]
 const SECURITY_DEVICES_HELP: &str = "Usage: aimux security devices [options]\n\nList remote client devices\n\nOptions:\n  --json                      Emit JSON";
+#[cfg(feature = "remote-control")]
 const SECURITY_DEVICE_HELP: &str = "Usage: aimux security device [options] [command]\n\nApprove a live remote client device\n\nCommands:\n  approve [deviceId]          Approve the most recent live remote client waiting for access";
+#[cfg(feature = "remote-control")]
 const SECURITY_APPROVE_HELP: &str = "Usage: aimux security approve <deviceId> [options]\n\nApprove a remote client device\n\nOptions:\n  --code <code>               Approval code shown on the waiting device\n  --json                      Emit JSON";
+#[cfg(feature = "remote-control")]
 const SECURITY_BLOCK_HELP: &str = "Usage: aimux security block <deviceId> [options]\n\nBlock a remote client device\n\nOptions:\n  --json                      Emit JSON";
+#[cfg(feature = "remote-control")]
 const SECURITY_UNBLOCK_HELP: &str = "Usage: aimux security unblock <deviceId> [options]\n\nUnblock a remote client device without approving it\n\nOptions:\n  --json                      Emit JSON";
+#[cfg(feature = "remote-control")]
 const SECURITY_UNLOCK_HELP: &str = "Usage: aimux security unlock\n\nUnlock security credentials";
+#[cfg(feature = "remote-control")]
 const HOSTED_HELP: &str = "Usage: aimux hosted [options] [command]\n\nManage hosted mode: principals, grants, audit, lockdown\n\nCommands:\n  status                      Show hosted mode configuration and principals\n  token                       Manage hosted bearer tokens\n  grant <principalId>         Allow a principal to converse with one session\n  ungrant <principalId>       Remove a principal's access to one session\n  lockdown <state>            Close or reopen the hosted listener\n  audit                       Inspect the hosted audit log";
+#[cfg(feature = "remote-control")]
 const HOSTED_STATUS_HELP: &str = "Usage: aimux hosted status [options]\n\nShow hosted mode configuration and principals\n\nOptions:\n  --json                      Emit JSON";
+#[cfg(feature = "remote-control")]
 const HOSTED_TOKEN_HELP: &str = "Usage: aimux hosted token [options] [command]\n\nManage hosted bearer tokens\n\nCommands:\n  create                      Create a principal and print its token once\n  list                        List principals\n  revoke <principalId>        Revoke a principal's token";
+#[cfg(feature = "remote-control")]
 const HOSTED_GRANT_HELP: &str = "Usage: aimux hosted grant <principalId> [options]\n\nAllow a principal to converse with one session\n\nOptions:\n  --project <root>            Project root the session belongs to\n  --session <id>              Session id";
+#[cfg(feature = "remote-control")]
 const HOSTED_UNGRANT_HELP: &str = "Usage: aimux hosted ungrant <principalId> [options]\n\nRemove a principal's access to one session\n\nOptions:\n  --project <root>            Project root the session belongs to\n  --session <id>              Session id";
+#[cfg(feature = "remote-control")]
 const HOSTED_LOCKDOWN_HELP: &str = "Usage: aimux hosted lockdown <state>\n\nClose or reopen the hosted listener (\"on\" or \"off\")";
+#[cfg(feature = "remote-control")]
 const HOSTED_AUDIT_HELP: &str = "Usage: aimux hosted audit [options] [command]\n\nInspect the hosted audit log\n\nCommands:\n  tail                        Show the most recent audit records";
 
 fn run_root_dashboard_command() -> Result<ExitCode> {

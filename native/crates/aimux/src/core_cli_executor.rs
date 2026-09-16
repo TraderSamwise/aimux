@@ -18,17 +18,22 @@ use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonRequestInit, request_daemon_json,
     request_daemon_text,
 };
+#[cfg(feature = "remote-control")]
 use crate::core_text::{
-    core_whoami_json, render_core_daemon_projects_lines, render_core_daemon_status_lines,
-    render_core_host_status_lines, render_core_login_lines, render_core_logout_lines,
-    render_core_project_ensure_lines, render_core_project_kill_lines,
-    render_core_project_restart_lines, render_core_project_serve_lines,
-    render_core_project_stop_lines, render_core_projects_list_lines,
+    core_whoami_json, render_core_login_lines, render_core_logout_lines,
     render_core_remote_disable_lines, render_core_remote_enable_lines,
     render_core_remote_security_device_mutation_line, render_core_remote_security_devices_lines,
     render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
 };
+use crate::core_text::{
+    render_core_daemon_projects_lines, render_core_daemon_status_lines,
+    render_core_host_status_lines, render_core_project_ensure_lines,
+    render_core_project_kill_lines, render_core_project_restart_lines,
+    render_core_project_serve_lines, render_core_project_stop_lines,
+    render_core_projects_list_lines,
+};
 use crate::daemon::routing::DaemonRouteUrl;
+#[cfg(feature = "remote-control")]
 use crate::daemon::text::auth::AuthFlowResult;
 use crate::daemon::text::operations::RestartControlPlaneTextResult;
 use crate::daemon_state::EnsureDaemonRunningOptions;
@@ -58,8 +63,11 @@ use crate::logs::{
 };
 use crate::paths::{PathResolver, is_git_project_root, project_checkout_required_message};
 use crate::project_service_manifest::get_project_service_manifest;
+#[cfg(feature = "remote-control")]
 use crate::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
+#[cfg(feature = "remote-control")]
 use crate::remote_login::{LoginAction, run_login_flow};
+#[cfg(feature = "remote-control")]
 use crate::remote_security_devices::{list_remote_security_devices, update_remote_security_device};
 use crate::runtime_migration::{
     build_runtime_migration_report, import_runtime_migration,
@@ -107,14 +115,22 @@ pub trait CoreCliRuntime {
     fn resolve_project_root(&self, path: &str) -> String;
     fn load_daemon_info(&self) -> Option<AimuxDaemonInfo>;
     fn load_daemon_state(&self) -> DaemonState;
+    #[cfg(feature = "remote-control")]
     fn has_remote_credentials(&self) -> bool;
     fn loop_actor_context(&self) -> CoreLoopActorContext;
+    #[cfg(feature = "remote-control")]
     fn credentials_for_status(&self) -> Option<Value>;
+    #[cfg(feature = "remote-control")]
     fn whoami_payload(&self) -> Value;
+    #[cfg(feature = "remote-control")]
     fn set_remote_enabled(&self, enabled: bool) -> Result<(), String>;
+    #[cfg(feature = "remote-control")]
     fn clear_credentials(&self) -> String;
+    #[cfg(feature = "remote-control")]
     fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String>;
+    #[cfg(feature = "remote-control")]
     fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String>;
+    #[cfg(feature = "remote-control")]
     fn update_remote_security_device(
         &self,
         device_id: &str,
@@ -212,6 +228,7 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         load_daemon_state(resolver.daemon_state_path())
     }
 
+    #[cfg(feature = "remote-control")]
     fn has_remote_credentials(&self) -> bool {
         let resolver = PathResolver::from_env();
         load_credentials(&resolver).is_some()
@@ -221,6 +238,7 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         CoreLoopActorContext::from_env()
     }
 
+    #[cfg(feature = "remote-control")]
     fn credentials_for_status(&self) -> Option<Value> {
         let resolver = PathResolver::from_env();
         load_credentials(&resolver).map(|credentials| {
@@ -231,6 +249,7 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         })
     }
 
+    #[cfg(feature = "remote-control")]
     fn whoami_payload(&self) -> Value {
         let resolver = PathResolver::from_env();
         let credentials = load_credentials(&resolver).map(|credentials| {
@@ -243,6 +262,7 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         json!({ "credentials": credentials })
     }
 
+    #[cfg(feature = "remote-control")]
     fn set_remote_enabled(&self, enabled: bool) -> Result<(), String> {
         let resolver = PathResolver::from_env();
         set_remote_enabled(&resolver, enabled)
@@ -250,11 +270,13 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             .map_err(|error| error.to_string())
     }
 
+    #[cfg(feature = "remote-control")]
     fn clear_credentials(&self) -> String {
         let resolver = PathResolver::from_env();
         clear_credentials(&resolver).as_str().into()
     }
 
+    #[cfg(feature = "remote-control")]
     fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String> {
         let resolver = PathResolver::from_env();
         let result = run_login_flow(
@@ -272,10 +294,12 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         })
     }
 
+    #[cfg(feature = "remote-control")]
     fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String> {
         list_remote_security_devices(pending)
     }
 
+    #[cfg(feature = "remote-control")]
     fn update_remote_security_device(
         &self,
         device_id: &str,
@@ -529,6 +553,7 @@ const POST_TEXT_ROUTES: &[&str] = &[
     CORE_API_ROUTES.attachment_publish_text,
     CORE_API_ROUTES.dashboard_reload_text,
     CORE_API_ROUTES.graveyard_cleanup_text,
+    CORE_API_ROUTES.graveyard_reap_dead_text,
     CORE_API_ROUTES.graveyard_resurrect_text,
     CORE_API_ROUTES.graveyard_send_text,
     CORE_API_ROUTES.handoff_accept_text,
@@ -847,7 +872,7 @@ pub fn run_core_cli_with(
         current_working_dir,
         current_project_root,
         daemon_running: runtime.load_daemon_info().is_some(),
-        has_credentials: runtime.has_remote_credentials(),
+        has_credentials: core_cli_has_remote_credentials(runtime),
         loop_actor: runtime.loop_actor_context(),
     };
     let mut plan = match classify_core_cli_with_project_resolver(raw_args, &context, |project| {
@@ -881,6 +906,16 @@ pub fn run_core_cli_with(
         Ok(execution) => execution,
         Err(message) => CoreCliExecution::error(format!("Error: {message}"), 1),
     }
+}
+
+#[cfg(feature = "remote-control")]
+fn core_cli_has_remote_credentials(runtime: &impl CoreCliRuntime) -> bool {
+    runtime.has_remote_credentials()
+}
+
+#[cfg(not(feature = "remote-control"))]
+fn core_cli_has_remote_credentials(_runtime: &impl CoreCliRuntime) -> bool {
+    false
 }
 
 fn scope_bare_restart_to_current_project(
@@ -919,6 +954,7 @@ fn operation_requires_current_git_project(operation: CoreCliOperation) -> bool {
             | CoreCliOperation::WorktreeDeleteGraveyard
             | CoreCliOperation::GraveyardList
             | CoreCliOperation::GraveyardSend
+            | CoreCliOperation::GraveyardReapDead
             | CoreCliOperation::GraveyardResurrect
             | CoreCliOperation::GraveyardCleanup
     )
@@ -1045,6 +1081,7 @@ fn run_plan(
             session_id,
         } => run_agent_identity(output_mode, &project_root, &session_id, runtime),
         CoreCliAction::Compact { project_root } => run_compact(&project_root),
+        #[cfg(feature = "remote-control")]
         CoreCliAction::RemoteStatus { relay_request } => {
             let credentials = runtime.credentials_for_status();
             let relay = match relay_request {
@@ -1061,6 +1098,7 @@ fn run_plan(
                 render_core_remote_status_lines(&payload),
             )
         }
+        #[cfg(feature = "remote-control")]
         CoreCliAction::RemoteEnable { relay_request } => {
             let Some(request) = relay_request else {
                 return Ok(CoreCliExecution::error(
@@ -1075,6 +1113,7 @@ fn run_plan(
                 render_core_remote_enable_lines(&response.result["relay"]),
             )
         }
+        #[cfg(feature = "remote-control")]
         CoreCliAction::RemoteDisable { relay_request } => {
             let daemon_disconnected = relay_request.is_some();
             if let Some(request) = relay_request {
@@ -1088,6 +1127,7 @@ fn run_plan(
                 render_core_remote_disable_lines(daemon_disconnected),
             )
         }
+        #[cfg(feature = "remote-control")]
         CoreCliAction::Whoami => {
             let payload = runtime.whoami_payload();
             render_json_or_lines(
@@ -1096,6 +1136,7 @@ fn run_plan(
                 render_core_whoami_lines(&payload),
             )
         }
+        #[cfg(feature = "remote-control")]
         CoreCliAction::Logout { relay_disable } => {
             if let Some(request) = relay_disable {
                 let _ = runtime.request_core_command(&request);
@@ -1107,6 +1148,7 @@ fn run_plan(
                 render_core_logout_lines(&result),
             )
         }
+        #[cfg(feature = "remote-control")]
         CoreCliAction::Login {
             security_unlock,
             relay_enable,
@@ -1135,12 +1177,15 @@ fn run_plan(
             }
             Ok(CoreCliExecution::ok(lines))
         }
+        #[cfg(feature = "remote-control")]
         CoreCliAction::SecurityDevices { json } => {
             run_security_devices(json, false, output_mode, runtime)
         }
+        #[cfg(feature = "remote-control")]
         CoreCliAction::SecurityDeviceApproveLive { device_id, json } => {
             run_security_device_approve_live(device_id.as_deref(), json, output_mode, runtime)
         }
+        #[cfg(feature = "remote-control")]
         CoreCliAction::SecurityDeviceUpdate {
             device_id,
             action,
@@ -1187,6 +1232,7 @@ fn run_plan(
     }
 }
 
+#[cfg(feature = "remote-control")]
 fn run_security_devices(
     json_flag: bool,
     pending: bool,
@@ -1205,6 +1251,7 @@ fn run_security_devices(
     ))
 }
 
+#[cfg(feature = "remote-control")]
 fn run_security_device_approve_live(
     device_id: Option<&str>,
     json_flag: bool,
@@ -1244,6 +1291,7 @@ fn run_security_device_approve_live(
     Err("Interactive approval requires a TTY. Run `aimux security device approve` in a terminal and type the code shown on the waiting device.".into())
 }
 
+#[cfg(feature = "remote-control")]
 fn run_security_device_update(
     device_id: &str,
     action: &str,

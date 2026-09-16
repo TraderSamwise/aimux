@@ -75,6 +75,7 @@ pub fn route_json_daemon_request(
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
 
+    #[cfg(feature = "remote-control")]
     if method == "GET" && pathname == "/relay/status" {
         return Some(DaemonRouteResponse::json(
             200,
@@ -82,6 +83,7 @@ pub fn route_json_daemon_request(
         ));
     }
 
+    #[cfg(feature = "remote-control")]
     if method == "POST" && pathname == "/relay/enable" {
         if !runtime.has_remote_credentials() {
             return Some(DaemonRouteResponse::json(
@@ -102,6 +104,7 @@ pub fn route_json_daemon_request(
         ));
     }
 
+    #[cfg(feature = "remote-control")]
     if method == "POST" && pathname == "/relay/disable" {
         return Some(DaemonRouteResponse::json(
             200,

@@ -89,6 +89,7 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/worktrees/remove": "client-api",
   "/worktrees/graveyard": "client-api",
   "/graveyard/resurrect": "client-api",
+  "/graveyard/reap-dead-agents": "client-api",
   "/graveyard/worktrees/resurrect": "client-api",
   "/graveyard/worktrees/delete": "client-api",
   "/graveyard/cleanup": "client-api",

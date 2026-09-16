@@ -86,6 +86,11 @@ pub const ROUTES: &[Spec] = &[
     ),
     Spec::exact(
         Method::Post,
+        routes::graveyard_actions::REAP_DEAD_AGENTS,
+        Group::Lifecycle,
+    ),
+    Spec::exact(
+        Method::Post,
         routes::graveyard_actions::RESURRECT_WORKTREE,
         Group::Lifecycle,
     ),

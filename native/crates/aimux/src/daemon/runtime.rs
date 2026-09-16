@@ -5,10 +5,9 @@ pub use project_services::{
     project_service_stdio_log_path,
 };
 
-use crate::attachment_hosting::{
-    AttachmentHostingResult, HttpAttachmentUploader, PublishedAttachmentHostInput,
-    maybe_host_published_attachment,
-};
+use crate::attachment_hosting::{AttachmentHostingResult, PublishedAttachmentHostInput};
+#[cfg(feature = "remote-control")]
+use crate::attachment_hosting::{HttpAttachmentUploader, maybe_host_published_attachment};
 use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
     get_aimux_current_cli_identity,
@@ -52,6 +51,7 @@ use crate::daemon::stream::{
     maybe_handle_project_event_stream_request_async,
 };
 use crate::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
+#[cfg(feature = "remote-control")]
 use crate::daemon::text::auth::{
     AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
 };
@@ -117,10 +117,13 @@ use crate::recording_cleanup::{
     run_recording_cleanup,
 };
 use crate::release_version_contract::{
-    read_aimux_build_profile_from_package_root, read_aimux_runtime_version,
+    read_aimux_build_profile_from_package_root, read_aimux_build_variant_from_package_root,
+    read_aimux_runtime_version,
 };
 use crate::remote_access::{RemoteActorRole, parse_remote_actor};
+#[cfg(feature = "remote-control")]
 use crate::remote_credentials;
+#[cfg(feature = "remote-control")]
 use crate::remote_login::{self, LoginAction, LoginFlowWaiter};
 use crate::repair_events::{
     ACTION_CONTROL_PLANE_RESTART, ACTION_DASHBOARD_RELOAD, ACTION_PROJECT_SERVICE_ENSURE,
@@ -183,6 +186,7 @@ pub struct RealDaemonRuntime {
     project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
     project_service_health_probe: Arc<dyn ProjectServiceHealthProbe>,
     project_service_startup_timeout_ms: u64,
+    #[cfg(feature = "remote-control")]
     auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
     project_online_agent_count_cache: HashMap<String, ProjectOnlineAgentCountCacheEntry>,
@@ -193,6 +197,7 @@ pub struct RealDaemonRuntime {
     restart_managed_tmux_project_roots: Option<Result<Vec<String>, String>>,
     runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
     started_instant: Instant,
+    #[cfg(feature = "remote-control")]
     relay: Arc<crate::daemon::relay::RelaySupervisor>,
 }
 
@@ -444,10 +449,7 @@ impl fmt::Debug for RealDaemonRuntime {
                 "project_service_startup_timeout_ms",
                 &self.project_service_startup_timeout_ms,
             )
-            .field(
-                "auth_flow_count",
-                &self.auth_flows.lock().map(|flows| flows.len()).ok(),
-            )
+            .field("auth_flow_count", &auth_flow_count(self))
             .field(
                 "global_expose_hot_snapshots",
                 &self.global_expose_hot_snapshots,
@@ -460,8 +462,19 @@ impl fmt::Debug for RealDaemonRuntime {
     }
 }
 
+#[cfg(feature = "remote-control")]
+fn auth_flow_count(runtime: &RealDaemonRuntime) -> Option<usize> {
+    runtime.auth_flows.lock().map(|flows| flows.len()).ok()
+}
+
+#[cfg(not(feature = "remote-control"))]
+fn auth_flow_count(_runtime: &RealDaemonRuntime) -> Option<usize> {
+    None
+}
+
 impl RealDaemonRuntime {
     /// Dial the relay if the resolved target says we should.
+    #[cfg(feature = "remote-control")]
     fn start_relay(&self, credentials: &remote_credentials::AimuxCredentials, force: bool) {
         let env_url = std::env::var("AIMUX_RELAY_URL").ok();
         let env_token = std::env::var("AIMUX_RELAY_TOKEN").ok();
@@ -478,6 +491,7 @@ impl RealDaemonRuntime {
 
     /// Called once the daemon is up, so a machine that was left logged in and
     /// enabled reconnects on its own rather than waiting for a CLI call.
+    #[cfg(feature = "remote-control")]
     pub fn connect_relay_on_startup(&self) {
         if let Some(credentials) = remote_credentials::load_credentials(&self.resolver) {
             self.start_relay(&credentials, false);
@@ -573,6 +587,7 @@ impl RealDaemonRuntime {
                 );
             }
         }
+        #[cfg(feature = "remote-control")]
         self.relay.disconnect();
     }
 
@@ -600,6 +615,7 @@ impl RealDaemonRuntime {
             project_service_process_verifier: Arc::new(SystemProjectServiceProcessVerifier),
             project_service_health_probe: Arc::new(SystemProjectServiceHealthProbe),
             project_service_startup_timeout_ms,
+            #[cfg(feature = "remote-control")]
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
@@ -614,6 +630,7 @@ impl RealDaemonRuntime {
             restart_managed_tmux_project_roots: None,
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
+            #[cfg(feature = "remote-control")]
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
     }
@@ -634,6 +651,7 @@ impl RealDaemonRuntime {
             project_service_process_verifier,
             project_service_health_probe: Arc::new(SystemProjectServiceHealthProbe),
             project_service_startup_timeout_ms,
+            #[cfg(feature = "remote-control")]
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
@@ -648,6 +666,7 @@ impl RealDaemonRuntime {
             restart_managed_tmux_project_roots: None,
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
+            #[cfg(feature = "remote-control")]
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
     }
@@ -2369,14 +2388,17 @@ pub fn run_daemon_internal() -> Result<()> {
         RealDaemonRuntime::new(resolver.clone(), info)
             .with_global_expose_hot_snapshot_coordinator(global_expose_hot_snapshots.clone()),
     ));
-    let hosted_config = crate::hosted_config::load_hosted_config_with_resolver(&resolver);
-    let _hosted_server = crate::hosted_server::start_hosted_server_background_with_scheduler(
-        hosted_config,
-        resolver.clone(),
-        Arc::clone(&runtime),
-        Some(Arc::clone(&scheduler_context)),
-        Some(daemon_scheduler.clone()),
-    )?;
+    #[cfg(feature = "remote-control")]
+    let _hosted_server = {
+        let hosted_config = crate::hosted_config::load_hosted_config_with_resolver(&resolver);
+        crate::hosted_server::start_hosted_server_background_with_scheduler(
+            hosted_config,
+            resolver.clone(),
+            Arc::clone(&runtime),
+            Some(Arc::clone(&scheduler_context)),
+            Some(daemon_scheduler.clone()),
+        )?
+    };
     spawn_daemon_scheduler(
         Arc::clone(&scheduler_context),
         daemon_periodic_tasks(global_expose_hot_snapshots),
@@ -2384,6 +2406,7 @@ pub fn run_daemon_internal() -> Result<()> {
     );
     // A machine left logged in and enabled should come back on its own rather
     // than waiting for someone to run a CLI command.
+    #[cfg(feature = "remote-control")]
     if let Ok(runtime) = runtime.lock() {
         runtime.connect_relay_on_startup();
     }
@@ -2462,14 +2485,27 @@ pub struct DaemonDiskMaintenanceTask {
 pub fn daemon_periodic_tasks(
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
 ) -> Vec<Box<dyn DaemonPeriodicTask>> {
-    vec![
-        Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
-            global_expose_hot_snapshots,
-        )),
-        Box::new(crate::hosted_server::HostedPruneTask),
-        Box::new(crate::hosted_server::HostedOutboxDrainTask),
-        Box::new(DaemonDiskMaintenanceTask::new()),
-    ]
+    #[cfg(not(feature = "remote-control"))]
+    {
+        vec![
+            Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
+                global_expose_hot_snapshots,
+            )),
+            Box::new(DaemonDiskMaintenanceTask::new()),
+        ]
+    }
+    #[cfg(feature = "remote-control")]
+    {
+        let mut tasks: Vec<Box<dyn DaemonPeriodicTask>> = vec![
+            Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
+                global_expose_hot_snapshots,
+            )),
+            Box::new(DaemonDiskMaintenanceTask::new()),
+        ];
+        tasks.insert(1, Box::new(crate::hosted_server::HostedPruneTask));
+        tasks.insert(2, Box::new(crate::hosted_server::HostedOutboxDrainTask));
+        tasks
+    }
 }
 
 impl DaemonDiskMaintenanceTask {
@@ -2731,23 +2767,30 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
     /// "disconnected" whenever remote was enabled, which was indistinguishable
     /// from a relay that was up and working.
     fn relay_status(&self) -> Value {
-        let status = self.relay.status();
-        if status.get("status").and_then(Value::as_str) != Some("off") {
-            return status;
-        }
-        // No client running: report off unless the user has asked for remote,
-        // in which case they are waiting on a connection that has not started.
-        let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
+        #[cfg(not(feature = "remote-control"))]
+        {
             return json!({ "status": "off" });
-        };
-        if credentials.remote_enabled {
-            json!({
-                "status": "disconnected",
-                "relayUrl": credentials.relay_url,
-                "lastConnectedAt": Value::Null,
-            })
-        } else {
-            json!({ "status": "off" })
+        }
+        #[cfg(feature = "remote-control")]
+        {
+            let status = self.relay.status();
+            if status.get("status").and_then(Value::as_str) != Some("off") {
+                return status;
+            }
+            // No client running: report off unless the user has asked for remote,
+            // in which case they are waiting on a connection that has not started.
+            let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
+                return json!({ "status": "off" });
+            };
+            if credentials.remote_enabled {
+                json!({
+                    "status": "disconnected",
+                    "relayUrl": credentials.relay_url,
+                    "lastConnectedAt": Value::Null,
+                })
+            } else {
+                json!({ "status": "off" })
+            }
         }
     }
 
@@ -3255,10 +3298,12 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         self.prepare_restart_control_plane_runtime(project_root, force, wait_for_capture)
     }
 
+    #[cfg(feature = "remote-control")]
     fn has_remote_credentials(&self) -> bool {
         remote_credentials::load_credentials(&self.resolver).is_some()
     }
 
+    #[cfg(feature = "remote-control")]
     fn enable_relay_for_user_request(&mut self) -> Value {
         match remote_credentials::set_remote_enabled(&self.resolver, true) {
             Ok(Some(credentials)) => {
@@ -3272,12 +3317,14 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         }
     }
 
+    #[cfg(feature = "remote-control")]
     fn disable_relay(&mut self) -> Value {
         let _ = remote_credentials::set_remote_enabled(&self.resolver, false);
         self.relay.disconnect();
         json!({ "status": "off" })
     }
 
+    #[cfg(feature = "remote-control")]
     fn relay_auth_failed_message(&self, relay: &Value) -> String {
         relay
             .get("error")
@@ -3331,6 +3378,7 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
                 generated_at: generated_at.clone(),
                 cli_version: read_aimux_runtime_version(),
                 build_profile: read_aimux_build_profile_from_package_root(package_root()),
+                build_variant: read_aimux_build_variant_from_package_root(package_root()),
                 cli_launch: aimux_cli_launch_json(cli_launch),
                 expected_project_service: expected_project_service.clone(),
                 expected_runtime_owner: get_runtime_owner_id(),
@@ -3821,19 +3869,28 @@ impl DaemonProjectContentTextRuntime for RealDaemonRuntime {
         &mut self,
         input: &PublishedAttachmentHostInput<'_>,
     ) -> AttachmentHostingResult {
-        let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
+        #[cfg(not(feature = "remote-control"))]
+        {
+            let _ = input;
             return AttachmentHostingResult::Skipped;
-        };
-        maybe_host_published_attachment(
-            input,
-            &credentials.relay_url,
-            &credentials.token,
-            credentials.remote_enabled,
-            &HttpAttachmentUploader,
-        )
+        }
+        #[cfg(feature = "remote-control")]
+        {
+            let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
+                return AttachmentHostingResult::Skipped;
+            };
+            maybe_host_published_attachment(
+                input,
+                &credentials.relay_url,
+                &credentials.token,
+                credentials.remote_enabled,
+                &HttpAttachmentUploader,
+            )
+        }
     }
 }
 
+#[cfg(feature = "remote-control")]
 impl DaemonAuthTextRuntime for RealDaemonRuntime {
     fn remote_status_text_payload(&self) -> Value {
         let credentials = remote_credentials::load_credentials(&self.resolver).map(|credentials| {
@@ -3975,7 +4032,14 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         {
             return json!({ "ok": true, "suppressed": true, "reason": reason });
         }
+        #[cfg(not(feature = "remote-control"))]
+        {
+            let _ = payload;
+            return json!({ "ok": true, "suppressed": true, "reason": "remote_unavailable_in_lite_build" });
+        }
+        #[cfg(feature = "remote-control")]
         let notification = crate::mobile_push_bridge::relay_notification(payload);
+        #[cfg(feature = "remote-control")]
         match self.relay.push(&notification) {
             Ok(()) => json!({ "ok": true, "suppressed": false }),
             Err(reason) => json!({ "ok": true, "suppressed": true, "reason": reason }),

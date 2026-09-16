@@ -1,4 +1,6 @@
-use std::sync::{Arc, Mutex, Weak};
+#[cfg(feature = "remote-control")]
+use std::sync::Weak;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::daemon_state::AimuxDaemonInfo;
@@ -151,6 +153,7 @@ pub fn spawn_daemon_scheduler(
     );
 }
 
+#[cfg(feature = "remote-control")]
 pub fn hosted_prune_callback(
     state: &Arc<crate::hosted_server::HostedServerState>,
 ) -> HostedPruneCallback {
@@ -161,6 +164,7 @@ pub fn hosted_prune_callback(
     })
 }
 
+#[cfg(feature = "remote-control")]
 pub fn hosted_outbox_drain_callback(
     state: &Arc<crate::hosted_server::HostedServerState>,
 ) -> HostedOutboxDrainCallback {

@@ -9,6 +9,10 @@ repository.workspace = true
 name = "aimux"
 path = "src/bin/aimux.rs"
 
+[features]
+default = ["remote-control"]
+remote-control = ["dep:futures-util", "dep:tokio-tungstenite", "dep:ureq"]
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
@@ -20,6 +24,6 @@ sha1.workspace = true
 sha2.workspace = true
 time.workspace = true
 tokio.workspace = true
-futures-util.workspace = true
-tokio-tungstenite.workspace = true
-ureq.workspace = true
+futures-util = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }

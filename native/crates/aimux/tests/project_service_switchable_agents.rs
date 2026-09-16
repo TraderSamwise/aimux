@@ -213,7 +213,8 @@ fn topology_entries_apply_stored_control_demotion_over_stale_tmux_metadata() {
     let request_context = ProjectServiceRequestContext::new("/repo")
         .with_live_window_ids(support::live_window_ids(&["@7"]));
 
-    let entries = topology_switchable_entries_for_context(&request_context, &topology, &metadata);
+    let entries =
+        topology_switchable_entries_for_context(&request_context, &topology, &metadata).entries;
 
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].metadata.get("role"), None);

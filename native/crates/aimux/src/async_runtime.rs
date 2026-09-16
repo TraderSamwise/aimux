@@ -171,9 +171,15 @@ fn with_blocking_runtime_handle<R>(handle: Handle, closure: impl FnOnce() -> R) 
 
 pub fn doctor_tasks_report() -> AsyncRuntimeDoctorReport {
     let tasks = registry().snapshot();
-    let hosted_backlog = crate::hosted_outbox::hosted_outbox_backlog_snapshot_from_env();
+    #[cfg(not(feature = "remote-control"))]
+    let backlogs = backlog_snapshots();
+    #[cfg(feature = "remote-control")]
     let mut backlogs = backlog_snapshots();
+    #[cfg(feature = "remote-control")]
+    let hosted_backlog = crate::hosted_outbox::hosted_outbox_backlog_snapshot_from_env();
+    #[cfg(feature = "remote-control")]
     backlogs.retain(|backlog| backlog.name != hosted_backlog.name);
+    #[cfg(feature = "remote-control")]
     backlogs.push(hosted_backlog);
     AsyncRuntimeDoctorReport {
         runtime: AsyncRuntimeState {

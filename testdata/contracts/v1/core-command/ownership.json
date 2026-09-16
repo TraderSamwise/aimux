@@ -309,6 +309,7 @@
           { "command": "worktree delete-graveyard <path>", "shimNeedle": "/core/worktree/delete-graveyard-text" },
           { "command": "graveyard list", "shimNeedle": "/core/graveyard/list-text" },
           { "command": "graveyard send <id>", "shimNeedle": "/core/graveyard/send-text" },
+          { "command": "graveyard reap-dead [id]", "shimNeedle": "/core/graveyard/reap-dead-text" },
           { "command": "graveyard resurrect <id>", "shimNeedle": "/core/graveyard/resurrect-text" },
           { "command": "graveyard cleanup", "shimNeedle": "/core/graveyard/cleanup-text" },
           { "command": "threads", "shimNeedle": "/core/threads/list-text" },
