@@ -231,6 +231,54 @@ fn sorts_recent_output_by_timestamp_rank_then_original_order() {
 }
 
 #[test]
+fn role_expose_order_places_declared_supervisor_before_worktree_agents() {
+    let mut overseer = item("overseer", None, None, Some("/repo"), None, None);
+    overseer.role = "overseer".into();
+    overseer.role_state = json!({
+        "status": "resolved",
+        "role": "overseer",
+        "lane": { "kind": "supervisor" },
+        "projectControl": true,
+        "shouldShowInExpose": true,
+        "exposeOrder": 0
+    });
+    overseer.should_show_in_expose = true;
+    overseer.expose_order = 0;
+
+    let ordered = order_expose_items(
+        &[
+            item("main", None, None, Some("/repo"), None, None),
+            item(
+                "custom",
+                None,
+                None,
+                Some("/repo/.aimux/worktrees/custom"),
+                None,
+                None,
+            ),
+            overseer,
+        ],
+        "/repo",
+        ExposeSublabel::Worktree,
+        &ExposeOrderingOptions {
+            worktree_order_by_project_root: BTreeMap::from([(
+                "/repo".into(),
+                vec!["/repo".into(), "/repo/.aimux/worktrees/custom".into()],
+            )]),
+            sort_mode_recent_output: false,
+        },
+    );
+
+    assert_eq!(
+        ordered
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["overseer", "main", "custom"]
+    );
+}
+
+#[test]
 fn expose_context_uses_worktree_and_stable_tone_identity() {
     let items = vec![
         item("a", None, None, Some("/p/a"), None, None),
@@ -292,8 +340,12 @@ fn item(
             "status": "resolved",
             "role": "coder",
             "lane": { "kind": "worktree", "worktreePath": worktree_path.unwrap_or("/repo") },
-            "projectControl": false
+            "projectControl": false,
+            "shouldShowInExpose": true,
+            "exposeOrder": 1000
         }),
+        should_show_in_expose: true,
+        expose_order: 1000,
         overseer: false,
         scribe: false,
         alive: true,

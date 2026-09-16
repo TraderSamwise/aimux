@@ -647,6 +647,7 @@ fn list_all_projects_expose_items_with_live_window_projection(
         let options = SwitchableListOptions {
             scope: AgentListScope::All,
             raw_labels: true,
+            use_expose_role_visibility: true,
             ..SwitchableListOptions::default()
         };
         let mut project_items = list_switchable_agent_items(
@@ -706,6 +707,7 @@ fn list_live_projects_expose_items(
         let options = SwitchableListOptions {
             scope: AgentListScope::All,
             raw_labels: true,
+            use_expose_role_visibility: true,
             ..SwitchableListOptions::default()
         };
         let mut project_items = list_switchable_agent_items(

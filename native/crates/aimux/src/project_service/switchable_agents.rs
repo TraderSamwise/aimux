@@ -11,9 +11,9 @@ use crate::runtime_topology::{
     list_topology_service_states, read_runtime_topology, runtime_topology_path,
 };
 use crate::team_contract::{
-    agent_lane, agent_role, agent_role_state, is_overseer_session,
-    is_project_control_session as team_is_project_control_session, is_scribe_session,
-    project_control_display_role, session_with_stored_control_flags,
+    agent_expose_order, agent_lane, agent_role, agent_role_state, agent_should_show_in_expose,
+    is_overseer_session, is_project_control_session as team_is_project_control_session,
+    is_scribe_session, project_control_display_role, session_with_stored_control_flags,
 };
 use crate::tmux::TmuxTarget;
 
@@ -63,6 +63,7 @@ pub struct SwitchableContext {
 pub struct SwitchableListOptions {
     pub scope: AgentListScope,
     pub include_overseer: bool,
+    pub use_expose_role_visibility: bool,
     pub raw_labels: bool,
     pub display_order_ids: Vec<String>,
 }
@@ -72,6 +73,7 @@ impl Default for SwitchableListOptions {
         Self {
             scope: AgentListScope::Worktree,
             include_overseer: false,
+            use_expose_role_visibility: false,
             raw_labels: false,
             display_order_ids: Vec::new(),
         }
@@ -99,6 +101,8 @@ pub struct SwitchableAgentItem {
     pub role: String,
     pub lane: Value,
     pub role_state: Value,
+    pub should_show_in_expose: bool,
+    pub expose_order: i64,
     pub overseer: bool,
     pub scribe: bool,
     pub alive: bool,
@@ -157,9 +161,14 @@ pub fn route_switchable_agent_request_with_runtime(
         raw_labels: params
             .get("labelFormat")
             .is_some_and(|value| value == "raw"),
+        use_expose_role_visibility: false,
         display_order_ids: dashboard_display_order_ids(context.desktop_state.as_ref()),
     };
     let expose = params.get("expose").is_some_and(|value| value == "1");
+    let mut options = options;
+    if expose {
+        options.use_expose_role_visibility = true;
+    }
     let include_preview = matches!(
         params.get("includePreview").map(String::as_str),
         Some("1" | "true")
@@ -310,9 +319,14 @@ pub async fn route_switchable_agent_request_async(
         raw_labels: params
             .get("labelFormat")
             .is_some_and(|value| value == "raw"),
+        use_expose_role_visibility: false,
         display_order_ids: dashboard_display_order_ids(context.desktop_state.as_ref()),
     };
     let expose = params.get("expose").is_some_and(|value| value == "1");
+    let mut options = options;
+    if expose {
+        options.use_expose_role_visibility = true;
+    }
     let include_preview = matches!(
         params.get("includePreview").map(String::as_str),
         Some("1" | "true")
@@ -631,6 +645,11 @@ pub fn serialize_fast_control_item(item: &SwitchableAgentItem) -> Value {
     serialized.insert("role".into(), Value::String(item.role.clone()));
     serialized.insert("lane".into(), item.lane.clone());
     serialized.insert("roleState".into(), item.role_state.clone());
+    serialized.insert(
+        "shouldShowInExpose".into(),
+        Value::Bool(item.should_show_in_expose),
+    );
+    serialized.insert("exposeOrder".into(), Value::from(item.expose_order));
     insert_optional_string(&mut serialized, "projectId", item.project_id.as_deref());
     insert_optional_string(&mut serialized, "projectRoot", item.project_root.as_deref());
     insert_optional_string(&mut serialized, "projectName", item.project_name.as_deref());
@@ -676,6 +695,7 @@ fn build_switchable_agent_items(
     let scoped_worktree_path = resolve_context_worktree_path(context, current_managed_window);
     let visibility_rule = AgentVisibilityRule::expose_switchable(SwitchableRolePolicy {
         include_overseer: options.include_overseer,
+        use_expose_role_visibility: options.use_expose_role_visibility,
         scope_all_worktrees: options.scope == AgentListScope::All,
         scoped_worktree_path: scoped_worktree_path.clone(),
         current_window_id: current_managed_window
@@ -735,6 +755,8 @@ pub fn managed_window_item(
         role: agent_role(Some(&classification_metadata)).to_owned(),
         lane: agent_lane(Some(&classification_metadata)),
         role_state: agent_role_state(Some(&classification_metadata)),
+        should_show_in_expose: agent_should_show_in_expose(Some(&classification_metadata)),
+        expose_order: agent_expose_order(Some(&classification_metadata)),
         overseer: is_overseer_session(Some(&classification_metadata)),
         scribe: is_scribe_session(Some(&classification_metadata)),
         alive: entry.alive,

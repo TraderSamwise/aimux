@@ -33,18 +33,19 @@ pub fn order_expose_items(
     options: &ExposeOrderingOptions,
 ) -> Vec<SwitchableAgentItem> {
     if options.sort_mode_recent_output {
-        return order_expose_items_by_recent_output(items);
+        return order_expose_items_by_role_priority(order_expose_items_by_recent_output(items));
     }
     if sublabel == ExposeSublabel::None {
-        return items.to_vec();
+        return order_expose_items_by_role_priority(items.to_vec());
     }
     if sublabel == ExposeSublabel::Worktree {
         let groups = group_items_by_worktree(items, project_root, options);
-        return if groups.len() < 2 {
+        let ordered = if groups.len() < 2 {
             items.to_vec()
         } else {
             groups.into_iter().flat_map(|group| group.items).collect()
         };
+        return order_expose_items_by_role_priority(ordered);
     }
     let project_groups = group_items_by_project(items);
     if project_groups.len() < 2 {
@@ -53,7 +54,7 @@ pub fn order_expose_items(
             .and_then(|item| item.project_root.as_deref())
             .unwrap_or(project_root);
         let worktree_groups = group_items_by_worktree(items, root, options);
-        return if worktree_groups.len() < 2 {
+        let ordered = if worktree_groups.len() < 2 {
             items.to_vec()
         } else {
             worktree_groups
@@ -61,8 +62,9 @@ pub fn order_expose_items(
                 .flat_map(|group| group.items)
                 .collect()
         };
+        return order_expose_items_by_role_priority(ordered);
     }
-    project_groups
+    let ordered = project_groups
         .into_iter()
         .flat_map(|project| {
             let root = project
@@ -78,7 +80,20 @@ pub fn order_expose_items(
                 groups.into_iter().flat_map(|group| group.items).collect()
             }
         })
-        .collect()
+        .collect();
+    order_expose_items_by_role_priority(ordered)
+}
+
+fn order_expose_items_by_role_priority(
+    items: Vec<SwitchableAgentItem>,
+) -> Vec<SwitchableAgentItem> {
+    let mut keyed = items
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| (item.expose_order, index, item))
+        .collect::<Vec<_>>();
+    keyed.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    keyed.into_iter().map(|(_, _, item)| item).collect()
 }
 
 pub fn order_expose_items_by_recent_output(
