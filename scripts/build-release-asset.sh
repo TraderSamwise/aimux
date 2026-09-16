@@ -196,7 +196,7 @@ SOURCE_REF_ARGS=()
 if [ -n "${GITHUB_REF_NAME:-}" ]; then
   SOURCE_REF_ARGS=(--source-ref "$GITHUB_REF_NAME")
 fi
-node "$ROOT_DIR/scripts/write-release-provenance.mjs" \
+bash "$ROOT_DIR/scripts/write-release-provenance.sh" \
   --release-dir "$OUT_DIR" \
   --asset "$ASSET" \
   --platform-arch "$PLATFORM-$ARCH" \

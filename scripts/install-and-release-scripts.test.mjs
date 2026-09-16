@@ -684,6 +684,23 @@ printf 'local aimux fixture\\n'
 });
 
 describe("release workflow", () => {
+  it("keeps the local-only release gate inside the zero-Node script boundary", () => {
+    const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+    const buildReleaseAsset = readFileSync(join(repoRoot, "scripts/build-release-asset.sh"), "utf8");
+    const verifyReleaseAssetSet = readFileSync(join(repoRoot, "scripts/verify-release-asset-set.sh"), "utf8");
+
+    expect(packageJson.scripts["security:local-only:gate"]).toBe("bash scripts/check-local-only-release-gate.sh");
+    expect(buildReleaseAsset).toContain('bash "$ROOT_DIR/scripts/write-release-provenance.sh"');
+    expect(verifyReleaseAssetSet).toContain('bash "$ROOT_DIR/scripts/verify-release-provenance.sh"');
+    expect(
+      [
+        packageJson.scripts["security:local-only:gate"],
+        buildReleaseAsset,
+        verifyReleaseAssetSet,
+      ].join("\n"),
+    ).not.toMatch(/node\s+["']?\$?[^;\n]*scripts\/(?:check-local-only-release-gate|write-release-provenance|verify-release-provenance)\.mjs/);
+  });
+
   it("repairs PATH before inline archive checks use tar gzip mode", () => {
     const workflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
 
