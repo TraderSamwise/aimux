@@ -67,11 +67,23 @@ and this document should be treated as stale.
 A source reviewer should build from the reviewed checkout rather than trust a
 prebuilt Aimux artifact.
 
-Review sequence:
+Primary source-build sequence:
 
 ```bash
 yarn install --frozen-lockfile
+yarn release:source:local
+```
 
+`release:source:local` is defined in `package.json` as the local wrapper around
+`scripts/build-release-from-source.sh --variant local`. That source helper sets
+`AIMUX_BUILD_VARIANT=local`, uses the local package profile, builds
+`release/aimux-local-<platform>-<arch>.tar.gz`, verifies release provenance and
+SBOMs, runs the local boundary check, and installs into an isolated temporary
+root with `AIMUX_SKIP_POST_INSTALL_RESTART=1`.
+
+Independent decomposition of the same source property:
+
+```bash
 CARGO_INCREMENTAL=0 \
   CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
   cargo build --manifest-path native/Cargo.toml -p aimux --release --no-default-features
@@ -106,11 +118,7 @@ code in any build.
 Release archives, if reviewed, should be treated as a reproducibility target:
 
 ```bash
-AIMUX_BUILD_VARIANT=local yarn release:asset
-bash scripts/check-local-build-boundary.sh \
-  --variant local \
-  --archive release/aimux-local-<platform>-<arch>.tar.gz \
-  --platform-arch <platform>-<arch>
+yarn release:source:local
 ```
 
 The archive path is secondary. The source property is the `--no-default-features`
@@ -342,6 +350,9 @@ different feature sets, archive names, formula names, and dependency graphs.
 Source locations:
 
 - `.github/workflows/release.yml`
+- `package.json`
+- `scripts/build-release-from-source.sh`
+- `scripts/build-local-release-from-source.sh`
 - `scripts/build-release-asset.sh`
 - `scripts/install.sh`
 - `scripts/verify-release-asset-set.sh`
@@ -352,8 +363,8 @@ Source locations:
 Independent confirmation:
 
 ```bash
-rg -n 'AIMUX_BUILD_VARIANT|aimux-local|BUILD_VARIANT|no-default-features|Formula/aimux-local' \
-  .github/workflows/release.yml scripts docs/deployment.md
+rg -n 'release:source:local|AIMUX_BUILD_VARIANT|aimux-local|BUILD_VARIANT|no-default-features|Formula/aimux-local' \
+  package.json .github/workflows/release.yml scripts docs/deployment.md
 
 bash scripts/verify-release-asset-set.sh <release-dir>
 ```
