@@ -210,8 +210,10 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
   const tiles: ExposeTile[] = [];
   for (const source of sources) {
     source.items.forEach((item, index) => {
+      // Older or partial project-service payloads may omit this field; match
+      // Rust's unknown-role default and hide unless the server declares visibility.
       const declaredShouldShow =
-        item.shouldShowInExpose ?? item.roleState?.shouldShowInExpose ?? true;
+        item.shouldShowInExpose ?? item.roleState?.shouldShowInExpose ?? false;
       if (declaredShouldShow === false) return;
       const metadata = item.metadata ?? {};
       const context = item.exposeContext ?? {};

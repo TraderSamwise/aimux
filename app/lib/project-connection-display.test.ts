@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatProjectEndpointLabel,
   getProjectServiceEndpoint,
+  isRuntimeInventoryUnavailableError,
   isRelayUnavailableForProjectDiscovery,
   projectStateErrorCopy,
 } from "./project-connection-display";
@@ -82,6 +83,17 @@ describe("projectStateErrorCopy", () => {
     expect(projectStateErrorCopy("Relay not connected")).toEqual({
       title: "Remote unavailable.",
       detail: "Aimux could not reach the remote control plane. Try again after it reconnects.",
+    });
+  });
+
+  it("renders unverified tmux liveness as runtime inventory unavailable", () => {
+    const error =
+      "could not verify agent tmux liveness: tmux socket busy: tmux window query failed: tmux list-windows timed out";
+
+    expect(isRuntimeInventoryUnavailableError(error)).toBe(true);
+    expect(projectStateErrorCopy(error)).toEqual({
+      title: "Runtime inventory unavailable.",
+      detail: `Aimux could not verify tmux window liveness. ${error}`,
     });
   });
 

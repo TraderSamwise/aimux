@@ -244,6 +244,70 @@ describe("api relay routing", () => {
     });
   });
 
+  it("keeps agent inventory liveness 503 distinct from an empty agent list", async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: "could not verify agent tmux liveness: tmux socket busy",
+            tmuxLiveWindowQuery: { ok: false, error: "tmux list-windows timed out" },
+          }),
+          { status: 503 },
+        ),
+    ) as unknown as typeof fetch;
+
+    await expect(listAgents(endpoint)).rejects.toMatchObject({
+      name: "ApiError",
+      status: 503,
+      message: expect.stringContaining(
+        "could not verify agent tmux liveness: tmux socket busy: tmux window query failed: tmux list-windows timed out",
+      ),
+    });
+
+    installFetchMock({ ok: true, agents: [] });
+    await expect(listAgents(endpoint)).resolves.toMatchObject({ agents: [] });
+  });
+
+  it("names liveness failures from teammate mutation refusals", async () => {
+    const failure = {
+      ok: false,
+      error: "could not verify agent tmux liveness: tmux socket busy",
+      tmuxLiveWindowQuery: { ok: false, error: "tmux list-windows timed out" },
+    };
+    globalThis.fetch = vi.fn(
+      async () => new Response(JSON.stringify(failure), { status: 503 }),
+    ) as unknown as typeof fetch;
+
+    await expect(
+      createTeammate(endpoint, {
+        parentSessionId: "parent-1",
+        role: "coder",
+        open: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "ApiError",
+      status: 503,
+      message: expect.stringContaining(
+        "could not verify agent tmux liveness: tmux socket busy: tmux window query failed: tmux list-windows timed out",
+      ),
+    });
+
+    await expect(
+      createTeammateTask(endpoint, {
+        parentSessionId: "parent-1",
+        teammateSessionId: "team-1",
+        body: "Check this.",
+      }),
+    ).rejects.toMatchObject({
+      name: "ApiError",
+      status: 503,
+      message: expect.stringContaining(
+        "could not verify agent tmux liveness: tmux socket busy: tmux window query failed: tmux list-windows timed out",
+      ),
+    });
+  });
+
   it("times out relay-routed project requests", async () => {
     vi.useFakeTimers();
     const request = vi.fn(() => new Promise(() => {}));

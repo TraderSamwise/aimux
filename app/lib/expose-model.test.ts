@@ -37,6 +37,7 @@ function item(id: string, worktree: string, tone: number, kind = "working"): Exp
     },
     exposeContext: { worktree, tone },
     exposeStatus: { kind, label: kind === "needs" ? "Needs input" : "Working" },
+    shouldShowInExpose: true,
   };
 }
 
@@ -178,6 +179,42 @@ describe("expose model", () => {
       shouldShowInExpose: true,
       exposeOrder: 0,
     });
+  });
+
+  it("hides items when Exposé visibility is absent, matching the TUI unknown-role default", () => {
+    const tiles = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...item("1", "main", 0),
+            shouldShowInExpose: undefined,
+            metadata: {
+              ...item("1", "main", 0).metadata,
+              role: "unknown-supervisor",
+            },
+            roleState: {
+              status: "unknown",
+              reason: "unknown role",
+              role: "unknown-supervisor",
+              lane: { kind: "worktree" },
+              projectControl: false,
+            },
+          },
+          {
+            ...item("2", "main", 0),
+            shouldShowInExpose: true,
+            metadata: {
+              ...item("2", "main", 0).metadata,
+              role: "unknown-supervisor",
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(tiles.map((tile) => tile.sessionId)).toEqual(["session-2"]);
+    expect(tiles[0]?.shouldShowInExpose).toBe(true);
   });
 
   it("keeps Expose tones stable when the API order or server tone changes", () => {
