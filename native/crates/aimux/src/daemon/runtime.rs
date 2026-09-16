@@ -294,6 +294,17 @@ pub trait ProjectServiceHealthProbe: Send + Sync {
     fn is_ready(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool;
 }
 
+const PROJECT_SERVICE_HEALTH_RECOVERY_GRACE_MULTIPLIER: u64 = 2;
+const PROJECT_SERVICE_HEALTH_WAIT_POLL_MS: u64 = 100;
+
+fn project_service_health_recovery_grace_ms(startup_timeout_ms: u64) -> u64 {
+    startup_timeout_ms.saturating_mul(PROJECT_SERVICE_HEALTH_RECOVERY_GRACE_MULTIPLIER)
+}
+
+fn project_service_health_wait_budget_ms(startup_timeout_ms: u64) -> u64 {
+    startup_timeout_ms.saturating_add(project_service_health_recovery_grace_ms(startup_timeout_ms))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProjectServiceHealthWaitFailure {
     EndpointMissing { path: PathBuf },
@@ -1225,7 +1236,11 @@ impl RealDaemonRuntime {
         project_state_dir: &Path,
         pid: i32,
     ) -> ProjectServiceHealthWait {
-        let deadline = current_unix_millis() + u128::from(self.project_service_startup_timeout_ms);
+        let startup_timeout_ms = self.project_service_startup_timeout_ms;
+        let primary_deadline = current_unix_millis() + u128::from(startup_timeout_ms);
+        let recovery_grace_ms = project_service_health_recovery_grace_ms(startup_timeout_ms);
+        let recovery_deadline = primary_deadline + u128::from(recovery_grace_ms);
+        let mut recovery_grace_started = false;
         loop {
             let observed_failure = match load_metadata_endpoint_result(project_state_dir) {
                 Ok(Some(endpoint)) if endpoint.pid != pid => {
@@ -1253,10 +1268,25 @@ impl RealDaemonRuntime {
                     ProjectServiceHealthWaitFailure::ProcessExited { exit_status },
                 );
             }
-            if self.project_service_startup_timeout_ms == 0 || current_unix_millis() >= deadline {
+            let now = current_unix_millis();
+            if startup_timeout_ms == 0 || now >= recovery_deadline {
                 return ProjectServiceHealthWait::NotReady(observed_failure);
             }
-            thread::sleep(Duration::from_millis(100));
+            if now >= primary_deadline && !recovery_grace_started {
+                recovery_grace_started = true;
+                log_lifecycle_always(
+                    "project service health wait extended after startup timeout",
+                    "project-service",
+                    Some(json!({
+                        "pid": pid,
+                        "projectStateDir": project_state_dir.display().to_string(),
+                        "startupTimeoutMs": startup_timeout_ms,
+                        "recoveryGraceMs": recovery_grace_ms,
+                        "totalBudgetMs": project_service_health_wait_budget_ms(startup_timeout_ms),
+                    })),
+                );
+            }
+            thread::sleep(Duration::from_millis(PROJECT_SERVICE_HEALTH_WAIT_POLL_MS));
         }
     }
 
@@ -1271,7 +1301,7 @@ impl RealDaemonRuntime {
             ProjectServiceHealthWaitFailure::EndpointMissing { path } => format!(
                 "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): metadata endpoint missing at {} after {}ms",
                 path.display(),
-                self.project_service_startup_timeout_ms
+                project_service_health_wait_budget_ms(self.project_service_startup_timeout_ms)
             ),
             ProjectServiceHealthWaitFailure::EndpointLoadFailed { error } => format!(
                 "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): metadata endpoint unreadable: {error}"
@@ -1284,7 +1314,9 @@ impl RealDaemonRuntime {
             ),
             ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint } => format!(
                 "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): /health probe not ready at http://{}:{} after {}ms",
-                endpoint.host, endpoint.port, self.project_service_startup_timeout_ms
+                endpoint.host,
+                endpoint.port,
+                project_service_health_wait_budget_ms(self.project_service_startup_timeout_ms)
             ),
             ProjectServiceHealthWaitFailure::ProcessExited { exit_status } => {
                 let mut resolver = self.resolver.clone();
@@ -6773,7 +6805,44 @@ mod tests {
     }
 
     #[test]
-    fn control_plane_restart_skips_dashboard_reload_when_service_health_times_out() {
+    fn control_plane_restart_reloads_dashboard_after_slow_service_health_recovers() {
+        let fixture = restart_service_fixture("restart-health-recovers-after-timeout");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_024, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_024);
+        let launcher = Arc::new(RestartTestLauncher::new(91_124));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_024]));
+        let health = Arc::new(RestartTestHealthProbe::sequence(vec![false, false, true]));
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            100,
+        )
+        .with_project_service_health_probe(health.clone());
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            restart_test_dashboard,
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+
+        assert_eq!(result["service"]["status"], json!("ensured"));
+        assert_eq!(result["service"]["state"]["status"], json!("running"));
+        assert_eq!(result["service"]["state"]["pid"], json!(91_024));
+        assert_eq!(result["dashboard"]["status"], json!("reloaded"));
+        assert_eq!(result["dashboard"]["target"]["windowId"], json!("@1"));
+        assert_eq!(refreshed.into_inner(), vec![project.clone()]);
+        assert!(launcher.calls().is_empty());
+        assert_eq!(health.calls(), vec![91_024, 91_024, 91_024]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_skips_dashboard_reload_when_service_health_never_recovers() {
         let fixture = restart_service_fixture("restart-health-timeout");
         let project = fixture.project_root.clone();
         let project_id = fixture.register_project();
@@ -6787,7 +6856,7 @@ mod tests {
             fixture.daemon_info.clone(),
             launcher.clone(),
             verifier,
-            0,
+            100,
         )
         .with_project_service_health_probe(health.clone());
         let refreshed = RefCell::new(Vec::<String>::new());
@@ -6795,7 +6864,7 @@ mod tests {
         let result = runtime.restart_control_plane_project_with_statusline(
             &project,
             |_project| -> Result<RestartDashboardTarget, String> {
-                panic!("dashboard reload must not run after service health timeout")
+                panic!("dashboard reload must not run after service health never recovers")
             },
             |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
         );
@@ -6803,7 +6872,7 @@ mod tests {
         let error = result["service"]["error"].as_str().expect("service error");
         assert_eq!(result["service"]["status"], json!("failed"));
         assert!(error.contains("/health probe not ready"));
-        assert!(error.contains("after 0ms"));
+        assert!(error.contains("after 300ms"));
         assert!(error.contains("pid 91024"));
         assert_eq!(result["dashboard"]["status"], json!("skipped"));
         assert_eq!(
@@ -6813,6 +6882,7 @@ mod tests {
         assert_eq!(result["dashboard"]["error"], json!(error));
         assert!(refreshed.into_inner().is_empty());
         assert!(launcher.calls().is_empty());
+        assert!(health.calls().len() >= 3);
         fixture.cleanup();
     }
 
