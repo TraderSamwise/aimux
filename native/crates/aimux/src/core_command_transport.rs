@@ -541,6 +541,11 @@ impl LoopbackRetry {
                 Err(error) if is_transient_loopback_error(&error) => {
                     attempts += 1;
                     if Instant::now() >= self.deadline {
+                        if is_timeout(&error) {
+                            return Err(CoreCommandTransportError::Timeout {
+                                timeout_ms: self.timeout_ms,
+                            });
+                        }
                         return Err(CoreCommandTransportError::TransientIoExhausted {
                             operation: self.operation,
                             attempts,
@@ -798,7 +803,7 @@ mod tests {
         let result = LoopbackRetry::new("read", Some(100))
             .run(|| {
                 attempts += 1;
-                if attempts == 1 {
+                if attempts <= 5 {
                     Err(io::Error::from_raw_os_error(libc::EAGAIN))
                 } else {
                     Ok("ok")
@@ -808,7 +813,19 @@ mod tests {
             .expect("transient EAGAIN should eventually succeed");
 
         assert_eq!(result, "ok");
-        assert_eq!(attempts, 2);
+        assert_eq!(attempts, 6);
+    }
+
+    #[test]
+    fn loopback_retry_reports_unrecovered_eagain_as_timeout() {
+        let error = LoopbackRetry::new("read", Some(1))
+            .run(|| Err::<(), _>(io::Error::from_raw_os_error(libc::EAGAIN)))
+            .expect_err("unrecovered EAGAIN should report the read bound");
+
+        match error {
+            CoreCommandTransportError::Timeout { timeout_ms } => assert_eq!(timeout_ms, 1),
+            other => panic!("unrecovered read readiness should be a timeout, got {other}"),
+        }
     }
 
     #[test]

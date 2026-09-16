@@ -223,6 +223,33 @@ a broken release.
 The npm and tap jobs both depend on the complete asset-set gate, so a failed
 build, missing asset, checksum mismatch, or corrupt archive publishes nothing.
 
+### Local source review build
+
+For a source review, the reviewer should build the local variant from the
+checked-out source rather than trusting a prebuilt archive:
+
+```bash
+yarn install --frozen-lockfile
+yarn --cwd app install --frozen-lockfile
+yarn release:source:local
+```
+
+`yarn release:source:local` runs
+`scripts/build-local-release-from-source.sh`. It builds
+`release/aimux-local-<platform>-<arch>.tar.gz` with `BUILD_VARIANT=local`,
+generates the `.sha256`, `.provenance.json`, and `.sbom.spdx.json` companions,
+then verifies the archive shape, provenance/SBOM, local-only boundary, and an
+isolated install smoke with `AIMUX_INSTALL_VARIANT=local`. The generic
+`yarn release:source --variant full` path performs the same checks for the full
+variant and produces the existing unsuffixed `aimux-<platform>-<arch>.tar.gz`
+archive.
+
+The local source-build script requests `AIMUX_PACKAGE_PROFILE=minimal` to keep
+UI/docs out of the reviewer archive. That is packaging shape, not the
+local-only security claim; the security lane is the archive
+`BUILD_VARIANT=local` stamp. `AIMUX_BUILD_PROFILE=local` remains a legacy
+compatibility input for the same minimal packaging profile.
+
 ### Verify a release
 
 ```bash

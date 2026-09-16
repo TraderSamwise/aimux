@@ -218,20 +218,29 @@ bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$OUT_DIR/$ASSET" "$PLATFORM-$A
   shasum -a 256 "$ASSET" > "$ASSET.sha256"
 )
 SOURCE_REVISION="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)"
-SOURCE_REF_ARGS=()
 if [ -n "${GITHUB_REF_NAME:-}" ]; then
-  SOURCE_REF_ARGS=(--source-ref "$GITHUB_REF_NAME")
+  bash "$ROOT_DIR/scripts/write-release-provenance.sh" \
+    --release-dir "$OUT_DIR" \
+    --asset "$ASSET" \
+    --platform-arch "$PLATFORM-$ARCH" \
+    --variant "$BUILD_VARIANT" \
+    --package-profile "$PACKAGE_PROFILE" \
+    --legacy-build-profile "$LEGACY_BUILD_PROFILE" \
+    --version "$VERSION" \
+    --build-stamp "$BUILD_STAMP" \
+    --source-revision "$SOURCE_REVISION" \
+    --source-ref "$GITHUB_REF_NAME"
+else
+  bash "$ROOT_DIR/scripts/write-release-provenance.sh" \
+    --release-dir "$OUT_DIR" \
+    --asset "$ASSET" \
+    --platform-arch "$PLATFORM-$ARCH" \
+    --variant "$BUILD_VARIANT" \
+    --package-profile "$PACKAGE_PROFILE" \
+    --legacy-build-profile "$LEGACY_BUILD_PROFILE" \
+    --version "$VERSION" \
+    --build-stamp "$BUILD_STAMP" \
+    --source-revision "$SOURCE_REVISION"
 fi
-bash "$ROOT_DIR/scripts/write-release-provenance.sh" \
-  --release-dir "$OUT_DIR" \
-  --asset "$ASSET" \
-  --platform-arch "$PLATFORM-$ARCH" \
-  --variant "$BUILD_VARIANT" \
-  --package-profile "$PACKAGE_PROFILE" \
-  --legacy-build-profile "$LEGACY_BUILD_PROFILE" \
-  --version "$VERSION" \
-  --build-stamp "$BUILD_STAMP" \
-  --source-revision "$SOURCE_REVISION" \
-  "${SOURCE_REF_ARGS[@]}"
 
 printf 'Built %s\n' "$OUT_DIR/$ASSET"

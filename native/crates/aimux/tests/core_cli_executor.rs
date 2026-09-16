@@ -1903,7 +1903,7 @@ fn loop_self_report_timeout_records_pending_retry_with_named_wait() {
     assert_eq!(
         done.stderr,
         [
-            "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt."
+            "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: loop done request to aimux daemon route /core/loop/done-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms. The daemon may still be healthy but too busy to answer this request; aimux will replay pending loop self-reports on the next loop self-report attempt."
         ],
     );
     assert_eq!(
@@ -1938,7 +1938,7 @@ fn loop_block_timeout_records_pending_retry_with_distinct_operation() {
     assert_eq!(
         block.stderr,
         [
-            "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: loop block request to aimux daemon route /core/loop/block-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms. Ask the supervising user to restart or repair aimux when it is safe; aimux will replay pending loop self-reports on the next loop self-report attempt."
+            "Error: loop self-report could not be delivered to the running aimux daemon, so it was recorded for retry at /tmp/aimux-test/pending-loop-self-reports.jsonl: loop block request to aimux daemon route /core/loop/block-text failed while waiting up to 10000ms for daemon response: request timed out after 10000ms. The daemon may still be healthy but too busy to answer this request; aimux will replay pending loop self-reports on the next loop self-report attempt."
         ],
     );
     assert_eq!(

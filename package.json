@@ -70,6 +70,8 @@
     "installed:local-gate": "python3 scripts/installed-runtime-gate.py --scenario local",
     "release:readiness": "yarn verify:full && yarn installed:gate && yarn installed:local-gate",
     "release:asset": "bash scripts/build-release-asset.sh",
+    "release:source": "bash scripts/build-release-from-source.sh",
+    "release:source:local": "bash scripts/build-local-release-from-source.sh",
     "release:patch": "yarn version --patch && git push --atomic --follow-tags",
     "release:minor": "yarn version --minor && git push --atomic --follow-tags",
     "release:major": "yarn version --major && git push --atomic --follow-tags",

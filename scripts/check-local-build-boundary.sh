@@ -24,6 +24,20 @@ ARCHIVE=""
 PLATFORM_ARCH=""
 SKIP_CARGO_TREE=0
 
+append_standard_path_dirs() {
+  local current_path
+  current_path="${PATH:-}"
+  for dir in /usr/local/bin /opt/homebrew/bin /usr/bin /bin /usr/sbin /sbin; do
+    [ -d "$dir" ] || continue
+    case ":$current_path:" in
+      *":$dir:"*) ;;
+      *) current_path="${current_path:+$current_path:}$dir" ;;
+    esac
+  done
+  PATH="$current_path"
+  export PATH
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --variant)
@@ -78,6 +92,7 @@ need() {
   }
 }
 
+append_standard_path_dirs
 need grep
 need strings
 
@@ -149,6 +164,7 @@ trap cleanup EXIT
 
 if [ -n "$ARCHIVE" ]; then
   need tar
+  need gzip
   if [ -z "$PLATFORM_ARCH" ]; then
     printf '--platform-arch is required with --archive\n' >&2
     exit 2

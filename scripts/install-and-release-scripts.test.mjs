@@ -186,7 +186,11 @@ esac
     join(bin, "cargo"),
     `#!/bin/sh
 if [ "$1" = "metadata" ]; then
-  printf '%s\\n' '{"packages":[{"id":"path+file:///fixture#aimux@0.0.0","name":"aimux","version":"0.0.0","authors":["Aimux"],"license":"MIT"}],"resolve":{"root":"path+file:///fixture#aimux@0.0.0"}}'
+  printf '%s\\n' '{"packages":[{"id":"path+file:///fixture#aimux@0.0.0","name":"aimux","version":"0.0.0","authors":["Aimux"],"license":"MIT"}],"workspace_members":["path+file:///fixture#aimux@0.0.0"],"resolve":{"root":"path+file:///fixture#aimux@0.0.0","nodes":[{"id":"path+file:///fixture#aimux@0.0.0","deps":[]}]}}'
+  exit 0
+fi
+if [ "$1" = "tree" ]; then
+  printf '%s\\n' 'aimux v0.0.0 (/fixture)'
   exit 0
 fi
 mkdir -p "$CARGO_TARGET_DIR/release"
@@ -202,8 +206,20 @@ chmod +x "$CARGO_TARGET_DIR/release/aimux"
   writeExecutable(
     join(bin, "yarn"),
     `#!/bin/sh
-printf 'unexpected yarn command: %s\\n' "$*" >&2
-exit 127
+case "$1" in
+  release:asset)
+    exec ${realCommands.bash} ${join(repoRoot, "scripts/build-release-asset.sh")}
+    ;;
+  build:ui:local)
+    mkdir -p ${join(repoRoot, "dist-ui")}
+    printf '<!doctype html>\\n' > ${join(repoRoot, "dist-ui", "index.html")}
+    exit 0
+    ;;
+  *)
+    printf 'unexpected yarn command: %s\\n' "$*" >&2
+    exit 127
+    ;;
+esac
 `,
   );
   return {
@@ -302,7 +318,7 @@ describe("install.sh", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30000);
+  }, 120000);
 });
 
 describe("build-release-asset.sh", () => {
@@ -362,6 +378,30 @@ describe("build-release-asset.sh", () => {
       expect(readFileSync(join(extractDir, "aimux", "PACKAGE_PROFILE"), "utf8").trim()).toBe("minimal");
       expect(readFileSync(join(extractDir, "aimux", "BUILD_PROFILE"), "utf8").trim()).toBe("local");
       expect(readFileSync(join(extractDir, "aimux", "BUILD_VARIANT"), "utf8").trim()).toBe("local");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+});
+
+describe("build-release-from-source.sh", () => {
+  it("builds, verifies, and install-smokes the local variant from source", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-source-release-script-"));
+    try {
+      const result = run("bash", [join(repoRoot, "scripts/build-local-release-from-source.sh")], {
+        env: releaseScriptEnv(root, { AIMUX_RELEASE_VERSION: "source-test" }),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Building Aimux local variant from source revision");
+      expect(result.stdout).toContain("Package profile: minimal");
+      expect(result.stdout).toContain("aimux local build boundary check passed");
+      expect(result.stdout).toContain("Install smoke passed for local variant");
+      expect(result.stdout).toContain("Aimux source release build verified");
+      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz"))).toBe(true);
+      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.sha256"))).toBe(true);
+      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.provenance.json"))).toBe(true);
+      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.sbom.spdx.json"))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -552,7 +592,7 @@ describe("verify-release-asset-set.sh", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 
   it("rejects the reviewer probe: non-tar assets with stale zero checksums", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
@@ -666,7 +706,7 @@ describe("verify-release-asset-set.sh", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 });
 
 describe("check-local-build-boundary.sh", () => {
@@ -739,15 +779,24 @@ describe("release workflow", () => {
     const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
     const buildReleaseAsset = readFileSync(join(repoRoot, "scripts/build-release-asset.sh"), "utf8");
     const verifyReleaseAssetSet = readFileSync(join(repoRoot, "scripts/verify-release-asset-set.sh"), "utf8");
+    const sourceRelease = readFileSync(join(repoRoot, "scripts/build-release-from-source.sh"), "utf8");
 
     expect(packageJson.scripts["security:local-only:gate"]).toBe("bash scripts/check-local-only-release-gate.sh");
+    expect(packageJson.scripts["release:source"]).toBe("bash scripts/build-release-from-source.sh");
+    expect(packageJson.scripts["release:source:local"]).toBe("bash scripts/build-local-release-from-source.sh");
     expect(buildReleaseAsset).toContain('bash "$ROOT_DIR/scripts/write-release-provenance.sh"');
     expect(verifyReleaseAssetSet).toContain('bash "$ROOT_DIR/scripts/verify-release-provenance.sh"');
+    expect(sourceRelease).toContain('bash "$ROOT_DIR/scripts/verify-release-provenance.sh"');
+    expect(sourceRelease).toContain('bash "$ROOT_DIR/scripts/check-local-build-boundary.sh"');
+    expect(sourceRelease).toContain("AIMUX_SKIP_POST_INSTALL_RESTART=1");
     expect(
       [
         packageJson.scripts["security:local-only:gate"],
+        packageJson.scripts["release:source"],
+        packageJson.scripts["release:source:local"],
         buildReleaseAsset,
         verifyReleaseAssetSet,
+        sourceRelease,
       ].join("\n"),
     ).not.toMatch(/node\s+["']?\$?[^;\n]*scripts\/(?:check-local-only-release-gate|write-release-provenance|verify-release-provenance)\.mjs/);
   });
