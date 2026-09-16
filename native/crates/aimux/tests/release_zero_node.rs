@@ -399,6 +399,7 @@ fn release_bash_scripts_report_clear_error_when_invoked_with_sh() {
         "scripts/build-local-ui.sh",
         "scripts/build-release-asset.sh",
         "scripts/cargo-sweep-stale-targets.sh",
+        "scripts/check-index-native-clippy.sh",
         "scripts/check-staged-rustfmt.sh",
         "scripts/install-cargo-sweep-schedule.sh",
         "scripts/verify-codex-developer-instructions.sh",

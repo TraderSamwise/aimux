@@ -43,6 +43,7 @@ function findCommand(command) {
 
 const copiedScripts = [
   "scripts/check-commit-hook-attestations.sh",
+  "scripts/check-index-native-clippy.sh",
   "scripts/check-index-typecheck.sh",
   "scripts/check-staged-rustfmt.sh",
   "scripts/commit-msg-hook.sh",
@@ -189,6 +190,30 @@ exit 127
   );
   chmodSync(yarnWrapper, 0o755);
 
+  const cargoWrapper = join(root, "bin/cargo");
+  writeFileSync(
+    cargoWrapper,
+    `#!/bin/sh
+printf '%s|%s\\n' "$PWD" "$*" >> "$CARGO_LOG"
+if [ "$1" = "clippy" ]; then
+  if grep -R "CLIPPY_FAIL" native/crates/aimux/tests >/dev/null 2>&1; then
+    printf 'fixture clippy rejected staged Rust\\n' >&2
+    exit 101
+  fi
+  exit 0
+fi
+printf 'unexpected cargo command: %s\\n' "$*" >&2
+exit 127
+`,
+  );
+  chmodSync(cargoWrapper, 0o755);
+
+  mkdirSync(join(root, "native/crates/aimux/src"), { recursive: true });
+  mkdirSync(join(root, "native/crates/aimux/tests"), { recursive: true });
+  writeFileSync(join(root, "native/Cargo.toml"), "[workspace]\nmembers = [\"crates/aimux\"]\n");
+  writeFileSync(join(root, "native/crates/aimux/Cargo.toml"), "[package]\nname = \"aimux\"\nversion = \"0.1.0\"\nedition = \"2024\"\n");
+  writeFileSync(join(root, "native/crates/aimux/src/lib.rs"), "pub fn native() {}\n");
+
   runOk(root, "git", ["init", "-q"]);
   runOk(root, "git", ["config", "user.email", "test@example.com"]);
   runOk(root, "git", ["config", "user.name", "Aimux Test"]);
@@ -199,6 +224,7 @@ exit 127
   runOk(root, "git", ["add", ".husky/_/pre-commit", ".husky/_/pre-push"]);
   runOk(root, "git", ["add", ".husky/commit-msg", ".husky/post-commit", ".husky/pre-commit"]);
   runOk(root, "git", ["add", ".husky/pre-push", "package.json", "scripts", "src/lib.rs"]);
+  runOk(root, "git", ["add", "native"]);
   runOk(root, "git", ["add", "src/hook.ts", "notes.txt"]);
   runOk(root, "git", ["commit", "-q", "-m", "initial hook baseline"]);
   runOk(root, "git", ["config", "core.hooksPath", ".husky/_"]);
@@ -213,6 +239,7 @@ function hookEnv(root, realGit, extra = {}) {
     LINT_STAGED_LOG: join(root, "lint-staged.log"),
     REAL_GIT_BIN: realGit,
     YARN_LOG: join(root, "yarn.log"),
+    CARGO_LOG: join(root, "cargo.log"),
     ...extra,
   };
 }
@@ -297,6 +324,47 @@ describe("pre-commit hook", () => {
       expect(commitBody(root)).toContain(`Aimux-Pre-Commit: ${tree}`);
       const attest = run(root, "bash", ["scripts/check-commit-hook-attestations.sh", "HEAD^..HEAD"]);
       expect(attest.status, attest.stderr).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects delivery when staged Rust fails the all-target clippy gate", () => {
+    const { root, realGit } = setupRepo();
+    try {
+      writeFileSync(join(root, "native/crates/aimux/tests/clippy_fail.rs"), "const CLIPPY_FAIL: bool = true;\n");
+      runOk(root, "git", ["add", "native/crates/aimux/tests/clippy_fail.rs"]);
+
+      const result = run(root, "git", ["commit", "-m", "bad rust"], {
+        env: hookEnv(root, realGit),
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("fixture clippy rejected staged Rust");
+      expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows delivery after the staged Rust clippy violation is fixed", () => {
+    const { root, realGit } = setupRepo();
+    try {
+      writeFileSync(join(root, "native/crates/aimux/tests/clippy_pass.rs"), "const CLIPPY_PASS: bool = true;\n");
+      runOk(root, "git", ["add", "native/crates/aimux/tests/clippy_pass.rs"]);
+
+      const result = run(root, "git", ["commit", "-m", "good rust"], {
+        env: hookEnv(root, realGit),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
+      );
+      const tree = commitTree(root);
+      expect(commitBody(root)).toContain(`Aimux-Pre-Commit: ${tree}`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

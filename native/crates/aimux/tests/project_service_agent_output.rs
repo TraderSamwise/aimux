@@ -2379,7 +2379,6 @@ fn composer_chrome_hint_does_not_mask_real_unsubmitted_input() {
                 .into(),
             ..Default::default()
         },
-        ..Default::default()
     };
 
     let held = route_agent_output_request_with_runtime(
@@ -2850,7 +2849,6 @@ fn expired_failed_delivery_persists_remaining_queue_after_one_attempt() {
             submit_outcome: FakeSubmitOutcome::Dropped,
             ..Default::default()
         },
-        ..Default::default()
     };
 
     run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms);

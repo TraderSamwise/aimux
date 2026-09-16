@@ -14,6 +14,7 @@ rm -f "$MARKER"
 
 yarn native:fmt:staged
 bash scripts/check-index-typecheck.sh
+bash scripts/check-index-native-clippy.sh
 npx lint-staged --no-stash --no-hide-partially-staged
 
 git write-tree >"$MARKER"
