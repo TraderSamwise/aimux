@@ -171,13 +171,14 @@ Independent confirmation:
 
 ```bash
 cargo tree --manifest-path native/Cargo.toml -p aimux --no-default-features
-rg -n 'tokio-tungstenite|tungstenite|ureq|reqwest|hyper|h2|native-tls|openssl|curl' \
+rg -n 'tokio-tungstenite|tungstenite|ureq' \
   scripts/check-local-build-boundary.sh native/crates/aimux/Cargo.toml
 ```
 
-Expected result: the boundary script denylist names the remote/network
+Expected result: the boundary script denylist names the remote-control client
 dependencies it rejects in the local variant, and those dependencies are tied to
-the `remote-control` feature in Cargo.
+the `remote-control` feature in Cargo. This is not a rejection of local loopback
+HTTP dependencies used by Aimux's same-machine control plane.
 
 ### 3. Local Build Has No Remote-Control CLI Surface
 
