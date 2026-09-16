@@ -77,10 +77,12 @@ yarn release:source:local
 
 `release:source:local` is defined in `package.json` as the local wrapper around
 `scripts/build-release-from-source.sh --variant local`. That source helper sets
-`AIMUX_BUILD_VARIANT=local`, uses the local package profile, builds
+`AIMUX_BUILD_VARIANT=local` and `AIMUX_PACKAGE_PROFILE=minimal`, builds
 `release/aimux-local-<platform>-<arch>.tar.gz`, verifies release provenance and
 SBOMs, runs the local boundary check, and installs into an isolated temporary
-root with `AIMUX_SKIP_POST_INSTALL_RESTART=1`.
+root with `AIMUX_SKIP_POST_INSTALL_RESTART=1`. The local-only security claim is
+the build variant and feature set; the package profile controls archive
+contents such as UI/docs assets.
 
 Independent decomposition of the same source property:
 
@@ -365,7 +367,7 @@ Source locations:
 Independent confirmation:
 
 ```bash
-rg -n 'release:source:local|AIMUX_BUILD_VARIANT|aimux-local|BUILD_VARIANT|no-default-features|Formula/aimux-local' \
+rg -n 'release:source:local|AIMUX_BUILD_VARIANT|AIMUX_PACKAGE_PROFILE|aimux-local|BUILD_VARIANT|PACKAGE_PROFILE|no-default-features|Formula/aimux-local' \
   package.json .github/workflows/release.yml scripts docs/deployment.md
 
 bash scripts/verify-release-asset-set.sh <release-dir>
