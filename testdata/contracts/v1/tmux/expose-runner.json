@@ -62,7 +62,7 @@
         "requests": [
           {
             "method": "GET",
-            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
             "body": null
           }
         ],
@@ -112,7 +112,7 @@
         "requests": [
           {
             "method": "GET",
-            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
             "body": null
           }
         ],
@@ -175,7 +175,7 @@
         "requests": [
           {
             "method": "GET",
-            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
             "body": null
           }
         ],
@@ -246,7 +246,7 @@
         "requests": [
           {
             "method": "GET",
-            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
             "body": null
           }
         ],
@@ -320,12 +320,12 @@
         "requests": [
           {
             "method": "GET",
-            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
             "body": null
           },
           {
             "method": "GET",
-            "url": "/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "url": "/control/switchable-agents?scope=all&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
             "body": null
           }
         ],
@@ -422,12 +422,12 @@
         "requests": [
           {
             "method": "GET",
-            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
             "body": null
           },
           {
             "method": "GET",
-            "url": "/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&includeOverseer=1&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "url": "/control/switchable-agents?scope=all&labelFormat=raw&expose=1&includePreview=1&includeOverseer=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
             "body": null
           }
         ],
