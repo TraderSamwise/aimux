@@ -40,7 +40,7 @@ def run_cargo_metadata(manifest_path: Path, variant: str, platform_arch: str) ->
         "--filter-platform",
         target,
     ]
-    if variant == "lite":
+    if variant == "local":
         command.append("--no-default-features")
     elif variant != "full":
         fail(f"unsupported build variant: {variant}")
@@ -278,7 +278,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--asset-sha256", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-revision", required=True)
-    parser.add_argument("--variant", choices=["full", "lite"], required=True)
+    parser.add_argument("--variant", choices=["full", "local"], required=True)
     parser.add_argument("--platform-arch", choices=sorted(PLATFORM_TARGETS), required=True)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--verify", type=Path)

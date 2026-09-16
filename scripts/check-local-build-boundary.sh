@@ -3,12 +3,12 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/check-lite-build-boundary.sh [options]
+Usage: scripts/check-local-build-boundary.sh [options]
 
-Checks that an aimux binary matches the full/lite local-only build boundary.
+Checks that an aimux binary matches the full/local local-only build boundary.
 
 Options:
-  --variant <lite|full>          Boundary to check (default: lite)
+  --variant <local|full>          Boundary to check (default: local)
   --binary <path>                Check an already-built aimux binary
   --archive <path>               Check a release archive containing aimux/
   --platform-arch <value>        Archive native subdir, e.g. darwin-arm64
@@ -18,11 +18,25 @@ USAGE
 }
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VARIANT="lite"
+VARIANT="local"
 BINARY=""
 ARCHIVE=""
 PLATFORM_ARCH=""
 SKIP_CARGO_TREE=0
+
+append_standard_path_dirs() {
+  local current_path
+  current_path="${PATH:-}"
+  for dir in /usr/local/bin /opt/homebrew/bin /usr/bin /bin /usr/sbin /sbin; do
+    [ -d "$dir" ] || continue
+    case ":$current_path:" in
+      *":$dir:"*) ;;
+      *) current_path="${current_path:+$current_path:}$dir" ;;
+    esac
+  done
+  PATH="$current_path"
+  export PATH
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -51,7 +65,7 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      printf 'Unknown check-lite-build-boundary argument: %s\n' "$1" >&2
+      printf 'Unknown check-local-build-boundary argument: %s\n' "$1" >&2
       usage >&2
       exit 2
       ;;
@@ -59,7 +73,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$VARIANT" in
-  lite | full) ;;
+  local | full) ;;
   *)
     printf 'Unsupported build variant: %s\n' "$VARIANT" >&2
     exit 2
@@ -78,6 +92,7 @@ need() {
   }
 }
 
+append_standard_path_dirs
 need grep
 need strings
 
@@ -149,6 +164,7 @@ trap cleanup EXIT
 
 if [ -n "$ARCHIVE" ]; then
   need tar
+  need gzip
   if [ -z "$PLATFORM_ARCH" ]; then
     printf '--platform-arch is required with --archive\n' >&2
     exit 2
@@ -177,7 +193,7 @@ if [ -z "$BINARY" ]; then
   TARGET_ROOT="${CARGO_TARGET_DIR:-"$ROOT_DIR/native/target"}"
   export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
   export AIMUX_BUILD_VARIANT="$VARIANT"
-  if [ "$VARIANT" = "lite" ]; then
+  if [ "$VARIANT" = "local" ]; then
     cargo build --manifest-path "$ROOT_DIR/native/Cargo.toml" -p aimux --release --no-default-features
   else
     cargo build --manifest-path "$ROOT_DIR/native/Cargo.toml" -p aimux --release
@@ -203,7 +219,7 @@ strings "$BINARY" > "$STRINGS_FILE"
 
 if [ "$SKIP_CARGO_TREE" -eq 0 ]; then
   need cargo
-  if [ "$VARIANT" = "lite" ]; then
+  if [ "$VARIANT" = "local" ]; then
     cargo tree --manifest-path "$ROOT_DIR/native/Cargo.toml" -p aimux --no-default-features > "$TREE_FILE"
   else
     cargo tree --manifest-path "$ROOT_DIR/native/Cargo.toml" -p aimux > "$TREE_FILE"
@@ -214,19 +230,19 @@ remote_dependency_pattern='(^|[[:space:]])(tokio-tungstenite|tungstenite|ureq|re
 remote_help_pattern='^[[:space:]]{2}(remote|hosted|login|logout|whoami|security)([[:space:]]|$)'
 remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|tokio[-_]tungstenite|tungstenite|ureq|hosted_server|hosted_cli|remote_login|remote_security_devices|maybe_host_published_attachment|attachments/hosted'
 
-if [ "$VARIANT" = "lite" ]; then
+if [ "$VARIANT" = "local" ]; then
   if [ "$SKIP_CARGO_TREE" -eq 0 ] && grep -E "$remote_dependency_pattern" "$TREE_FILE" >/dev/null; then
-    printf 'Lite cargo tree contains remote-control dependencies:\n' >&2
+    printf 'Local cargo tree contains remote-control dependencies:\n' >&2
     grep -E "$remote_dependency_pattern" "$TREE_FILE" >&2
     exit 1
   fi
   if grep -E "$remote_help_pattern" "$HELP_FILE" >/dev/null; then
-    printf 'Lite --help lists remote-control commands:\n' >&2
+    printf 'Local --help lists remote-control commands:\n' >&2
     grep -E "$remote_help_pattern" "$HELP_FILE" >&2
     exit 1
   fi
   if grep -E "$remote_string_pattern" "$STRINGS_FILE" >/dev/null; then
-    printf 'Lite binary contains remote-control strings:\n' >&2
+    printf 'Local binary contains remote-control strings:\n' >&2
     grep -E "$remote_string_pattern" "$STRINGS_FILE" >&2
     exit 1
   fi

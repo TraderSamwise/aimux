@@ -43,10 +43,10 @@ require_job_needs() {
   fi
 }
 
-check_lite_boundary() {
-  local path="scripts/check-lite-build-boundary.sh"
+check_local_boundary() {
+  local path="scripts/check-local-build-boundary.sh"
   for dependency in tokio-tungstenite tungstenite ureq reqwest hyper h2 native-tls openssl curl; do
-    require_contains "$path" "$dependency" "lite remote/network dependency denylist entry $dependency"
+    require_contains "$path" "$dependency" "local remote/network dependency denylist entry $dependency"
   done
   for identity in \
     AIMUX_RELAY_URL \
@@ -60,7 +60,7 @@ check_lite_boundary() {
     maybe_host_published_attachment \
     'attachments/hosted'
   do
-    require_contains "$path" "$identity" "lite remote identity denylist entry $identity"
+    require_contains "$path" "$identity" "local remote identity denylist entry $identity"
   done
   require_contains "$path" "Full cargo tree is missing remote-control dependencies" "full-variant presence gate"
 }
@@ -69,13 +69,19 @@ check_release_provenance_gate() {
   require_file "scripts/write-release-provenance.sh" "release provenance generator"
   require_file "scripts/verify-release-provenance.sh" "release provenance verifier"
   require_file "scripts/generate-cargo-sbom.py" "Cargo SPDX SBOM generator"
+  require_file "scripts/build-release-from-source.sh" "source release build verifier"
+  require_file "scripts/build-local-release-from-source.sh" "local source release wrapper"
   require_contains "scripts/build-release-asset.sh" "write-release-provenance.sh" "per-asset provenance/SBOM generation"
   require_contains "scripts/verify-release-asset-set.sh" "verify-release-provenance.sh" "provenance/SBOM asset-set verification"
   require_contains "scripts/verify-release-provenance.sh" "generate-cargo-sbom.py" "regenerated SBOM dependency-set verification"
   require_contains "scripts/generate-cargo-sbom.py" "SBOM dependency set mismatch" "loud SBOM dependency mismatch error"
-  require_contains "scripts/generate-cargo-sbom.py" "no-default-features" "lite SBOM feature-set separation"
+  require_contains "scripts/generate-cargo-sbom.py" "no-default-features" "local SBOM feature-set separation"
   require_contains "scripts/verify-release-asset-set.sh" "missing release SBOM file" "distinct missing SBOM error"
   require_contains "scripts/verify-release-asset-set.sh" "missing release provenance file" "distinct missing provenance error"
+  require_contains "scripts/build-release-from-source.sh" "AIMUX_BUILD_VARIANT" "source build variant selection"
+  require_contains "scripts/build-release-from-source.sh" "verify-release-provenance.sh" "source build provenance verification"
+  require_contains "scripts/build-release-from-source.sh" "check-local-build-boundary.sh" "source build boundary verification"
+  require_contains "scripts/build-release-from-source.sh" "AIMUX_SKIP_POST_INSTALL_RESTART=1" "isolated source-build install smoke"
 
   local workflow=".github/workflows/release.yml"
   require_contains "$workflow" "actions/attest-build-provenance@v2" "GitHub artifact attestation step"
@@ -96,7 +102,7 @@ check_source_local_only_gates() {
   require_contains "native/crates/aimux/src/project_service/process.rs" 'StdTcpListener::bind(("127.0.0.1"' "project service loopback bind"
 }
 
-check_lite_boundary
+check_local_boundary
 check_release_provenance_gate
 check_source_local_only_gates
 

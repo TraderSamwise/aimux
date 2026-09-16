@@ -9,7 +9,7 @@ LOCAL_ARCHIVE="${AIMUX_ARCHIVE:-${1:-}}"
 HAD_EXISTING_INSTALL=0
 INSTALL_VARIANT="${AIMUX_INSTALL_VARIANT:-full}"
 case "$INSTALL_VARIANT" in
-  full | lite) ;;
+  full | local) ;;
   *) printf 'aimux install failed: unsupported AIMUX_INSTALL_VARIANT: %s\n' "$INSTALL_VARIANT" >&2; exit 1 ;;
 esac
 
@@ -95,8 +95,8 @@ shell_quote() {
 
 PLATFORM="$(detect_platform)"
 ARCH="$(detect_arch)"
-if [ "$INSTALL_VARIANT" = "lite" ]; then
-  ASSET="aimux-lite-${PLATFORM}-${ARCH}.tar.gz"
+if [ "$INSTALL_VARIANT" = "local" ]; then
+  ASSET="aimux-local-${PLATFORM}-${ARCH}.tar.gz"
 else
   ASSET="aimux-${PLATFORM}-${ARCH}.tar.gz"
 fi
@@ -148,7 +148,7 @@ tar -xzf "$ARCHIVE" -C "$TMP_DIR"
 [ -f "$TMP_DIR/aimux/BUILD_VARIANT" ] || fail "release archive is missing BUILD_VARIANT; install a current aimux release"
 ARCHIVE_VARIANT="$(sed -n '1{s/[[:space:]]*$//;p;}' "$TMP_DIR/aimux/BUILD_VARIANT")"
 case "$ARCHIVE_VARIANT" in
-  full | lite) ;;
+  full | local) ;;
   *) fail "release archive has invalid BUILD_VARIANT: $ARCHIVE_VARIANT" ;;
 esac
 if [ "$ARCHIVE_VARIANT" != "$INSTALL_VARIANT" ]; then

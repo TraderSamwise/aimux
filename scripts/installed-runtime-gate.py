@@ -23,9 +23,9 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[1]
 PHASE8_PATH = ROOT / "scripts" / "phase8-live-residuals.py"
 FULL_CHECKS = ("loop", "input", "liveness", "transcript", "git-leak")
-LITE_CHECKS = ("git-leak", "sensitive-egress")
+LOCAL_CHECKS = ("git-leak", "sensitive-egress")
 CHECKS = ("loop", "input", "liveness", "transcript", "git-leak", "sensitive-egress")
-SCENARIOS = ("full", "lite")
+SCENARIOS = ("full", "local")
 SENSITIVE_STORES = (
     "context",
     "history",
@@ -138,12 +138,12 @@ def build_release_asset(work: Path, variant: str = "full") -> Path:
         f"/tmp/aimux-installed-gate-target-{os.environ.get('AIMUX_SESSION_ID', 'manual')}",
     )
     run(["yarn", "release:asset"], env=env, timeout=900)
-    pattern = "aimux-lite-*.tar.gz" if variant == "lite" else "aimux-*.tar.gz"
+    pattern = "aimux-local-*.tar.gz" if variant == "local" else "aimux-*.tar.gz"
     assets = sorted(
         [
             path
             for path in release_dir.glob(pattern)
-            if variant == "lite" or not path.name.startswith("aimux-lite-")
+            if variant == "local" or not path.name.startswith("aimux-local-")
         ],
         key=lambda path: path.stat().st_mtime,
     )
@@ -184,13 +184,13 @@ def host_platform_arch() -> str:
     elif system == "Linux":
         host_platform = "linux"
     else:
-        raise GateFailure(f"unsupported platform for lite gate: {system}")
+        raise GateFailure(f"unsupported platform for local gate: {system}")
     if machine in {"x86_64", "amd64"}:
         arch = "x64"
     elif machine in {"arm64", "aarch64"}:
         arch = "arm64"
     else:
-        raise GateFailure(f"unsupported architecture for lite gate: {machine}")
+        raise GateFailure(f"unsupported architecture for local gate: {machine}")
     return f"{host_platform}-{arch}"
 
 
@@ -624,10 +624,10 @@ def assert_no_remote_strings(binary: Path) -> None:
     needles = ("AIMUX_RELAY_URL", "relay.aimux.app", "tokio_tungstenite", "wss://")
     counts = {needle: string_count(binary, needle) for needle in needles}
     for needle, count in counts.items():
-        print(f"lite strings count {needle}={count}")
+        print(f"local strings count {needle}={count}")
     nonzero = {needle: count for needle, count in counts.items() if count != 0}
     if nonzero:
-        raise GateFailure(f"lite binary contains remote-control strings: {nonzero}")
+        raise GateFailure(f"local binary contains remote-control strings: {nonzero}")
 
 
 def assert_no_remote_help(aimux_bin: Path) -> None:
@@ -641,12 +641,12 @@ def assert_no_remote_help(aimux_bin: Path) -> None:
         command = stripped.split()[0]
         if command in forbidden:
             command_lines.append(line)
-    print(f"lite forbidden help commands found={len(command_lines)}")
+    print(f"local forbidden help commands found={len(command_lines)}")
     if command_lines:
-        raise GateFailure(f"lite --help lists remote-control commands: {command_lines}")
+        raise GateFailure(f"local --help lists remote-control commands: {command_lines}")
 
 
-def assert_lite_cargo_tree_has_no_remote_dependencies() -> None:
+def assert_local_cargo_tree_has_no_remote_dependencies() -> None:
     args = ["cargo", "tree", "--manifest-path", "native/Cargo.toml", "-p", "aimux", "--no-default-features"]
     print(f"$ {' '.join(args)}")
     result = subprocess.run(
@@ -664,13 +664,13 @@ def assert_lite_cargo_tree_has_no_remote_dependencies() -> None:
         raise GateFailure(f"cargo tree failed with exit {result.returncode}")
     forbidden = ("tungstenite", "ureq")
     hits = [line for line in result.stdout.splitlines() if any(name in line for name in forbidden)]
-    print(f"lite cargo tree remote dependency hits={len(hits)}")
+    print(f"local cargo tree remote dependency hits={len(hits)}")
     if hits:
-        raise GateFailure(f"lite cargo tree contains remote-control dependencies: {hits}")
+        raise GateFailure(f"local cargo tree contains remote-control dependencies: {hits}")
 
 
 def assert_sensitive_store_egress_static_boundary() -> None:
-    boundary_source = (ROOT / "scripts" / "check-lite-build-boundary.sh").read_text(encoding="utf-8")
+    boundary_source = (ROOT / "scripts" / "check-local-build-boundary.sh").read_text(encoding="utf-8")
     required_forbidden_strings = (
         "AIMUX_RELAY_URL",
         "relay[.]aimux[.]app",
@@ -682,7 +682,7 @@ def assert_sensitive_store_egress_static_boundary() -> None:
     )
     missing = [needle for needle in required_forbidden_strings if needle not in boundary_source]
     if missing:
-        raise GateFailure(f"lite boundary script no longer checks remote egress strings: {missing}")
+        raise GateFailure(f"local boundary script no longer checks remote egress strings: {missing}")
     runtime_source = (ROOT / "native" / "crates" / "aimux" / "src" / "daemon_state.rs").read_text(encoding="utf-8")
     if "AIMUX_DAEMON_HOST must be loopback" not in runtime_source:
         raise GateFailure("daemon host loopback-only guard is missing from daemon_state.rs")
@@ -795,15 +795,15 @@ def start_nonloopback_listener(scope: Any) -> int:
 
 
 def assert_no_non_loopback_network_surface(scope: Any, extra_pids: set[int] | None = None) -> None:
-    pids = wait_until("lite control-plane pids", 10, 0.25, lambda: control_plane_pids(scope))
+    pids = wait_until("local control-plane pids", 10, 0.25, lambda: control_plane_pids(scope))
     if extra_pids:
         pids = set(pids) | extra_pids
     rows = lsof_tcp_rows_for_pids(set(pids))
     violations = [row for row in rows if not tcp_name_is_loopback_only(lsof_name(row))]
-    print(f"lite egress lsof sampled pids={sorted(pids)} tcp_rows={len(rows)} non_loopback={len(violations)}")
+    print(f"local egress lsof sampled pids={sorted(pids)} tcp_rows={len(rows)} non_loopback={len(violations)}")
     if violations:
         raise GateFailure(
-            "lite runtime exposed a non-loopback network surface while sensitive stores existed:\n"
+            "local runtime exposed a non-loopback network surface while sensitive stores existed:\n"
             + "\n".join(violations)
         )
 
@@ -823,13 +823,13 @@ def check_sensitive_store_egress(phase8: Any, aimux_bin: Path, mutation: str | N
             assert_no_non_loopback_network_surface(scope)
             time.sleep(0.5)
         print(
-            "sensitive-store egress gate verified lite runtime has no non-loopback surface "
+            "sensitive-store egress gate verified local runtime has no non-loopback surface "
             f"while {len(fixture_paths)} sensitive fixtures exist"
         )
 
 
-def check_lite_functioning_runtime(phase8: Any, aimux_bin: Path) -> None:
-    with create_scope(phase8, aimux_bin, "lite") as scope:
+def check_local_functioning_runtime(phase8: Any, aimux_bin: Path) -> None:
+    with create_scope(phase8, aimux_bin, "local") as scope:
         aimux(scope, ["init"], timeout=60)
         aimux(scope, ["daemon", "ensure"], timeout=60)
         session_id = spawn_session(scope)
@@ -837,31 +837,31 @@ def check_lite_functioning_runtime(phase8: Any, aimux_bin: Path) -> None:
         live = find_session(ps(scope), session_id)
         status = str(live.get("status") or "")
         if status not in {"starting", "running", "idle"}:
-            raise GateFailure(f"lite installed runtime spawned session has unexpected status {status}: {live}")
-        print(f"lite installed runtime initialized project and ps reported session={session_id} status={status}")
+            raise GateFailure(f"local installed runtime spawned session has unexpected status {status}: {live}")
+        print(f"local installed runtime initialized project and ps reported session={session_id} status={status}")
 
 
-def run_lite_scenario(phase8: Any, work: Path, only: str, mutation: str | None) -> None:
+def run_local_scenario(phase8: Any, work: Path, only: str, mutation: str | None) -> None:
     platform_arch = host_platform_arch()
     print(f"building full archive for real variant-refusal proof on {platform_arch}")
     full_asset = build_release_asset(work, "full")
-    print(f"building lite archive through release:asset on {platform_arch}")
-    lite_asset = build_release_asset(work, "lite")
+    print(f"building local archive through release:asset on {platform_arch}")
+    local_asset = build_release_asset(work, "local")
 
-    install_variant_refusal(full_asset, "lite", "release archive BUILD_VARIANT mismatch: expected lite, got full")
-    install_variant_refusal(lite_asset, "full", "release archive BUILD_VARIANT mismatch: expected full, got lite")
+    install_variant_refusal(full_asset, "local", "release archive BUILD_VARIANT mismatch: expected local, got full")
+    install_variant_refusal(local_asset, "full", "release archive BUILD_VARIANT mismatch: expected full, got local")
 
-    aimux_bin = install_release_asset(lite_asset, work, variant="lite")
+    aimux_bin = install_release_asset(local_asset, work, variant="local")
     native_bin = installed_native_binary(work)
-    print(f"installed lite runtime under {aimux_bin}")
-    print(f"installed lite native binary {native_bin}")
+    print(f"installed local runtime under {aimux_bin}")
+    print(f"installed local native binary {native_bin}")
 
     run(
         [
             "bash",
-            "scripts/check-lite-build-boundary.sh",
+            "scripts/check-local-build-boundary.sh",
             "--archive",
-            str(lite_asset),
+            str(local_asset),
             "--platform-arch",
             platform_arch,
             "--skip-cargo-tree",
@@ -870,17 +870,17 @@ def run_lite_scenario(phase8: Any, work: Path, only: str, mutation: str | None) 
     )
     assert_no_remote_strings(native_bin)
     assert_no_remote_help(aimux_bin)
-    assert_lite_cargo_tree_has_no_remote_dependencies()
-    check_lite_functioning_runtime(phase8, aimux_bin)
-    lite_runners = {
+    assert_local_cargo_tree_has_no_remote_dependencies()
+    check_local_functioning_runtime(phase8, aimux_bin)
+    local_runners = {
         "git-leak": check_git_leak,
         "sensitive-egress": check_sensitive_store_egress,
     }
-    for name in selected_checks(only, LITE_CHECKS):
+    for name in selected_checks(only, LOCAL_CHECKS):
         if mutation and MUTATION_TO_CHECK[mutation] != name:
             continue
-        print(f"\n== installed-runtime-gate:{name}:lite ==")
-        lite_runners[name](phase8, aimux_bin, mutation)
+        print(f"\n== installed-runtime-gate:{name}:local ==")
+        local_runners[name](phase8, aimux_bin, mutation)
 
 
 def selected_checks(only: str, available: tuple[str, ...]) -> tuple[str, ...]:
@@ -910,7 +910,7 @@ def main() -> int:
 
     scenario_checks = {
         "full": FULL_CHECKS,
-        "lite": LITE_CHECKS,
+        "local": LOCAL_CHECKS,
         "all": CHECKS,
     }[args.scenario]
     if args.only != "all" and args.only not in scenario_checks:
@@ -945,9 +945,9 @@ def main() -> int:
                     continue
                 print(f"\n== installed-runtime-gate:{name} ==")
                 runners[name](phase8, aimux_bin, args.mutate)
-        if args.scenario in {"lite", "all"}:
-            print("\n== installed-runtime-gate:lite ==")
-            run_lite_scenario(phase8, work, args.only, args.mutate)
+        if args.scenario in {"local", "all"}:
+            print("\n== installed-runtime-gate:local ==")
+            run_local_scenario(phase8, work, args.only, args.mutate)
     return 0
 
 
