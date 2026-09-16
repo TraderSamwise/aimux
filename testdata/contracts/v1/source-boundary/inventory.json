@@ -309,6 +309,7 @@
         "allowed": [
           "scripts/audit-fixture-enforcement.mjs",
           "scripts/captest.mjs",
+          "scripts/check-remote-structural-boundary.mjs",
           "scripts/hosted-check.mjs",
           "src/context/compactor.ts",
           "src/core-project-actor.ts",
