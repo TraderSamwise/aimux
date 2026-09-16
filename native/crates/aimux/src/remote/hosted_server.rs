@@ -543,10 +543,10 @@ where
         scheduler.clone(),
     ));
     scheduler_context
-        .set_hosted_prune(crate::daemon::scheduler::hosted_prune_callback(&state))
+        .set_hosted_prune(crate::daemon::remote_control::hosted_prune_callback(&state))
         .map_err(anyhow::Error::msg)?;
     scheduler_context
-        .set_hosted_outbox_drain(crate::daemon::scheduler::hosted_outbox_drain_callback(
+        .set_hosted_outbox_drain(crate::daemon::remote_control::hosted_outbox_drain_callback(
             &state,
         ))
         .map_err(anyhow::Error::msg)?;

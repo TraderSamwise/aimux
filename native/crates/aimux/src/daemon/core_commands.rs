@@ -1,4 +1,5 @@
 use crate::core_command_contract::{CORE_COMMAND_NAMES, is_core_command_name};
+use crate::daemon::remote_control::route_remote_core_command;
 use crate::daemon::routing::DaemonRouteResponse;
 use crate::daemon::status::{DaemonStatusRuntime, project_service_fleet_json};
 use crate::daemon::text::operations::{
@@ -39,14 +40,22 @@ pub trait DaemonCoreCommandRuntime: DaemonStatusRuntime {
         let _ = (project_root, force, wait_for_capture);
         Ok(None)
     }
-    #[cfg(feature = "remote-control")]
-    fn has_remote_credentials(&self) -> bool;
-    #[cfg(feature = "remote-control")]
-    fn enable_relay_for_user_request(&mut self) -> Value;
-    #[cfg(feature = "remote-control")]
-    fn disable_relay(&mut self) -> Value;
-    #[cfg(feature = "remote-control")]
-    fn relay_auth_failed_message(&self, relay: &Value) -> String;
+    fn has_remote_credentials(&self) -> bool {
+        false
+    }
+    fn enable_relay_for_user_request(&mut self) -> Value {
+        json!({ "status": "off" })
+    }
+    fn disable_relay(&mut self) -> Value {
+        json!({ "status": "off" })
+    }
+    fn relay_auth_failed_message(&self, relay: &Value) -> String {
+        relay
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("relay auth failed")
+            .to_owned()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,18 +79,10 @@ pub fn route_core_command(
         );
     }
     let command = command_string.expect("validated command");
-    #[cfg(not(feature = "remote-control"))]
-    if lite_rejects_remote_core_command(command) {
-        return DaemonRouteResponse::json(
-            400,
-            command_error(
-                &id,
-                Some(command),
-                "remote control commands are not available in the lite build",
-            ),
-        );
-    }
     let payload = body.and_then(|body| body.get("payload"));
+    if let Some(response) = route_remote_core_command(runtime, &id, command, issued_at) {
+        return response;
+    }
 
     let result = match command {
         command if command == CORE_COMMAND_NAMES.ping => Ok(json!({ "pong": true })),
@@ -247,33 +248,6 @@ pub fn route_core_command(
                     result
                 })
         }
-        #[cfg(feature = "remote-control")]
-        command if command == CORE_COMMAND_NAMES.relay_status => {
-            Ok(json!({ "relay": runtime.relay_status() }))
-        }
-        #[cfg(feature = "remote-control")]
-        command if command == CORE_COMMAND_NAMES.relay_enable => {
-            if !runtime.has_remote_credentials() {
-                return DaemonRouteResponse::json(
-                    401,
-                    command_error(
-                        &id,
-                        Some(command),
-                        "Not logged in. Run `aimux login` first.",
-                    ),
-                );
-            }
-            let relay = runtime.enable_relay_for_user_request();
-            if relay.get("status").and_then(Value::as_str) == Some("auth_failed") {
-                let message = runtime.relay_auth_failed_message(&relay);
-                return DaemonRouteResponse::json(401, command_error(&id, Some(command), message));
-            }
-            Ok(json!({ "relay": relay }))
-        }
-        #[cfg(feature = "remote-control")]
-        command if command == CORE_COMMAND_NAMES.relay_disable => {
-            Ok(json!({ "relay": runtime.disable_relay() }))
-        }
         _ => unreachable!("is_core_command_name accepted an unhandled command"),
     };
 
@@ -281,13 +255,6 @@ pub fn route_core_command(
         Ok(result) => DaemonRouteResponse::json(200, command_ok(&id, command, issued_at, result)),
         Err(error) => DaemonRouteResponse::json(500, command_error(&id, Some(command), error)),
     }
-}
-
-#[cfg(not(feature = "remote-control"))]
-fn lite_rejects_remote_core_command(command: &str) -> bool {
-    command == CORE_COMMAND_NAMES.relay_status
-        || command == CORE_COMMAND_NAMES.relay_enable
-        || command == CORE_COMMAND_NAMES.relay_disable
 }
 
 fn restart_lock_owner_pid(payload: Option<&Value>) -> Option<i32> {
@@ -606,7 +573,7 @@ fn command_id(runtime: &impl DaemonCoreCommandRuntime, body: Option<&Value>) -> 
         .unwrap_or_else(|| runtime.next_core_command_id())
 }
 
-fn command_ok(id: &str, command: &str, issued_at: &str, result: Value) -> Value {
+pub(super) fn command_ok(id: &str, command: &str, issued_at: &str, result: Value) -> Value {
     json!({
         "ok": true,
         "id": id,
@@ -616,7 +583,7 @@ fn command_ok(id: &str, command: &str, issued_at: &str, result: Value) -> Value 
     })
 }
 
-fn command_error(id: &str, command: Option<&str>, error: impl AsRef<str>) -> Value {
+pub(super) fn command_error(id: &str, command: Option<&str>, error: impl AsRef<str>) -> Value {
     let mut body = Map::new();
     body.insert("ok".to_owned(), Value::Bool(false));
     body.insert("id".to_owned(), Value::String(id.to_owned()));
