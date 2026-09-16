@@ -2,7 +2,7 @@
   "version": 1,
   "source": "src/version.test.ts",
   "generatedBy": "scripts/capture-version-contract.mjs",
-  "description": "Installed artifact version and build-profile label precedence captured by running TypeScript version/build-profile helpers against temporary package roots.",
+  "description": "Installed artifact version, build-profile label, and build-variant label precedence captured by running TypeScript version/build-profile/build-variant helpers against temporary package roots.",
   "cases": [
     {
       "id": "release-version-001",
@@ -66,6 +66,36 @@
       "input": { "api": "readAimuxBuildProfileFromPackageRoot", "files": { "BUILD_PROFILE": "enterprise\n" } },
       "output": "full",
       "inputSha256": "bdbf092606d5599548d87ddf595c5b2d1abe21b45ec9cba8ead3f1ec8602f59f"
+    },
+    {
+      "id": "release-version-007",
+      "name": "prefers the installed artifact BUILD_VARIANT label",
+      "source": "src/version.test.ts",
+      "sourceName": "prefers the installed artifact BUILD_VARIANT label",
+      "api": "readAimuxBuildVariantFromPackageRoot",
+      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": "full", "files": { "BUILD_VARIANT": "lite\n" } },
+      "output": "lite",
+      "inputSha256": "962cf19f2abb65d7e9976b442a8409dc1417ac93436f20f8c386a8068976a05f"
+    },
+    {
+      "id": "release-version-008",
+      "name": "falls back to full build variant for source checkouts and older installs",
+      "source": "src/version.test.ts",
+      "sourceName": "falls back to full build variant for source checkouts and older installs",
+      "api": "readAimuxBuildVariantFromPackageRoot",
+      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": null, "files": {} },
+      "output": "full",
+      "inputSha256": "5624b36f6e591f2e7b8a30abd3ecb5c351106d837b45657f811b43fb751752d5"
+    },
+    {
+      "id": "release-version-009",
+      "name": "ignores unknown build variant labels",
+      "source": "src/version.test.ts",
+      "sourceName": "ignores unknown build variant labels",
+      "api": "readAimuxBuildVariantFromPackageRoot",
+      "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": "lite", "files": { "BUILD_VARIANT": "enterprise\n" } },
+      "output": "lite",
+      "inputSha256": "6c433c905500a9fcd1257dfd5994db6371dcb5c0780f08477e8540dfb71e79ce"
     }
   ]
 }

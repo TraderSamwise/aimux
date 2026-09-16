@@ -7,6 +7,11 @@ INSTALL_ROOT="${AIMUX_INSTALL_ROOT:-$HOME/.aimux/native}"
 BIN_DIR="${AIMUX_BIN_DIR:-$HOME/.local/bin}"
 LOCAL_ARCHIVE="${AIMUX_ARCHIVE:-${1:-}}"
 HAD_EXISTING_INSTALL=0
+INSTALL_VARIANT="${AIMUX_INSTALL_VARIANT:-full}"
+case "$INSTALL_VARIANT" in
+  full | lite) ;;
+  *) printf 'aimux install failed: unsupported AIMUX_INSTALL_VARIANT: %s\n' "$INSTALL_VARIANT" >&2; exit 1 ;;
+esac
 
 append_standard_path_dirs() {
   current_path="${PATH:-}"
@@ -90,7 +95,11 @@ shell_quote() {
 
 PLATFORM="$(detect_platform)"
 ARCH="$(detect_arch)"
-ASSET="aimux-${PLATFORM}-${ARCH}.tar.gz"
+if [ "$INSTALL_VARIANT" = "lite" ]; then
+  ASSET="aimux-lite-${PLATFORM}-${ARCH}.tar.gz"
+else
+  ASSET="aimux-${PLATFORM}-${ARCH}.tar.gz"
+fi
 
 case "$VERSION" in
   latest)
@@ -136,6 +145,15 @@ fi
 tar -xzf "$ARCHIVE" -C "$TMP_DIR"
 [ -d "$TMP_DIR/aimux" ] || fail "release archive did not contain aimux/"
 [ -f "$TMP_DIR/aimux/BUILD_STAMP" ] || fail "release archive is missing BUILD_STAMP; install a current aimux release"
+[ -f "$TMP_DIR/aimux/BUILD_VARIANT" ] || fail "release archive is missing BUILD_VARIANT; install a current aimux release"
+ARCHIVE_VARIANT="$(sed -n '1{s/[[:space:]]*$//;p;}' "$TMP_DIR/aimux/BUILD_VARIANT")"
+case "$ARCHIVE_VARIANT" in
+  full | lite) ;;
+  *) fail "release archive has invalid BUILD_VARIANT: $ARCHIVE_VARIANT" ;;
+esac
+if [ "$ARCHIVE_VARIANT" != "$INSTALL_VARIANT" ]; then
+  fail "release archive BUILD_VARIANT mismatch: expected $INSTALL_VARIANT, got $ARCHIVE_VARIANT"
+fi
 
 INSTALLED_VERSION="$(cat "$TMP_DIR/aimux/VERSION" 2>/dev/null || printf '%s' "$VERSION_LABEL")"
 DEST="$INSTALL_ROOT/$INSTALLED_VERSION"

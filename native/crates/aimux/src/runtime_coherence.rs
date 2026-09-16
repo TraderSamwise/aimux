@@ -67,6 +67,7 @@ pub struct RuntimeCoherenceInput {
     pub generated_at: String,
     pub cli_version: String,
     pub build_profile: String,
+    pub build_variant: String,
     pub cli_launch: Value,
     pub expected_project_service: Value,
     pub expected_runtime_owner: String,
@@ -211,6 +212,7 @@ pub fn build_runtime_coherence_report_with_resolver(
         "generatedAt": input.generated_at,
         "cliVersion": input.cli_version,
         "buildProfile": input.build_profile,
+        "buildVariant": input.build_variant,
         "cliLaunch": input.cli_launch,
         "expected": {
             "projectService": input.expected_project_service,
@@ -254,6 +256,10 @@ pub fn render_runtime_coherence_report(report: &Value) -> String {
         format!(
             "  build profile: {}",
             string_at(report, &["buildProfile"]).unwrap_or_default()
+        ),
+        format!(
+            "  build variant: {}",
+            string_at(report, &["buildVariant"]).unwrap_or_default()
         ),
         cli_launcher_line(&report["cliLaunch"]),
         format!(
