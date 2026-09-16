@@ -721,71 +721,96 @@ impl TmuxRuntimeManager {
                 return Ok(swapped);
             }
             if !self.is_window_alive(&replacement)? {
-                let output = self
-                    .capture_target(
-                        &replacement,
-                        CapturePaneOptions {
-                            start_line: Some(-80),
-                            ..CapturePaneOptions::default()
-                        },
-                    )
-                    .unwrap_or_default();
+                let diagnostics = self.replacement_window_diagnostics(&replacement);
                 let _ = self.kill_window(&replacement);
-                let output = output.trim();
                 let readiness_detail = format!(
                     "expected {readiness_option}={readiness_value}, last observed {readiness_option}={}",
                     format_tmux_option_value(last_ready_value.as_deref())
                 );
-                return Err(if output.is_empty() {
-                    format!(
-                        "Replacement tmux window {} exited before dashboard readiness; {}",
-                        replacement.window_id, readiness_detail
-                    )
-                } else {
-                    format!(
-                        "Replacement tmux window {} exited before dashboard readiness; {}:\n{}",
-                        replacement.window_id, readiness_detail, output
-                    )
-                });
+                return Err(format!(
+                    "Replacement tmux window {} exited before dashboard readiness; {};\n{}",
+                    replacement.window_id, readiness_detail, diagnostics
+                ));
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         last_ready_value = self.get_window_option(&replacement.window_id, readiness_option);
-        let output = self
-            .capture_target(
-                &replacement,
-                CapturePaneOptions {
-                    start_line: Some(-80),
-                    ..CapturePaneOptions::default()
-                },
-            )
-            .unwrap_or_default();
+        let diagnostics = self.replacement_window_diagnostics(&replacement);
         let _ = self.kill_window(&replacement);
-        let output = output.trim();
         let readiness_detail = format!(
             "last observed {readiness_option}={}",
             format_tmux_option_value(last_ready_value.as_deref())
         );
-        Err(if output.is_empty() {
-            format!(
-                "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}; {}",
-                timeout_ms,
-                replacement.window_id,
-                readiness_option,
-                readiness_value,
-                readiness_detail
-            )
-        } else {
-            format!(
-                "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}; {}:\n{}",
-                timeout_ms,
-                replacement.window_id,
-                readiness_option,
-                readiness_value,
-                readiness_detail,
-                output
-            )
-        })
+        Err(format!(
+            "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}; {};\n{}",
+            timeout_ms,
+            replacement.window_id,
+            readiness_option,
+            readiness_value,
+            readiness_detail,
+            diagnostics
+        ))
+    }
+
+    fn replacement_window_diagnostics(&mut self, target: &TmuxTarget) -> String {
+        let window_state = self
+            .get_target_by_window_id(&target.session_name, &target.window_id)
+            .map(|window| {
+                format!(
+                    "window state: present session={} id={} index={} name={} paneDead={}",
+                    window.session_name,
+                    window.window_id,
+                    window.window_index,
+                    window.window_name,
+                    format_optional_bool(window.pane_dead)
+                )
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "window state: missing from session {} id={}",
+                    target.session_name, target.window_id
+                )
+            });
+        let pane_state = match self.display_message_raw(
+            "#{pane_current_command}\t#{pane_pid}\t#{pane_dead}\t#{pane_start_command}\t#{pane_dead_status}",
+            Some(&target.window_id),
+        ) {
+            Ok(raw) => {
+                let mut parts = raw.trim().splitn(5, '\t');
+                let command = parts.next().unwrap_or_default();
+                let pid = parts.next().unwrap_or_default();
+                let dead = parts.next().unwrap_or_default();
+                let start_command = parts.next().unwrap_or_default();
+                let dead_status = parts.next().unwrap_or_default();
+                format!(
+                    "pane state: command={} pid={} dead={} deadStatus={} startCommand={}",
+                    format_diagnostic_value(command),
+                    format_diagnostic_value(pid),
+                    format_diagnostic_value(dead),
+                    format_diagnostic_value(dead_status),
+                    format_diagnostic_value(start_command)
+                )
+            }
+            Err(error) => format!("pane state: unavailable: {error}"),
+        };
+        let pane_output = match self.capture_target(
+            target,
+            CapturePaneOptions {
+                start_line: Some(-80),
+                ..CapturePaneOptions::default()
+            },
+        ) {
+            Ok(output) => {
+                let output = output.trim();
+                if output.is_empty() {
+                    "pane output: <empty>".to_owned()
+                } else {
+                    format!("pane output:\n{output}")
+                }
+            }
+            Err(error) => format!("pane output: unavailable: {error}"),
+        };
+        format!("{window_state}\n{pane_state}\n{pane_output}")
     }
 
     pub fn select_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
@@ -3465,6 +3490,21 @@ fn format_tmux_option_value(value: Option<&str>) -> String {
         .filter(|value| !value.trim().is_empty())
         .map(|value| format!("{value:?}"))
         .unwrap_or_else(|| "<missing>".to_owned())
+}
+
+fn format_optional_bool(value: Option<bool>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn format_diagnostic_value(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        "<empty>".to_owned()
+    } else {
+        format!("{value:?}")
+    }
 }
 
 #[cfg(test)]

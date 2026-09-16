@@ -106,8 +106,17 @@ pub fn get_dashboard_command_spec_with_options(
             options.implementation_path.clone(),
         ],
     };
+    let native_dashboard = launch
+        .args
+        .iter()
+        .any(|arg| arg == "__dashboard-internal-native");
+    let mut launch_args = launch.args.clone();
+    if native_dashboard && !launch_args.iter().any(|arg| arg == "--project-root") {
+        launch_args.push("--project-root".to_owned());
+        launch_args.push(project_root.to_owned());
+    }
     let aimux_command = std::iter::once(launch.command.as_str())
-        .chain(launch.args.iter().map(String::as_str))
+        .chain(launch_args.iter().map(String::as_str))
         .map(shell_quote)
         .collect::<Vec<_>>()
         .join(" ");
@@ -122,10 +131,6 @@ pub fn get_dashboard_command_spec_with_options(
         build_dashboard_env_command_prefix(&options.env, true, &unset_keys, &options.home_dir),
         aimux_command
     );
-    let native_dashboard = launch
-        .args
-        .iter()
-        .any(|arg| arg == "__dashboard-internal-native");
     let wrapped_dashboard_command = if native_dashboard {
         dashboard_entrypoint.clone()
     } else {

@@ -89,6 +89,11 @@ fn replacement_failure_reports_child_output_before_timeout() {
         "{error}"
     );
     assert!(
+        error.contains("window state: missing from session aimux-mobile-abc id=@2"),
+        "{error}"
+    );
+    assert!(error.contains("pane state:"), "{error}");
+    assert!(
         error.contains("dashboard crashed while parsing /desktop-state"),
         "{error}"
     );
@@ -143,6 +148,11 @@ fn replacement_timeout_reports_pane_output_when_wrapper_keeps_window_alive() {
         "{error}"
     );
     assert!(error.contains("last observed @ready=<missing>"), "{error}");
+    assert!(
+        error.contains("window state: missing from session aimux-mobile-abc id=@2"),
+        "{error}"
+    );
+    assert!(error.contains("pane state:"), "{error}");
     assert!(error.contains("invalid type: string"), "{error}");
     assert_eq!(
         calls.borrow().last(),
@@ -187,10 +197,17 @@ fn replacement_timeout_without_pane_output_stays_a_timeout() {
     );
 
     let error = result.expect_err("unstamped replacement should fail");
-    assert_eq!(
-        error,
-        "Timed out waiting 0ms for replacement tmux window @2 readiness option @ready=stamp; last observed @ready=<missing>"
+    assert!(
+        error.contains(
+            "Timed out waiting 0ms for replacement tmux window @2 readiness option @ready=stamp; last observed @ready=<missing>"
+        ),
+        "{error}"
     );
+    assert!(
+        error.contains("window state: missing from session aimux-mobile-abc id=@2"),
+        "{error}"
+    );
+    assert!(error.contains("pane output: <empty>"), "{error}");
 }
 
 #[test]
@@ -233,9 +250,15 @@ fn replacement_timeout_reports_last_observed_readiness_value() {
     );
 
     let error = result.expect_err("stale replacement should fail");
-    assert_eq!(
-        error,
-        "Timed out waiting 0ms for replacement tmux window @2 readiness option @ready=stamp; last observed @ready=\"old-stamp\""
+    assert!(
+        error.contains(
+            "Timed out waiting 0ms for replacement tmux window @2 readiness option @ready=stamp; last observed @ready=\"old-stamp\""
+        ),
+        "{error}"
+    );
+    assert!(
+        error.contains("window state: missing from session aimux-mobile-abc id=@2"),
+        "{error}"
     );
 }
 
