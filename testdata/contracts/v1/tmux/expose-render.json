@@ -118,11 +118,11 @@
     },
     {
       "id": "tmux-expose-render-006",
-      "name": "draws unselected global tile with project worktree tone and overflow badge",
+      "name": "draws unselected global tile with project worktree tone and empty overflow hotkey",
       "source": "src/tmux/expose.ts",
       "api": "drawTile",
       "input": {
-        "name": "draws unselected global tile with project worktree tone and overflow badge",
+        "name": "draws unselected global tile with project worktree tone and empty overflow hotkey",
         "item": {
           "label": "Aider",
           "target": { "windowId": "@2" },
@@ -147,7 +147,7 @@
         "options": { "projectRoot": "/repo", "projectStateDir": "/repo/.aimux", "currentWindowId": "@1" }
       },
       "output": {
-        "text": "\u001b[4;10H\u001b[38;5;176m╭ \u001b[0m  \u001b[1;38;2;82;53;234m·\u001b[0m \u001b[2maimux / \u001b[0m\u001b[1;38;2;82;53;234mrust-v1\u001b[0m  \u001b[2mAider\u001b[0m\u001b[0m \u001b[38;5;176m────╮\u001b[0m\u001b[5;10H\u001b[38;5;176m│\u001b[0m   \u001b[35;7m BLOCKED \u001b[0m  \u001b[2mBlocked on review\u001b[0m\u001b[0m \u001b[38;5;176m│\u001b[0m\u001b[6;10H\u001b[38;5;176m│\u001b[0m review says no                 \u001b[38;5;176m│\u001b[0m\u001b[7;10H\u001b[38;5;176m│\u001b[0m needs patch                    \u001b[38;5;176m│\u001b[0m\u001b[8;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[9;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[10;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[11;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[12;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[13;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[14;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[15;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[16;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[17;10H\u001b[38;5;176m╰────────────────────────────────╯\u001b[0m"
+        "text": "\u001b[4;10H\u001b[38;5;176m╭ \u001b[0m  \u001b[2maimux / \u001b[0m\u001b[1;38;2;82;53;234mrust-v1\u001b[0m  \u001b[2mAider\u001b[0m\u001b[0m \u001b[38;5;176m──────╮\u001b[0m\u001b[5;10H\u001b[38;5;176m│\u001b[0m   \u001b[35;7m BLOCKED \u001b[0m  \u001b[2mBlocked on review\u001b[0m\u001b[0m \u001b[38;5;176m│\u001b[0m\u001b[6;10H\u001b[38;5;176m│\u001b[0m review says no                 \u001b[38;5;176m│\u001b[0m\u001b[7;10H\u001b[38;5;176m│\u001b[0m needs patch                    \u001b[38;5;176m│\u001b[0m\u001b[8;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[9;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[10;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[11;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[12;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[13;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[14;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[15;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[16;10H\u001b[38;5;176m│\u001b[0m                                \u001b[38;5;176m│\u001b[0m\u001b[17;10H\u001b[38;5;176m╰────────────────────────────────╯\u001b[0m"
       },
       "inputSha256": "11b48a4de8ef245917562108a23d9f67b48f342f2e7762fcc78ab05808010f4f"
     },

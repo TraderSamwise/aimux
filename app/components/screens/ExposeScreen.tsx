@@ -250,6 +250,16 @@ function ExposeTileCard({
           style={{ borderLeftColor: tile.tone }}
         >
           <View className={cn("flex-row items-center", dense ? "gap-1.5" : "gap-2")}>
+            {tile.hotkeyLabel ? (
+              <View
+                className="h-6 w-6 shrink-0 items-center justify-center rounded border border-[#3f4149] bg-[#202127]"
+                accessibilityLabel={`Hotkey ${tile.hotkeyLabel}`}
+              >
+                <Text className="font-mono text-[12px] font-bold leading-4 text-[#f4d35e]">
+                  {tile.hotkeyLabel}
+                </Text>
+              </View>
+            ) : null}
             <View className="justify-center">
               <StatusDotMini status={tile.statusKind ?? undefined} />
             </View>

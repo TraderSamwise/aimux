@@ -181,6 +181,72 @@ describe("expose model", () => {
     });
   });
 
+  it("assigns 0 to the first visible supervisor and keeps worktree hotkeys on 1-9", () => {
+    const worktreeItems = Array.from({ length: 10 }, (_, index) =>
+      item(`${index + 1}`, `worktree-${index + 1}`, index),
+    );
+    const tiles = buildExposeTiles([
+      {
+        project,
+        items: [
+          {
+            ...item("0", "main", 0),
+            label: "Project Overseer",
+            metadata: {
+              ...item("0", "main", 0).metadata,
+              sessionId: "claude-overseer",
+              role: "overseer",
+            },
+            roleState: {
+              status: "resolved",
+              role: "overseer",
+              lane: { kind: "supervisor" },
+              projectControl: true,
+              shouldShowInExpose: true,
+              exposeOrder: 0,
+            },
+          },
+          {
+            ...item("99", "main", 0, "ready"),
+            label: "Project Reviewer",
+            metadata: {
+              ...item("99", "main", 0, "ready").metadata,
+              sessionId: "claude-reviewer",
+              role: "reviewer",
+            },
+            roleState: {
+              status: "resolved",
+              role: "reviewer",
+              lane: { kind: "supervisor" },
+              projectControl: true,
+              shouldShowInExpose: true,
+              exposeOrder: 1,
+            },
+          },
+          ...worktreeItems,
+        ],
+      },
+    ]);
+
+    expect(
+      tiles.map((tile) => ({
+        sessionId: tile.sessionId,
+        supervisorScoped: tile.supervisorScoped,
+        hotkeyLabel: tile.hotkeyLabel,
+      })),
+    ).toEqual([
+      { sessionId: "claude-overseer", supervisorScoped: true, hotkeyLabel: "0" },
+      { sessionId: "claude-reviewer", supervisorScoped: true, hotkeyLabel: "" },
+      ...Array.from({ length: 9 }, (_, index) => ({
+        sessionId: `session-${index + 1}`,
+        supervisorScoped: false,
+        hotkeyLabel: String(index + 1),
+      })),
+      { sessionId: "session-10", supervisorScoped: false, hotkeyLabel: "" },
+    ]);
+    expect(filterExposeTiles(tiles, "ready").map((tile) => tile.hotkeyLabel)).toEqual(["0"]);
+  });
+
   it("hides items when Exposé visibility is absent, matching the TUI unknown-role default", () => {
     const tiles = buildExposeTiles([
       {

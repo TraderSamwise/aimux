@@ -605,10 +605,10 @@ pub fn draw_tile(input: DrawTileInput<'_>) -> String {
     } else {
         ("╭", "╮", "╰", "╯", "─", "│")
     };
-    let badge_label = if badge <= 9 {
+    let badge_label = if (0..=9).contains(&badge) {
         badge.to_string()
     } else {
-        "·".to_owned()
+        String::new()
     };
     let marker = if selected {
         format!("{} ", style("▸", Tone::Accent))
@@ -624,10 +624,12 @@ pub fn draw_tile(input: DrawTileInput<'_>) -> String {
     } else {
         String::new()
     };
-    let badge_str = if selected {
-        style(&badge_label, Tone::Accent)
+    let badge_str = if badge_label.is_empty() {
+        String::new()
+    } else if selected {
+        format!("{} ", style(&badge_label, Tone::Accent))
     } else {
-        toned(&badge_label, context.tone)
+        format!("{} ", toned(&badge_label, context.tone))
     };
     let project_str = context
         .project
@@ -646,7 +648,7 @@ pub fn draw_tile(input: DrawTileInput<'_>) -> String {
     } else {
         ""
     };
-    let title_left = format!("{marker}{badge_str} {lead}{here}");
+    let title_left = format!("{marker}{badge_str}{lead}{here}");
     let pill_str = render_agent_status_pill(metadata);
     let rel = metadata
         .get("recencyAt")
@@ -1312,11 +1314,10 @@ pub fn run_tmux_expose_with_drivers(
                 continue;
             }
             if let ExposeKey::Char(ch) = key
-                && ('1'..='9').contains(&ch)
+                && ch.is_ascii_digit()
             {
-                let target = ch as usize - '1' as usize;
                 let visible_count = (layout.visible_count.max(0) as usize).min(items.len());
-                if target < visible_count.min(9) {
+                if let Some(target) = expose_hotkey_target_index(&items, visible_count, ch) {
                     index = target;
                     if focus_or_select(&options, &context, &deps, client, &items[index], view_stale)
                     {
@@ -1885,9 +1886,11 @@ fn render_grid_expose(
         ),
         cols.saturating_sub(2) as usize,
     );
+    let supervisor_hint =
+        expose_supervisor_hotkey_footer_hint(items, visible_count).unwrap_or_default();
     let help = truncate_ansi(
         &format!(
-            "\x1b[2m1-9 open · ↑↓←→/n/p move · Enter open · r sort · O overseer · ^A d dashboard{zoom} · q/Esc close{more}{RESET}"
+            "\x1b[2m{supervisor_hint}1-9 open · ↑↓←→/n/p move · Enter open · r sort · ^A d dashboard{zoom} · q/Esc close{more}{RESET}"
         ),
         cols.saturating_sub(2) as usize,
     );
@@ -1992,7 +1995,7 @@ fn render_tile_at(input: RenderTileAtInput<'_>) -> String {
     draw_tile(DrawTileInput {
         item,
         preview: &preview,
-        badge: tile_index as i64 + 1,
+        badge: expose_hotkey_badge_for_item(items, tile_index),
         selected: tile_index == selected_index,
         top,
         left,
@@ -2429,6 +2432,87 @@ fn render_agent_status_pill(metadata: &Value) -> String {
     pill(&label.to_uppercase(), status_tone(kind))
 }
 
+fn expose_item_lane_kind(item: &Value) -> Option<&str> {
+    item.get("roleState")
+        .and_then(|role_state| role_state.get("lane"))
+        .and_then(|lane| lane.get("kind"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            item.get("lane")
+                .and_then(|lane| lane.get("kind"))
+                .and_then(Value::as_str)
+        })
+}
+
+fn is_supervisor_scoped_expose_item(item: &Value) -> bool {
+    expose_item_lane_kind(item) == Some("supervisor")
+}
+
+fn expose_hotkey_badge_for_item(items: &[Value], index: usize) -> i64 {
+    let Some(item) = items.get(index) else {
+        return -1;
+    };
+    if is_supervisor_scoped_expose_item(item) {
+        let earlier_supervisor = items
+            .iter()
+            .take(index)
+            .any(is_supervisor_scoped_expose_item);
+        return if earlier_supervisor { -1 } else { 0 };
+    }
+    let ordinal = items
+        .iter()
+        .take(index + 1)
+        .filter(|item| !is_supervisor_scoped_expose_item(item))
+        .count();
+    if ordinal <= 9 { ordinal as i64 } else { -1 }
+}
+
+fn expose_hotkey_target_index(items: &[Value], visible_count: usize, key: char) -> Option<usize> {
+    let visible_count = visible_count.min(items.len());
+    match key {
+        '0' => items
+            .iter()
+            .take(visible_count)
+            .position(is_supervisor_scoped_expose_item),
+        '1'..='9' => {
+            let target_ordinal = key.to_digit(10)? as usize;
+            items
+                .iter()
+                .take(visible_count)
+                .enumerate()
+                .filter(|(_, item)| !is_supervisor_scoped_expose_item(item))
+                .nth(target_ordinal.saturating_sub(1))
+                .map(|(index, _)| index)
+        }
+        _ => None,
+    }
+}
+
+fn expose_supervisor_hotkey_footer_label(item: &Value) -> String {
+    item.get("roleState")
+        .and_then(|role_state| role_state.get("role"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            item.get("metadata")
+                .and_then(|metadata| metadata.get("role"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| item.get("label").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("supervisor")
+        .to_owned()
+}
+
+fn expose_supervisor_hotkey_footer_hint(items: &[Value], visible_count: usize) -> Option<String> {
+    let visible_count = visible_count.min(items.len());
+    items
+        .iter()
+        .take(visible_count)
+        .find(|item| is_supervisor_scoped_expose_item(item))
+        .map(|item| format!("0 {} · ", expose_supervisor_hotkey_footer_label(item)))
+}
+
 fn status_tone(kind: &str) -> Tone {
     match kind {
         "working" => Tone::Work,
@@ -2546,4 +2630,100 @@ fn daemon_json_error(status: u16, response: &Value) -> String {
             }
             .to_string()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expose_item(label: &str, lane_kind: &str) -> Value {
+        json!({
+            "label": label,
+            "target": { "windowId": format!("@{label}") },
+            "metadata": {
+                "role": label,
+                "sessionId": label,
+                "worktreePath": format!("/repo/{label}")
+            },
+            "roleState": {
+                "status": "resolved",
+                "role": label,
+                "lane": { "kind": lane_kind },
+                "projectControl": lane_kind == "supervisor",
+                "shouldShowInExpose": true,
+                "exposeOrder": if lane_kind == "supervisor" { 0 } else { 100 }
+            },
+            "exposeContext": {
+                "worktree": label
+            }
+        })
+    }
+
+    #[test]
+    fn expose_hotkeys_assign_zero_to_first_supervisor_and_keep_worktree_digits() {
+        let mut items = vec![
+            expose_item("overseer", "supervisor"),
+            expose_item("reviewer", "supervisor"),
+        ];
+        items.extend((1..=10).map(|index| expose_item(&format!("worker-{index}"), "worktree")));
+
+        let badges = (0..items.len())
+            .map(|index| expose_hotkey_badge_for_item(&items, index))
+            .collect::<Vec<_>>();
+
+        assert_eq!(badges, vec![0, -1, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1]);
+        assert_eq!(
+            expose_hotkey_target_index(&items, items.len(), '0'),
+            Some(0)
+        );
+        assert_eq!(
+            expose_hotkey_target_index(&items, items.len(), '1'),
+            Some(2)
+        );
+        assert_eq!(
+            expose_hotkey_target_index(&items, items.len(), '9'),
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn expose_footer_names_the_first_visible_supervisor_role() {
+        let items = vec![
+            expose_item("reviewer", "supervisor"),
+            expose_item("overseer", "supervisor"),
+            expose_item("worker", "worktree"),
+        ];
+        let view = ExposeScopeView {
+            scope: ExposeScope::Project,
+            items: items.clone(),
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+        };
+        let options = TmuxExposeOptions {
+            project_root: PathBuf::from("/repo"),
+            project_state_dir: PathBuf::from("/repo/.aimux"),
+            columns: Some(100),
+            rows: Some(24),
+            ..TmuxExposeOptions::default()
+        };
+        let mut output = Vec::new();
+
+        render_grid_expose(
+            &mut output,
+            &view,
+            &items,
+            &BTreeMap::new(),
+            0,
+            &options,
+            RenderGridExposeState {
+                sort_mode: ExposeSortMode::Default,
+                loading: false,
+            },
+        )
+        .expect("render expose grid");
+        let rendered = String::from_utf8(output).expect("utf8 expose render");
+
+        assert!(rendered.contains("0 reviewer"));
+        assert!(!rendered.contains("0 overseer"));
+    }
 }
