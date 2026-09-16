@@ -190,18 +190,25 @@ a broken release.
 
 ### What the tag triggers
 
-1. **Release assets** — builds `aimux-{darwin,linux}-{arm64,x64}.tar.gz` plus
-   `.sha256` on matching runners, after re-running `yarn release:readiness`.
-   Each asset is checked for stripped source maps, and the Darwin assets are
-   checked for a notifier helper of the right architecture. Assets are uploaded
-   to the GitHub Release, which is created with generated notes.
+1. **Release assets** — builds full `aimux-{darwin,linux}-{arm64,x64}.tar.gz`
+   and lite `aimux-lite-{darwin,linux}-{arm64,x64}.tar.gz` archives plus
+   `.sha256` files on matching runners, after re-running
+   `yarn release:readiness`. Each asset carries a `BUILD_VARIANT` stamp
+   (`full` or `lite`) separate from `BUILD_PROFILE`, is checked for stripped
+   source maps, and the Darwin assets are checked for a notifier helper of the
+   right architecture. Lite assets must also pass the remote-control absence
+   gate before upload. A release asset set gate fails downstream publishing if
+   any variant/platform archive or SHA file is missing.
 2. **npm** — publishes `aimux-cli` with `--provenance` through npm trusted
    publishing (OIDC, no stored token). It fails fast if `package.json`'s version
    does not match the tag, and stages the native CLI binaries plus macOS
-   notifier helpers from the release assets so the npm package carries them.
-3. **Homebrew tap** — rewrites `Formula/aimux.rb` in
-   `TraderSamwise/homebrew-aimux` with the new version, URLs, and SHA256 values,
-   using the `HOMEBREW_TAP_TOKEN` secret.
+   notifier helpers from the full release assets so the npm package carries
+   them. There is no lite npm package.
+3. **Homebrew tap** — rewrites `Formula/aimux.rb` and `Formula/aimux-lite.rb`
+   in `TraderSamwise/homebrew-aimux` with the new version, URLs, and SHA256
+   values, using the `HOMEBREW_TAP_TOKEN` secret. The lite formula downloads
+   only lite assets, conflicts with the full formula, and still installs the
+   command as `aimux`.
 
 The npm and tap jobs both depend on the asset job, so a failed build publishes
 nothing.
@@ -210,14 +217,17 @@ nothing.
 
 ```bash
 gh run watch                            # or: gh run list --workflow=release.yml
-gh release view v<version>              # four assets + four .sha256 files
+gh release view v<version>              # eight assets + eight .sha256 files
 npm view aimux-cli version
 brew update && brew info aimux
+brew info aimux-lite
 ```
 
 The three surfaces should agree on the version. `scripts/install.sh` pulls the
-same GitHub Release asset, so a standalone install of `AIMUX_VERSION=v<version>`
-is the fourth check.
+same full GitHub Release asset by default, so a standalone install of
+`AIMUX_VERSION=v<version>` is the fourth check. Lite installs must set
+`AIMUX_INSTALL_VARIANT=lite`; the installer refuses an archive whose
+`BUILD_VARIANT` does not match the requested install lane.
 
 ## Architecture
 

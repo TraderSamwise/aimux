@@ -533,6 +533,7 @@ fn fake_text_response(path: &str) -> String {
             "Aimux Versions\n",
             "  cli version: test-cli\n",
             "  build profile: test\n",
+            "  build variant: full\n",
             "  cli launcher: /tmp/aimux\n",
             "  cli current entry: /tmp/aimux\n",
             "  cli stable shim: /tmp/stable/aimux\n",

@@ -118,6 +118,7 @@ fn install_script_rejects_archives_without_native_cli() {
     fs::create_dir_all(&package_root).expect("create package root");
     fs::write(package_root.join("VERSION"), "local-native\n").expect("write version");
     fs::write(package_root.join("BUILD_STAMP"), "build-native\n").expect("write build stamp");
+    fs::write(package_root.join("BUILD_VARIANT"), "full\n").expect("write build variant");
     let archive = tar_package(&temp.0);
 
     let output = Command::new(posix_sh())
@@ -172,19 +173,30 @@ fn release_asset_compiles_native_binary_with_selected_build_profile() {
         script.contains("export AIMUX_BUILD_PROFILE=\"$BUILD_PROFILE\""),
         "release build must pass the selected BUILD_PROFILE into the native binary compile"
     );
+    assert!(
+        script.contains("export AIMUX_BUILD_VARIANT=\"$BUILD_VARIANT\""),
+        "release build must pass the selected BUILD_VARIANT into the native binary compile"
+    );
     let export_profile = script
         .find("export AIMUX_BUILD_PROFILE=\"$BUILD_PROFILE\"")
         .expect("profile export");
+    let export_variant = script
+        .find("export AIMUX_BUILD_VARIANT=\"$BUILD_VARIANT\"")
+        .expect("variant export");
     let cargo_build = script
         .find("cargo build --manifest-path native/Cargo.toml -p aimux --release")
         .expect("cargo build");
     assert!(
-        export_profile < cargo_build,
-        "release asset must export the build profile before compiling the native binary"
+        export_profile < cargo_build && export_variant < cargo_build,
+        "release asset must export the build profile and variant before compiling the native binary"
     );
     assert!(
         build_script.contains("cargo:rerun-if-env-changed=AIMUX_BUILD_PROFILE"),
         "Cargo must rebuild aimux when AIMUX_BUILD_PROFILE changes"
+    );
+    assert!(
+        build_script.contains("cargo:rerun-if-env-changed=AIMUX_BUILD_VARIANT"),
+        "Cargo must rebuild aimux when AIMUX_BUILD_VARIANT changes"
     );
     assert!(
         script.contains("CARGO_TARGET_ROOT=\"${CARGO_TARGET_DIR:-\"$ROOT_DIR/native/target\"}\""),
@@ -432,6 +444,7 @@ fn create_release_archive(root: &Path) -> PathBuf {
     fs::create_dir_all(package_root.join("scripts")).expect("create scripts dir");
     fs::write(package_root.join("VERSION"), "local-native\n").expect("write version");
     fs::write(package_root.join("BUILD_STAMP"), "build-native\n").expect("write build stamp");
+    fs::write(package_root.join("BUILD_VARIANT"), "full\n").expect("write build variant");
     fs::write(
         package_root.join("scripts/tmux-control.sh"),
         "#!/bin/sh\nexit 0\n",
@@ -457,6 +470,7 @@ fn create_witness_archive(root: &Path, archive_stamp: &str, binary_stamp: &str) 
         format!("{archive_stamp}\n"),
     )
     .expect("write build stamp");
+    fs::write(package_root.join("BUILD_VARIANT"), "full\n").expect("write build variant");
     let native_bin = package_root.join(format!("native/{}/aimux", platform_arch()));
     fs::write(
         &native_bin,

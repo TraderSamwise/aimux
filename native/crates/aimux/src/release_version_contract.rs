@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const DEFAULT_VERSION: &str = "0.0.0";
 const DEFAULT_BUILD_PROFILE: &str = "full";
+const DEFAULT_BUILD_VARIANT: &str = "full";
 static VERSION_CONTRACT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn read_aimux_version_from_package_root(package_root: impl AsRef<Path>) -> String {
@@ -89,6 +90,35 @@ pub fn parse_aimux_build_profile(value: Option<&str>) -> Option<&'static str> {
     }
 }
 
+pub fn read_aimux_build_variant_from_package_root(package_root: impl AsRef<Path>) -> String {
+    read_aimux_build_variant_from_package_root_with_env(
+        package_root,
+        std::env::var("AIMUX_BUILD_VARIANT").ok().as_deref(),
+    )
+}
+
+pub fn read_aimux_build_variant_from_package_root_with_env(
+    package_root: impl AsRef<Path>,
+    env_build_variant: Option<&str>,
+) -> String {
+    if let Ok(variant) = fs::read_to_string(package_root.as_ref().join("BUILD_VARIANT"))
+        && let Some(variant) = parse_aimux_build_variant(Some(&variant))
+    {
+        return variant.to_owned();
+    }
+    parse_aimux_build_variant(env_build_variant)
+        .unwrap_or(DEFAULT_BUILD_VARIANT)
+        .to_owned()
+}
+
+pub fn parse_aimux_build_variant(value: Option<&str>) -> Option<&'static str> {
+    match value.map(str::trim) {
+        Some("full") => Some("full"),
+        Some("lite") => Some("lite"),
+        _ => None,
+    }
+}
+
 pub fn run_release_version_contract_case(input: &Value) -> Value {
     let temp = ContractTempDir::new();
     seed_files(temp.path(), input.get("files").unwrap_or(&Value::Null));
@@ -101,6 +131,13 @@ pub fn run_release_version_contract_case(input: &Value) -> Value {
             Value::String(read_aimux_build_profile_from_package_root_with_env(
                 temp.path(),
                 env_profile,
+            ))
+        }
+        "readAimuxBuildVariantFromPackageRoot" => {
+            let env_variant = input.get("envBuildVariant").and_then(Value::as_str);
+            Value::String(read_aimux_build_variant_from_package_root_with_env(
+                temp.path(),
+                env_variant,
             ))
         }
         api => Value::String(format!("unknown release version contract api: {api}")),
