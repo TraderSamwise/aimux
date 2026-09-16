@@ -128,7 +128,7 @@ def wait_until(label: str, timeout: float, interval: float, probe: Callable[[], 
 def build_release_asset(work: Path, variant: str = "full") -> Path:
     release_dir = work / "release"
     env = os.environ.copy()
-    env["AIMUX_BUILD_PROFILE"] = "local"
+    env["AIMUX_PACKAGE_PROFILE"] = "minimal"
     env["AIMUX_BUILD_VARIANT"] = variant
     env["AIMUX_RELEASE_DIR"] = str(release_dir)
     env["AIMUX_RELEASE_VERSION"] = f"0.0.0-installed-gate-{variant}.{os.getpid()}.{int(time.time())}"
