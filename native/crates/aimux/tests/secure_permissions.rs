@@ -21,7 +21,7 @@ use aimux::secure_permissions::{
     PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, global_aimux_excluded_executable_dirs,
     local_aimux_excluded_executable_or_source_dirs, local_aimux_sensitive_dirs,
     repair_global_aimux_home, repair_project_local_store, repair_project_state_store,
-    write_private_file_without_parent_chmod,
+    repair_registered_project_local_stores, write_private_file_without_parent_chmod,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -100,6 +100,17 @@ fn upgrade_repair_restores_existing_sensitive_store_modes() {
     make_public_dir(worktree_executable.parent().expect("worktree parent"));
     make_mode_file(&worktree_executable, 0o755);
 
+    let inactive_project = fixture.root.join("inactive-project");
+    let inactive_local_dir = inactive_project.join(".aimux");
+    make_public_dir(&inactive_local_dir);
+    make_public_dir(inactive_local_dir.join("context").join("codex-old"));
+    make_public_file(
+        inactive_local_dir
+            .join("context")
+            .join("codex-old")
+            .join("live.md"),
+    );
+
     make_public_dir(&project_state_dir);
     for path in [
         project_state_dir.join("metadata.json"),
@@ -138,6 +149,8 @@ fn upgrade_repair_restores_existing_sensitive_store_modes() {
     make_mode_file(&native_executable, 0o755);
 
     repair_project_local_store(&fixture.project).expect("repair local store");
+    repair_registered_project_local_stores([fixture.project.as_path(), inactive_project.as_path()])
+        .expect("repair registered local stores");
     repair_project_state_store(&project_state_dir).expect("repair project state");
     repair_global_aimux_home(&fixture.aimux_home).expect("repair global home");
 
@@ -145,6 +158,8 @@ fn upgrade_repair_restores_existing_sensitive_store_modes() {
     for dir in local_aimux_sensitive_dirs() {
         assert_private_tree(&local_dir.join(dir));
     }
+    assert_private_dir(&inactive_local_dir);
+    assert_private_tree(&inactive_local_dir.join("context"));
     assert_eq!(mode(&worktree_executable), 0o755);
     assert_private_tree(&project_state_dir);
     assert_private_dir(&fixture.aimux_home);

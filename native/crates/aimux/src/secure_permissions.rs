@@ -112,6 +112,17 @@ pub fn repair_project_local_store(project_root: impl AsRef<Path>) -> io::Result<
     Ok(())
 }
 
+pub fn repair_registered_project_local_stores<I, P>(project_roots: I) -> io::Result<()>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    for project_root in project_roots {
+        repair_project_local_store(project_root)?;
+    }
+    Ok(())
+}
+
 pub fn repair_global_aimux_home(aimux_home: impl AsRef<Path>) -> io::Result<()> {
     let aimux_home = aimux_home.as_ref();
     ensure_private_dir(aimux_home)?;

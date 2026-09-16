@@ -2342,6 +2342,16 @@ pub fn run_daemon_internal() -> Result<()> {
     let resolver = PathResolver::from_env();
     secure_permissions::repair_global_aimux_home(resolver.global_aimux_dir())
         .context("repair global .aimux permissions")?;
+    let registry = resolver
+        .load_registry()
+        .context("load project registry for permission repair")?;
+    secure_permissions::repair_registered_project_local_stores(
+        registry
+            .projects
+            .iter()
+            .map(|project| project.repo_root.as_str()),
+    )
+    .context("repair registered project .aimux permissions")?;
     let host = get_daemon_host().map_err(anyhow::Error::msg)?;
     let port = get_daemon_port().map_err(anyhow::Error::msg)?;
     if let Some(reason) = crate::runtime_safety_guard::default_daemon_run_refusal_reason(port) {
