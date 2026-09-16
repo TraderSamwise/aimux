@@ -13,6 +13,7 @@ import { setAgentLoop, setAgentOverseer } from "@/lib/api";
 import { agentCompactIdentity, agentToolName } from "@/lib/agent-display";
 import { useAuth } from "@/lib/auth";
 import type { DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
+import { projectStateErrorCopy } from "@/lib/project-connection-display";
 import { detailHrefForPath } from "@/lib/view-location";
 import { cn } from "@/lib/utils";
 import { useRouteProject } from "@/lib/use-route-project";
@@ -73,6 +74,7 @@ export default function LoopsScreen() {
       ),
     [entries],
   );
+  const stateErrorCopy = stateError ? projectStateErrorCopy(stateError) : null;
   const activeCandidates = useMemo(
     () => entries.filter((entry) => isManageableSession(entry.session)),
     [entries],
@@ -184,8 +186,8 @@ export default function LoopsScreen() {
           title="Project host offline"
           body="Start the project host to manage loop overseer state."
         />
-      ) : !state && stateError ? (
-        <PageStateCard title="Loop state failed" body={stateError} tone="danger" />
+      ) : !state && stateErrorCopy ? (
+        <PageStateCard title={stateErrorCopy.title} body={stateErrorCopy.detail} tone="warning" />
       ) : !state ? (
         <PageStateCard
           title="Loading loop state..."
