@@ -1,6 +1,6 @@
 use crate::atomic_write::{atomic_write_with_mode, quarantine_corrupt_file};
-use crate::hosted_lock::{HostedLockOptions, with_hosted_lock};
 use crate::paths::PathResolver;
+use crate::remote::hosted_lock::{HostedLockOptions, with_hosted_lock};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -120,16 +120,16 @@ use crate::release_version_contract::{
     read_aimux_build_profile_from_package_root, read_aimux_build_variant_from_package_root,
     read_aimux_runtime_version,
 };
-use crate::remote_access::{RemoteActorRole, parse_remote_actor};
 #[cfg(feature = "remote-control")]
-use crate::remote_credentials;
+use crate::remote::remote_credentials;
 #[cfg(feature = "remote-control")]
-use crate::remote_login::{self, LoginAction, LoginFlowWaiter};
+use crate::remote::remote_login::{self, LoginAction, LoginFlowWaiter};
 use crate::repair_events::{
     ACTION_CONTROL_PLANE_RESTART, ACTION_DASHBOARD_RELOAD, ACTION_PROJECT_SERVICE_ENSURE,
     ACTION_VALIDATION_ORPHAN_CLEANUP, STATUS_FAILED, STATUS_REPAIRED, STATUS_SKIPPED,
     STATUS_STARTED, record_repair_event_for_project, record_repair_event_from_env,
 };
+use crate::request_actor::{RemoteActorRole, parse_remote_actor};
 use crate::runtime_coherence::{
     RuntimeCoherenceHealth, RuntimeCoherenceHealthProbe, RuntimeCoherenceInput,
     RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow, build_runtime_coherence_report_with_resolver,
@@ -199,7 +199,7 @@ pub struct RealDaemonRuntime {
     runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
     started_instant: Instant,
     #[cfg(feature = "remote-control")]
-    relay: Arc<crate::daemon::relay::RelaySupervisor>,
+    relay: Arc<crate::remote::daemon_relay::RelaySupervisor>,
 }
 
 #[derive(Default)]
@@ -479,7 +479,7 @@ impl RealDaemonRuntime {
     fn start_relay(&self, credentials: &remote_credentials::AimuxCredentials, force: bool) {
         let env_url = std::env::var("AIMUX_RELAY_URL").ok();
         let env_token = std::env::var("AIMUX_RELAY_TOKEN").ok();
-        if let Some((url, token)) = crate::daemon::relay::resolve_relay_target(
+        if let Some((url, token)) = crate::remote::daemon_relay::resolve_relay_target(
             Some(credentials.relay_url.as_str()),
             Some(credentials.token.as_str()),
             credentials.remote_enabled,
@@ -632,7 +632,7 @@ impl RealDaemonRuntime {
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
             #[cfg(feature = "remote-control")]
-            relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
+            relay: Arc::new(crate::remote::daemon_relay::RelaySupervisor::default()),
         }
     }
 
@@ -668,7 +668,7 @@ impl RealDaemonRuntime {
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
             #[cfg(feature = "remote-control")]
-            relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
+            relay: Arc::new(crate::remote::daemon_relay::RelaySupervisor::default()),
         }
     }
 
@@ -2403,8 +2403,9 @@ pub fn run_daemon_internal() -> Result<()> {
     ));
     #[cfg(feature = "remote-control")]
     let _hosted_server = {
-        let hosted_config = crate::hosted_config::load_hosted_config_with_resolver(&resolver);
-        crate::hosted_server::start_hosted_server_background_with_scheduler(
+        let hosted_config =
+            crate::remote::hosted_config::load_hosted_config_with_resolver(&resolver);
+        crate::remote::hosted_server::start_hosted_server_background_with_scheduler(
             hosted_config,
             resolver.clone(),
             Arc::clone(&runtime),
@@ -2515,8 +2516,11 @@ pub fn daemon_periodic_tasks(
             )),
             Box::new(DaemonDiskMaintenanceTask::new()),
         ];
-        tasks.insert(1, Box::new(crate::hosted_server::HostedPruneTask));
-        tasks.insert(2, Box::new(crate::hosted_server::HostedOutboxDrainTask));
+        tasks.insert(1, Box::new(crate::remote::hosted_server::HostedPruneTask));
+        tasks.insert(
+            2,
+            Box::new(crate::remote::hosted_server::HostedOutboxDrainTask),
+        );
         tasks
     }
 }
@@ -4051,7 +4055,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
             return json!({ "ok": true, "suppressed": true, "reason": "remote_unavailable_in_lite_build" });
         }
         #[cfg(feature = "remote-control")]
-        let notification = crate::mobile_push_bridge::relay_notification(payload);
+        let notification = crate::remote::mobile_push_bridge::relay_notification(payload);
         #[cfg(feature = "remote-control")]
         match self.relay.push(&notification) {
             Ok(()) => json!({ "ok": true, "suppressed": false }),

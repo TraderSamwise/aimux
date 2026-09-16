@@ -1,5 +1,5 @@
-use crate::hosted_principals::{HostedPrincipal, HostedPrincipalsStore};
-use crate::remote_access::{
+use crate::remote::hosted_principals::{HostedPrincipal, HostedPrincipalsStore};
+use crate::request_actor::{
     RemoteActor, RemoteActorRole, RemoteOperatorGrant, RemoteOperatorPrincipal,
 };
 use anyhow::Result;

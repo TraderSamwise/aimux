@@ -1,11 +1,11 @@
 //! The connection loop, driven by a fake socket and a fake daemon.
 
 use aimux::backlog_metrics::BacklogMetricStatus;
-use aimux::relay_client::RelayStatus;
-use aimux::relay_runner::{
+use aimux::remote::relay_client::RelayStatus;
+use aimux::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
 };
-use aimux::websocket::{
+use aimux::remote::websocket::{
     BoxFuture, WebSocketConnectionParts, WebSocketConnector, WebSocketError, WebSocketEvent,
     WebSocketReader, WebSocketWriter,
 };

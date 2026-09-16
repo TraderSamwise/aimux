@@ -24,12 +24,12 @@ use tokio::time::Instant;
 use crate::async_runtime::{spawn_blocking_named, task_name};
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
-use crate::relay_client::{project_event_frame, split_sse_frames};
-use crate::relay_runner::{
+use crate::remote::relay_client::{project_event_frame, split_sse_frames};
+use crate::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem,
     RelayHandle, RelayRunner,
 };
-use crate::websocket::{BoxFuture, TokioTungsteniteConnector};
+use crate::remote::websocket::{BoxFuture, TokioTungsteniteConnector};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Relay request/response traffic is control JSON, not attachment bytes or bulk
@@ -479,8 +479,8 @@ impl RelaySupervisor {
                 let status = handle.status().status;
                 let finished = matches!(
                     status,
-                    Some(crate::relay_client::RelayStatus::AuthFailed)
-                        | Some(crate::relay_client::RelayStatus::Disconnected)
+                    Some(crate::remote::relay_client::RelayStatus::AuthFailed)
+                        | Some(crate::remote::relay_client::RelayStatus::Disconnected)
                 );
                 if !force && !finished {
                     return;
@@ -521,7 +521,7 @@ impl RelaySupervisor {
         let Some((runner, handle)) = current.as_ref() else {
             return Err("relay_off".to_owned());
         };
-        if handle.status().status != Some(crate::relay_client::RelayStatus::Connected) {
+        if handle.status().status != Some(crate::remote::relay_client::RelayStatus::Connected) {
             return Err("relay_disconnected".to_owned());
         }
         runner.push_notification(notification)
@@ -602,13 +602,13 @@ pub fn resolve_project_event_stream(path: &str, headers: &Value) -> Result<Strin
                 .collect::<std::collections::BTreeMap<String, String>>()
         })
         .unwrap_or_default();
-    let actor = crate::remote_access::parse_remote_actor(&header_map);
-    let decision = crate::remote_access::assert_remote_access_allowed(
+    let actor = crate::request_actor::parse_remote_actor(&header_map);
+    let decision = crate::request_actor::assert_remote_access_allowed(
         actor.as_ref(),
         "GET",
         &pathname,
         &route_url,
-        crate::remote_access::RemoteAccessContext {
+        crate::request_actor::RemoteAccessContext {
             body: None,
             project_root: None,
         },
@@ -679,7 +679,7 @@ mod tests {
         MAX_RELAY_EVENT_SUBSCRIPTIONS, MAX_RELAY_SSE_BUFFER_BYTES, append_limited_sse_chunk,
         read_status_and_body, route_request_over_stream,
     };
-    use crate::relay_runner::DaemonRelayBridge;
+    use crate::remote::relay_runner::DaemonRelayBridge;
     use std::io::Cursor;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant as StdInstant};

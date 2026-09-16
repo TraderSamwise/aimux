@@ -1,11 +1,11 @@
 //! The relay protocol decisions, frame by frame. No socket, no relay.
 
-use aimux::relay_client::{
+use aimux::remote::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
     decide_connect_error, handle_frame, notification_push_frame, project_event_frame,
     project_events_error_frame, split_sse_frames,
 };
-use aimux::websocket::WebSocketError;
+use aimux::remote::websocket::WebSocketError;
 use serde_json::json;
 
 const MAX_HANDSHAKE_FAILURES: u32 = 5;

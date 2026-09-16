@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::remote_access::{RemoteActor, RemoteActorRole};
+use crate::request_actor::{RemoteActor, RemoteActorRole};
 
 pub fn body_shared_chat_actor(body: &Value) -> Option<Value> {
     let raw = body.get("sharedChatActor")?.as_object()?;

@@ -2,7 +2,7 @@
 //! the other end of the relay. What the bridge is willing to put on the wire to
 //! this daemon is therefore a security boundary, not a formatting detail.
 
-use aimux::daemon::relay::{build_request_head, daemon_loopback_port};
+use aimux::remote::daemon_relay::{build_request_head, daemon_loopback_port};
 use serde_json::json;
 
 fn head(headers: serde_json::Value) -> String {
@@ -77,7 +77,7 @@ fn the_loopback_port_follows_the_daemon_env_override() {
 
 #[test]
 fn stored_credentials_only_connect_when_remote_is_enabled() {
-    use aimux::daemon::relay::resolve_relay_target;
+    use aimux::remote::daemon_relay::resolve_relay_target;
     assert_eq!(
         resolve_relay_target(Some("wss://r"), Some("tok"), true, None, None),
         Some(("wss://r".to_owned(), "tok".to_owned()))
@@ -91,7 +91,7 @@ fn stored_credentials_only_connect_when_remote_is_enabled() {
 
 #[test]
 fn an_env_override_decides_on_its_own_without_touching_the_saved_login() {
-    use aimux::daemon::relay::resolve_relay_target;
+    use aimux::remote::daemon_relay::resolve_relay_target;
     // remote_enabled is false, but the env pair is present: this is how a test
     // daemon points at a local relay without editing the user's credentials.
     assert_eq!(
@@ -125,7 +125,7 @@ fn an_env_override_decides_on_its_own_without_touching_the_saved_login() {
 
 #[test]
 fn blank_or_whitespace_credentials_never_connect() {
-    use aimux::daemon::relay::resolve_relay_target;
+    use aimux::remote::daemon_relay::resolve_relay_target;
     assert_eq!(
         resolve_relay_target(Some("  "), Some("tok"), true, None, None),
         None
@@ -140,7 +140,7 @@ fn blank_or_whitespace_credentials_never_connect() {
 // A relay subscription path is supplied by whoever is on the other end. It
 // decides what this daemon connects to, so it is an authorization boundary.
 mod project_event_stream {
-    use aimux::daemon::relay::resolve_project_event_stream;
+    use aimux::remote::daemon_relay::resolve_project_event_stream;
     use serde_json::json;
 
     #[test]
