@@ -162,10 +162,27 @@ pub fn worktree_create_text_route(
         Ok(name) => name,
         Err(response) => return response,
     };
+    let pr = route_url
+        .search_param("pr")
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            body.and_then(|body| body.get("pr")).and_then(|value| {
+                value
+                    .as_u64()
+                    .map(|number| number.to_string())
+                    .or_else(|| value.as_str().map(ToOwned::to_owned))
+            })
+        })
+        .filter(|value| !value.trim().is_empty());
+    let mut request_body = Map::new();
+    request_body.insert("name".into(), Value::String(name.clone()));
+    if let Some(pr) = pr {
+        request_body.insert("pr".into(), Value::String(pr));
+    }
     let result = runtime.post_project_service_json(
         &project,
         project_routes::worktree_actions::CREATE,
-        json!({ "name": name }),
+        Value::Object(request_body),
         None,
     );
     let (json, project_root) = match unwrap_project_result(result) {
@@ -187,6 +204,7 @@ pub fn worktree_create_text_route(
         "path": path,
         "status": status,
         "projectRoot": project_root,
+        "pr": json.get("pr").cloned().unwrap_or(Value::Null),
     });
     text_or_json_lines(
         route_url,

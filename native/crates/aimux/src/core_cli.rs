@@ -1571,11 +1571,24 @@ where
                     ),
                     None,
                 ),
-                "create" => (
-                    CoreCliOperation::WorktreeCreate,
-                    text_route_path(CORE_API_ROUTES.worktree_create_text, parsed.json),
-                    Some(json!({ "project": project_root, "name": parsed.name })),
-                ),
+                "create" => {
+                    let body = match parsed.pr {
+                        Some(pr) => json!({
+                            "project": project_root,
+                            "name": parsed.name,
+                            "pr": pr,
+                        }),
+                        None => json!({
+                            "project": project_root,
+                            "name": parsed.name,
+                        }),
+                    };
+                    (
+                        CoreCliOperation::WorktreeCreate,
+                        text_route_path(CORE_API_ROUTES.worktree_create_text, parsed.json),
+                        Some(body),
+                    )
+                }
                 "prune" => (
                     CoreCliOperation::WorktreePrune,
                     text_route_path(CORE_API_ROUTES.worktree_prune_text, parsed.json),

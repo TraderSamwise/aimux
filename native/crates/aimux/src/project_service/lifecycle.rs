@@ -48,7 +48,9 @@ pub(crate) use restore_snapshot::{
 };
 #[cfg(test)]
 pub(crate) use runtime_adapter::AsyncProjectLifecycleRuntime;
-pub use runtime_adapter::{ProjectLifecycleRuntime, SystemProjectLifecycleRuntime};
+pub use runtime_adapter::{
+    PreparedPullRequestWorktree, ProjectLifecycleRuntime, SystemProjectLifecycleRuntime,
+};
 use services::*;
 use session_state::*;
 use teammates::*;

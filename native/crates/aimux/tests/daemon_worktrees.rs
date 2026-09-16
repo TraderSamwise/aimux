@@ -200,6 +200,39 @@ fn worktree_list_and_create_match_text_and_json_contracts() {
         text_body(created),
         "Created worktree \"feature\" at /repo/.aimux/worktrees/feature\n"
     );
+    assert_eq!(
+        runtime.calls.last().unwrap(),
+        &(
+            "/repo".into(),
+            project_routes::worktree_actions::CREATE.into(),
+            Some(json!({ "name": "feature" })),
+            None,
+        )
+    );
+
+    let created_pr = route_worktree_text_request(
+        &mut runtime,
+        "POST",
+        &format!(
+            "{}?project=/repo&name=review-123&pr=123",
+            CORE_API_ROUTES.worktree_create_text
+        ),
+        None,
+    )
+    .expect("worktree create pr");
+    assert_eq!(
+        text_body(created_pr),
+        "Created worktree \"review-123\" at /repo/.aimux/worktrees/review-123\n"
+    );
+    assert_eq!(
+        runtime.calls.last().unwrap(),
+        &(
+            "/repo".into(),
+            project_routes::worktree_actions::CREATE.into(),
+            Some(json!({ "name": "review-123", "pr": "123" })),
+            None,
+        )
+    );
 }
 
 #[test]

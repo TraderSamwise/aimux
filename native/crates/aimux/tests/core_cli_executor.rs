@@ -2830,6 +2830,17 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
         &args(&["worktree", "create", "feature", "--project=/repo"]),
         &mut runtime,
     );
+    let create_pr = run_core_cli_with(
+        &args(&[
+            "worktree",
+            "create",
+            "review-123",
+            "--project=/repo",
+            "--pr",
+            "123",
+        ]),
+        &mut runtime,
+    );
     let cleanup = run_core_cli_with(
         &args(&[
             "worktree",
@@ -2882,6 +2893,7 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
     for execution in [
         list,
         create,
+        create_pr,
         cleanup,
         remove,
         graveyard_worktree,
@@ -2904,6 +2916,10 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
             (
                 "/core/worktree/create-text".into(),
                 Some(json!({ "project": "/repo", "name": "feature" })),
+            ),
+            (
+                "/core/worktree/create-text".into(),
+                Some(json!({ "project": "/repo", "name": "review-123", "pr": 123 })),
             ),
             (
                 "/core/worktree/cache-cleanup-text?json=1".into(),
