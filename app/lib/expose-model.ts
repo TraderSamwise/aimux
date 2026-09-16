@@ -200,6 +200,13 @@ function toneFor(
   worktreeName: string,
   projectName: string,
 ): string {
+  if (item.roleState?.lane?.kind === "supervisor") {
+    return worktreeTone({
+      name: worktreeName,
+      projectRoot,
+      projectName,
+    });
+  }
   return worktreeTone({
     path: item.metadata?.worktreePath ?? projectRoot,
     name: worktreeName,
@@ -208,16 +215,54 @@ function toneFor(
   });
 }
 
-function supervisorRoleLabel(item: ExposeSourceItem): string {
-  const role =
-    item.roleState?.role ??
-    item.metadata?.role ??
-    item.label ??
-    item.metadata?.label ??
-    item.id ??
-    "supervisor";
-  const trimmed = role.trim();
-  return trimmed || "supervisor";
+function laneLabelFor(item: ExposeSourceItem, rawWorktreeName: string): string {
+  return item.roleState?.lane?.kind === "supervisor" ? "supervisor" : rawWorktreeName;
+}
+
+function exposeMixedSupervisorLabel(supervisorCount: number, baseLabel: string): string {
+  const supervisorLabel = supervisorCount === 1 ? "Supervisor" : "Supervisors";
+  const lowerBase = baseLabel.toLowerCase();
+  if (lowerBase.includes("worktree")) return `${supervisorLabel} + Worktrees`;
+  if (lowerBase.includes("project")) return `${supervisorLabel} + Projects`;
+  return `${supervisorLabel} + ${baseLabel}`;
+}
+
+export function exposeSetLabel(tiles: readonly ExposeTile[], baseLabel: string): string {
+  const supervisorCount = tiles.filter((tile) => tile.supervisorScoped).length;
+  if (supervisorCount === 0) return baseLabel;
+  if (supervisorCount === tiles.length) {
+    return supervisorCount === 1 ? "Supervisor" : "Supervisors";
+  }
+  return exposeMixedSupervisorLabel(supervisorCount, baseLabel);
+}
+
+function normalizedAgentLabel(agent: {
+  label: string;
+  command?: string;
+  toolConfigKey?: string;
+  id: string;
+  role?: string;
+}): string {
+  const tool = agentToolName(agent).trim();
+  const label = (tool || agentCompactIdentity(agent) || "agent").trim();
+  const stripped = label.replace(/\s*\([^)]*\)\s*$/u, "").trim();
+  return stripped || "agent";
+}
+
+function agentDisplayLabel(
+  agent: {
+    label: string;
+    command?: string;
+    toolConfigKey?: string;
+    id: string;
+    role?: string;
+  },
+  roleState: AgentRoleState | undefined,
+): string {
+  const base = normalizedAgentLabel(agent);
+  const role = (roleState?.role ?? agent.role ?? "").trim();
+  if (!roleState?.showRoleSuffix || !role) return base;
+  return `${base} (${role})`;
 }
 
 function orderedExposeTiles(tiles: ExposeTile[]): ExposeTile[] {
@@ -252,13 +297,8 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
       const projectRoot = item.projectRoot || source.project.path;
       const rawWorktreeName = context.worktree || "main";
       const supervisorScoped = item.roleState?.lane?.kind === "supervisor";
-      const supervisorLabel = supervisorScoped ? supervisorRoleLabel(item) : null;
-      const worktreeName = supervisorLabel ?? rawWorktreeName;
-      const semanticTitle = supervisorLabel
-        ? supervisorLabel
-        : context.project
-          ? `${projectName} / ${worktreeName}`
-          : worktreeName;
+      const worktreeName = laneLabelFor(item, rawWorktreeName);
+      const semanticTitle = context.project ? `${projectName} / ${worktreeName}` : worktreeName;
       const statusKind = normalizeStatusKind(item.exposeStatus?.kind);
       const label = item.label || metadata.label || item.id || "agent";
       const sessionId = metadata.sessionId || item.id || label;
@@ -270,6 +310,8 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         role: metadata.role,
       };
       const tool = agentToolName(agentDisplay);
+      const displayLabel =
+        metadata.kind === "service" ? label : agentDisplayLabel(agentDisplay, item.roleState);
       const kind = metadata.kind === "service" ? "service" : "agent";
       tiles.push({
         id: `${projectRoot}:${item.target?.windowId ?? item.id ?? index}`,
@@ -281,7 +323,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         windowId: item.target?.windowId,
         windowIndex: item.target?.windowIndex,
         label,
-        displayLabel: metadata.kind === "service" ? label : agentCompactIdentity(agentDisplay),
+        displayLabel,
         tool,
         role: metadata.role,
         shouldShowInExpose: declaredShouldShow,
@@ -294,13 +336,13 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         worktreeName,
         worktreePath: metadata.worktreePath,
         semanticTitle,
-        contextSubtitle: supervisorLabel
+        contextSubtitle: supervisorScoped
           ? "Supervisor Lane"
           : context.project
             ? projectName
             : source.project.name,
-        sectionKey: supervisorLabel
-          ? `${projectRoot}:supervisor:${supervisorLabel}`
+        sectionKey: supervisorScoped
+          ? `${projectRoot}:supervisor`
           : `${projectRoot}:${semanticTitle}`,
         sectionLabel: semanticTitle,
         tone: toneFor(item, projectRoot, worktreeName, projectName),
