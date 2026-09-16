@@ -432,26 +432,43 @@ fn restart_and_relay_commands_match_daemon_bus_contracts() {
     assert!(runtime.calls[0].starts_with("control:issued:"));
     assert!(runtime.calls[0].ends_with("/relative"));
 
-    let relay_status = json_body(route_core_command(
-        &mut runtime,
-        Some(&json!({ "id": "rs", "command": CORE_COMMAND_NAMES.relay_status })),
-        "issued",
-    ));
-    assert_eq!(relay_status["result"]["relay"]["status"], "connected");
+    #[cfg(not(feature = "remote-control"))]
+    {
+        let relay_status = json_body(route_core_command(
+            &mut runtime,
+            Some(&json!({ "id": "rs", "command": CORE_COMMAND_NAMES.relay_status })),
+            "issued",
+        ));
+        assert_eq!(
+            relay_status,
+            json!({ "ok": false, "id": "rs", "command": CORE_COMMAND_NAMES.relay_status, "error": "remote control commands are not available in the local build" })
+        );
+        return;
+    }
 
-    let relay_enable = json_body(route_core_command(
-        &mut runtime,
-        Some(&json!({ "id": "re", "command": CORE_COMMAND_NAMES.relay_enable })),
-        "issued",
-    ));
-    assert_eq!(relay_enable["result"]["relay"]["status"], "connected");
+    #[cfg(feature = "remote-control")]
+    {
+        let relay_status = json_body(route_core_command(
+            &mut runtime,
+            Some(&json!({ "id": "rs", "command": CORE_COMMAND_NAMES.relay_status })),
+            "issued",
+        ));
+        assert_eq!(relay_status["result"]["relay"]["status"], "connected");
 
-    let relay_disable = json_body(route_core_command(
-        &mut runtime,
-        Some(&json!({ "id": "rd", "command": CORE_COMMAND_NAMES.relay_disable })),
-        "issued",
-    ));
-    assert_eq!(relay_disable["result"]["relay"]["status"], "off");
+        let relay_enable = json_body(route_core_command(
+            &mut runtime,
+            Some(&json!({ "id": "re", "command": CORE_COMMAND_NAMES.relay_enable })),
+            "issued",
+        ));
+        assert_eq!(relay_enable["result"]["relay"]["status"], "connected");
+
+        let relay_disable = json_body(route_core_command(
+            &mut runtime,
+            Some(&json!({ "id": "rd", "command": CORE_COMMAND_NAMES.relay_disable })),
+            "issued",
+        ));
+        assert_eq!(relay_disable["result"]["relay"]["status"], "off");
+    }
 }
 
 #[test]
@@ -510,31 +527,48 @@ fn restart_core_command_forwards_force_to_preflight_and_locked_recheck() {
 
 #[test]
 fn relay_enable_requires_credentials_and_preserves_auth_failed_message() {
-    let mut no_credentials = FakeCoreRuntime {
-        credentials: false,
-        ..FakeCoreRuntime::default()
-    };
-    assert_eq!(
-        json_body(route_core_command(
-            &mut no_credentials,
-            Some(&json!({ "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable })),
-            "issued"
-        )),
-        json!({ "ok": false, "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable, "error": "Not logged in. Run `aimux login` first." })
-    );
+    #[cfg(not(feature = "remote-control"))]
+    {
+        let mut runtime = FakeCoreRuntime::default();
+        assert_eq!(
+            json_body(route_core_command(
+                &mut runtime,
+                Some(&json!({ "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable })),
+                "issued"
+            )),
+            json!({ "ok": false, "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable, "error": "remote control commands are not available in the local build" })
+        );
+        return;
+    }
 
-    let mut auth_failed = FakeCoreRuntime {
-        relay: json!({ "status": "auth_failed", "lastError": "bad token" }),
-        ..FakeCoreRuntime::default()
-    };
-    assert_eq!(
-        json_body(route_core_command(
-            &mut auth_failed,
-            Some(&json!({ "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable })),
-            "issued"
-        )),
-        json!({ "ok": false, "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable, "error": "bad token" })
-    );
+    #[cfg(feature = "remote-control")]
+    {
+        let mut no_credentials = FakeCoreRuntime {
+            credentials: false,
+            ..FakeCoreRuntime::default()
+        };
+        assert_eq!(
+            json_body(route_core_command(
+                &mut no_credentials,
+                Some(&json!({ "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable })),
+                "issued"
+            )),
+            json!({ "ok": false, "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable, "error": "Not logged in. Run `aimux login` first." })
+        );
+
+        let mut auth_failed = FakeCoreRuntime {
+            relay: json!({ "status": "auth_failed", "lastError": "bad token" }),
+            ..FakeCoreRuntime::default()
+        };
+        assert_eq!(
+            json_body(route_core_command(
+                &mut auth_failed,
+                Some(&json!({ "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable })),
+                "issued"
+            )),
+            json!({ "ok": false, "id": "relay", "command": CORE_COMMAND_NAMES.relay_enable, "error": "bad token" })
+        );
+    }
 }
 
 #[test]

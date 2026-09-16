@@ -1,6 +1,4 @@
 pub mod agents;
-#[cfg(feature = "remote-control")]
-pub mod auth;
 pub mod collaboration;
 pub mod host_agent;
 pub mod metadata;
