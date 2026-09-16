@@ -71,6 +71,7 @@ Primary source-build sequence:
 
 ```bash
 yarn install --frozen-lockfile
+yarn --cwd app install --frozen-lockfile
 yarn release:source:local
 ```
 
