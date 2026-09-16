@@ -18,7 +18,7 @@ pub fn build_info() -> BuildInfo {
             if cfg!(feature = "remote-control") {
                 "full"
             } else {
-                "lite"
+                "local"
             },
         ),
         zero_node_cli_target: true,

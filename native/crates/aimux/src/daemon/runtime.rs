@@ -4052,7 +4052,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         #[cfg(not(feature = "remote-control"))]
         {
             let _ = payload;
-            return json!({ "ok": true, "suppressed": true, "reason": "remote_unavailable_in_lite_build" });
+            return json!({ "ok": true, "suppressed": true, "reason": "remote_unavailable_in_local_build" });
         }
         #[cfg(feature = "remote-control")]
         let notification = crate::remote::mobile_push_bridge::relay_notification(payload);

@@ -19,8 +19,8 @@ forges, and other services. A local-only Aimux build can at most prove that
 Aimux itself does not upload Aimux-managed data. The spawned agents remain a
 separate user and corporate trust decision.
 
-The existing lite boundary currently proves only that the `remote-control` Cargo
-feature is absent from the lite binary. It does not prove that disk state is
+The existing local boundary currently proves only that the `remote-control` Cargo
+feature is absent from the local binary. It does not prove that disk state is
 private, retained for an acceptable period, excluded from Git, or covered by a
 data-exfiltration allowlist.
 
@@ -40,7 +40,7 @@ sed -n '1,180p' native/crates/aimux/src/recording_cleanup.rs
 sed -n '1,260p' native/crates/aimux/src/config.rs
 sed -n '1,260p' native/crates/aimux/src/atomic_write.rs
 sed -n '1,140p' native/crates/aimux/src/remote_credentials.rs
-sed -n '120,210p' scripts/check-lite-build-boundary.sh
+sed -n '120,210p' scripts/check-local-build-boundary.sh
 sed -n '3860,3910p' native/crates/aimux/src/daemon/runtime.rs
 ```
 
@@ -281,19 +281,19 @@ Gaps:
 - `~/.aimux/projects/*` directories accumulate state across projects and test
   runs; I found many historical project directories.
 
-### 7. Lite exfiltration is only partially provable today
+### 7. Local exfiltration is only partially provable today
 
 Severity: medium.
 
 What is proven by existing checks:
 
-- `scripts/check-lite-build-boundary.sh` builds/checks the lite variant with
+- `scripts/check-local-build-boundary.sh` builds/checks the local variant with
   `--no-default-features`.
-- It fails if the lite Cargo tree contains `tokio-tungstenite`, `tungstenite`,
+- It fails if the local Cargo tree contains `tokio-tungstenite`, `tungstenite`,
   or `ureq`.
-- It fails if lite `--help` exposes `remote`, `hosted`, `login`, `logout`,
+- It fails if local `--help` exposes `remote`, `hosted`, `login`, `logout`,
   `whoami`, or `security` commands.
-- It fails if lite binary strings contain relay/remote markers such as
+- It fails if local binary strings contain relay/remote markers such as
   `AIMUX_RELAY_URL`, `wss://relay.aimux.app`, `relay_client`,
   `tokio-tungstenite`, `tungstenite`, or `ureq`.
 - In source, attachment relay hosting is behind `#[cfg(feature =
@@ -303,7 +303,7 @@ What is proven by existing checks:
 What is not yet proven:
 
 - There is no dedicated gate that enumerates sensitive stores and fails if a
-  lite binary opens any outbound path from those stores.
+  local binary opens any outbound path from those stores.
 - There is no runtime network-denied proof in this audit for "Aimux did real
   local work while no non-loopback egress occurred." That evidence belongs to
   the network-surface workstream and was requested from `codex-v987zd`. An
@@ -312,7 +312,7 @@ What is not yet proven:
   completed evidence.
 - There is no mutation proof that adding an upload from `.aimux/context`,
   `.aimux/history`, `.aimux/attachments`, `~/.aimux/projects/*/metadata.json`,
-  or logs would fail a data-exfiltration gate. The current lite boundary would
+  or logs would fail a data-exfiltration gate. The current local boundary would
   likely catch some relay/remote regressions, but it is not expressed as a
   sensitive-data exfiltration policy.
 
@@ -334,13 +334,13 @@ What is not yet proven:
 | `~/.aimux/hosted` | Hosted/remote mode principals, audit, devices, lockdown/outbox paths by resolver | not fully sampled here | Outside repo | Several hosted files use `0600` and hosted dirs use `0700` in code |
 | `/tmp` and temp dirs | Build/test temp dirs, cargo target dirs, script temp output, launchd sweep stdout/stderr paths | inherited from creating process | Outside repo | Usually caller/script lifecycle; not an Aimux sensitive-store policy |
 
-## Exfiltration Assessment For Lite
+## Exfiltration Assessment For Local
 
 Current honest verdict: **not yet provably local-only for data**.
 
-The lite build has meaningful remote-control absence evidence, and the specific
+The local build has meaningful remote-control absence evidence, and the specific
 attachment hosting upload path is compiled to a no-op when `remote-control` is
-absent. That supports a narrow claim: the lite Aimux binary should not contain
+absent. That supports a narrow claim: the local Aimux binary should not contain
 the existing relay remote-control client or relay attachment upload code.
 
 That is not enough for a corporate data-at-rest/exfiltration claim. The current
@@ -373,7 +373,7 @@ non-relay uploader that reads context/history/attachments/logs.
 3. Sensitive-store egress gate.
 
    Maintain an explicit list of sensitive stores and run static plus runtime
-   checks for lite:
+   checks for local:
 
    - `.aimux/context`
    - `.aimux/history`
@@ -389,14 +389,14 @@ non-relay uploader that reads context/history/attachments/logs.
    - `~/.aimux/hosted`
    - Aimux logs and temp spools
 
-   The gate should fail if lite contains outbound HTTP/WebSocket/DNS clients or
+   The gate should fail if local contains outbound HTTP/WebSocket/DNS clients or
    if any new outbound route reads from those stores. Mutation proof: add a
    test-only or feature-guarded uploader from `.aimux/attachments` or
-   `.aimux/history` and verify the lite boundary fails.
+   `.aimux/history` and verify the local boundary fails.
 
 4. Runtime network-denied gate.
 
-   Run a real lite binary in an isolated runtime while loopback is allowed and
+   Run a real local binary in an isolated runtime while loopback is allowed and
    non-loopback egress is denied/monitored. Exercise project discovery,
    dashboard/service startup, agent inventory without launching network agent
    CLIs, attachment storage, context/history read/write, graveyard read/write,
@@ -425,10 +425,10 @@ Aimux currently writes sensitive source-work data in plaintext under both the
 project checkout and `~/.aimux`. On the audited machine, most of those files are
 group/world-readable. Project-local data is protected from commits in Sam's repo
 by repo/global ignore rules, but Aimux's generated ignore is not a sufficient
-first-use protection in an arbitrary corporate repo. Lite builds remove the
+first-use protection in an arbitrary corporate repo. Local builds remove the
 existing remote-control/relay code path, including relay attachment hosting, but
 there is not yet a data-specific exfiltration gate with mutation proof.
 
-The correct security-review position today is: **lite Aimux has remote-control
+The correct security-review position today is: **local Aimux has remote-control
 compiled out, but Aimux is not yet provably local-only for data at rest or data
 exfiltration.**
