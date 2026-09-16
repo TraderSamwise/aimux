@@ -124,6 +124,7 @@ function releaseScriptEnv(root, extra = {}) {
     mkdir: runOk("bash", ["-lc", "command -v mkdir"]).stdout.trim(),
     mktemp: runOk("bash", ["-lc", "command -v mktemp"]).stdout.trim(),
     node: runOk("bash", ["-lc", "command -v node"]).stdout.trim(),
+    python3: runOk("bash", ["-lc", "command -v python3"]).stdout.trim(),
     rm: runOk("bash", ["-lc", "command -v rm"]).stdout.trim(),
     sed: runOk("bash", ["-lc", "command -v sed"]).stdout.trim(),
     shasum: runOk("bash", ["-lc", "command -v shasum"]).stdout.trim(),
@@ -450,38 +451,25 @@ describe("verify-release-asset-set.sh", () => {
         2,
       )}\n`,
     );
-    writeFileSync(
+    runOk("python3", [
+      join(repoRoot, "scripts/generate-cargo-sbom.py"),
+      "--manifest-path",
+      join(repoRoot, "native/Cargo.toml"),
+      "--asset",
+      asset,
+      "--asset-sha256",
+      shaValue,
+      "--version",
+      "0.1.34",
+      "--source-revision",
+      "1234567890abcdef1234567890abcdef12345678",
+      "--variant",
+      variant,
+      "--platform-arch",
+      platformArch,
+      "--output",
       join(root, `${asset}.sbom.spdx.json`),
-      `${JSON.stringify(
-        {
-          spdxVersion: "SPDX-2.3",
-          dataLicense: "CC0-1.0",
-          SPDXID: "SPDXRef-DOCUMENT",
-          name: `${asset}.sbom`,
-          documentNamespace: `https://aimux.app/sbom/test/${asset}/${shaValue}`,
-          creationInfo: {
-            created: "2026-09-16T00:00:00Z",
-            creators: ["Tool: fixture"],
-          },
-          documentDescribes: ["SPDXRef-aimux"],
-          packages: [
-            {
-              name: "aimux",
-              SPDXID: "SPDXRef-aimux",
-              versionInfo: "0.1.34",
-              downloadLocation: "NOASSERTION",
-              filesAnalyzed: false,
-              supplier: "Organization: Aimux",
-              licenseConcluded: "NOASSERTION",
-              licenseDeclared: "MIT",
-              copyrightText: "NOASSERTION",
-            },
-          ],
-        },
-        null,
-        2,
-      )}\n`,
-    );
+    ]);
   }
 
   function writeAssetSet(root, omitted = undefined) {
@@ -595,6 +583,26 @@ describe("verify-release-asset-set.sh", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("release provenance verification failed");
       expect(result.stderr).toContain("provenance sha256 mismatch");
+      expect(result.stderr).toContain(asset);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an SBOM whose dependency set does not match the asset variant", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
+    try {
+      writeAssetSet(root);
+      const asset = "aimux-lite-linux-x64.tar.gz";
+      const sbomPath = join(root, `${asset}.sbom.spdx.json`);
+      const sbom = JSON.parse(readFileSync(sbomPath, "utf8"));
+      sbom.packages = sbom.packages.filter((entry) => entry.name === "aimux");
+      writeFileSync(sbomPath, `${JSON.stringify(sbom, null, 2)}\n`);
+
+      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("SBOM dependency set mismatch");
       expect(result.stderr).toContain(asset);
     } finally {
       rmSync(root, { recursive: true, force: true });

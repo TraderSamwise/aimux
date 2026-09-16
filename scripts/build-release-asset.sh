@@ -30,7 +30,7 @@ need() {
 
 append_standard_path_dirs
 
-for command in dirname awk grep uname mktemp date cat shasum find sort cargo mkdir cp tar gzip bash chmod rm node; do
+for command in dirname awk grep uname mktemp date cat shasum find sort cargo mkdir cp tar gzip bash chmod rm node python3; do
   need "$command"
 done
 

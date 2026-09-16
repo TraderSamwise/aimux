@@ -18,7 +18,7 @@ if [ "$#" -ne 4 ]; then
   fail "usage: scripts/verify-release-provenance.sh <release-dir> <asset> <platform-arch> <full|lite>"
 fi
 
-for command in awk grep shasum sed; do
+for command in awk grep python3 shasum sed; do
   need "$command"
 done
 
@@ -35,6 +35,7 @@ ASSET_PATH="$RELEASE_DIR/$ASSET"
 SHA_PATH="$RELEASE_DIR/$ASSET.sha256"
 PROVENANCE_PATH="$RELEASE_DIR/$ASSET.provenance.json"
 SBOM_PATH="$RELEASE_DIR/$ASSET.sbom.spdx.json"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 for pair in \
   "asset:$ASSET_PATH" \
@@ -84,6 +85,10 @@ revision="$(sed -n 's/.*"revision": "\([^"]*\)".*/\1/p' "$PROVENANCE_PATH" | sed
 if ! printf '%s\n' "$revision" | grep -Eq '^[0-9a-fA-F]{40}$'; then
   fail "provenance source revision is missing or not a git sha for $ASSET"
 fi
+version="$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$PROVENANCE_PATH" | sed -n '1p')"
+if [ -z "$version" ]; then
+  fail "provenance version is missing for $ASSET"
+fi
 for gate in assetSet boundary attestation; do
   if ! grep -F "\"$gate\":" "$PROVENANCE_PATH" >/dev/null 2>&1; then
     fail "provenance gate $gate is missing for $ASSET"
@@ -97,6 +102,17 @@ if ! grep -F '"packages": [' "$SBOM_PATH" >/dev/null 2>&1; then
 fi
 if ! grep -F '"documentDescribes": [' "$SBOM_PATH" >/dev/null 2>&1; then
   fail "SBOM documentDescribes is empty for $ASSET"
+fi
+if ! python3 "$ROOT_DIR/scripts/generate-cargo-sbom.py" \
+  --manifest-path "$ROOT_DIR/native/Cargo.toml" \
+  --asset "$ASSET" \
+  --asset-sha256 "$actual_sha" \
+  --version "$version" \
+  --source-revision "$revision" \
+  --variant "$EXPECTED_VARIANT" \
+  --platform-arch "$PLATFORM_ARCH" \
+  --verify "$SBOM_PATH"; then
+  fail "SBOM dependency set verification failed for $ASSET"
 fi
 
 printf 'release provenance verified for %s\n' "$ASSET"

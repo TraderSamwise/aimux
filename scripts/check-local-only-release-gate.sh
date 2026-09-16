@@ -68,8 +68,12 @@ check_lite_boundary() {
 check_release_provenance_gate() {
   require_file "scripts/write-release-provenance.sh" "release provenance generator"
   require_file "scripts/verify-release-provenance.sh" "release provenance verifier"
+  require_file "scripts/generate-cargo-sbom.py" "Cargo SPDX SBOM generator"
   require_contains "scripts/build-release-asset.sh" "write-release-provenance.sh" "per-asset provenance/SBOM generation"
   require_contains "scripts/verify-release-asset-set.sh" "verify-release-provenance.sh" "provenance/SBOM asset-set verification"
+  require_contains "scripts/verify-release-provenance.sh" "generate-cargo-sbom.py" "regenerated SBOM dependency-set verification"
+  require_contains "scripts/generate-cargo-sbom.py" "SBOM dependency set mismatch" "loud SBOM dependency mismatch error"
+  require_contains "scripts/generate-cargo-sbom.py" "no-default-features" "lite SBOM feature-set separation"
   require_contains "scripts/verify-release-asset-set.sh" "missing release SBOM file" "distinct missing SBOM error"
   require_contains "scripts/verify-release-asset-set.sh" "missing release provenance file" "distinct missing provenance error"
 

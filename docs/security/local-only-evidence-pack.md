@@ -153,12 +153,44 @@ The gate verifies:
 - every archive `BUILD_VARIANT` matches its lane;
 - every `.provenance.json` exists and names the same artifact, SHA256,
   variant, platform, and git revision;
-- every `.sbom.spdx.json` exists and is a nonempty SPDX 2.3 document.
+- every `.sbom.spdx.json` exists, is SPDX 2.3, and matches the Cargo
+  dependency graph for that asset's `full` or `lite` feature set.
 
 Violation behavior: the gate exits nonzero and names the exact asset and
 comparison, for example `checksum mismatch for release asset`, `release asset
-is not a readable tar.gz archive`, `missing release SBOM file`, or
-`provenance sha256 mismatch`.
+is not a readable tar.gz archive`, `missing release SBOM file`,
+`provenance sha256 mismatch`, or `SBOM dependency set mismatch`.
+
+### Full And Lite SBOMs Are Reproducible
+
+Property: the full and lite release lanes publish separate standard SPDX 2.3
+SBOMs generated from the same Cargo graph used to compile that lane. Lite SBOMs
+are generated with `--no-default-features`; full SBOMs are generated with the
+default feature set. A reviewer can rerun the generator from the tagged source
+without installing `cargo-cyclonedx` or any Node helper:
+
+```bash
+python3 scripts/generate-cargo-sbom.py \
+  --manifest-path native/Cargo.toml \
+  --asset aimux-lite-darwin-arm64.tar.gz \
+  --asset-sha256 <archive-sha256> \
+  --version <release-version> \
+  --source-revision <tag-commit-sha> \
+  --variant lite \
+  --platform-arch darwin-arm64 \
+  --output /tmp/aimux-lite-darwin-arm64.tar.gz.sbom.spdx.json
+```
+
+Enforcing checks:
+
+```bash
+bash scripts/verify-release-provenance.sh <release-dir> <asset> <platform-arch> <variant>
+bash scripts/verify-release-asset-set.sh <release-dir>
+```
+
+`verify-release-provenance.sh` regenerates the expected SPDX package set with
+`scripts/generate-cargo-sbom.py` and rejects a published SBOM whose package or
+dependency relationship set does not match the selected variant.
 
 ### Release Artifacts Carry Verifiable Provenance
 
@@ -173,9 +205,9 @@ bash scripts/verify-release-provenance.sh <release-dir> <asset> <platform-arch> 
 gh attestation verify <asset> --repo TraderSamwise/aimux
 ```
 
-The release workflow generates per-asset provenance JSON and an SPDX SBOM,
-uploads both beside the archive, and uses GitHub artifact attestations for the
-archive plus companion files. The `verify-release-assets` job downloads the
+The release workflow generates per-asset provenance JSON and a per-variant SPDX
+SBOM, uploads both beside the archive, and uses GitHub artifact attestations for
+the archive plus companion files. The `verify-release-assets` job downloads the
 complete set, verifies content locally, then verifies the published
 attestations before npm or Homebrew jobs can run.
 

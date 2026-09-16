@@ -22,7 +22,7 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-for command in grep shasum tar mktemp rm sed; do
+for command in grep python3 shasum tar mktemp rm sed; do
   need "$command"
 done
 

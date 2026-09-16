@@ -94,7 +94,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-for command in awk basename date grep shasum; do
+for command in awk basename date grep python3 shasum; do
   need "$command"
 done
 
@@ -127,6 +127,7 @@ fi
 
 ASSET_PATH="$RELEASE_DIR/$ASSET"
 [ -f "$ASSET_PATH" ] || fail "asset not found: $ASSET_PATH"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ASSET_SHA256="$(shasum -a 256 "$ASSET_PATH" | awk '{ print $1 }')"
 CREATED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 PROVENANCE_PATH="$RELEASE_DIR/$ASSET.provenance.json"
@@ -165,40 +166,14 @@ cat > "$PROVENANCE_PATH" <<JSON
 }
 JSON
 
-cat > "$SBOM_PATH" <<JSON
-{
-  "spdxVersion": "SPDX-2.3",
-  "dataLicense": "CC0-1.0",
-  "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "$(json_string "$ASSET_BASENAME").sbom",
-  "documentNamespace": "https://aimux.app/sbom/$SOURCE_REVISION/$(json_string "$ASSET_BASENAME")/$ASSET_SHA256",
-  "creationInfo": {
-    "created": "$CREATED_AT",
-    "creators": ["Tool: scripts/write-release-provenance.sh"]
-  },
-  "documentDescribes": ["SPDXRef-aimux"],
-  "packages": [
-    {
-      "name": "aimux",
-      "SPDXID": "SPDXRef-aimux",
-      "versionInfo": "$(json_string "$VERSION")",
-      "downloadLocation": "NOASSERTION",
-      "filesAnalyzed": false,
-      "supplier": "Organization: Aimux",
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "MIT",
-      "copyrightText": "NOASSERTION",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:cargo/aimux@$(json_string "$VERSION")"
-        }
-      ]
-    }
-  ]
-}
-JSON
+python3 "$ROOT_DIR/scripts/generate-cargo-sbom.py" \
+  --manifest-path "$ROOT_DIR/native/Cargo.toml" \
+  --asset "$ASSET_BASENAME" \
+  --asset-sha256 "$ASSET_SHA256" \
+  --version "$VERSION" \
+  --source-revision "$SOURCE_REVISION" \
+  --variant "$BUILD_VARIANT" \
+  --platform-arch "$PLATFORM_ARCH" \
+  --output "$SBOM_PATH"
 
 printf 'Wrote %s\n' "$PROVENANCE_PATH"
-printf 'Wrote %s\n' "$SBOM_PATH"
