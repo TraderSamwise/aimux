@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use crate::atomic_write::write_text_atomic;
+use crate::secure_permissions;
 
 use super::exchange_retention::{
     compact_runtime_exchange, count_runtime_exchange_bytes, count_runtime_exchange_records,
@@ -383,15 +384,19 @@ struct RuntimeExchangeLock {
 impl RuntimeExchangeLock {
     fn acquire(path: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            secure_permissions::ensure_private_dir(parent).map_err(|error| error.to_string())?;
         }
         let lock_path = PathBuf::from(format!("{}.lock", path.to_string_lossy()));
         let started = SystemTime::now();
         loop {
             match fs::create_dir(&lock_path) {
                 Ok(()) => {
+                    secure_permissions::ensure_private_dir(&lock_path)
+                        .map_err(|error| error.to_string())?;
                     let owner = lock_path.join("owner");
-                    if let Err(error) = fs::write(&owner, format!("{}\n", std::process::id())) {
+                    if let Err(error) =
+                        write_text_atomic(&owner, format!("{}\n", std::process::id()))
+                    {
                         let _ = fs::remove_dir_all(&lock_path);
                         return Err(error.to_string());
                     }

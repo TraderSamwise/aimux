@@ -1,4 +1,5 @@
 use crate::paths::PathResolver;
+use crate::secure_permissions;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -50,9 +51,7 @@ pub fn read_last_log_lines(path: impl AsRef<Path>, lines: usize) -> String {
 }
 
 pub fn clear_log_file(path: impl AsRef<Path>) -> io::Result<()> {
-    let path = path.as_ref();
-    fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new(".")))?;
-    fs::write(path, [])
+    secure_permissions::truncate_private_file(path)
 }
 
 fn parse_js_parse_int_10(value: &str) -> Option<i64> {

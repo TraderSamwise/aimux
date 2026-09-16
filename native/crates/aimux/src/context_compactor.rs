@@ -1,11 +1,13 @@
 use crate::async_subprocess::{AsyncCommand, AsyncCommandError, command_task_name};
+use crate::atomic_write::{write_json_atomic, write_text_atomic};
 use crate::config::load_config_for_project;
+use crate::secure_permissions;
 use crate::shell_hooks::shell_quote;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -136,12 +138,14 @@ pub fn llm_compact_with_runner(
 ) -> CompactReport {
     let project_root = project_root.as_ref();
     let base_dir = context_dir(project_root);
-    let base_dir_error = fs::create_dir_all(&base_dir).err().map(|error| {
-        format!(
-            "failed to create context directory {}: {error}",
-            base_dir.display()
-        )
-    });
+    let base_dir_error = secure_permissions::ensure_private_dir(&base_dir)
+        .err()
+        .map(|error| {
+            format!(
+                "failed to create context directory {}: {error}",
+                base_dir.display()
+            )
+        });
     let mut sessions = Vec::new();
 
     for session_id in session_ids {
@@ -183,7 +187,7 @@ pub fn llm_compact_with_runner(
             continue;
         }
         let session_dir = base_dir.join(session_id);
-        if let Err(error) = fs::create_dir_all(&session_dir) {
+        if let Err(error) = secure_permissions::ensure_private_dir(&session_dir) {
             sessions.push(CompactSessionReport {
                 session_id: session_id.clone(),
                 status: CompactSessionStatus::Failed {
@@ -279,12 +283,14 @@ pub fn algorithmic_compact(
 ) -> CompactReport {
     let project_root = project_root.as_ref();
     let base_dir = context_dir(project_root);
-    let base_dir_error = fs::create_dir_all(&base_dir).err().map(|error| {
-        format!(
-            "failed to create context directory {}: {error}",
-            base_dir.display()
-        )
-    });
+    let base_dir_error = secure_permissions::ensure_private_dir(&base_dir)
+        .err()
+        .map(|error| {
+            format!(
+                "failed to create context directory {}: {error}",
+                base_dir.display()
+            )
+        });
     let mut sessions = Vec::new();
 
     for session_id in session_ids {
@@ -323,7 +329,7 @@ pub fn algorithmic_compact(
             continue;
         }
         let session_dir = base_dir.join(session_id);
-        let status = match fs::create_dir_all(&session_dir)
+        let status = match secure_permissions::ensure_private_dir(&session_dir)
             .map_err(|error| {
                 format!(
                     "failed to create session context directory {}: {error}",
@@ -612,21 +618,13 @@ fn write_summary_artifacts(
     let summary_with_header = with_summary_header(summary, &provenance);
     provenance.summary_bytes = summary_with_header.len();
 
-    fs::write(session_dir.join("summary.md"), summary_with_header)
+    write_text_atomic(session_dir.join("summary.md"), summary_with_header)
         .map_err(|error| error.to_string())?;
-    fs::write(
-        session_dir.join("summary.meta.json"),
-        format!(
-            "{}\n",
-            serde_json::to_string_pretty(&provenance).map_err(|error| error.to_string())?
-        ),
-    )
-    .map_err(|error| error.to_string())?;
-    let mut checkpoints = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(session_dir.join("summary.checkpoints.jsonl"))
+    write_json_atomic(session_dir.join("summary.meta.json"), &provenance)
         .map_err(|error| error.to_string())?;
+    let mut checkpoints =
+        secure_permissions::open_private_append(session_dir.join("summary.checkpoints.jsonl"))
+            .map_err(|error| error.to_string())?;
     writeln!(
         checkpoints,
         "{}",
@@ -719,7 +717,8 @@ fn read_history_text(path: &Path, max_bytes: usize) -> Result<String, String> {
 
 fn run_shell_command(command: &str, input: &str) -> Result<String, String> {
     let input_path = temp_compact_input_path();
-    fs::write(&input_path, input).map_err(|error| error.to_string())?;
+    secure_permissions::write_private_file_without_parent_chmod(&input_path, input)
+        .map_err(|error| error.to_string())?;
     let shell_command = format!(
         "{} < {}",
         command,

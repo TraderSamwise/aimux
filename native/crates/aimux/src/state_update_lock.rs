@@ -11,6 +11,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use crate::atomic_write::write_text_atomic;
+use crate::secure_permissions;
+
 /// A lock older than this is assumed to belong to a process that died holding it.
 const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
 /// How long to keep retrying a held lock before giving up.
@@ -82,15 +85,18 @@ fn read_owner(lock_path: &Path) -> Option<String> {
 /// reclaiming it if it has gone stale.
 pub fn acquire_state_update_lock(path: &Path) -> Result<StateUpdateLock, String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        secure_permissions::ensure_private_dir(parent).map_err(|error| error.to_string())?;
     }
     let lock_path = state_update_lock_path(path);
     let deadline = SystemTime::now() + ACQUIRE_TIMEOUT;
     loop {
         match fs::create_dir(&lock_path) {
             Ok(()) => {
+                secure_permissions::ensure_private_dir(&lock_path)
+                    .map_err(|error| error.to_string())?;
                 let owner = owner_token();
-                fs::write(owner_path(&lock_path), &owner).map_err(|error| error.to_string())?;
+                write_text_atomic(owner_path(&lock_path), &owner)
+                    .map_err(|error| error.to_string())?;
                 return Ok(StateUpdateLock {
                     path: lock_path,
                     owner,

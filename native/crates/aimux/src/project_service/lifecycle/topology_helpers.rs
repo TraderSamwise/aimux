@@ -1,7 +1,9 @@
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
+use crate::atomic_write::write_text_atomic;
 use crate::paths::compute_project_id;
+use crate::secure_permissions;
 
 use super::LIVE_STATUSES;
 use super::ids::now_iso;
@@ -168,7 +170,7 @@ pub(super) fn suppress_next_shell_reports(
         return;
     }
     let dir = project_state_dir.as_ref().join("shell-state-suppress");
-    if std::fs::create_dir_all(&dir).is_ok() {
-        let _ = std::fs::write(dir.join(session_id), count.max(1).to_string());
+    if secure_permissions::ensure_private_dir(&dir).is_ok() {
+        let _ = write_text_atomic(dir.join(session_id), count.max(1).to_string());
     }
 }

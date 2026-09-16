@@ -1,3 +1,4 @@
+use crate::secure_permissions;
 use crate::tmux::{TmuxRuntimeManager, TmuxTarget, pane_pipe_ownership_script};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -194,7 +195,7 @@ impl<T: ExposePaneOutputTapTmux> ExposePaneOutputTap<T> {
             return;
         }
         self.running = true;
-        let _ = fs::create_dir_all(&self.tap_dir);
+        let _ = secure_permissions::ensure_private_dir(&self.tap_dir);
     }
 
     pub fn stop(&mut self) {
@@ -226,7 +227,7 @@ impl<T: ExposePaneOutputTapTmux> ExposePaneOutputTap<T> {
         if items.is_empty() {
             return;
         }
-        if fs::create_dir_all(&self.tap_dir).is_err() {
+        if secure_permissions::ensure_private_dir(&self.tap_dir).is_err() {
             return;
         }
         let expires_at = now + self.active_ms;
@@ -367,7 +368,10 @@ impl<T: ExposePaneOutputTapTmux> ExposePaneOutputTap<T> {
             let token = new_token();
             let _ = fs::remove_file(&file_path);
             let _ = fs::remove_file(&token_file_path);
-            fs::write(&file_path, b"").map_err(|error| error.to_string())?;
+            secure_permissions::truncate_private_file(&file_path)
+                .map_err(|error| error.to_string())?;
+            secure_permissions::truncate_private_file(&token_file_path)
+                .map_err(|error| error.to_string())?;
             self.tmux.pipe_target_to_file(
                 &item.target,
                 &file_path,
@@ -491,7 +495,7 @@ impl<T: ExposePaneOutputTapTmux> ExposePaneOutputTap<T> {
         if tail.total_bytes <= self.max_bytes {
             return;
         }
-        let _ = fs::write(file_path, tail.buffer);
+        let _ = secure_permissions::write_private_file_without_parent_chmod(file_path, tail.buffer);
     }
 
     fn compact_tracked_files(&self, now: i64) {

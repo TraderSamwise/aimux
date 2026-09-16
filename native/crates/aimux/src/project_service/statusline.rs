@@ -13,6 +13,7 @@ use crate::dashboard_ui_state::DashboardUiStatePersistence;
 use crate::paths::basename_like_node_posix;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
+use crate::secure_permissions;
 use crate::team_contract::{
     is_overseer_session, is_project_control_session as team_is_project_control_session,
     is_scribe_session, project_control_display_role,
@@ -392,7 +393,7 @@ fn write_precomputed_tmux_statusline_files(
     client_session: Option<&str>,
 ) -> Result<(), String> {
     let status_dir = tmux_statusline_dir(project_state_dir.as_ref());
-    fs::create_dir_all(&status_dir).map_err(|error| error.to_string())?;
+    secure_permissions::ensure_private_dir(&status_dir).map_err(|error| error.to_string())?;
     write_statusline_text(
         &status_dir,
         "top-dashboard.txt",

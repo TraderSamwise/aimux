@@ -6,6 +6,7 @@ use crate::atomic_write::write_text_atomic;
 use crate::project_service::plans::{
     plan_authority_path_for_project_root, read_plan_content, write_plan_content,
 };
+use crate::secure_permissions;
 
 pub const LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES: usize = 8000;
 
@@ -271,7 +272,7 @@ pub fn cap_launch_preamble_for_argv(
         .join(session_id)
         .join("launch-preamble.md");
     if let Some(parent) = overflow_path.parent()
-        && fs::create_dir_all(parent).is_ok()
+        && secure_permissions::ensure_private_dir(parent).is_ok()
         && write_text_atomic(
             &overflow_path,
             if preamble.ends_with('\n') {
@@ -338,19 +339,23 @@ pub fn seed_fork_artifacts(
     let target_history = history_dir(project_root).join(format!("{target_session_id}.jsonl"));
     if source_history.exists() && !target_history.exists() {
         if let Some(parent) = target_history.parent() {
-            let _ = fs::create_dir_all(parent);
+            let _ = secure_permissions::ensure_private_dir(parent);
         }
-        let _ = fs::copy(source_history, target_history);
+        if fs::copy(source_history, &target_history).is_ok() {
+            let _ = secure_permissions::set_private_file_mode(&target_history);
+        }
     }
     let target_context = context_dir(project_root).join(target_session_id);
-    let _ = fs::create_dir_all(&target_context);
+    let _ = secure_permissions::ensure_private_dir(&target_context);
     let source_status = status_dir(project_root).join(format!("{source_session_id}.md"));
     let target_status = status_dir(project_root).join(format!("{target_session_id}.md"));
     if source_status.exists() && !target_status.exists() {
         if let Some(parent) = target_status.parent() {
-            let _ = fs::create_dir_all(parent);
+            let _ = secure_permissions::ensure_private_dir(parent);
         }
-        let _ = fs::copy(source_status, target_status);
+        if fs::copy(source_status, &target_status).is_ok() {
+            let _ = secure_permissions::set_private_file_mode(&target_status);
+        }
     } else if !target_status.exists()
         && let Some(status) = snapshot.status_text.as_deref()
     {

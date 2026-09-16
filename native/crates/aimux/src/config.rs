@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::atomic_write::{write_json_atomic, write_text_atomic};
 use crate::paths::PathResolver;
+use crate::secure_permissions;
 
 const GITIGNORE_CONTENTS: &str =
     "# Runtime-private service/project state (lives in ~/.aimux/projects/)
@@ -246,9 +247,10 @@ pub fn init_project_with_resolver(
 ) -> Result<(), String> {
     let project_root = project_root.as_ref();
     let local_dir = resolver.aimux_dir_for(project_root);
-    std::fs::create_dir_all(&local_dir).map_err(|error| error.to_string())?;
-    for subdir in ["plans", "context", "history", "status"] {
-        std::fs::create_dir_all(local_dir.join(subdir)).map_err(|error| error.to_string())?;
+    secure_permissions::ensure_private_dir(&local_dir).map_err(|error| error.to_string())?;
+    for subdir in secure_permissions::local_aimux_sensitive_dirs() {
+        secure_permissions::ensure_private_dir(local_dir.join(subdir))
+            .map_err(|error| error.to_string())?;
     }
 
     let config_path = resolver.config_path_for(project_root);
@@ -260,6 +262,8 @@ pub fn init_project_with_resolver(
     if !gitignore_path.exists() {
         write_text_atomic(gitignore_path, GITIGNORE_CONTENTS).map_err(|error| error.to_string())?;
     }
+    secure_permissions::repair_project_local_store(project_root)
+        .map_err(|error| error.to_string())?;
 
     Ok(())
 }

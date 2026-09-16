@@ -49,6 +49,7 @@ use crate::project_service::scribe_watcher_task::scribe_watcher_task;
 use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
 use crate::project_service::visual_clients::project_expose_hot_snapshot_refresh_task;
 use crate::runtime_lifecycle_methods::write_instruction_files;
+use crate::secure_permissions;
 use crate::tmux_expose::{
     ExposeHttpClient, ExposeHttpRequest, ExposeInputEvent, ExposeInputSource,
     SystemExposeHttpClient, run_tmux_expose_with_input_source,
@@ -111,6 +112,10 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
     crate::async_runtime::init_process_runtime()
         .context("initialize project-service async runtime")?;
     let startup = prepare_project_service_startup(options)?;
+    secure_permissions::repair_project_local_store(&startup.project_root)
+        .context("repair project .aimux permissions")?;
+    secure_permissions::repair_project_state_store(&startup.project_state_dir)
+        .context("repair project state permissions")?;
     log_lifecycle_always(
         "project service starting",
         "project-service",
@@ -1876,7 +1881,7 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 pub fn start_project_expose_socket(
     startup: &ProjectServiceStartup,
 ) -> io::Result<ProjectExposeSocketGuard> {
-    fs::create_dir_all(&startup.project_state_dir)?;
+    secure_permissions::ensure_private_dir(&startup.project_state_dir)?;
     let socket_path = expose_socket_path(&startup.project_state_dir);
     clear_expose_socket_path(&startup.project_state_dir, &socket_path);
     let listener = UnixListener::bind(&socket_path)?;

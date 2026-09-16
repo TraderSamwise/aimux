@@ -5,6 +5,9 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::atomic_write::write_text_atomic;
+use crate::secure_permissions;
+
 type History = BTreeMap<String, Vec<i64>>;
 
 pub fn history_path(home: impl AsRef<Path>) -> PathBuf {
@@ -128,7 +131,7 @@ fn read_history(home: impl AsRef<Path>) -> Result<History, String> {
 fn write_history(home: impl AsRef<Path>, history: &History) -> Result<(), String> {
     let path = history_path(home);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
+        secure_permissions::ensure_private_dir(parent).map_err(|error| {
             format!(
                 "could not create runtime guard repair history directory {}: {error}",
                 parent.display()
@@ -137,7 +140,7 @@ fn write_history(home: impl AsRef<Path>, history: &History) -> Result<(), String
     }
     let text = serde_json::to_string(history)
         .map_err(|error| format!("could not encode runtime guard repair history: {error}"))?;
-    fs::write(&path, format!("{text}\n")).map_err(|error| {
+    write_text_atomic(&path, format!("{text}\n")).map_err(|error| {
         format!(
             "could not write runtime guard repair history {}: {error}",
             path.display()

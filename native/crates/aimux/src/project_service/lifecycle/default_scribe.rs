@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::atomic_write::write_text_atomic;
 use crate::config::load_config_for_project;
 use crate::daemon_state::{is_pid_alive, load_metadata_state};
 use crate::paths::basename_like_node_posix;
@@ -12,6 +13,7 @@ use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
+use crate::secure_permissions;
 use crate::session_bootstrap::scribe_team;
 use crate::session_launch::resolve_default_scribe_launch;
 use crate::user_facing_errors::user_facing_error_message;
@@ -193,7 +195,9 @@ fn claim_default_scribe_creation(project_state_dir: &Path) -> Result<DefaultScri
     loop {
         match fs::create_dir(&lock_path) {
             Ok(()) => {
-                fs::write(lock_path.join("owner"), token.as_bytes())
+                secure_permissions::ensure_private_dir(&lock_path)
+                    .map_err(|error| error.to_string())?;
+                write_text_atomic(lock_path.join("owner"), &token)
                     .map_err(|error| error.to_string())?;
                 return Ok(DefaultScribeClaim { lock_path, token });
             }

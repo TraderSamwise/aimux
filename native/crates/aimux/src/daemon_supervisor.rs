@@ -1,4 +1,5 @@
 use crate::async_subprocess::{AsyncCommand, command_task_name};
+use crate::atomic_write::write_text_atomic;
 use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_daemon_launch_command};
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, DaemonJsonResponse,
@@ -19,6 +20,7 @@ use crate::project_service_manifest::{
     ProjectServiceManifest, get_project_service_manifest, is_stale_against_daemon, manifests_match,
     should_keep_unresponsive_daemon,
 };
+use crate::secure_permissions;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -234,11 +236,12 @@ pub fn try_acquire_daemon_start_lock_with(
 ) -> Result<Option<PathBuf>, DaemonSupervisorError> {
     let lock_path = lock_path.as_ref();
     let steal_path = steal_path.as_ref();
-    fs::create_dir_all(lock_path.parent().unwrap_or_else(|| Path::new(".")))?;
+    secure_permissions::ensure_private_dir(lock_path.parent().unwrap_or_else(|| Path::new(".")))?;
     let acquire = || -> io::Result<Option<PathBuf>> {
         match fs::create_dir(lock_path) {
             Ok(()) => {
-                fs::write(
+                secure_permissions::ensure_private_dir(lock_path)?;
+                write_text_atomic(
                     lock_path.join("owner.json"),
                     format!("{{\"pid\":{owner_pid}}}\n"),
                 )?;
@@ -411,9 +414,10 @@ fn acquire_lock_dir(
     lock_path: &Path,
     owner_pid: i32,
 ) -> Result<Option<PathBuf>, DaemonSupervisorError> {
-    fs::create_dir_all(lock_path.parent().unwrap_or_else(|| Path::new(".")))?;
+    secure_permissions::ensure_private_dir(lock_path.parent().unwrap_or_else(|| Path::new(".")))?;
     match fs::create_dir(lock_path) {
         Ok(()) => {
+            secure_permissions::ensure_private_dir(lock_path)?;
             if let Err(error) = write_lock_owner(lock_path, owner_pid) {
                 let _ = fs::remove_dir_all(lock_path);
                 return Err(error.into());
@@ -426,7 +430,7 @@ fn acquire_lock_dir(
 }
 
 fn write_lock_owner(lock_path: &Path, owner_pid: i32) -> io::Result<()> {
-    fs::write(
+    write_text_atomic(
         lock_path.join("owner.json"),
         format!(
             "{{\"pid\":{owner_pid},\"acquiredAt\":{}}}\n",

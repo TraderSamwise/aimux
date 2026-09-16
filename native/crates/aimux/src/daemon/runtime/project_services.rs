@@ -2,7 +2,8 @@ use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_project_service_launch_command};
 use crate::daemon_state::{ProjectServiceState, try_is_pid_alive};
 use crate::process_inspector::{ProjectServiceProcessIdentity, is_aimux_project_service_process};
-use std::fs::{self, File, OpenOptions};
+use crate::secure_permissions;
+use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::process::Stdio;
@@ -124,10 +125,7 @@ fn project_service_child_stdio(project_state_dir: &Path) -> io::Result<(File, Fi
 }
 
 fn open_append_log_pair(path: &Path) -> io::Result<(File, File)> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let stdout = OpenOptions::new().create(true).append(true).open(path)?;
+    let stdout = secure_permissions::open_private_append(path)?;
     let stderr = stdout.try_clone()?;
     Ok((stdout, stderr))
 }
