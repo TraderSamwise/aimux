@@ -1813,7 +1813,9 @@ fn runner_keeps_supervisor_present_across_repeated_refreshes() {
     let loaded_frames = frames
         .iter()
         .copied()
-        .filter(|frame| frame.contains("all worktrees") && !frame.contains("Loading sessions"))
+        .filter(|frame| {
+            frame.contains("supervisor + worktrees") && !frame.contains("Loading sessions")
+        })
         .collect::<Vec<_>>();
     let first_frame = loaded_frames.first().expect("first loaded frame");
     let last_frame = loaded_frames.last().expect("last loaded frame");
@@ -1822,11 +1824,11 @@ fn runner_keeps_supervisor_present_across_repeated_refreshes() {
         "expected initial and refreshed loaded frames:\n{rendered}"
     );
     assert!(
-        first_frame.contains("all worktrees (3)"),
+        first_frame.contains("supervisor + worktrees (3)"),
         "first loaded frame did not show all three items:\n{first_frame}"
     );
     assert!(
-        last_frame.contains("all worktrees (3)"),
+        last_frame.contains("supervisor + worktrees (3)"),
         "last loaded frame did not show all three items:\n{last_frame}"
     );
     assert!(last_frame.contains("overseer"));

@@ -297,7 +297,8 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000
+                "exposeOrder": 1000,
+                "showRoleSuffix": false
               },
               "shouldShowInExpose": true,
               "exposeOrder": 1000
@@ -348,7 +349,8 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000
+                "exposeOrder": 1000,
+                "showRoleSuffix": false
               },
               "shouldShowInExpose": true,
               "exposeOrder": 1000
@@ -406,7 +408,8 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000
+                "exposeOrder": 1000,
+                "showRoleSuffix": false
               },
               "shouldShowInExpose": true,
               "exposeOrder": 1000
@@ -457,7 +460,8 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000
+                "exposeOrder": 1000,
+                "showRoleSuffix": false
               },
               "shouldShowInExpose": true,
               "exposeOrder": 1000
@@ -515,7 +519,8 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000
+                "exposeOrder": 1000,
+                "showRoleSuffix": false
               },
               "shouldShowInExpose": true,
               "exposeOrder": 1000
@@ -566,7 +571,8 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000
+                "exposeOrder": 1000,
+                "showRoleSuffix": false
               },
               "shouldShowInExpose": true,
               "exposeOrder": 1000

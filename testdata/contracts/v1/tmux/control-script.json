@@ -10011,7 +10011,10 @@
               "sessionOptions": { "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" } },
               "panes": {}
             },
-            "rootFiles": { "nc-status-sequence.txt": "" },
+            "rootFiles": {
+              "aimux-debug.log": "aimux-control: expose resize relaunch requested after settled client size count=1 tty=/dev/live\n",
+              "nc-status-sequence.txt": ""
+            },
             "projectFiles": {
               "expose.sock": "",
               "metadata-api.txt": "http://127.0.0.1:43444",

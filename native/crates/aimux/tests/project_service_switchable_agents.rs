@@ -467,7 +467,8 @@ fn serialization_and_status_chips_match_fast_control_shapes() {
                 "lane": { "kind": "worktree", "worktreePath": "/repo" },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000
+                "exposeOrder": 1000,
+                "showRoleSuffix": false
             },
             "shouldShowInExpose": true,
             "exposeOrder": 1000
