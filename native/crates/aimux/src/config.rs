@@ -14,6 +14,8 @@ history/
 tasks/
 status/
 threads/
+attachments/
+graveyard/
 
 # Terminal recordings (large, machine-specific)
 recordings/

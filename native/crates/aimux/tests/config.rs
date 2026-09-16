@@ -45,7 +45,7 @@ fn init_project_creates_local_and_global_state_without_overwriting_config() {
     assert!(repo.join(".aimux/config.json").is_file());
     assert_eq!(
         fs::read_to_string(repo.join(".aimux/.gitignore")).expect("gitignore"),
-        "# Runtime-private service/project state (lives in ~/.aimux/projects/)\nstate.json\n\n# Agent-facing shared artifacts\ncontext/\nhistory/\ntasks/\nstatus/\nthreads/\n\n# Terminal recordings (large, machine-specific)\nrecordings/\n\n# Agent plan files\nplans/\n\n# Managed git worktrees\nworktrees/\n\n"
+        "# Runtime-private service/project state (lives in ~/.aimux/projects/)\nstate.json\n\n# Agent-facing shared artifacts\ncontext/\nhistory/\ntasks/\nstatus/\nthreads/\nattachments/\ngraveyard/\n\n# Terminal recordings (large, machine-specific)\nrecordings/\n\n# Agent plan files\nplans/\n\n# Managed git worktrees\nworktrees/\n\n"
     );
     assert!(
         !resolver
