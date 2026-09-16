@@ -110,6 +110,15 @@ fn watched_by_overseer_notification_refusal_reason(
     let metadata = serde_json::to_value(load_metadata_state(project_state_dir)).ok()?;
     let topology = read_runtime_topology(runtime_topology_path(project_state_dir)).ok()?;
     let sessions = list_topology_session_states(&topology, None);
+    if crate::async_runtime::is_async_worker_context() {
+        return watched_by_overseer_notification_refusal_reason_for_state(
+            event,
+            &Value::Null,
+            &metadata,
+            &sessions,
+            Err("live tmux window verification is unavailable in async worker context"),
+        );
+    }
     let live_window_ids =
         try_live_window_ids_for_session_projection("notification-delivery-guard").ok()?;
     let notifications = project_root

@@ -157,6 +157,10 @@ fn blocking_runtime_handle() -> Option<Handle> {
     BLOCKING_RUNTIME_HANDLE.with(|handle| handle.borrow().clone())
 }
 
+pub fn is_async_worker_context() -> bool {
+    Handle::try_current().is_ok() && blocking_runtime_handle().is_none()
+}
+
 fn with_blocking_runtime_handle<R>(handle: Handle, closure: impl FnOnce() -> R) -> R {
     BLOCKING_RUNTIME_HANDLE.with(|slot| {
         let previous = slot.replace(Some(handle));
