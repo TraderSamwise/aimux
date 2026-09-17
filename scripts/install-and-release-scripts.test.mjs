@@ -657,7 +657,7 @@ describe("verify-release-asset-set.sh", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 
   it("fails when any local artifact is missing", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));

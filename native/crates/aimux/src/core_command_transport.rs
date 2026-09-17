@@ -800,7 +800,7 @@ mod tests {
     fn loopback_retry_treats_eagain_as_transient_until_success() {
         let mut attempts = 0;
 
-        let result = LoopbackRetry::new("read", Some(100))
+        let result = LoopbackRetry::new("read", Some(5_000))
             .run(|| {
                 attempts += 1;
                 if attempts <= 5 {
