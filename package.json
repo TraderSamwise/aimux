@@ -68,6 +68,7 @@
     "verify:codex-instructions": "bash scripts/verify-codex-developer-instructions.sh",
     "installed:gate": "python3 scripts/installed-runtime-gate.py",
     "installed:local-gate": "python3 scripts/installed-runtime-gate.py --scenario local",
+    "release:linux-repro": "bash scripts/linux-release-repro.sh",
     "release:readiness": "yarn verify:full && yarn installed:gate && yarn installed:local-gate",
     "release:asset": "bash scripts/build-release-asset.sh",
     "release:source": "bash scripts/build-release-from-source.sh",
