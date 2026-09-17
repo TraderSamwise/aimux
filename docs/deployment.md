@@ -190,10 +190,12 @@ a broken release.
 
 ### What the tag triggers
 
-1. **Release assets** — builds full `aimux-{darwin,linux}-{arm64,x64}.tar.gz`
+1. **Release readiness** — runs `yarn release:readiness` once on an isolated
+   Aimux runtime with tmux available. This covers `verify:full` plus the full
+   and local installed-runtime gates before any asset is built.
+2. **Release assets** — builds full `aimux-{darwin,linux}-{arm64,x64}.tar.gz`
    and local `aimux-local-{darwin,linux}-{arm64,x64}.tar.gz` archives plus
-   `.sha256`, `.provenance.json`, and `.sbom.spdx.json` companion files on matching runners, after re-running
-   `yarn release:readiness`. Each asset carries a `BUILD_VARIANT` stamp
+   `.sha256`, `.provenance.json`, and `.sbom.spdx.json` companion files on matching runners. Each asset carries a `BUILD_VARIANT` stamp
    (`full` or `local`) and a separate `PACKAGE_PROFILE` stamp, is checked for
    stripped source maps, and the Darwin assets are checked for a notifier
    helper of the right architecture. Package profile is tracked separately from

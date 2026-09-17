@@ -34,14 +34,42 @@ jobs:
 
       - run: corepack enable
 
-      # The installed-runtime gates in release:readiness drive a real tmux
-      # runtime, so tmux must exist before they run.
-      - name: Install tmux
-        run: sudo apt-get update && sudo apt-get install -y tmux
-
       - run: yarn install --frozen-lockfile
 
       - run: yarn --cwd app install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Prepare isolated Aimux runtime
+        run: |
+          set -euo pipefail
+          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-release-readiness" >> "$GITHUB_ENV"
+          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-release-readiness-tmux.sock" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/aimux-home-release-readiness"
+          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-release-readiness/test-isolation.json"
+
+      - name: Ensure tmux is available
+        run: |
+          set -euo pipefail
+          if command -v tmux >/dev/null 2>&1; then
+            tmux -V
+            exit 0
+          fi
+          case "$RUNNER_OS" in
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y tmux
+              ;;
+            macOS)
+              brew install tmux
+              ;;
+            *)
+              echo "unsupported runner OS for installed-runtime gates: $RUNNER_OS" >&2
+              exit 1
+              ;;
+          esac
+          tmux -V
 
       - run: yarn release:readiness
 
