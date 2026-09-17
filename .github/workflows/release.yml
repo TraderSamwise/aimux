@@ -18,8 +18,36 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  readiness:
+    name: Release readiness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
+
+      - run: corepack enable
+
+      # The installed-runtime gates in release:readiness drive a real tmux
+      # runtime, so tmux must exist before they run.
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - run: yarn install --frozen-lockfile
+
+      - run: yarn --cwd app install --frozen-lockfile
+
+      - run: yarn release:readiness
+
   release-assets:
     name: Build release assets
+    needs: readiness
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -82,8 +110,6 @@ jobs:
       - run: yarn install --frozen-lockfile
 
       - run: yarn --cwd app install --frozen-lockfile
-
-      - run: yarn release:readiness
 
       - name: Build release asset
         run: yarn release:asset
