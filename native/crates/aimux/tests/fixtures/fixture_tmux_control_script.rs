@@ -836,6 +836,8 @@ fn run_exec_call(
             (native_aimux_binary(), args)
         }
     };
+    let has_explicit_daemon_host = args.iter().any(|arg| arg == "--daemon-host");
+    let has_explicit_daemon_port = args.iter().any(|arg| arg == "--daemon-port");
     let bin_dir = root.join("bin");
     let path = format!(
         "{}:{}",
@@ -854,6 +856,12 @@ fn run_exec_call(
         .env("TMUX_FAKE_CURL_LOG", root.join("curl-log.jsonl"))
         .env("TMUX_FAKE_AIMUX_LOG", root.join("aimux-log.txt"))
         .env("AIMUX_BIN", bin_dir.join("aimux"));
+    if !has_explicit_daemon_host {
+        process.env("AIMUX_DAEMON_HOST", "127.0.0.1");
+    }
+    if !has_explicit_daemon_port {
+        process.env("AIMUX_DAEMON_PORT", NORMALIZED_DAEMON_PORT);
+    }
     if runner == TmuxControlRunner::Native {
         process.env(
             "AIMUX_TMUX_CONTROL_COMMAND",
