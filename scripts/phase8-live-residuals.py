@@ -228,6 +228,11 @@ def assert_isolated_daemon_port(value: str | None, label: str) -> None:
 def without_tmux(env: dict[str, str]) -> dict[str, str]:
     env.pop("TMUX", None)
     env.pop("TMUX_PANE", None)
+    # A scope isolates tmux by putting a wrapper on PATH that forces
+    # -L <scope socket>. Native aimux honours AIMUX_TMUX_SOCKET_PATH by passing
+    # -S <path>, which beats that -L, so an ambient value silently moves the
+    # spawned session onto the caller's server and out of the scope.
+    env.pop("AIMUX_TMUX_SOCKET_PATH", None)
     return env
 
 
