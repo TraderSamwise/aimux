@@ -18,13 +18,39 @@ use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
 
 use super::json_helpers::*;
 use super::runtime_adapter::{
-    PreparedPullRequestWorktree, ProjectLifecycleRuntime, prune_git_worktrees,
+    PreparedPullRequestWorktree, PreparedRemoteBranchWorktree, PreparedRemoteSourceWorktree,
+    ProjectLifecycleRuntime, prune_git_worktrees, remote_worktree_name_from_source,
     remove_git_worktree_checkout,
 };
 use super::{
     LIVE_STATUSES, ensure_rig, json_error, lifecycle_response, live_window_id_for_service,
     map_topology_array, now_iso, read_runtime_topology, upsert_array_item,
 };
+
+enum PreparedWorktreeSource {
+    PullRequest {
+        pr: u64,
+        prepared: PreparedPullRequestWorktree,
+    },
+    RemoteBranch {
+        requested: String,
+        prepared: PreparedRemoteBranchWorktree,
+    },
+    RemoteSource {
+        source: String,
+        prepared: PreparedRemoteSourceWorktree,
+    },
+}
+
+impl PreparedWorktreeSource {
+    fn branch(&self) -> &str {
+        match self {
+            Self::PullRequest { prepared, .. } => prepared.branch.as_str(),
+            Self::RemoteBranch { prepared, .. } => prepared.branch.as_str(),
+            Self::RemoteSource { prepared, .. } => prepared.branch.as_str(),
+        }
+    }
+}
 
 pub(super) fn route_worktree_graveyard(
     context: &ProjectServiceRequestContext,
@@ -126,8 +152,19 @@ pub(super) fn route_worktree_create(
     body: &Value,
     runtime: &mut impl ProjectLifecycleRuntime,
 ) -> ProjectServiceDispatchResponse {
-    let Some(name) = trimmed_string(body.get("name")) else {
-        return json_error(400, "name is required");
+    let remote_source = match remote_source_from_body(body) {
+        Ok(source) => source,
+        Err(error) => return json_error(400, error),
+    };
+    let name = match trimmed_string(body.get("name")) {
+        Some(name) => name,
+        None => match &remote_source {
+            Some(source) => match remote_worktree_name_from_source(source) {
+                Ok(name) => name,
+                Err(error) => return json_error(400, error),
+            },
+            None => return json_error(400, "name is required"),
+        },
     };
     let project_root = context.project_root().to_string_lossy().into_owned();
     let main_repo = match runtime.find_main_repo(&project_root) {
@@ -178,9 +215,34 @@ pub(super) fn route_worktree_create(
         Ok(pr) => pr,
         Err(error) => return json_error(400, error),
     };
-    let prepared_pr = match pr {
-        Some(pr) => match runtime.prepare_pull_request_worktree(&main_repo, &name, pr) {
-            Ok(prepared) => Some((pr, prepared)),
+    let remote_branch = match remote_branch_from_body(body) {
+        Ok(branch) => branch,
+        Err(error) => return json_error(400, error),
+    };
+    if pr.is_some() && remote_branch.is_some() {
+        return json_error(400, "pr and branch are mutually exclusive");
+    }
+    if remote_source.is_some() && (pr.is_some() || remote_branch.is_some()) {
+        return json_error(400, "source cannot be combined with pr or branch");
+    }
+    let prepared_source = if let Some(source) = remote_source {
+        match runtime.prepare_remote_source_worktree(&main_repo, &source) {
+            Ok(prepared) => Some(PreparedWorktreeSource::RemoteSource { source, prepared }),
+            Err(error) => {
+                record_worktree_operation_failure(
+                    &project_state_dir,
+                    "create",
+                    format!("Failed to create worktree \"{name}\" from remote source"),
+                    error.clone(),
+                    &target_path,
+                    Some(&name),
+                );
+                return json_error(500, error);
+            }
+        }
+    } else if let Some(pr) = pr {
+        match runtime.prepare_pull_request_worktree(&main_repo, &name, pr) {
+            Ok(prepared) => Some(PreparedWorktreeSource::PullRequest { pr, prepared }),
             Err(error) => {
                 record_worktree_operation_failure(
                     &project_state_dir,
@@ -192,13 +254,32 @@ pub(super) fn route_worktree_create(
                 );
                 return json_error(500, error);
             }
-        },
-        None => None,
+        }
+    } else if let Some(branch) = remote_branch {
+        match runtime.prepare_remote_branch_worktree(&main_repo, &name, &branch) {
+            Ok(prepared) => Some(PreparedWorktreeSource::RemoteBranch {
+                requested: branch,
+                prepared,
+            }),
+            Err(error) => {
+                record_worktree_operation_failure(
+                    &project_state_dir,
+                    "create",
+                    format!("Failed to create worktree \"{name}\" from origin/{branch}"),
+                    error.clone(),
+                    &target_path,
+                    Some(&name),
+                );
+                return json_error(500, error);
+            }
+        }
+    } else {
+        None
     };
     let created_at = now_iso();
-    let branch = prepared_pr
+    let branch = prepared_source
         .as_ref()
-        .map(|(_, prepared)| prepared.branch.as_str())
+        .map(PreparedWorktreeSource::branch)
         .unwrap_or(&name);
     let topology_input = WorktreeCreateTopologyInput {
         project_state_dir: &project_state_dir,
@@ -212,9 +293,9 @@ pub(super) fn route_worktree_create(
     if let Err(error) = upsert_created_worktree_topology(&topology_input, "creating", None) {
         return json_error(500, error);
     }
-    let create_result = match &prepared_pr {
-        Some((_, PreparedPullRequestWorktree { branch, .. })) => {
-            runtime.create_worktree_from_branch(&main_repo, branch, &target_path)
+    let create_result = match &prepared_source {
+        Some(source) => {
+            runtime.create_worktree_from_branch(&main_repo, source.branch(), &target_path)
         }
         None => runtime.create_worktree(&main_repo, &name, &target_path),
     };
@@ -226,16 +307,66 @@ pub(super) fn route_worktree_create(
             clear_worktree_operation_failure(&project_state_dir, "create", &target_path);
             let mut payload = json!({
                 "path": target_path.clone(),
+                "name": name,
                 "status": "created",
                 "branch": branch,
             });
-            if let Some((pr, prepared)) = &prepared_pr {
-                object_insert_mut(&mut payload, "pr", json!(pr));
-                object_insert_mut(
-                    &mut payload,
-                    "headOid",
-                    Value::String(prepared.head_oid.clone()),
-                );
+            if let Some(source) = &prepared_source {
+                match source {
+                    PreparedWorktreeSource::PullRequest { pr, prepared } => {
+                        object_insert_mut(&mut payload, "pr", json!(pr));
+                        object_insert_mut(
+                            &mut payload,
+                            "headOid",
+                            Value::String(prepared.head_oid.clone()),
+                        );
+                    }
+                    PreparedWorktreeSource::RemoteBranch {
+                        requested,
+                        prepared,
+                    } => {
+                        object_insert_mut(
+                            &mut payload,
+                            "remoteBranch",
+                            Value::String(prepared.remote_branch.clone()),
+                        );
+                        object_insert_mut(
+                            &mut payload,
+                            "upstream",
+                            Value::String(prepared.upstream.clone()),
+                        );
+                        if requested != &prepared.remote_branch {
+                            object_insert_mut(
+                                &mut payload,
+                                "requestedBranch",
+                                Value::String(requested.clone()),
+                            );
+                        }
+                        object_insert_mut(
+                            &mut payload,
+                            "headOid",
+                            Value::String(prepared.head_oid.clone()),
+                        );
+                    }
+                    PreparedWorktreeSource::RemoteSource { source, prepared } => {
+                        object_insert_mut(&mut payload, "source", Value::String(source.clone()));
+                        object_insert_mut(
+                            &mut payload,
+                            "remoteSourceKind",
+                            Value::String(prepared.kind.clone()),
+                        );
+                        object_insert_mut(
+                            &mut payload,
+                            "upstream",
+                            Value::String(prepared.upstream.clone()),
+                        );
+                        object_insert_mut(
+                            &mut payload,
+                            "headOid",
+                            Value::String(prepared.head_oid.clone()),
+                        );
+                    }
+                }
             }
             lifecycle_response(payload, "worktree.create", "worktree", Some(&target_path))
         }
@@ -278,6 +409,40 @@ fn pull_request_number_from_body(body: &Value) -> Result<Option<u64>, String> {
         return Err("pr must be a positive pull request number".into());
     }
     Ok(Some(number))
+}
+
+fn remote_branch_from_body(body: &Value) -> Result<Option<String>, String> {
+    let Some(value) = body.get("branch") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(branch) = value.as_str() else {
+        return Err("branch must be an origin branch name".into());
+    };
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(branch.to_owned()))
+}
+
+fn remote_source_from_body(body: &Value) -> Result<Option<String>, String> {
+    let Some(value) = body.get("source") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(source) = value.as_str() else {
+        return Err("source must be a GitHub pull request or branch URL".into());
+    };
+    let source = source.trim();
+    if source.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(source.to_owned()))
 }
 
 pub(super) fn route_worktree_cache_cleanup(

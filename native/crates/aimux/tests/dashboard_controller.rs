@@ -2077,6 +2077,37 @@ fn worktree_input_collects_name_and_dispatches_create() {
 }
 
 #[test]
+fn remote_worktree_input_pastes_source_and_dispatches_shared_create_route() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('B')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.remote_worktree_input.as_deref(), Some(""));
+    assert_eq!(
+        controller.handle_key(
+            &snapshot,
+            DashboardKey::Paste(" https://github.com/openai/aimux/pull/123/files ".into()),
+        ),
+        DashboardControllerEffect::Render
+    );
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected remote worktree create request");
+    };
+    assert_eq!(request.path, routes::worktree_actions::CREATE);
+    assert_eq!(
+        request.body,
+        json!({ "source": "https://github.com/openai/aimux/pull/123/files" })
+    );
+    assert!(controller.remote_worktree_input.is_none());
+}
+
+#[test]
 fn shifted_w_opens_worktree_list_until_escape() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);

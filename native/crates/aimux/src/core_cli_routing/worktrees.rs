@@ -11,6 +11,8 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
             project: None,
             name: None,
             pr: None,
+            branch: None,
+            source: None,
             path: None,
             yes: false,
             include_active: false,
@@ -23,6 +25,7 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
         "list"
             | "add"
             | "create"
+            | "open"
             | "prune"
             | "cleanup-caches"
             | "remove"
@@ -42,6 +45,8 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
         project: None,
         name: None,
         pr: None,
+        branch: None,
+        source: None,
         path: None,
         yes: false,
         include_active: false,
@@ -78,6 +83,18 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
             index += 1;
             continue;
         }
+        if matches!(subcommand, "add" | "create") && arg == "--branch" {
+            parsed.branch = Some(required_non_flag_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if matches!(subcommand, "add" | "create")
+            && let Some(value) = arg.strip_prefix("--branch=")
+        {
+            parsed.branch = Some(non_flag_inline_value(value)?.to_owned());
+            index += 1;
+            continue;
+        }
         if matches!(subcommand, "cleanup-caches" | "prune") && arg == "--yes" {
             parsed.yes = true;
             index += 1;
@@ -98,6 +115,12 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
                 }
                 parsed.name = Some(arg.to_owned());
             }
+            "open" => {
+                if parsed.source.is_some() {
+                    return None;
+                }
+                parsed.source = Some(arg.to_owned());
+            }
             "remove" | "graveyard" | "resurrect" | "delete-graveyard" => {
                 if parsed.path.is_some() {
                     return None;
@@ -113,6 +136,12 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
         "list" | "cleanup-caches" | "prune" => {}
         "add" | "create" => {
             parsed.name.as_ref()?;
+            if parsed.pr.is_some() && parsed.branch.is_some() {
+                return None;
+            }
+        }
+        "open" => {
+            parsed.source.as_ref()?;
         }
         "remove" | "graveyard" | "resurrect" | "delete-graveyard" => {
             parsed.path.as_ref()?;

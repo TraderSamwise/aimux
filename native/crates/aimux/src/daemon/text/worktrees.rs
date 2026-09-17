@@ -43,6 +43,21 @@ pub trait DaemonWorktreeTextRuntime {
     }
 }
 
+fn optional_param(route_url: &DaemonRouteUrl, body: Option<&Value>, key: &str) -> Option<String> {
+    route_url
+        .search_param(key)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            body.and_then(|body| body.get(key)).and_then(|value| {
+                value
+                    .as_str()
+                    .map(ToOwned::to_owned)
+                    .or_else(|| value.as_u64().map(|number| number.to_string()))
+            })
+        })
+        .filter(|value| !value.trim().is_empty())
+}
+
 pub fn route_worktree_text_request(
     runtime: &mut impl DaemonWorktreeTextRuntime,
     method: &str,
@@ -161,10 +176,11 @@ pub fn worktree_create_text_route(
         Ok(project) => project,
         Err(response) => return response,
     };
-    let name = match required_param(route_url, body, "name") {
-        Ok(name) => name,
-        Err(response) => return response,
-    };
+    let name = optional_param(route_url, body, "name");
+    let source = optional_param(route_url, body, "source");
+    if name.is_none() && source.is_none() {
+        return DaemonRouteResponse::text(400, "Error: name or source is required\n");
+    }
     let pr = route_url
         .search_param("pr")
         .map(ToOwned::to_owned)
@@ -177,10 +193,19 @@ pub fn worktree_create_text_route(
             })
         })
         .filter(|value| !value.trim().is_empty());
+    let branch = optional_param(route_url, body, "branch");
     let mut request_body = Map::new();
-    request_body.insert("name".into(), Value::String(name.clone()));
+    if let Some(name) = &name {
+        request_body.insert("name".into(), Value::String(name.clone()));
+    }
+    if let Some(source) = &source {
+        request_body.insert("source".into(), Value::String(source.clone()));
+    }
     if let Some(pr) = pr {
         request_body.insert("pr".into(), Value::String(pr));
+    }
+    if let Some(branch) = branch {
+        request_body.insert("branch".into(), Value::String(branch));
     }
     let result = runtime.post_project_service_json(
         &project,
@@ -203,11 +228,13 @@ pub fn worktree_create_text_route(
     };
     let payload = json!({
         "ok": true,
-        "name": name,
+        "name": name.or_else(|| json.get("name").and_then(Value::as_str).map(ToOwned::to_owned)).unwrap_or_default(),
         "path": path,
         "status": status,
         "projectRoot": project_root,
         "pr": json.get("pr").cloned().unwrap_or(Value::Null),
+        "source": json.get("source").cloned().unwrap_or(Value::Null),
+        "upstream": json.get("upstream").cloned().unwrap_or(Value::Null),
     });
     text_or_json_lines(
         route_url,

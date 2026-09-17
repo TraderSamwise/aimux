@@ -1740,6 +1740,7 @@ fn focused_supervisor_section_renders_cursor() {
     assert!(plain.contains("▸ [0] SUPERVISOR"));
     assert!(plain.contains("0 supervisor"));
     assert!(plain.contains("1-9 worktrees"));
+    assert!(plain.contains("B remote branch"));
 }
 
 #[test]

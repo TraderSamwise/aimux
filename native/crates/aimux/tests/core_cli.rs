@@ -1266,6 +1266,26 @@ fn worktree_and_graveyard_commands_plan_native_text_routes() {
             body: Some(json!({ "project": "/repo", "name": "review-123", "pr": 123 })),
         }
     );
+    let open_remote = classify_core_cli(
+        &[
+            "worktree",
+            "open",
+            "https://github.com/openai/aimux/tree/feature/remote-worktree",
+        ],
+        &context(true, true),
+    )
+    .expect("worktree open plan");
+    assert_eq!(open_remote.operation, CoreCliOperation::WorktreeCreate);
+    assert_eq!(
+        open_remote.action,
+        CoreCliAction::TextRoute {
+            path: "/core/worktree/create-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "source": "https://github.com/openai/aimux/tree/feature/remote-worktree"
+            })),
+        }
+    );
 
     let prune = classify_core_cli(
         &[

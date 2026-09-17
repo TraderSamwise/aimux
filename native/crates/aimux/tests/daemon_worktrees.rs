@@ -68,7 +68,17 @@ impl DaemonWorktreeTextRuntime for FakeWorktreeRuntime {
         match route_path {
             project_routes::worktree_actions::CREATE => ProjectServiceJsonResult::ok(
                 "/repo",
-                json!({ "ok": true, "path": format!("/repo/.aimux/worktrees/{}", body["name"].as_str().unwrap()), "status": "created" }),
+                json!({
+                    "ok": true,
+                    "name": body.get("name").and_then(Value::as_str).unwrap_or("pr-123"),
+                    "path": format!(
+                        "/repo/.aimux/worktrees/{}",
+                        body.get("name").and_then(Value::as_str).unwrap_or("pr-123")
+                    ),
+                    "status": "created",
+                    "source": body.get("source").cloned().unwrap_or(Value::Null),
+                    "upstream": "origin/feature/demo",
+                }),
             ),
             project_routes::worktree_actions::CACHE_CLEANUP => ProjectServiceJsonResult::ok(
                 "/repo",
@@ -246,6 +256,30 @@ fn worktree_list_and_create_match_text_and_json_contracts() {
             "/repo".into(),
             project_routes::worktree_actions::CREATE.into(),
             Some(json!({ "name": "review-123", "pr": "123" })),
+            None,
+        )
+    );
+
+    let opened_remote = route_worktree_text_request(
+        &mut runtime,
+        "POST",
+        &format!(
+            "{}?project=/repo&source=https%3A%2F%2Fgithub.com%2Fopenai%2Faimux%2Ftree%2Ffeature%2Fdemo",
+            CORE_API_ROUTES.worktree_create_text
+        ),
+        None,
+    )
+    .expect("worktree open remote");
+    assert_eq!(
+        text_body(opened_remote),
+        "Created worktree \"pr-123\" at /repo/.aimux/worktrees/pr-123\n"
+    );
+    assert_eq!(
+        runtime.calls.last().unwrap(),
+        &(
+            "/repo".into(),
+            project_routes::worktree_actions::CREATE.into(),
+            Some(json!({ "source": "https://github.com/openai/aimux/tree/feature/demo" })),
             None,
         )
     );

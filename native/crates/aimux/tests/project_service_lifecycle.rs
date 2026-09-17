@@ -3,8 +3,9 @@ use aimux::dashboard_model::DesktopStateSnapshot;
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle::{
-    PreparedPullRequestWorktree, ProjectLifecycleRuntime, SystemProjectLifecycleRuntime,
-    ensure_default_scribe_agent, route_lifecycle_request_with_runtime,
+    PreparedPullRequestWorktree, PreparedRemoteSourceWorktree, ProjectLifecycleRuntime,
+    SystemProjectLifecycleRuntime, ensure_default_scribe_agent,
+    route_lifecycle_request_with_runtime,
 };
 use aimux::project_service::operation_failures::list_dashboard_operation_failures;
 use aimux::project_service::process::{ProjectServiceStartup, run_project_service_startup_tasks};
@@ -46,6 +47,8 @@ struct FakeLifecycleRuntime {
     worktrees_created: Vec<FakeCreateWorktree>,
     prepared_pull_requests: Vec<FakePreparePullRequest>,
     pull_request_prepare_result: Option<Result<PreparedPullRequestWorktree, String>>,
+    prepared_remote_sources: Vec<FakePrepareRemoteSource>,
+    remote_source_prepare_result: Option<Result<PreparedRemoteSourceWorktree, String>>,
     branch_worktrees_created: Vec<FakeCreateWorktree>,
     create_worktree_from_branch_error: Option<String>,
     create_worktree_error: Option<String>,
@@ -74,6 +77,12 @@ struct FakePreparePullRequest {
     main_repo: String,
     name: String,
     pr: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FakePrepareRemoteSource {
+    main_repo: String,
+    source: String,
 }
 
 impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
@@ -142,6 +151,28 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             Some(error) => Err(error.clone()),
             None => Ok(()),
         }
+    }
+
+    fn prepare_remote_source_worktree(
+        &mut self,
+        main_repo: &str,
+        source: &str,
+    ) -> Result<PreparedRemoteSourceWorktree, String> {
+        self.prepared_remote_sources.push(FakePrepareRemoteSource {
+            main_repo: main_repo.to_owned(),
+            source: source.to_owned(),
+        });
+        self.remote_source_prepare_result
+            .clone()
+            .unwrap_or_else(|| {
+                Ok(PreparedRemoteSourceWorktree {
+                    name: "pr-123".into(),
+                    branch: "aimux/pr-123/demo".into(),
+                    upstream: "origin/demo".into(),
+                    head_oid: "cccccccccccccccccccccccccccccccccccccccc".into(),
+                    kind: "pullRequest".into(),
+                })
+            })
     }
 
     fn create_window(
@@ -3004,6 +3035,69 @@ fn worktree_create_pr_fetches_head_branch_and_persists_aimux_worktree() {
 }
 
 #[test]
+fn worktree_create_source_prepares_tracking_branch_and_persists_aimux_worktree() {
+    let project = temp_project("worktree-create-source");
+    let state_dir = project.join("state");
+    write_worktree_create_topology(&state_dir, json!([]));
+    let expected_path = project
+        .join(".aimux/worktrees/pr-123")
+        .to_string_lossy()
+        .into_owned();
+    let project_root = project.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project_root.clone()),
+        remote_source_prepare_result: Some(Ok(PreparedRemoteSourceWorktree {
+            name: "pr-123".into(),
+            branch: "aimux/pr-123/feature-demo".into(),
+            upstream: "origin/feature/demo".into(),
+            head_oid: "cccccccccccccccccccccccccccccccccccccccc".into(),
+            kind: "pullRequest".into(),
+        })),
+        ..Default::default()
+    };
+
+    let source = "https://github.com/openai/aimux/pull/123/files";
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "source": source })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["name"], "pr-123");
+    assert_eq!(response.body["branch"], "aimux/pr-123/feature-demo");
+    assert_eq!(response.body["source"], source);
+    assert_eq!(response.body["upstream"], "origin/feature/demo");
+    assert_eq!(
+        runtime.prepared_remote_sources,
+        vec![FakePrepareRemoteSource {
+            main_repo: project_root.clone(),
+            source: source.into(),
+        }]
+    );
+    assert!(runtime.worktrees_created.is_empty());
+    assert_eq!(
+        runtime.branch_worktrees_created,
+        vec![FakeCreateWorktree {
+            main_repo: project_root.clone(),
+            name: "aimux/pr-123/feature-demo".into(),
+            target_path: expected_path.clone(),
+        }]
+    );
+    let topology = read_topology(&state_dir);
+    let worktree = &topology["worktrees"][0];
+    assert_eq!(worktree["name"], "pr-123");
+    assert_eq!(worktree["branch"], "aimux/pr-123/feature-demo");
+    assert_eq!(worktree["path"], expected_path);
+    assert_eq!(worktree["status"], "active");
+    cleanup(project);
+}
+
+#[test]
 fn worktree_create_pr_real_route_creates_worktree_on_pull_request_head() {
     let _env_guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
@@ -3093,6 +3187,235 @@ fn worktree_create_pr_real_route_creates_worktree_on_pull_request_head() {
     assert_eq!(worktree["name"], "review-123");
     assert_eq!(worktree["branch"], "aimux/pr-123/review-123");
     assert_eq!(worktree["status"], "active");
+    cleanup(root);
+}
+
+#[test]
+fn worktree_create_source_pr_link_creates_tracking_worktree_on_head() {
+    let _env_guard = ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("env lock");
+    let (root, repo, state_dir) = setup_github_like_repo("worktree-create-source-pr");
+    run_command(&repo, "git", &["checkout", "-b", "contributor/pr-head"]);
+    fs::write(repo.join("pr-source.txt"), "pull request source\n").expect("pr source");
+    run_command(&repo, "git", &["add", "pr-source.txt"]);
+    run_command(&repo, "git", &["commit", "-m", "pr source"]);
+    let pr_head = command_output(&repo, "git", &["rev-parse", "HEAD"]);
+    run_command(
+        &repo,
+        "git",
+        &["push", "origin", "HEAD:refs/heads/contributor/pr-head"],
+    );
+    run_command(&repo, "git", &["checkout", "master"]);
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("bin dir");
+    let gh_path = bin_dir.join("gh");
+    fs::write(
+        &gh_path,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' '{{\"state\":\"OPEN\",\"headRefOid\":\"{pr_head}\",\"headRefName\":\"contributor/pr-head\",\"headRepositoryOwner\":{{\"login\":\"openai\"}},\"headRepository\":{{\"name\":\"aimux\"}}}}'\n"
+        ),
+    )
+    .expect("write fake gh");
+    run_command(&root, "chmod", &["+x", gh_path.to_str().unwrap()]);
+    let old_path = std::env::var_os("PATH");
+    let next_path = match old_path.as_ref() {
+        Some(path) => {
+            let mut paths = std::env::split_paths(path).collect::<Vec<_>>();
+            paths.insert(0, bin_dir.clone());
+            std::env::join_paths(paths).expect("join path")
+        }
+        None => bin_dir.clone().into_os_string(),
+    };
+    unsafe {
+        std::env::set_var("PATH", &next_path);
+    }
+
+    write_worktree_create_topology(&state_dir, json!([]));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&repo, &state_dir);
+    let mut runtime = SystemProjectLifecycleRuntime;
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "source": "https://github.com/openai/aimux/pull/123/files" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    if let Some(path) = old_path {
+        unsafe {
+            std::env::set_var("PATH", path);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("PATH");
+        }
+    }
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    assert_eq!(response.body["name"], "pr-123");
+    assert_eq!(response.body["upstream"], "origin/contributor/pr-head");
+    let worktree_path = repo.join(".aimux/worktrees/pr-123");
+    assert_eq!(
+        command_output(&worktree_path, "git", &["rev-parse", "HEAD"]),
+        pr_head
+    );
+    assert_eq!(
+        command_output(
+            &worktree_path,
+            "git",
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ),
+        "origin/contributor/pr-head"
+    );
+    cleanup(root);
+}
+
+#[test]
+fn worktree_create_source_branch_link_from_unrelated_worktree_tracks_upstream() {
+    let (root, repo, state_dir) = setup_github_like_repo("worktree-create-source-branch");
+    run_command(&repo, "git", &["checkout", "-b", "feature/demo"]);
+    fs::write(repo.join("branch-source.txt"), "branch source\n").expect("branch source");
+    run_command(&repo, "git", &["add", "branch-source.txt"]);
+    run_command(&repo, "git", &["commit", "-m", "branch source"]);
+    let branch_head = command_output(&repo, "git", &["rev-parse", "HEAD"]);
+    run_command(
+        &repo,
+        "git",
+        &["push", "origin", "HEAD:refs/heads/feature/demo"],
+    );
+    run_command(&repo, "git", &["checkout", "master"]);
+    let caller_worktree = root.join("caller-worktree");
+    run_command(
+        &repo,
+        "git",
+        &[
+            "worktree",
+            "add",
+            caller_worktree.to_str().unwrap(),
+            "-b",
+            "caller",
+        ],
+    );
+
+    write_worktree_create_topology(&state_dir, json!([]));
+    let context =
+        ProjectServiceRequestContext::with_project_state_dir(&caller_worktree, &state_dir);
+    let mut runtime = SystemProjectLifecycleRuntime;
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "source": "https://github.com/openai/aimux/tree/feature/demo" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    assert_eq!(response.body["name"], "feature-demo");
+    assert_eq!(response.body["branch"], "feature/demo");
+    assert_eq!(response.body["upstream"], "origin/feature/demo");
+    let worktree_path = repo.join(".aimux/worktrees/feature-demo");
+    assert_eq!(
+        command_output(&worktree_path, "git", &["rev-parse", "HEAD"]),
+        branch_head
+    );
+    assert_eq!(
+        command_output(
+            &worktree_path,
+            "git",
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ),
+        "origin/feature/demo"
+    );
+    cleanup(root);
+}
+
+#[test]
+fn worktree_create_source_fast_forwards_existing_local_branch() {
+    let (root, repo, state_dir) = setup_github_like_repo("worktree-create-source-fast-forward");
+    run_command(&repo, "git", &["branch", "feature/ff", "master"]);
+    run_command(&repo, "git", &["checkout", "-b", "remote-ff"]);
+    fs::write(repo.join("ff.txt"), "remote ff\n").expect("ff");
+    run_command(&repo, "git", &["add", "ff.txt"]);
+    run_command(&repo, "git", &["commit", "-m", "remote ff"]);
+    let remote_head = command_output(&repo, "git", &["rev-parse", "HEAD"]);
+    run_command(
+        &repo,
+        "git",
+        &["push", "origin", "HEAD:refs/heads/feature/ff"],
+    );
+    run_command(&repo, "git", &["checkout", "master"]);
+
+    write_worktree_create_topology(&state_dir, json!([]));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&repo, &state_dir);
+    let mut runtime = SystemProjectLifecycleRuntime;
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "source": "https://github.com/openai/aimux/tree/feature/ff" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    assert_eq!(
+        command_output(&repo, "git", &["rev-parse", "feature/ff"]),
+        remote_head
+    );
+    cleanup(root);
+}
+
+#[test]
+fn worktree_create_source_non_fast_forward_refuses_and_leaves_branch_unchanged() {
+    let (root, repo, state_dir) = setup_github_like_repo("worktree-create-source-non-ff");
+    run_command(&repo, "git", &["checkout", "-b", "remote-conflict"]);
+    fs::write(repo.join("remote-conflict.txt"), "remote\n").expect("remote conflict");
+    run_command(&repo, "git", &["add", "remote-conflict.txt"]);
+    run_command(&repo, "git", &["commit", "-m", "remote conflict"]);
+    run_command(
+        &repo,
+        "git",
+        &["push", "origin", "HEAD:refs/heads/feature/conflict"],
+    );
+    run_command(&repo, "git", &["checkout", "master"]);
+    run_command(&repo, "git", &["checkout", "-b", "feature/conflict"]);
+    fs::write(repo.join("local-conflict.txt"), "local\n").expect("local conflict");
+    run_command(&repo, "git", &["add", "local-conflict.txt"]);
+    run_command(&repo, "git", &["commit", "-m", "local conflict"]);
+    let local_before = command_output(&repo, "git", &["rev-parse", "HEAD"]);
+    run_command(&repo, "git", &["checkout", "master"]);
+
+    write_worktree_create_topology(&state_dir, json!([]));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&repo, &state_dir);
+    let mut runtime = SystemProjectLifecycleRuntime;
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "source": "https://github.com/openai/aimux/tree/feature/conflict" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("cannot fast-forward"),
+        "{:?}",
+        response.body
+    );
+    assert_eq!(
+        command_output(&repo, "git", &["rev-parse", "feature/conflict"]),
+        local_before
+    );
+    assert!(!repo.join(".aimux/worktrees/feature-conflict").exists());
     cleanup(root);
 }
 
@@ -4761,6 +5084,42 @@ fn temp_plain_project(label: &str) -> PathBuf {
     ));
     cleanup(path.clone());
     path
+}
+
+fn setup_github_like_repo(label: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let root = temp_plain_project(label);
+    let repo = root.join("repo");
+    let origin = root.join("origin.git");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&repo).expect("repo dir");
+    run_command(&repo, "git", &["init", "-b", "master"]);
+    run_command(&repo, "git", &["config", "user.email", "test@example.com"]);
+    run_command(&repo, "git", &["config", "user.name", "Aimux Test"]);
+    fs::write(repo.join("README.md"), "base\n").expect("base file");
+    run_command(&repo, "git", &["add", "README.md"]);
+    run_command(&repo, "git", &["commit", "-m", "base"]);
+    run_command(&root, "git", &["init", "--bare", "origin.git"]);
+    run_command(
+        &repo,
+        "git",
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/openai/aimux.git",
+        ],
+    );
+    run_command(
+        &repo,
+        "git",
+        &[
+            "config",
+            &format!("url.{}.insteadOf", origin.to_string_lossy()),
+            "https://github.com/openai/aimux.git",
+        ],
+    );
+    run_command(&repo, "git", &["push", "origin", "master"]);
+    (root, repo, state_dir)
 }
 
 fn cleanup(path: PathBuf) {

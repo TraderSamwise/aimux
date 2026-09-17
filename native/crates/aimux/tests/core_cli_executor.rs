@@ -3048,6 +3048,15 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
         ]),
         &mut runtime,
     );
+    let open_remote = run_core_cli_with(
+        &args(&[
+            "worktree",
+            "open",
+            "https://github.com/openai/aimux/pull/123/files",
+            "--project=/repo",
+        ]),
+        &mut runtime,
+    );
     let cleanup = run_core_cli_with(
         &args(&[
             "worktree",
@@ -3105,6 +3114,7 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
         list,
         create,
         create_pr,
+        open_remote,
         cleanup,
         remove,
         graveyard_worktree,
@@ -3132,6 +3142,13 @@ fn worktree_and_graveyard_commands_execute_native_text_routes_without_core_comma
             (
                 "/core/worktree/create-text".into(),
                 Some(json!({ "project": "/repo", "name": "review-123", "pr": 123 })),
+            ),
+            (
+                "/core/worktree/create-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "source": "https://github.com/openai/aimux/pull/123/files"
+                })),
             ),
             (
                 "/core/worktree/cache-cleanup-text?json=1".into(),

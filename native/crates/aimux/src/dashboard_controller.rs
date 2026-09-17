@@ -39,6 +39,7 @@ pub struct DashboardController {
     pub subscreen_actions: Vec<DashboardSubscreenAction>,
     pub graveyard_worktree_delete_confirm: Option<String>,
     pub worktree_input: Option<String>,
+    pub remote_worktree_input: Option<String>,
     pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
@@ -99,6 +100,7 @@ enum DashboardInputOverlay {
     ServiceInput,
     LaunchOptions,
     WorktreeInput,
+    RemoteWorktreeInput,
     WorktreeRemoveConfirm,
     WorktreeList,
     WorktreeCacheCleanupConfirm,
@@ -330,6 +332,7 @@ impl DashboardController {
             subscreen_actions: Vec::new(),
             graveyard_worktree_delete_confirm: None,
             worktree_input: None,
+            remote_worktree_input: None,
             worktree_remove_confirm: None,
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
@@ -366,6 +369,9 @@ impl DashboardController {
         }
         if self.worktree_input.is_some() {
             return self.handle_worktree_input_key(key);
+        }
+        if self.remote_worktree_input.is_some() {
+            return self.handle_remote_worktree_input_key(key);
         }
         if self.worktree_remove_confirm.is_some() {
             return self.handle_worktree_remove_confirm_key(key);
@@ -461,6 +467,10 @@ impl DashboardController {
             DashboardKey::ClearFailures => self.handle_clear_failures(snapshot),
             DashboardKey::Printable('w') => {
                 self.worktree_input = Some(String::new());
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable('B') => {
+                self.remote_worktree_input = Some(String::new());
                 DashboardControllerEffect::Render
             }
             DashboardKey::Printable('W') => {
@@ -758,6 +768,7 @@ impl DashboardController {
         self.subscreen_actions.clear();
         self.graveyard_worktree_delete_confirm = None;
         self.worktree_input = None;
+        self.remote_worktree_input = None;
         self.worktree_remove_confirm = None;
         self.worktree_list_open = false;
         self.worktree_cache_cleanup_confirm = None;
@@ -806,6 +817,8 @@ impl DashboardController {
             DashboardInputOverlay::LaunchOptions
         } else if self.worktree_input.is_some() {
             DashboardInputOverlay::WorktreeInput
+        } else if self.remote_worktree_input.is_some() {
+            DashboardInputOverlay::RemoteWorktreeInput
         } else if self.worktree_remove_confirm.is_some() {
             DashboardInputOverlay::WorktreeRemoveConfirm
         } else if self.worktree_list_open {
@@ -1354,6 +1367,46 @@ impl DashboardController {
             }
             DashboardKey::Paste(text) => {
                 if let Some(buffer) = self.worktree_input.as_mut() {
+                    buffer.push_str(&text);
+                }
+                DashboardControllerEffect::Render
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn handle_remote_worktree_input_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back => {
+                self.remote_worktree_input = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter => {
+                let source = self.remote_worktree_input.take().unwrap_or_default();
+                let source = source.trim().to_owned();
+                if source.is_empty() {
+                    return DashboardControllerEffect::Render;
+                }
+                DashboardControllerEffect::Request(DashboardActionRequest {
+                    method: "POST",
+                    path: routes::worktree_actions::CREATE,
+                    body: json!({ "source": source }),
+                })
+            }
+            DashboardKey::Backspace | DashboardKey::Delete => {
+                if let Some(buffer) = self.remote_worktree_input.as_mut() {
+                    buffer.pop();
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable(character) => {
+                if let Some(buffer) = self.remote_worktree_input.as_mut() {
+                    buffer.push(character);
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Paste(text) => {
+                if let Some(buffer) = self.remote_worktree_input.as_mut() {
                     buffer.push_str(&text);
                 }
                 DashboardControllerEffect::Render
