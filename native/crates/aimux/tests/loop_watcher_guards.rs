@@ -49,6 +49,15 @@ fn self_exited_session_with_status(id: &str, status: Option<&str>, action: &str)
     )
 }
 
+fn non_loop_session(id: &str, activity: &str) -> (Value, Value) {
+    (
+        json!({ "id": id, "tool": "codex", "worktreePath": "/repo", "status": "running" }),
+        json!({
+            "derived": { "activity": activity, "attention": "normal" }
+        }),
+    )
+}
+
 fn briefing_mentions(send: &LoopSend, id: &str) -> bool {
     send.text
         .lines()
@@ -1177,6 +1186,168 @@ fn reconciliation_requires_condition_dwell_before_alerting() {
     );
     assert!(watcher.plan_sends(&input, NOW + 29_999).is_empty());
     assert_eq!(watcher.plan_sends(&input, NOW + 30_000).len(), 1);
+}
+
+#[test]
+fn idle_fleet_alerts_when_visible_work_waits_and_all_workers_are_idle() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = non_loop_session("worker", "idle");
+    let (done_worker, done_meta) =
+        self_exited_session_with_status("done-worker", Some("running"), "done");
+    let mut input = input_with_config(
+        vec![boss, worker, done_worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta, "done-worker": done_meta } }),
+        json!({
+            "idleFleetDwellMs": 0,
+            "idleFleetReminderTicks": 2,
+            "idleFleetCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [{ "id": "task-1", "status": "pending", "description": "queue up work" }]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    let send = sends
+        .iter()
+        .find(|send| send.kind == LoopSendKind::IdleFleet)
+        .unwrap_or_else(|| panic!("idle fleet send missing: {sends:?}"));
+    assert!(send.text.contains("fleet appears idle"));
+    assert!(send.text.contains("task task-1"));
+    assert!(send.text.contains("worker"));
+    assert!(send.text.contains("done-worker"));
+}
+
+#[test]
+fn idle_fleet_alerts_for_work_assigned_to_agent_that_already_stopped() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = non_loop_session("worker", "done");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "idleFleetDwellMs": 0,
+            "idleFleetReminderTicks": 2,
+            "idleFleetCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [{
+            "id": "task-ack",
+            "status": "in_progress",
+            "assignedTo": "worker",
+            "description": "already acked"
+        }]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    let send = sends
+        .iter()
+        .find(|send| send.kind == LoopSendKind::IdleFleet)
+        .unwrap_or_else(|| panic!("idle fleet send missing: {sends:?}"));
+    assert!(send.text.contains("task task-ack"));
+    assert!(send.text.contains("assigned-owner-idle"));
+}
+
+#[test]
+fn idle_fleet_does_not_alert_for_momentary_idle_trough_before_dwell() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = non_loop_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "idleFleetDwellMs": 30_000,
+            "idleFleetReminderTicks": 2,
+            "idleFleetCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [{ "id": "task-1", "status": "pending", "description": "queue up work" }]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    assert!(watcher.plan_sends(&input, NOW).is_empty());
+    assert!(watcher.plan_sends(&input, NOW + 29_999).is_empty());
+    assert_eq!(watcher.plan_sends(&input, NOW + 30_000).len(), 1);
+}
+
+#[test]
+fn idle_fleet_does_not_alert_when_workers_are_active_or_when_no_work_waits() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = non_loop_session("worker", "running");
+    let mut input = input_with_config(
+        vec![boss.clone(), worker],
+        json!({ "sessions": { "boss": boss_meta.clone(), "worker": worker_meta } }),
+        json!({
+            "idleFleetDwellMs": 0,
+            "idleFleetReminderTicks": 1,
+            "idleFleetCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [{ "id": "task-1", "status": "pending", "description": "queue up work" }]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    assert!(
+        watcher.plan_sends(&input, NOW).is_empty(),
+        "a genuinely active worker means the fleet is not idle"
+    );
+
+    let (idle_worker, idle_meta) = non_loop_session("worker", "idle");
+    let no_work_input = input_with_config(
+        vec![boss, idle_worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": idle_meta } }),
+        json!({
+            "idleFleetDwellMs": 0,
+            "idleFleetReminderTicks": 1,
+            "idleFleetCooldownMs": 0
+        }),
+    );
+    assert!(
+        watcher.plan_sends(&no_work_input, NOW + 1).is_empty(),
+        "an idle fleet with nothing visible to do must stay quiet"
+    );
+}
+
+#[test]
+fn idle_fleet_reminder_respects_unchanged_level_cadence() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = non_loop_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "idleFleetDwellMs": 0,
+            "idleFleetReminderTicks": 2,
+            "idleFleetCooldownMs": 0
+        }),
+    );
+    input["runtimeExchange"] = json!({
+        "tasks": [{ "id": "task-1", "status": "pending", "description": "queue up work" }]
+    });
+
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].kind, LoopSendKind::IdleFleet);
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+
+    assert!(
+        watcher.plan_sends(&input, NOW + 1).is_empty(),
+        "unchanged idle-fleet level must not fire every tick"
+    );
+    let reminder = watcher.plan_sends(&input, NOW + 2);
+    assert_eq!(reminder.len(), 1);
+    assert_eq!(reminder[0].kind, LoopSendKind::IdleFleet);
 }
 
 #[test]

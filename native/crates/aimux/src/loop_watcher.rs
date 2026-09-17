@@ -29,6 +29,7 @@ pub enum LoopSendKind {
     PausedSummary,
     Reconciliation,
     LoopExit,
+    IdleFleet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +149,12 @@ pub struct LoopWatcher {
     last_reconciliation_wake_at: i64,
     unchanged_reconciliation_ticks: u64,
     reconciliation_condition_since_ms: Option<i64>,
+    last_idle_fleet_signature: Option<String>,
+    last_idle_fleet_attempted_signature: Option<String>,
+    last_idle_fleet_reported_signature: Option<String>,
+    last_idle_fleet_wake_at: i64,
+    unchanged_idle_fleet_ticks: u64,
+    idle_fleet_condition_since_ms: Option<i64>,
     reported_loop_exits: BTreeSet<String>,
     scan_records: Vec<LoopScanRecord>,
 }
@@ -266,6 +273,7 @@ impl LoopWatcher {
             self.plan_paused_summary(&paused_candidates, overseer_id.as_deref(), input);
         let reconciliation =
             self.plan_reconciliation(overseer_id.as_deref(), &paused_candidates, input, now_ms);
+        let idle_fleet = self.plan_idle_fleet(overseer_id.as_deref(), input, now_ms);
         let candidates = self.dwelled_candidates(
             raw_candidates,
             now_ms,
@@ -281,6 +289,9 @@ impl LoopWatcher {
                 sends.push(send);
             }
             if let Some(send) = reconciliation {
+                sends.push(send);
+            }
+            if let Some(send) = idle_fleet {
                 sends.push(send);
             }
             return sends;
@@ -320,6 +331,9 @@ impl LoopWatcher {
             if let Some(send) = reconciliation {
                 sends.push(send);
             }
+            if let Some(send) = idle_fleet {
+                sends.push(send);
+            }
             return sends;
         }
 
@@ -330,6 +344,9 @@ impl LoopWatcher {
             .unwrap_or(false)
         {
             if let Some(send) = reconciliation {
+                sends.push(send);
+            }
+            if let Some(send) = idle_fleet {
                 sends.push(send);
             }
             return sends;
@@ -360,6 +377,9 @@ impl LoopWatcher {
         if let Some(send) = reconciliation {
             sends.push(send);
         }
+        if let Some(send) = idle_fleet {
+            sends.push(send);
+        }
         sends
     }
 
@@ -382,6 +402,13 @@ impl LoopWatcher {
                 self.last_reconciliation_attempted_signature = Some(send.signature.clone());
                 if matches!(outcome, LoopDeliveryOutcome::Delivered) {
                     self.last_reconciliation_reported_signature = Some(send.signature.clone());
+                }
+            }
+            LoopSendKind::IdleFleet => {
+                self.last_idle_fleet_wake_at = now_ms;
+                self.last_idle_fleet_attempted_signature = Some(send.signature.clone());
+                if matches!(outcome, LoopDeliveryOutcome::Delivered) {
+                    self.last_idle_fleet_reported_signature = Some(send.signature.clone());
                 }
             }
         }
@@ -830,6 +857,71 @@ impl LoopWatcher {
             kind: LoopSendKind::LoopExit,
         })
     }
+
+    fn plan_idle_fleet(
+        &mut self,
+        overseer_id: Option<&str>,
+        input: &Value,
+        now_ms: i64,
+    ) -> Option<LoopSend> {
+        let overseer_id = overseer_id.filter(|id| session_can_receive_loop_send(input, id))?;
+        if !find_idle_loop_capacity(input, Some(overseer_id), &[]).is_empty() {
+            self.clear_idle_fleet_state();
+            return None;
+        }
+        let work = find_idle_fleet_waiting_work(input, Some(overseer_id));
+        let idle_capacity = find_idle_fleet_capacity(input, Some(overseer_id));
+        if work.is_empty() || idle_capacity.is_empty() {
+            self.clear_idle_fleet_state();
+            return None;
+        }
+        if !fleet_is_fully_idle(input, Some(overseer_id)) {
+            self.clear_idle_fleet_state();
+            return None;
+        }
+
+        let condition_since = *self.idle_fleet_condition_since_ms.get_or_insert(now_ms);
+        let dwell_ms = config_i64(input, "idleFleetDwellMs", 30_000).max(0);
+        if now_ms.saturating_sub(condition_since) < dwell_ms {
+            return None;
+        }
+
+        let signature = idle_fleet_signature(&work, &idle_capacity);
+        if self.last_idle_fleet_signature.as_deref() == Some(signature.as_str()) {
+            self.unchanged_idle_fleet_ticks = self.unchanged_idle_fleet_ticks.saturating_add(1);
+        } else {
+            self.last_idle_fleet_signature = Some(signature.clone());
+            self.unchanged_idle_fleet_ticks = 0;
+        }
+
+        let already_reported =
+            self.last_idle_fleet_reported_signature.as_deref() == Some(signature.as_str());
+        let already_attempted =
+            self.last_idle_fleet_attempted_signature.as_deref() == Some(signature.as_str());
+        let reminder_due = idle_fleet_reminder_due(
+            input,
+            self.unchanged_idle_fleet_ticks,
+            now_ms.saturating_sub(self.last_idle_fleet_wake_at),
+        );
+        if (already_reported || already_attempted) && !reminder_due {
+            return None;
+        }
+
+        Some(LoopSend {
+            session_id: overseer_id.to_owned(),
+            text: build_idle_fleet_briefing(&work, &idle_capacity),
+            signature,
+            kind: LoopSendKind::IdleFleet,
+        })
+    }
+
+    fn clear_idle_fleet_state(&mut self) {
+        self.last_idle_fleet_signature = None;
+        self.last_idle_fleet_attempted_signature = None;
+        self.last_idle_fleet_reported_signature = None;
+        self.unchanged_idle_fleet_ticks = 0;
+        self.idle_fleet_condition_since_ms = None;
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -944,6 +1036,18 @@ struct PersistentLoopWatcherState {
     #[serde(default)]
     reconciliation_condition_since_ms: Option<i64>,
     #[serde(default)]
+    last_idle_fleet_signature: Option<String>,
+    #[serde(default)]
+    last_idle_fleet_attempted_signature: Option<String>,
+    #[serde(default)]
+    last_idle_fleet_reported_signature: Option<String>,
+    #[serde(default)]
+    last_idle_fleet_wake_at: i64,
+    #[serde(default)]
+    unchanged_idle_fleet_ticks: u64,
+    #[serde(default)]
+    idle_fleet_condition_since_ms: Option<i64>,
+    #[serde(default)]
     reported_loop_exits: Vec<String>,
     #[serde(default)]
     scan_records: Vec<LoopScanRecord>,
@@ -1012,6 +1116,14 @@ impl PersistentLoopWatcherState {
             last_reconciliation_wake_at: watcher.last_reconciliation_wake_at,
             unchanged_reconciliation_ticks: watcher.unchanged_reconciliation_ticks,
             reconciliation_condition_since_ms: watcher.reconciliation_condition_since_ms,
+            last_idle_fleet_signature: watcher.last_idle_fleet_signature.clone(),
+            last_idle_fleet_attempted_signature: watcher
+                .last_idle_fleet_attempted_signature
+                .clone(),
+            last_idle_fleet_reported_signature: watcher.last_idle_fleet_reported_signature.clone(),
+            last_idle_fleet_wake_at: watcher.last_idle_fleet_wake_at,
+            unchanged_idle_fleet_ticks: watcher.unchanged_idle_fleet_ticks,
+            idle_fleet_condition_since_ms: watcher.idle_fleet_condition_since_ms,
             reported_loop_exits: watcher.reported_loop_exits.iter().cloned().collect(),
             scan_records: watcher.scan_records.clone(),
         }
@@ -1075,6 +1187,12 @@ impl PersistentLoopWatcherState {
             last_reconciliation_wake_at: self.last_reconciliation_wake_at,
             unchanged_reconciliation_ticks: self.unchanged_reconciliation_ticks,
             reconciliation_condition_since_ms: self.reconciliation_condition_since_ms,
+            last_idle_fleet_signature: self.last_idle_fleet_signature,
+            last_idle_fleet_attempted_signature: self.last_idle_fleet_attempted_signature,
+            last_idle_fleet_reported_signature: self.last_idle_fleet_reported_signature,
+            last_idle_fleet_wake_at: self.last_idle_fleet_wake_at,
+            unchanged_idle_fleet_ticks: self.unchanged_idle_fleet_ticks,
+            idle_fleet_condition_since_ms: self.idle_fleet_condition_since_ms,
             reported_loop_exits: self.reported_loop_exits.into_iter().collect(),
             scan_records: self.scan_records,
         })
@@ -1127,6 +1245,7 @@ fn loop_send_kind_name(kind: LoopSendKind) -> &'static str {
         LoopSendKind::PausedSummary => "pausedSummary",
         LoopSendKind::Reconciliation => "reconciliation",
         LoopSendKind::LoopExit => "loopExit",
+        LoopSendKind::IdleFleet => "idleFleet",
     }
 }
 
@@ -1137,6 +1256,7 @@ fn loop_send_kind_from_name(value: &str) -> Option<LoopSendKind> {
         "pausedSummary" => Some(LoopSendKind::PausedSummary),
         "reconciliation" => Some(LoopSendKind::Reconciliation),
         "loopExit" => Some(LoopSendKind::LoopExit),
+        "idleFleet" => Some(LoopSendKind::IdleFleet),
         _ => None,
     }
 }
@@ -1333,6 +1453,28 @@ fn active_loop_pause_keys(input: &Value) -> BTreeMap<String, String> {
         .collect()
 }
 
+fn metadata_activity<'a>(input: &'a Value, session_id: &str) -> Option<&'a str> {
+    input
+        .get("metadata")
+        .and_then(|metadata| metadata.get("sessions"))
+        .and_then(Value::as_object)
+        .and_then(|sessions| sessions.get(session_id))
+        .and_then(|session| session.get("derived"))
+        .and_then(|derived| derived.get("activity"))
+        .and_then(Value::as_str)
+}
+
+fn is_scribe_metadata_session(metadata: &Value, session: &Value) -> bool {
+    let id = str_field(session, "id");
+    let meta = metadata
+        .get("sessions")
+        .and_then(Value::as_object)
+        .and_then(|sessions| sessions.get(id))
+        .unwrap_or(&Value::Null);
+    meta.get("scribe").and_then(Value::as_bool).unwrap_or(false)
+        || meta.get("team").and_then(|team| optional_str(team, "role")) == Some("scribe")
+}
+
 pub fn build_overseer_briefing(candidates: &[Value], template: Option<&str>) -> String {
     if let Some(template) = template
         .map(str::trim)
@@ -1436,6 +1578,35 @@ fn build_reconciliation_briefing(work: &[Value], available: &[Value]) -> String 
     lines.join("\n")
 }
 
+fn build_idle_fleet_briefing(work: &[Value], available: &[Value]) -> String {
+    let mut lines = Vec::from([String::from(
+        "[aimux loop check] The agent fleet appears idle while visible work is waiting.",
+    )]);
+    lines.push(String::from(
+        "This includes agents outside managed loops and agents that self-exited their loops; `idle` and `done` both mean no worker appears to be making progress.",
+    ));
+    lines.push(String::from(
+        "This does not include external queue files such as Sam's gqaapg queue unless they are imported into runtime exchange.",
+    ));
+    lines.push(String::new());
+    lines.push(String::from("Visible unowned work:"));
+    lines.extend(work.iter().take(8).map(describe_reconciliation_work));
+    if work.len() > 8 {
+        lines.push(format!("- ... and {} more", work.len() - 8));
+    }
+    lines.push(String::new());
+    lines.push(String::from("Idle available agents:"));
+    lines.extend(available.iter().take(8).map(describe_idle_fleet_capacity));
+    if available.len() > 8 {
+        lines.push(format!("- ... and {} more", available.len() - 8));
+    }
+    lines.push(String::new());
+    lines.push(String::from(
+        "Assign queued work, close stale worklist items, or intentionally pause the fleet; silence here would otherwise look like progress.",
+    ));
+    lines.join("\n")
+}
+
 fn render_overseer_briefing_template(template: &str, candidates: &[Value]) -> String {
     replace_template_token(
         &replace_template_token(template, "count", &candidates.len().to_string()),
@@ -1493,6 +1664,49 @@ fn find_idle_loop_capacity(
         .collect()
 }
 
+fn find_idle_fleet_capacity(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
+    fleet_worker_sessions(input, overseer_id)
+        .into_iter()
+        .filter_map(|session| {
+            let id = str_field(session, "id");
+            let activity = metadata_activity(input, id)?;
+            matches!(activity, "idle" | "done").then(|| {
+                json!({
+                    "id": id,
+                    "activity": activity,
+                    "worktreePath": session.get("worktreePath").cloned().unwrap_or(Value::Null),
+                    "tool": session.get("tool").cloned().unwrap_or(Value::Null)
+                })
+            })
+        })
+        .collect()
+}
+
+fn fleet_is_fully_idle(input: &Value, overseer_id: Option<&str>) -> bool {
+    let workers = fleet_worker_sessions(input, overseer_id);
+    !workers.is_empty()
+        && workers.iter().all(|session| {
+            let id = str_field(session, "id");
+            matches!(metadata_activity(input, id), Some("idle" | "done"))
+        })
+}
+
+fn fleet_worker_sessions<'a>(input: &'a Value, overseer_id: Option<&str>) -> Vec<&'a Value> {
+    let metadata = input.get("metadata").unwrap_or(&Value::Null);
+    array_field(input, "sessions")
+        .iter()
+        .filter(|session| {
+            let id = str_field(session, "id");
+            !id.is_empty()
+                && overseer_id != Some(id)
+                && !is_scribe_metadata_session(metadata, session)
+                && optional_str(session, "status")
+                    .map(|status| matches!(status, "starting" | "running" | "idle"))
+                    .unwrap_or(true)
+        })
+        .collect()
+}
+
 fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
     let live_sessions = array_field(input, "sessions")
         .iter()
@@ -1507,6 +1721,27 @@ fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
     }
     for item in coordination_worklist_needs_you(input) {
         if let Some(item) = unowned_worklist_item(&item) {
+            work.push(item);
+        }
+    }
+    work.sort_by(|left, right| {
+        str_field(left, "sortKey")
+            .cmp(str_field(right, "sortKey"))
+            .then_with(|| str_field(left, "id").cmp(str_field(right, "id")))
+    });
+    work.dedup_by(|left, right| str_field(left, "dedupeKey") == str_field(right, "dedupeKey"));
+    work
+}
+
+fn find_idle_fleet_waiting_work(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
+    let mut work = find_visible_unowned_work(input);
+    let idle_workers = find_idle_fleet_capacity(input, overseer_id)
+        .into_iter()
+        .filter_map(|worker| optional_str(&worker, "id").map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    let exchange = input.get("runtimeExchange").unwrap_or(&Value::Null);
+    for task in array_field(exchange, "tasks") {
+        if let Some(item) = idle_owned_task_item(task, &idle_workers) {
             work.push(item);
         }
     }
@@ -1571,6 +1806,28 @@ fn unowned_task_item(task: &Value, live_sessions: &BTreeSet<String>) -> Option<V
     }))
 }
 
+fn idle_owned_task_item(task: &Value, idle_workers: &BTreeSet<String>) -> Option<Value> {
+    let status = str_field(task, "status");
+    if !matches!(status, "pending" | "assigned" | "in_progress" | "blocked") {
+        return None;
+    }
+    let assigned_to = optional_str(task, "assignedTo")?;
+    if !idle_workers.contains(assigned_to) {
+        return None;
+    }
+    let id = optional_str(task, "id")?;
+    Some(json!({
+        "id": id,
+        "kind": "task",
+        "dedupeKey": format!("task:{id}"),
+        "sortKey": format!("task:{id}"),
+        "status": status,
+        "ownerState": "assigned-owner-idle",
+        "assignedTo": assigned_to,
+        "title": optional_str(task, "description").unwrap_or("task")
+    }))
+}
+
 fn unowned_worklist_item(item: &Value) -> Option<Value> {
     if !item
         .get("actionable")
@@ -1603,6 +1860,14 @@ fn reconciliation_signature(work: &[Value], available: &[Value]) -> String {
     )
 }
 
+fn idle_fleet_signature(work: &[Value], available: &[Value]) -> String {
+    format!(
+        "idle-fleet:condition:work-waiting:{}:fleet-idle:{}",
+        !work.is_empty(),
+        !available.is_empty()
+    )
+}
+
 fn reconciliation_reminder_due(
     input: &Value,
     unchanged_ticks: u64,
@@ -1615,6 +1880,23 @@ fn reconciliation_reminder_due(
         .unwrap_or(6)
         .max(1);
     let cooldown = config_i64(input, "reconciliationCooldownMs", 15 * 60 * 1000).max(0);
+    unchanged_ticks > 0
+        && unchanged_ticks.is_multiple_of(ticks)
+        && elapsed_since_last_wake_ms >= cooldown
+}
+
+fn idle_fleet_reminder_due(
+    input: &Value,
+    unchanged_ticks: u64,
+    elapsed_since_last_wake_ms: i64,
+) -> bool {
+    let ticks = input
+        .get("config")
+        .and_then(|config| config.get("idleFleetReminderTicks"))
+        .and_then(Value::as_u64)
+        .unwrap_or(6)
+        .max(1);
+    let cooldown = config_i64(input, "idleFleetCooldownMs", 15 * 60 * 1000).max(0);
     unchanged_ticks > 0
         && unchanged_ticks.is_multiple_of(ticks)
         && elapsed_since_last_wake_ms >= cooldown
@@ -1641,6 +1923,13 @@ fn describe_reconciliation_capacity(candidate: &Value) -> String {
         .map(|goal| format!(" — goal: {goal}"))
         .unwrap_or_default();
     format!("- {}{}", str_field(candidate, "id"), goal)
+}
+
+fn describe_idle_fleet_capacity(candidate: &Value) -> String {
+    let activity = optional_str(candidate, "activity")
+        .map(|activity| format!(" — activity: {activity}"))
+        .unwrap_or_default();
+    format!("- {}{}", str_field(candidate, "id"), activity)
 }
 
 pub fn describe_candidate(candidate: &Value) -> String {

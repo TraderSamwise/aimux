@@ -328,6 +328,9 @@ fn stopped_metadata_session_ids(input: &Value) -> Vec<String> {
             {
                 return None;
             }
+            if !metadata_loop_active(input, id) {
+                return None;
+            }
             if matches!(metadata_activity(input, id), Some("idle" | "done")) {
                 Some(id.to_owned())
             } else {
@@ -346,6 +349,18 @@ fn metadata_activity<'a>(input: &'a Value, session_id: &str) -> Option<&'a str> 
         .and_then(|session| session.get("derived"))
         .and_then(|derived| derived.get("activity"))
         .and_then(Value::as_str)
+}
+
+fn metadata_loop_active(input: &Value, session_id: &str) -> bool {
+    input
+        .get("metadata")
+        .and_then(|metadata| metadata.get("sessions"))
+        .and_then(Value::as_object)
+        .and_then(|sessions| sessions.get(session_id))
+        .and_then(|session| session.get("loop"))
+        .and_then(|loop_meta| loop_meta.get("active"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub fn apply_live_activity_override(input: &mut Value, session_id: &str, live: &Value) {
@@ -437,9 +452,15 @@ fn loop_config_from(config: &Value) -> Value {
     insert_default_i64(object, "scanIntervalMs", DEFAULT_SCAN_INTERVAL_MS);
     insert_default_u64(object, "scanEveryTicks", DEFAULT_SCAN_EVERY_TICKS);
     insert_default_i64(object, "stoppedDwellMs", DEFAULT_STOPPED_DWELL_MS);
+    insert_default_i64(object, "idleFleetDwellMs", DEFAULT_STOPPED_DWELL_MS);
     insert_default_u64(
         object,
         "unchangedReminderTicks",
+        DEFAULT_UNCHANGED_REMINDER_TICKS,
+    );
+    insert_default_u64(
+        object,
+        "idleFleetReminderTicks",
         DEFAULT_UNCHANGED_REMINDER_TICKS,
     );
     config

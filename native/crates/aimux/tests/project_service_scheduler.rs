@@ -12,7 +12,7 @@ use aimux::project_service::notifications::{NotificationQuery, list_notification
 use aimux::project_service::operation_failures::list_dashboard_operation_failures;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
-use aimux::project_service::runtime_exchange::runtime_exchange_path;
+use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
 use aimux::project_service::scheduler::{
     PeriodicScheduler, PeriodicTask, PeriodicTaskFuture, PeriodicTaskHealthSnapshot,
     ProjectSchedulerHandle, spawn_project_service_scheduler,
@@ -751,6 +751,95 @@ fn normal_loop_watcher_tick_records_completed_run() {
     assert_eq!(health.consecutive_failures, 0);
     assert_eq!(health.last_error, None);
     assert!(health.last_completed_at_ms.is_some());
+}
+
+#[test]
+fn loop_watcher_task_records_idle_fleet_signal_for_overseer_delivery() {
+    let root = unique_temp_dir("aimux-loop-watcher-idle-fleet-route");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(project_root.join(".aimux")).expect("project config dir");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        project_root.join(".aimux/config.json"),
+        r#"{"loop":{"idleFleetDwellMs":0,"idleFleetReminderTicks":2,"idleFleetCooldownMs":0}}"#,
+    )
+    .expect("config");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_with_sessions(&["boss", "worker"]),
+    )
+    .expect("write topology");
+    fs::write(
+        metadata_state_path(&state_dir),
+        serde_json::to_string(&json!({
+            "version": 1,
+            "sessions": {
+                "boss": {
+                    "overseer": true,
+                    "derived": {
+                        "activity": "busy",
+                        "attention": "normal"
+                    }
+                },
+                "worker": {
+                    "derived": {
+                        "activity": "done",
+                        "attention": "normal"
+                    }
+                }
+            }
+        }))
+        .expect("metadata json"),
+    )
+    .expect("write metadata");
+    write_runtime_exchange(
+        runtime_exchange_path(&state_dir),
+        &json!({
+            "version": 1,
+            "generatedAt": "2026-09-13T00:00:00.000Z",
+            "threads": [],
+            "messages": [],
+            "tasks": [{
+                "id": "task-1",
+                "status": "pending",
+                "description": "queued work"
+            }]
+        }),
+    )
+    .expect("write exchange");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    assert_eq!(
+        run_due_at(&mut scheduler, &context, 15_000),
+        vec!["loop-watcher"]
+    );
+    let health = scheduler_health_for(&scheduler, "loop-watcher");
+    assert_eq!(health.consecutive_failures, 0, "{health:?}");
+
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(loop_watcher_state_path(&state_dir)).expect("watcher state"),
+    )
+    .expect("watcher state json");
+    assert_eq!(
+        state["scanRecords"][0]["plannedSendKinds"][0], "idleFleet",
+        "{state}"
+    );
+    assert_eq!(state["deliveryRecords"][0]["sessionId"], "boss");
+    assert_eq!(state["deliveryRecords"][0]["kind"], "idleFleet");
+    assert!(
+        state["deliveryRecords"][0]["outcome"].as_str().is_some(),
+        "{state}"
+    );
 }
 
 #[test]
@@ -1710,6 +1799,70 @@ fn topology_with_live_session() -> serde_json::Value {
             "createdAt": "2026-09-13T00:00:00.000Z",
             "updatedAt": "2026-09-13T00:00:00.000Z",
         }],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": [],
+    })
+}
+
+fn topology_with_sessions(ids: &[&str]) -> serde_json::Value {
+    let nodes = ids
+        .iter()
+        .map(|id| {
+            json!({
+                "id": format!("agent:{id}"),
+                "rigId": "rig-1",
+                "logicalId": id,
+                "createdAt": "2026-09-13T00:00:00.000Z",
+            })
+        })
+        .collect::<Vec<_>>();
+    let bindings = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            json!({
+                "id": format!("binding-{id}"),
+                "nodeId": format!("agent:{id}"),
+                "tmuxSession": "aimux-test",
+                "tmuxWindowId": format!("@{}", index + 1),
+                "tmuxWindowIndex": index + 1,
+                "tmuxWindowName": id,
+                "updatedAt": "2026-09-13T00:00:00.000Z",
+            })
+        })
+        .collect::<Vec<_>>();
+    let sessions = ids
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id,
+                "nodeId": format!("agent:{id}"),
+                "status": "running",
+                "tool": "codex",
+                "createdAt": "2026-09-13T00:00:00.000Z",
+                "updatedAt": "2026-09-13T00:00:00.000Z",
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "version": 1,
+        "generatedAt": "2026-09-13T00:00:00.000Z",
+        "rigs": [{
+            "id": "rig-1",
+            "name": "local",
+            "projectRoot": "/repo",
+            "createdAt": "2026-09-13T00:00:00.000Z",
+            "updatedAt": "2026-09-13T00:00:00.000Z",
+        }],
+        "nodes": nodes,
+        "edges": [],
+        "bindings": bindings,
+        "sessions": sessions,
         "services": [],
         "worktrees": [],
         "worktreeGraveyard": [],
