@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use crate::config::load_config_for_known_project_root;
 use crate::debug_logging::{LogLevel, log_always_at};
-use crate::git_clone_guard::prepare_git_clone_guard_env;
 use crate::managed_launch_env::wrap_command_with_managed_launch_env_extra;
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{
@@ -826,11 +825,6 @@ pub(super) fn wrap_agent_launch(
         .and_then(|name| name.to_str())
         .unwrap_or(command);
     let wrapper_enabled = tool_config.get("wrapperEnabled").and_then(Value::as_bool) != Some(false);
-    let git_guard_env = prepare_git_clone_guard_env(project_state_dir, project_root)?;
-    let launch_env = launch_env
-        .into_iter()
-        .chain(git_guard_env)
-        .collect::<Vec<_>>();
     if !is_configured_tool_command {
         if launch_env.is_empty() {
             return Ok((command.to_owned(), launch_args));
@@ -950,8 +944,8 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_disabled_agent_launch_still_installs_git_clone_guard() {
-        let temp = TempDir::new("aimux-agent-launch-git-guard");
+    fn wrapper_disabled_agent_launch_does_not_install_git_path_shim() {
+        let temp = TempDir::new("aimux-agent-launch-no-git-guard");
         let project = temp.path().join("project");
         let state = temp.path().join("state");
         fs::create_dir_all(&project).expect("project");
@@ -975,18 +969,18 @@ mod tests {
 
         assert_eq!(command, "env");
         assert!(
-            args.iter()
-                .any(|arg| arg.starts_with("PATH=") && arg.contains("/git-guard:")),
-            "wrapped args should prepend the guard directory to PATH: {args:?}"
+            !args
+                .iter()
+                .any(|arg| arg.starts_with("PATH=") && arg.contains("/git-guard")),
+            "wrapped args must not prepend a git PATH shim: {args:?}"
         );
         assert!(
-            args.iter()
-                .any(|arg| arg == &format!("AIMUX_GIT_GUARD_PROJECT_ROOT={project_root}")),
-            "wrapped args should carry the protected project root: {args:?}"
+            !args.iter().any(|arg| arg.starts_with("AIMUX_GIT_GUARD_")),
+            "wrapped args must not set git guard env vars: {args:?}"
         );
         assert!(
-            state.join("git-guard/git").is_file(),
-            "launch wrapping should install the git guard executable"
+            !state.join("git-guard").exists(),
+            "launch wrapping must not install a git guard directory"
         );
     }
 }
