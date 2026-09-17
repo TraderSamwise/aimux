@@ -217,13 +217,13 @@ def write_config(scope: Any) -> None:
     helper.write_text(
         textwrap.dedent(
             """\
-            #!/bin/sh
+            #!/usr/bin/env bash
             printf 'GATE_READY:%s\\n' "$AIMUX_SESSION_ID"
             while :; do
-              if IFS= read -r line 2>/dev/null < /dev/tty; then
+              if IFS= read -r line; then
                 printf 'GATE_INPUT:%s\\n' "$line"
               else
-                sleep 0.25
+                sleep 1
               fi
             done
             """
@@ -456,34 +456,99 @@ def tmux_socket_paths(socket_name: str) -> list[Path]:
     ]
 
 
+def tmux_windows(phase8: Any, real_tmux: str, scope: Any) -> subprocess.CompletedProcess[str]:
+    return phase8.run(
+        [
+            real_tmux,
+            "-L",
+            scope.tmux_socket_name,
+            "list-windows",
+            "-a",
+            "-F",
+            "#{window_id} #{window_name} #{pane_current_command} #{pane_dead}",
+        ],
+        env=phase8.without_tmux(os.environ.copy()),
+        timeout=10,
+        check=False,
+    )
+
+
+def tmux_capture_window(
+    phase8: Any,
+    real_tmux: str,
+    scope: Any,
+    window_id: str,
+) -> subprocess.CompletedProcess[str]:
+    return phase8.run(
+        [
+            real_tmux,
+            "-L",
+            scope.tmux_socket_name,
+            "capture-pane",
+            "-p",
+            "-J",
+            "-t",
+            window_id,
+        ],
+        env=phase8.without_tmux(os.environ.copy()),
+        timeout=10,
+        check=False,
+    )
+
+
+def wait_for_tmux_window_ready(
+    phase8: Any,
+    real_tmux: str,
+    scope: Any,
+    window_id: str,
+) -> None:
+    deadline = time.monotonic() + 12
+    windows = subprocess.CompletedProcess([], 1, "", "")
+    capture = subprocess.CompletedProcess([], 1, "", "")
+    while time.monotonic() < deadline:
+        capture = tmux_capture_window(phase8, real_tmux, scope, window_id)
+        if capture.returncode == 0 and "GATE_READY" in capture.stdout:
+            return
+        windows = tmux_windows(phase8, real_tmux, scope)
+        time.sleep(0.25)
+    socket_state = ", ".join(
+        f"{path}:exists={path.exists()}" for path in tmux_socket_paths(scope.tmux_socket_name)
+    )
+    raise GateFailure(
+        "timed out waiting for liveness pane readiness; "
+        f"socket_state=[{socket_state}]\n"
+        f"windows stdout:\n{windows.stdout}\nwindows stderr:\n{windows.stderr}\n"
+        f"capture stdout:\n{capture.stdout}\ncapture stderr:\n{capture.stderr}"
+    )
+
+
 def check_liveness(phase8: Any, aimux_bin: Path, mutation: str | None) -> None:
     with create_scope(phase8, aimux_bin, "liveness") as scope:
-        aimux(scope, ["daemon", "ensure"], timeout=60)
-        spawned = spawn_session_payload(scope)
-        session_id = str(spawned.get("sessionId"))
-        wait_for_ready(scope, session_id)
-        live = find_session(ps(scope), session_id)
-        status = str(live.get("status") or "")
-        if status not in {"starting", "running", "idle"}:
-            raise GateFailure(f"expected live session status, got {status}: {live}")
-        target = spawned.get("tmuxTarget") or {}
-        window_id = str(target.get("windowId") or "")
-        if not window_id:
-            raise GateFailure(f"spawned live session has no tmux window target: {spawned}")
         real_tmux = phase8.find_tmux()
-        pre_kill = phase8.run(
+        aimux(scope, ["daemon", "ensure"], timeout=60)
+        guard_session = f"installed-gate-liveness-guard-{os.getpid()}"
+        phase8.run(
             [
                 real_tmux,
                 "-L",
                 scope.tmux_socket_name,
-                "list-windows",
-                "-F",
-                "#{window_id} #{window_name} #{pane_current_command} #{pane_dead}",
+                "new-session",
+                "-d",
+                "-s",
+                guard_session,
+                "while :; do sleep 3600; done",
             ],
             env=phase8.without_tmux(os.environ.copy()),
             timeout=10,
-            check=False,
         )
+        spawned = spawn_session_payload(scope)
+        session_id = str(spawned.get("sessionId"))
+        target = spawned.get("tmuxTarget") or {}
+        window_id = str(target.get("windowId") or "")
+        if not window_id:
+            raise GateFailure(f"spawned live session has no tmux window target: {spawned}")
+        wait_for_tmux_window_ready(phase8, real_tmux, scope, window_id)
+        pre_kill = tmux_windows(phase8, real_tmux, scope)
         if pre_kill.returncode != 0:
             socket_state = ", ".join(
                 f"{path}:exists={path.exists()}"
@@ -497,6 +562,18 @@ def check_liveness(phase8: Any, aimux_bin: Path, mutation: str | None) -> None:
             raise GateFailure(f"spawned tmux window {window_id} missing before liveness kill:\n{pre_kill.stdout}")
         if mutation != "liveness-skip-kill":
             phase8.run([real_tmux, "-L", scope.tmux_socket_name, "kill-window", "-t", window_id], env=phase8.without_tmux(os.environ.copy()), timeout=10)
+        post_kill = tmux_windows(phase8, real_tmux, scope)
+        if post_kill.returncode != 0:
+            socket_state = ", ".join(
+                f"{path}:exists={path.exists()}"
+                for path in tmux_socket_paths(scope.tmux_socket_name)
+            )
+            raise GateFailure(
+                "tmux server disappeared after liveness kill; "
+                f"socket_state=[{socket_state}]\nstdout:\n{post_kill.stdout}\nstderr:\n{post_kill.stderr}"
+            )
+        if window_id in post_kill.stdout.split():
+            raise GateFailure(f"spawned tmux window {window_id} survived liveness kill:\n{post_kill.stdout}")
         wait_until(
             "ps to report killed window offline",
             15,
