@@ -22,6 +22,24 @@ pub struct PreparedPullRequestWorktree {
     pub head_oid: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedRemoteBranchWorktree {
+    pub name: String,
+    pub branch: String,
+    pub remote_branch: String,
+    pub upstream: String,
+    pub head_oid: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedRemoteSourceWorktree {
+    pub name: String,
+    pub branch: String,
+    pub upstream: String,
+    pub head_oid: String,
+    pub kind: String,
+}
+
 pub trait ProjectLifecycleRuntime {
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String>;
     fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String>;
@@ -40,6 +58,23 @@ pub trait ProjectLifecycleRuntime {
     ) -> Result<PreparedPullRequestWorktree, String> {
         let _ = (main_repo, name, pr);
         Err("pull request worktree creation is not supported by this runtime".into())
+    }
+    fn prepare_remote_branch_worktree(
+        &mut self,
+        main_repo: &str,
+        name: &str,
+        branch: &str,
+    ) -> Result<PreparedRemoteBranchWorktree, String> {
+        let _ = (main_repo, name, branch);
+        Err("remote branch worktree creation is not supported by this runtime".into())
+    }
+    fn prepare_remote_source_worktree(
+        &mut self,
+        main_repo: &str,
+        source: &str,
+    ) -> Result<PreparedRemoteSourceWorktree, String> {
+        let _ = (main_repo, source);
+        Err("remote source worktree creation is not supported by this runtime".into())
     }
     fn create_worktree_from_branch(
         &mut self,
@@ -155,6 +190,23 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
         pr: u64,
     ) -> Result<PreparedPullRequestWorktree, String> {
         prepare_git_pull_request_worktree(main_repo, name, pr)
+    }
+
+    fn prepare_remote_branch_worktree(
+        &mut self,
+        main_repo: &str,
+        name: &str,
+        branch: &str,
+    ) -> Result<PreparedRemoteBranchWorktree, String> {
+        prepare_git_remote_branch_worktree(main_repo, name, branch)
+    }
+
+    fn prepare_remote_source_worktree(
+        &mut self,
+        main_repo: &str,
+        source: &str,
+    ) -> Result<PreparedRemoteSourceWorktree, String> {
+        prepare_git_remote_source_worktree(main_repo, source)
     }
 
     fn create_worktree_from_branch(
@@ -512,7 +564,7 @@ fn prepare_git_pull_request_worktree(
     name: &str,
     pr: u64,
 ) -> Result<PreparedPullRequestWorktree, String> {
-    ensure_origin_remote(main_repo)?;
+    ensure_origin_remote(main_repo, "resolve pull requests")?;
     let pr_info = github_pull_request_info(main_repo, pr)?;
     if pr_info.state != "OPEN" {
         return Err(format!(
@@ -551,9 +603,161 @@ fn prepare_git_pull_request_worktree(
     })
 }
 
+fn prepare_git_remote_branch_worktree(
+    main_repo: &str,
+    name: &str,
+    branch: &str,
+) -> Result<PreparedRemoteBranchWorktree, String> {
+    ensure_origin_remote(main_repo, "resolve remote branches")?;
+    let remote_branch = normalize_remote_branch_name(main_repo, branch)?;
+    let prepared = prepare_tracking_branch(
+        main_repo,
+        "origin",
+        None,
+        &remote_branch,
+        &remote_branch_local_branch_name(&remote_branch, name),
+    )?;
+    Ok(PreparedRemoteBranchWorktree {
+        name: name.to_owned(),
+        branch: prepared.local_branch,
+        remote_branch: remote_branch.clone(),
+        upstream: prepared.upstream,
+        head_oid: prepared.head_oid,
+    })
+}
+
+fn prepare_git_remote_source_worktree(
+    main_repo: &str,
+    source: &str,
+) -> Result<PreparedRemoteSourceWorktree, String> {
+    let parsed = parse_remote_worktree_source(source)?;
+    match parsed {
+        RemoteWorktreeSource::PullRequest {
+            owner,
+            repo,
+            number,
+        } => {
+            ensure_origin_remote(main_repo, "resolve pull requests")?;
+            let pr_info = github_pull_request_info_for_source(main_repo, &owner, &repo, number)?;
+            if pr_info.state != "OPEN" {
+                return Err(format!(
+                    "Pull request {owner}/{repo}#{number} is {}; only open pull requests can be checked out",
+                    pr_info.state
+                ));
+            }
+            let remote = ensure_github_remote(
+                main_repo,
+                &pr_info.head_owner,
+                &pr_info.head_repo,
+                "resolve pull request head branches",
+            )?;
+            let local_branch = pull_request_branch_name(number, &pr_info.head_ref);
+            let tracking = prepare_tracking_branch(
+                main_repo,
+                &remote,
+                Some(&github_repo_https_url(
+                    &pr_info.head_owner,
+                    &pr_info.head_repo,
+                )),
+                &pr_info.head_ref,
+                &local_branch,
+            )?;
+            if tracking.head_oid != pr_info.head_oid {
+                return Err(format!(
+                    "Fetched pull request {owner}/{repo}#{number} head {} did not match GitHub head {}",
+                    tracking.head_oid, pr_info.head_oid
+                ));
+            }
+            Ok(PreparedRemoteSourceWorktree {
+                name: format!("pr-{number}"),
+                branch: tracking.local_branch,
+                upstream: tracking.upstream,
+                head_oid: tracking.head_oid,
+                kind: "pullRequest".into(),
+            })
+        }
+        RemoteWorktreeSource::Branch {
+            owner,
+            repo,
+            branch,
+        } => {
+            let origin_repo = github_repo_from_origin(main_repo).ok();
+            let same_as_origin = origin_repo
+                .as_ref()
+                .is_some_and(|origin| origin.owner == owner && origin.repo == repo);
+            let remote = if same_as_origin {
+                "origin".to_owned()
+            } else {
+                ensure_github_remote(main_repo, &owner, &repo, "resolve branch links")?
+            };
+            let local_branch = if same_as_origin {
+                branch.clone()
+            } else {
+                remote_branch_local_branch_name_for_repo(&owner, &repo, &branch)
+            };
+            let tracking = prepare_tracking_branch(
+                main_repo,
+                &remote,
+                Some(&github_repo_https_url(&owner, &repo)),
+                &branch,
+                &local_branch,
+            )?;
+            Ok(PreparedRemoteSourceWorktree {
+                name: remote_worktree_name_from_branch(&branch),
+                branch: tracking.local_branch,
+                upstream: tracking.upstream,
+                head_oid: tracking.head_oid,
+                kind: "branch".into(),
+            })
+        }
+        RemoteWorktreeSource::OriginBranch { branch } => {
+            ensure_origin_remote(main_repo, "resolve remote branches")?;
+            let tracking = prepare_tracking_branch(main_repo, "origin", None, &branch, &branch)?;
+            Ok(PreparedRemoteSourceWorktree {
+                name: remote_worktree_name_from_branch(&branch),
+                branch: tracking.local_branch,
+                upstream: tracking.upstream,
+                head_oid: tracking.head_oid,
+                kind: "branch".into(),
+            })
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GithubPullRequestInfo {
     state: String,
+    head_oid: String,
+    head_ref: String,
+    head_owner: String,
+    head_repo: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubRepo {
+    owner: String,
+    repo: String,
+}
+
+enum RemoteWorktreeSource {
+    PullRequest {
+        owner: String,
+        repo: String,
+        number: u64,
+    },
+    Branch {
+        owner: String,
+        repo: String,
+        branch: String,
+    },
+    OriginBranch {
+        branch: String,
+    },
+}
+
+struct PreparedTrackingBranch {
+    local_branch: String,
+    upstream: String,
     head_oid: String,
 }
 
@@ -566,30 +770,200 @@ fn github_pull_request_info(main_repo: &str, pr: u64) -> Result<GithubPullReques
     .map_err(|error| classify_gh_pr_view_error(pr, error))?;
     let json: Value = serde_json::from_str(&output)
         .map_err(|error| format!("gh returned invalid JSON for pull request #{pr}: {error}"))?;
-    let state = json
-        .get("state")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| format!("gh response for pull request #{pr} omitted state"))?;
-    let head_oid = json
-        .get("headRefOid")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| format!("gh response for pull request #{pr} omitted headRefOid"))?;
     Ok(GithubPullRequestInfo {
-        state: state.to_owned(),
-        head_oid: head_oid.to_owned(),
+        state: required_json_string(&json, "state", &format!("pull request #{pr}"))?.to_owned(),
+        head_oid: required_json_string(&json, "headRefOid", &format!("pull request #{pr}"))?
+            .to_owned(),
+        head_ref: String::new(),
+        head_owner: String::new(),
+        head_repo: String::new(),
     })
 }
 
-fn ensure_origin_remote(main_repo: &str) -> Result<(), String> {
+fn github_pull_request_info_for_source(
+    main_repo: &str,
+    owner: &str,
+    repo: &str,
+    pr: u64,
+) -> Result<GithubPullRequestInfo, String> {
+    let selector = format!("https://github.com/{owner}/{repo}/pull/{pr}");
+    let output = run_gh_pr_view(
+        main_repo,
+        &[
+            "pr",
+            "view",
+            &selector,
+            "--json",
+            "state,headRefOid,headRefName,headRepository,headRepositoryOwner",
+        ],
+        format!("gh pr view failed for pull request {owner}/{repo}#{pr}"),
+    )
+    .map_err(|error| classify_gh_pr_view_error(pr, error))?;
+    github_pull_request_info_from_json(&output, &format!("pull request {owner}/{repo}#{pr}"))
+}
+
+fn github_pull_request_info_from_json(
+    output: &str,
+    label: &str,
+) -> Result<GithubPullRequestInfo, String> {
+    let json: Value = serde_json::from_str(output)
+        .map_err(|error| format!("gh returned invalid JSON for {label}: {error}"))?;
+    let state = required_json_string(&json, "state", label)?;
+    let head_oid = required_json_string(&json, "headRefOid", label)?;
+    let head_ref = required_json_string(&json, "headRefName", label)?;
+    let head_owner = json
+        .get("headRepositoryOwner")
+        .and_then(|value| {
+            value
+                .as_str()
+                .or_else(|| value.get("login").and_then(Value::as_str))
+                .or_else(|| value.get("name").and_then(Value::as_str))
+        })
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("gh response for {label} omitted headRepositoryOwner"))?;
+    let head_repo = json
+        .get("headRepository")
+        .and_then(|value| {
+            value
+                .as_str()
+                .or_else(|| value.get("name").and_then(Value::as_str))
+                .or_else(|| {
+                    value
+                        .get("nameWithOwner")
+                        .and_then(Value::as_str)
+                        .and_then(|value| value.rsplit('/').next())
+                })
+        })
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("gh response for {label} omitted headRepository"))?;
+    Ok(GithubPullRequestInfo {
+        state: state.to_owned(),
+        head_oid: head_oid.to_owned(),
+        head_ref: head_ref.to_owned(),
+        head_owner: head_owner.to_owned(),
+        head_repo: head_repo.to_owned(),
+    })
+}
+
+fn required_json_string<'a>(json: &'a Value, key: &str, label: &str) -> Result<&'a str, String> {
+    json.get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("gh response for {label} omitted {key}"))
+}
+
+fn ensure_origin_remote(main_repo: &str, purpose: &str) -> Result<(), String> {
     run_git_argv_output(
         main_repo,
         &["remote", "get-url", "origin"],
-        "git remote origin is required to resolve pull requests".to_owned(),
+        format!("git remote origin is required to {purpose}"),
     )
     .map(|_| ())
-    .map_err(|error| format!("Git remote \"origin\" is required to resolve pull requests: {error}"))
+    .map_err(|error| format!("Git remote \"origin\" is required to {purpose}: {error}"))
+}
+
+fn prepare_tracking_branch(
+    main_repo: &str,
+    remote: &str,
+    remote_url: Option<&str>,
+    remote_branch: &str,
+    local_branch: &str,
+) -> Result<PreparedTrackingBranch, String> {
+    let remote_branch = normalize_remote_branch_name(main_repo, remote_branch)?;
+    if let Some(remote_url) = remote_url {
+        ensure_remote_url(main_repo, remote, remote_url)?;
+    }
+    let remote_ref = format!("refs/remotes/{remote}/{remote_branch}");
+    let upstream = format!("{remote}/{remote_branch}");
+    let refspec = format!("+refs/heads/{remote_branch}:{remote_ref}");
+    run_git_argv(
+        main_repo,
+        &["fetch", "--no-tags", remote, &refspec],
+        format!("git fetch failed for {upstream}"),
+    )
+    .map_err(|error| classify_git_remote_branch_fetch_error(&upstream, error))?;
+    let head_oid = git_ref_oid(main_repo, &remote_ref)
+        .map_err(|error| format!("Fetched {upstream}, but could not read {remote_ref}: {error}"))?;
+    ensure_local_tracking_branch(main_repo, local_branch, &upstream, &remote_ref, &head_oid)?;
+    Ok(PreparedTrackingBranch {
+        local_branch: local_branch.to_owned(),
+        upstream,
+        head_oid,
+    })
+}
+
+fn ensure_local_tracking_branch(
+    main_repo: &str,
+    branch: &str,
+    upstream: &str,
+    remote_ref: &str,
+    fetched_oid: &str,
+) -> Result<(), String> {
+    if branch_exists_in_repo(main_repo, branch) {
+        if let Some(path) = branch_checkout_path(main_repo, branch)? {
+            return Err(format!(
+                "Local branch \"{branch}\" is already checked out at {path}"
+            ));
+        }
+        let existing_oid = git_ref_oid(main_repo, &format!("refs/heads/{branch}"))?;
+        run_git_argv(
+            main_repo,
+            &["merge-base", "--is-ancestor", &existing_oid, fetched_oid],
+            format!("git merge-base failed while checking whether {branch} can fast-forward"),
+        )
+        .map_err(|_| {
+            format!(
+                "Local branch \"{branch}\" cannot fast-forward to {upstream}; refusing to overwrite local commits"
+            )
+        })?;
+        if existing_oid != fetched_oid {
+            run_git_argv(
+                main_repo,
+                &["branch", "-f", branch, remote_ref],
+                format!("git branch fast-forward failed for {branch}"),
+            )?;
+        }
+    } else {
+        run_git_argv(
+            main_repo,
+            &["branch", "--track", branch, remote_ref],
+            format!("git branch failed for {upstream}"),
+        )?;
+    }
+    run_git_argv(
+        main_repo,
+        &["branch", "--set-upstream-to", upstream, branch],
+        format!("git branch --set-upstream-to failed for {branch}"),
+    )?;
+    Ok(())
+}
+
+fn ensure_remote_url(main_repo: &str, remote: &str, expected_url: &str) -> Result<(), String> {
+    match remote_config_url(main_repo, remote) {
+        Ok(existing) => {
+            let existing = existing.trim();
+            if existing == expected_url {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Git remote \"{remote}\" already points at {existing}, not {expected_url}"
+                ))
+            }
+        }
+        Err(_) => run_git_argv(
+            main_repo,
+            &["remote", "add", remote, expected_url],
+            format!("git remote add failed for {remote}"),
+        ),
+    }
+}
+
+fn remote_config_url(main_repo: &str, remote: &str) -> Result<String, String> {
+    run_git_argv_output(
+        main_repo,
+        &["config", "--get", &format!("remote.{remote}.url")],
+        format!("git config remote.{remote}.url failed"),
+    )
 }
 
 fn ensure_local_pull_request_branch(
@@ -661,6 +1035,190 @@ fn pull_request_branch_name(pr: u64, name: &str) -> String {
 
 fn pull_request_storage_ref(pr: u64, name: &str) -> String {
     format!("refs/aimux/pr/{pr}/{}", sanitize_ref_component(name))
+}
+
+fn remote_branch_local_branch_name(remote_branch: &str, name: &str) -> String {
+    format!(
+        "aimux/branch/{}/{}",
+        sanitize_ref_component(remote_branch),
+        sanitize_ref_component(name)
+    )
+}
+
+fn remote_branch_local_branch_name_for_repo(
+    owner: &str,
+    repo: &str,
+    remote_branch: &str,
+) -> String {
+    format!(
+        "aimux/branch/{}-{}/{}",
+        sanitize_ref_component(owner),
+        sanitize_ref_component(repo),
+        sanitize_ref_component(remote_branch)
+    )
+}
+
+pub(crate) fn remote_worktree_name_from_source(source: &str) -> Result<String, String> {
+    match parse_remote_worktree_source(source)? {
+        RemoteWorktreeSource::PullRequest { number, .. } => Ok(format!("pr-{number}")),
+        RemoteWorktreeSource::Branch { branch, .. }
+        | RemoteWorktreeSource::OriginBranch { branch } => {
+            Ok(remote_worktree_name_from_branch(&branch))
+        }
+    }
+}
+
+fn remote_worktree_name_from_branch(branch: &str) -> String {
+    sanitize_ref_component(branch)
+}
+
+fn parse_remote_worktree_source(source: &str) -> Result<RemoteWorktreeSource, String> {
+    let source = source.trim();
+    if source.is_empty() {
+        return Err("remote source is required".into());
+    }
+    if let Some(path) = github_path(source) {
+        let segments = path
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(percent_decode_path_segment)
+            .collect::<Result<Vec<_>, _>>()?;
+        if segments.len() >= 4 && segments[2] == "pull" {
+            let number = segments[3]
+                .parse::<u64>()
+                .ok()
+                .filter(|number| *number > 0)
+                .ok_or_else(|| format!("GitHub pull request URL has invalid number: {source}"))?;
+            return Ok(RemoteWorktreeSource::PullRequest {
+                owner: segments[0].clone(),
+                repo: strip_dot_git(&segments[1]).to_owned(),
+                number,
+            });
+        }
+        if segments.len() >= 4 && segments[2] == "tree" {
+            let branch = segments[3..].join("/");
+            if branch.trim().is_empty() {
+                return Err(format!("GitHub branch URL omitted a branch: {source}"));
+            }
+            return Ok(RemoteWorktreeSource::Branch {
+                owner: segments[0].clone(),
+                repo: strip_dot_git(&segments[1]).to_owned(),
+                branch,
+            });
+        }
+        return Err(format!(
+            "remote source must be a GitHub pull request or branch URL: {source}"
+        ));
+    }
+    Ok(RemoteWorktreeSource::OriginBranch {
+        branch: source.to_owned(),
+    })
+}
+
+fn github_path(source: &str) -> Option<&str> {
+    source
+        .strip_prefix("https://github.com/")
+        .or_else(|| source.strip_prefix("http://github.com/"))
+}
+
+fn github_repo_from_origin(main_repo: &str) -> Result<GithubRepo, String> {
+    let output = remote_config_url(main_repo, "origin")?;
+    parse_github_repo_url(output.trim()).ok_or_else(|| {
+        format!(
+            "Git remote \"origin\" is not a GitHub repository: {}",
+            output.trim()
+        )
+    })
+}
+
+fn parse_github_repo_url(value: &str) -> Option<GithubRepo> {
+    let path = value
+        .strip_prefix("https://github.com/")
+        .or_else(|| value.strip_prefix("http://github.com/"))
+        .or_else(|| value.strip_prefix("git@github.com:"))?;
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+    let owner = segments.next()?.to_owned();
+    let repo = strip_dot_git(segments.next()?).to_owned();
+    Some(GithubRepo { owner, repo })
+}
+
+fn ensure_github_remote(
+    main_repo: &str,
+    owner: &str,
+    repo: &str,
+    purpose: &str,
+) -> Result<String, String> {
+    let origin = github_repo_from_origin(main_repo).ok();
+    if origin
+        .as_ref()
+        .is_some_and(|origin| origin.owner == owner && origin.repo == repo)
+    {
+        ensure_origin_remote(main_repo, purpose)?;
+        return Ok("origin".into());
+    }
+    let remote = github_remote_name(owner, repo);
+    ensure_remote_url(main_repo, &remote, &github_repo_https_url(owner, repo))?;
+    Ok(remote)
+}
+
+fn github_remote_name(owner: &str, repo: &str) -> String {
+    format!(
+        "aimux-{}-{}",
+        sanitize_ref_component(owner),
+        sanitize_ref_component(repo)
+    )
+}
+
+fn github_repo_https_url(owner: &str, repo: &str) -> String {
+    format!("https://github.com/{owner}/{repo}.git")
+}
+
+fn strip_dot_git(value: &str) -> &str {
+    value.strip_suffix(".git").unwrap_or(value)
+}
+
+fn percent_decode_path_segment(segment: &str) -> Result<String, String> {
+    let bytes = segment.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(format!(
+                    "invalid percent escape in GitHub URL segment {segment:?}"
+                ));
+            }
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                .map_err(|_| format!("invalid percent escape in GitHub URL segment {segment:?}"))?;
+            let value = u8::from_str_radix(hex, 16)
+                .map_err(|_| format!("invalid percent escape in GitHub URL segment {segment:?}"))?;
+            output.push(value);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(output).map_err(|_| format!("GitHub URL segment is not UTF-8: {segment:?}"))
+}
+
+fn normalize_remote_branch_name(main_repo: &str, branch: &str) -> Result<String, String> {
+    let trimmed = branch.trim();
+    let trimmed = trimmed.strip_prefix("origin/").unwrap_or(trimmed);
+    if trimmed.is_empty() {
+        return Err("branch must be a non-empty origin branch name".into());
+    }
+    let output = run_git_argv_output(
+        main_repo,
+        &["check-ref-format", "--branch", trimmed],
+        format!("git check-ref-format failed for branch {trimmed}"),
+    )
+    .map_err(|error| format!("Remote branch name \"{branch}\" is invalid: {error}"))?;
+    let normalized = output.trim();
+    if normalized.is_empty() || normalized.starts_with("origin/") {
+        return Err(format!("Remote branch name \"{branch}\" is invalid"));
+    }
+    Ok(normalized.to_owned())
 }
 
 fn sanitize_ref_component(value: &str) -> String {
@@ -772,6 +1330,28 @@ fn classify_git_pr_fetch_error(pr: u64, error: String) -> String {
         return format!("GitHub authentication is required to fetch pull request #{pr}: {error}");
     }
     format!("Failed to fetch pull request #{pr}: {error}")
+}
+
+fn classify_git_remote_branch_fetch_error(upstream: &str, error: String) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("couldn't find remote ref") || lower.contains("could not find remote ref") {
+        return format!("Remote branch \"{upstream}\" was not found: {error}");
+    }
+    if lower.contains("could not resolve host")
+        || lower.contains("network")
+        || lower.contains("timed out")
+        || lower.contains("connection")
+    {
+        return format!("Network error while fetching {upstream}: {error}");
+    }
+    if lower.contains("authentication")
+        || lower.contains("permission denied")
+        || lower.contains("could not read username")
+        || lower.contains("repository not found")
+    {
+        return format!("Git authentication is required to fetch {upstream}: {error}");
+    }
+    format!("Failed to fetch {upstream}: {error}")
 }
 
 fn branch_exists_in_repo(cwd: &str, branch: &str) -> bool {

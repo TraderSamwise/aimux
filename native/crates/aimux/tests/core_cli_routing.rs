@@ -1357,6 +1357,8 @@ fn worktree_and_graveyard_parsers_match_cli_forms() {
             project: Some("/repo".into()),
             name: None,
             pr: None,
+            branch: None,
+            source: None,
             path: None,
             yes: true,
             include_active: true,
@@ -1375,6 +1377,36 @@ fn worktree_and_graveyard_parsers_match_cli_forms() {
     assert_eq!(create_pr.pr, Some(123));
     assert!(parse_core_worktree_args(&["worktree", "create", "review", "--pr", "0"]).is_none());
     assert!(parse_core_worktree_args(&["worktree", "create", "review", "--pr", "abc"]).is_none());
+
+    let create_branch =
+        parse_core_worktree_args(&["worktree", "create", "review", "--branch", "feature/foo"])
+            .expect("worktree create branch args");
+    assert_eq!(create_branch.name.as_deref(), Some("review"));
+    assert_eq!(create_branch.branch.as_deref(), Some("feature/foo"));
+    assert!(
+        parse_core_worktree_args(&[
+            "worktree",
+            "create",
+            "review",
+            "--pr",
+            "123",
+            "--branch",
+            "feature/foo"
+        ])
+        .is_none()
+    );
+
+    let open = parse_core_worktree_args(&[
+        "worktree",
+        "open",
+        "https://github.com/openai/aimux/pull/123/files",
+    ])
+    .expect("worktree open args");
+    assert_eq!(open.subcommand, "open");
+    assert_eq!(
+        open.source.as_deref(),
+        Some("https://github.com/openai/aimux/pull/123/files")
+    );
 
     let prune = parse_core_worktree_args(&["worktree", "prune", "--project=/repo", "--yes"])
         .expect("worktree prune args");

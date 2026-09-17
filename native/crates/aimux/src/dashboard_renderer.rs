@@ -518,6 +518,11 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
                 label: "worktree",
                 tone: None,
             },
+            FooterHint {
+                key: "B",
+                label: "remote branch",
+                tone: None,
+            },
         ]);
         hints.extend(visibility);
         hints.extend(system);
@@ -578,6 +583,11 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
             FooterHint {
                 key: "w",
                 label: "worktree",
+                tone: None,
+            },
+            FooterHint {
+                key: "B",
+                label: "remote branch",
                 tone: None,
             },
         ];

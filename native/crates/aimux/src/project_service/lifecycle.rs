@@ -49,7 +49,8 @@ pub(crate) use restore_snapshot::{
 #[cfg(test)]
 pub(crate) use runtime_adapter::AsyncProjectLifecycleRuntime;
 pub use runtime_adapter::{
-    PreparedPullRequestWorktree, ProjectLifecycleRuntime, SystemProjectLifecycleRuntime,
+    PreparedPullRequestWorktree, PreparedRemoteSourceWorktree, ProjectLifecycleRuntime,
+    SystemProjectLifecycleRuntime,
 };
 use services::*;
 use session_state::*;

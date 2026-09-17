@@ -1536,8 +1536,8 @@ where
         }
         (
             "worktree",
-            "" | "list" | "add" | "create" | "prune" | "cleanup-caches" | "remove" | "graveyard"
-            | "resurrect" | "delete-graveyard",
+            "" | "list" | "add" | "create" | "open" | "prune" | "cleanup-caches" | "remove"
+            | "graveyard" | "resurrect" | "delete-graveyard",
         ) => {
             let parsed = parse_core_worktree_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
@@ -1561,23 +1561,30 @@ where
                     None,
                 ),
                 "create" => {
-                    let body = match parsed.pr {
-                        Some(pr) => json!({
-                            "project": project_root,
-                            "name": parsed.name,
-                            "pr": pr,
-                        }),
-                        None => json!({
-                            "project": project_root,
-                            "name": parsed.name,
-                        }),
-                    };
+                    let mut body = json!({
+                        "project": project_root,
+                        "name": parsed.name,
+                    });
+                    if let Some(pr) = parsed.pr {
+                        body["pr"] = json!(pr);
+                    }
+                    if let Some(branch) = parsed.branch {
+                        body["branch"] = json!(branch);
+                    }
                     (
                         CoreCliOperation::WorktreeCreate,
                         text_route_path(CORE_API_ROUTES.worktree_create_text, parsed.json),
                         Some(body),
                     )
                 }
+                "open" => (
+                    CoreCliOperation::WorktreeCreate,
+                    text_route_path(CORE_API_ROUTES.worktree_create_text, parsed.json),
+                    Some(json!({
+                        "project": project_root,
+                        "source": parsed.source,
+                    })),
+                ),
                 "prune" => (
                     CoreCliOperation::WorktreePrune,
                     text_route_path(CORE_API_ROUTES.worktree_prune_text, parsed.json),

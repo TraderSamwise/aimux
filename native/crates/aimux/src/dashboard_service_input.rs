@@ -98,6 +98,34 @@ pub fn render_worktree_input_overlay(buffer: &str, cols: usize, rows: usize) -> 
     })
 }
 
+pub fn render_remote_worktree_input_overlay(buffer: &str, cols: usize, rows: usize) -> String {
+    let body = vec![
+        format!(
+            "  {} {}_",
+            style("GitHub PR or branch URL:", Tone::Muted),
+            buffer
+        ),
+        String::new(),
+        format!(
+            "  {}",
+            style(
+                "Creates a tracking worktree from the remote head.",
+                Tone::Muted
+            )
+        ),
+        String::new(),
+        modal_hints("[Enter] open  [Esc] cancel"),
+    ];
+    render_overlay_box(&OverlayBoxSpec {
+        title: "Open remote worktree",
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Blue,
+        icon: None,
+    })
+}
+
 pub fn render_worktree_remove_confirm_overlay(
     name: &str,
     path: &str,

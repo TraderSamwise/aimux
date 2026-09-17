@@ -414,6 +414,10 @@ pub struct CoreWorktreeArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pr: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     pub yes: bool,
     pub include_active: bool,
