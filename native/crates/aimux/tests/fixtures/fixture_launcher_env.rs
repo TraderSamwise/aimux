@@ -10,6 +10,7 @@ const LAUNCHER_ENV: &str =
 /// `rustDivergences` field says why. Everything else is literal Node parity.
 #[test]
 fn fixture_launcher_env_matches_typescript() {
+    let _home_guard = EnvVarGuard::set("HOME", "/Users/sam");
     let contract: Value =
         serde_json::from_str(LAUNCHER_ENV).expect("valid launch/launcher-env fixture");
     let cases = contract["cases"].as_array().expect("launcher env cases");
@@ -33,6 +34,32 @@ fn fixture_launcher_env_matches_typescript() {
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 }
 
 fn launcher_actual(case: &Value) -> Value {

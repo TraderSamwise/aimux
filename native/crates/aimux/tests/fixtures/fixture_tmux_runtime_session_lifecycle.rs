@@ -43,9 +43,11 @@ fn fixture_tmux_runtime_session_lifecycle_matches_typescript_contract() {
 
 fn with_contract_env(run: impl FnOnce() -> Value) -> Value {
     let previous_home = std::env::var("AIMUX_HOME").ok();
+    let previous_host = std::env::var("AIMUX_DAEMON_HOST").ok();
     let previous_port = std::env::var("AIMUX_DAEMON_PORT").ok();
     unsafe {
         std::env::set_var("AIMUX_HOME", "/tmp/aimux-contract-home");
+        std::env::set_var("AIMUX_DAEMON_HOST", "");
         std::env::set_var("AIMUX_DAEMON_PORT", "54321");
     }
     let output = run();
@@ -53,6 +55,10 @@ fn with_contract_env(run: impl FnOnce() -> Value) -> Value {
         match previous_home {
             Some(value) => std::env::set_var("AIMUX_HOME", value),
             None => std::env::remove_var("AIMUX_HOME"),
+        }
+        match previous_host {
+            Some(value) => std::env::set_var("AIMUX_DAEMON_HOST", value),
+            None => std::env::remove_var("AIMUX_DAEMON_HOST"),
         }
         match previous_port {
             Some(value) => std::env::set_var("AIMUX_DAEMON_PORT", value),
