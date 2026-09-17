@@ -39,6 +39,44 @@ fn command_from(action: &CoreCliAction) -> (&str, Option<&Value>, bool, Option<u
     )
 }
 
+fn text_route_body_with_loop_report_id(
+    action: &CoreCliAction,
+    expected_path: &str,
+) -> (Value, String) {
+    let CoreCliAction::TextRoute { path, body } = action else {
+        panic!("expected text route action, got {action:?}");
+    };
+    assert_eq!(path, expected_path);
+    let mut body = body.clone().expect("text route body");
+    let report_id = body
+        .as_object_mut()
+        .and_then(|object| object.remove("reportId"))
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .expect("loop self-report body includes reportId");
+    assert_loop_report_id_shape(&report_id);
+    (body, report_id)
+}
+
+fn assert_loop_report_id_shape(report_id: &str) {
+    let rest = report_id
+        .strip_prefix("loop-self-report-")
+        .expect("loop self-report id has expected prefix");
+    let mut parts = rest.split('-');
+    let pid = parts.next().expect("loop self-report id has pid");
+    let nanos = parts.next().expect("loop self-report id has timestamp");
+    let sequence = parts.next().expect("loop self-report id has sequence");
+    assert!(
+        parts.next().is_none(),
+        "loop self-report id has no extra segments"
+    );
+    assert!(!pid.is_empty());
+    assert!(pid.chars().all(|ch| ch.is_ascii_digit()));
+    assert!(!nanos.is_empty());
+    u128::from_str_radix(nanos, 16).expect("loop self-report timestamp is hex");
+    assert!(!sequence.is_empty());
+    u64::from_str_radix(sequence, 16).expect("loop self-report sequence is hex");
+}
+
 #[test]
 fn sidecar_owned_commands_map_to_authoritative_names_and_payloads() {
     let cases = [
@@ -2287,17 +2325,16 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
     )
     .expect("loop done plan");
     assert_eq!(done.operation, CoreCliOperation::LoopDone);
+    let (done_body, done_report_id) =
+        text_route_body_with_loop_report_id(&done.action, "/core/loop/done-text?json=1");
     assert_eq!(
-        done.action,
-        CoreCliAction::TextRoute {
-            path: "/core/loop/done-text?json=1".into(),
-            body: Some(json!({
-                "project": "/repo",
-                "sessionId": "claude-1",
-                "source": "agent",
-                "reason": "done",
-            })),
-        }
+        done_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "claude-1",
+            "source": "agent",
+            "reason": "done",
+        })
     );
 
     let done_with_delivery_ref = classify_core_cli(
@@ -2312,17 +2349,17 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
         &context(true, true),
     )
     .expect("loop done delivery ref plan");
+    let (done_delivery_ref_body, done_delivery_ref_report_id) =
+        text_route_body_with_loop_report_id(&done_with_delivery_ref.action, "/core/loop/done-text");
+    assert_ne!(done_report_id, done_delivery_ref_report_id);
     assert_eq!(
-        done_with_delivery_ref.action,
-        CoreCliAction::TextRoute {
-            path: "/core/loop/done-text".into(),
-            body: Some(json!({
-                "project": "/repo",
-                "sessionId": "claude-1",
-                "source": "agent",
-                "deliveryRef": "master",
-            })),
-        }
+        done_delivery_ref_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "claude-1",
+            "source": "agent",
+            "deliveryRef": "master",
+        })
     );
 
     let block = classify_core_cli(
@@ -2331,16 +2368,17 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
     )
     .expect("loop block plan");
     assert_eq!(block.operation, CoreCliOperation::LoopBlock);
+    let (block_body, block_report_id) =
+        text_route_body_with_loop_report_id(&block.action, "/core/loop/block-text");
+    assert_ne!(done_report_id, block_report_id);
+    assert_ne!(done_delivery_ref_report_id, block_report_id);
     assert_eq!(
-        block.action,
-        CoreCliAction::TextRoute {
-            path: "/core/loop/block-text".into(),
-            body: Some(json!({
-                "project": "/repo",
-                "sessionId": "claude-1",
-                "source": "agent",
-            })),
-        }
+        block_body,
+        json!({
+            "project": "/repo",
+            "sessionId": "claude-1",
+            "source": "agent",
+        })
     );
 
     let missing_session = classify_core_cli(&["loop", "done"], &context(true, true))

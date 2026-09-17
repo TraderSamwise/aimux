@@ -2062,7 +2062,99 @@ fn js_string(value: &Value) -> String {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::ffi::OsString;
     use std::io;
+    use std::sync::{Mutex, MutexGuard};
+
+    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct AimuxHomeEnvGuard {
+        previous: Option<OsString>,
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl AimuxHomeEnvGuard {
+        fn set(path: &Path) -> Self {
+            let guard = TEST_ENV_LOCK.lock().expect("test env lock");
+            let previous = std::env::var_os("AIMUX_HOME");
+            unsafe {
+                std::env::set_var("AIMUX_HOME", path);
+            }
+            Self {
+                previous,
+                _guard: guard,
+            }
+        }
+    }
+
+    impl Drop for AimuxHomeEnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(previous) = &self.previous {
+                    std::env::set_var("AIMUX_HOME", previous);
+                } else {
+                    std::env::remove_var("AIMUX_HOME");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pending_loop_self_report_replay_preserves_spooled_report_id() {
+        let home = std::env::temp_dir().join(format!(
+            "aimux-loop-report-replay-{}-{}",
+            std::process::id(),
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join("daemon")).expect("create isolated aimux home");
+        let _env = AimuxHomeEnvGuard::set(&home);
+        let spool_path = pending_loop_self_report_spool_path();
+        fs::write(
+            &spool_path,
+            serde_json::to_string(&json!({
+                "kind": "loop-self-report",
+                "recordedAt": "2026-09-17T00:00:00.000Z",
+                "route": "/core/loop/done-text",
+                "body": {
+                    "project": "/repo",
+                    "sessionId": "codex-1",
+                    "source": "agent",
+                    "reportId": "loop-self-report-stable"
+                },
+                "deliveryError": "request timed out"
+            }))
+            .expect("serialize pending report")
+                + "\n",
+        )
+        .expect("write pending report");
+
+        let requests = RefCell::new(Vec::<(String, Option<Value>)>::new());
+        let delivered = replay_pending_loop_self_reports(|route, body| {
+            requests.borrow_mut().push((route.to_owned(), body));
+            Ok("loop ok".to_owned())
+        })
+        .expect("replay pending reports");
+
+        assert_eq!(delivered, 1);
+        let requests = requests.into_inner();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, "/core/loop/done-text");
+        assert_eq!(
+            requests[0]
+                .1
+                .as_ref()
+                .and_then(|body| body.get("reportId"))
+                .and_then(Value::as_str),
+            Some("loop-self-report-stable"),
+            "replay must deliver the exact spooled reportId, not regenerate it"
+        );
+        assert!(
+            !spool_path.exists(),
+            "delivered pending self-report should be removed from spool"
+        );
+        let _ = fs::remove_dir_all(home);
+    }
 
     #[test]
     fn daemon_text_request_skips_ensure_when_daemon_answers() {
