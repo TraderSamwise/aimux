@@ -61,6 +61,26 @@ fn expose_popup_failure_logs_child_error() {
 }
 
 #[test]
+fn fixture_normalization_maps_linux_tmp_and_macos_private_tmp_aliases() {
+    let replacements = BTreeMap::from([(
+        "<temp1>".to_owned(),
+        "/tmp/aimux-tmux-control-fixture-temp1-123-0".to_owned(),
+    )]);
+    let actual = normalize_string(
+        "/private/tmp/aimux-tmux-control-fixture-temp1-123-0/project-root.txt \
+         /private/tmp/aimux-tmux-control-fixture-temp1-123-0%2Fproject-root.txt",
+        Path::new("/repo"),
+        &replacements,
+        &FixtureNormalization::none(),
+    );
+
+    assert_eq!(
+        actual,
+        "<temp1>/project-root.txt <temp1>%2Fproject-root.txt"
+    );
+}
+
+#[test]
 fn dashboard_reload_failure_names_missing_tmux_session() {
     assert_dashboard_reload_failure_names_missing_tmux_session(TmuxControlRunner::ShellScript);
     assert_dashboard_reload_failure_names_missing_tmux_session(TmuxControlRunner::Native);
@@ -1253,11 +1273,13 @@ fn normalize_string(
 ) -> String {
     let mut output = value.replace(&repo.to_string_lossy().to_string(), "<repo>");
     for (placeholder, real) in replacements {
-        output = output.replace(
-            &percent_encode_component(real),
-            &percent_encode_component(placeholder),
-        );
-        output = output.replace(real, placeholder);
+        for alias in fixture_path_aliases(real) {
+            output = output.replace(
+                &percent_encode_component(&alias),
+                &percent_encode_component(placeholder),
+            );
+            output = output.replace(&alias, placeholder);
+        }
     }
     output = normalize_tempfile_paths(&output);
     normalize_daemon_port(&output, normalization)
@@ -1350,6 +1372,21 @@ fn normalize_tempfile_paths(value: &str) -> String {
     }
     output.push_str(rest);
     output
+}
+
+fn fixture_path_aliases(path: &str) -> Vec<String> {
+    let mut aliases = Vec::from([path.to_owned()]);
+    if let Ok(canonical) = fs::canonicalize(path) {
+        aliases.push(canonical.to_string_lossy().into_owned());
+    }
+    if let Some(stripped) = path.strip_prefix("/private/") {
+        aliases.push(format!("/{stripped}"));
+    } else if path.starts_with("/var/") || path.starts_with("/tmp/") {
+        aliases.push(format!("/private{path}"));
+    }
+    aliases.sort_by_key(|alias| std::cmp::Reverse(alias.len()));
+    aliases.dedup();
+    aliases
 }
 
 fn normalize_fixture_root_tempfile_paths(value: &str) -> String {
