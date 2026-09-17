@@ -404,6 +404,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: verify-release-assets
     steps:
+      - name: Checkout aimux
+        uses: actions/checkout@v4
+
       - name: Resolve version
         id: meta
         env:
@@ -479,10 +482,16 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet Formula/aimux.rb Formula/aimux-local.rb; then
+          for formula in Formula/aimux.rb Formula/aimux-local.rb; do
+            if [ ! -f "$formula" ]; then
+              echo "Formula render did not produce $formula." >&2
+              exit 1
+            fi
+          done
+          git add Formula/aimux.rb Formula/aimux-local.rb
+          if git diff --cached --quiet; then
             echo "Formula already up to date."
             exit 0
           fi
-          git add Formula/aimux.rb Formula/aimux-local.rb
           git commit -m "aimux ${TAG}"
           git push
