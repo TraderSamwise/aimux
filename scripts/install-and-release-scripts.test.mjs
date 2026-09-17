@@ -730,7 +730,7 @@ describe("verify-release-asset-set.sh", () => {
     }
   });
 
-  it("rejects stale provenance that names the old artifact digest", () => {
+  it("per-asset provenance verification rejects stale provenance that names the old artifact digest", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
       writeAssetSet(root);
@@ -740,7 +740,13 @@ describe("verify-release-asset-set.sh", () => {
       provenance.artifact.sha256 = "0".repeat(64);
       writeFileSync(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`);
 
-      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
+      const result = run("bash", [
+        join(repoRoot, "scripts/verify-release-provenance.sh"),
+        root,
+        asset,
+        "linux-x64",
+        "local",
+      ]);
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("release provenance verification failed");
@@ -751,7 +757,7 @@ describe("verify-release-asset-set.sh", () => {
     }
   });
 
-  it("rejects an SBOM whose dependency set does not match the asset variant", () => {
+  it("per-asset provenance verification rejects an SBOM whose dependency set does not match the asset variant", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));
     try {
       writeAssetSet(root);
@@ -761,7 +767,13 @@ describe("verify-release-asset-set.sh", () => {
       sbom.packages = sbom.packages.filter((entry) => entry.name === "aimux");
       writeFileSync(sbomPath, `${JSON.stringify(sbom, null, 2)}\n`);
 
-      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset-set.sh"), root]);
+      const result = run("bash", [
+        join(repoRoot, "scripts/verify-release-provenance.sh"),
+        root,
+        asset,
+        "linux-x64",
+        "local",
+      ]);
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("SBOM dependency set mismatch");
@@ -944,7 +956,7 @@ describe("release workflow", () => {
     expect(packageJson.scripts["release:source"]).toBe("bash scripts/build-release-from-source.sh");
     expect(packageJson.scripts["release:source:local"]).toBe("bash scripts/build-local-release-from-source.sh");
     expect(buildReleaseAsset).toContain('bash "$ROOT_DIR/scripts/write-release-provenance.sh"');
-    expect(verifyReleaseAssetSet).toContain('bash "$ROOT_DIR/scripts/verify-release-provenance.sh"');
+    expect(verifyReleaseAssetSet).not.toContain('bash "$ROOT_DIR/scripts/verify-release-provenance.sh"');
     expect(sourceRelease).toContain('bash "$ROOT_DIR/scripts/verify-release-provenance.sh"');
     expect(sourceRelease).toContain('bash "$ROOT_DIR/scripts/check-local-build-boundary.sh"');
     expect(sourceRelease).toContain("AIMUX_SKIP_POST_INSTALL_RESTART=1");
@@ -991,6 +1003,8 @@ describe("release workflow", () => {
     expect(workflow).toContain("--variant ${{ matrix.variant }}");
     expect(workflow).toContain("--archive release/${{ matrix.asset }}.tar.gz");
     expect(workflow).toContain("--platform-arch ${{ matrix.platform }}-${{ matrix.arch }}");
+    expect(workflow).toContain("- name: Verify release provenance and SBOM");
+    expect(workflow).toContain("bash scripts/verify-release-provenance.sh");
     expect(workflow).toContain("bash scripts/verify-release-asset-set.sh release-check");
     expect(workflow).toContain("release/${{ matrix.asset }}.tar.gz.provenance.json");
     expect(workflow).toContain("release/${{ matrix.asset }}.tar.gz.sbom.spdx.json");

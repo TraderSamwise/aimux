@@ -22,11 +22,10 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-for command in grep python3 shasum tar mktemp rm sed; do
+for command in grep shasum tar mktemp rm sed; do
   need "$command"
 done
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -129,11 +128,6 @@ for platform in darwin linux; do
       elif [ ! -r "$sbom_path" ]; then
         printf 'release SBOM file is not readable: %s\n' "$sbom_path" >&2
         missing=1
-      fi
-      if [ -f "$asset_path" ] && [ -f "$sha_path" ] && [ -f "$provenance_path" ] && [ -f "$sbom_path" ]; then
-        if ! bash "$ROOT_DIR/scripts/verify-release-provenance.sh" "$RELEASE_DIR" "$asset" "${platform}-${arch}" "$variant"; then
-          missing=1
-        fi
       fi
     done
   done

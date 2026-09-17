@@ -72,7 +72,6 @@ check_release_provenance_gate() {
   require_file "scripts/build-release-from-source.sh" "source release build verifier"
   require_file "scripts/build-local-release-from-source.sh" "local source release wrapper"
   require_contains "scripts/build-release-asset.sh" "write-release-provenance.sh" "per-asset provenance/SBOM generation"
-  require_contains "scripts/verify-release-asset-set.sh" "verify-release-provenance.sh" "provenance/SBOM asset-set verification"
   require_contains "scripts/verify-release-provenance.sh" "generate-cargo-sbom.py" "regenerated SBOM dependency-set verification"
   require_contains "scripts/generate-cargo-sbom.py" "SBOM dependency set mismatch" "loud SBOM dependency mismatch error"
   require_contains "scripts/generate-cargo-sbom.py" "no-default-features" "local SBOM feature-set separation"
@@ -84,6 +83,8 @@ check_release_provenance_gate() {
   require_contains "scripts/build-release-from-source.sh" "AIMUX_SKIP_POST_INSTALL_RESTART=1" "isolated source-build install smoke"
 
   local workflow=".github/workflows/release.yml"
+  require_contains "$workflow" "Verify release provenance and SBOM" "per-asset provenance/SBOM matrix verification step"
+  require_contains "$workflow" "scripts/verify-release-provenance.sh" "per-asset provenance/SBOM verifier"
   require_contains "$workflow" "actions/attest-build-provenance@v2" "GitHub artifact attestation step"
   require_contains "$workflow" "gh attestation verify" "artifact attestation verification step"
   require_contains "$workflow" 'release/${{ matrix.asset }}.tar.gz.provenance.json' "provenance asset upload"

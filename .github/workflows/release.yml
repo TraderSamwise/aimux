@@ -180,6 +180,15 @@ jobs:
             --archive release/${{ matrix.asset }}.tar.gz \
             --platform-arch ${{ matrix.platform }}-${{ matrix.arch }}
 
+      - name: Verify release provenance and SBOM
+        run: |
+          set -euo pipefail
+          bash scripts/verify-release-provenance.sh \
+            release \
+            ${{ matrix.asset }}.tar.gz \
+            ${{ matrix.platform }}-${{ matrix.arch }} \
+            ${{ matrix.variant }}
+
       - name: Verify Darwin notifier helper
         if: matrix.platform == 'darwin'
         run: |
