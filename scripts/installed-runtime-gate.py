@@ -219,8 +219,12 @@ def write_config(scope: Any) -> None:
             """\
             #!/bin/sh
             printf 'GATE_READY:%s\\n' "$AIMUX_SESSION_ID"
-            while IFS= read -r line; do
-              printf 'GATE_INPUT:%s\\n' "$line"
+            while :; do
+              if IFS= read -r line 2>/dev/null < /dev/tty; then
+                printf 'GATE_INPUT:%s\\n' "$line"
+              else
+                sleep 0.25
+              fi
             done
             """
         ),
@@ -310,6 +314,7 @@ def write_config(scope: Any) -> None:
 def create_scope(phase8: Any, aimux_bin: Path, label: str) -> Any:
     tmux = phase8.find_tmux()
     scope = phase8.Scope(f"installed-gate-{label}", aimux_bin)
+    scope.env["SHELL"] = shutil.which("sh") or "/bin/sh"
     socket_name = f"aimux-installed-gate-{label}-{os.getpid()}-{time.time_ns()}"
     scope.tmux_socket_name = socket_name
     phase8.install_tmux_socket_wrapper(scope, tmux, socket_name)
@@ -443,6 +448,14 @@ def check_input_delivery(phase8: Any, aimux_bin: Path, mutation: str | None) -> 
         print(f"agent input became visible in session={session_id}")
 
 
+def tmux_socket_paths(socket_name: str) -> list[Path]:
+    uid = os.getuid()
+    return [
+        Path("/tmp") / f"tmux-{uid}" / socket_name,
+        Path("/private/tmp") / f"tmux-{uid}" / socket_name,
+    ]
+
+
 def check_liveness(phase8: Any, aimux_bin: Path, mutation: str | None) -> None:
     with create_scope(phase8, aimux_bin, "liveness") as scope:
         aimux(scope, ["daemon", "ensure"], timeout=60)
@@ -457,8 +470,32 @@ def check_liveness(phase8: Any, aimux_bin: Path, mutation: str | None) -> None:
         window_id = str(target.get("windowId") or "")
         if not window_id:
             raise GateFailure(f"spawned live session has no tmux window target: {spawned}")
+        real_tmux = phase8.find_tmux()
+        pre_kill = phase8.run(
+            [
+                real_tmux,
+                "-L",
+                scope.tmux_socket_name,
+                "list-windows",
+                "-F",
+                "#{window_id} #{window_name} #{pane_current_command} #{pane_dead}",
+            ],
+            env=phase8.without_tmux(os.environ.copy()),
+            timeout=10,
+            check=False,
+        )
+        if pre_kill.returncode != 0:
+            socket_state = ", ".join(
+                f"{path}:exists={path.exists()}"
+                for path in tmux_socket_paths(scope.tmux_socket_name)
+            )
+            raise GateFailure(
+                "tmux server disappeared before liveness kill; "
+                f"socket_state=[{socket_state}]\nstdout:\n{pre_kill.stdout}\nstderr:\n{pre_kill.stderr}"
+            )
+        if window_id not in pre_kill.stdout.split():
+            raise GateFailure(f"spawned tmux window {window_id} missing before liveness kill:\n{pre_kill.stdout}")
         if mutation != "liveness-skip-kill":
-            real_tmux = phase8.find_tmux()
             phase8.run([real_tmux, "-L", scope.tmux_socket_name, "kill-window", "-t", window_id], env=phase8.without_tmux(os.environ.copy()), timeout=10)
         wait_until(
             "ps to report killed window offline",
