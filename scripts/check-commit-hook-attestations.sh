@@ -47,7 +47,15 @@ while IFS= read -r commit; do
   )"
 
   if [ -z "$actual" ]; then
-    echo "aimux: commit $(git rev-parse --short "$commit") is missing Aimux-Pre-Commit; hooks may have been skipped." >&2
+    # Some commits are created by paths that cannot run the commit-msg hook:
+    # `git revert`/`git cherry-pick` reuse a recorded message, and external
+    # release tooling commits directly. Those are not --no-verify bypasses, so
+    # fall back to verifying the invariant the hook exists to protect: the
+    # commit's tree must already satisfy the pre-commit checks.
+    if bash scripts/verify-commit-tree-clean.sh "$commit" >/dev/null 2>&1; then
+      continue
+    fi
+    echo "aimux: commit $(git rev-parse --short "$commit") is missing Aimux-Pre-Commit and its tree does not pass the pre-commit checks." >&2
     failed=1
     continue
   fi
