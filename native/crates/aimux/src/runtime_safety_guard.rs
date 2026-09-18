@@ -57,10 +57,25 @@ pub fn default_daemon_run_refusal_reason_for_exe(
     daemon_port: u16,
     exe: &Path,
 ) -> Option<&'static str> {
+    default_daemon_run_refusal_reason_for_exe_with_build_identity(
+        daemon_port,
+        exe,
+        is_internal_cargo_aimux_build(),
+    )
+}
+
+fn default_daemon_run_refusal_reason_for_exe_with_build_identity(
+    daemon_port: u16,
+    exe: &Path,
+    is_internal_cargo_build: bool,
+) -> Option<&'static str> {
     if daemon_port != crate::daemon_state::DEFAULT_DAEMON_PORT {
         return None;
     }
-    is_cargo_target_aimux_binary_path(exe).then_some("cargo target daemon on default port")
+    if !is_aimux_binary_path(exe) {
+        return None;
+    }
+    is_internal_cargo_build.then_some("cargo target daemon on default port")
 }
 
 pub fn default_daemon_run_refusal_reason(daemon_port: u16) -> Option<&'static str> {
@@ -186,12 +201,19 @@ fn is_any_cargo_test_harness_binary_path() -> bool {
             .is_some_and(|name| name.contains('-'))
 }
 
-fn is_cargo_target_aimux_binary_path(path: &Path) -> bool {
-    if path
-        .file_name()
+fn is_internal_cargo_aimux_build() -> bool {
+    cfg!(debug_assertions) || crate::build_info().profile == "native-dev"
+}
+
+fn is_aimux_binary_path(path: &Path) -> bool {
+    path.file_name()
         .and_then(|name| name.to_str())
-        .is_none_or(|name| name != "aimux")
-    {
+        .is_some_and(|name| name == "aimux")
+}
+
+#[cfg(test)]
+fn is_cargo_target_aimux_binary_path(path: &Path) -> bool {
+    if !is_aimux_binary_path(path) {
         return false;
     }
     let components = path
@@ -416,8 +438,8 @@ fn is_loopback_daemon_url(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        TEST_ISOLATION_MARKER, default_daemon_run_refusal_reason_for_exe,
-        request_project_refusal_reason,
+        TEST_ISOLATION_MARKER, default_daemon_run_refusal_reason_for_exe_with_build_identity,
+        is_cargo_target_aimux_binary_path, request_project_refusal_reason,
     };
     use crate::daemon::routing::DaemonRouteUrl;
     use crate::daemon_state::DEFAULT_DAEMON_PORT;
@@ -454,43 +476,72 @@ mod tests {
     }
 
     #[test]
-    fn default_daemon_run_refuses_debug_and_cargo_target_binaries() {
+    fn default_daemon_run_refuses_internal_cargo_builds_on_default_port() {
         assert_eq!(
-            default_daemon_run_refusal_reason_for_exe(
+            default_daemon_run_refusal_reason_for_exe_with_build_identity(
                 DEFAULT_DAEMON_PORT,
                 Path::new("/Users/sam/cs/aimux/native/target/debug/aimux"),
+                true,
             ),
             Some("cargo target daemon on default port")
         );
         assert_eq!(
-            default_daemon_run_refusal_reason_for_exe(
+            default_daemon_run_refusal_reason_for_exe_with_build_identity(
                 DEFAULT_DAEMON_PORT,
                 Path::new("/tmp/aimux-cargo-target-codex-8s9so6/debug/aimux"),
+                true,
             ),
             Some("cargo target daemon on default port")
         );
         assert_eq!(
-            default_daemon_run_refusal_reason_for_exe(
+            default_daemon_run_refusal_reason_for_exe_with_build_identity(
+                DEFAULT_DAEMON_PORT,
+                Path::new("/Users/sam/.cache/gate-probe-target/debug/aimux"),
+                true,
+            ),
+            Some("cargo target daemon on default port")
+        );
+        assert_eq!(
+            default_daemon_run_refusal_reason_for_exe_with_build_identity(
                 DEFAULT_DAEMON_PORT,
                 Path::new("/Users/sam/cs/aimux/native/target/release/aimux"),
+                true,
             ),
             Some("cargo target daemon on default port")
         );
     }
 
     #[test]
-    fn default_daemon_run_allows_installed_binary_and_non_default_debug_port() {
+    fn cargo_target_path_heuristic_still_recognizes_legacy_target_shapes() {
+        assert!(is_cargo_target_aimux_binary_path(Path::new(
+            "/Users/sam/cs/aimux/native/target/debug/aimux"
+        )));
+        assert!(is_cargo_target_aimux_binary_path(Path::new(
+            "/tmp/aimux-cargo-target-codex-8s9so6/debug/aimux"
+        )));
+        assert!(is_cargo_target_aimux_binary_path(Path::new(
+            "/Users/sam/cs/aimux/native/target/release/aimux"
+        )));
+        assert!(!is_cargo_target_aimux_binary_path(Path::new(
+            "/Users/sam/.cache/gate-probe-target/debug/aimux"
+        )));
+    }
+
+    #[test]
+    fn default_daemon_run_allows_installed_binary_and_non_default_internal_cargo_port() {
         assert_eq!(
-            default_daemon_run_refusal_reason_for_exe(
+            default_daemon_run_refusal_reason_for_exe_with_build_identity(
                 DEFAULT_DAEMON_PORT,
                 Path::new("/Users/sam/.aimux/native/local-47a40168/native/darwin-arm64/aimux"),
+                false,
             ),
             None
         );
         assert_eq!(
-            default_daemon_run_refusal_reason_for_exe(
+            default_daemon_run_refusal_reason_for_exe_with_build_identity(
                 47_123,
                 Path::new("/tmp/aimux-cargo-target-codex-8s9so6/debug/aimux"),
+                true,
             ),
             None
         );
