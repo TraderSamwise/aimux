@@ -53,6 +53,17 @@ Primary source check:
   (1), and `lib.rs` (1). There are zero such cfg attributes inside
   `src/remote/` itself. Those sites are call-site adapters or local/full
   selection points, not scattered remote implementation islands.
+- A looser grep for `feature = "remote-control"` finds 87 occurrences rather
+  than 70. The extra 17 are the same attribute in compound form —
+  `#[cfg(all(...))]`, `#[cfg(not(...))]`, `#[cfg(any(...))]` — and are listed
+  here so the wider number is not a surprise. The distinction that matters for
+  this claim is that every one of the 87 is a compile-time `#[cfg]` attribute,
+  which removes code from the build. None is the `cfg!(...)` macro, which
+  evaluates to a boolean and compiles *both* branches into the binary. Verify
+  with `rg -n 'cfg!\(feature = "remote-control"\)' native/crates/aimux/src`,
+  which returns nothing; a non-empty result would mean remote code is present
+  in a local build regardless of the feature flag, and would invalidate this
+  section.
 - `native/crates/aimux/src/request_actor.rs` should remain outside
   `src/remote`; it is core request-context/shared-chat actor plumbing, not a
   remote-control transport module.
