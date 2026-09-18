@@ -14,13 +14,7 @@ pub fn build_info() -> BuildInfo {
         package: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),
         profile: embedded_package_profile(),
-        variant: option_env!("AIMUX_BUILD_VARIANT").unwrap_or(
-            if cfg!(feature = "remote-control") {
-                "full"
-            } else {
-                "local"
-            },
-        ),
+        variant: option_env!("AIMUX_BUILD_VARIANT").unwrap_or("unknown"),
         zero_node_cli_target: true,
     }
 }

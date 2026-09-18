@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const DEFAULT_VERSION: &str = "0.0.0";
 const DEFAULT_PACKAGE_PROFILE: &str = "full";
-const DEFAULT_BUILD_VARIANT: &str = "full";
+const DEFAULT_BUILD_VARIANT: &str = "unknown";
 static VERSION_CONTRACT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn read_aimux_version_from_package_root(package_root: impl AsRef<Path>) -> String {
@@ -114,18 +114,55 @@ pub fn read_aimux_build_variant_from_package_root(package_root: impl AsRef<Path>
     )
 }
 
+pub fn read_aimux_runtime_build_variant() -> String {
+    let env_build_variant = std::env::var("AIMUX_BUILD_VARIANT").ok();
+    read_aimux_runtime_build_variant_from(
+        std::env::var_os("AIMUX_ROOT").map(PathBuf::from),
+        std::env::current_exe().ok(),
+        env_build_variant.as_deref(),
+    )
+}
+
+pub fn read_aimux_runtime_build_variant_from(
+    aimux_root: Option<PathBuf>,
+    executable_path: Option<PathBuf>,
+    env_build_variant: Option<&str>,
+) -> String {
+    if let Some(executable_path) = executable_path
+        && let Some(parent) = executable_path.parent()
+    {
+        for candidate in parent.ancestors() {
+            if let Some(variant) = read_aimux_build_variant_file(candidate) {
+                return variant;
+            }
+        }
+    }
+    if let Some(root) = aimux_root
+        && let Some(variant) = read_aimux_build_variant_file(root)
+    {
+        return variant;
+    }
+    parse_aimux_build_variant(env_build_variant)
+        .unwrap_or(DEFAULT_BUILD_VARIANT)
+        .to_owned()
+}
+
 pub fn read_aimux_build_variant_from_package_root_with_env(
     package_root: impl AsRef<Path>,
     env_build_variant: Option<&str>,
 ) -> String {
-    if let Ok(variant) = fs::read_to_string(package_root.as_ref().join("BUILD_VARIANT"))
-        && let Some(variant) = parse_aimux_build_variant(Some(&variant))
-    {
+    if let Some(variant) = read_aimux_build_variant_file(package_root.as_ref()) {
         return variant.to_owned();
     }
     parse_aimux_build_variant(env_build_variant)
         .unwrap_or(DEFAULT_BUILD_VARIANT)
         .to_owned()
+}
+
+fn read_aimux_build_variant_file(package_root: impl AsRef<Path>) -> Option<String> {
+    fs::read_to_string(package_root.as_ref().join("BUILD_VARIANT"))
+        .ok()
+        .and_then(|variant| parse_aimux_build_variant(Some(&variant)).map(str::to_owned))
 }
 
 pub fn parse_aimux_build_variant(value: Option<&str>) -> Option<&'static str> {
@@ -233,6 +270,58 @@ mod tests {
         assert_eq!(
             read_aimux_runtime_version_from(Some(env_root.path().to_path_buf()), Some(exe)),
             "local-exe"
+        );
+    }
+
+    #[test]
+    fn runtime_build_variant_finds_local_install_root_above_direct_native_binary() {
+        let temp = ContractTempDir::new();
+        fs::write(temp.path().join("BUILD_VARIANT"), "local\n").expect("write build variant");
+        let exe = temp.path().join("native/linux-x64/aimux");
+
+        assert_eq!(
+            read_aimux_runtime_build_variant_from(None, Some(exe), Some("full")),
+            "local"
+        );
+    }
+
+    #[test]
+    fn runtime_build_variant_finds_full_install_root_above_direct_native_binary() {
+        let temp = ContractTempDir::new();
+        fs::write(temp.path().join("BUILD_VARIANT"), "full\n").expect("write build variant");
+        let exe = temp.path().join("native/linux-x64/aimux");
+
+        assert_eq!(
+            read_aimux_runtime_build_variant_from(None, Some(exe), Some("local")),
+            "full"
+        );
+    }
+
+    #[test]
+    fn runtime_build_variant_prefers_running_executable_over_explicit_aimux_root() {
+        let env_root = ContractTempDir::new();
+        let exe_root = ContractTempDir::new();
+        fs::write(env_root.path().join("BUILD_VARIANT"), "full\n").expect("write env variant");
+        fs::write(exe_root.path().join("BUILD_VARIANT"), "local\n").expect("write exe variant");
+        let exe = exe_root.path().join("native/linux-x64/aimux");
+
+        assert_eq!(
+            read_aimux_runtime_build_variant_from(
+                Some(env_root.path().to_path_buf()),
+                Some(exe),
+                Some("full"),
+            ),
+            "local"
+        );
+    }
+
+    #[test]
+    fn build_variant_without_artifact_or_env_reports_unknown() {
+        let temp = ContractTempDir::new();
+
+        assert_eq!(
+            read_aimux_build_variant_from_package_root_with_env(temp.path(), None),
+            "unknown"
         );
     }
 }

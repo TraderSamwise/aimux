@@ -89,12 +89,12 @@
     },
     {
       "id": "release-version-009",
-      "name": "falls back to full build variant for source checkouts and older installs",
+      "name": "reports unknown build variant without artifact or env evidence",
       "source": "src/version.test.ts",
-      "sourceName": "falls back to full build variant for source checkouts and older installs",
+      "sourceName": "reports unknown build variant without artifact or env evidence",
       "api": "readAimuxBuildVariantFromPackageRoot",
       "input": { "api": "readAimuxBuildVariantFromPackageRoot", "envBuildVariant": null, "files": {} },
-      "output": "full",
+      "output": "unknown",
       "inputSha256": "5624b36f6e591f2e7b8a30abd3ecb5c351106d837b45657f811b43fb751752d5"
     },
     {
