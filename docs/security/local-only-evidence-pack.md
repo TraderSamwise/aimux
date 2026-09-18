@@ -39,21 +39,26 @@ Primary source check:
 
 - `native/crates/aimux/src/remote/mod.rs` should be the module tree that
   re-exports relay, hosted, login, remote credential, remote security-device,
-  mobile push bridge, websocket, and remote CLI code. Phase 1 moved the 20
-  remote-control implementation modules under `src/remote/`; phase 1c also
-  moved the remote CLI surface there rather than hiding it behind a macro.
+  mobile push bridge, websocket, and remote CLI code. The remote CLI surface is
+  a normal gated module in that tree rather than being hidden behind a macro.
 - This does not claim there is only one `#[cfg(feature = "remote-control")]`
-  site in the source tree. Grep for `cfg(feature = "remote-control")` and the
-  build-variant reporter and you should find 88 sites across 11 source files.
-  Sixty of those are concentrated in three files: `daemon/runtime.rs` (31),
-  `daemon/remote_control.rs` (15), and `attachment_hosting.rs` (14). The next
-  largest clusters are `core_cli_executor.rs` (8), `async_runtime.rs` (5),
-  `core_cli.rs` (4), and `bin/aimux.rs` (4), with 7 more across four files.
-  Those sites are call-site adapters or local/full selection points, not
-  scattered remote implementation islands.
+  site in the source tree. In this checkout, grep for the exact attribute
+  `#[cfg(feature = "remote-control")]` and you should find 70 sites across 11
+  source files. Forty-eight of those are concentrated in three files:
+  `daemon/runtime.rs` (26), `attachment_hosting.rs` (13), and
+  `daemon/remote_control.rs` (9). The remaining sites are
+  `core_cli_executor.rs` (7), `core_cli.rs` (4), `async_runtime.rs` (4),
+  `bin/aimux.rs` (2), `project_service/project_events.rs` (2),
+  `project_service/runtime_health_history.rs` (1), `native_cli_dispatch.rs`
+  (1), and `lib.rs` (1). There are zero such cfg attributes inside
+  `src/remote/` itself. Those sites are call-site adapters or local/full
+  selection points, not scattered remote implementation islands.
 - `native/crates/aimux/src/request_actor.rs` should remain outside
   `src/remote`; it is core request-context/shared-chat actor plumbing, not a
   remote-control transport module.
+- `native/Cargo.toml` currently has one workspace member, `crates/aimux`.
+  There is no separate `remote` crate and no single cross-crate dependency edge
+  that proves the boundary by itself.
 - `native/crates/aimux/Cargo.toml` should make `remote-control` a default
   feature and should attach remote network crates only to that feature.
 - A local build must use `--no-default-features`; a full build uses the default
@@ -64,7 +69,10 @@ Independent confirmation:
 ```bash
 rg -n 'cfg\(feature = "remote-control"\)|pub mod remote' native/crates/aimux/src
 rg -l '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src | sort
-rg -n 'cfg!\(feature = "remote-control"\)' native/crates/aimux/src/build_info.rs
+rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src/remote || true
+rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src \
+  | cut -d: -f1 | sort | uniq -c | sort -nr
+grep -n '^members' -A5 native/Cargo.toml
 sed -n '1,80p' native/crates/aimux/Cargo.toml
 sed -n '1,120p' native/crates/aimux/src/lib.rs
 sed -n '1,160p' native/crates/aimux/src/remote/mod.rs
@@ -72,10 +80,11 @@ sed -n '1,160p' native/crates/aimux/src/remote/mod.rs
 
 Expected result: the reviewer should be able to explain remote reachability from
 one remote implementation module gate, reviewed call-site gates, and the Cargo
-feature graph. If grep shows remote implementation modules outside `src/remote`
-or hidden behind independent gates, this source-review claim fails. If the
-reviewed count is not 88 sites across 11 files, update this document before
-using it in a review.
+feature graph. If grep shows `#[cfg(feature = "remote-control")]` sites inside
+`src/remote/`, remote implementation modules outside `src/remote`, or remote
+implementation code hidden behind independent gates, this source-review claim
+fails. If the reviewed count is not 70 sites across 11 files in this checkout,
+update this document before using it in a review.
 
 ## Self-Build Verification Path
 
@@ -161,11 +170,12 @@ build and the source-owned gate that verifies the resulting binary.
 Property: relay, hosted mode, remote login, remote credentials, remote security
 devices, remote attachment hosting, mobile push bridge, and websocket transport
 live under the remote implementation module gated from `lib.rs`. Phase 1 moved
-the 20 remote-control implementation modules under `src/remote`; phase 1c keeps
+the remote-control implementation modules under `src/remote`; phase 1c keeps
 the remote CLI cluster under that same remote tree rather than using a macro.
-Remaining `remote-control` cfg sites outside `src/remote` must be call-site
-adapters or local/full selection points, not independent remote implementation
-modules.
+The boundary is not a physically separate crate: `native/Cargo.toml` has one
+workspace member, `crates/aimux`. Remaining `remote-control` cfg sites outside
+`src/remote` must be call-site adapters or local/full selection points, not
+independent remote implementation modules.
 
 Source locations:
 
@@ -174,6 +184,7 @@ Source locations:
 - `native/crates/aimux/src/remote/`
 - `native/crates/aimux/src/remote/cli.rs`
 - `native/crates/aimux/src/request_actor.rs`
+- `native/Cargo.toml`
 - `native/crates/aimux/Cargo.toml`
 - `scripts/check-remote-structural-boundary.mjs`
 - `scripts/check-local-build-boundary.sh`
@@ -186,9 +197,12 @@ rg -n 'relay|hosted|remote_login|remote_credentials|remote_security|mobile_push_
   native/crates/aimux/src/remote native/crates/aimux/src/lib.rs native/crates/aimux/Cargo.toml
 rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src
 rg -l '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src | sort
-rg -n 'cfg!\(feature = "remote-control"\)' native/crates/aimux/src/build_info.rs
+rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src/remote || true
+rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src \
+  | cut -d: -f1 | sort | uniq -c | sort -nr
 find native/crates/aimux/src/remote -maxdepth 1 -name '*.rs' -type f | sort
 sed -n '1,120p' native/crates/aimux/src/request_actor.rs
+grep -n '^members' -A5 native/Cargo.toml
 
 cargo tree --manifest-path native/Cargo.toml -p aimux --no-default-features
 cargo tree --manifest-path native/Cargo.toml -p aimux
@@ -196,13 +210,13 @@ cargo tree --manifest-path native/Cargo.toml -p aimux
 
 Expected result: the local tree should not include remote-control dependency
 crates such as `tokio-tungstenite`, `tungstenite`, or `ureq`; the full tree
-should include them. The cfg grep plus the `cfg!` reporter should account for
-88 reviewed sites across 11 files. Each non-remote hit should be read, not
-waved away; a hit that defines remote transport behavior outside `src/remote`
-invalidates this claim. The structural checker should fail if old remote files
-such as `relay_client.rs`, `hosted_server.rs`, or `mobile_push_bridge.rs`
-reappear outside `src/remote`, or if local dep-info shows compiled
-`src/remote` units.
+should include them. The exact cfg grep should account for 70 reviewed sites
+across 11 files, and zero of those sites should be inside `src/remote/`. Each
+non-remote hit should be read, not waved away; a hit that defines remote
+transport behavior outside `src/remote` invalidates this claim. The structural
+checker should fail if old remote files such as `relay_client.rs`,
+`hosted_server.rs`, or `mobile_push_bridge.rs` reappear outside `src/remote`,
+or if local dep-info shows compiled `src/remote` units.
 
 ### 2. Local Build Has No Remote-Control Dependency Graph
 
@@ -278,6 +292,29 @@ strings /tmp/aimux-local-review-target/release/aimux \
 Expected result: no matches in the local binary. The same strings should be
 present in the full binary, and the boundary script should check both
 directions.
+
+Published v0.1.42 linux-x64 artifact spot check:
+
+```bash
+tmp="$(mktemp -d /tmp/aimux-v0142-verify.XXXXXX)"
+cd "$tmp"
+gh release download v0.1.42 --repo TraderSamwise/aimux \
+  --pattern 'aimux-linux-x64.tar.gz' \
+  --pattern 'aimux-local-linux-x64.tar.gz'
+mkdir full local
+tar -xzf aimux-linux-x64.tar.gz -C full
+tar -xzf aimux-local-linux-x64.tar.gz -C local
+wc -c < full/aimux/native/linux-x64/aimux
+wc -c < local/aimux/native/linux-x64/aimux
+strings full/aimux/native/linux-x64/aimux | rg -c 'tungstenite|wss://'
+strings local/aimux/native/linux-x64/aimux | rg -c 'tungstenite|wss://' || printf '0\n'
+```
+
+Expected result for the published v0.1.42 linux-x64 artifacts: the full binary
+is `23922208` bytes and has `145` `tungstenite|wss://` string matches; the
+local binary is `20190856` bytes and has `0` matches. This is supporting
+artifact evidence for the source boundary; it does not replace the source-build
+verification path above.
 
 ### 5. Control-Plane Network Scope Is Loopback
 
@@ -425,6 +462,8 @@ Source locations:
 - `scripts/verify-release-asset-set.sh`
 - `scripts/generate-cargo-sbom.py`
 - `scripts/verify-release-provenance.sh`
+- `native/crates/aimux/src/release_version_contract.rs`
+- `native/crates/aimux/src/runtime_coherence.rs`
 - `docs/deployment.md`
 
 Independent confirmation:
@@ -432,6 +471,10 @@ Independent confirmation:
 ```bash
 rg -n 'release:source:local|AIMUX_BUILD_VARIANT|AIMUX_PACKAGE_PROFILE|aimux-local|BUILD_VARIANT|PACKAGE_PROFILE|no-default-features|Formula/aimux-local' \
   package.json .github/workflows/release.yml scripts docs/deployment.md
+rg -n 'read_aimux_runtime_build_variant|DEFAULT_BUILD_VARIANT|build variant' \
+  native/crates/aimux/src/release_version_contract.rs \
+  native/crates/aimux/src/runtime_coherence.rs \
+  native/crates/aimux/src/daemon/runtime.rs
 
 bash scripts/verify-release-asset-set.sh <release-dir>
 ```
@@ -439,7 +482,9 @@ bash scripts/verify-release-asset-set.sh <release-dir>
 Expected result: the local archive uses the local variant stamp and
 `--no-default-features`; full uses the default feature set. The installer should
 reject a full archive through the local install path and reject a local archive
-through the full path.
+through the full path. `aimux doctor versions` reports the runtime build
+variant from a `BUILD_VARIANT` file or explicit environment evidence; when there
+is no such evidence, the source path reports `unknown`, not an inferred `full`.
 
 ### 10. SBOMs Are Reproducible From Source
 
