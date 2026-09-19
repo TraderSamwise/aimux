@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,6 +105,24 @@ function createExistingInstall(root) {
   mkdirSync(binDir, { recursive: true });
   writeFileSync(join(binDir, "aimux"), "#!/usr/bin/env sh\nexit 0\n");
   chmodSync(join(binDir, "aimux"), 0o755);
+}
+
+function writeLauncherFixture(root) {
+  const packageRoot = join(root, "package", "aimux");
+  const packageBin = join(packageRoot, "bin");
+  const nativeDir = join(packageRoot, "native", platformArch());
+  mkdirSync(packageBin, { recursive: true });
+  mkdirSync(nativeDir, { recursive: true });
+  const launcher = join(packageBin, "aimux");
+  writeFileSync(launcher, readFileSync(join(repoRoot, "bin/aimux")));
+  chmodSync(launcher, 0o755);
+  writeExecutable(
+    join(nativeDir, "aimux"),
+    `#!/usr/bin/env sh
+printf 'native-from-package-root %s\\n' "$AIMUX_ROOT"
+`,
+  );
+  return launcher;
 }
 
 function writeExecutable(path, body) {
@@ -398,6 +417,27 @@ describe("install.sh", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 120000);
+});
+
+describe("bin/aimux", () => {
+  it("resolves a symlinked launcher back to the package root", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-bin-launcher-"));
+    try {
+      const launcher = writeLauncherFixture(root);
+      const prefixBin = join(root, "prefix", "bin");
+      mkdirSync(prefixBin, { recursive: true });
+      const symlinkedLauncher = join(prefixBin, "aimux");
+      symlinkSync(launcher, symlinkedLauncher);
+
+      const result = run("sh", [symlinkedLauncher, "--version"]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("native-from-package-root");
+      expect(result.stdout).toContain(join(root, "package", "aimux"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("build-release-asset.sh", () => {
@@ -839,6 +879,8 @@ describe("verify-release-asset-set.sh", () => {
       expect(localFormula).toContain('url "file://');
       expect(localFormula).toContain("aimux-local-linux-x64.tar.gz");
       expect(localFormula).toContain('conflicts_with "aimux", because: "both install the aimux command"');
+      expect(localFormula).toContain('(bin/"aimux").write_env_script libexec/"bin/aimux", {}');
+      expect(localFormula).not.toContain("bin.install_symlink");
       expect(readFileSync(join(root, "brew.log"), "utf8")).toContain("fetch --formula");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -969,7 +1011,9 @@ describe("release workflow", () => {
         verifyReleaseAssetSet,
         sourceRelease,
       ].join("\n"),
-    ).not.toMatch(/node\s+["']?\$?[^;\n]*scripts\/(?:check-local-only-release-gate|write-release-provenance|verify-release-provenance)\.mjs/);
+    ).not.toMatch(
+      /node\s+["']?\$?[^;\n]*scripts\/(?:check-local-only-release-gate|write-release-provenance|verify-release-provenance)\.mjs/,
+    );
   });
 
   it("repairs PATH before inline archive checks use tar gzip mode", () => {
@@ -1024,10 +1068,15 @@ describe("release workflow", () => {
     expect(tapJob).toContain("needs: verify-release-assets");
     expect(packageJson.scripts["release:homebrew:dry-run"]).toBe("bash scripts/homebrew-release-dry-run.sh");
     expect(workflow).toContain("bash scripts/render-homebrew-formulas.sh");
+    expect(workflow).toContain("- name: Gate Homebrew installed command");
+    expect(workflow).toContain("bash scripts/homebrew-release-dry-run.sh \\");
+    expect(workflow).toContain("--live-install");
+    expect(workflow).toContain("--skip-doctor-proof");
     expect(workflow).toContain("AIMUX_HOMEBREW_FORMULA_DIR: tap/Formula");
     expect(renderer).toContain('conflicts_with "aimux", because: "both install the aimux command"');
     expect(renderer).toContain("aimux-local-darwin-arm64.tar.gz");
-    expect(renderer).toContain('bin.install_symlink libexec/"bin/aimux"');
+    expect(renderer).toContain('(bin/"aimux").write_env_script libexec/"bin/aimux", {}');
+    expect(renderer).not.toContain("bin.install_symlink");
     const npmStage = workflow.slice(
       workflow.indexOf("- name: Stage macOS native assets for npm package"),
       workflow.indexOf("- name: Verify npm package has no source maps"),

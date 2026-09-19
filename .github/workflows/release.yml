@@ -410,7 +410,7 @@ jobs:
 
   update-homebrew-tap:
     name: Update Homebrew tap
-    runs-on: ubuntu-latest
+    runs-on: macos-15-intel
     needs: verify-release-assets
     steps:
       - name: Checkout aimux
@@ -425,20 +425,29 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Download sha256 files
+      - name: Download Homebrew gate assets and sha256 files
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
           OWNER_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          mkdir -p sha
+          mkdir -p sha homebrew-gate-release
           for a in \
             aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
             aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sha256" --dir sha --clobber
+          done
+          for a in aimux-darwin-x64 aimux-local-darwin-x64; do
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "${a}.tar.gz" --dir homebrew-gate-release --clobber
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "${a}.tar.gz.provenance.json" --dir homebrew-gate-release --clobber
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "${a}.tar.gz.sbom.spdx.json" --dir homebrew-gate-release --clobber
+            cp "sha/${a}.tar.gz.sha256" homebrew-gate-release/
           done
 
       - name: Extract SHA values
@@ -482,6 +491,25 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/render-homebrew-formulas.sh
+
+      - name: Gate Homebrew installed command
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_ENV_HINTS: "1"
+        run: |
+          set -euo pipefail
+          if ! brew list --formula --versions tmux >/dev/null 2>&1; then
+            brew install tmux
+          fi
+          bash scripts/homebrew-release-dry-run.sh \
+            --release-dir homebrew-gate-release \
+            --host-only \
+            --live-install \
+            --skip-doctor-proof \
+            --skip-bad-sha-proof \
+            --tag "${{ steps.meta.outputs.tag }}" \
+            --version "${{ steps.meta.outputs.version }}" \
+            --staging-tap "aimux/release-tap-gate-${{ github.run_id }}-${{ github.run_attempt }}"
 
       - name: Commit and push
         working-directory: tap

@@ -211,12 +211,12 @@ a broken release.
    artifact digest, or if any artifact is not a readable archive with the
    expected `BUILD_VARIANT` and native binary path. The release verification job
    also verifies the published attestations before npm or Homebrew jobs run.
-2. **npm** — publishes `aimux-cli` with `--provenance` through npm trusted
+3. **npm** — publishes `aimux-cli` with `--provenance` through npm trusted
    publishing (OIDC, no stored token). It fails fast if `package.json`'s version
    does not match the tag, and stages the native CLI binaries plus macOS
    notifier helpers from the full release assets so the npm package carries
    them. There is no local npm package.
-3. **Homebrew tap** — rewrites `Formula/aimux.rb` and `Formula/aimux-local.rb`
+4. **Homebrew tap** — rewrites `Formula/aimux.rb` and `Formula/aimux-local.rb`
    in `TraderSamwise/homebrew-aimux` with the new version, URLs, and SHA256
    values, using the `HOMEBREW_TAP_TOKEN` secret. The local formula downloads
    only local assets, conflicts with the full formula, and still installs the
@@ -294,11 +294,19 @@ yarn release:homebrew:dry-run --release-dir /tmp/aimux-release --host-only --liv
 
 Live install mode refuses to run if `aimux` or `aimux-local` is already
 installed by Homebrew. When allowed, it installs the staged full formula,
-proves `aimux-local` is refused by `conflicts_with`, uninstalls it, installs the
-staged local formula, proves the installed command is still `aimux`, checks
-`aimux doctor versions` reports build variant `local`, then proves the full
-formula is refused while local is installed. The script uninstalls only formulas
-it installed itself.
+proves the installed `aimux --help` command runs through Homebrew's generated
+absolute `libexec` wrapper, proves `aimux-local` is refused by `conflicts_with`,
+uninstalls it, installs the staged local formula, proves the installed command
+runs the same way, checks `aimux doctor versions` reports build variant `local`,
+then proves the full formula is refused while local is installed. The script
+uninstalls only formulas it installed itself.
+For isolated proof prefixes that intentionally skip dependencies, add
+`--ignore-dependencies`; release CI keeps the normal dependency-present path.
+For debugging an already-published asset set whose checks were verified
+elsewhere, `--skip-asset-verification` narrows the run to Formula/Homebrew
+behavior; release CI does not use that escape hatch.
+The release tap job adds `--skip-doctor-proof` so the mandatory gate proves the
+Homebrew-installed launcher without depending on daemon startup.
 
 After Sam authorizes and cuts the real release, the public hop is still his
 release-day check:

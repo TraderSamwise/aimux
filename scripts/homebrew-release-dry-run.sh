@@ -22,11 +22,17 @@ Options:
   --staging-tap TAP       Temporary tap name, default aimux/dry-run-<pid>
   --host-only             Exercise only the current platform's full/local assets
   --live-install          Install/uninstall staged formulas in this Homebrew prefix
+  --ignore-dependencies   Pass --ignore-dependencies to live Homebrew installs
+  --skip-asset-verification
+                          Trust staged assets and run only Formula/Homebrew checks
+  --skip-doctor-proof     Do not run aimux doctor after local formula install
   --skip-bad-sha-proof    Skip the deliberate mismatched SHA fetch proof
   -h, --help              Show this help
 
 Live install mode is intentionally opt-in and refuses to run if aimux or
 aimux-local is already installed, so it cannot uninstall a user's real formula.
+Use --ignore-dependencies only for isolated proof prefixes where dependencies
+are already irrelevant to the launcher check.
 USAGE
 }
 
@@ -96,15 +102,85 @@ run_and_capture() {
   return "$status"
 }
 
+brew_install_formula() {
+  if [ "$IGNORE_DEPENDENCIES" -eq 1 ]; then
+    brew install --formula --ignore-dependencies "$@"
+  else
+    brew install --formula "$@"
+  fi
+}
+
+prove_installed_aimux_command() {
+  local formula="$1"
+  local label="$2"
+  local command_path
+  local formula_cellar
+  local formula_prefix
+  local expected_target
+  local help_log
+  local wrapper_target
+
+  command_path="$(brew --prefix)/bin/aimux"
+  formula_prefix="$(brew --prefix "$formula")"
+  formula_cellar="$(brew --cellar "$formula")"
+  expected_target="$formula_prefix/libexec/bin/aimux"
+  help_log="$LOG_DIR/help-$formula.log"
+
+  set +e
+  "$command_path" --help >"$help_log" 2>&1
+  local status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    sed 's/^/  /' "$help_log" >&2
+    fail "aimux --help failed after Homebrew $label install with exit $status"
+  fi
+  if ! grep -F "aimux" "$help_log" >/dev/null 2>&1; then
+    sed 's/^/  /' "$help_log" >&2
+    fail "aimux --help after Homebrew $label install did not identify aimux"
+  fi
+  wrapper_target="$(sed -n 's/^[[:space:]]*exec "\([^"]*\)".*/\1/p' "$command_path" | sed -n '1p')"
+  case "$wrapper_target" in
+    /*) ;;
+    "")
+      sed 's/^/  /' "$command_path" >&2
+      fail "Homebrew $label wrapper does not contain an exec target"
+      ;;
+    *)
+      sed 's/^/  /' "$command_path" >&2
+      fail "Homebrew $label wrapper target is not absolute: $wrapper_target"
+      ;;
+  esac
+  if [ ! -x "$wrapper_target" ]; then
+    sed 's/^/  /' "$command_path" >&2
+    fail "Homebrew $label wrapper target is not executable: $wrapper_target"
+  fi
+  case "$wrapper_target" in
+    "$expected_target" | "$formula_cellar"/*/libexec/bin/aimux) ;;
+    *)
+      sed 's/^/  /' "$command_path" >&2
+      fail "Homebrew $label wrapper target is not the formula libexec aimux: $wrapper_target"
+      ;;
+  esac
+  if ! grep -F "exec \"$wrapper_target\"" "$command_path" >/dev/null 2>&1; then
+    sed 's/^/  /' "$command_path" >&2
+    fail "Homebrew $label wrapper does not exec its parsed target: $wrapper_target"
+  fi
+  printf 'Homebrew %s installed command proof passed: %s --help\n' "$label" "$command_path"
+  printf 'Homebrew %s wrapper target proof passed: %s\n' "$label" "$wrapper_target"
+}
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR=""
 TAG="v0.0.0-homebrew-dry-run"
 VERSION="0.0.0"
 STAGING_DIR=""
 LIVE_INSTALL=0
+IGNORE_DEPENDENCIES=0
 BAD_SHA_PROOF=1
 HOST_ONLY=0
 STAGING_TAP="aimux/dry-run-$$"
+SKIP_ASSET_VERIFICATION=0
+SKIP_DOCTOR_PROOF=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -136,6 +212,18 @@ while [ "$#" -gt 0 ]; do
       LIVE_INSTALL=1
       shift
       ;;
+    --ignore-dependencies)
+      IGNORE_DEPENDENCIES=1
+      shift
+      ;;
+    --skip-asset-verification)
+      SKIP_ASSET_VERIFICATION=1
+      shift
+      ;;
+    --skip-doctor-proof)
+      SKIP_DOCTOR_PROOF=1
+      shift
+      ;;
     --skip-bad-sha-proof)
       BAD_SHA_PROOF=0
       shift
@@ -158,9 +246,14 @@ done
 RELEASE_DIR="$(cd "$RELEASE_DIR" && pwd)"
 [ -d "$RELEASE_DIR" ] || fail "release directory not found: $RELEASE_DIR"
 
-for command in awk bash brew cp grep mkdir mktemp rm ruby sed shasum tar uname; do
+for command in awk bash brew cp grep mkdir mktemp rm sed shasum tar uname; do
   need "$command"
 done
+if command -v ruby >/dev/null 2>&1; then
+  RUBY_CMD=(ruby)
+else
+  RUBY_CMD=(brew ruby --)
+fi
 export HOMEBREW_NO_AUTO_UPDATE="${HOMEBREW_NO_AUTO_UPDATE:-1}"
 export HOMEBREW_NO_INSTALL_CLEANUP="${HOMEBREW_NO_INSTALL_CLEANUP:-1}"
 
@@ -173,18 +266,22 @@ HOST_LOCAL_ASSET="aimux-local-${PLATFORM_ARCH}.tar.gz"
 if [ "$HOST_ONLY" -eq 1 ]; then
   ensure_asset_pair "$HOST_FULL_ASSET"
   ensure_asset_pair "$HOST_LOCAL_ASSET"
-  bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$RELEASE_DIR/$HOST_FULL_ASSET" "$PLATFORM_ARCH"
-  bash "$ROOT_DIR/scripts/verify-release-provenance.sh" "$RELEASE_DIR" "$HOST_FULL_ASSET" "$PLATFORM_ARCH" full
-  bash "$ROOT_DIR/scripts/check-local-build-boundary.sh" \
-    --variant full \
-    --archive "$RELEASE_DIR/$HOST_FULL_ASSET" \
-    --platform-arch "$PLATFORM_ARCH"
-  bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$RELEASE_DIR/$HOST_LOCAL_ASSET" "$PLATFORM_ARCH"
-  bash "$ROOT_DIR/scripts/verify-release-provenance.sh" "$RELEASE_DIR" "$HOST_LOCAL_ASSET" "$PLATFORM_ARCH" local
-  bash "$ROOT_DIR/scripts/check-local-build-boundary.sh" \
-    --variant local \
-    --archive "$RELEASE_DIR/$HOST_LOCAL_ASSET" \
-    --platform-arch "$PLATFORM_ARCH"
+  if [ "$SKIP_ASSET_VERIFICATION" -eq 0 ]; then
+    bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$RELEASE_DIR/$HOST_FULL_ASSET" "$PLATFORM_ARCH"
+    bash "$ROOT_DIR/scripts/verify-release-provenance.sh" "$RELEASE_DIR" "$HOST_FULL_ASSET" "$PLATFORM_ARCH" full
+    bash "$ROOT_DIR/scripts/check-local-build-boundary.sh" \
+      --variant full \
+      --archive "$RELEASE_DIR/$HOST_FULL_ASSET" \
+      --platform-arch "$PLATFORM_ARCH"
+    bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$RELEASE_DIR/$HOST_LOCAL_ASSET" "$PLATFORM_ARCH"
+    bash "$ROOT_DIR/scripts/verify-release-provenance.sh" "$RELEASE_DIR" "$HOST_LOCAL_ASSET" "$PLATFORM_ARCH" local
+    bash "$ROOT_DIR/scripts/check-local-build-boundary.sh" \
+      --variant local \
+      --archive "$RELEASE_DIR/$HOST_LOCAL_ASSET" \
+      --platform-arch "$PLATFORM_ARCH"
+  else
+    printf 'Skipping release asset verification by explicit request\n'
+  fi
 else
   for platform in darwin linux; do
     for arch in arm64 x64; do
@@ -192,7 +289,11 @@ else
       ensure_asset_pair "aimux-local-${platform}-${arch}.tar.gz"
     done
   done
-  bash "$ROOT_DIR/scripts/verify-release-asset-set.sh" "$RELEASE_DIR"
+  if [ "$SKIP_ASSET_VERIFICATION" -eq 0 ]; then
+    bash "$ROOT_DIR/scripts/verify-release-asset-set.sh" "$RELEASE_DIR"
+  else
+    printf 'Skipping release asset-set verification by explicit request\n'
+  fi
 fi
 
 if [ -z "$STAGING_DIR" ]; then
@@ -230,6 +331,10 @@ fi
 run_and_capture "Homebrew staging tap creation" "$LOG_DIR/tap-new.log" \
   brew tap-new "$STAGING_TAP" --no-git
 CREATED_STAGING_TAP=1
+if brew help trust >/dev/null 2>&1; then
+  run_and_capture "Homebrew staging tap trust" "$LOG_DIR/tap-trust.log" \
+    brew trust "$STAGING_TAP"
+fi
 TAP_REPO="$(brew --repo "$STAGING_TAP")"
 FORMULA_DIR="$TAP_REPO/Formula"
 
@@ -251,9 +356,9 @@ cp "$FORMULA_DIR/aimux.rb" "$STAGING_DIR/aimux.rb"
 cp "$FORMULA_DIR/aimux-local.rb" "$STAGING_DIR/aimux-local.rb"
 
 run_and_capture "Ruby parse for aimux formula" "$LOG_DIR/ruby-aimux.log" \
-  ruby -c "$FORMULA_DIR/aimux.rb"
+  "${RUBY_CMD[@]}" -c "$FORMULA_DIR/aimux.rb"
 run_and_capture "Ruby parse for aimux-local formula" "$LOG_DIR/ruby-aimux-local.log" \
-  ruby -c "$FORMULA_DIR/aimux-local.rb"
+  "${RUBY_CMD[@]}" -c "$FORMULA_DIR/aimux-local.rb"
 
 export HOMEBREW_CACHE="$CACHE_DIR"
 run_and_capture "Homebrew fetch for aimux $PLATFORM_ARCH" "$LOG_DIR/fetch-aimux.log" \
@@ -291,25 +396,29 @@ if [ "$LIVE_INSTALL" -eq 1 ]; then
   if brew list --formula --versions aimux-local >/dev/null 2>&1; then
     fail "--live-install refused: aimux-local is already installed by Homebrew"
   fi
-  if ! brew list --formula --versions tmux >/dev/null 2>&1; then
+  if [ "$IGNORE_DEPENDENCIES" -eq 0 ] && ! brew list --formula --versions tmux >/dev/null 2>&1; then
     fail "--live-install requires tmux dependency to already be installed; refusing to mutate dependencies"
   fi
 
   export HOMEBREW_CACHE="$CACHE_DIR/live"
   run_and_capture "Homebrew install aimux" "$LOG_DIR/install-aimux.log" \
-    brew install --formula "$STAGING_TAP/aimux"
+    brew_install_formula "$STAGING_TAP/aimux"
   INSTALLED_FULL=1
   if [ ! -x "$(brew --prefix)/bin/aimux" ]; then
     fail "Homebrew full install did not create executable command: $(brew --prefix)/bin/aimux"
   fi
   printf 'Homebrew full formula installed command: %s\n' "$(brew --prefix)/bin/aimux"
+  prove_installed_aimux_command aimux full
 
-  if brew install --formula "$STAGING_TAP/aimux-local" >"$LOG_DIR/conflict-local-while-full.log" 2>&1; then
+  if brew_install_formula "$STAGING_TAP/aimux-local" >"$LOG_DIR/conflict-local-while-full.log" 2>&1; then
     fail "Homebrew allowed aimux-local to install while aimux was installed"
   fi
-  if ! grep -F "conflict" "$LOG_DIR/conflict-local-while-full.log" >/dev/null 2>&1; then
+  if ! grep -E "conflict|Formulae found in multiple taps" "$LOG_DIR/conflict-local-while-full.log" >/dev/null 2>&1; then
     sed 's/^/  /' "$LOG_DIR/conflict-local-while-full.log" >&2
     fail "aimux-local conflict refusal did not name the conflict"
+  fi
+  if brew list --formula --versions aimux-local >/dev/null 2>&1; then
+    brew uninstall --formula aimux-local
   fi
   printf 'Homebrew conflict proof passed: aimux blocks aimux-local\n'
 
@@ -318,34 +427,42 @@ if [ "$LIVE_INSTALL" -eq 1 ]; then
 
   export HOMEBREW_CACHE="$CACHE_DIR/live"
   run_and_capture "Homebrew install aimux-local" "$LOG_DIR/install-aimux-local.log" \
-    brew install --formula "$STAGING_TAP/aimux-local"
+    brew_install_formula "$STAGING_TAP/aimux-local"
   INSTALLED_LOCAL=1
   if [ ! -x "$(brew --prefix)/bin/aimux" ]; then
     fail "Homebrew local install did not create executable command: $(brew --prefix)/bin/aimux"
   fi
   printf 'Homebrew local formula installed command: %s\n' "$(brew --prefix)/bin/aimux"
+  prove_installed_aimux_command aimux-local local
 
-  DOCTOR_LOG="$LOG_DIR/doctor-versions-local.log"
-  AIMUX_HOME="$STAGING_DIR/aimux-home" \
-    AIMUX_DAEMON_PORT=0 \
-    AIMUX_SKIP_DAEMON_START=1 \
-    "$(brew --prefix)/bin/aimux" doctor versions >"$DOCTOR_LOG" 2>&1 || {
-      status=$?
+  if [ "$SKIP_DOCTOR_PROOF" -eq 0 ]; then
+    DOCTOR_LOG="$LOG_DIR/doctor-versions-local.log"
+    AIMUX_HOME="$STAGING_DIR/aimux-home" \
+      AIMUX_DAEMON_PORT=0 \
+      AIMUX_SKIP_DAEMON_START=1 \
+      "$(brew --prefix)/bin/aimux" doctor versions >"$DOCTOR_LOG" 2>&1 || {
+        status=$?
+        sed 's/^/  /' "$DOCTOR_LOG" >&2
+        fail "aimux doctor versions failed after Homebrew local install with exit $status"
+      }
+    if ! grep -E "buildVariant[[:space:]:=]+local|build variant[[:space:]:=]+local|BUILD_VARIANT[[:space:]:=]+local" "$DOCTOR_LOG" >/dev/null 2>&1; then
       sed 's/^/  /' "$DOCTOR_LOG" >&2
-      fail "aimux doctor versions failed after Homebrew local install with exit $status"
-    }
-  if ! grep -E "buildVariant[[:space:]:=]+local|build variant[[:space:]:=]+local|BUILD_VARIANT[[:space:]:=]+local" "$DOCTOR_LOG" >/dev/null 2>&1; then
-    sed 's/^/  /' "$DOCTOR_LOG" >&2
-    fail "aimux doctor versions did not report local build variant after Homebrew local install"
+      fail "aimux doctor versions did not report local build variant after Homebrew local install"
+    fi
+    printf 'Homebrew local doctor variant proof passed\n'
+  else
+    printf 'Homebrew local doctor variant proof skipped by explicit request\n'
   fi
-  printf 'Homebrew local doctor variant proof passed\n'
 
-  if brew install --formula "$STAGING_TAP/aimux" >"$LOG_DIR/conflict-full-while-local.log" 2>&1; then
+  if brew_install_formula "$STAGING_TAP/aimux" >"$LOG_DIR/conflict-full-while-local.log" 2>&1; then
     fail "Homebrew allowed aimux to install while aimux-local was installed"
   fi
-  if ! grep -F "conflict" "$LOG_DIR/conflict-full-while-local.log" >/dev/null 2>&1; then
+  if ! grep -E "conflict|Formulae found in multiple taps" "$LOG_DIR/conflict-full-while-local.log" >/dev/null 2>&1; then
     sed 's/^/  /' "$LOG_DIR/conflict-full-while-local.log" >&2
     fail "aimux conflict refusal did not name the conflict"
+  fi
+  if brew list --formula --versions aimux >/dev/null 2>&1; then
+    brew uninstall --formula aimux
   fi
   printf 'Homebrew conflict proof passed: aimux-local blocks aimux\n'
 
@@ -361,4 +478,7 @@ Aimux Homebrew release dry-run passed:
   current platform: $PLATFORM_ARCH
   host-only: $HOST_ONLY
   live install: $LIVE_INSTALL
+  ignore dependencies: $IGNORE_DEPENDENCIES
+  asset verification skipped: $SKIP_ASSET_VERIFICATION
+  doctor proof skipped: $SKIP_DOCTOR_PROOF
 EOF

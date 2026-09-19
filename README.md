@@ -39,8 +39,12 @@ surfaces for the same workflows.
 
 ```bash
 brew tap TraderSamwise/aimux
+brew trust TraderSamwise/aimux
 brew install aimux
 ```
+
+Homebrew may refuse third-party taps until they are explicitly trusted; run the
+`brew trust` command after tapping if your Homebrew version enforces tap trust.
 
 ### Standalone
 
