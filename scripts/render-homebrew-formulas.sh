@@ -87,6 +87,8 @@ class Aimux < Formula
   end
 
   depends_on "tmux"
+  depends_on "openssl@3"
+  depends_on "jemalloc"
 
   def install
     libexec.install Dir["*"]

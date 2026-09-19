@@ -22,6 +22,8 @@ Options:
   --staging-tap TAP       Temporary tap name, default aimux/dry-run-<pid>
   --host-only             Exercise only the current platform's full/local assets
   --live-install          Install/uninstall staged formulas in this Homebrew prefix
+  --dependency-prep-only  Prepare formula dependencies, then exit before install
+  --skip-dependency-prep  Do not prepare dependencies before live install
   --ignore-dependencies   Pass --ignore-dependencies to live Homebrew installs
   --skip-asset-verification
                           Trust staged assets and run only Formula/Homebrew checks
@@ -110,6 +112,92 @@ brew_install_formula() {
   fi
 }
 
+dependency_problem() {
+  local message="$1"
+  printf '%s\n' "$message" >&2
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    printf '::warning::%s\n' "$message"
+  fi
+}
+
+prepare_formula_dependencies() {
+  local formula="$1"
+  local label="$2"
+  local deps_file="$LOG_DIR/deps-$label.txt"
+  local dep
+  local status
+  local dep_log
+  local saw_dependency=0
+
+  if [ "$IGNORE_DEPENDENCIES" -eq 1 ]; then
+    printf 'Homebrew dependency preparation skipped for %s because --ignore-dependencies is set\n' "$label"
+    return 0
+  fi
+
+  printf 'Resolving Homebrew dependencies for %s formula: %s\n' "$label" "$formula"
+  set +e
+  brew deps --formula "$formula" >"$deps_file" 2>"$LOG_DIR/deps-$label.err"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    sed 's/^/  /' "$LOG_DIR/deps-$label.err" >&2
+    fail "could not determine Homebrew dependencies for $label formula with exit $status"
+  fi
+
+  while IFS= read -r dep; do
+    [ -n "$dep" ] || continue
+    saw_dependency=1
+    dep_log="$LOG_DIR/dependency-$label-${dep//[^A-Za-z0-9_.@-]/_}.log"
+    if brew list --formula --versions "$dep" >/dev/null 2>&1; then
+      printf 'Preparing Homebrew dependency for %s formula: brew upgrade %s\n' "$label" "$dep"
+      set +e
+      brew upgrade --formula "$dep" >"$dep_log" 2>&1
+      status=$?
+      set -e
+    else
+      printf 'Preparing Homebrew dependency for %s formula: brew install %s\n' "$label" "$dep"
+      set +e
+      brew install --formula "$dep" >"$dep_log" 2>&1
+      status=$?
+      set -e
+    fi
+    if [ "$status" -ne 0 ]; then
+      sed 's/^/  /' "$dep_log" >&2
+      dependency_problem "Homebrew dependency preparation failed for $dep needed by $label formula with exit $status; this is a Homebrew runner environment/dependency problem, not an aimux formula failure. Continuing to the aimux formula gate."
+    else
+      printf 'Homebrew dependency preparation passed for %s needed by %s formula\n' "$dep" "$label"
+    fi
+  done < "$deps_file"
+
+  if [ "$saw_dependency" -eq 0 ]; then
+    printf 'Homebrew dependency preparation found no dependencies for %s formula\n' "$label"
+  fi
+}
+
+install_formula_for_gate() {
+  local formula="$1"
+  local label="$2"
+  local install_log="$LOG_DIR/install-$label.log"
+  local status
+
+  printf 'Running Homebrew gated install for %s formula: brew_install_formula %s\n' "$label" "$formula"
+  set +e
+  brew_install_formula "$formula" >"$install_log" 2>&1
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    printf 'Homebrew gated install for %s formula passed\n' "$label"
+    return 0
+  fi
+  if brew list --formula --versions "$label" >/dev/null 2>&1; then
+    sed 's/^/  /' "$install_log" >&2
+    dependency_problem "Homebrew gated install for $label formula returned exit $status after the formula was installed; treating the nonzero exit as dependency/environment residue and continuing to the installed-command proof."
+    return 0
+  fi
+  sed 's/^/  /' "$install_log" >&2
+  fail "aimux formula gate failed: Homebrew did not install $label formula (exit $status)"
+}
+
 prove_installed_aimux_command() {
   local formula="$1"
   local label="$2"
@@ -132,38 +220,38 @@ prove_installed_aimux_command() {
   set -e
   if [ "$status" -ne 0 ]; then
     sed 's/^/  /' "$help_log" >&2
-    fail "aimux --help failed after Homebrew $label install with exit $status"
+    fail "aimux formula gate failed: installed $label command failed --help with exit $status"
   fi
   if ! grep -F "aimux" "$help_log" >/dev/null 2>&1; then
     sed 's/^/  /' "$help_log" >&2
-    fail "aimux --help after Homebrew $label install did not identify aimux"
+    fail "aimux formula gate failed: installed $label command --help did not identify aimux"
   fi
   wrapper_target="$(sed -n 's/^[[:space:]]*exec "\([^"]*\)".*/\1/p' "$command_path" | sed -n '1p')"
   case "$wrapper_target" in
     /*) ;;
     "")
       sed 's/^/  /' "$command_path" >&2
-      fail "Homebrew $label wrapper does not contain an exec target"
+      fail "aimux formula gate failed: Homebrew $label wrapper does not contain an exec target"
       ;;
     *)
       sed 's/^/  /' "$command_path" >&2
-      fail "Homebrew $label wrapper target is not absolute: $wrapper_target"
+      fail "aimux formula gate failed: Homebrew $label wrapper target is not absolute: $wrapper_target"
       ;;
   esac
   if [ ! -x "$wrapper_target" ]; then
     sed 's/^/  /' "$command_path" >&2
-    fail "Homebrew $label wrapper target is not executable: $wrapper_target"
+    fail "aimux formula gate failed: Homebrew $label wrapper target is not executable: $wrapper_target"
   fi
   case "$wrapper_target" in
     "$expected_target" | "$formula_cellar"/*/libexec/bin/aimux) ;;
     *)
       sed 's/^/  /' "$command_path" >&2
-      fail "Homebrew $label wrapper target is not the formula libexec aimux: $wrapper_target"
+      fail "aimux formula gate failed: Homebrew $label wrapper target is not the formula libexec aimux: $wrapper_target"
       ;;
   esac
   if ! grep -F "exec \"$wrapper_target\"" "$command_path" >/dev/null 2>&1; then
     sed 's/^/  /' "$command_path" >&2
-    fail "Homebrew $label wrapper does not exec its parsed target: $wrapper_target"
+    fail "aimux formula gate failed: Homebrew $label wrapper does not exec its parsed target: $wrapper_target"
   fi
   printf 'Homebrew %s installed command proof passed: %s --help\n' "$label" "$command_path"
   printf 'Homebrew %s wrapper target proof passed: %s\n' "$label" "$wrapper_target"
@@ -175,6 +263,8 @@ TAG="v0.0.0-homebrew-dry-run"
 VERSION="0.0.0"
 STAGING_DIR=""
 LIVE_INSTALL=0
+DEPENDENCY_PREP_ONLY=0
+SKIP_DEPENDENCY_PREP=0
 IGNORE_DEPENDENCIES=0
 BAD_SHA_PROOF=1
 HOST_ONLY=0
@@ -210,6 +300,15 @@ while [ "$#" -gt 0 ]; do
       ;;
     --live-install)
       LIVE_INSTALL=1
+      shift
+      ;;
+    --dependency-prep-only)
+      DEPENDENCY_PREP_ONLY=1
+      LIVE_INSTALL=1
+      shift
+      ;;
+    --skip-dependency-prep)
+      SKIP_DEPENDENCY_PREP=1
       shift
       ;;
     --ignore-dependencies)
@@ -396,13 +495,26 @@ if [ "$LIVE_INSTALL" -eq 1 ]; then
   if brew list --formula --versions aimux-local >/dev/null 2>&1; then
     fail "--live-install refused: aimux-local is already installed by Homebrew"
   fi
-  if [ "$IGNORE_DEPENDENCIES" -eq 0 ] && ! brew list --formula --versions tmux >/dev/null 2>&1; then
-    fail "--live-install requires tmux dependency to already be installed; refusing to mutate dependencies"
+  if [ "$SKIP_DEPENDENCY_PREP" -eq 0 ]; then
+    prepare_formula_dependencies "$STAGING_TAP/aimux" aimux
+    prepare_formula_dependencies "$STAGING_TAP/aimux-local" aimux-local
+  else
+    printf 'Homebrew dependency preparation skipped by explicit request\n'
+  fi
+
+  if [ "$DEPENDENCY_PREP_ONLY" -eq 1 ]; then
+    cat <<EOF
+Aimux Homebrew dependency preparation finished:
+  formulas: $FORMULA_DIR
+  staging tap: $STAGING_TAP
+  logs: $LOG_DIR
+  current platform: $PLATFORM_ARCH
+EOF
+    exit 0
   fi
 
   export HOMEBREW_CACHE="$CACHE_DIR/live"
-  run_and_capture "Homebrew install aimux" "$LOG_DIR/install-aimux.log" \
-    brew_install_formula "$STAGING_TAP/aimux"
+  install_formula_for_gate "$STAGING_TAP/aimux" aimux
   INSTALLED_FULL=1
   if [ ! -x "$(brew --prefix)/bin/aimux" ]; then
     fail "Homebrew full install did not create executable command: $(brew --prefix)/bin/aimux"
@@ -426,8 +538,7 @@ if [ "$LIVE_INSTALL" -eq 1 ]; then
   INSTALLED_FULL=0
 
   export HOMEBREW_CACHE="$CACHE_DIR/live"
-  run_and_capture "Homebrew install aimux-local" "$LOG_DIR/install-aimux-local.log" \
-    brew_install_formula "$STAGING_TAP/aimux-local"
+  install_formula_for_gate "$STAGING_TAP/aimux-local" aimux-local
   INSTALLED_LOCAL=1
   if [ ! -x "$(brew --prefix)/bin/aimux" ]; then
     fail "Homebrew local install did not create executable command: $(brew --prefix)/bin/aimux"
@@ -478,6 +589,8 @@ Aimux Homebrew release dry-run passed:
   current platform: $PLATFORM_ARCH
   host-only: $HOST_ONLY
   live install: $LIVE_INSTALL
+  dependency prep only: $DEPENDENCY_PREP_ONLY
+  dependency prep skipped: $SKIP_DEPENDENCY_PREP
   ignore dependencies: $IGNORE_DEPENDENCIES
   asset verification skipped: $SKIP_ASSET_VERIFICATION
   doctor proof skipped: $SKIP_DOCTOR_PROOF

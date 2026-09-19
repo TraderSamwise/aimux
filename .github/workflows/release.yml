@@ -492,19 +492,33 @@ jobs:
           set -euo pipefail
           bash scripts/render-homebrew-formulas.sh
 
+      - name: Prepare Homebrew formula dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_ENV_HINTS: "1"
+        run: |
+          set -euo pipefail
+          bash scripts/homebrew-release-dry-run.sh \
+            --release-dir homebrew-gate-release \
+            --host-only \
+            --dependency-prep-only \
+            --skip-doctor-proof \
+            --skip-bad-sha-proof \
+            --tag "${{ steps.meta.outputs.tag }}" \
+            --version "${{ steps.meta.outputs.version }}" \
+            --staging-tap "aimux/release-dependency-prep-${{ github.run_id }}-${{ github.run_attempt }}"
+
       - name: Gate Homebrew installed command
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_ENV_HINTS: "1"
         run: |
           set -euo pipefail
-          if ! brew list --formula --versions tmux >/dev/null 2>&1; then
-            brew install tmux
-          fi
           bash scripts/homebrew-release-dry-run.sh \
             --release-dir homebrew-gate-release \
             --host-only \
             --live-install \
+            --skip-dependency-prep \
             --skip-doctor-proof \
             --skip-bad-sha-proof \
             --tag "${{ steps.meta.outputs.tag }}" \

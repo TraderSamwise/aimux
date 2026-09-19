@@ -293,7 +293,11 @@ yarn release:homebrew:dry-run --release-dir /tmp/aimux-release --host-only --liv
 ```
 
 Live install mode refuses to run if `aimux` or `aimux-local` is already
-installed by Homebrew. When allowed, it installs the staged full formula,
+installed by Homebrew. When allowed, it first resolves the staged formula
+dependencies and installs or upgrades them in a dependency-prep phase. A
+dependency postinstall or upgrade failure is reported as a Homebrew
+runner/dependency problem, not an aimux formula failure, and the installed
+formula gate still runs afterward. The gate installs the staged full formula,
 proves the installed `aimux --help` command runs through Homebrew's generated
 absolute `libexec` wrapper, proves `aimux-local` is refused by `conflicts_with`,
 uninstalls it, installs the staged local formula, proves the installed command
@@ -305,8 +309,10 @@ For isolated proof prefixes that intentionally skip dependencies, add
 For debugging an already-published asset set whose checks were verified
 elsewhere, `--skip-asset-verification` narrows the run to Formula/Homebrew
 behavior; release CI does not use that escape hatch.
-The release tap job adds `--skip-doctor-proof` so the mandatory gate proves the
-Homebrew-installed launcher without depending on daemon startup.
+The release tap job runs dependency prep in its own step, then runs the
+mandatory installed-command gate with `--skip-dependency-prep` and
+`--skip-doctor-proof` so it proves the Homebrew-installed launcher without
+depending on daemon startup or dependency postinstall status.
 
 After Sam authorizes and cuts the real release, the public hop is still his
 release-day check:

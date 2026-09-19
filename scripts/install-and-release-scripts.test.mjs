@@ -209,6 +209,144 @@ esac
   );
 }
 
+function writeLiveFakeBrew(binDir) {
+  writeExecutable(
+    join(binDir, "brew"),
+    `#!/bin/sh
+set -eu
+prefix="\${AIMUX_FAKE_BREW_PREFIX:?missing AIMUX_FAKE_BREW_PREFIX}"
+state="\${AIMUX_FAKE_BREW_STATE:?missing AIMUX_FAKE_BREW_STATE}"
+tap_repo="\${AIMUX_FAKE_BREW_TAP_REPO:?missing AIMUX_FAKE_BREW_TAP_REPO}"
+log="\${AIMUX_FAKE_BREW_LOG:-}"
+if [ -n "$log" ]; then
+  printf '%s\\n' "$*" >> "$log"
+fi
+mkdir -p "$state/installed" "$prefix/bin" "$prefix/Cellar" "$prefix/opt"
+case "$1" in
+  --prefix)
+    if [ "$#" -eq 1 ]; then
+      printf '%s\\n' "$prefix"
+    else
+      printf '%s/opt/%s\\n' "$prefix" "$2"
+    fi
+    exit 0
+    ;;
+  --cellar)
+    printf '%s/Cellar/%s\\n' "$prefix" "$2"
+    exit 0
+    ;;
+  --repo)
+    printf '%s\\n' "$tap_repo"
+    exit 0
+    ;;
+  tap-new)
+    mkdir -p "$tap_repo/Formula"
+    exit 0
+    ;;
+  trust)
+    exit 0
+    ;;
+  tap)
+    [ -d "$tap_repo" ] && printf 'aimux/dry-run-fixture\\n'
+    exit 0
+    ;;
+  untap)
+    exit 0
+    ;;
+  ruby)
+    exit 0
+    ;;
+  fetch)
+    exit 0
+    ;;
+  deps)
+    case "$3" in
+      */aimux-local)
+        printf 'tmux\\n'
+        ;;
+      */aimux)
+        printf 'tmux\\nopenssl@3\\njemalloc\\n'
+        ;;
+    esac
+    exit 0
+    ;;
+  list)
+    formula=""
+    for arg in "$@"; do
+      formula="$arg"
+    done
+    if [ -f "$state/installed/$formula" ]; then
+      printf '%s 0.0.0\\n' "$formula"
+      exit 0
+    fi
+    exit 1
+    ;;
+  upgrade|install)
+    shift
+    while [ "$#" -gt 0 ] && [ "$1" = "--formula" ]; do
+      shift
+    done
+    formula="$1"
+    short="\${formula##*/}"
+    if [ "$short" = "aimux" ] || [ "$short" = "aimux-local" ]; then
+      if [ "$short" = "aimux-local" ] && [ -f "$state/installed/aimux" ]; then
+        printf 'conflict: aimux-local conflicts with aimux\\n' >&2
+        exit 1
+      fi
+      if [ "$short" = "aimux" ] && [ -f "$state/installed/aimux-local" ]; then
+        printf 'conflict: aimux conflicts with aimux-local\\n' >&2
+        exit 1
+      fi
+      cellar="$prefix/Cellar/$short/0.0.0"
+      target="$cellar/libexec/bin/aimux"
+      mkdir -p "$(dirname "$target")" "$prefix/opt"
+      printf '#!/usr/bin/env sh\\nprintf "aimux fake help %s\\\\n" "$1"\\n' "$short" > "$target"
+      chmod 755 "$target"
+      ln -sfn "$cellar" "$prefix/opt/$short"
+      if [ "\${AIMUX_FAKE_BREW_BROKEN_FORMULA:-}" = "$short" ]; then
+        printf '#!/bin/sh\\nexec "%s/libexec/bin/missing-aimux" "$@"\\n' "$cellar" > "$prefix/bin/aimux"
+      else
+        printf '#!/bin/sh\\nexec "%s" "$@"\\n' "$target" > "$prefix/bin/aimux"
+      fi
+      chmod 755 "$prefix/bin/aimux"
+      touch "$state/installed/$short"
+      exit 0
+    fi
+    touch "$state/installed/$short"
+    if [ "\${AIMUX_FAKE_BREW_DEP_FAIL:-}" = "$short" ]; then
+      printf 'The post-install step did not complete successfully\\n' >&2
+      printf 'You can try again using:\\n  brew postinstall %s\\n' "$short" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  uninstall)
+    shift
+    [ "\${1:-}" = "--formula" ] && shift
+    short="\${1##*/}"
+    rm -f "$state/installed/$short"
+    rm -rf "$prefix/Cellar/$short" "$prefix/opt/$short"
+    if [ "$short" = "aimux" ] || [ "$short" = "aimux-local" ]; then
+      rm -f "$prefix/bin/aimux"
+    fi
+    exit 0
+    ;;
+  *)
+    printf 'unexpected fake brew command: %s\\n' "$*" >&2
+    exit 127
+    ;;
+esac
+`,
+  );
+}
+
+function writeHomebrewGateAssets(root) {
+  for (const asset of [`aimux-${platformArch()}.tar.gz`, `aimux-local-${platformArch()}.tar.gz`]) {
+    writeFileSync(join(root, asset), `placeholder ${asset}\n`);
+    writeFileSync(join(root, `${asset}.sha256`), `${"1".repeat(64)}  ${asset}\n`);
+  }
+}
+
 function releaseScriptEnv(root, extra = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
@@ -920,6 +1058,91 @@ describe("verify-release-asset-set.sh", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 30000);
+
+  it("reports dependency preparation failure without failing a good formula gate", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_DEP_FAIL: "openssl@3",
+        AIMUX_FAKE_BREW_LOG: join(root, "brew.log"),
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--live-install",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("Homebrew dependency preparation failed for openssl@3");
+      expect(result.stderr).toContain("not an aimux formula failure");
+      expect(result.stdout).toContain("Homebrew full installed command proof passed");
+      expect(result.stdout).toContain("Homebrew local installed command proof passed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("fails the formula gate when the installed aimux wrapper is broken", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_BROKEN_FORMULA: "aimux",
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--live-install",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("aimux formula gate failed");
+      expect(result.stderr).toContain("installed full command failed --help");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
 });
 
 describe("check-local-build-boundary.sh", () => {
@@ -1068,12 +1291,17 @@ describe("release workflow", () => {
     expect(tapJob).toContain("needs: verify-release-assets");
     expect(packageJson.scripts["release:homebrew:dry-run"]).toBe("bash scripts/homebrew-release-dry-run.sh");
     expect(workflow).toContain("bash scripts/render-homebrew-formulas.sh");
+    expect(workflow).toContain("- name: Prepare Homebrew formula dependencies");
+    expect(workflow).toContain("--dependency-prep-only");
     expect(workflow).toContain("- name: Gate Homebrew installed command");
     expect(workflow).toContain("bash scripts/homebrew-release-dry-run.sh \\");
     expect(workflow).toContain("--live-install");
+    expect(workflow).toContain("--skip-dependency-prep");
     expect(workflow).toContain("--skip-doctor-proof");
     expect(workflow).toContain("AIMUX_HOMEBREW_FORMULA_DIR: tap/Formula");
     expect(renderer).toContain('conflicts_with "aimux", because: "both install the aimux command"');
+    expect(renderer).toContain('depends_on "openssl@3"');
+    expect(renderer).toContain('depends_on "jemalloc"');
     expect(renderer).toContain("aimux-local-darwin-arm64.tar.gz");
     expect(renderer).toContain('(bin/"aimux").write_env_script libexec/"bin/aimux", {}');
     expect(renderer).not.toContain("bin.install_symlink");
