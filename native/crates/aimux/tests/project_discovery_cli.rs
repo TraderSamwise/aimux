@@ -240,6 +240,7 @@ impl CliFixture {
             .env("HOME", &self.home)
             .env("AIMUX_HOME", &self.aimux_home)
             .env("AIMUX_TMUX_SOCKET_PATH", &self.tmux_socket)
+            .env("AIMUX_TEST_HARNESS", "cargo-test")
             .env("AIMUX_DAEMON_PORT", self.port.to_string());
         command
     }

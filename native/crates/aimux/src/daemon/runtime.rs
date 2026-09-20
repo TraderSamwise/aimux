@@ -2466,6 +2466,22 @@ pub fn run_daemon_internal() -> Result<()> {
             "refusing internal cargo-target daemon on default port {port}; set AIMUX_DAEMON_PORT for isolated test or live-drive runs"
         );
     }
+    if let Some(reason) =
+        crate::runtime_safety_guard::missing_daemon_test_isolation_lease_refusal_reason(
+            &resolver.global_aimux_dir(),
+        )
+    {
+        log_lifecycle_always(
+            "daemon startup refused",
+            "daemon",
+            Some(json!({
+                "reason": reason,
+                "aimuxHome": resolver.global_aimux_dir().to_string_lossy(),
+                "port": port,
+            })),
+        );
+        anyhow::bail!("refusing cargo-test daemon without test isolation lease: {reason}");
+    }
     let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
         crate::process_signals::DAEMON_TERMINATION_SIGNALS,
     )

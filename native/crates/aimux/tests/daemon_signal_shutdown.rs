@@ -175,6 +175,32 @@ fn daemon_without_test_isolation_lease_is_not_reaped_by_watchdog() {
     .expect("remove test isolation marker");
 
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_aimux"));
+    isolation
+        .apply_to_command(&mut daemon)
+        .args(["daemon", "run"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    remove_cargo_test_identity(&mut daemon);
+    let mut daemon = daemon.spawn().expect("spawn non-test daemon");
+    wait_for_daemon_health(isolation.daemon_port());
+    std::thread::sleep(Duration::from_millis(1200));
+    wait_for_daemon_health(isolation.daemon_port());
+
+    signal_pid(daemon.id(), libc::SIGTERM);
+    wait_for_child_exit(&mut daemon, "legitimate daemon");
+}
+
+#[test]
+fn daemon_refuses_cargo_test_context_without_test_isolation_lease() {
+    let isolation = TestIsolation::new("daemon-missing-test-lease");
+    fs::remove_file(
+        isolation
+            .aimux_home()
+            .join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+    )
+    .expect("remove test isolation marker");
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_aimux"));
     let mut daemon = isolation
         .apply_to_command(&mut daemon)
         .args(["daemon", "run"])
@@ -182,12 +208,13 @@ fn daemon_without_test_isolation_lease_is_not_reaped_by_watchdog() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn daemon");
-    wait_for_daemon_health(isolation.daemon_port());
-    std::thread::sleep(Duration::from_millis(1200));
-    wait_for_daemon_health(isolation.daemon_port());
+    wait_for_child_exit(&mut daemon, "daemon missing test lease");
+    let stderr = child_stderr(&mut daemon);
 
-    signal_pid(daemon.id(), libc::SIGTERM);
-    wait_for_child_exit(&mut daemon, "legitimate daemon");
+    assert!(
+        stderr.contains("refusing cargo-test daemon without test isolation lease"),
+        "daemon should refuse missing test lease loudly, got stderr={stderr:?}"
+    );
 }
 
 fn wait_for_daemon_health(port: u16) {
@@ -218,6 +245,27 @@ fn write_test_isolation_marker(aimux_home: &std::path::Path, owner_pid: u32) {
         format!(r#"{{"kind":"cargo-test","ownerPid":{owner_pid}}}"#),
     )
     .expect("write isolated aimux home marker");
+}
+
+fn remove_cargo_test_identity(command: &mut Command) {
+    for (key, _) in std::env::vars_os() {
+        if key
+            .to_str()
+            .is_some_and(|key| key.starts_with("CARGO_BIN_EXE_"))
+        {
+            command.env_remove(key);
+        }
+    }
+    command.env_remove("CARGO_TARGET_TMPDIR");
+    command.env_remove(aimux::runtime_safety_guard::TEST_HARNESS_ENV_VAR);
+}
+
+fn child_stderr(child: &mut Child) -> String {
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    stderr
 }
 
 fn wait_for_project_service_pids(isolation: &TestIsolation) -> Vec<u32> {

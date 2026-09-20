@@ -205,6 +205,7 @@ def isolated_env(home: Path, aimux_home: Path, aimux_bin: Path, tmp: Path) -> di
     env["AIMUX_CLI_BIN"] = str(aimux_bin)
     env["AIMUX_DAEMON_HOST"] = "127.0.0.1"
     env["AIMUX_DAEMON_PORT"] = str(free_residual_daemon_port())
+    env["AIMUX_TEST_HARNESS"] = "phase8-live-residuals"
     env["AIMUX_DASHBOARD_IMPLEMENTATION"] = "native"
     env["TERM"] = "xterm-256color"
     env["TMPDIR"] = str(tmp)

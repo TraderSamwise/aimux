@@ -152,6 +152,7 @@ jobs:
 
       - name: Prepare isolated Aimux home
         run: |
+          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
           mkdir -p "$AIMUX_HOME"
           # This marker intentionally disables the cargo-test materialization
           # guard for CI's disposable AIMUX_HOME. A test that relies on ambient
@@ -196,6 +197,7 @@ jobs:
 
       - name: Prepare isolated Aimux home
         run: |
+          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
           mkdir -p "$AIMUX_HOME"
           # This marker intentionally disables the cargo-test materialization
           # guard for CI's disposable AIMUX_HOME. A test that relies on ambient

@@ -10,6 +10,7 @@ use std::thread;
 use std::time::Duration;
 
 pub const TEST_HARNESS_HEADER: &str = "x-aimux-test-harness";
+pub const TEST_HARNESS_ENV_VAR: &str = "AIMUX_TEST_HARNESS";
 pub const TEST_ISOLATION_MARKER: &str = "test-isolation.json";
 const CARGO_TEST_HEADER_VALUE: &str = "cargo-test";
 const TEST_ISOLATION_OWNER_WATCHDOG_INTERVAL_MS: u64 = 500;
@@ -264,6 +265,32 @@ pub fn default_daemon_run_refusal_reason(daemon_port: u16) -> Option<&'static st
     default_daemon_run_refusal_reason_for_exe(daemon_port, &std::env::current_exe().ok()?)
 }
 
+pub fn missing_daemon_test_isolation_lease_refusal_reason(daemon_home: &Path) -> Option<String> {
+    missing_daemon_test_isolation_lease_refusal_reason_for_process(
+        daemon_home,
+        is_cargo_test_process_context(),
+    )
+}
+
+pub(crate) fn missing_daemon_test_isolation_lease_refusal_reason_for_process(
+    daemon_home: &Path,
+    is_cargo_test_process: bool,
+) -> Option<String> {
+    if !is_cargo_test_process {
+        return None;
+    }
+    match load_test_isolation_lease(daemon_home) {
+        Ok(Some(_)) => None,
+        Ok(None) => Some(format!(
+            "cargo-test daemon requires test isolation lease at {}",
+            daemon_home.join(TEST_ISOLATION_MARKER).display()
+        )),
+        Err(error) => Some(format!(
+            "cargo-test daemon has invalid test isolation lease: {error}"
+        )),
+    }
+}
+
 pub fn request_project_refusal_reason(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
@@ -326,7 +353,7 @@ pub fn should_refuse_cargo_test_for_daemon_home(daemon_home: &Path) -> bool {
 }
 
 pub fn is_isolated_test_aimux_home(daemon_home: &Path) -> bool {
-    daemon_home.join(TEST_ISOLATION_MARKER).is_file()
+    matches!(load_test_isolation_lease(daemon_home), Ok(Some(_)))
 }
 
 pub fn is_cargo_test_harness_binary() -> bool {
@@ -334,7 +361,8 @@ pub fn is_cargo_test_harness_binary() -> bool {
 }
 
 pub fn is_cargo_test_process_context() -> bool {
-    is_any_cargo_test_harness_binary_path()
+    std::env::var_os(TEST_HARNESS_ENV_VAR).is_some()
+        || is_any_cargo_test_harness_binary_path()
         || std::env::vars_os().any(|(key, _)| {
             key.to_str()
                 .is_some_and(|key| key.starts_with("CARGO_BIN_EXE_"))
@@ -622,6 +650,7 @@ mod tests {
     use super::{
         TEST_ISOLATION_MARKER, default_daemon_run_refusal_reason_for_exe_with_build_identity,
         is_cargo_target_aimux_binary_path, load_test_isolation_lease,
+        missing_daemon_test_isolation_lease_refusal_reason_for_process,
         request_project_refusal_reason,
     };
     use crate::daemon::routing::DaemonRouteUrl;
@@ -688,6 +717,54 @@ mod tests {
             error.contains("missing integer ownerPid"),
             "unexpected error: {error}"
         );
+        fs::remove_dir_all(aimux_home).expect("remove lease home");
+    }
+
+    #[test]
+    fn cargo_test_daemon_requires_valid_test_isolation_lease() {
+        let aimux_home = temp_project_root("aimux-test-daemon-lease");
+        fs::create_dir_all(&aimux_home).expect("create lease home");
+
+        let missing =
+            missing_daemon_test_isolation_lease_refusal_reason_for_process(&aimux_home, true)
+                .expect("missing lease should refuse");
+        assert!(
+            missing.contains("requires test isolation lease"),
+            "unexpected missing-lease reason: {missing}"
+        );
+
+        fs::write(
+            aimux_home.join(TEST_ISOLATION_MARKER),
+            r#"{"kind":"cargo-test"}"#,
+        )
+        .expect("write malformed marker");
+        let malformed =
+            missing_daemon_test_isolation_lease_refusal_reason_for_process(&aimux_home, true)
+                .expect("malformed lease should refuse");
+        assert!(
+            malformed.contains("invalid test isolation lease"),
+            "unexpected malformed-lease reason: {malformed}"
+        );
+
+        mark_test_isolation(&aimux_home);
+        assert_eq!(
+            missing_daemon_test_isolation_lease_refusal_reason_for_process(&aimux_home, true),
+            None
+        );
+
+        fs::remove_dir_all(aimux_home).expect("remove lease home");
+    }
+
+    #[test]
+    fn non_test_daemon_does_not_require_test_isolation_lease() {
+        let aimux_home = temp_project_root("aimux-real-daemon-no-lease");
+        fs::create_dir_all(&aimux_home).expect("create lease home");
+
+        assert_eq!(
+            missing_daemon_test_isolation_lease_refusal_reason_for_process(&aimux_home, false),
+            None
+        );
+
         fs::remove_dir_all(aimux_home).expect("remove lease home");
     }
 

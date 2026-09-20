@@ -45,6 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-release-readiness" >> "$GITHUB_ENV"
+          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
           echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-release-readiness-tmux.sock" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/aimux-home-release-readiness"
           printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-release-readiness/test-isolation.json"

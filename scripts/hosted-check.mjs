@@ -108,7 +108,12 @@ async function main() {
   const home = mkdtempSync(join(tmpdir(), "hosted-check-home-"));
   const project = mkdtempSync(join(tmpdir(), "hosted-check-proj-"));
   const projectName = basename(project);
-  const env = { ...process.env, AIMUX_HOME: home, AIMUX_DAEMON_PORT: String(daemonPort) };
+  const env = {
+    ...process.env,
+    AIMUX_HOME: home,
+    AIMUX_DAEMON_PORT: String(daemonPort),
+    AIMUX_TEST_HARNESS: "hosted-check",
+  };
   const run = (args, options = {}) =>
     execFileSync(cli, args, { env, cwd: project, encoding: "utf8", ...options });
 

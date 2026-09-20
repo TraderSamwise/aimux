@@ -80,6 +80,7 @@ impl TestIsolation {
             .env("HOME", &self.home)
             .env("AIMUX_HOME", &self.aimux_home)
             .env("AIMUX_TMUX_SOCKET_PATH", &self.tmux_socket)
+            .env("AIMUX_TEST_HARNESS", "cargo-test")
             .env("AIMUX_DAEMON_PORT", self.daemon_port.to_string())
     }
 
@@ -108,6 +109,7 @@ impl TestIsolation {
             std::env::set_var("HOME", &self.home);
             std::env::set_var("AIMUX_HOME", &self.aimux_home);
             std::env::set_var("AIMUX_TMUX_SOCKET_PATH", &self.tmux_socket);
+            std::env::set_var("AIMUX_TEST_HARNESS", "cargo-test");
             std::env::set_var("AIMUX_DAEMON_PORT", self.daemon_port.to_string());
         }
         let daemon_dir = self.aimux_home.join("daemon");
@@ -210,6 +212,7 @@ fn capture_env() -> Vec<(&'static str, Option<std::ffi::OsString>)> {
         "HOME",
         "AIMUX_HOME",
         "AIMUX_TMUX_SOCKET_PATH",
+        "AIMUX_TEST_HARNESS",
         "AIMUX_DAEMON_PORT",
     ]
     .into_iter()

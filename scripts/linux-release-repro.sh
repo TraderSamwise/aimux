@@ -187,6 +187,7 @@ echo "aimux: running $MODE lane in $PLATFORM Ubuntu container"
       exit 1
     fi
     export AIMUX_HOME="$RUNNER_TEMP/aimux-home-release-readiness"
+    export AIMUX_TEST_HARNESS="docker-linux-release-repro"
     export AIMUX_TMUX_SOCKET_PATH="$RUNNER_TEMP/aimux-release-readiness-tmux.sock"
     mkdir -p "$AIMUX_HOME"
     printf "{\"kind\":\"docker-linux-release-repro\",\"ownerPid\":%s}\n" "$$" > "$AIMUX_HOME/test-isolation.json"
