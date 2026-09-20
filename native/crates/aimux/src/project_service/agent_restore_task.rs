@@ -145,28 +145,36 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                     ));
                 }
             };
+            let candidate_sessions =
+                list_topology_session_states(&topology, Some(ONLINE_SESSION_STATUSES));
             // Topology status is durable, not live: a session whose window died
             // with the service still reads `running` until something reconciles it.
-            // Recording that would stamp a dead run's agents with this run's writer
-            // id and destroy the only evidence that they were lost.
-            let live_window_ids = match self
-                .live_windows
-                .live_window_ids("agent-restore-snapshot")
-                .await
-            {
-                Ok(live_window_ids) => live_window_ids,
-                // A tmux query that could not be answered says nothing about which
-                // agents are alive. Recording an empty set or offering every
-                // session back would both be inventions.
-                Err(error) => {
-                    log_lifecycle_always(
-                        "agent restore snapshot skipped",
-                        "agent-restore",
-                        Some(json!({ "reason": "tmux live windows unavailable", "error": error })),
-                    );
-                    return Err(format!(
-                        "agent restore snapshot tmux live windows unavailable: {error}"
-                    ));
+            // But when topology has no session that even claims to be online, tmux
+            // has nothing to prove. Avoid waking tmux forever for idle projects.
+            let live_window_ids = if candidate_sessions.is_empty() {
+                BTreeSet::new()
+            } else {
+                match self
+                    .live_windows
+                    .live_window_ids("agent-restore-snapshot")
+                    .await
+                {
+                    Ok(live_window_ids) => live_window_ids,
+                    // A tmux query that could not be answered says nothing about which
+                    // agents are alive. Recording an empty set or offering every
+                    // session back would both be inventions.
+                    Err(error) => {
+                        log_lifecycle_always(
+                            "agent restore snapshot skipped",
+                            "agent-restore",
+                            Some(
+                                json!({ "reason": "tmux live windows unavailable", "error": error }),
+                            ),
+                        );
+                        return Err(format!(
+                            "agent restore snapshot tmux live windows unavailable: {error}"
+                        ));
+                    }
                 }
             };
             let metadata = match try_load_metadata_state(&project_state_dir) {
@@ -182,7 +190,7 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                     ));
                 }
             };
-            let sessions = list_topology_session_states(&topology, Some(ONLINE_SESSION_STATUSES))
+            let sessions = candidate_sessions
                 .into_iter()
                 .filter(|session| session_is_backed_by_live_window(session, &live_window_ids))
                 .map(|session| {
@@ -319,4 +327,188 @@ pub fn agent_restore_snapshot_task(
     context: &Arc<ProjectServiceRequestContext>,
 ) -> Box<dyn PeriodicTask> {
     Box::new(AgentRestoreSnapshotTask::new(context))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime_topology::write_runtime_topology;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    struct CountingLiveWindowSource {
+        calls: Arc<AtomicUsize>,
+        result: Arc<Mutex<Result<BTreeSet<String>, String>>>,
+    }
+
+    impl CountingLiveWindowSource {
+        fn new(result: Result<BTreeSet<String>, String>) -> (Self, Arc<AtomicUsize>) {
+            let calls = Arc::new(AtomicUsize::new(0));
+            (
+                Self {
+                    calls: Arc::clone(&calls),
+                    result: Arc::new(Mutex::new(result)),
+                },
+                calls,
+            )
+        }
+    }
+
+    impl LiveWindowSource for CountingLiveWindowSource {
+        fn live_window_ids<'a>(
+            &'a mut self,
+            _surface: &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, String>> + Send + 'a>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let result = self
+                .result
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            Box::pin(async move { result })
+        }
+    }
+
+    #[test]
+    fn idle_topology_does_not_query_tmux_live_windows() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = temp_root("agent-restore-idle");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            fs::create_dir_all(&project_root).expect("project root");
+            fs::create_dir_all(&state_dir).expect("state dir");
+            write_runtime_topology(
+                runtime_topology_path(&state_dir),
+                &json!({
+                    "version": 1,
+                    "generatedAt": "2026-01-01T00:00:00.000Z",
+                    "rigs": [],
+                    "nodes": [],
+                    "bindings": [],
+                    "sessions": [],
+                    "services": [],
+                    "worktrees": [],
+                    "worktreeGraveyard": [],
+                    "teamRoles": [],
+                    "remoteClients": [],
+                    "lifecycleOperations": [],
+                    "exchangeRefs": [],
+                }),
+            )
+            .expect("write topology");
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let (source, calls) =
+                CountingLiveWindowSource::new(Err("tmux should not be queried".into()));
+            let mut task =
+                AgentRestoreSnapshotTask::with_live_window_source(&context, Box::new(source));
+
+            task.run(&context).await.expect("idle scan succeeds");
+
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "idle projects with no online topology candidates must not poll tmux"
+            );
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn running_topology_still_queries_tmux_live_windows() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = temp_root("agent-restore-running");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            fs::create_dir_all(&project_root).expect("project root");
+            fs::create_dir_all(&state_dir).expect("state dir");
+            write_runtime_topology(
+                runtime_topology_path(&state_dir),
+                &json!({
+                    "version": 1,
+                    "generatedAt": "2026-01-01T00:00:00.000Z",
+                    "rigs": [{
+                        "id": "rig",
+                        "name": "repo",
+                        "projectRoot": project_root.to_string_lossy(),
+                        "createdAt": "2026-01-01T00:00:00.000Z",
+                        "updatedAt": "2026-01-01T00:00:00.000Z",
+                    }],
+                    "nodes": [{
+                        "id": "node-agent",
+                        "rigId": "rig",
+                        "logicalId": "codex-live",
+                        "runtime": "codex",
+                        "toolConfigKey": "codex",
+                        "createdAt": "2026-01-01T00:00:00.000Z",
+                        "updatedAt": "2026-01-01T00:00:00.000Z",
+                    }],
+                    "bindings": [{
+                        "id": "binding-agent",
+                        "nodeId": "node-agent",
+                        "tmuxWindowId": "@agent",
+                        "createdAt": "2026-01-01T00:00:00.000Z",
+                        "updatedAt": "2026-01-01T00:00:00.000Z",
+                    }],
+                    "sessions": [{
+                        "id": "codex-live",
+                        "nodeId": "node-agent",
+                        "status": "running",
+                        "command": "codex",
+                        "toolConfigKey": "codex",
+                        "args": [],
+                        "createdAt": "2026-01-01T00:00:00.000Z",
+                        "updatedAt": "2026-01-01T00:00:00.000Z",
+                        "tmuxTarget": {
+                            "sessionName": "aimux-project",
+                            "windowId": "@agent",
+                            "windowIndex": 1,
+                            "windowName": "codex-live"
+                        }
+                    }],
+                    "services": [],
+                    "worktrees": [],
+                    "worktreeGraveyard": [],
+                    "teamRoles": [],
+                    "remoteClients": [],
+                    "lifecycleOperations": [],
+                    "exchangeRefs": [],
+                }),
+            )
+            .expect("write topology");
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let (source, calls) =
+                CountingLiveWindowSource::new(Ok(BTreeSet::from(["@agent".to_owned()])));
+            let mut task =
+                AgentRestoreSnapshotTask::with_live_window_source(&context, Box::new(source));
+
+            task.run(&context).await.expect("running scan succeeds");
+
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "running topology candidates still require tmux liveness verification"
+            );
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    fn temp_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aimux-{label}-{}-{}",
+            std::process::id(),
+            TOKEN.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    static TOKEN: AtomicUsize = AtomicUsize::new(0);
 }

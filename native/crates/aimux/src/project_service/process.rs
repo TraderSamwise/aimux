@@ -89,6 +89,8 @@ use super::server::{
 use super::statusline::route_statusline_refresh_request_async;
 use super::switchable_agents::route_switchable_agent_request_async;
 
+const STREAM_OUTPUT_IDLE_BACKOFF_MS: &[u64] = &[500, 1_000, 2_000, 5_000, 15_000];
+
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 
@@ -981,51 +983,47 @@ pub fn write_project_service_response_with_runtime(
         let mut last_output_fingerprint = None;
         let mut last_project_event_sequence = stream.event_cursor.unwrap_or_default();
         let mut last_stream_write = Instant::now();
+        let mut output_idle_backoff = OutputStreamIdleBackoff::new(interval_ms);
         loop {
             wait_for_next_stream_tick(
                 stream,
                 context,
                 last_project_event_sequence,
-                interval_ms,
+                output_idle_backoff.current_delay_ms(stream.kind),
                 last_stream_write,
             );
-            let frame = match stream.kind {
-                ProjectServiceStreamKind::ProjectEvents => {
-                    let frame = encode_project_event_stream_frame(
-                        stream,
-                        context,
-                        runtime,
-                        &mut last_project_event_sequence,
-                        &mut last_output_fingerprint,
-                    );
-                    if frame.is_empty() && stream_keepalive_due(stream, last_stream_write) {
-                        encode_sse_keepalive()
-                    } else {
-                        frame
-                    }
-                }
+            let outcome = match stream.kind {
+                ProjectServiceStreamKind::ProjectEvents => encode_project_event_stream_frame(
+                    stream,
+                    context,
+                    runtime,
+                    &mut last_project_event_sequence,
+                    &mut last_output_fingerprint,
+                    last_stream_write,
+                ),
                 ProjectServiceStreamKind::AgentOutput => encode_agent_output_stream_frame(
                     stream,
                     context,
                     runtime,
                     &mut last_output_fingerprint,
+                    last_stream_write,
                 ),
                 ProjectServiceStreamKind::AgentInteraction => {
                     if stream_keepalive_due(stream, last_stream_write) {
-                        encode_sse_keepalive()
+                        StreamFrameOutcome::keepalive()
                     } else {
-                        Vec::new()
+                        StreamFrameOutcome::empty()
                     }
                 }
             };
+            output_idle_backoff.observe(stream.kind, outcome.output_state);
+            let frame = outcome.frame;
             if frame.is_empty() {
                 continue;
             }
             writer.write_all(&frame)?;
             writer.flush()?;
-            if stream.kind != ProjectServiceStreamKind::AgentOutput {
-                last_stream_write = Instant::now();
-            }
+            last_stream_write = Instant::now();
         }
     }
     Ok(())
@@ -1071,13 +1069,14 @@ where
         last_output_fingerprint: None,
         last_project_event_sequence: stream.event_cursor.unwrap_or_default(),
         last_stream_write: Instant::now(),
+        output_idle_backoff: OutputStreamIdleBackoff::new(interval_ms),
     };
     loop {
         wait_for_next_stream_tick_async(
             &stream,
             context.as_deref(),
             state.last_project_event_sequence,
-            interval_ms,
+            state.output_idle_backoff.current_delay_ms(stream.kind),
             state.last_stream_write,
         )
         .await;
@@ -1089,9 +1088,7 @@ where
         }
         writer.write_all(&frame).await?;
         writer.flush().await?;
-        if stream.kind != ProjectServiceStreamKind::AgentOutput {
-            state.last_stream_write = Instant::now();
-        }
+        state.last_stream_write = Instant::now();
     }
 }
 
@@ -1143,6 +1140,93 @@ struct ProjectServiceStreamState {
     last_output_fingerprint: Option<String>,
     last_project_event_sequence: u64,
     last_stream_write: Instant,
+    output_idle_backoff: OutputStreamIdleBackoff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamOutputState {
+    NotOutput,
+    Changed,
+    Unchanged,
+    Error,
+}
+
+#[derive(Debug)]
+struct StreamFrameOutcome {
+    frame: Vec<u8>,
+    output_state: StreamOutputState,
+}
+
+impl StreamFrameOutcome {
+    fn empty() -> Self {
+        Self {
+            frame: Vec::new(),
+            output_state: StreamOutputState::NotOutput,
+        }
+    }
+
+    fn keepalive() -> Self {
+        Self {
+            frame: encode_sse_keepalive(),
+            output_state: StreamOutputState::NotOutput,
+        }
+    }
+
+    fn output(frame: Vec<u8>, output_state: StreamOutputState) -> Self {
+        Self {
+            frame,
+            output_state,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OutputStreamIdleBackoff {
+    base_interval_ms: u64,
+    idle_step: usize,
+}
+
+impl OutputStreamIdleBackoff {
+    fn new(interval_ms: u64) -> Self {
+        Self {
+            base_interval_ms: interval_ms.max(100),
+            idle_step: 0,
+        }
+    }
+
+    fn current_delay_ms(&self, stream_kind: ProjectServiceStreamKind) -> u64 {
+        if !stream_kind_polls_agent_output(stream_kind) {
+            return self.base_interval_ms;
+        }
+        STREAM_OUTPUT_IDLE_BACKOFF_MS
+            .get(self.idle_step)
+            .copied()
+            .unwrap_or_else(|| *STREAM_OUTPUT_IDLE_BACKOFF_MS.last().unwrap_or(&15_000))
+            .max(self.base_interval_ms)
+    }
+
+    fn observe(&mut self, stream_kind: ProjectServiceStreamKind, output_state: StreamOutputState) {
+        if !stream_kind_polls_agent_output(stream_kind) {
+            return;
+        }
+        match output_state {
+            StreamOutputState::Unchanged => {
+                let last = STREAM_OUTPUT_IDLE_BACKOFF_MS.len().saturating_sub(1);
+                self.idle_step = (self.idle_step + 1).min(last);
+            }
+            StreamOutputState::Changed | StreamOutputState::Error => {
+                self.idle_step = 0;
+            }
+            StreamOutputState::NotOutput => {}
+        }
+    }
+}
+
+fn stream_kind_polls_agent_output(kind: ProjectServiceStreamKind) -> bool {
+    matches!(
+        kind,
+        ProjectServiceStreamKind::AgentOutput | ProjectServiceStreamKind::ProjectEvents
+    )
 }
 
 async fn wait_for_next_stream_tick_async(
@@ -1173,38 +1257,38 @@ async fn encode_stream_frame_async(
     state: ProjectServiceStreamState,
 ) -> Result<(ProjectServiceStreamState, Vec<u8>), DaemonListenerError> {
     let mut state = state;
-    let frame = match stream.kind {
+    let outcome = match stream.kind {
         ProjectServiceStreamKind::ProjectEvents => {
-            let frame = encode_project_event_stream_frame_async(
+            encode_project_event_stream_frame_async(
                 &stream,
                 context.as_deref(),
                 &mut state.last_project_event_sequence,
                 &mut state.last_output_fingerprint,
+                state.last_stream_write,
             )
-            .await;
-            if frame.is_empty() && stream_keepalive_due(&stream, state.last_stream_write) {
-                encode_sse_keepalive()
-            } else {
-                frame
-            }
+            .await
         }
         ProjectServiceStreamKind::AgentOutput => {
             encode_agent_output_stream_frame_async(
                 &stream,
                 context.as_deref(),
                 &mut state.last_output_fingerprint,
+                state.last_stream_write,
             )
             .await
         }
         ProjectServiceStreamKind::AgentInteraction => {
             if stream_keepalive_due(&stream, state.last_stream_write) {
-                encode_sse_keepalive()
+                StreamFrameOutcome::keepalive()
             } else {
-                Vec::new()
+                StreamFrameOutcome::empty()
             }
         }
     };
-    Ok((state, frame))
+    state
+        .output_idle_backoff
+        .observe(stream.kind, outcome.output_state);
+    Ok((state, outcome.frame))
 }
 
 fn wait_for_next_stream_tick(
@@ -1254,11 +1338,13 @@ fn encode_project_event_stream_frame(
     runtime: &mut impl AgentOutputCaptureRuntime,
     last_sequence: &mut u64,
     last_output_fingerprint: &mut Option<String>,
-) -> Vec<u8> {
+    last_write: Instant,
+) -> StreamFrameOutcome {
     let Some(context) = context else {
-        return encode_sse_keepalive();
+        return StreamFrameOutcome::keepalive();
     };
     let mut bytes = Vec::new();
+    let mut output_state = StreamOutputState::NotOutput;
     let records = context
         .project_events
         .events_since(*last_sequence, stream.session_id.as_deref());
@@ -1272,15 +1358,27 @@ fn encode_project_event_stream_frame(
         bytes.extend(encode_sse_event(event_name, &record.event));
     }
     if let Some(session_id) = stream.session_id.as_deref() {
-        bytes.extend(encode_project_event_output_frame(
+        let output = encode_project_event_output_frame(
             stream,
             context,
             runtime,
             session_id,
             last_output_fingerprint,
-        ));
+            last_write,
+        );
+        output_state = output.output_state;
+        bytes.extend(output.frame);
     }
-    bytes
+    if bytes.is_empty() && stream_keepalive_due(stream, last_write) {
+        return StreamFrameOutcome {
+            frame: encode_sse_keepalive(),
+            output_state,
+        };
+    }
+    StreamFrameOutcome {
+        frame: bytes,
+        output_state,
+    }
 }
 
 async fn encode_project_event_stream_frame_async(
@@ -1288,11 +1386,13 @@ async fn encode_project_event_stream_frame_async(
     context: Option<&ProjectServiceRequestContext>,
     last_sequence: &mut u64,
     last_output_fingerprint: &mut Option<String>,
-) -> Vec<u8> {
+    last_write: Instant,
+) -> StreamFrameOutcome {
     let Some(context) = context else {
-        return encode_sse_keepalive();
+        return StreamFrameOutcome::keepalive();
     };
     let mut bytes = Vec::new();
+    let mut output_state = StreamOutputState::NotOutput;
     let records = context
         .project_events
         .events_since(*last_sequence, stream.session_id.as_deref());
@@ -1306,17 +1406,27 @@ async fn encode_project_event_stream_frame_async(
         bytes.extend(encode_sse_event(event_name, &record.event));
     }
     if let Some(session_id) = stream.session_id.as_deref() {
-        bytes.extend(
-            encode_project_event_output_frame_async(
-                stream,
-                context,
-                session_id,
-                last_output_fingerprint,
-            )
-            .await,
+        let output = encode_project_event_output_frame_async(
+            stream,
+            context,
+            session_id,
+            last_output_fingerprint,
+            last_write,
         );
+        let output = output.await;
+        output_state = output.output_state;
+        bytes.extend(output.frame);
     }
-    bytes
+    if bytes.is_empty() && stream_keepalive_due(stream, last_write) {
+        return StreamFrameOutcome {
+            frame: encode_sse_keepalive(),
+            output_state,
+        };
+    }
+    StreamFrameOutcome {
+        frame: bytes,
+        output_state,
+    }
 }
 
 fn encode_project_event_output_frame(
@@ -1325,7 +1435,8 @@ fn encode_project_event_output_frame(
     runtime: &mut impl AgentOutputCaptureRuntime,
     session_id: &str,
     last_output_fingerprint: &mut Option<String>,
-) -> Vec<u8> {
+    last_write: Instant,
+) -> StreamFrameOutcome {
     let mode = match stream.mode.as_deref() {
         Some("chat") => AgentOutputResponseMode::Chat,
         _ => AgentOutputResponseMode::Full,
@@ -1341,7 +1452,10 @@ fn encode_project_event_output_frame(
                     coalesced: result.coalesced,
                     error: false,
                 });
-                return Vec::new();
+                return StreamFrameOutcome::output(
+                    keepalive_if_due(stream, last_write),
+                    StreamOutputState::Unchanged,
+                );
             }
             *last_output_fingerprint = Some(fingerprint);
             context.output_metrics.record(AgentOutputReadRecord {
@@ -1351,7 +1465,10 @@ fn encode_project_event_output_frame(
                 coalesced: result.coalesced,
                 error: false,
             });
-            encode_sse_event("agent_output", &result.payload)
+            StreamFrameOutcome::output(
+                encode_sse_event("agent_output", &result.payload),
+                StreamOutputState::Changed,
+            )
         }
         Err(response) => {
             context.output_metrics.record(AgentOutputReadRecord {
@@ -1361,7 +1478,10 @@ fn encode_project_event_output_frame(
                 coalesced: false,
                 error: true,
             });
-            encode_sse_event("error", &response.body)
+            StreamFrameOutcome::output(
+                encode_sse_event("error", &response.body),
+                StreamOutputState::Error,
+            )
         }
     }
 }
@@ -1371,7 +1491,8 @@ async fn encode_project_event_output_frame_async(
     context: &ProjectServiceRequestContext,
     session_id: &str,
     last_output_fingerprint: &mut Option<String>,
-) -> Vec<u8> {
+    last_write: Instant,
+) -> StreamFrameOutcome {
     let mode = match stream.mode.as_deref() {
         Some("chat") => AgentOutputResponseMode::Chat,
         _ => AgentOutputResponseMode::Full,
@@ -1395,7 +1516,10 @@ async fn encode_project_event_output_frame_async(
                     coalesced: result.coalesced,
                     error: false,
                 });
-                return Vec::new();
+                return StreamFrameOutcome::output(
+                    keepalive_if_due(stream, last_write),
+                    StreamOutputState::Unchanged,
+                );
             }
             *last_output_fingerprint = Some(fingerprint);
             context.output_metrics.record(AgentOutputReadRecord {
@@ -1405,7 +1529,10 @@ async fn encode_project_event_output_frame_async(
                 coalesced: result.coalesced,
                 error: false,
             });
-            encode_sse_event("agent_output", &result.payload)
+            StreamFrameOutcome::output(
+                encode_sse_event("agent_output", &result.payload),
+                StreamOutputState::Changed,
+            )
         }
         Err(response) => {
             context.output_metrics.record(AgentOutputReadRecord {
@@ -1415,7 +1542,10 @@ async fn encode_project_event_output_frame_async(
                 coalesced: false,
                 error: true,
             });
-            encode_sse_event("error", &response.body)
+            StreamFrameOutcome::output(
+                encode_sse_event("error", &response.body),
+                StreamOutputState::Error,
+            )
         }
     }
 }
@@ -1425,12 +1555,13 @@ fn encode_agent_output_stream_frame(
     context: Option<&ProjectServiceRequestContext>,
     runtime: &mut impl AgentOutputCaptureRuntime,
     last_output_fingerprint: &mut Option<String>,
-) -> Vec<u8> {
+    last_write: Instant,
+) -> StreamFrameOutcome {
     let Some(context) = context else {
-        return encode_sse_keepalive();
+        return StreamFrameOutcome::keepalive();
     };
     let Some(session_id) = stream.session_id.as_deref() else {
-        return encode_sse_keepalive();
+        return StreamFrameOutcome::keepalive();
     };
     let mode = match stream.mode.as_deref() {
         Some("chat") => AgentOutputResponseMode::Chat,
@@ -1447,7 +1578,10 @@ fn encode_agent_output_stream_frame(
                     coalesced: result.coalesced,
                     error: false,
                 });
-                return encode_sse_keepalive();
+                return StreamFrameOutcome::output(
+                    keepalive_if_due(stream, last_write),
+                    StreamOutputState::Unchanged,
+                );
             }
             *last_output_fingerprint = Some(fingerprint);
             context.output_metrics.record(AgentOutputReadRecord {
@@ -1457,7 +1591,10 @@ fn encode_agent_output_stream_frame(
                 coalesced: result.coalesced,
                 error: false,
             });
-            encode_sse_event("output", &result.payload)
+            StreamFrameOutcome::output(
+                encode_sse_event("output", &result.payload),
+                StreamOutputState::Changed,
+            )
         }
         Err(response) => {
             context.output_metrics.record(AgentOutputReadRecord {
@@ -1467,7 +1604,10 @@ fn encode_agent_output_stream_frame(
                 coalesced: false,
                 error: true,
             });
-            encode_sse_event("error", &response.body)
+            StreamFrameOutcome::output(
+                encode_sse_event("error", &response.body),
+                StreamOutputState::Error,
+            )
         }
     }
 }
@@ -1476,12 +1616,13 @@ async fn encode_agent_output_stream_frame_async(
     stream: &super::dispatcher::ProjectServiceStreamPlan,
     context: Option<&ProjectServiceRequestContext>,
     last_output_fingerprint: &mut Option<String>,
-) -> Vec<u8> {
+    last_write: Instant,
+) -> StreamFrameOutcome {
     let Some(context) = context else {
-        return encode_sse_keepalive();
+        return StreamFrameOutcome::keepalive();
     };
     let Some(session_id) = stream.session_id.as_deref() else {
-        return encode_sse_keepalive();
+        return StreamFrameOutcome::keepalive();
     };
     let mode = match stream.mode.as_deref() {
         Some("chat") => AgentOutputResponseMode::Chat,
@@ -1506,7 +1647,10 @@ async fn encode_agent_output_stream_frame_async(
                     coalesced: result.coalesced,
                     error: false,
                 });
-                return encode_sse_keepalive();
+                return StreamFrameOutcome::output(
+                    keepalive_if_due(stream, last_write),
+                    StreamOutputState::Unchanged,
+                );
             }
             *last_output_fingerprint = Some(fingerprint);
             context.output_metrics.record(AgentOutputReadRecord {
@@ -1516,7 +1660,10 @@ async fn encode_agent_output_stream_frame_async(
                 coalesced: result.coalesced,
                 error: false,
             });
-            encode_sse_event("output", &result.payload)
+            StreamFrameOutcome::output(
+                encode_sse_event("output", &result.payload),
+                StreamOutputState::Changed,
+            )
         }
         Err(response) => {
             context.output_metrics.record(AgentOutputReadRecord {
@@ -1526,8 +1673,22 @@ async fn encode_agent_output_stream_frame_async(
                 coalesced: false,
                 error: true,
             });
-            encode_sse_event("error", &response.body)
+            StreamFrameOutcome::output(
+                encode_sse_event("error", &response.body),
+                StreamOutputState::Error,
+            )
         }
+    }
+}
+
+fn keepalive_if_due(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    last_write: Instant,
+) -> Vec<u8> {
+    if stream_keepalive_due(stream, last_write) {
+        encode_sse_keepalive()
+    } else {
+        Vec::new()
     }
 }
 
@@ -1951,6 +2112,51 @@ mod tests {
     use tokio::sync::oneshot;
 
     static TEST_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn output_stream_idle_backoff_climbs_and_resets() {
+        let mut backoff = OutputStreamIdleBackoff::new(500);
+
+        assert_eq!(
+            backoff.current_delay_ms(ProjectServiceStreamKind::AgentOutput),
+            500
+        );
+        backoff.observe(
+            ProjectServiceStreamKind::AgentOutput,
+            StreamOutputState::Unchanged,
+        );
+        assert_eq!(
+            backoff.current_delay_ms(ProjectServiceStreamKind::AgentOutput),
+            1_000
+        );
+        backoff.observe(
+            ProjectServiceStreamKind::AgentOutput,
+            StreamOutputState::Unchanged,
+        );
+        backoff.observe(
+            ProjectServiceStreamKind::AgentOutput,
+            StreamOutputState::Unchanged,
+        );
+        backoff.observe(
+            ProjectServiceStreamKind::AgentOutput,
+            StreamOutputState::Unchanged,
+        );
+        assert_eq!(
+            backoff.current_delay_ms(ProjectServiceStreamKind::AgentOutput),
+            15_000,
+            "unchanged output streams should become a slow backstop instead of a 500ms tmux poll"
+        );
+
+        backoff.observe(
+            ProjectServiceStreamKind::AgentOutput,
+            StreamOutputState::Changed,
+        );
+        assert_eq!(
+            backoff.current_delay_ms(ProjectServiceStreamKind::AgentOutput),
+            500,
+            "actual output movement should restore the live 500ms stream cadence"
+        );
+    }
 
     fn unique_test_root(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

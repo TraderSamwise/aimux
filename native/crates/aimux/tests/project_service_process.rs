@@ -259,7 +259,7 @@ fn output_stream_writer_emits_native_chat_output_frames() {
             session_id: Some("codex-1".into()),
             start_line: Some(-120),
             interval_ms: 100,
-            keepalive_interval_ms: None,
+            keepalive_interval_ms: Some(100),
             mode: Some("chat".into()),
             event_cursor: None,
         }),
@@ -303,11 +303,6 @@ fn output_stream_writer_emits_native_chat_output_frames() {
     assert_eq!(metrics["bySource"]["output-stream"]["changed"], 1);
     assert!(
         metrics["bySource"]["output-stream"]["unchanged"]
-            .as_u64()
-            .is_some_and(|count| count >= 1)
-    );
-    assert!(
-        metrics["bySource"]["output-stream"]["coalesced"]
             .as_u64()
             .is_some_and(|count| count >= 1)
     );

@@ -18,6 +18,22 @@ daemon_port=""
 dashboard_candidate_missing=0
 dashboard_candidate_stale_shell=0
 
+resolve_tmux_bin() {
+  if [ -n "${AIMUX_TMUX_BIN:-}" ]; then
+    return 0
+  fi
+  AIMUX_TMUX_BIN="$(command -v tmux 2>/dev/null || true)"
+  if [ -z "$AIMUX_TMUX_BIN" ]; then
+    printf '%s\n' "aimux: tmux executable not found on PATH" >&2
+    exit 1
+  fi
+}
+
+tmux() {
+  resolve_tmux_bin
+  "$AIMUX_TMUX_BIN" "$@"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     next|prev|attention|dashboard|coordination|overseer|menu|expose|meta|window|active|team)
