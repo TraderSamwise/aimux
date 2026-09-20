@@ -38,6 +38,14 @@ function expect(condition, message) {
   else fail(message);
 }
 
+function writeTestIsolationMarker(aimuxHome, kind) {
+  mkdirSync(aimuxHome, { recursive: true });
+  writeFileSync(
+    join(aimuxHome, "test-isolation.json"),
+    `${JSON.stringify({ kind, ownerPid: process.pid })}\n`,
+  );
+}
+
 async function expectStatus(label, response, expected) {
   const actual = response.status;
   expect(actual === expected, `${label} → ${expected} (got ${actual})`);
@@ -116,7 +124,7 @@ async function main() {
     // shell tool and the tmux prefix are written here too: `shell` is not a
     // default tool, and a unique prefix keeps this run's tmux sessions
     // identifiable for teardown.
-    mkdirSync(home, { recursive: true });
+    writeTestIsolationMarker(home, "hosted-check");
     writeFileSync(
       join(home, "config.json"),
       JSON.stringify(

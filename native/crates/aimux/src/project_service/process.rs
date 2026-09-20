@@ -93,6 +93,7 @@ use super::switchable_agents::route_switchable_agent_request_async;
 use std::os::unix::net::{UnixListener, UnixStream};
 
 pub const STABILITY_DOCTOR_TEST_WEDGE_ENV: &str = "AIMUX_TEST_STABILITY_DOCTOR_WEDGE_TASK";
+const TEST_ISOLATION_OWNER_WATCHDOG_INTERVAL_MS: u64 = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectServiceInternalOptions {
@@ -111,6 +112,7 @@ pub struct ProjectServiceStartup {
 pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> Result<()> {
     crate::async_runtime::init_process_runtime()
         .context("initialize project-service async runtime")?;
+    let aimux_home = PathResolver::from_env().global_aimux_dir();
     let startup = prepare_project_service_startup(options)?;
     secure_permissions::repair_project_local_store(&startup.project_root)
         .context("repair project .aimux permissions")?;
@@ -133,6 +135,7 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         crate::process_signals::DAEMON_TERMINATION_SIGNALS,
     )
     .context("install project-service shutdown signal handlers")?;
+    let test_isolation_owner_gone = spawn_test_isolation_owner_watchdog(&aimux_home);
     let listener = bind_project_service_listener(startup.desired_port)?;
     let port = listener
         .local_addr()
@@ -177,7 +180,12 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         listener,
         startup,
         plugin_statuses,
-        || crate::process_signals::received_shutdown_signal().is_some(),
+        move || {
+            crate::process_signals::received_shutdown_signal().is_some()
+                || test_isolation_owner_gone
+                    .as_ref()
+                    .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        },
     ));
     if let Some(signal_name) = crate::process_signals::received_shutdown_signal_name() {
         log_lifecycle_always(
@@ -189,6 +197,117 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         );
     }
     Ok(())
+}
+
+fn spawn_test_isolation_owner_watchdog(aimux_home: &Path) -> Option<Arc<AtomicBool>> {
+    let lease = match crate::runtime_safety_guard::load_test_isolation_lease(aimux_home) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return None,
+        Err(error) => {
+            log_lifecycle_always(
+                "project service test isolation watchdog not started",
+                "project-service",
+                Some(json!({ "aimuxHome": aimux_home.to_string_lossy(), "error": error })),
+            );
+            return None;
+        }
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_for_thread = Arc::clone(&stop);
+    let aimux_home = aimux_home.to_path_buf();
+    let owner_pid = lease.owner_pid;
+    let kind = lease.kind.clone();
+    let aimux_home_for_thread = aimux_home.clone();
+    let kind_for_thread = kind.clone();
+    let interval = Duration::from_millis(TEST_ISOLATION_OWNER_WATCHDOG_INTERVAL_MS);
+    thread::Builder::new()
+        .name("aimux-project-service-test-isolation-watchdog".to_owned())
+        .spawn(move || {
+            while !stop_for_thread.load(Ordering::SeqCst) {
+                thread::sleep(interval);
+                if let Some(reason) =
+                    test_isolation_owner_stop_reason(&aimux_home_for_thread, &lease)
+                {
+                    log_lifecycle_always(
+                        "project service stopping after test isolation owner ended",
+                        "project-service",
+                        Some(json!({
+                            "aimuxHome": aimux_home_for_thread.to_string_lossy(),
+                            "ownerPid": owner_pid,
+                            "kind": kind_for_thread,
+                            "reason": reason,
+                        })),
+                    );
+                    stop_for_thread.store(true, Ordering::SeqCst);
+                    return;
+                }
+            }
+        })
+        .map_err(|error| {
+            log_lifecycle_always(
+                "project service test isolation watchdog spawn failed",
+                "project-service",
+                Some(json!({
+                    "aimuxHome": aimux_home.to_string_lossy(),
+                    "ownerPid": owner_pid,
+                    "kind": kind,
+                    "error": error.to_string(),
+                })),
+            );
+        })
+        .ok()?;
+    Some(stop)
+}
+
+fn test_isolation_owner_stop_reason(
+    aimux_home: &Path,
+    lease: &crate::runtime_safety_guard::TestIsolationLease,
+) -> Option<String> {
+    test_isolation_owner_stop_reason_with_probe(
+        aimux_home,
+        lease,
+        crate::daemon_state::try_is_pid_alive,
+    )
+}
+
+fn test_isolation_owner_stop_reason_with_probe(
+    aimux_home: &Path,
+    lease: &crate::runtime_safety_guard::TestIsolationLease,
+    pid_alive: impl Fn(i32) -> Result<bool, String>,
+) -> Option<String> {
+    let marker = aimux_home.join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER);
+    match marker.try_exists() {
+        Ok(true) => {}
+        Ok(false) => {
+            return Some(format!(
+                "test isolation marker disappeared: {}",
+                marker.display()
+            ));
+        }
+        Err(error) => {
+            log_lifecycle_always(
+                "project service test isolation marker probe failed",
+                "project-service",
+                Some(json!({ "marker": marker.to_string_lossy(), "error": error.to_string() })),
+            );
+            return None;
+        }
+    }
+    match pid_alive(lease.owner_pid) {
+        Ok(true) => None,
+        Ok(false) => Some(format!(
+            "test isolation owner pid {} exited",
+            lease.owner_pid
+        )),
+        Err(error) => {
+            log_lifecycle_always(
+                "project service test isolation owner probe failed",
+                "project-service",
+                Some(json!({ "ownerPid": lease.owner_pid, "error": error })),
+            );
+            None
+        }
+    }
 }
 
 pub fn run_project_service_startup_tasks(
@@ -2313,6 +2432,75 @@ mod tests {
                 .project_state_dir
                 .starts_with(aimux_home.join("projects"))
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_isolation_owner_watchdog_stops_when_marker_disappears() {
+        let root = unique_test_root("watchdog-marker-gone");
+        let aimux_home = root.join("aimux-home");
+        fs::create_dir_all(&aimux_home).expect("create aimux home");
+        let lease = crate::runtime_safety_guard::TestIsolationLease {
+            kind: "cargo-test".to_owned(),
+            owner_pid: 123,
+        };
+
+        let reason = test_isolation_owner_stop_reason_with_probe(&aimux_home, &lease, |_| Ok(true));
+
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("test isolation marker disappeared")),
+            "missing marker should be treated as scope loss once a lease is active, got {reason:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_isolation_owner_watchdog_stops_when_owner_exits() {
+        let root = unique_test_root("watchdog-owner-exit");
+        let aimux_home = root.join("aimux-home");
+        fs::create_dir_all(&aimux_home).expect("create aimux home");
+        fs::write(
+            aimux_home.join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER),
+            r#"{"kind":"cargo-test","ownerPid":123}"#,
+        )
+        .expect("write marker");
+        let lease = crate::runtime_safety_guard::TestIsolationLease {
+            kind: "cargo-test".to_owned(),
+            owner_pid: 123,
+        };
+
+        let reason =
+            test_isolation_owner_stop_reason_with_probe(&aimux_home, &lease, |_| Ok(false));
+
+        assert_eq!(
+            reason,
+            Some("test isolation owner pid 123 exited".to_owned())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_isolation_owner_watchdog_does_not_treat_probe_error_as_dead() {
+        let root = unique_test_root("watchdog-probe-error");
+        let aimux_home = root.join("aimux-home");
+        fs::create_dir_all(&aimux_home).expect("create aimux home");
+        fs::write(
+            aimux_home.join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER),
+            r#"{"kind":"cargo-test","ownerPid":123}"#,
+        )
+        .expect("write marker");
+        let lease = crate::runtime_safety_guard::TestIsolationLease {
+            kind: "cargo-test".to_owned(),
+            owner_pid: 123,
+        };
+
+        let reason = test_isolation_owner_stop_reason_with_probe(&aimux_home, &lease, |_| {
+            Err("ps unavailable".to_owned())
+        });
+
+        assert_eq!(reason, None);
         let _ = fs::remove_dir_all(root);
     }
 

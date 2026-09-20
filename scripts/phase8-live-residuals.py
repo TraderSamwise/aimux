@@ -81,6 +81,7 @@ class Scope:
         self.env = isolated_env(self.home, self.aimux_home, aimux_bin, self.tmp)
         self.home.mkdir(parents=True, exist_ok=True)
         self.aimux_home.mkdir(parents=True, exist_ok=True)
+        write_test_isolation_marker(self.aimux_home, "phase8-live-residuals")
         self.project.mkdir(parents=True, exist_ok=True)
         assert_isolated_daemon_port(self.env.get("AIMUX_DAEMON_PORT"), "scope initialization")
 
@@ -209,6 +210,13 @@ def isolated_env(home: Path, aimux_home: Path, aimux_bin: Path, tmp: Path) -> di
     env["TMPDIR"] = str(tmp)
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     return without_tmux(env)
+
+
+def write_test_isolation_marker(aimux_home: Path, kind: str) -> None:
+    aimux_home.mkdir(parents=True, exist_ok=True)
+    (aimux_home / "test-isolation.json").write_text(
+        json.dumps({"kind": kind, "ownerPid": os.getpid()}) + "\n"
+    )
 
 
 def assert_isolated_daemon_port(value: str | None, label: str) -> None:

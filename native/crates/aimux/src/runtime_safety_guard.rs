@@ -1,6 +1,7 @@
 use crate::daemon::routing::DaemonRouteUrl;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 pub const TEST_HARNESS_HEADER: &str = "x-aimux-test-harness";
@@ -23,6 +24,64 @@ const PROJECT_ROOT_REQUEST_FIELDS: &[&str] = &[
     "root",
     "worktreePath",
 ];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestIsolationLease {
+    pub kind: String,
+    pub owner_pid: i32,
+}
+
+pub fn load_test_isolation_lease(daemon_home: &Path) -> Result<Option<TestIsolationLease>, String> {
+    let marker = daemon_home.join(TEST_ISOLATION_MARKER);
+    if !marker.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&marker).map_err(|error| {
+        format!(
+            "could not read test isolation marker {}: {error}",
+            marker.display()
+        )
+    })?;
+    let value = serde_json::from_str::<Value>(&raw).map_err(|error| {
+        format!(
+            "could not parse test isolation marker {}: {error}",
+            marker.display()
+        )
+    })?;
+    let kind = value
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            format!(
+                "test isolation marker {} is missing string kind",
+                marker.display()
+            )
+        })?
+        .to_owned();
+    let owner_pid = value
+        .get("ownerPid")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| {
+            format!(
+                "test isolation marker {} is missing integer ownerPid",
+                marker.display()
+            )
+        })?;
+    let owner_pid = i32::try_from(owner_pid).map_err(|_| {
+        format!(
+            "test isolation marker {} ownerPid is out of range",
+            marker.display()
+        )
+    })?;
+    if owner_pid <= 0 {
+        return Err(format!(
+            "test isolation marker {} ownerPid must be positive, got {owner_pid}",
+            marker.display()
+        ));
+    }
+    Ok(Some(TestIsolationLease { kind, owner_pid }))
+}
 
 pub fn mark_daemon_test_harness_request(headers: &mut BTreeMap<String, String>) {
     let aimux_home = crate::paths::PathResolver::from_env().global_aimux_dir();
@@ -439,7 +498,8 @@ fn is_loopback_daemon_url(url: &str) -> bool {
 mod tests {
     use super::{
         TEST_ISOLATION_MARKER, default_daemon_run_refusal_reason_for_exe_with_build_identity,
-        is_cargo_target_aimux_binary_path, request_project_refusal_reason,
+        is_cargo_target_aimux_binary_path, load_test_isolation_lease,
+        request_project_refusal_reason,
     };
     use crate::daemon::routing::DaemonRouteUrl;
     use crate::daemon_state::DEFAULT_DAEMON_PORT;
@@ -473,6 +533,39 @@ mod tests {
             ),
         )
         .expect("write test isolation marker");
+    }
+
+    #[test]
+    fn test_isolation_lease_parses_owner_identity() {
+        let aimux_home = temp_project_root("aimux-test-lease-home");
+        mark_test_isolation(&aimux_home);
+
+        let lease = load_test_isolation_lease(&aimux_home)
+            .expect("load lease")
+            .expect("lease present");
+
+        assert_eq!(lease.kind, "cargo-test");
+        assert_eq!(lease.owner_pid, std::process::id() as i32);
+        fs::remove_dir_all(aimux_home).expect("remove lease home");
+    }
+
+    #[test]
+    fn malformed_test_isolation_lease_is_not_empty_absence() {
+        let aimux_home = temp_project_root("aimux-test-lease-bad");
+        fs::create_dir_all(&aimux_home).expect("create lease home");
+        fs::write(
+            aimux_home.join(TEST_ISOLATION_MARKER),
+            r#"{"kind":"cargo-test"}"#,
+        )
+        .expect("write bad marker");
+
+        let error = load_test_isolation_lease(&aimux_home).expect_err("bad marker should fail");
+
+        assert!(
+            error.contains("missing integer ownerPid"),
+            "unexpected error: {error}"
+        );
+        fs::remove_dir_all(aimux_home).expect("remove lease home");
     }
 
     #[test]

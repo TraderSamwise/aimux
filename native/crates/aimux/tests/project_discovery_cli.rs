@@ -218,6 +218,7 @@ impl CliFixture {
         let tmux_socket = root.join("tmux.sock");
         fs::create_dir_all(&home).expect("create home");
         fs::create_dir_all(&aimux_home).expect("create aimux home");
+        write_test_isolation_marker(&aimux_home);
         let node_log = root.join("node.log");
         let node = fake_node(&root, &node_log, 9);
         Self {
@@ -249,6 +250,17 @@ impl Drop for CliFixture {
         let _ = self.command().args(["daemon", "stop"]).output();
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+fn write_test_isolation_marker(aimux_home: &Path) {
+    fs::write(
+        aimux_home.join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+        format!(
+            r#"{{"kind":"cargo-test","ownerPid":{}}}"#,
+            std::process::id()
+        ),
+    )
+    .expect("write isolated aimux home marker");
 }
 
 fn allocate_daemon_port() -> u16 {

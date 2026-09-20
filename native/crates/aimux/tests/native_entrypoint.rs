@@ -1470,6 +1470,7 @@ impl NativeEntrypointFixture {
         let tmux_socket = root.join("tmux.sock");
         fs::create_dir_all(&home).expect("create home");
         fs::create_dir_all(&aimux_home).expect("create aimux home");
+        write_test_isolation_marker(&aimux_home);
         let log = root.join("node.log");
         let node = fake_node(&root, &log, 9);
         Self {
@@ -1501,6 +1502,17 @@ impl Drop for NativeEntrypointFixture {
         let _ = self.command().args(["daemon", "stop"]).output();
         cleanup(self.root.clone());
     }
+}
+
+fn write_test_isolation_marker(aimux_home: &std::path::Path) {
+    fs::write(
+        aimux_home.join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+        format!(
+            r#"{{"kind":"cargo-test","ownerPid":{}}}"#,
+            std::process::id()
+        ),
+    )
+    .expect("write isolated aimux home marker");
 }
 
 fn allocate_daemon_port() -> u16 {
