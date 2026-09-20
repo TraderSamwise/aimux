@@ -14,9 +14,11 @@ use crate::tmux_query_memo::{
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::fs;
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -46,6 +48,7 @@ pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-t
 pub const AIMUX_MODIFIED_ENTER_COMMAND: &str = "send-keys -H 1b 5b 31 33 3b 32 75";
 pub const AIMUX_STALE_MODIFIED_ENTER_COMMAND: &str = "send-keys -H 1b5b32373b3575";
 static TMUX_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static TMUX_PROGRAM: OnceLock<Result<OsString, String>> = OnceLock::new();
 const ABANDONED_CLIENT_SESSION_GRACE_SECONDS: i64 = 10 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3427,13 +3430,80 @@ fn default_interactive_exec(
 }
 
 pub fn tmux_command_from_env() -> AsyncCommand {
-    let mut command = AsyncCommand::new("tmux");
+    let program = tmux_program_from_env().unwrap_or_else(|error| panic!("{error}"));
+    let mut command = AsyncCommand::new(program);
     if let Some(socket_path) =
         std::env::var_os(AIMUX_TMUX_SOCKET_PATH_ENV).filter(|value| !value.is_empty())
     {
         command.arg("-S").arg(socket_path);
     }
     command
+}
+
+pub fn tmux_program_from_env() -> Result<OsString, String> {
+    TMUX_PROGRAM
+        .get_or_init(|| {
+            let current_dir = std::env::current_dir().ok();
+            resolve_tmux_program_from_path(std::env::var_os("PATH"), current_dir.as_deref())
+        })
+        .clone()
+}
+
+fn resolve_tmux_program_from_path(
+    path_env: Option<OsString>,
+    current_dir: Option<&Path>,
+) -> Result<OsString, String> {
+    let current_dir = current_dir
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok());
+    let mut searched = Vec::new();
+    let Some(path_env) = path_env.filter(|value| !value.is_empty()) else {
+        return Err("tmux executable not found: PATH is empty".to_owned());
+    };
+    for dir in std::env::split_paths(&path_env) {
+        let candidate = tmux_candidate_path(&dir, current_dir.as_deref());
+        searched.push(candidate.display().to_string());
+        if executable_file_exists(&candidate) {
+            return Ok(candidate.into_os_string());
+        }
+    }
+    Err(format!(
+        "tmux executable not found; searched {}",
+        searched.join(", ")
+    ))
+}
+
+fn tmux_candidate_path(path_entry: &Path, current_dir: Option<&Path>) -> PathBuf {
+    let dir = if path_entry.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        path_entry
+    };
+    let candidate = dir.join("tmux");
+    if candidate.is_absolute() {
+        return candidate;
+    }
+    current_dir
+        .map(|cwd| cwd.join(&candidate))
+        .unwrap_or(candidate)
+}
+
+fn executable_file_exists(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn persistent_aimux_executable() -> String {
@@ -3511,6 +3581,8 @@ fn format_diagnostic_value(value: &str) -> String {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::rc::Rc;
 
     #[test]
@@ -3563,4 +3635,64 @@ mod tests {
             "{persisted_commands}"
         );
     }
+
+    #[test]
+    fn tmux_program_resolution_returns_absolute_executable_once() {
+        let root = temp_tmux_resolution_root("finds");
+        let miss = root.join("miss");
+        let hit = root.join("hit");
+        fs::create_dir_all(&miss).expect("miss dir");
+        fs::create_dir_all(&hit).expect("hit dir");
+        let tmux = hit.join("tmux");
+        fs::write(&tmux, "#!/bin/sh\nexit 0\n").expect("write tmux");
+        make_executable(&tmux);
+        let path_env = std::env::join_paths([miss.as_path(), hit.as_path()]).expect("join path");
+
+        let resolved = resolve_tmux_program_from_path(Some(path_env), Some(&root))
+            .expect("tmux should resolve");
+
+        assert_eq!(resolved, tmux.into_os_string());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tmux_program_resolution_names_searched_paths_when_missing() {
+        let root = temp_tmux_resolution_root("missing");
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::create_dir_all(&first).expect("first dir");
+        fs::create_dir_all(&second).expect("second dir");
+        let path_env =
+            std::env::join_paths([first.as_path(), second.as_path()]).expect("join path");
+
+        let error = resolve_tmux_program_from_path(Some(path_env), Some(&root))
+            .expect_err("tmux should be missing");
+
+        assert!(
+            error.contains(&first.join("tmux").display().to_string()),
+            "{error}"
+        );
+        assert!(
+            error.contains(&second.join("tmux").display().to_string()),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_tmux_resolution_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aimux-tmux-resolution-{label}-{}",
+            std::process::id()
+        ))
+    }
+
+    #[cfg(unix)]
+    fn make_executable(path: &Path) {
+        let mut permissions = fs::metadata(path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("chmod");
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(_path: &Path) {}
 }

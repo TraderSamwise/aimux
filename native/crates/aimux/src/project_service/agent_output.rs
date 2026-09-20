@@ -4,7 +4,9 @@ use crate::agent_prompt_delivery::{
     SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS, composer_still_contains_prompt_draft,
     prompt_draft_signature,
 };
-use crate::async_subprocess::{AsyncCommand, command_task_name};
+#[cfg(test)]
+use crate::async_subprocess::AsyncCommand;
+use crate::async_subprocess::command_task_name;
 use crate::daemon_state::load_metadata_state;
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::expose_pane_output_tap::EXPOSE_PANE_TAP_MAX_BYTES;
@@ -2178,8 +2180,11 @@ fn run_tmux_argv_with_timeout(
     fallback_error: String,
     timeout: Duration,
 ) -> Result<Output, String> {
-    let output = run_command_with_timeout("tmux", &argv, timeout)
-        .map_err(|error| tmux_command_error(&fallback_error, &argv, &error))?;
+    let mut command = tmux_command_from_env();
+    command.args(&argv);
+    let output = command
+        .output_timeout(command_task_name("project-service", "tmux"), timeout)
+        .map_err(|error| tmux_command_error(&fallback_error, &argv, &error.to_string()))?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if error.is_empty() {
@@ -2235,6 +2240,7 @@ fn shellish_quote(value: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn run_command_with_timeout(
     program: &str,
     argv: &[String],

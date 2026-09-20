@@ -4,15 +4,14 @@ use crate::backend_session_ids::{
 };
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
-    AIMUX_TMUX_SOCKET_PATH_ENV, CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo,
-    clear_history_argv, kill_window_argv, new_window_argv, rename_window_argv,
-    set_window_option_argv, tmux_command_from_env,
+    CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, clear_history_argv,
+    kill_window_argv, new_window_argv, rename_window_argv, set_window_option_argv,
+    tmux_command_from_env,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tokio::process::Command as TokioCommand;
 
 const LIFECYCLE_SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -480,22 +479,19 @@ async fn run_tmux_argv_output_async(
     fallback_error: String,
     cwd: Option<&str>,
 ) -> Result<String, String> {
-    let mut command = TokioCommand::new("tmux");
-    if let Some(socket_path) =
-        std::env::var_os(AIMUX_TMUX_SOCKET_PATH_ENV).filter(|value| !value.is_empty())
-    {
-        command.arg("-S").arg(socket_path);
-    }
+    let mut command = tmux_command_from_env();
     command.args(argv);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    command.kill_on_drop(true);
-    match tokio::time::timeout(LIFECYCLE_SUBPROCESS_TIMEOUT, command.output()).await {
-        Ok(Ok(output)) if output.status.success() => {
+    match command
+        .output_timeout_async(LIFECYCLE_SUBPROCESS_TIMEOUT)
+        .await
+    {
+        Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         }
-        Ok(Ok(output)) => {
+        Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             if stderr.is_empty() {
                 Err(fallback_error)
@@ -503,10 +499,7 @@ async fn run_tmux_argv_output_async(
                 Err(stderr)
             }
         }
-        Ok(Err(error)) => Err(format!("{fallback_error}: {error}")),
-        Err(_) => Err(format!(
-            "{fallback_error}: tmux timed out after {LIFECYCLE_SUBPROCESS_TIMEOUT:?}"
-        )),
+        Err(error) => Err(format!("{fallback_error}: {error}")),
     }
 }
 

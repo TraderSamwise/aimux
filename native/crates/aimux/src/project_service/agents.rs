@@ -1,5 +1,7 @@
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::config::default_config;
 use crate::daemon_state::load_metadata_state;
@@ -26,6 +28,15 @@ const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline
 /// stored here, so it rides on one of these underlying statuses.
 const LIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle"];
 const LIVE_SERVICE_WINDOW_STATUSES: &[&str] = &["starting", "running"];
+const LIVE_WINDOW_IDS_QUERY_CACHE_TTL: Duration = Duration::from_millis(500);
+static LIVE_WINDOW_IDS_QUERY_CACHE: OnceLock<Mutex<Option<LiveWindowIdsQueryCacheEntry>>> =
+    OnceLock::new();
+
+#[derive(Clone)]
+struct LiveWindowIdsQueryCacheEntry {
+    result: Result<BTreeSet<String>, String>,
+    captured_at: Instant,
+}
 
 #[derive(Clone, Copy)]
 pub enum LiveWindowIdsProjection<'a> {
@@ -98,26 +109,26 @@ pub fn live_services_with_window_projection(
 pub fn try_live_window_ids_for_session_projection(
     surface: &str,
 ) -> Result<BTreeSet<String>, String> {
-    match crate::tmux::TmuxRuntimeManager::new().try_live_window_ids() {
+    if let Some(result) = cached_live_window_ids_query() {
+        return result;
+    }
+    let result = match crate::tmux::TmuxRuntimeManager::new().try_live_window_ids() {
         Ok(live_window_ids) => Ok(live_window_ids),
         Err(error) => {
-            log_always_at(
-                LogLevel::Warn,
-                "tmux live window query failed; preserving session liveness",
-                "project-service",
-                Some(json!({
-                    "surface": surface,
-                    "error": error,
-                })),
-            );
+            log_live_window_query_failure(surface, &error);
             Err(error)
         }
-    }
+    };
+    store_live_window_ids_query(result.clone());
+    result
 }
 
 pub async fn try_live_window_ids_for_session_projection_async(
     surface: &str,
 ) -> Result<BTreeSet<String>, String> {
+    if let Some(result) = cached_live_window_ids_query() {
+        return result;
+    }
     let mut command = crate::tmux::tmux_command_from_env();
     command.args(crate::tmux::list_all_window_ids_argv());
     let output = command
@@ -136,41 +147,76 @@ pub async fn try_live_window_ids_for_session_projection_async(
                 error
             };
             if crate::tmux::tmux_list_sessions_failed_because_no_server(&error) {
-                return Ok(Default::default());
+                let result = Ok(Default::default());
+                store_live_window_ids_query(result.clone());
+                return result;
             }
-            log_always_at(
-                LogLevel::Warn,
-                "tmux live window query failed; preserving session liveness",
-                "project-service",
-                Some(json!({
-                    "surface": surface,
-                    "error": error,
-                })),
-            );
-            return Err(error);
+            log_live_window_query_failure(surface, &error);
+            let result = Err(error);
+            store_live_window_ids_query(result.clone());
+            return result;
         }
         Err(error) => {
             if crate::tmux::tmux_list_sessions_failed_because_no_server(&error) {
-                return Ok(Default::default());
+                let result = Ok(Default::default());
+                store_live_window_ids_query(result.clone());
+                return result;
             }
-            log_always_at(
-                LogLevel::Warn,
-                "tmux live window query failed; preserving session liveness",
-                "project-service",
-                Some(json!({
-                    "surface": surface,
-                    "error": error,
-                })),
-            );
-            return Err(error);
+            log_live_window_query_failure(surface, &error);
+            let result = Err(error);
+            store_live_window_ids_query(result.clone());
+            return result;
         }
     };
-    Ok(raw
+    let result = Ok(raw
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(str::to_owned)
-        .collect())
+        .collect());
+    store_live_window_ids_query(result.clone());
+    result
+}
+
+fn cached_live_window_ids_query() -> Option<Result<BTreeSet<String>, String>> {
+    let cache = LIVE_WINDOW_IDS_QUERY_CACHE.get_or_init(|| Mutex::new(None));
+    let mut cache = cache.lock().ok()?;
+    let entry = cache.as_ref()?;
+    if entry.captured_at.elapsed() <= LIVE_WINDOW_IDS_QUERY_CACHE_TTL {
+        return Some(entry.result.clone());
+    }
+    *cache = None;
+    None
+}
+
+fn store_live_window_ids_query(result: Result<BTreeSet<String>, String>) {
+    let cache = LIVE_WINDOW_IDS_QUERY_CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut cache) = cache.lock() {
+        *cache = Some(LiveWindowIdsQueryCacheEntry {
+            result,
+            captured_at: Instant::now(),
+        });
+    }
+}
+
+fn log_live_window_query_failure(surface: &str, error: &str) {
+    log_always_at(
+        LogLevel::Warn,
+        "tmux live window query failed; preserving session liveness",
+        "project-service",
+        Some(json!({
+            "surface": surface,
+            "error": error,
+        })),
+    );
+}
+
+#[cfg(test)]
+fn clear_live_window_ids_query_cache_for_tests() {
+    let cache = LIVE_WINDOW_IDS_QUERY_CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut cache) = cache.lock() {
+        *cache = None;
+    }
 }
 
 pub fn route_agent_read_request(
@@ -913,6 +959,31 @@ fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn live_window_ids_query_cache_preserves_errors_as_errors() {
+        clear_live_window_ids_query_cache_for_tests();
+        store_live_window_ids_query(Err("tmux socket busy".to_owned()));
+
+        let cached = cached_live_window_ids_query().expect("cached result");
+
+        assert_eq!(cached, Err("tmux socket busy".to_owned()));
+        clear_live_window_ids_query_cache_for_tests();
+    }
+
+    #[test]
+    fn live_window_ids_query_cache_preserves_successful_ids() {
+        clear_live_window_ids_query_cache_for_tests();
+        store_live_window_ids_query(Ok(BTreeSet::from(["@1".to_owned(), "@2".to_owned()])));
+
+        let cached = cached_live_window_ids_query().expect("cached result");
+
+        assert_eq!(
+            cached,
+            Ok(BTreeSet::from(["@1".to_owned(), "@2".to_owned()]))
+        );
+        clear_live_window_ids_query_cache_for_tests();
+    }
 
     #[test]
     fn agent_list_role_uses_same_effective_scribe_flag_as_response() {

@@ -150,12 +150,13 @@ impl GlobalExposeHotSnapshotCoordinator {
             .leases
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        let was_active = leases.has_active_preview_clients(now);
         leases.touch(&input, now);
         let active = leases.has_active_preview_clients(now);
         drop(leases);
         if active {
             self.update_refresh_inputs(worker_projects(projects), project_state_dirs);
-            if let Some(scheduler) = self.scheduler.as_ref() {
+            if !was_active && let Some(scheduler) = self.scheduler.as_ref() {
                 scheduler.force_task_next_tick(GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME);
             }
         }
@@ -1102,6 +1103,25 @@ mod tests {
 
         assert!(active);
         assert!(handle.take_forced_task(GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME));
+    }
+
+    #[test]
+    fn active_global_preview_refresh_is_edge_triggered() {
+        let handle = daemon_scheduler_handle();
+        let coordinator = GlobalExposeHotSnapshotCoordinator::new(true)
+            .with_refresh_delay_ms(200)
+            .with_scheduler(handle.clone());
+        let route_url = DaemonRouteUrl::parse(
+            "/core/expose/items?includePreview=1&clientId=phase3c-global&clientTtlMs=60000",
+        );
+
+        let first_active = coordinator.touch_route_lease(&route_url, &[], BTreeMap::new());
+        assert!(first_active);
+        assert!(handle.take_forced_task(GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME));
+
+        let second_active = coordinator.touch_route_lease(&route_url, &[], BTreeMap::new());
+        assert!(second_active);
+        assert!(!handle.take_forced_task(GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME));
     }
 
     #[test]
