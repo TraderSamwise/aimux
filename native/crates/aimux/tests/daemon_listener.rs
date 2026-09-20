@@ -15,13 +15,16 @@ use aimux::request_actor::RemoteAccessDecision;
 use serde_json::json;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::pin::Pin;
 use std::process::Command;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[test]
 fn parses_request_line_headers_and_content_length_body() {
@@ -399,19 +402,22 @@ fn async_response_write_times_out_when_peer_stops_reading() {
 
 #[test]
 fn async_response_write_allows_slow_progressing_reader() {
-    let (mut client_stream, mut server_stream) = tokio::io::duplex(64);
-    block_on_named("daemon-listener-test:slow-progressing-write", async {
-        tokio::io::AsyncWriteExt::write_all(
-            &mut client_stream,
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("test runtime");
+    runtime.block_on(async {
+        tokio::time::pause();
+        let stream = SlowProgressingAsyncStream::new(
             b"GET /large HTTP/1.1\r\nHost: local\r\n\r\n",
-        )
-        .await
-        .expect("client writes request");
-        let server = aimux::async_runtime::spawn_named(
-            "daemon-listener-test:slow-progressing-write-server",
-            async move {
+            16,
+            Duration::from_millis(10),
+        );
+        let server = tokio::spawn(async move {
+            let mut stream = stream;
+            let result =
                 handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts(
-                    &mut server_stream,
+                    &mut stream,
                     DaemonRequestMetadata::default(),
                     &mut |_| None,
                     &mut |_, _| Box::pin(async { Ok(false) }),
@@ -427,34 +433,31 @@ fn async_response_write_allows_slow_progressing_reader() {
                     None,
                     Some(Duration::from_millis(50)),
                 )
-                .await
-            },
-        );
+                .await;
+            (result, stream)
+        });
 
-        let mut output = Vec::new();
-        let mut buffer = [0_u8; 16];
-        loop {
-            let count = tokio::time::timeout(
-                Duration::from_secs(2),
-                tokio::io::AsyncReadExt::read(&mut client_stream, &mut buffer),
-            )
-            .await
-            .expect("client read should not stall")
-            .expect("client read");
-            if count == 0 {
+        for _ in 0..100 {
+            if server.is_finished() {
                 break;
             }
-            output.extend_from_slice(&buffer[..count]);
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::advance(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         }
 
-        server
-            .await
-            .expect("server task")
-            .expect("slow progressing reader should receive response");
-        let response = String::from_utf8_lossy(&output);
+        let (result, stream) = server.await.expect("server task");
+        result.expect("slow progressing writer should receive response");
+        assert!(
+            stream.virtual_write_delay() > Duration::from_millis(50),
+            "test must take longer than the idle timeout in virtual time"
+        );
+        assert!(
+            stream.write_count > 1,
+            "response should be split across multiple progressing writes"
+        );
+        let response = String::from_utf8_lossy(&stream.output);
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
-        assert!(output.ends_with(&vec![b'x'; 256]));
+        assert!(stream.output.ends_with(&vec![b'x'; 256]));
     });
 }
 
@@ -529,6 +532,106 @@ impl Write for MemoryStream {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+struct SlowProgressingAsyncStream {
+    input: Vec<u8>,
+    input_offset: usize,
+    output: Vec<u8>,
+    max_write: usize,
+    write_delay: Duration,
+    delay_before_next_write: bool,
+    write_delay_ready: Arc<AtomicBool>,
+    write_delay_scheduled: bool,
+    write_count: usize,
+    write_delay_count: usize,
+}
+
+impl SlowProgressingAsyncStream {
+    fn new(input: &[u8], max_write: usize, write_delay: Duration) -> Self {
+        Self {
+            input: input.to_vec(),
+            input_offset: 0,
+            output: Vec::new(),
+            max_write,
+            write_delay,
+            delay_before_next_write: false,
+            write_delay_ready: Arc::new(AtomicBool::new(false)),
+            write_delay_scheduled: false,
+            write_count: 0,
+            write_delay_count: 0,
+        }
+    }
+
+    fn virtual_write_delay(&self) -> Duration {
+        self.write_delay * self.write_delay_count as u32
+    }
+}
+
+impl AsyncRead for SlowProgressingAsyncStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if self.input_offset >= self.input.len() {
+            return Poll::Ready(Ok(()));
+        }
+        let count = buffer
+            .remaining()
+            .min(self.input.len().saturating_sub(self.input_offset));
+        let start = self.input_offset;
+        let end = start + count;
+        buffer.put_slice(&self.input[start..end]);
+        self.input_offset = end;
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for SlowProgressingAsyncStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if buffer.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        if self.delay_before_next_write {
+            if self.write_delay_ready.load(Ordering::SeqCst) {
+                self.delay_before_next_write = false;
+                self.write_delay_scheduled = false;
+            } else {
+                if !self.write_delay_scheduled {
+                    self.write_delay_scheduled = true;
+                    self.write_delay_count += 1;
+                    let ready = Arc::clone(&self.write_delay_ready);
+                    let waker = cx.waker().clone();
+                    let delay = self.write_delay;
+                    tokio::spawn(async move {
+                        tokio::time::sleep(delay).await;
+                        ready.store(true, Ordering::SeqCst);
+                        waker.wake();
+                    });
+                }
+                return Poll::Pending;
+            }
+        }
+        self.write_delay_ready.store(false, Ordering::SeqCst);
+        let count = self.max_write.min(buffer.len());
+        self.output.extend_from_slice(&buffer[..count]);
+        self.write_count += 1;
+        self.delay_before_next_write = true;
+        Poll::Ready(Ok(count))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 

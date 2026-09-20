@@ -27,3 +27,6 @@ tokio.workspace = true
 futures-util = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
