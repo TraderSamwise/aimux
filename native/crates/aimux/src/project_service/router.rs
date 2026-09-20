@@ -13,7 +13,9 @@ use crate::plugin_api::NativePluginStatus;
 use crate::project_api_contract::{invalidations, project_api_views_for_mutation_route, routes};
 use crate::tmux::{TmuxRuntimeManager, TmuxTarget};
 
-use super::agent_output_projection::AgentOutputProjectionCache;
+use super::agent_output_projection::{
+    AgentOutputProjectionCache, AgentTranscriptProjectionStabilityCache,
+};
 use super::output_cache::AgentOutputCaptureCache;
 use super::output_metrics::AgentOutputReadMetrics;
 use super::project_events::ProjectEventBus;
@@ -71,6 +73,7 @@ pub struct ProjectServiceRequestContext {
     pub lifecycle_mutations: LifecycleMutationQueue,
     pub osc_output_tap: OscOutputTap,
     pub output_projection_cache: AgentOutputProjectionCache,
+    pub transcript_projection_stability_cache: AgentTranscriptProjectionStabilityCache,
     pub output_metrics: AgentOutputReadMetrics,
     pub project_events: ProjectEventBus,
     pub visual_clients: ProjectHotSnapshotCoordinator,
@@ -94,6 +97,7 @@ impl ProjectServiceRequestContext {
             lifecycle_mutations: LifecycleMutationQueue::default(),
             osc_output_tap: OscOutputTap::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
+            transcript_projection_stability_cache: Default::default(),
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
             visual_clients: ProjectHotSnapshotCoordinator::default(),
@@ -120,6 +124,7 @@ impl ProjectServiceRequestContext {
             lifecycle_mutations: LifecycleMutationQueue::default(),
             osc_output_tap: OscOutputTap::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
+            transcript_projection_stability_cache: Default::default(),
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
             visual_clients: ProjectHotSnapshotCoordinator::default(),

@@ -1427,6 +1427,152 @@ fn output_route_projects_parsed_status_and_activity_text_from_capture() {
 }
 
 #[test]
+fn output_route_does_not_rewrite_settled_transcript_rows_after_compaction() {
+    let project = temp_project("stable-transcript-settled");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: [
+            "• Searching for 2 patterns",
+            "• curl /supabase {\"query\":\"select 1;\"}",
+            "",
+            "› next prompt after compact",
+        ]
+        .join("\n"),
+        calls: Vec::new(),
+        actions: Vec::new(),
+        ..Default::default()
+    };
+
+    let first = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&startLine=-160&mode=chat",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    runtime.output = [
+        "• Searching for 2 patterns",
+        "• curl /supabase {\"query\":\"select slug, name from table;\"}",
+        "",
+        "› next prompt after compact",
+    ]
+    .join("\n");
+    let changed = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&startLine=-160&mode=chat",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    runtime.output = "› next prompt after compact".into();
+    let compacted = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&startLine=-160&mode=chat",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(first.status, 200);
+    assert_eq!(changed.status, 200);
+    assert_eq!(compacted.status, 200);
+    assert_eq!(
+        transcript_texts(&first.body),
+        vec![
+            "Searching for 2 patterns\ncurl /supabase {\"query\":\"select 1;\"}",
+            "next prompt after compact",
+        ]
+    );
+    assert_eq!(
+        transcript_texts(&changed.body),
+        vec![
+            "Searching for 2 patterns\ncurl /supabase {\"query\":\"select 1;\"}",
+            "next prompt after compact",
+        ],
+        "a settled row already returned by the route must not mutate"
+    );
+    assert_eq!(
+        transcript_texts(&compacted.body),
+        vec![
+            "Searching for 2 patterns\ncurl /supabase {\"query\":\"select 1;\"}",
+            "next prompt after compact",
+        ],
+        "a settled row already returned by the route must not disappear"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn output_route_still_allows_live_latest_transcript_row_to_complete() {
+    let project = temp_project("stable-transcript-latest");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: [
+            "› run the query",
+            "• Working (12s • esc to interrupt)",
+            "• Built the first slice.",
+        ]
+        .join("\n"),
+        calls: Vec::new(),
+        actions: Vec::new(),
+        ..Default::default()
+    };
+
+    let partial = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&startLine=-160&mode=chat",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    runtime.output = [
+        "› run the query",
+        "• Working (12s • esc to interrupt)",
+        "• Built the first slice.",
+        "• Done.",
+        "",
+        "› next prompt",
+    ]
+    .join("\n");
+    let completed = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&startLine=-160&mode=chat",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(partial.status, 200);
+    assert_eq!(
+        transcript_texts(&partial.body),
+        vec!["run the query", "Built the first slice."]
+    );
+    assert_eq!(completed.status, 200);
+    assert_eq!(
+        transcript_texts(&completed.body),
+        vec![
+            "run the query",
+            "Built the first slice.\nDone.",
+            "next prompt"
+        ],
+        "the mutable latest row must still be able to settle into completed output"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn output_route_omits_terminal_fields_in_chat_mode_and_bounds_forward_reads() {
     let project = temp_project("chat");
     let state_dir = project.join("state");
@@ -3590,6 +3736,15 @@ fn write_delivery_queue(state_dir: &PathBuf, pending: Value) {
         .expect("serialize delivery queue"),
     )
     .expect("write delivery queue");
+}
+
+fn transcript_texts(body: &Value) -> Vec<String> {
+    body["messages"]
+        .as_array()
+        .expect("messages array")
+        .iter()
+        .map(|message| message["text"].as_str().expect("message text").to_owned())
+        .collect()
 }
 
 fn write_attachment(

@@ -773,6 +773,20 @@ fn truncated_csi_fragment_end(bytes: &[u8], index: usize) -> Option<usize> {
     }
 }
 
+fn stabilize_projected_transcript_messages(
+    result: &mut Map<String, Value>,
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    start_line: i64,
+) {
+    let Some(Value::Array(messages)) = result.get_mut("messages") else {
+        return;
+    };
+    context
+        .transcript_projection_stability_cache
+        .stabilize_messages(session_id, start_line, messages);
+}
+
 pub fn project_agent_output_payload(
     result: &Value,
     capture_window: AgentOutputCaptureWindow,
@@ -1002,6 +1016,12 @@ pub(super) fn read_agent_output_payload(
         tool.as_deref(),
     );
     enrich_projected_attachment_urls(&mut result, context.project_root(), session_id);
+    stabilize_projected_transcript_messages(
+        &mut result,
+        context,
+        session_id,
+        capture_window.start_line,
+    );
     if pane_state.interrupted_visible {
         result.insert("activityText".into(), Value::String(String::new()));
     }
@@ -1138,6 +1158,12 @@ pub(super) async fn read_agent_output_payload_async(
         tool.as_deref(),
     );
     enrich_projected_attachment_urls(&mut result, context.project_root(), session_id);
+    stabilize_projected_transcript_messages(
+        &mut result,
+        context,
+        session_id,
+        capture_window.start_line,
+    );
     if pane_state.interrupted_visible {
         result.insert("activityText".into(), Value::String(String::new()));
     }

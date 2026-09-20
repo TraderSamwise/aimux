@@ -38,6 +38,17 @@ pub struct AgentOutputProjectionCache {
     ttl: Duration,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AgentTranscriptProjectionKey {
+    session_id: String,
+    start_line: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentTranscriptProjectionStabilityCache {
+    inner: Arc<Mutex<BTreeMap<AgentTranscriptProjectionKey, Vec<Value>>>>,
+}
+
 #[derive(Debug, Clone)]
 struct AgentOutputProjectionCacheEntry {
     projection: AgentOutputProjection,
@@ -96,6 +107,22 @@ impl AgentOutputProjectionCache {
             },
         );
         projection
+    }
+}
+
+impl AgentTranscriptProjectionStabilityCache {
+    pub fn stabilize_messages(&self, session_id: &str, start_line: i64, messages: &mut Vec<Value>) {
+        let key = AgentTranscriptProjectionKey {
+            session_id: session_id.to_owned(),
+            start_line,
+        };
+        let Ok(mut cached) = self.inner.lock() else {
+            return;
+        };
+        if let Some(existing) = cached.get(&key) {
+            *messages = stabilize_transcript_messages(existing, messages);
+        }
+        cached.insert(key, messages.clone());
     }
 }
 
@@ -1604,6 +1631,126 @@ fn messages_from_blocks(blocks: &[AgentOutputBlock], ansi: Option<&str>) -> Vec<
         newest.insert("latest".to_owned(), Value::Bool(true));
     }
     messages
+}
+
+fn stabilize_transcript_messages(existing: &[Value], incoming: &[Value]) -> Vec<Value> {
+    if existing.is_empty() || incoming.is_empty() {
+        return incoming.to_vec();
+    }
+    let matches = transcript_message_alignment(existing, incoming);
+    if matches.is_empty() {
+        if existing.iter().any(is_settled_transcript_message) {
+            let mut merged = existing
+                .iter()
+                .filter(|message| is_settled_transcript_message(message))
+                .cloned()
+                .collect::<Vec<_>>();
+            strip_latest_markers(&mut merged);
+            merged.extend_from_slice(incoming);
+            return merged;
+        }
+        return incoming.to_vec();
+    }
+
+    let mut merged = Vec::new();
+    let mut existing_cursor = 0;
+    let mut incoming_cursor = 0;
+    for (existing_index, incoming_index) in matches {
+        append_stabilized_transcript_gap(
+            &mut merged,
+            &existing[existing_cursor..existing_index],
+            &incoming[incoming_cursor..incoming_index],
+        );
+        merged.push(incoming[incoming_index].clone());
+        existing_cursor = existing_index + 1;
+        incoming_cursor = incoming_index + 1;
+    }
+    append_stabilized_transcript_gap(
+        &mut merged,
+        &existing[existing_cursor..],
+        &incoming[incoming_cursor..],
+    );
+    merged
+}
+
+fn append_stabilized_transcript_gap(
+    target: &mut Vec<Value>,
+    existing_gap: &[Value],
+    incoming_gap: &[Value],
+) {
+    if existing_gap.iter().any(is_settled_transcript_message) {
+        let mut settled = existing_gap
+            .iter()
+            .filter(|message| is_settled_transcript_message(message))
+            .cloned()
+            .collect::<Vec<_>>();
+        strip_latest_markers(&mut settled);
+        target.extend(settled);
+        return;
+    }
+    target.extend_from_slice(incoming_gap);
+}
+
+fn transcript_message_alignment(existing: &[Value], incoming: &[Value]) -> Vec<(usize, usize)> {
+    let mut lengths = vec![vec![0usize; incoming.len() + 1]; existing.len() + 1];
+    for existing_index in (0..existing.len()).rev() {
+        for incoming_index in (0..incoming.len()).rev() {
+            lengths[existing_index][incoming_index] =
+                if transcript_message_signature(&existing[existing_index])
+                    == transcript_message_signature(&incoming[incoming_index])
+                {
+                    lengths[existing_index + 1][incoming_index + 1] + 1
+                } else {
+                    lengths[existing_index + 1][incoming_index]
+                        .max(lengths[existing_index][incoming_index + 1])
+                };
+        }
+    }
+
+    let mut matches = Vec::new();
+    let mut existing_index = 0;
+    let mut incoming_index = 0;
+    while existing_index < existing.len() && incoming_index < incoming.len() {
+        if transcript_message_signature(&existing[existing_index])
+            == transcript_message_signature(&incoming[incoming_index])
+        {
+            matches.push((existing_index, incoming_index));
+            existing_index += 1;
+            incoming_index += 1;
+        } else if lengths[existing_index + 1][incoming_index]
+            >= lengths[existing_index][incoming_index + 1]
+        {
+            existing_index += 1;
+        } else {
+            incoming_index += 1;
+        }
+    }
+    matches
+}
+
+fn transcript_message_signature(message: &Value) -> String {
+    let role = message
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let text = message
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let parts = message.get("parts").cloned().unwrap_or(Value::Null);
+    format!("{role}\0{text}\0{parts}")
+}
+
+fn is_settled_transcript_message(message: &Value) -> bool {
+    message.get("latest").and_then(Value::as_bool) != Some(true)
+}
+
+fn strip_latest_markers(messages: &mut [Value]) {
+    for message in messages {
+        if let Value::Object(object) = message {
+            object.remove("latest");
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
