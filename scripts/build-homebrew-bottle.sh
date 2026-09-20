@@ -94,11 +94,14 @@ run_and_capture() {
   local label="$1"
   local log="$2"
   shift 2
-  if "$@" >"$log" 2>&1; then
+  set +e
+  "$@" >"$log" 2>&1
+  local status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
     printf '%s passed\n' "$label"
     return 0
   fi
-  local status=$?
   printf '%s failed with exit %s\n' "$label" "$status" >&2
   sed 's/^/  /' "$log" >&2
   return "$status"
@@ -110,6 +113,10 @@ fi
 run_and_capture "Homebrew bottle tap creation" "$TMP_DIR/tap-new.log" \
   "$BREW" tap-new "$STAGING_TAP" --no-git
 CREATED_STAGING_TAP=1
+if "$BREW" help trust >/dev/null 2>&1; then
+  run_and_capture "Homebrew bottle tap trust" "$TMP_DIR/tap-trust.log" \
+    "$BREW" trust "$STAGING_TAP"
+fi
 
 TAP_REPO="$("$BREW" --repo "$STAGING_TAP")"
 FORMULA_DIR="$TAP_REPO/Formula"
@@ -136,10 +143,17 @@ run_and_capture "Homebrew build-bottle install for $FORMULA" "$TMP_DIR/install-b
     "$BREW" bottle --json --no-rebuild --root-url "$BOTTLE_ROOT_URL" "$FORMULA_REF"
 )
 
+shopt -s nullglob
+bottle_json=("$OUT_DIR"/*.bottle.json)
+shopt -u nullglob
+if [ "${#bottle_json[@]}" -eq 0 ]; then
+  fail "brew bottle produced no JSON for $FORMULA in $OUT_DIR"
+fi
+
 node "$ROOT_DIR/scripts/homebrew-bottle-metadata.mjs" \
   --formula "$FORMULA" \
   --output "$OUT_DIR/$FORMULA.bottles.tsv" \
-  "$OUT_DIR"/*.bottle.json
+  "${bottle_json[@]}"
 
 printf 'Built Homebrew bottle for %s:\n' "$FORMULA"
 printf '  output: %s\n' "$OUT_DIR"
