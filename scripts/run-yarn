@@ -5,56 +5,112 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VOLTA_HOME="${VOLTA_HOME:-"$HOME/.volta"}"
 
 read_json_string() {
   local key="$1"
-  sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$ROOT_DIR/package.json" | head -n 1
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" =~ \"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  done < "$ROOT_DIR/package.json"
+  return 1
 }
 
 NODE_VERSION="${AIMUX_NODE_VERSION:-}"
 if [ -z "$NODE_VERSION" ] && [ -f "$ROOT_DIR/.nvmrc" ]; then
-  NODE_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/.nvmrc")"
+  IFS= read -r NODE_VERSION < "$ROOT_DIR/.nvmrc" || NODE_VERSION=""
+  NODE_VERSION="${NODE_VERSION//[[:space:]]/}"
   NODE_VERSION="${NODE_VERSION#v}"
 fi
 
 YARN_VERSION="${AIMUX_YARN_VERSION:-}"
 if [ -z "$YARN_VERSION" ]; then
-  YARN_VERSION="$(read_json_string yarn)"
+  YARN_VERSION="$(read_json_string yarn || true)"
 fi
 YARN_VERSION="${YARN_VERSION:-1.22.21}"
 
-NODE_BIN="${AIMUX_NODE_BIN:-}"
-if [ -z "$NODE_BIN" ] && [ -n "$NODE_VERSION" ]; then
-  candidate="$VOLTA_HOME/tools/image/node/$NODE_VERSION/bin/node"
-  if [ -x "$candidate" ]; then
-    NODE_BIN="$candidate"
+VOLTA_NODE_CANDIDATE="$VOLTA_HOME/tools/image/node/$NODE_VERSION/bin/node"
+VOLTA_YARN_CLI="$VOLTA_HOME/tools/image/yarn/$YARN_VERSION/lib/cli.js"
+
+resolve_node_bin() {
+  if [ -n "${AIMUX_NODE_BIN:-}" ]; then
+    if [ -x "$AIMUX_NODE_BIN" ]; then
+      printf '%s\n' "$AIMUX_NODE_BIN"
+      return 0
+    fi
+    return 1
   fi
-fi
-if [ -z "$NODE_BIN" ]; then
-  NODE_BIN="$(command -v node || true)"
-fi
-if [ -z "$NODE_BIN" ] || [ ! -x "$NODE_BIN" ]; then
-  printf 'unable to find executable node for run-yarn\n' >&2
-  exit 127
+
+  if [ -n "$NODE_VERSION" ] && [ -x "$VOLTA_NODE_CANDIDATE" ]; then
+    printf '%s\n' "$VOLTA_NODE_CANDIDATE"
+    return 0
+  fi
+
+  command -v node || true
+}
+
+exec_yarn_cli() {
+  local yarn_cli="$1"
+  local source_label="$2"
+  shift 2
+  local node_bin
+  node_bin="$(resolve_node_bin)"
+  if [ -z "$node_bin" ] || [ ! -x "$node_bin" ]; then
+    printf 'unable to run %s Yarn CLI because no executable node was found\n' "$source_label" >&2
+    printf 'checked AIMUX_NODE_BIN=%s, Volta node=%s, and node on PATH\n' "${AIMUX_NODE_BIN:-<unset>}" "$VOLTA_NODE_CANDIDATE" >&2
+    exit 127
+  fi
+  exec "$node_bin" "$yarn_cli" "$@"
+}
+
+is_volta_yarn_shim() {
+  local path="$1"
+  case "$path" in
+    */volta-shims/yarn|*/.volta/bin/yarn|*/volta/bin/yarn) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+PATH_YARN="$(command -v yarn || true)"
+PATH_COREPACK="$(command -v corepack || true)"
+SKIPPED_PATH_YARN=""
+
+if [ -n "${AIMUX_YARN_CLI:-}" ]; then
+  if [ ! -f "$AIMUX_YARN_CLI" ]; then
+    printf 'AIMUX_YARN_CLI points to a missing Yarn CLI: %s\n' "$AIMUX_YARN_CLI" >&2
+    exit 127
+  fi
+  exec_yarn_cli "$AIMUX_YARN_CLI" "AIMUX_YARN_CLI" "$@"
 fi
 
-YARN_CLI="${AIMUX_YARN_CLI:-}"
-if [ -z "$YARN_CLI" ]; then
-  candidate="$VOLTA_HOME/tools/image/yarn/$YARN_VERSION/lib/cli.js"
-  if [ -f "$candidate" ]; then
-    YARN_CLI="$candidate"
-  fi
-fi
-if [ -z "$YARN_CLI" ]; then
-  printf 'unable to find Yarn %s CLI at %s/tools/image/yarn/%s/lib/cli.js\n' \
-    "$YARN_VERSION" "$VOLTA_HOME" "$YARN_VERSION" >&2
-  exit 127
-fi
-if [ ! -f "$YARN_CLI" ]; then
-  printf 'Yarn CLI does not exist: %s\n' "$YARN_CLI" >&2
-  exit 127
+if [ -f "$VOLTA_YARN_CLI" ]; then
+  exec_yarn_cli "$VOLTA_YARN_CLI" "Volta" "$@"
 fi
 
-exec "$NODE_BIN" "$YARN_CLI" "$@"
+if [ -n "$PATH_YARN" ] && [ -x "$PATH_YARN" ]; then
+  if is_volta_yarn_shim "$PATH_YARN"; then
+    SKIPPED_PATH_YARN=" (skipped: Volta shim can mask child exits as 126; real Volta CLI was not found)"
+  else
+    exec "$PATH_YARN" "$@"
+  fi
+fi
+
+if [ -n "$PATH_COREPACK" ] && [ -x "$PATH_COREPACK" ]; then
+  exec "$PATH_COREPACK" "yarn@$YARN_VERSION" "$@"
+fi
+
+{
+  printf 'unable to find a Yarn runner for scripts/run-yarn\n'
+  printf 'looked for:\n'
+  printf '  AIMUX_YARN_CLI: %s\n' "${AIMUX_YARN_CLI:-<unset>}"
+  printf '  Volta Yarn CLI: %s\n' "$VOLTA_YARN_CLI"
+  printf '  PATH yarn: %s%s\n' "${PATH_YARN:-<not found>}" "$SKIPPED_PATH_YARN"
+  printf '  corepack: %s\n' "${PATH_COREPACK:-<not found>}"
+  printf 'install yarn/corepack on PATH, restore Volta images, or set AIMUX_YARN_CLI to a Yarn classic cli.js\n'
+} >&2
+  exit 127
