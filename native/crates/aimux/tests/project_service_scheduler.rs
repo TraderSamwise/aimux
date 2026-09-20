@@ -30,7 +30,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, mpsc};
 use std::time::Duration;
 
@@ -1533,6 +1533,29 @@ impl PeriodicTask for MeasuredHotTask {
     }
 }
 
+struct SpawnedHotTask {
+    runs: Arc<AtomicUsize>,
+}
+
+impl PeriodicTask for SpawnedHotTask {
+    fn name(&self) -> &str {
+        "spawned-hot"
+    }
+    fn interval_ms(&self) -> i64 {
+        250
+    }
+    fn run_immediately(&self) -> bool {
+        true
+    }
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(225));
+            Ok(())
+        })
+    }
+}
+
 #[test]
 fn hot_task_reaches_health_notifications_and_operation_failures() {
     let project_root = unique_temp_dir("scheduler-hot-task-alert");
@@ -1634,6 +1657,53 @@ fn hot_task_reaches_health_notifications_and_operation_failures() {
                 .unwrap_or_default()
                 .contains("per 250ms tick"),
         "{failure:#?}"
+    );
+}
+
+#[test]
+fn spawned_hot_task_keeps_running_when_alert_sink_blocks() {
+    init_process_runtime().expect("runtime initialized");
+    let runs = Arc::new(AtomicUsize::new(0));
+    let alerts = Arc::new(AtomicUsize::new(0));
+    let release_alert = Arc::new(AtomicBool::new(false));
+    let handle = ProjectSchedulerHandle::default();
+    let tasks = vec![Box::new(SpawnedHotTask {
+        runs: Arc::clone(&runs),
+    }) as Box<dyn PeriodicTask>];
+    let ctx = Arc::new(context_with_scheduler(handle.clone()));
+
+    spawn_project_service_scheduler(ctx, tasks, handle.clone());
+    let sink_alerts = Arc::clone(&alerts);
+    let sink_release_alert = Arc::clone(&release_alert);
+    handle.set_alert_sink(move |_alert| {
+        sink_alerts.fetch_add(1, Ordering::SeqCst);
+        while !sink_release_alert.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+
+    let hot_health = wait_for_scheduler_health(&handle, "spawned-hot", |task| task.hot)
+        .expect("spawned scheduler recorded hot task");
+    assert_eq!(hot_health.consecutive_hot_runs, 3);
+    assert_eq!(
+        alerts.load(Ordering::SeqCst),
+        1,
+        "hot alert should be published exactly once"
+    );
+
+    let runs_when_alert_blocked = runs.load(Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(700));
+    let runs_after_wait = runs.load(Ordering::SeqCst);
+    release_alert.store(true, Ordering::SeqCst);
+
+    assert!(
+        runs_after_wait > runs_when_alert_blocked,
+        "a blocked hot-alert sink must not stop the task loop; runs before={runs_when_alert_blocked}, after={runs_after_wait}"
+    );
+    assert_eq!(
+        alerts.load(Ordering::SeqCst),
+        1,
+        "unchanged hot level should not spam additional alerts"
     );
 }
 
@@ -2097,7 +2167,7 @@ fn wait_for_scheduler_health(
     predicate: impl Fn(&PeriodicTaskHealthSnapshot) -> bool,
 ) -> Option<PeriodicTaskHealthSnapshot> {
     let started = std::time::Instant::now();
-    while started.elapsed() < Duration::from_secs(1) {
+    while started.elapsed() < Duration::from_secs(3) {
         let health = handle.try_health_snapshot().ok()?;
         if let Some(task) = health
             .into_iter()

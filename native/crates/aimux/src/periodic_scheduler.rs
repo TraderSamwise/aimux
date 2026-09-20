@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use tokio::task::JoinSet;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 
-use crate::async_runtime::{spawn_named, task_name};
+use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named, task_name};
 use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 
 /// How long the tick loop sleeps when nothing is scheduled.
@@ -200,7 +200,23 @@ impl SchedulerHandle {
             }
         };
         if let Some(sink) = sink {
-            sink(alert);
+            let labels = self.labels;
+            let task_name =
+                scoped_task_name(labels.supervisor_scope, "scheduler-alert", &alert.name);
+            spawn_blocking_named(task_name, move || {
+                let task = alert.name.clone();
+                if catch_unwind(AssertUnwindSafe(|| sink(alert))).is_err() {
+                    log_lifecycle_always(
+                        labels.health_error,
+                        labels.component,
+                        Some(json!({
+                            "operation": "alert",
+                            "task": task,
+                            "error": "scheduler alert sink panicked",
+                        })),
+                    );
+                }
+            });
         }
     }
 

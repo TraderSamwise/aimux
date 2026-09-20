@@ -44,9 +44,9 @@ const DEFAULT_STOPPED_DWELL_MS: i64 = 30_000;
 const DEFAULT_UNCHANGED_REMINDER_TICKS: u64 = 4;
 /// Blast-radius cap: no single scan may message more agents than this.
 const MAX_SENDS_PER_SCAN: usize = 8;
-/// Longest one scan may hold the shared tick loop; eight unanswered sends would
-/// otherwise block every other task for over a minute.
-const SCAN_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+/// Longest one scan may spend delivering loop checks. Keep this below the
+/// default 15s cadence so one slow scan cannot exceed its own interval.
+const SCAN_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const LIVE_ACTIVITY_PROBE_START_LINE: i64 = -80;
 
 pub struct LoopWatcherTask {
