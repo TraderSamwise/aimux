@@ -414,6 +414,126 @@ describe("the projected transcript", () => {
     ]);
   });
 
+  it("does not rewrite settled same-window messages after compaction changes projection gaps", () => {
+    const store = createStore();
+    const summary = {
+      ...message,
+      id: "assistant:summary",
+      text: "Compact summary",
+      parts: [{ type: "text" as const, text: "Compact summary" }],
+      latest: undefined,
+    };
+    const connectivityProbe = {
+      ...message,
+      id: "assistant:probe",
+      text: 'Searching for 2 patterns\ncurl /supabase {"query":"select 1;"}',
+      parts: [
+        {
+          type: "text" as const,
+          text: 'Searching for 2 patterns\ncurl /supabase {"query":"select 1;"}',
+        },
+      ],
+      latest: undefined,
+    };
+    const differentToolCall = {
+      ...message,
+      id: "assistant:query",
+      text: 'Searching for 2 patterns\ncurl /supabase {"query":"select slug, name from table;"}',
+      parts: [
+        {
+          type: "text" as const,
+          text: 'Searching for 2 patterns\ncurl /supabase {"query":"select slug, name from table;"}',
+        },
+      ],
+      latest: undefined,
+    };
+    const prompt = {
+      ...message,
+      id: "user:prompt",
+      role: "user" as const,
+      text: "next prompt after compact",
+      parts: [{ type: "text" as const, text: "next prompt after compact" }],
+    };
+
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -160,
+      messages: [summary, connectivityProbe, prompt],
+    });
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -160,
+      messages: [summary, differentToolCall, prompt],
+    });
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -160,
+      messages: [summary, prompt],
+    });
+
+    expect(store.get(transcriptFamily("agent-1")).map((item) => item.text)).toEqual([
+      "Compact summary",
+      'Searching for 2 patterns\ncurl /supabase {"query":"select 1;"}',
+      "next prompt after compact",
+    ]);
+  });
+
+  it("still lets a same-window latest message complete", () => {
+    const store = createStore();
+    const prompt = {
+      ...message,
+      id: "user:prompt",
+      role: "user" as const,
+      text: "run the query",
+      parts: [{ type: "text" as const, text: "run the query" }],
+      latest: undefined,
+    };
+    const partial = {
+      ...message,
+      id: "assistant:partial",
+      text: "Searching for 2 patterns...",
+      parts: [{ type: "text" as const, text: "Searching for 2 patterns..." }],
+      latest: true as const,
+    };
+    const completed = {
+      ...message,
+      id: "assistant:complete",
+      text: "Searching for 2 patterns...\nDone.",
+      parts: [{ type: "text" as const, text: "Searching for 2 patterns...\nDone." }],
+      latest: undefined,
+    };
+    const nextPrompt = {
+      ...message,
+      id: "user:next",
+      role: "user" as const,
+      text: "next prompt",
+      parts: [{ type: "text" as const, text: "next prompt" }],
+      latest: true as const,
+    };
+
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -160,
+      messages: [prompt, partial],
+    });
+    store.set(ingestEventAtom, {
+      type: "agent_output",
+      sessionId: "agent-1",
+      startLine: -160,
+      messages: [prompt, completed, nextPrompt],
+    });
+
+    expect(store.get(transcriptFamily("agent-1")).map((item) => item.text)).toEqual([
+      "run the query",
+      "Searching for 2 patterns...\nDone.",
+      "next prompt",
+    ]);
+  });
+
   it("replaces the transcript when a wider stream event arrives", () => {
     const store = createStore();
     const tailOnly = {

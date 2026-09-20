@@ -87,6 +87,93 @@ function mergeTranscriptMessages(
   return [...stripLatestMarkers(existing.slice(0, existing.length - overlap)), ...incoming];
 }
 
+function stabilizeSameWindowTranscriptMessages(
+  existing: AgentTranscriptMessage[],
+  incoming: AgentTranscriptMessage[],
+): AgentTranscriptMessage[] {
+  if (existing.length === 0 || incoming.length === 0) return incoming;
+  const matches = transcriptMessageAlignment(existing, incoming);
+  if (matches.length === 0) {
+    return existing.some((message) => !message.latest)
+      ? [...stripLatestMarkers(existing.filter((message) => !message.latest)), ...incoming]
+      : incoming;
+  }
+
+  const merged: AgentTranscriptMessage[] = [];
+  let existingCursor = 0;
+  let incomingCursor = 0;
+  for (const [existingIndex, incomingIndex] of matches) {
+    appendStabilizedTranscriptGap(
+      merged,
+      existing.slice(existingCursor, existingIndex),
+      incoming.slice(incomingCursor, incomingIndex),
+    );
+    merged.push(incoming[incomingIndex]);
+    existingCursor = existingIndex + 1;
+    incomingCursor = incomingIndex + 1;
+  }
+  appendStabilizedTranscriptGap(
+    merged,
+    existing.slice(existingCursor),
+    incoming.slice(incomingCursor),
+  );
+  return merged;
+}
+
+function appendStabilizedTranscriptGap(
+  target: AgentTranscriptMessage[],
+  existingGap: AgentTranscriptMessage[],
+  incomingGap: AgentTranscriptMessage[],
+) {
+  if (existingGap.some((message) => !message.latest)) {
+    target.push(...stripLatestMarkers(existingGap.filter((message) => !message.latest)));
+    return;
+  }
+  target.push(...incomingGap);
+}
+
+function transcriptMessageAlignment(
+  existing: AgentTranscriptMessage[],
+  incoming: AgentTranscriptMessage[],
+): Array<[number, number]> {
+  const lengths = Array.from({ length: existing.length + 1 }, () =>
+    Array.from({ length: incoming.length + 1 }, () => 0),
+  );
+  for (let existingIndex = existing.length - 1; existingIndex >= 0; existingIndex -= 1) {
+    for (let incomingIndex = incoming.length - 1; incomingIndex >= 0; incomingIndex -= 1) {
+      lengths[existingIndex][incomingIndex] =
+        transcriptMessageSignature(existing[existingIndex]) ===
+        transcriptMessageSignature(incoming[incomingIndex])
+          ? lengths[existingIndex + 1][incomingIndex + 1] + 1
+          : Math.max(
+              lengths[existingIndex + 1][incomingIndex],
+              lengths[existingIndex][incomingIndex + 1],
+            );
+    }
+  }
+
+  const matches: Array<[number, number]> = [];
+  let existingIndex = 0;
+  let incomingIndex = 0;
+  while (existingIndex < existing.length && incomingIndex < incoming.length) {
+    if (
+      transcriptMessageSignature(existing[existingIndex]) ===
+      transcriptMessageSignature(incoming[incomingIndex])
+    ) {
+      matches.push([existingIndex, incomingIndex]);
+      existingIndex += 1;
+      incomingIndex += 1;
+    } else if (
+      lengths[existingIndex + 1][incomingIndex] >= lengths[existingIndex][incomingIndex + 1]
+    ) {
+      existingIndex += 1;
+    } else {
+      incomingIndex += 1;
+    }
+  }
+  return matches;
+}
+
 function stripLatestMarkers(messages: AgentTranscriptMessage[]): AgentTranscriptMessage[] {
   return messages.map((message) => {
     if (!message.latest) return message;
@@ -129,9 +216,16 @@ function applyTranscriptMessages(
 ) {
   const startLineAtom = transcriptStartLineFamily(sessionId);
   const currentStartLine = get(startLineAtom);
-  if (startLine === undefined || currentStartLine === undefined || startLine <= currentStartLine) {
+  if (startLine === undefined || currentStartLine === undefined || startLine < currentStartLine) {
     set(transcriptFamily(sessionId), messages);
     set(startLineAtom, startLine);
+    return;
+  }
+  if (startLine === currentStartLine) {
+    set(
+      transcriptFamily(sessionId),
+      stabilizeSameWindowTranscriptMessages(get(transcriptFamily(sessionId)), messages),
+    );
     return;
   }
   set(
