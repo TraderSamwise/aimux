@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then
+  printf '%s must be run with bash\n' "$0" >&2
+  exit 2
+fi
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+OUT_DIR=""
+MUTATE=""
+SESSION_ID="${AIMUX_SESSION_ID:-manual-$$}"
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/build-local-only-evidence-bundle [--out <dir>] [--mutate <name>]
+
+Runs the local-only security gates and writes one reviewer-facing evidence bundle.
+
+Mutations:
+  network-surface-nonloopback  prove the bundle refuses a non-loopback socket gate failure
+  remote-control-cfg-macro     prove the bundle refuses a cfg!(feature = "remote-control") gate failure
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --out)
+      OUT_DIR="$2"
+      shift 2
+      ;;
+    --mutate)
+      MUTATE="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'Unknown build-local-only-evidence-bundle argument: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$MUTATE" in
+  "" | network-surface-nonloopback | remote-control-cfg-macro) ;;
+  *)
+    printf 'Unsupported --mutate value: %s\n' "$MUTATE" >&2
+    exit 2
+    ;;
+esac
+
+if [ -z "$OUT_DIR" ]; then
+  OUT_DIR="${TMPDIR:-/tmp}/aimux-local-only-evidence-${STAMP}-$$"
+fi
+mkdir -p "$OUT_DIR/logs" "$OUT_DIR/release"
+
+case "$(uname -s)" in
+  Darwin) PLATFORM="darwin" ;;
+  Linux) PLATFORM="linux" ;;
+  *)
+    printf 'unsupported platform: %s\n' "$(uname -s)" >&2
+    exit 2
+    ;;
+esac
+case "$(uname -m)" in
+  x86_64 | amd64) ARCH="x64" ;;
+  arm64 | aarch64) ARCH="arm64" ;;
+  *)
+    printf 'unsupported architecture: %s\n' "$(uname -m)" >&2
+    exit 2
+    ;;
+esac
+PLATFORM_ARCH="$PLATFORM-$ARCH"
+TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/aimux-local-only-evidence-target-${SESSION_ID}}"
+
+git -C "$ROOT_DIR" rev-parse --verify HEAD > "$OUT_DIR/source-revision.txt"
+git -C "$ROOT_DIR" status --short > "$OUT_DIR/git-status-short.txt"
+git -C "$ROOT_DIR" tag --points-at HEAD > "$OUT_DIR/git-tags-at-head.txt"
+if [ -s "$OUT_DIR/git-status-short.txt" ]; then
+  printf 'false\n' > "$OUT_DIR/working-tree-clean.txt"
+else
+  printf 'true\n' > "$OUT_DIR/working-tree-clean.txt"
+fi
+
+"$ROOT_DIR/scripts/run-yarn" node "$ROOT_DIR/scripts/build-local-only-evidence-bundle.mjs" init \
+  --bundle "$OUT_DIR" \
+  --platform-arch "$PLATFORM_ARCH" \
+  --mutation "${MUTATE:-none}"
+
+shell_quote() {
+  printf "%q" "$1"
+}
+
+record_gate() {
+  local id="$1"
+  local title="$2"
+  local exit_code="$3"
+  local expected_refusal="${4:-false}"
+  "$ROOT_DIR/scripts/run-yarn" node "$ROOT_DIR/scripts/build-local-only-evidence-bundle.mjs" record \
+    --bundle "$OUT_DIR" \
+    --id "$id" \
+    --title "$title" \
+    --exit-code "$exit_code" \
+    --expected-refusal "$expected_refusal"
+}
+
+finish_bundle() {
+  local status="$1"
+  local failure="${2:-}"
+  "$ROOT_DIR/scripts/run-yarn" node "$ROOT_DIR/scripts/build-local-only-evidence-bundle.mjs" finish \
+    --bundle "$OUT_DIR" \
+    --status "$status" \
+    --failure "$failure"
+}
+
+fail_bundle() {
+  local message="$1"
+  finish_bundle failed "$message" || true
+  printf 'Local-only evidence bundle failed: %s\n' "$message" >&2
+  printf 'Bundle left at: %s\n' "$OUT_DIR" >&2
+  exit 1
+}
+
+run_command() {
+  local id="$1"
+  local title="$2"
+  shift 2
+  local gate_dir="$OUT_DIR/logs/$id"
+  mkdir -p "$gate_dir"
+  {
+    local first=1
+    for arg in "$@"; do
+      if [ "$first" -eq 0 ]; then printf ' '; fi
+      shell_quote "$arg"
+      first=0
+    done
+    printf '\n'
+  } > "$gate_dir/command.txt"
+  set +e
+  (
+    cd "$ROOT_DIR"
+    CARGO_INCREMENTAL=0 \
+      CARGO_TARGET_DIR="$TARGET_DIR" \
+      AIMUX_RELEASE_DIR="$OUT_DIR/release" \
+      AIMUX_RELEASE_VERSION="0.0.0-local-only-evidence-${STAMP}" \
+      "$@"
+  ) >"$gate_dir/stdout.txt" 2>"$gate_dir/stderr.txt"
+  local status=$?
+  set -e
+  record_gate "$id" "$title" "$status" false
+  return "$status"
+}
+
+run_required() {
+  local id="$1"
+  local title="$2"
+  shift 2
+  local status
+  if run_command "$id" "$title" "$@"; then
+    return 0
+  fi
+  status=$?
+  fail_bundle "$id failed with exit $status"
+}
+
+run_expected_refusal() {
+  local id="$1"
+  local title="$2"
+  local expected="$3"
+  shift 3
+  local gate_dir="$OUT_DIR/logs/$id"
+  mkdir -p "$gate_dir"
+  {
+    local first=1
+    for arg in "$@"; do
+      if [ "$first" -eq 0 ]; then printf ' '; fi
+      shell_quote "$arg"
+      first=0
+    done
+    printf '\n'
+  } > "$gate_dir/command.txt"
+  set +e
+  (
+    cd "$ROOT_DIR"
+    AIMUX_INSTALL_ROOT="$OUT_DIR/$id/root" \
+      AIMUX_BIN_DIR="$OUT_DIR/$id/bin" \
+      AIMUX_SKIP_POST_INSTALL_RESTART=1 \
+      "$@"
+  ) >"$gate_dir/stdout.txt" 2>"$gate_dir/stderr.txt"
+  local status=$?
+  set -e
+  record_gate "$id" "$title" "$status" true
+  if [ "$status" -eq 0 ]; then
+    fail_bundle "$id accepted a release artifact it should have refused"
+  fi
+  if ! grep -F "$expected" "$gate_dir/stdout.txt" "$gate_dir/stderr.txt" >/dev/null 2>&1; then
+    fail_bundle "$id failed without expected refusal text: $expected"
+  fi
+}
+
+build_asset() {
+  local variant="$1"
+  local id="build-${variant}-release-asset"
+  local title="Build ${variant} Release Asset With Provenance/SBOM"
+  local gate_dir="$OUT_DIR/logs/$id"
+  mkdir -p "$gate_dir"
+  printf 'bash scripts/build-release-asset.sh\n' > "$gate_dir/command.txt"
+  set +e
+  (
+    cd "$ROOT_DIR"
+    CARGO_INCREMENTAL=0 \
+      CARGO_TARGET_DIR="$TARGET_DIR" \
+      AIMUX_RELEASE_DIR="$OUT_DIR/release" \
+      AIMUX_RELEASE_VERSION="0.0.0-local-only-evidence-${STAMP}" \
+      AIMUX_PACKAGE_PROFILE="$([ "$variant" = local ] && printf minimal || printf full)" \
+      AIMUX_BUILD_VARIANT="$variant" \
+      bash scripts/build-release-asset.sh
+  ) >"$gate_dir/stdout.txt" 2>"$gate_dir/stderr.txt"
+  local status=$?
+  set -e
+  record_gate "$id" "$title" "$status" false
+  if [ "$status" -ne 0 ]; then
+    fail_bundle "$id failed with exit $status"
+  fi
+}
+
+run_mutation() {
+  local name="$1"
+  local mutation_root="$OUT_DIR/mutation-source"
+  mkdir -p "$mutation_root/native/crates/aimux/src"
+  if [ "$name" = remote-control-cfg-macro ]; then
+    cat > "$mutation_root/native/crates/aimux/src/lib.rs" <<'RUST'
+pub fn local_boundary() -> bool {
+    cfg!(feature = "remote-control")
+}
+RUST
+  else
+    cat > "$mutation_root/native/crates/aimux/src/lib.rs" <<'RUST'
+pub fn leak() {
+    let _ = std::net::TcpStream::connect(("198.51.100.10", 443));
+}
+RUST
+  fi
+  printf 'path#aimux@0.1.0\n' > "$mutation_root/packages.txt"
+  : > "$mutation_root/root-edges.txt"
+  local id="mutation-$name"
+  run_command "$id" "Mutation Proof: $name" \
+    "$ROOT_DIR/scripts/check-local-network-surface" \
+    --source-root "$mutation_root" \
+    --package-identities-file "$mutation_root/packages.txt" \
+    --expected-package-identities-file "$mutation_root/packages.txt" \
+    --root-dependency-edges-file "$mutation_root/root-edges.txt" \
+    --expected-root-dependency-edges-file "$mutation_root/root-edges.txt" || {
+      fail_bundle "mutation $name correctly failed $id with exit $?"
+    }
+  fail_bundle "mutation $name unexpectedly passed"
+}
+
+if [ -n "$MUTATE" ]; then
+  run_mutation "$MUTATE"
+fi
+
+run_required network-surface "Static Local Network Surface Gate" "$ROOT_DIR/scripts/check-local-network-surface"
+run_required local-only-release-gate "Local-Only Release Wiring Gate" bash scripts/check-local-only-release-gate.sh
+
+build_asset full
+build_asset local
+
+FULL_ASSET="$OUT_DIR/release/aimux-${PLATFORM_ARCH}.tar.gz"
+LOCAL_ASSET="$OUT_DIR/release/aimux-local-${PLATFORM_ARCH}.tar.gz"
+
+run_required full-boundary "Full Build Boundary Gate" \
+  bash scripts/check-local-build-boundary.sh --variant full --archive "$FULL_ASSET" --platform-arch "$PLATFORM_ARCH"
+run_required local-boundary "Local Build Boundary Gate" \
+  bash scripts/check-local-build-boundary.sh --variant local --archive "$LOCAL_ASSET" --platform-arch "$PLATFORM_ARCH"
+run_required full-provenance-sbom "Full Release Provenance And SBOM Verification" \
+  bash scripts/verify-release-provenance.sh "$OUT_DIR/release" "$(basename "$FULL_ASSET")" "$PLATFORM_ARCH" full
+run_required local-provenance-sbom "Local Release Provenance And SBOM Verification" \
+  bash scripts/verify-release-provenance.sh "$OUT_DIR/release" "$(basename "$LOCAL_ASSET")" "$PLATFORM_ARCH" local
+
+run_expected_refusal install-refuses-full-on-local-lane \
+  "Install Variant Refusal: Full Asset On Local Lane" \
+  "release archive BUILD_VARIANT mismatch: expected local, got full" \
+  env AIMUX_INSTALL_VARIANT=local bash scripts/install.sh "$FULL_ASSET"
+run_expected_refusal install-refuses-local-on-full-lane \
+  "Install Variant Refusal: Local Asset On Full Lane" \
+  "release archive BUILD_VARIANT mismatch: expected full, got local" \
+  env AIMUX_INSTALL_VARIANT=full bash scripts/install.sh "$LOCAL_ASSET"
+
+run_required git-leak "Git Leak Gate" \
+  python3 scripts/installed-runtime-gate.py --scenario local --only git-leak
+run_required sensitive-store-egress "Sensitive Store Egress Gate" \
+  python3 scripts/installed-runtime-gate.py --scenario local --only sensitive-egress
+
+finish_bundle passed
+tar -czf "$OUT_DIR.tar.gz" -C "$(dirname "$OUT_DIR")" "$(basename "$OUT_DIR")"
+printf 'Local-only evidence bundle passed: %s\n' "$OUT_DIR"
