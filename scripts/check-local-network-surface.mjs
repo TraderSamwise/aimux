@@ -71,11 +71,26 @@ const AUDITED_LOCAL_PACKAGE_IDENTITIES = [
   "registry+https://github.com/rust-lang/crates.io-index#zmij@1.0.23",
 ];
 
+const AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES = [
+  "anyhow->registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
+  "clap->registry+https://github.com/rust-lang/crates.io-index#clap@4.6.6",
+  "libc->registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+  "serde->registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+  "serde_json->registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+  "serde_yaml->registry+https://github.com/rust-lang/crates.io-index#serde_yaml@0.9.34+deprecated",
+  "sha1->registry+https://github.com/rust-lang/crates.io-index#sha1@0.10.7",
+  "sha2->registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
+  "time->registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+  "tokio->registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+];
+
 const args = process.argv.slice(2);
 let sourceRoot = repoRoot;
 let manifestPath = join(repoRoot, "native/Cargo.toml");
 let packageIdentitiesFile = null;
 let expectedPackageIdentitiesFile = null;
+let rootDependencyEdgesFile = null;
+let expectedRootDependencyEdgesFile = null;
 let skipPackageIdentityCheck = false;
 
 for (let i = 0; i < args.length; i += 1) {
@@ -88,11 +103,15 @@ for (let i = 0; i < args.length; i += 1) {
     packageIdentitiesFile = resolve(args[++i]);
   } else if (arg === "--expected-package-identities-file") {
     expectedPackageIdentitiesFile = resolve(args[++i]);
+  } else if (arg === "--root-dependency-edges-file") {
+    rootDependencyEdgesFile = resolve(args[++i]);
+  } else if (arg === "--expected-root-dependency-edges-file") {
+    expectedRootDependencyEdgesFile = resolve(args[++i]);
   } else if (arg === "--skip-package-identity-check") {
     skipPackageIdentityCheck = true;
   } else if (arg === "--write-current-package-identities") {
     const output = resolve(args[++i]);
-    const identities = collectCurrentPackageIdentities();
+    const identities = collectCurrentPackageSurface().packages;
     mkdirSync(dirname(output), { recursive: true });
     writeFileSync(output, `${identities.join("\n")}\n`, "utf8");
     process.exit(0);
@@ -142,13 +161,20 @@ function normalizePackageIdentity(pkg) {
   return `${pkg.source}#${pkg.name}@${pkg.version}`;
 }
 
-function collectCurrentPackageIdentities() {
+function readList(path) {
+  return readFileSync(path, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .sort();
+}
+
+function collectCurrentPackageSurface() {
   if (packageIdentitiesFile) {
-    return readFileSync(packageIdentitiesFile, "utf8")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .sort();
+    return {
+      packages: readList(packageIdentitiesFile),
+      rootEdges: rootDependencyEdgesFile ? readList(rootDependencyEdgesFile) : [],
+    };
   }
 
   const metadata = spawnSync(
@@ -166,6 +192,7 @@ function collectCurrentPackageIdentities() {
   }
   const nodes = new Map(parsed.resolve.nodes.map((node) => [node.id, node]));
   const packages = new Map(parsed.packages.map((pkg) => [pkg.id, pkg]));
+  const aimuxNode = nodes.get(aimuxPackage.id);
   const visited = new Set();
   function visit(id) {
     if (visited.has(id)) return;
@@ -175,46 +202,95 @@ function collectCurrentPackageIdentities() {
     }
   }
   visit(aimuxPackage.id);
-  return [...visited].map((id) => normalizePackageIdentity(packages.get(id))).sort();
+  return {
+    packages: [...visited].map((id) => normalizePackageIdentity(packages.get(id))).sort(),
+    rootEdges: (aimuxNode?.deps ?? [])
+      .map((dep) => `${dep.name}->${normalizePackageIdentity(packages.get(dep.pkg))}`)
+      .sort(),
+  };
 }
 
 function expectedPackageIdentities() {
   if (!expectedPackageIdentitiesFile) return [...AUDITED_LOCAL_PACKAGE_IDENTITIES].sort();
-  return readFileSync(expectedPackageIdentitiesFile, "utf8")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .sort();
+  return readList(expectedPackageIdentitiesFile);
 }
 
-function checkPackageIdentityGraph() {
-  if (skipPackageIdentityCheck) return;
-  const current = collectCurrentPackageIdentities();
-  const expected = expectedPackageIdentities();
+function expectedRootDependencyEdges() {
+  if (!expectedRootDependencyEdgesFile) return [...AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES].sort();
+  return readList(expectedRootDependencyEdgesFile);
+}
+
+function compareAuditedList({ label, current, expected, consequence }) {
   const currentSet = new Set(current);
   const expectedSet = new Set(expected);
   const added = current.filter((identity) => !expectedSet.has(identity));
   const removed = expected.filter((identity) => !currentSet.has(identity));
-  if (added.length > 0 || removed.length > 0) {
-    fail(
-      [
-        "local no-default-features dependency graph changed from the audited package identities",
-        "This gate keys on Cargo package identity, so a renamed, aliased, or wrapped network client dependency cannot enter the local build without review.",
-        added.length > 0 ? `added package identities:\n${added.map((value) => `  + ${value}`).join("\n")}` : "",
-        removed.length > 0 ? `removed package identities:\n${removed.map((value) => `  - ${value}`).join("\n")}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
-  }
+  if (added.length === 0 && removed.length === 0) return;
+  fail(
+    [
+      `${label} changed from the audited identities`,
+      consequence,
+      added.length > 0 ? `added identities:\n${added.map((value) => `  + ${value}`).join("\n")}` : "",
+      removed.length > 0 ? `removed identities:\n${removed.map((value) => `  - ${value}`).join("\n")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
+function checkPackageIdentitySurface() {
+  if (skipPackageIdentityCheck) return;
+  const current = collectCurrentPackageSurface();
+  compareAuditedList({
+    label: "local no-default-features dependency graph",
+    current: current.packages,
+    expected: expectedPackageIdentities(),
+    consequence:
+      "This gate keys on Cargo package identity, so a renamed, aliased, or wrapped network client dependency cannot enter the local build without review.",
+  });
+  compareAuditedList({
+    label: "local no-default-features root dependency edge set",
+    current: current.rootEdges,
+    expected: expectedRootDependencyEdges(),
+    consequence:
+      "This also freezes which audited transitive crates are directly usable from aimux source, so making an already-present network-capable transitive crate a direct dependency still requires review.",
+  });
 }
 
 function hasRemoteControlCfgMacro(text) {
   return /cfg!\s*\([^)]*feature\s*=\s*"remote-control"/s.test(text);
 }
 
-const networkCallPattern =
-  /\b(?:(?:std|tokio)::net::)?(?:[A-Za-z_][A-Za-z0-9_]*)?(?:TcpStream|TcpListener|UdpSocket)::(?:connect|connect_timeout|bind)\s*\(|\btokio::net::lookup_host\s*\(|\.to_socket_addrs\s*\(/g;
+function escapeRegex(value) {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+function socketTypeNames(text) {
+  const names = new Set(["TcpStream", "TcpListener", "UdpSocket"]);
+  const directAliasPattern = /use\s+(?:std|tokio)::net::(TcpStream|TcpListener|UdpSocket)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+  for (const match of text.matchAll(directAliasPattern)) names.add(match[2]);
+  const braceUsePattern = /use\s+(?:std|tokio)::net::\{([^}]+)\}/g;
+  for (const match of text.matchAll(braceUsePattern)) {
+    for (const rawPart of match[1].split(",")) {
+      const part = rawPart.trim();
+      const alias = /^(TcpStream|TcpListener|UdpSocket)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/.exec(part);
+      const direct = /^(TcpStream|TcpListener|UdpSocket)$/.exec(part);
+      if (alias) names.add(alias[2]);
+      if (direct) names.add(direct[1]);
+    }
+  }
+  const typeAliasPattern = /type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:std|tokio)::net::(TcpStream|TcpListener|UdpSocket)\s*;/g;
+  for (const match of text.matchAll(typeAliasPattern)) names.add(match[1]);
+  return [...names].sort((a, b) => b.length - a.length);
+}
+
+function networkCallPatternFor(text) {
+  const socketTypes = socketTypeNames(text).map(escapeRegex).join("|");
+  return new RegExp(
+    `\\b(?:(?:std|tokio)::net::)?(?:${socketTypes})::(?:connect|connect_timeout|bind)\\s*\\(|\\btokio::net::lookup_host\\s*\\(|\\.to_socket_addrs\\s*\\(`,
+    "g",
+  );
+}
 
 function lineNumberAt(text, index) {
   return text.slice(0, index).split("\n").length;
@@ -272,7 +348,7 @@ function checkSourceNetworkSurface() {
 
     if (rel.startsWith("native/crates/aimux/src/remote/")) return;
     const lines = readLines(path);
-    for (const match of text.matchAll(networkCallPattern)) {
+    for (const match of text.matchAll(networkCallPatternFor(text))) {
       const start = match.index ?? 0;
       const line = lineNumberAt(text, start);
       const statement = statementAround(text, start);
@@ -295,7 +371,7 @@ function checkSourceNetworkSurface() {
 }
 
 try {
-  checkPackageIdentityGraph();
+  checkPackageIdentitySurface();
   checkSourceNetworkSurface();
 } catch (error) {
   fail(error.message);
@@ -310,4 +386,4 @@ if (failures.length > 0) {
 }
 
 console.log("Local network surface gate passed");
-console.log("checked: audited local Cargo package identities, remote-control cfg! macro absence, and loopback-only local socket/DNS call evidence");
+console.log("checked: audited local Cargo package identities/root dependency edges, remote-control cfg! macro absence, and loopback-only local socket/DNS call evidence");

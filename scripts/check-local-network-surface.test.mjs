@@ -102,12 +102,16 @@ pub fn local_boundary() -> bool {
     const root = makeFixture("pub fn marker() {}\n");
     const expected = join(root, "expected.txt");
     const actual = join(root, "actual.txt");
+    const expectedEdges = join(root, "expected-edges.txt");
+    const actualEdges = join(root, "actual-edges.txt");
     writeFileSync(expected, "path#aimux@0.1.0\n", "utf8");
     writeFileSync(
       actual,
       "path#aimux@0.1.0\nregistry+https://github.com/rust-lang/crates.io-index#sneaky-network-client@1.0.0\n",
       "utf8",
     );
+    writeFileSync(expectedEdges, "tokio->registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1\n", "utf8");
+    writeFileSync(actualEdges, "tokio->registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1\n", "utf8");
 
     const result = spawnSync(
       process.execPath,
@@ -119,6 +123,10 @@ pub fn local_boundary() -> bool {
         actual,
         "--expected-package-identities-file",
         expected,
+        "--root-dependency-edges-file",
+        actualEdges,
+        "--expected-root-dependency-edges-file",
+        expectedEdges,
       ],
       {
         cwd: repoRoot,
@@ -128,7 +136,63 @@ pub fn local_boundary() -> bool {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("dependency graph changed from the audited package identities");
+    expect(result.stderr).toContain("dependency graph changed from the audited identities");
     expect(result.stderr).toContain("sneaky-network-client@1.0.0");
+  });
+
+  it("fails when an audited transitive package becomes directly usable by aimux source", () => {
+    const root = makeFixture("pub fn marker() {}\n");
+    const packages = join(root, "packages.txt");
+    const expectedEdges = join(root, "expected-edges.txt");
+    const actualEdges = join(root, "actual-edges.txt");
+    writeFileSync(packages, "path#aimux@0.1.0\nregistry+https://github.com/rust-lang/crates.io-index#socket2@0.6.5\n", "utf8");
+    writeFileSync(expectedEdges, "tokio->registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1\n", "utf8");
+    writeFileSync(
+      actualEdges,
+      "socket2->registry+https://github.com/rust-lang/crates.io-index#socket2@0.6.5\ntokio->registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1\n",
+      "utf8",
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--source-root",
+        root,
+        "--package-identities-file",
+        packages,
+        "--expected-package-identities-file",
+        packages,
+        "--root-dependency-edges-file",
+        actualEdges,
+        "--expected-root-dependency-edges-file",
+        expectedEdges,
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("root dependency edge set changed from the audited identities");
+    expect(result.stderr).toContain("socket2@0.6.5");
+  });
+
+  it("detects aliases of standard socket types", () => {
+    const root = makeFixture(`
+use std::net::TcpStream as Pipe;
+
+pub fn leak() {
+    let _ = Pipe::connect(("198.51.100.10", 443));
+}
+`);
+
+    const result = runCheck(root);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("non-loopback network target");
+    expect(result.stderr).toContain("198.51.100.10");
   });
 });
