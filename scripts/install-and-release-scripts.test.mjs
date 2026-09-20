@@ -1225,6 +1225,184 @@ describe("verify-release-asset-set.sh", () => {
     }
   });
 
+  it("extracts real Homebrew bottle JSON map entries by nested formula name", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-json-"));
+    try {
+      const bottleJson = join(root, "bottle.json");
+      const bottleDir = join(root, "bottles");
+      const formulaDir = join(root, "Formula");
+      mkdirSync(bottleDir, { recursive: true });
+      writeFileSync(
+        bottleJson,
+        JSON.stringify(
+          {
+            "aimux/bottle-aimux_local-26375/aimux": {
+              formula: {
+                name: "aimux",
+                pkg_version: "0.1.48",
+              },
+              bottle: {
+                root_url: "https://example.test/bottles",
+                cellar: "any_skip_relocation",
+                rebuild: 0,
+                tags: {
+                  arm64_golden_gate: {
+                    sha256: "a".repeat(64),
+                    filename: "aimux-0.1.48.arm64_golden_gate.bottle.tar.gz",
+                    local_filename: "aimux--0.1.48.arm64_golden_gate.bottle.tar.gz",
+                  },
+                },
+              },
+            },
+            "aimux/bottle-aimux_local-26375/aimux-local": {
+              formula: {
+                name: "aimux-local",
+                pkg_version: "0.1.48",
+              },
+              bottle: {
+                root_url: "https://example.test/bottles",
+                cellar: "any_skip_relocation",
+                rebuild: 0,
+                tags: {
+                  sequoia: {
+                    sha256: "C".repeat(64),
+                    filename: "aimux-local-0.1.48.sequoia.bottle.tar.gz",
+                    local_filename: "aimux-local--0.1.48.sequoia.bottle.tar.gz",
+                  },
+                  arm64_golden_gate: {
+                    sha256: "b".repeat(64),
+                    filename: "aimux-local-0.1.48.arm64_golden_gate.bottle.tar.gz",
+                    local_filename: "aimux-local--0.1.48.arm64_golden_gate.bottle.tar.gz",
+                  },
+                },
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      runOk("node", [
+        join(repoRoot, "scripts/homebrew-bottle-metadata.mjs"),
+        "--formula",
+        "aimux-local",
+        "--output",
+        join(bottleDir, "aimux-local.bottles.tsv"),
+        bottleJson,
+      ]);
+
+      expect(readFileSync(join(bottleDir, "aimux-local.bottles.tsv"), "utf8")).toBe(
+        [
+          [
+            "arm64_golden_gate",
+            "any_skip_relocation",
+            "b".repeat(64),
+            "aimux-local-0.1.48.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local--0.1.48.arm64_golden_gate.bottle.tar.gz",
+          ].join("\t"),
+          [
+            "sequoia",
+            "any_skip_relocation",
+            "c".repeat(64),
+            "aimux-local-0.1.48.sequoia.bottle.tar.gz",
+            "aimux-local--0.1.48.sequoia.bottle.tar.gz",
+          ].join("\t"),
+          "",
+        ].join("\n"),
+      );
+
+      writeFileSync(
+        join(bottleDir, "aimux.bottles.tsv"),
+        `arm64_golden_gate\tany_skip_relocation\t${"a".repeat(64)}\taimux-0.1.48.arm64_golden_gate.bottle.tar.gz\taimux--0.1.48.arm64_golden_gate.bottle.tar.gz\n`,
+      );
+      runOk("bash", [join(repoRoot, "scripts/render-homebrew-formulas.sh")], {
+        env: {
+          TAG: "v0.1.48",
+          VERSION: "0.1.48",
+          AIMUX_HOMEBREW_FORMULA_DIR: formulaDir,
+          AIMUX_HOMEBREW_BASE_URL: "https://example.test/source",
+          AIMUX_HOMEBREW_BOTTLE_DIR: bottleDir,
+          AIMUX_HOMEBREW_BOTTLE_ROOT_URL: "https://example.test/bottles",
+          DARWIN_ARM64: "1".repeat(64),
+          DARWIN_X64: "2".repeat(64),
+          LINUX_ARM64: "3".repeat(64),
+          LINUX_X64: "4".repeat(64),
+          LOCAL_DARWIN_ARM64: "5".repeat(64),
+          LOCAL_DARWIN_X64: "6".repeat(64),
+          LOCAL_LINUX_ARM64: "7".repeat(64),
+          LOCAL_LINUX_X64: "8".repeat(64),
+        },
+      });
+      const localFormula = readFileSync(join(formulaDir, "aimux-local.rb"), "utf8");
+      expect(localFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${"b".repeat(64)}"`);
+      expect(localFormula).toContain(`sha256 cellar: :any_skip_relocation, sequoia: "${"c".repeat(64)}"`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails visibly for unmatched or malformed Homebrew bottle JSON map entries", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-json-error-"));
+    try {
+      const noMatch = join(root, "no-match.json");
+      const malformed = join(root, "malformed.json");
+      writeFileSync(
+        noMatch,
+        JSON.stringify({
+          "aimux/bottle-aimux_local-26375/aimux": {
+            formula: { name: "aimux" },
+            bottle: {
+              cellar: "any_skip_relocation",
+              tags: {
+                arm64_golden_gate: {
+                  sha256: "a".repeat(64),
+                  filename: "aimux-0.1.48.arm64_golden_gate.bottle.tar.gz",
+                  local_filename: "aimux--0.1.48.arm64_golden_gate.bottle.tar.gz",
+                },
+              },
+            },
+          },
+        }),
+      );
+      writeFileSync(
+        malformed,
+        JSON.stringify({
+          "aimux/bottle-aimux_local-26375/aimux-local": {
+            formula: { name: "aimux-local" },
+            bottle: {
+              cellar: "any_skip_relocation",
+            },
+          },
+        }),
+      );
+
+      const noMatchResult = run("node", [
+        join(repoRoot, "scripts/homebrew-bottle-metadata.mjs"),
+        "--formula",
+        "aimux-local",
+        "--output",
+        join(root, "no-match.tsv"),
+        noMatch,
+      ]);
+      expect(noMatchResult.status).toBe(1);
+      expect(noMatchResult.stderr).toContain("no bottle metadata for aimux-local");
+
+      const malformedResult = run("node", [
+        join(repoRoot, "scripts/homebrew-bottle-metadata.mjs"),
+        "--formula",
+        "aimux-local",
+        "--output",
+        join(root, "malformed.tsv"),
+        malformed,
+      ]);
+      expect(malformedResult.status).toBe(1);
+      expect(malformedResult.stderr).toContain(`${malformed} entry aimux/bottle-aimux_local-26375/aimux-local is missing bottle tags`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails visibly when Homebrew bottle metadata is corrupt", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-render-"));
     try {

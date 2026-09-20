@@ -44,27 +44,32 @@ if (inputs.length === 0) fail("missing bottle JSON input");
 const rows = [];
 for (const input of inputs) {
   const data = JSON.parse(readFileSync(input, "utf8"));
-  if (data?.formula?.name !== formula) {
-    continue;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    fail(`${input} does not contain a Homebrew bottle metadata object`);
   }
-  const bottle = data.bottle;
-  if (!bottle || typeof bottle !== "object") {
-    fail(`${input} does not contain a bottle object`);
-  }
-  const cellar = String(bottle.cellar ?? "");
-  if (!cellar) fail(`${input} is missing bottle.cellar`);
-  const tags = bottle.tags;
-  if (!tags || typeof tags !== "object") {
-    fail(`${input} is missing bottle tags`);
-  }
-  for (const [tag, spec] of Object.entries(tags)) {
-    const sha = String(spec?.sha256 ?? "");
-    const filename = String(spec?.filename ?? "");
-    const localFilename = String(spec?.local_filename ?? "");
-    if (!/^[A-Za-z0-9_]+$/.test(tag)) fail(`invalid bottle tag in ${input}: ${tag}`);
-    if (!/^[a-fA-F0-9]{64}$/.test(sha)) fail(`invalid sha256 for ${formula} ${tag} in ${input}: ${sha}`);
-    if (!filename || !localFilename) fail(`${input} is missing bottle filename for ${tag}`);
-    rows.push([tag, cellar, sha.toLowerCase(), filename, localFilename]);
+  for (const [fullName, entry] of Object.entries(data)) {
+    if (entry?.formula?.name !== formula) {
+      continue;
+    }
+    const bottle = entry.bottle;
+    if (!bottle || typeof bottle !== "object" || Array.isArray(bottle)) {
+      fail(`${input} entry ${fullName} does not contain a bottle object`);
+    }
+    const cellar = String(bottle.cellar ?? "");
+    if (!cellar) fail(`${input} entry ${fullName} is missing bottle.cellar`);
+    const tags = bottle.tags;
+    if (!tags || typeof tags !== "object" || Array.isArray(tags)) {
+      fail(`${input} entry ${fullName} is missing bottle tags`);
+    }
+    for (const [tag, spec] of Object.entries(tags)) {
+      const sha = String(spec?.sha256 ?? "");
+      const filename = String(spec?.filename ?? "");
+      const localFilename = String(spec?.local_filename ?? "");
+      if (!/^[A-Za-z0-9_]+$/.test(tag)) fail(`invalid bottle tag in ${input}: ${tag}`);
+      if (!/^[a-fA-F0-9]{64}$/.test(sha)) fail(`invalid sha256 for ${formula} ${tag} in ${input}: ${sha}`);
+      if (!filename || !localFilename) fail(`${input} entry ${fullName} is missing bottle filename for ${tag}`);
+      rows.push([tag, cellar, sha.toLowerCase(), filename, localFilename]);
+    }
   }
 }
 
