@@ -89,7 +89,7 @@ case "$VARIANT" in
 esac
 
 append_standard_path_dirs
-for command in bash git mktemp rm tar yarn; do
+for command in bash git mktemp rm tar node; do
   need "$command"
 done
 
@@ -119,7 +119,7 @@ printf 'Release directory: %s\n' "$RELEASE_DIR"
 printf 'Package profile: %s\n' "$AIMUX_PACKAGE_PROFILE"
 
 cd "$ROOT_DIR"
-yarn release:asset
+node scripts/run-yarn.mjs release:asset
 
 [ -f "$ASSET_PATH" ] || fail "expected archive was not produced: $ASSET_PATH"
 [ -f "$ASSET_PATH.sha256" ] || fail "expected checksum was not produced: $ASSET_PATH.sha256"

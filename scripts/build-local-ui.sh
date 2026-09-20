@@ -14,7 +14,7 @@ cd "$APP_DIR"
 rm -rf "$APP_DIST"
 EXPO_PUBLIC_AIMUX_CONNECTION_MODE=local \
   EXPO_PUBLIC_AIMUX_DAEMON_URL=http://localhost:43190 \
-  yarn export:web
+  node "$ROOT_DIR/scripts/run-yarn.mjs" --cwd app export:web
 
 INDEX_HTML="$APP_DIST/index.html"
 LOCAL_CONFIG_SCRIPT='<script src="/aimux-local-config.js"></script>'

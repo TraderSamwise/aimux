@@ -12,7 +12,7 @@ MARKER="$(git rev-parse --git-path aimux/pre-commit-ok)"
 mkdir -p "$(dirname "$MARKER")"
 rm -f "$MARKER"
 
-yarn native:fmt:staged
+node scripts/run-yarn.mjs native:fmt:staged
 bash scripts/check-index-typecheck.sh
 bash scripts/check-index-native-clippy.sh
 npx lint-staged --no-stash --no-hide-partially-staged

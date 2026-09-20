@@ -79,7 +79,7 @@ export AIMUX_BUILD_VARIANT="$BUILD_VARIANT"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-"$ROOT_DIR/native/target"}"
 if [ "$PACKAGE_PROFILE" = "full" ]; then
-  need yarn
+  need node
 fi
 
 detect_platform() {
@@ -128,7 +128,7 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 if [ "$PACKAGE_PROFILE" = "full" ]; then
-  yarn build:ui:local
+  node scripts/run-yarn.mjs build:ui:local
 fi
 
 release_source_hash() {
