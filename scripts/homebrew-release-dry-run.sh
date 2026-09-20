@@ -5,6 +5,8 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 usage() {
   cat <<'USAGE'
 Usage: scripts/homebrew-release-dry-run.sh --release-dir DIR [options]
@@ -88,23 +90,7 @@ ensure_asset_pair() {
   [ -r "$RELEASE_DIR/$asset.sha256" ] || fail "missing or unreadable checksum file: $RELEASE_DIR/$asset.sha256"
 }
 
-run_and_capture() {
-  local label="$1"
-  local outfile="$2"
-  shift 2
-  printf 'Running %s: %s\n' "$label" "$*"
-  set +e
-  "$@" >"$outfile" 2>&1
-  local status=$?
-  set -e
-  if [ "$status" -eq 0 ]; then
-    printf '%s passed\n' "$label"
-    return 0
-  fi
-  printf '%s failed with exit %s\n' "$label" "$status" >&2
-  sed 's/^/  /' "$outfile" >&2
-  return "$status"
-}
+. "$ROOT_DIR/scripts/lib/run-and-capture.sh"
 
 brew_install_formula() {
   if [ "$IGNORE_DEPENDENCIES" -eq 1 ]; then
@@ -267,7 +253,6 @@ prove_installed_aimux_command() {
   printf 'Homebrew %s wrapper target proof passed: %s\n' "$label" "$wrapper_target"
 }
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR=""
 TAG="v0.0.0-homebrew-dry-run"
 VERSION="0.0.0"

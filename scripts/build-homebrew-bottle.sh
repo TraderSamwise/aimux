@@ -5,6 +5,8 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 usage() {
   cat <<'USAGE'
 Usage: scripts/build-homebrew-bottle.sh aimux|aimux-local
@@ -72,7 +74,6 @@ if ! command -v "$BREW" >/dev/null 2>&1; then
   fail "missing brew executable: $BREW"
 fi
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${AIMUX_HOMEBREW_BOTTLE_OUT_DIR:-homebrew-bottles}"
 BASE_URL="${AIMUX_HOMEBREW_BASE_URL:-"https://github.com/TraderSamwise/aimux/releases/download/${TAG:-}"}"
 BASE_URL="${BASE_URL%/}"
@@ -90,22 +91,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-run_and_capture() {
-  local label="$1"
-  local log="$2"
-  shift 2
-  set +e
-  "$@" >"$log" 2>&1
-  local status=$?
-  set -e
-  if [ "$status" -eq 0 ]; then
-    printf '%s passed\n' "$label"
-    return 0
-  fi
-  printf '%s failed with exit %s\n' "$label" "$status" >&2
-  sed 's/^/  /' "$log" >&2
-  return "$status"
-}
+. "$ROOT_DIR/scripts/lib/run-and-capture.sh"
 
 if "$BREW" tap | grep -Fx "$STAGING_TAP" >/dev/null 2>&1; then
   fail "temporary Homebrew tap already exists: $STAGING_TAP"
