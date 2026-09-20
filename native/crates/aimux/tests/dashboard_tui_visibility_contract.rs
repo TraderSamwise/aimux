@@ -219,7 +219,11 @@ fn dashboard_loop_throttles_visible_visibility_checks() {
         calls += 1;
         parse_tmux_visibility(Some("1\t0"), Some("%1"))
     });
-    read_dashboard_tui_visibility_for_loop(&mut state, 1000, || {
+    read_dashboard_tui_visibility_for_loop(&mut state, 9_000, || {
+        calls += 1;
+        parse_tmux_visibility(Some("1\t0"), Some("%1"))
+    });
+    read_dashboard_tui_visibility_for_loop(&mut state, 10_000, || {
         calls += 1;
         parse_tmux_visibility(Some("1\t1"), Some("%1"))
     });

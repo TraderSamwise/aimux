@@ -27,9 +27,10 @@ resolve_tmux_bin() {
     printf '%s\n' "aimux: tmux executable not found on PATH" >&2
     exit 1
   fi
+  export AIMUX_TMUX_BIN
 }
 
-tmux() {
+run_tmux() {
   resolve_tmux_bin
   "$AIMUX_TMUX_BIN" "$@"
 }
@@ -106,7 +107,7 @@ hydrate_from_tmux_pane() {
     pane_target="${TMUX_PANE-}"
   fi
   [ -n "$pane_target" ] || return 1
-  pane_context=$(tmux display-message -p -t "$pane_target" '#{session_name}|#{window_id}|#{window_name}|#{client_tty}|#{pane_current_path}' 2>/dev/null || true)
+  pane_context=$(run_tmux display-message -p -t "$pane_target" '#{session_name}|#{window_id}|#{window_name}|#{client_tty}|#{pane_current_path}' 2>/dev/null || true)
   [ -n "$pane_context" ] || return 1
   pane_session=$(printf '%s' "$pane_context" | cut -d '|' -f1)
   pane_window_id=$(printf '%s' "$pane_context" | cut -d '|' -f2)
@@ -149,10 +150,10 @@ project_context_session() {
 hydrate_project_context() {
   context_session=$(project_context_session) || return 1
   if [ -z "$project_root" ]; then
-    project_root=$(tmux show-options -v -t "$context_session" @aimux-project-root 2>/dev/null || true)
+    project_root=$(run_tmux show-options -v -t "$context_session" @aimux-project-root 2>/dev/null || true)
   fi
   if [ -z "$project_state_dir" ]; then
-    project_state_dir=$(tmux show-options -v -t "$context_session" @aimux-project-state-dir 2>/dev/null || true)
+    project_state_dir=$(run_tmux show-options -v -t "$context_session" @aimux-project-state-dir 2>/dev/null || true)
   fi
 }
 
@@ -167,7 +168,7 @@ debug_log_line() {
 client_size_label() {
   label_tty="$1"
   [ -n "$label_tty" ] || return 1
-  tmux list-clients -F '#{client_tty} #{client_width}x#{client_height}' 2>/dev/null |
+  run_tmux list-clients -F '#{client_tty} #{client_width}x#{client_height}' 2>/dev/null |
     awk -v tty="$label_tty" '$1 == tty { print $2; exit }'
 }
 
@@ -200,7 +201,7 @@ shell_quote() {
 
 resolve_live_client() {
   if [ -n "$client_tty" ]; then
-    live_client=$(tmux list-clients -F '#{client_tty}|#{session_name}|#{window_id}' 2>/dev/null | awk -F '|' -v tty="$client_tty" '$1 == tty { print; exit }')
+    live_client=$(run_tmux list-clients -F '#{client_tty}|#{session_name}|#{window_id}' 2>/dev/null | awk -F '|' -v tty="$client_tty" '$1 == tty { print; exit }')
     if [ -n "$live_client" ]; then
       live_client_tty=$(printf '%s' "$live_client" | cut -d '|' -f1)
       live_client_session=$(printf '%s' "$live_client" | cut -d '|' -f2)
@@ -209,7 +210,7 @@ resolve_live_client() {
   fi
 
   if [ -n "$current_window_id" ]; then
-    live_client=$(tmux list-clients -F '#{client_tty}|#{session_name}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$current_window_id" '$3 == window_id { print; exit }')
+    live_client=$(run_tmux list-clients -F '#{client_tty}|#{session_name}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$current_window_id" '$3 == window_id { print; exit }')
     if [ -n "$live_client" ]; then
       live_client_tty=$(printf '%s' "$live_client" | cut -d '|' -f1)
       live_client_session=$(printf '%s' "$live_client" | cut -d '|' -f2)
@@ -218,7 +219,7 @@ resolve_live_client() {
   fi
 
   if [ -n "$current_client_session" ]; then
-    live_client=$(tmux list-clients -F '#{client_tty}|#{session_name}|#{window_id}' 2>/dev/null | awk -F '|' -v session_name="$current_client_session" '$2 == session_name { print; exit }')
+    live_client=$(run_tmux list-clients -F '#{client_tty}|#{session_name}|#{window_id}' 2>/dev/null | awk -F '|' -v session_name="$current_client_session" '$2 == session_name { print; exit }')
     if [ -n "$live_client" ]; then
       live_client_tty=$(printf '%s' "$live_client" | cut -d '|' -f1)
       live_client_session=$(printf '%s' "$live_client" | cut -d '|' -f2)
@@ -233,25 +234,25 @@ switch_client_to_target() {
   switch_target="$1"
   switch_tty="${2-}"
   if [ -n "$switch_tty" ]; then
-    tmux switch-client -c "$switch_tty" -t "$switch_target" >/dev/null 2>&1 || return 1
+    run_tmux switch-client -c "$switch_tty" -t "$switch_target" >/dev/null 2>&1 || return 1
   else
-    tmux switch-client -t "$switch_target" >/dev/null 2>&1 || return 1
+    run_tmux switch-client -t "$switch_target" >/dev/null 2>&1 || return 1
   fi
 }
 
 refresh_navigation_client() {
   refresh_tty="${1-}"
   if [ -n "$refresh_tty" ]; then
-    tmux refresh-client -t "$refresh_tty" -S >/dev/null 2>&1 || true
+    run_tmux refresh-client -t "$refresh_tty" -S >/dev/null 2>&1 || true
   else
-    tmux refresh-client -S >/dev/null 2>&1 || true
+    run_tmux refresh-client -S >/dev/null 2>&1 || true
   fi
 }
 
 dashboard_ready_for_build() {
   ready_window_id="$1"
   ready_build="$2"
-  ready_value=$(tmux show-window-options -v -t "$ready_window_id" @aimux-dashboard-ready 2>/dev/null || true)
+  ready_value=$(run_tmux show-window-options -v -t "$ready_window_id" @aimux-dashboard-ready 2>/dev/null || true)
   [ -n "$ready_build" ] && [ "$ready_value" = "$ready_build" ]
 }
 
@@ -271,7 +272,7 @@ validate_dashboard_target() {
   validate_session="$1"
   validate_index="$2"
   validate_target="${validate_session}:${validate_index}"
-  dashboard_row=$(tmux list-windows -t "$validate_session" -F '#{window_index}|#{window_id}|#{window_name}|#{pane_dead}' 2>/dev/null | awk -F '|' -v idx="$validate_index" '$1 == idx { print; exit }')
+  dashboard_row=$(run_tmux list-windows -t "$validate_session" -F '#{window_index}|#{window_id}|#{window_name}|#{pane_dead}' 2>/dev/null | awk -F '|' -v idx="$validate_index" '$1 == idx { print; exit }')
   [ -n "$dashboard_row" ] || return 1
   dashboard_window_id=$(printf '%s' "$dashboard_row" | cut -d '|' -f2)
   dashboard_pane_dead=$(printf '%s' "$dashboard_row" | cut -d '|' -f4)
@@ -285,31 +286,31 @@ validate_dashboard_target() {
       ;;
   esac
 
-  target_project_root=$(tmux show-options -v -t "$validate_host_session" @aimux-project-root 2>/dev/null || true)
+  target_project_root=$(run_tmux show-options -v -t "$validate_host_session" @aimux-project-root 2>/dev/null || true)
   [ -n "$project_root" ] && [ "$target_project_root" = "$project_root" ] || return 1
 
-  expected_dashboard_build=$(tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
-  dashboard_build=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
+  expected_dashboard_build=$(run_tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
+  dashboard_build=$(run_tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
   [ -n "$expected_dashboard_build" ] && [ "$dashboard_build" = "$expected_dashboard_build" ] || return 1
   wait_for_dashboard_ready "$dashboard_window_id" "$expected_dashboard_build" || return 1
 
-  expected_runtime_owner=$(tmux show-options -v -t "$validate_host_session" @aimux-runtime-owner 2>/dev/null || true)
-  target_runtime_owner=$(tmux show-options -v -t "$validate_session" @aimux-runtime-owner 2>/dev/null || true)
-  dashboard_owner=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-owner 2>/dev/null || true)
+  expected_runtime_owner=$(run_tmux show-options -v -t "$validate_host_session" @aimux-runtime-owner 2>/dev/null || true)
+  target_runtime_owner=$(run_tmux show-options -v -t "$validate_session" @aimux-runtime-owner 2>/dev/null || true)
+  dashboard_owner=$(run_tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-owner 2>/dev/null || true)
   [ -n "$expected_runtime_owner" ] && [ "$target_runtime_owner" = "$expected_runtime_owner" ] && [ "$dashboard_owner" = "$expected_runtime_owner" ] || return 1
 
-  if [ "$(tmux display-message -p -t "$dashboard_window_id" '#{pane_in_mode}' 2>/dev/null || printf '0')" = "1" ]; then
-    tmux send-keys -t "$dashboard_window_id" -X cancel >/dev/null 2>&1 || true
+  if [ "$(run_tmux display-message -p -t "$dashboard_window_id" '#{pane_in_mode}' 2>/dev/null || printf '0')" = "1" ]; then
+    run_tmux send-keys -t "$dashboard_window_id" -X cancel >/dev/null 2>&1 || true
   fi
 
-  dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
+  dashboard_command=$(run_tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
   case "$dashboard_command" in
     ''|cat|tail|sh)
       dashboard_candidate_stale_shell=1
       return 1
       ;;
     bash|zsh|fish)
-      dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -40 2>/dev/null || true)
+      dashboard_preview=$(run_tmux capture-pane -p -t "$dashboard_window_id" -S -40 2>/dev/null || true)
       case "$dashboard_preview" in
         *Aimux*|*aimux*) ;;
         *)
@@ -319,7 +320,7 @@ validate_dashboard_target() {
       esac
       ;;
   esac
-  dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
+  dashboard_preview=$(run_tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
   case "$dashboard_preview" in
     *"aimux dashboard failed to start."*)
       return 1
@@ -333,14 +334,14 @@ find_dashboard_candidate() {
   dashboard_index=""
 
   if [ -n "${live_client_session-}" ]; then
-    dashboard_index=$(tmux list-windows -t "$live_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
+    dashboard_index=$(run_tmux list-windows -t "$live_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
     if [ -n "$dashboard_index" ]; then
       dashboard_session="$live_client_session"
     fi
   fi
 
   if [ -z "$dashboard_session" ] && [ -n "$current_client_session" ]; then
-    dashboard_index=$(tmux list-windows -t "$current_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
+    dashboard_index=$(run_tmux list-windows -t "$current_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
     if [ -n "$dashboard_index" ]; then
       dashboard_session="$current_client_session"
     fi
@@ -353,7 +354,7 @@ find_dashboard_candidate() {
         session_prefix=${session_prefix%-client-????????}
         ;;
     esac
-    dashboard_target=$(tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' -v prefix="$session_prefix" '$1 ~ ("^" prefix "(-client-[a-f0-9]{8})?$") && $3 ~ /^dashboard/ { print $1 "|" $2; exit }')
+    dashboard_target=$(run_tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' -v prefix="$session_prefix" '$1 ~ ("^" prefix "(-client-[a-f0-9]{8})?$") && $3 ~ /^dashboard/ { print $1 "|" $2; exit }')
     if [ -n "$dashboard_target" ]; then
       dashboard_session=$(printf '%s' "$dashboard_target" | cut -d '|' -f1)
       dashboard_index=$(printf '%s' "$dashboard_target" | cut -d '|' -f2)
@@ -369,7 +370,7 @@ dashboard_candidate_needs_reload() {
     return 0
   fi
   dashboard_candidate_missing=0
-  dashboard_row=$(tmux list-windows -t "$dashboard_session" -F '#{window_index}|#{window_id}|#{window_name}|#{pane_dead}' 2>/dev/null | awk -F '|' -v idx="$dashboard_index" '$1 == idx { print; exit }')
+  dashboard_row=$(run_tmux list-windows -t "$dashboard_session" -F '#{window_index}|#{window_id}|#{window_name}|#{pane_dead}' 2>/dev/null | awk -F '|' -v idx="$dashboard_index" '$1 == idx { print; exit }')
   dashboard_window_id=$(printf '%s' "$dashboard_row" | cut -d '|' -f2)
   dashboard_pane_dead=$(printf '%s' "$dashboard_row" | cut -d '|' -f4)
   [ -n "$dashboard_window_id" ] || return 0
@@ -381,20 +382,20 @@ dashboard_candidate_needs_reload() {
       validate_host_session=${validate_host_session%-client-????????}
       ;;
   esac
-  expected_dashboard_build=$(tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
-  dashboard_build=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
+  expected_dashboard_build=$(run_tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
+  dashboard_build=$(run_tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
   [ -n "$expected_dashboard_build" ] && [ -n "$dashboard_build" ] || return 0
   [ "$dashboard_build" != "$expected_dashboard_build" ] && return 0
   dashboard_ready_for_build "$dashboard_window_id" "$expected_dashboard_build" || return 0
 
-  dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
+  dashboard_command=$(run_tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
   case "$dashboard_command" in
     ''|cat|tail|sh)
       dashboard_candidate_stale_shell=1
       return 0
       ;;
     bash|zsh|fish)
-      dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -40 2>/dev/null || true)
+      dashboard_preview=$(run_tmux capture-pane -p -t "$dashboard_window_id" -S -40 2>/dev/null || true)
       case "$dashboard_preview" in
         *Aimux*|*aimux*) ;;
         *)
@@ -405,7 +406,7 @@ dashboard_candidate_needs_reload() {
       ;;
   esac
 
-  dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
+  dashboard_preview=$(run_tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
   case "$dashboard_preview" in
     *"aimux dashboard failed to start."*)
       return 0
@@ -416,13 +417,13 @@ dashboard_candidate_needs_reload() {
 
 switch_fast_current_session_dashboard() {
   [ -n "$current_client_session" ] || return 1
-  dashboard_index=$(tmux list-windows -t "$current_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
+  dashboard_index=$(run_tmux list-windows -t "$current_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
   [ -n "$dashboard_index" ] || return 1
   validate_dashboard_target "$current_client_session" "$dashboard_index" || return 1
   dashboard_switch_target="${current_client_session}:${dashboard_index}"
   switch_client_to_target "$dashboard_switch_target" "$client_tty" || return 1
   refresh_navigation_client "$client_tty"
-  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  run_tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
   exit 0
 }
 
@@ -498,7 +499,7 @@ switch_local_dashboard() {
   else
     refresh_navigation_client ""
   fi
-  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  run_tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
   exit 0
 }
 
@@ -565,16 +566,16 @@ PY
 
 create_missing_dashboard_window() {
   reload_session="${live_client_session-${current_client_session-}}"
-  if [ -z "$reload_session" ] || ! tmux has-session -t "$reload_session" >/dev/null 2>&1; then
+  if [ -z "$reload_session" ] || ! run_tmux has-session -t "$reload_session" >/dev/null 2>&1; then
     show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - tmux session missing"
     return 1
   fi
   aimux_bin="${AIMUX_BIN-aimux}"
-  if ! tmux new-window -d -t "$reload_session" -c "$project_root" -n dashboard "$aimux_bin" __dashboard-internal-native --project-root "$project_root" >/dev/null 2>&1; then
+  if ! run_tmux new-window -d -t "$reload_session" -c "$project_root" -n dashboard "$aimux_bin" __dashboard-internal-native --project-root "$project_root" >/dev/null 2>&1; then
     show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't create dashboard window"
     return 1
   fi
-  dashboard_index=$(tmux list-windows -t "$reload_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
+  dashboard_index=$(run_tmux list-windows -t "$reload_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
   if [ -z "$dashboard_index" ]; then
     show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - dashboard window not found after create"
     return 1
@@ -586,7 +587,7 @@ create_missing_dashboard_window() {
     return 1
   fi
   refresh_navigation_client "$reload_tty"
-  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  run_tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
   return 0
 }
 
@@ -788,8 +789,8 @@ show_local_overseer() {
       refresh_navigation_client ""
     fi
   fi
-  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
-  tmux send-keys -t "$dashboard_switch_target" O >/dev/null 2>&1 || true
+  run_tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  run_tmux send-keys -t "$dashboard_switch_target" O >/dev/null 2>&1 || true
   exit 0
 }
 
@@ -797,10 +798,10 @@ ensure_linked_window() {
   target_window_id="$1"
   target_session="${live_client_session-}"
   [ -n "$target_session" ] || return 1
-  linked_index=$(tmux list-windows -t "$target_session" -F '#{window_index}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$target_window_id" '$2 == window_id { print $1; exit }')
+  linked_index=$(run_tmux list-windows -t "$target_session" -F '#{window_index}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$target_window_id" '$2 == window_id { print $1; exit }')
   if [ -z "$linked_index" ]; then
-    tmux link-window -d -s "$target_window_id" -t "$target_session" >/dev/null 2>&1 || return 1
-    linked_index=$(tmux list-windows -t "$target_session" -F '#{window_index}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$target_window_id" '$2 == window_id { print $1; exit }')
+    run_tmux link-window -d -s "$target_window_id" -t "$target_session" >/dev/null 2>&1 || return 1
+    linked_index=$(run_tmux list-windows -t "$target_session" -F '#{window_index}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$target_window_id" '$2 == window_id { print $1; exit }')
   fi
   [ -n "$linked_index" ] || return 1
   printf '%s' "$linked_index"
@@ -814,16 +815,16 @@ switch_local_window() {
   is_live_window "$target_window_id" || return 1
   target_index=$(ensure_linked_window "$target_window_id") || return 1
   if [ -n "${live_client_tty-}" ]; then
-    tmux switch-client -c "$live_client_tty" -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
+    run_tmux switch-client -c "$live_client_tty" -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
   else
-    tmux switch-client -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
+    run_tmux switch-client -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
   fi
   if [ -n "${live_client_tty-}" ]; then
-    tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
+    run_tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
   elif [ -n "$client_tty" ]; then
-    tmux refresh-client -t "$client_tty" -S >/dev/null 2>&1 || true
+    run_tmux refresh-client -t "$client_tty" -S >/dev/null 2>&1 || true
   else
-    tmux refresh-client -S >/dev/null 2>&1 || true
+    run_tmux refresh-client -S >/dev/null 2>&1 || true
   fi
   exit 0
 }
@@ -831,16 +832,16 @@ switch_local_window() {
 is_live_window() {
   target_window_id="$1"
   [ -n "$target_window_id" ] || return 1
-  pane_dead=$(tmux display-message -p -t "$target_window_id" '#{pane_dead}' 2>/dev/null || true)
+  pane_dead=$(run_tmux display-message -p -t "$target_window_id" '#{pane_dead}' 2>/dev/null || true)
   [ "$pane_dead" != "1" ] && [ -n "$pane_dead" ]
 }
 
 show_local_message() {
   message="$1"
   if [ -n "${pane_id-}" ]; then
-    tmux display-message -t "$pane_id" "$message" >/dev/null 2>&1 || true
+    run_tmux display-message -t "$pane_id" "$message" >/dev/null 2>&1 || true
   else
-    tmux display-message "$message" >/dev/null 2>&1 || true
+    run_tmux display-message "$message" >/dev/null 2>&1 || true
   fi
 }
 
@@ -905,7 +906,7 @@ show_local_expose() {
     if [ -n "$popup_client_tty" ]; then
       # list-clients, not `display-message -c`: outside a client tmux ignores -c and
       # answers for a sibling client, so the baseline never matches the one resized.
-      client_size=$(tmux list-clients -F '#{client_tty} #{client_width}|#{client_height}' 2>/dev/null |
+      client_size=$(run_tmux list-clients -F '#{client_tty} #{client_width}|#{client_height}' 2>/dev/null |
         awk -v tty="$popup_client_tty" '$1 == tty { print $2; exit }' || true)
       client_cols="${client_size%%|*}"
       client_rows="${client_size#*|}"
@@ -929,10 +930,10 @@ show_local_expose() {
     } > "$expose_context"
     expose_cmd="old_stty=\$(stty -g 2>/dev/null || true); stty raw -echo 2>/dev/null || true; pipe=\$(mktemp \"\${TMPDIR:-/tmp}/aimux-expose-stdin.XXXXXX\") || exit 1; rm -f \"\$pipe\"; mkfifo \"\$pipe\" || exit 1; feeder=; cleanup() { [ -n \"\$feeder\" ] && kill \"\$feeder\" 2>/dev/null || true; [ -n \"\$feeder\" ] && wait \"\$feeder\" 2>/dev/null || true; rm -f \"\$pipe\"; if [ -n \"\$old_stty\" ]; then stty \"\$old_stty\" 2>/dev/null || true; else stty sane 2>/dev/null || true; fi; }; trap cleanup EXIT HUP INT TERM; { cat $(shell_quote "$expose_context"); cat /dev/tty; } >\"\$pipe\" & feeder=\$!; nc -U $(shell_quote "$expose_socket") <\"\$pipe\"; nc_status=\$?; exit \$nc_status"
     if [ -n "$popup_client_tty" ]; then
-      tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >"$expose_error" 2>&1
+      run_tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >"$expose_error" 2>&1
       popup_status=$?
     else
-      tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >"$expose_error" 2>&1
+      run_tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >"$expose_error" 2>&1
       popup_status=$?
     fi
     if [ "$popup_status" != 0 ]; then

@@ -426,11 +426,11 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "scripts/tmux-control.sh",
-    marker: "tmux display-popup",
+    marker: "run_tmux display-popup",
     count: 2,
     command: "tmux",
     argv: "literal popup/control/session argv",
-    input: "tmux runtime state and user-selected navigation target",
+    input: "tmux runtime state and user-selected navigation target; shell calls route through the resolved AIMUX_TMUX_BIN helper",
   },
   {
     path: "scripts/tmux-control.sh",
