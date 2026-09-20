@@ -105,7 +105,7 @@ use crate::process_inspector::{
     is_current_native_aimux_project_service_process, list_process_args,
 };
 use crate::project_api_contract::routes as project_routes;
-use crate::project_catalog::{hidden_project_tmp_dirs, try_list_registered_desktop_projects};
+use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service::lifecycle::seed_agent_restore_prompt_gates_for_daemon_boot;
 use crate::project_service_manifest::get_project_service_manifest;
 use crate::recording_cleanup::{
@@ -1895,12 +1895,12 @@ fn read_projects_for_route_from_snapshot(
             .entry(entry.repo_root.clone())
             .or_insert_with(|| session_prefix_for_project(&entry.repo_root));
     }
-    let projects = try_list_registered_desktop_projects(&entries, &tmp_dirs, |entry| {
+    let projects = list_registered_desktop_projects(&entries, &tmp_dirs, |entry| {
         session_prefix_by_root
             .get(&entry.repo_root)
             .cloned()
             .unwrap_or_else(|| "aimux".to_owned())
-    })?;
+    });
     let services_by_id = project_service_state_by_id_from_resolver(&snapshot.resolver);
     let endpoint_read = service_endpoints_by_id_from_resolver(&snapshot.resolver, &entries);
     let projects = build_projects_route_projects(

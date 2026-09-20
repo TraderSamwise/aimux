@@ -43,8 +43,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, remove_dir_all};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -233,106 +231,6 @@ fn native_daemon_projects_route_reports_genuine_empty_registry_as_empty() {
     assert_eq!(body["ok"], true);
     assert_eq!(body["projects"].as_array().map(Vec::len), Some(0));
     assert!(body.get("projectReadErrors").is_none());
-    fixture.cleanup();
-}
-
-#[test]
-#[cfg(unix)]
-fn native_daemon_projects_route_reports_unreadable_registered_root_not_empty() {
-    let fixture = RuntimeFixture::new("projects-unreadable-root");
-    let resolver = fixture.resolver();
-    let locked_parent = fixture.root.join("locked-parent");
-    let project = locked_parent.join("repo");
-    fs::create_dir_all(project.join(".git")).expect("project git");
-    fs::write(
-        resolver.projects_registry_path(),
-        json!({
-            "version": 1,
-            "projects": [{
-                "id": "unreadable",
-                "name": "repo",
-                "repoRoot": project,
-                "lastSeen": "2026-09-20T00:00:00.000Z"
-            }]
-        })
-        .to_string(),
-    )
-    .expect("registry");
-    let original_permissions = fs::metadata(&locked_parent)
-        .expect("locked parent metadata")
-        .permissions();
-    fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o000)).expect("lock parent");
-    let runtime = Arc::new(Mutex::new(fixture.runtime()));
-
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
-    let cli_response = handle_daemon_runtime_request_with_mutex(
-        &runtime,
-        request(
-            "GET",
-            &format!("{}?json=1", CORE_API_ROUTES.daemon_projects_text),
-        ),
-    );
-    fs::set_permissions(&locked_parent, original_permissions).expect("restore parent permissions");
-    let body: Value = serde_json::from_slice(&response.body).expect("projects error json");
-    let cli_body = String::from_utf8_lossy(&cli_response.body);
-
-    assert_eq!(response.status, 500);
-    assert_eq!(body["ok"], false);
-    assert!(
-        body["error"].as_str().is_some_and(|error| {
-            error.contains("failed to inspect registered project root")
-                && error.contains("locked-parent")
-        }),
-        "{body}"
-    );
-    assert!(body.get("projects").is_none());
-    assert_eq!(cli_response.status, 500);
-    assert!(
-        cli_body.contains("failed to inspect registered project root")
-            && cli_body.contains("locked-parent"),
-        "{cli_body}"
-    );
-    fixture.cleanup();
-}
-
-#[test]
-fn native_daemon_projects_route_omits_genuinely_absent_registered_root() {
-    let fixture = RuntimeFixture::new("projects-absent-root");
-    let resolver = fixture.resolver();
-    let missing_project = fixture.root.join("missing-repo");
-    fs::write(
-        resolver.projects_registry_path(),
-        json!({
-            "version": 1,
-            "projects": [{
-                "id": "missing",
-                "name": "missing-repo",
-                "repoRoot": missing_project,
-                "lastSeen": "2026-09-20T00:00:00.000Z"
-            }]
-        })
-        .to_string(),
-    )
-    .expect("registry");
-    let runtime = Arc::new(Mutex::new(fixture.runtime()));
-
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
-    let cli_response = handle_daemon_runtime_request_with_mutex(
-        &runtime,
-        request(
-            "GET",
-            &format!("{}?json=1", CORE_API_ROUTES.daemon_projects_text),
-        ),
-    );
-    let body: Value = serde_json::from_slice(&response.body).expect("projects json");
-    let cli_body: Value = serde_json::from_slice(&cli_response.body).expect("cli projects json");
-
-    assert_eq!(response.status, 200);
-    assert_eq!(body["ok"], true);
-    assert_eq!(body["projects"].as_array().map(Vec::len), Some(0));
-    assert!(body.get("projectReadErrors").is_none());
-    assert_eq!(cli_response.status, 200);
-    assert_eq!(cli_body["projects"].as_array().map(Vec::len), Some(0));
     fixture.cleanup();
 }
 

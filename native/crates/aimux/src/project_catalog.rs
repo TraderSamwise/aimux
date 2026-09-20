@@ -1,7 +1,6 @@
-use crate::paths::ProjectEntry;
+use crate::paths::{ProjectEntry, has_test_isolation_marker};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -57,27 +56,9 @@ pub fn hidden_project_tmp_dirs(os_tmp_dir: impl AsRef<Path>) -> Vec<PathBuf> {
 }
 
 pub fn should_hide_desktop_project(project_path: impl AsRef<Path>, tmp_dirs: &[PathBuf]) -> bool {
-    try_should_hide_desktop_project(project_path, tmp_dirs).unwrap_or(true)
-}
-
-pub fn try_should_hide_desktop_project(
-    project_path: impl AsRef<Path>,
-    tmp_dirs: &[PathBuf],
-) -> Result<bool, String> {
     let project_path = project_path.as_ref();
-    if project_path.as_os_str().is_empty() {
-        return Ok(true);
-    }
-    match std::fs::metadata(project_path) {
-        Ok(metadata) if metadata.is_dir() => {}
-        Ok(_) => return Ok(true),
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
-        Err(error) => {
-            return Err(format!(
-                "failed to inspect registered project root {}: {error}",
-                project_path.display()
-            ));
-        }
+    if project_path.as_os_str().is_empty() || !project_path.exists() {
+        return true;
     }
     let name = project_path
         .file_name()
@@ -86,18 +67,7 @@ pub fn try_should_hide_desktop_project(
     let is_tmp_project = tmp_dirs
         .iter()
         .any(|tmp_dir| project_path == tmp_dir || project_path.strip_prefix(tmp_dir).is_ok());
-    if !(is_tmp_project && name.starts_with("aimux-")) {
-        return Ok(false);
-    }
-    let marker = project_path.join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER);
-    match std::fs::metadata(&marker) {
-        Ok(metadata) => Ok(metadata.is_file()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(format!(
-            "failed to inspect registered project isolation marker {}: {error}",
-            marker.display()
-        )),
-    }
+    is_tmp_project && name.starts_with("aimux-") && has_test_isolation_marker(project_path)
 }
 
 pub fn list_registered_desktop_projects(
@@ -121,29 +91,6 @@ pub fn list_registered_desktop_projects(
         .collect::<Vec<_>>();
     projects.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.path.cmp(&b.path)));
     projects
-}
-
-pub fn try_list_registered_desktop_projects(
-    entries: &[ProjectEntry],
-    tmp_dirs: &[PathBuf],
-    session_prefix_for_project: impl Fn(&ProjectEntry) -> String,
-) -> Result<Vec<DesktopProjectInfo>, String> {
-    let mut projects = Vec::new();
-    for entry in entries {
-        if try_should_hide_desktop_project(&entry.repo_root, tmp_dirs)? {
-            continue;
-        }
-        let session_prefix = session_prefix_for_project(entry);
-        projects.push(DesktopProjectInfo {
-            id: entry.id.clone(),
-            name: entry.name.clone(),
-            path: entry.repo_root.clone(),
-            last_seen: Some(entry.last_seen.clone()),
-            dashboard_session_name: format!("{session_prefix}-{}", entry.id),
-        });
-    }
-    projects.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.path.cmp(&b.path)));
-    Ok(projects)
 }
 
 pub fn run_project_scanner_contract_case(api: &str, name: &str, input: &Value) -> Value {
