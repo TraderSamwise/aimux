@@ -163,9 +163,17 @@ prepare_formula_dependencies() {
     fi
     if [ "$status" -ne 0 ]; then
       sed 's/^/  /' "$dep_log" >&2
-      dependency_problem "Homebrew dependency preparation failed for $dep needed by $label formula with exit $status; this is a Homebrew runner environment/dependency problem, not an aimux formula failure. Continuing to the aimux formula gate."
+      if brew list --formula --versions "$dep" >/dev/null 2>&1; then
+        dependency_problem "Homebrew dependency preparation failed for $dep needed by $label formula with exit $status after the dependency was installed; this is a Homebrew runner environment/dependency problem, not an aimux formula failure. Continuing to the aimux formula gate."
+      else
+        fail "Homebrew dependency preparation failed for $dep needed by $label formula with exit $status before the dependency was installed; this is a Homebrew runner environment/dependency problem, not an aimux formula failure."
+      fi
     else
       printf 'Homebrew dependency preparation passed for %s needed by %s formula\n' "$dep" "$label"
+    fi
+    if ! brew list --formula --versions "$dep" >/dev/null 2>&1; then
+      sed 's/^/  /' "$dep_log" >&2
+      fail "Homebrew dependency preparation did not leave $dep installed for $label formula; this is a Homebrew runner environment/dependency problem, not an aimux formula failure."
     fi
   done < "$deps_file"
 

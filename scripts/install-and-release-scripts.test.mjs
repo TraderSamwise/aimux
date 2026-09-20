@@ -265,7 +265,7 @@ case "$1" in
         printf 'tmux\\n'
         ;;
       */aimux)
-        printf 'tmux\\nopenssl@3\\njemalloc\\n'
+        printf 'tmux\\n'
         ;;
     esac
     exit 0
@@ -311,6 +311,10 @@ case "$1" in
       chmod 755 "$prefix/bin/aimux"
       touch "$state/installed/$short"
       exit 0
+    fi
+    if [ "\${AIMUX_FAKE_BREW_DEP_HARD_FAIL:-}" = "$short" ]; then
+      printf 'failed to install dependency %s\\n' "$short" >&2
+      exit 1
     fi
     touch "$state/installed/$short"
     if [ "\${AIMUX_FAKE_BREW_DEP_FAIL:-}" = "$short" ]; then
@@ -1069,7 +1073,7 @@ describe("verify-release-asset-set.sh", () => {
       const env = {
         ...process.env,
         PATH: `${bin}:${process.env.PATH}`,
-        AIMUX_FAKE_BREW_DEP_FAIL: "openssl@3",
+        AIMUX_FAKE_BREW_DEP_FAIL: "tmux",
         AIMUX_FAKE_BREW_LOG: join(root, "brew.log"),
         AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
         AIMUX_FAKE_BREW_STATE: join(root, "state"),
@@ -1094,10 +1098,55 @@ describe("verify-release-asset-set.sh", () => {
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stderr).toContain("Homebrew dependency preparation failed for openssl@3");
+      expect(result.stderr).toContain("Homebrew dependency preparation failed for tmux");
       expect(result.stderr).toContain("not an aimux formula failure");
       expect(result.stdout).toContain("Homebrew full installed command proof passed");
       expect(result.stdout).toContain("Homebrew local installed command proof passed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("fails during dependency prep when a dependency is not installed", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const brewLog = join(root, "brew.log");
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_DEP_HARD_FAIL: "tmux",
+        AIMUX_FAKE_BREW_LOG: brewLog,
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--dependency-prep-only",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Homebrew dependency preparation failed for tmux");
+      expect(result.stderr).toContain("before the dependency was installed");
+      expect(result.stderr).toContain("not an aimux formula failure");
+      expect(readFileSync(brewLog, "utf8")).not.toContain("install --formula aimux/");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1300,8 +1349,9 @@ describe("release workflow", () => {
     expect(workflow).toContain("--skip-doctor-proof");
     expect(workflow).toContain("AIMUX_HOMEBREW_FORMULA_DIR: tap/Formula");
     expect(renderer).toContain('conflicts_with "aimux", because: "both install the aimux command"');
-    expect(renderer).toContain('depends_on "openssl@3"');
-    expect(renderer).toContain('depends_on "jemalloc"');
+    expect(renderer.match(/depends_on "tmux"/g) ?? []).toHaveLength(2);
+    expect(renderer).not.toContain('depends_on "openssl@3"');
+    expect(renderer).not.toContain('depends_on "jemalloc"');
     expect(renderer).toContain("aimux-local-darwin-arm64.tar.gz");
     expect(renderer).toContain('(bin/"aimux").write_env_script libexec/"bin/aimux", {}');
     expect(renderer).not.toContain("bin.install_symlink");
