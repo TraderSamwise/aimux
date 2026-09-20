@@ -24,6 +24,14 @@ function agentChatTranscriptJsx(source: string): string {
   return source.slice(start, end);
 }
 
+function componentSource(source: string, componentName: string): string {
+  const start = source.indexOf(`const ${componentName} =`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const displayName = source.indexOf(`${componentName}.displayName`, start);
+  expect(displayName).toBeGreaterThan(start);
+  return source.slice(start, displayName);
+}
+
 describe("AgentChatScreen composer render contract", () => {
   it("does not re-render the screen or transcript for a draft keystroke", () => {
     const source = agentChatScreenSource();
@@ -92,5 +100,16 @@ describe("AgentChatScreen composer render contract", () => {
     expect(sendErrorJsx).toContain("items-start");
     expect(sendErrorJsx).toContain("numberOfLines={3}");
     expect(sendErrorJsx).not.toContain("numberOfLines={1}");
+  });
+
+  it("keeps terminal output keyboard-aware and pinned on native keyboard changes", () => {
+    const source = agentChatScreenSource();
+    const terminalSource = componentSource(source, "AgentTerminalOutputPane");
+
+    expect(terminalSource).toContain("KeyboardChatScrollView");
+    expect(terminalSource).toContain('keyboardLiftBehavior="whenAtEnd"');
+    expect(terminalSource).toContain("extraContentPadding={extraContentPadding}");
+    expect(terminalSource).toContain("chatCommandForKeyboardChange");
+    expect(terminalSource).toContain("keyboardVisible");
   });
 });

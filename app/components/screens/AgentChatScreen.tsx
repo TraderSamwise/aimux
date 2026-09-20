@@ -118,6 +118,7 @@ import {
 import {
   chatCommandForContentChange,
   chatCommandForInitialLayout,
+  chatCommandForKeyboardChange,
   chatCommandForNavigationFocus,
   chatChromeAfterUserScroll,
   chatPolicyAfterNavigationFocus,
@@ -2563,6 +2564,7 @@ export default function ChatScreen() {
                     <AgentTerminalOutputPane
                       bottomContentInset={chatBottomContentReserve}
                       dividerWidth={chatDividerWidth}
+                      keyboardVisible={keyboardVisible}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
                       sessionKey={sessionKey}
                       topContentInset={chatTopContentReserve}
@@ -2762,6 +2764,7 @@ const TERMINAL_OUTPUT_MAX_LINES = 500;
 type AgentTerminalOutputPaneProps = {
   bottomContentInset: number;
   dividerWidth: number;
+  keyboardVisible: boolean;
   onChromeVisibleChange: (visible: boolean) => void;
   sessionKey: string;
   topContentInset: number;
@@ -2770,6 +2773,7 @@ type AgentTerminalOutputPaneProps = {
 const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   bottomContentInset,
   dividerWidth,
+  keyboardVisible,
   onChromeVisibleChange,
   sessionKey,
   topContentInset,
@@ -2777,7 +2781,7 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   const outputPlain = useAtomValue(outputBufferFamily(sessionKey));
   const outputAnsi = useAtomValue(outputAnsiFamily(sessionKey));
   const outputAvailable = useAtomValue(outputAvailableFamily(sessionKey));
-  const scrollRef = useRef<ScrollView | null>(null);
+  const scrollRef = useRef<ChatScrollHandle | null>(null);
   const output = outputAnsi || outputPlain;
   const outputTail = useMemo(
     () => output.replace(/\r/g, "").split("\n").slice(-TERMINAL_OUTPUT_MAX_LINES).join("\n"),
@@ -2805,6 +2809,7 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   const terminalScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
   const terminalScrollFrameRef = useRef<number | null>(null);
   const terminalInitialLayoutKeyRef = useRef<string | null>(null);
+  const extraContentPadding = useSharedValue(bottomContentInset);
   const visibleLines = visibleOutput.sessionKey === sessionKey ? visibleOutput.lines : liveLines;
   const visibleOutputText =
     visibleOutput.sessionKey === sessionKey ? visibleOutput.outputText : outputTail;
@@ -2821,6 +2826,10 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   useEffect(() => {
     return cancelPendingTerminalScroll;
   }, [cancelPendingTerminalScroll]);
+
+  useEffect(() => {
+    extraContentPadding.value = bottomContentInset;
+  }, [bottomContentInset, extraContentPadding]);
 
   const executeTerminalScrollCommand = useCallback(
     (command: ChatScrollCommand) => {
@@ -2848,6 +2857,11 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
     onChromeVisibleChange(true);
     executeTerminalScrollCommand(chatCommandForNavigationFocus());
   }, [executeTerminalScrollCommand, onChromeVisibleChange, sessionKey]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    executeTerminalScrollCommand(chatCommandForKeyboardChange(terminalScrollPolicyRef.current));
+  }, [executeTerminalScrollCommand, keyboardVisible]);
 
   useEffect(() => {
     const next = terminalVisibleOutputForLiveChange(visibleOutput, {
@@ -2905,18 +2919,71 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
     [cancelPendingTerminalScroll, liveOutput, onChromeVisibleChange],
   );
 
+  const contentContainerStyle = {
+    flexGrow: 1,
+    justifyContent: "flex-end" as const,
+    paddingBottom: Platform.OS === "web" ? bottomContentInset + 18 : 18,
+    paddingHorizontal: 12,
+    paddingTop: topContentInset + 16,
+  };
+  const content = hasOutput ? (
+    <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
+      {visibleLines.map((line, lineIndex) => (
+        <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
+          {line.length === 0
+            ? "\u00a0"
+            : line.map((span, spanIndex) => (
+                <RNText key={spanIndex} style={span.style}>
+                  {span.text}
+                </RNText>
+              ))}
+        </RNText>
+      ))}
+    </View>
+  ) : (
+    <View className="items-center justify-center px-4 py-10">
+      <View
+        className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
+        style={{ minWidth: 220 }}
+      >
+        <ActivityIndicator size="small" color="#a1a1aa" />
+        <View className="min-w-0 shrink">
+          <Text className="text-sm text-muted-foreground">Loading output</Text>
+          <Text className="mt-1 text-xs text-muted-foreground">
+            Waiting for terminal output from the project service.
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+
+  if (Platform.OS !== "web") {
+    return (
+      <KeyboardChatScrollView
+        ref={scrollRef as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
+        className="flex-1 bg-background"
+        contentContainerStyle={contentContainerStyle}
+        extraContentPadding={extraContentPadding}
+        keyboardDismissMode="interactive"
+        keyboardLiftBehavior="whenAtEnd"
+        keyboardShouldPersistTaps="handled"
+        onContentSizeChange={handleTerminalContentSizeChange}
+        onLayout={handleTerminalLayout}
+        onScroll={handleTerminalScroll}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator
+      >
+        {content}
+      </KeyboardChatScrollView>
+    );
+  }
+
   return (
     <ScrollView
-      ref={scrollRef}
+      ref={scrollRef as React.Ref<ScrollView>}
       className="flex-1 bg-background"
-      contentContainerStyle={{
-        flexGrow: 1,
-        justifyContent: "flex-end",
-        paddingBottom: bottomContentInset + 18,
-        paddingHorizontal: 12,
-        paddingTop: topContentInset + 16,
-      }}
-      keyboardDismissMode={Platform.OS === "web" ? "on-drag" : "interactive"}
+      contentContainerStyle={contentContainerStyle}
+      keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       onContentSizeChange={handleTerminalContentSizeChange}
       onLayout={handleTerminalLayout}
@@ -2924,36 +2991,7 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
       scrollEventThrottle={16}
       showsVerticalScrollIndicator
     >
-      {hasOutput ? (
-        <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
-          {visibleLines.map((line, lineIndex) => (
-            <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
-              {line.length === 0
-                ? "\u00a0"
-                : line.map((span, spanIndex) => (
-                    <RNText key={spanIndex} style={span.style}>
-                      {span.text}
-                    </RNText>
-                  ))}
-            </RNText>
-          ))}
-        </View>
-      ) : (
-        <View className="items-center justify-center px-4 py-10">
-          <View
-            className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
-            style={{ minWidth: 220 }}
-          >
-            <ActivityIndicator size="small" color="#a1a1aa" />
-            <View className="min-w-0 shrink">
-              <Text className="text-sm text-muted-foreground">Loading output</Text>
-              <Text className="mt-1 text-xs text-muted-foreground">
-                Waiting for terminal output from the project service.
-              </Text>
-            </View>
-          </View>
-        </View>
-      )}
+      {content}
     </ScrollView>
   );
 });
