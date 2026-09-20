@@ -23,15 +23,15 @@ while [ "$#" -gt 0 ]; do
       ARGS+=("$1" "$2")
       shift 2
       ;;
-    --package-identities-file|--skip-package-identity-check)
+    --skip-package-identity-check)
+      printf '%s\n' "scripts/check-local-network-surface refuses --skip-package-identity-check; use fixture-specific checker inputs instead of disabling the real gate." >&2
+      exit 2
+      ;;
+    --package-identities-file)
       NEEDS_METADATA=0
       ARGS+=("$1")
-      if [ "$1" = "--package-identities-file" ]; then
-        ARGS+=("$2")
-        shift 2
-      else
-        shift
-      fi
+      ARGS+=("$2")
+      shift 2
       ;;
     *)
       ARGS+=("$1")

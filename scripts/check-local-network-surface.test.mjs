@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const script = join(repoRoot, "scripts/check-local-network-surface.mjs");
+const launcher = join(repoRoot, "scripts/check-local-network-surface");
 const tempRoots = [];
 
 function tempDir(name) {
@@ -41,6 +42,24 @@ afterEach(() => {
 });
 
 describe("local network surface checker", () => {
+  it("refuses package identity skips against the real repository", () => {
+    const direct = spawnSync(process.execPath, [script, "--skip-package-identity-check"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(direct.status).toBe(1);
+    expect(direct.stderr).toContain("--skip-package-identity-check is only for fixture source roots");
+
+    const wrapped = spawnSync(launcher, ["--skip-package-identity-check"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(wrapped.status).toBe(2);
+    expect(wrapped.stderr).toContain("refuses --skip-package-identity-check");
+  });
+
   it("passes loopback socket calls in local source", () => {
     const root = makeFixture(`
 pub fn wake() {
@@ -194,5 +213,41 @@ pub fn leak() {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("non-loopback network target");
     expect(result.stderr).toContain("198.51.100.10");
+  });
+
+  it("fails a new unclassified process spawn site and names it", () => {
+    const root = makeFixture(`
+use crate::async_subprocess::AsyncCommand;
+
+pub fn spawn_new_tool() {
+    let _ = AsyncCommand::new("sneaky-tool");
+}
+`);
+
+    const result = runCheck(root);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("unclassified process spawn site");
+    expect(result.stderr).toContain('AsyncCommand::new("sneaky-tool")');
+    expect(result.stderr).toContain("Classify the spawned command, argv shape");
+  });
+
+  it("ignores test-only process spawns when auditing production source", () => {
+    const root = makeFixture(`
+#[cfg(test)]
+mod tests {
+    use crate::async_subprocess::AsyncCommand;
+
+    #[test]
+    fn can_spawn_test_helper() {
+        let _ = AsyncCommand::new("test-helper");
+    }
+}
+`);
+
+    const result = runCheck(root);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("audited process spawn surface");
   });
 });
