@@ -22,7 +22,7 @@ use crate::tmux::{
     CapturePaneOptions, TMUX_RUNTIME_OWNER_OPTION, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxTarget,
     WINDOW_TARGET_FORMAT, capture_pane_argv, resize_window_argv, send_carriage_return_argv,
     send_escape_argv, send_key_argv, send_text_argv, split_text_for_tmux_send_keys,
-    tmux_command_from_env,
+    try_tmux_command_from_env,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
 use serde_json::{Map, Value, json};
@@ -2180,7 +2180,8 @@ fn run_tmux_argv_with_timeout(
     fallback_error: String,
     timeout: Duration,
 ) -> Result<Output, String> {
-    let mut command = tmux_command_from_env();
+    let mut command = try_tmux_command_from_env()
+        .map_err(|error| tmux_command_error(&fallback_error, &argv, &error))?;
     command.args(&argv);
     let output = command
         .output_timeout(command_task_name("project-service", "tmux"), timeout)
@@ -2201,7 +2202,8 @@ async fn run_tmux_argv_with_timeout_async(
     fallback_error: String,
     timeout: Duration,
 ) -> Result<Output, String> {
-    let mut command = tmux_command_from_env();
+    let mut command = try_tmux_command_from_env()
+        .map_err(|error| tmux_command_error(&fallback_error, &argv, &error))?;
     command.args(&argv);
     let output = command
         .output_timeout_async(timeout)

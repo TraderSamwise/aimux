@@ -1088,7 +1088,7 @@ for idx, item in enumerate(items[:len(keys)]):
 if len(args) <= 3:
     raise SystemExit(1)
 try:
-    subprocess.run([os.environ.get("AIMUX_TMUX_BIN", "tmux"), *args], check=True)
+    subprocess.run([os.environ["AIMUX_TMUX_BIN"], *args], check=True)
 except subprocess.CalledProcessError:
     raise SystemExit(1)
 PY
@@ -1116,7 +1116,7 @@ resolve_local_target_from_tmux_metadata() {
     python3 - "$host_session" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" "$debug_log" <<'PY'
 import json, os, subprocess, sys
 host_session, project_root, current_path, current_window_id, explicit_window_id, action, item_index, debug_log = sys.argv[1:]
-tmux_bin = os.environ.get("AIMUX_TMUX_BIN", "tmux")
+tmux_bin = os.environ["AIMUX_TMUX_BIN"]
 
 def log(message):
     if action != "team":

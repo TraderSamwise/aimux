@@ -271,13 +271,6 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     input: "runtime-selected pid/signal for process cleanup",
   },
   {
-    path: "native/crates/aimux/src/project_service/agent_output.rs",
-    marker: "AsyncCommand::new(program);",
-    command: "agent-output parser helper program",
-    argv: "caller-supplied argv with timeout",
-    input: "runtime/config-derived parser helper invocation",
-  },
-  {
     path: "native/crates/aimux/src/project_service/desktop_state.rs",
     marker: 'AsyncCommand::new("git")',
     count: 2,
@@ -308,13 +301,6 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     command: "tmux new-window target command",
     argv: "command/args from lifecycle launch request",
     input: "user/config/runtime-derived session launch",
-  },
-  {
-    path: "native/crates/aimux/src/project_service/lifecycle/runtime_adapter.rs",
-    marker: 'TokioCommand::new("tmux");',
-    command: "tmux",
-    argv: "runtime adapter tmux argv",
-    input: "project-service lifecycle mutations",
   },
   {
     path: "native/crates/aimux/src/project_service/lifecycle/runtime_adapter.rs",
@@ -382,10 +368,10 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "native/crates/aimux/src/tmux.rs",
-    marker: 'AsyncCommand::new("tmux");',
-    command: "tmux",
+    marker: "AsyncCommand::new(program);",
+    command: "resolved tmux binary",
     argv: "tmux command argv, with optional AIMUX_TMUX_SOCKET_PATH",
-    input: "runtime tmux operations",
+    input: "runtime tmux operations; tmux itself is resolved before spawn and never launched by bare PATH",
   },
   {
     path: "native/crates/aimux/src/tmux_control.rs",
@@ -464,17 +450,17 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "scripts/tmux-control.sh",
-    marker: 'subprocess.run(["tmux"',
+    marker: 'subprocess.run([os.environ["AIMUX_TMUX_BIN"], *args], check=True)',
     command: "tmux",
     argv: "literal display-menu argv from inline Python",
-    input: "runtime switchable-agent metadata",
+    input: "runtime switchable-agent metadata; AIMUX_TMUX_BIN is resolved by the shell wrapper before Python runs",
   },
   {
     path: "scripts/tmux-control.sh",
-    marker: 'subprocess.check_output(["tmux"',
+    marker: "subprocess.check_output([tmux_bin, *args], text=True)",
     command: "tmux",
     argv: "literal tmux metadata argv from inline Python",
-    input: "runtime session/window state",
+    input: "runtime session/window state; tmux_bin comes from resolved AIMUX_TMUX_BIN",
   },
   {
     path: "scripts/tmux-open-hyperlink.sh",

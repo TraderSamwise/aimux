@@ -3,6 +3,7 @@ use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_project_service_launc
 use crate::daemon_state::{ProjectServiceState, try_is_pid_alive};
 use crate::process_inspector::{ProjectServiceProcessIdentity, is_aimux_project_service_process};
 use crate::secure_permissions;
+use crate::tmux::{AIMUX_TMUX_BIN_ENV, tmux_program_from_env};
 use std::fs::File;
 use std::io;
 use std::path::Path;
@@ -44,6 +45,10 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
         if let Some(current_exe) = current_exe.as_deref() {
             env.insert("AIMUX_NATIVE_BIN".into(), current_exe.to_owned());
         }
+        let tmux_bin = tmux_program_from_env()
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|error| format!("failed to launch project service: {error}"))?;
+        env.insert(AIMUX_TMUX_BIN_ENV.into(), tmux_bin.clone());
         let launch = get_aimux_project_service_launch_command(
             project_id,
             &project_root_text,
@@ -59,6 +64,7 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
         command
             .args(&launch.args)
             .env("AIMUX_NATIVE_BIN", &launch.command)
+            .env(AIMUX_TMUX_BIN_ENV, tmux_bin)
             .current_dir(project_root)
             .stdin(Stdio::null());
         let (stdout, stderr) = project_service_child_stdio(project_state_dir).map_err(|error| {

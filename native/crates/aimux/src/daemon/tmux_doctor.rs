@@ -19,7 +19,8 @@ use crate::tmux::{
     is_tmux_client_session_for_host, legacy_project_session_name, modified_enter_binding_argv,
     new_dashboard_window_argv, new_session_argv, project_session, refresh_status_argv,
     rename_session_argv, respawn_window_argv, set_session_option_argv, set_window_option_argv,
-    should_install_modified_enter_binding, switch_client_argv,
+    should_install_modified_enter_binding, switch_client_argv, tmux_program_from_env,
+    try_tmux_command_from_env,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -196,7 +197,12 @@ pub struct SystemTmuxDoctorCommandRunner;
 
 impl TmuxDoctorCommandRunner for SystemTmuxDoctorCommandRunner {
     fn run(&mut self, program: &str, args: &[String]) -> Result<String, String> {
-        let output = AsyncCommand::new(program)
+        let mut command = if program == "tmux" {
+            try_tmux_command_from_env()?
+        } else {
+            AsyncCommand::new(program)
+        };
+        let output = command
             .args(args)
             .output()
             .map_err(|error| error.to_string())?;
@@ -343,7 +349,7 @@ pub fn repair_tmux_runtime(
     input: &TmuxRepairInput,
 ) -> Result<TmuxRepairResult, String> {
     run_command(runner, "tmux", &["-V"])
-        .map_err(|_| "tmux is not installed or not available in PATH".to_owned())?;
+        .map_err(|error| format!("tmux is not installed or not available: {error}"))?;
     let canonical_project_root =
         fs::canonicalize(&input.project_root).unwrap_or_else(|_| input.project_root.clone());
     let project_root_text = path_text(&canonical_project_root);
@@ -583,6 +589,9 @@ fn configure_managed_session(
     let project_state_dir = input.aimux_home.join("projects").join(project_id);
     let project_state_dir_text = path_text(&project_state_dir);
     let runtime_owner = runtime_owner_id(&input.aimux_home);
+    let tmux_bin = tmux_program_from_env()
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| format!("failed to configure tmux runtime: {error}"))?;
     for (key, value) in [
         ("@aimux-project-root", project_root),
         ("@aimux-project-state-dir", &project_state_dir_text),
@@ -605,6 +614,14 @@ fn configure_managed_session(
     ] {
         set_session_option(runner, session_name, key, value)?;
     }
+    run_tmux_owned(
+        runner,
+        &crate::tmux::set_environment_argv(
+            session_name,
+            crate::tmux::AIMUX_TMUX_BIN_ENV,
+            &tmux_bin,
+        ),
+    )?;
     run_tmux_owned(
         runner,
         &[

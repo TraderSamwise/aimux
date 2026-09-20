@@ -44,11 +44,12 @@ pub const TMUX_RUNTIME_CONTRACT_OPTION: &str = "@aimux-runtime-contract";
 pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-required";
 pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "2";
 pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
+pub const AIMUX_TMUX_BIN_ENV: &str = "AIMUX_TMUX_BIN";
 pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-tool}}";
 pub const AIMUX_MODIFIED_ENTER_COMMAND: &str = "send-keys -H 1b 5b 31 33 3b 32 75";
 pub const AIMUX_STALE_MODIFIED_ENTER_COMMAND: &str = "send-keys -H 1b5b32373b3575";
 static TMUX_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-static TMUX_PROGRAM: OnceLock<Result<OsString, String>> = OnceLock::new();
+static TMUX_PROGRAM: OnceLock<OsString> = OnceLock::new();
 const ABANDONED_CLIENT_SESSION_GRACE_SECONDS: i64 = 10 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1069,6 +1070,8 @@ impl TmuxRuntimeManager {
         config: TmuxRuntimeConfig,
     ) -> Result<(), String> {
         let config = sanitize_persistent_runtime_config(config);
+        let tmux_bin = tmux_program_from_env()?;
+        let tmux_bin = tmux_bin.to_string_lossy().into_owned();
         let control_context_args = [
             "--current-client-session #{q:client_session}",
             "--client-tty #{q:client_tty}",
@@ -1100,6 +1103,10 @@ impl TmuxRuntimeManager {
             session_name,
             TMUX_RUNTIME_OWNER_OPTION,
             &config.runtime_owner_id,
+        )?;
+        self.exec_owned(
+            set_environment_argv(session_name, AIMUX_TMUX_BIN_ENV, &tmux_bin),
+            None,
         )?;
         self.set_session_option(session_name, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix)?;
         self.set_session_option(
@@ -3004,6 +3011,16 @@ pub fn set_session_option_argv(session_name: &str, key: &str, value: &str) -> Ve
     ]
 }
 
+pub fn set_environment_argv(session_name: &str, key: &str, value: &str) -> Vec<String> {
+    vec![
+        "set-environment".to_owned(),
+        "-t".to_owned(),
+        session_name.to_owned(),
+        key.to_owned(),
+        value.to_owned(),
+    ]
+}
+
 pub fn append_session_option_argv(session_name: &str, key: &str, value: &str) -> Vec<String> {
     vec![
         "set-option".to_owned(),
@@ -3430,23 +3447,50 @@ fn default_interactive_exec(
 }
 
 pub fn tmux_command_from_env() -> AsyncCommand {
-    let program = tmux_program_from_env().unwrap_or_else(|error| panic!("{error}"));
+    try_tmux_command_from_env().unwrap_or_else(|error| panic!("{error}"))
+}
+
+pub fn try_tmux_command_from_env() -> Result<AsyncCommand, String> {
+    let program = tmux_program_from_env()?;
     let mut command = AsyncCommand::new(program);
     if let Some(socket_path) =
         std::env::var_os(AIMUX_TMUX_SOCKET_PATH_ENV).filter(|value| !value.is_empty())
     {
         command.arg("-S").arg(socket_path);
     }
-    command
+    Ok(command)
 }
 
 pub fn tmux_program_from_env() -> Result<OsString, String> {
-    TMUX_PROGRAM
-        .get_or_init(|| {
-            let current_dir = std::env::current_dir().ok();
-            resolve_tmux_program_from_path(std::env::var_os("PATH"), current_dir.as_deref())
-        })
-        .clone()
+    if let Some(program) = TMUX_PROGRAM.get() {
+        return Ok(program.clone());
+    }
+    let current_dir = std::env::current_dir().ok();
+    let program = resolve_tmux_program_from_env(
+        std::env::var_os(AIMUX_TMUX_BIN_ENV),
+        std::env::var_os("PATH"),
+        current_dir.as_deref(),
+    )?;
+    let _ = TMUX_PROGRAM.set(program.clone());
+    Ok(TMUX_PROGRAM.get().cloned().unwrap_or(program))
+}
+
+fn resolve_tmux_program_from_env(
+    tmux_bin_env: Option<OsString>,
+    path_env: Option<OsString>,
+    current_dir: Option<&Path>,
+) -> Result<OsString, String> {
+    if let Some(tmux_bin) = tmux_bin_env.filter(|value| !value.is_empty()) {
+        let candidate = PathBuf::from(&tmux_bin);
+        if executable_file_exists(&candidate) {
+            return Ok(tmux_bin);
+        }
+        return Err(format!(
+            "{AIMUX_TMUX_BIN_ENV} points to a missing or non-executable tmux binary: {}",
+            candidate.display()
+        ));
+    }
+    resolve_tmux_program_from_path(path_env, current_dir)
 }
 
 fn resolve_tmux_program_from_path(
@@ -3652,6 +3696,47 @@ mod tests {
             .expect("tmux should resolve");
 
         assert_eq!(resolved, tmux.into_os_string());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tmux_program_resolution_prefers_tmux_bin_env_over_path() {
+        let root = temp_tmux_resolution_root("env");
+        let miss = root.join("miss");
+        let hit = root.join("hit");
+        fs::create_dir_all(&miss).expect("miss dir");
+        fs::create_dir_all(&hit).expect("hit dir");
+        let tmux = hit.join("tmux");
+        fs::write(&tmux, "#!/bin/sh\nexit 0\n").expect("write tmux");
+        make_executable(&tmux);
+        let path_env = std::env::join_paths([miss.as_path()]).expect("join path");
+
+        let resolved = resolve_tmux_program_from_env(
+            Some(tmux.clone().into_os_string()),
+            Some(path_env),
+            Some(&root),
+        )
+        .expect("AIMUX_TMUX_BIN should resolve even when PATH misses tmux");
+
+        assert_eq!(resolved, tmux.into_os_string());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tmux_program_resolution_reports_bad_tmux_bin_env() {
+        let root = temp_tmux_resolution_root("bad-env");
+        let missing = root.join("missing-tmux");
+        let path_env = std::env::join_paths([root.as_path()]).expect("join path");
+
+        let error = resolve_tmux_program_from_env(
+            Some(missing.clone().into_os_string()),
+            Some(path_env),
+            Some(&root),
+        )
+        .expect_err("bad AIMUX_TMUX_BIN should fail loudly");
+
+        assert!(error.contains(AIMUX_TMUX_BIN_ENV), "{error}");
+        assert!(error.contains(&missing.display().to_string()), "{error}");
         let _ = fs::remove_dir_all(root);
     }
 
