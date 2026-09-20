@@ -1,6 +1,6 @@
 use aimux::async_runtime::init_process_runtime;
 use aimux::daemon_state::metadata_state_path;
-use aimux::loop_watcher::loop_watcher_state_path;
+use aimux::loop_watcher::{LoopSendKind, LoopWatcher, loop_watcher_state_path};
 use aimux::plugin_project_service_host::builtin_plugin_tick_tasks;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::{
@@ -840,6 +840,220 @@ fn loop_watcher_task_records_idle_fleet_signal_for_overseer_delivery() {
         state["deliveryRecords"][0]["outcome"].as_str().is_some(),
         "{state}"
     );
+}
+
+#[test]
+fn loop_watcher_stopped_managed_agent_builds_overseer_loop_check() {
+    let input = json!({
+        "sessions": [
+            { "id": "boss", "status": "running", "tool": "claude" },
+            { "id": "worker", "status": "running", "tool": "codex" }
+        ],
+        "metadata": {
+            "sessions": {
+                "boss": {
+                    "overseer": true,
+                    "derived": {
+                        "activity": "running",
+                        "attention": "normal"
+                    }
+                },
+                "worker": {
+                    "loop": {
+                        "active": true,
+                        "goal": "ship the fix",
+                        "since": "2026-09-13T00:00:00.000Z",
+                        "source": "overseer",
+                        "updatedBySessionId": "boss"
+                    },
+                    "derived": {
+                        "activity": "done",
+                        "attention": "normal"
+                    }
+                }
+            }
+        },
+        "config": {
+            "stoppedDwellMs": 0,
+            "nudgeCooldownMs": 0,
+            "unchangedReminderTicks": 4
+        },
+        "pendingInteractions": [],
+        "runtimeExchange": {
+            "version": 1,
+            "threads": [],
+            "messages": [],
+            "tasks": []
+        },
+        "coordinationWorklist": {
+            "items": []
+        }
+    });
+    let mut watcher = LoopWatcher::new();
+    let mut delivered_text = String::new();
+    let mut deliver = |send: &aimux::loop_watcher::LoopSend| {
+        delivered_text = send.text.clone();
+        true
+    };
+
+    let sends = watcher.scan(&input, 1_000, &mut deliver);
+
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].session_id, "boss");
+    assert_eq!(sends[0].kind, LoopSendKind::OverseerBriefing);
+    assert!(
+        delivered_text.contains("[aimux loop check] These agents are in a managed loop"),
+        "{delivered_text}"
+    );
+    assert!(delivered_text.contains("worker"), "{delivered_text}");
+    assert!(delivered_text.contains("ship the fix"), "{delivered_text}");
+}
+
+#[test]
+fn loop_watcher_bad_scan_cadence_is_clamped_and_still_reaches_route() {
+    let root = unique_temp_dir("aimux-loop-watcher-cadence-clamp-route");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(project_root.join(".aimux")).expect("project config dir");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        project_root.join(".aimux/config.json"),
+        r#"{"loop":{"scanEveryTicks":1000000,"stoppedDwellMs":0,"nudgeCooldownMs":0}}"#,
+    )
+    .expect("config");
+    let mut topology = topology_with_sessions(&["boss", "worker"]);
+    topology["sessions"][1]["status"] = json!("offline");
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).expect("write topology");
+    fs::write(
+        metadata_state_path(&state_dir),
+        serde_json::to_string(&json!({
+            "version": 1,
+            "sessions": {
+                "boss": {
+                    "overseer": true,
+                    "derived": {
+                        "activity": "running",
+                        "attention": "normal"
+                    }
+                },
+                "worker": {
+                    "loop": {
+                        "active": true,
+                        "goal": "ship the fix",
+                        "since": "2026-09-13T00:00:00.000Z",
+                        "source": "overseer",
+                        "updatedBySessionId": "boss"
+                    },
+                    "derived": {
+                        "activity": "done",
+                        "attention": "normal"
+                    }
+                }
+            }
+        }))
+        .expect("metadata json"),
+    )
+    .expect("write metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    assert_eq!(
+        run_due_at(&mut scheduler, &context, 60_000),
+        vec!["loop-watcher"]
+    );
+
+    let health = scheduler_health_for(&scheduler, "loop-watcher");
+    assert_eq!(health.consecutive_failures, 0, "{health:?}");
+    assert_eq!(health.interval_ms, Some(60_000));
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(loop_watcher_state_path(&state_dir)).expect("watcher state"),
+    )
+    .expect("watcher state json");
+    assert_eq!(
+        state["scanRecords"][0]["plannedSendKinds"][0], "overseerBriefing",
+        "{state}"
+    );
+    assert_eq!(state["deliveryRecords"][0]["sessionId"], "boss");
+    assert_eq!(state["deliveryRecords"][0]["kind"], "overseerBriefing");
+}
+
+#[test]
+fn loop_watcher_bad_scan_cadence_still_stays_quiet_for_working_agent() {
+    let root = unique_temp_dir("aimux-loop-watcher-cadence-clamp-working");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(project_root.join(".aimux")).expect("project config dir");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        project_root.join(".aimux/config.json"),
+        r#"{"loop":{"scanEveryTicks":1000000,"stoppedDwellMs":0,"nudgeCooldownMs":0}}"#,
+    )
+    .expect("config");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_with_sessions(&["boss", "worker"]),
+    )
+    .expect("write topology");
+    fs::write(
+        metadata_state_path(&state_dir),
+        serde_json::to_string(&json!({
+            "version": 1,
+            "sessions": {
+                "boss": {
+                    "overseer": true,
+                    "derived": {
+                        "activity": "running",
+                        "attention": "normal"
+                    }
+                },
+                "worker": {
+                    "loop": {
+                        "active": true,
+                        "goal": "ship the fix",
+                        "since": "2026-09-13T00:00:00.000Z",
+                        "source": "overseer",
+                        "updatedBySessionId": "boss"
+                    },
+                    "derived": {
+                        "activity": "running",
+                        "attention": "normal"
+                    }
+                }
+            }
+        }))
+        .expect("metadata json"),
+    )
+    .expect("write metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    assert_eq!(
+        run_due_at(&mut scheduler, &context, 60_000),
+        vec!["loop-watcher"]
+    );
+
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(loop_watcher_state_path(&state_dir)).expect("watcher state"),
+    )
+    .expect("watcher state json");
+    assert_eq!(state["scanRecords"][0]["plannedSendCount"], 0, "{state}");
+    assert_eq!(state["deliveryRecords"], json!([]), "{state}");
 }
 
 #[test]

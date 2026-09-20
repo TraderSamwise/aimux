@@ -36,6 +36,10 @@ pub const NUDGEABLE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"]
 pub const LOOP_WATCH_SESSION_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
 const DEFAULT_SCAN_INTERVAL_MS: i64 = 15_000;
 const DEFAULT_SCAN_EVERY_TICKS: u64 = 60;
+/// A loop watcher that sleeps longer than this is indistinguishable from a
+/// dead watcher to the overseer. Keep the user-facing signal prompt even when
+/// a bad config briefly lands and is later removed.
+const MAX_SCAN_EVERY_TICKS: u64 = 240;
 const DEFAULT_STOPPED_DWELL_MS: i64 = 30_000;
 const DEFAULT_UNCHANGED_REMINDER_TICKS: u64 = 4;
 /// Blast-radius cap: no single scan may message more agents than this.
@@ -474,11 +478,25 @@ fn loop_scan_interval_ms(loop_config: &Value) -> i64 {
 }
 
 fn loop_scan_every_ticks(loop_config: &Value) -> u64 {
-    loop_config
+    let ticks = loop_config
         .get("scanEveryTicks")
         .and_then(Value::as_u64)
         .unwrap_or(DEFAULT_SCAN_EVERY_TICKS)
-        .max(1)
+        .max(1);
+    if ticks > MAX_SCAN_EVERY_TICKS {
+        log_at(
+            LogLevel::Warn,
+            "loop watcher scan cadence clamped",
+            "loop-watcher",
+            Some(json!({
+                "configuredScanEveryTicks": ticks,
+                "maxScanEveryTicks": MAX_SCAN_EVERY_TICKS,
+            })),
+        );
+        MAX_SCAN_EVERY_TICKS
+    } else {
+        ticks
+    }
 }
 
 fn insert_default_i64(object: &mut Map<String, Value>, key: &str, value: i64) {
