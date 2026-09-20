@@ -14,8 +14,10 @@ import {
   displayableMessageParts,
   hasDisplayableChatMessageContent,
   hasDisplayableChatText,
+  messageContainerClassName,
   messageContainerStyleForRole,
   messageSpeakerLabel,
+  messageTextClassName,
   normalizeChatLinkTarget,
   resolveImageUrl,
   shouldRenderRichTerminalText,
@@ -195,6 +197,17 @@ describe("MessageBlock layout", () => {
   it("does not clip rich terminal spans inside chat bubbles", () => {
     expect(messageContainerStyleForRole("assistant").overflow).toBe("visible");
     expect(messageContainerStyleForRole("user").overflow).toBe("visible");
+  });
+
+  it("renders pending composer echoes differently from settled user history", () => {
+    const settled = { role: "user" as const };
+    const pending = { pendingComposerEcho: true, role: "user" as const };
+
+    expect(messageContainerClassName(settled)).toContain("bg-primary");
+    expect(messageContainerClassName(pending)).not.toContain("bg-primary");
+    expect(messageContainerClassName(pending)).toContain("border");
+    expect(messageTextClassName(settled)).toBe("text-primary-foreground");
+    expect(messageTextClassName(pending)).toBe("text-muted-foreground");
   });
 
   it("drops parser residue that has no displayable content", () => {

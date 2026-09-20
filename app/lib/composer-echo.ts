@@ -13,6 +13,8 @@ export interface ComposerEchoMergeResult {
   messages: ChatMessage[];
   echoes: AcceptedComposerEcho[];
   droppedUnconfirmedCount: number;
+  droppedExpiredCount: number;
+  droppedTranscriptAdvancedCount: number;
 }
 
 export const COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS = 10_000;
@@ -50,7 +52,13 @@ export function mergeAcceptedComposerEchoes(
   },
 ): ComposerEchoMergeResult {
   if (acceptedEchoes.length === 0) {
-    return { messages: [...parsedMessages], echoes: [], droppedUnconfirmedCount: 0 };
+    return {
+      messages: [...parsedMessages],
+      echoes: [],
+      droppedExpiredCount: 0,
+      droppedTranscriptAdvancedCount: 0,
+      droppedUnconfirmedCount: 0,
+    };
   }
 
   const timeoutMs = options.timeoutMs ?? COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS;
@@ -59,6 +67,8 @@ export function mergeAcceptedComposerEchoes(
   const retainedEchoes: AcceptedComposerEcho[] = [];
   const pendingEchoes: AcceptedComposerEcho[] = [];
   let droppedUnconfirmedCount = 0;
+  let droppedExpiredCount = 0;
+  let droppedTranscriptAdvancedCount = 0;
 
   for (const accepted of acceptedEchoes) {
     const matchIndex = confirmationSlotIndex(parsedMessages, accepted, claimedParsedIndexes);
@@ -73,6 +83,11 @@ export function mergeAcceptedComposerEchoes(
     const expired = options.nowMs - accepted.createdAtMs >= timeoutMs;
     if (accepted.settled || transcriptAdvanced || expired) {
       droppedUnconfirmedCount += 1;
+      if (transcriptAdvanced) {
+        droppedTranscriptAdvancedCount += 1;
+      } else if (expired) {
+        droppedExpiredCount += 1;
+      }
       continue;
     }
 
@@ -88,5 +103,11 @@ export function mergeAcceptedComposerEchoes(
     inserted += 1;
   }
 
-  return { messages, echoes: retainedEchoes, droppedUnconfirmedCount };
+  return {
+    messages,
+    echoes: retainedEchoes,
+    droppedExpiredCount,
+    droppedTranscriptAdvancedCount,
+    droppedUnconfirmedCount,
+  };
 }

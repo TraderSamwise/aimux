@@ -178,6 +178,12 @@ export interface ChatActor {
 export interface ChatMessage {
   id?: string;
   clientMessageId?: string;
+  /**
+   * Local-only optimistic composer echo. These are accepted sends that have not
+   * appeared in the service transcript yet, so they must not be styled as
+   * settled user history.
+   */
+  pendingComposerEcho?: boolean;
   role?: "user" | "assistant" | "system" | "tool";
   ts?: string;
   parts?: HistoryPart[];

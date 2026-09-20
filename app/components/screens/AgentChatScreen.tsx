@@ -433,6 +433,7 @@ function buildAcceptedComposerMessage(opts: {
   return {
     clientMessageId: opts.clientMessageId,
     id: opts.clientMessageId,
+    pendingComposerEcho: true,
     role: "user",
     parts,
     text,
@@ -1050,7 +1051,7 @@ export default function ChatScreen() {
             nowMs: Date.now(),
             timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
           });
-          if (result.droppedUnconfirmedCount > 0) {
+          if (result.droppedExpiredCount > 0) {
             setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
           }
           return result.echoes;

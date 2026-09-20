@@ -37,6 +37,7 @@ describe("composer optimistic echo reconciliation", () => {
     const pending = echo("composer:one", "queue up", {
       message: userMessage("composer:one", "queue up", {
         clientMessageId: "composer:one",
+        pendingComposerEcho: true,
         parts: [
           { type: "text", text: "queue up" },
           {
@@ -62,10 +63,11 @@ describe("composer optimistic echo reconciliation", () => {
     });
 
     expect(
-      mergeAcceptedComposerEchoes([], [pending], { nowMs: 1_500 }).messages.map(
-        (message) => message.id,
-      ),
-    ).toEqual(["composer:one"]);
+      mergeAcceptedComposerEchoes([], [pending], { nowMs: 1_500 }).messages.map((message) => [
+        message.id,
+        message.pendingComposerEcho,
+      ]),
+    ).toEqual([["composer:one", true]]);
 
     const reconciled = mergeAcceptedComposerEchoes([confirmed], [pending], { nowMs: 1_500 });
 
@@ -75,6 +77,7 @@ describe("composer optimistic echo reconciliation", () => {
       clientMessageId: "composer:one",
       parts: confirmed.parts,
     });
+    expect(reconciled.messages[0]).not.toHaveProperty("pendingComposerEcho");
     expect(reconciled.echoes).toEqual([{ ...pending, settled: true }]);
   });
 
@@ -106,9 +109,11 @@ describe("composer optimistic echo reconciliation", () => {
     expect(reconciled.messages).toEqual([]);
     expect(reconciled.echoes).toEqual([]);
     expect(reconciled.droppedUnconfirmedCount).toBe(1);
+    expect(reconciled.droppedExpiredCount).toBe(1);
+    expect(reconciled.droppedTranscriptAdvancedCount).toBe(0);
   });
 
-  it("shows the server transcript and drops an echo when the transcript advances without a user confirmation", () => {
+  it("shows the server transcript without treating an agent answer as retryable", () => {
     const pending = echo("composer:missing", "lost");
     const assistant: ChatMessage = {
       id: "assistant:next",
@@ -122,5 +127,7 @@ describe("composer optimistic echo reconciliation", () => {
     expect(reconciled.messages).toEqual([assistant]);
     expect(reconciled.echoes).toEqual([]);
     expect(reconciled.droppedUnconfirmedCount).toBe(1);
+    expect(reconciled.droppedExpiredCount).toBe(0);
+    expect(reconciled.droppedTranscriptAdvancedCount).toBe(1);
   });
 });

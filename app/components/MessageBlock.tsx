@@ -489,6 +489,26 @@ export function messageContainerStyleForRole(role: ChatMessage["role"]): ViewSty
   return role === "user" ? MESSAGE_USER_STYLE : MESSAGE_ASSISTANT_STYLE;
 }
 
+export function messageContainerClassName(
+  message: Pick<ChatMessage, "pendingComposerEcho" | "role">,
+): string {
+  if (message.role === "user" && message.pendingComposerEcho === true) {
+    return "self-end rounded-lg border border-border bg-transparent px-3 py-2 my-1";
+  }
+  return message.role === "user"
+    ? "self-end rounded-lg bg-primary px-3 py-2 my-1"
+    : "self-start rounded-lg bg-secondary px-3 py-2 my-1";
+}
+
+export function messageTextClassName(
+  message: Pick<ChatMessage, "pendingComposerEcho" | "role">,
+): string {
+  if (message.role === "user" && message.pendingComposerEcho === true) {
+    return "text-muted-foreground";
+  }
+  return message.role === "user" ? "text-primary-foreground" : "text-secondary-foreground";
+}
+
 function RichText({
   spans,
   className,
@@ -838,6 +858,7 @@ export const MessageBlock = React.memo(function MessageBlock({
 }: Props) {
   const role = message.role ?? "assistant";
   const isUser = role === "user";
+  const messageForStyle = { pendingComposerEcho: message.pendingComposerEcho, role };
   const speakerLabel = isUser ? messageSpeakerLabel(message) : null;
   const richTerminalColors = useAtomValue(chatRichTerminalColorsAtom);
   const displayParts = displayableMessageParts(message.parts);
@@ -848,11 +869,7 @@ export const MessageBlock = React.memo(function MessageBlock({
   return (
     <View
       style={messageContainerStyleForRole(role)}
-      className={
-        isUser
-          ? "self-end rounded-lg bg-primary px-3 py-2 my-1"
-          : "self-start rounded-lg bg-secondary px-3 py-2 my-1"
-      }
+      className={messageContainerClassName(messageForStyle)}
     >
       {speakerLabel ? (
         <Text
@@ -868,7 +885,7 @@ export const MessageBlock = React.memo(function MessageBlock({
       {displayParts.length > 0 ? (
         displayParts.map((part, idx) => {
           if (part.type === "text") {
-            const className = isUser ? "text-primary-foreground" : "text-secondary-foreground";
+            const className = messageTextClassName(messageForStyle);
             const richTextInput = {
               isUser,
               enabled: richTerminalColors,
