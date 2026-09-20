@@ -545,7 +545,21 @@ fn is_titled_divider(line: &str) -> bool {
         .rev()
         .take_while(|ch| is_box_drawing(*ch))
         .count();
-    prefix >= 4 && suffix >= 4 && trimmed.chars().count() > prefix + suffix
+    let char_count = trimmed.chars().count();
+    if prefix < 4 || suffix == 0 || char_count <= prefix + suffix {
+        return false;
+    }
+    let title_len = char_count - prefix - suffix;
+    let title = trimmed
+        .chars()
+        .skip(prefix)
+        .take(title_len)
+        .collect::<String>();
+    let title = title.trim();
+    if title.is_empty() {
+        return false;
+    }
+    suffix >= 4 || (prefix >= 24 && title.chars().count() <= 80)
 }
 
 fn is_todo_panel_line(line: &str) -> bool {
@@ -3407,6 +3421,37 @@ mod tests {
         assert!(
             first_assistant_text_part(messages).get("spans").is_some(),
             "ansi projection must not reuse the earlier plain cache entry"
+        );
+    }
+
+    #[test]
+    fn claude_projection_trims_wrapped_session_title_dividers_after_compact() {
+        let divider = "─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── [grand] main ─";
+        let raw = format!(
+            "Compacted (ctrl+o to see full summary)\n\
+             Read /Users/sam/cs/thegrand/AGENTS.md (42 lines)\n\
+             Skills restored (plan-execute, artifact-design, loop)\n\
+             {divider}\n\
+             Remote Control\n\
+             This session is available in the Claude mobile app\n"
+        );
+
+        let projection = project_agent_output(&raw, Some("claude"));
+        let blocks = projection
+            .parsed
+            .get("blocks")
+            .and_then(Value::as_array)
+            .expect("parsed blocks");
+        let rendered = blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Remote Control"));
+        assert!(
+            !rendered.contains('─'),
+            "post-compact session title divider should be trimmed from GUI transcript: {rendered:?}"
         );
     }
 }
