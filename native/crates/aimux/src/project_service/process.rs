@@ -93,7 +93,6 @@ use super::switchable_agents::route_switchable_agent_request_async;
 use std::os::unix::net::{UnixListener, UnixStream};
 
 pub const STABILITY_DOCTOR_TEST_WEDGE_ENV: &str = "AIMUX_TEST_STABILITY_DOCTOR_WEDGE_TASK";
-const TEST_ISOLATION_OWNER_WATCHDOG_INTERVAL_MS: u64 = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectServiceInternalOptions {
@@ -135,7 +134,11 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         crate::process_signals::DAEMON_TERMINATION_SIGNALS,
     )
     .context("install project-service shutdown signal handlers")?;
-    let test_isolation_owner_gone = spawn_test_isolation_owner_watchdog(&aimux_home);
+    let test_isolation_owner_gone =
+        crate::runtime_safety_guard::spawn_test_isolation_owner_watchdog(
+            &aimux_home,
+            "project-service",
+        );
     let listener = bind_project_service_listener(startup.desired_port)?;
     let port = listener
         .local_addr()
@@ -197,117 +200,6 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         );
     }
     Ok(())
-}
-
-fn spawn_test_isolation_owner_watchdog(aimux_home: &Path) -> Option<Arc<AtomicBool>> {
-    let lease = match crate::runtime_safety_guard::load_test_isolation_lease(aimux_home) {
-        Ok(Some(lease)) => lease,
-        Ok(None) => return None,
-        Err(error) => {
-            log_lifecycle_always(
-                "project service test isolation watchdog not started",
-                "project-service",
-                Some(json!({ "aimuxHome": aimux_home.to_string_lossy(), "error": error })),
-            );
-            return None;
-        }
-    };
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_for_thread = Arc::clone(&stop);
-    let aimux_home = aimux_home.to_path_buf();
-    let owner_pid = lease.owner_pid;
-    let kind = lease.kind.clone();
-    let aimux_home_for_thread = aimux_home.clone();
-    let kind_for_thread = kind.clone();
-    let interval = Duration::from_millis(TEST_ISOLATION_OWNER_WATCHDOG_INTERVAL_MS);
-    thread::Builder::new()
-        .name("aimux-project-service-test-isolation-watchdog".to_owned())
-        .spawn(move || {
-            while !stop_for_thread.load(Ordering::SeqCst) {
-                thread::sleep(interval);
-                if let Some(reason) =
-                    test_isolation_owner_stop_reason(&aimux_home_for_thread, &lease)
-                {
-                    log_lifecycle_always(
-                        "project service stopping after test isolation owner ended",
-                        "project-service",
-                        Some(json!({
-                            "aimuxHome": aimux_home_for_thread.to_string_lossy(),
-                            "ownerPid": owner_pid,
-                            "kind": kind_for_thread,
-                            "reason": reason,
-                        })),
-                    );
-                    stop_for_thread.store(true, Ordering::SeqCst);
-                    return;
-                }
-            }
-        })
-        .map_err(|error| {
-            log_lifecycle_always(
-                "project service test isolation watchdog spawn failed",
-                "project-service",
-                Some(json!({
-                    "aimuxHome": aimux_home.to_string_lossy(),
-                    "ownerPid": owner_pid,
-                    "kind": kind,
-                    "error": error.to_string(),
-                })),
-            );
-        })
-        .ok()?;
-    Some(stop)
-}
-
-fn test_isolation_owner_stop_reason(
-    aimux_home: &Path,
-    lease: &crate::runtime_safety_guard::TestIsolationLease,
-) -> Option<String> {
-    test_isolation_owner_stop_reason_with_probe(
-        aimux_home,
-        lease,
-        crate::daemon_state::try_is_pid_alive,
-    )
-}
-
-fn test_isolation_owner_stop_reason_with_probe(
-    aimux_home: &Path,
-    lease: &crate::runtime_safety_guard::TestIsolationLease,
-    pid_alive: impl Fn(i32) -> Result<bool, String>,
-) -> Option<String> {
-    let marker = aimux_home.join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER);
-    match marker.try_exists() {
-        Ok(true) => {}
-        Ok(false) => {
-            return Some(format!(
-                "test isolation marker disappeared: {}",
-                marker.display()
-            ));
-        }
-        Err(error) => {
-            log_lifecycle_always(
-                "project service test isolation marker probe failed",
-                "project-service",
-                Some(json!({ "marker": marker.to_string_lossy(), "error": error.to_string() })),
-            );
-            return None;
-        }
-    }
-    match pid_alive(lease.owner_pid) {
-        Ok(true) => None,
-        Ok(false) => Some(format!(
-            "test isolation owner pid {} exited",
-            lease.owner_pid
-        )),
-        Err(error) => {
-            log_lifecycle_always(
-                "project service test isolation owner probe failed",
-                "project-service",
-                Some(json!({ "ownerPid": lease.owner_pid, "error": error })),
-            );
-            None
-        }
-    }
 }
 
 pub fn run_project_service_startup_tasks(
@@ -2445,7 +2337,12 @@ mod tests {
             owner_pid: 123,
         };
 
-        let reason = test_isolation_owner_stop_reason_with_probe(&aimux_home, &lease, |_| Ok(true));
+        let reason = crate::runtime_safety_guard::test_isolation_owner_stop_reason_with_probe(
+            &aimux_home,
+            &lease,
+            |_| Ok(true),
+            "project-service",
+        );
 
         assert!(
             reason
@@ -2471,8 +2368,12 @@ mod tests {
             owner_pid: 123,
         };
 
-        let reason =
-            test_isolation_owner_stop_reason_with_probe(&aimux_home, &lease, |_| Ok(false));
+        let reason = crate::runtime_safety_guard::test_isolation_owner_stop_reason_with_probe(
+            &aimux_home,
+            &lease,
+            |_| Ok(false),
+            "project-service",
+        );
 
         assert_eq!(
             reason,
@@ -2496,9 +2397,12 @@ mod tests {
             owner_pid: 123,
         };
 
-        let reason = test_isolation_owner_stop_reason_with_probe(&aimux_home, &lease, |_| {
-            Err("ps unavailable".to_owned())
-        });
+        let reason = crate::runtime_safety_guard::test_isolation_owner_stop_reason_with_probe(
+            &aimux_home,
+            &lease,
+            |_| Err("ps unavailable".to_owned()),
+            "project-service",
+        );
 
         assert_eq!(reason, None);
         let _ = fs::remove_dir_all(root);

@@ -101,8 +101,9 @@ use crate::lifecycle_orphans::{
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, ProjectEntry, compute_project_id};
 use crate::process_inspector::{
-    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process_args,
-    is_current_native_aimux_project_service_process, list_process_args,
+    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_daemon_process_args,
+    is_aimux_project_service_process_args, is_current_native_aimux_project_service_process,
+    list_process_args, try_list_process_args,
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, try_list_registered_desktop_projects};
@@ -2370,6 +2371,72 @@ fn process_list_json(processes: Vec<ProcessArgsEntry>) -> Vec<Value> {
         .collect()
 }
 
+fn daemon_process_inventory_report(
+    processes: &[ProcessArgsEntry],
+    expected_daemon_pid: Option<i32>,
+) -> Value {
+    let daemon_processes = processes
+        .iter()
+        .filter(|entry| is_aimux_daemon_process_args(&entry.args))
+        .collect::<Vec<_>>();
+    let unexpected = daemon_processes
+        .iter()
+        .filter(|entry| Some(entry.pid) != expected_daemon_pid)
+        .map(|entry| {
+            json!({
+                "pid": entry.pid,
+                "argsPreview": process_args_preview(&entry.args),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "total": daemon_processes.len(),
+        "expectedPid": expected_daemon_pid,
+        "unexpectedCount": unexpected.len(),
+        "unexpected": unexpected,
+    })
+}
+
+fn process_args_preview(args: &str) -> String {
+    const MAX_PREVIEW: usize = 220;
+    if args.len() <= MAX_PREVIEW {
+        return args.to_owned();
+    }
+    format!("{}...", args.chars().take(MAX_PREVIEW).collect::<String>())
+}
+
+fn render_daemon_process_inventory_for_doctor(report: &Value) -> String {
+    let Some(inventory) = report.get("daemonProcessInventory") else {
+        return String::new();
+    };
+    let total = inventory.get("total").and_then(Value::as_u64).unwrap_or(0);
+    let unexpected_count = inventory
+        .get("unexpectedCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mut lines = vec![format!(
+        "  daemon processes: {total} ({unexpected_count} unexpected)"
+    )];
+    if let Some(error) = report.get("processInventoryError").and_then(Value::as_str) {
+        lines.push(format!("  daemon process inventory error: {error}"));
+    }
+    for process in inventory
+        .get("unexpected")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(10)
+    {
+        let pid = process.get("pid").and_then(Value::as_i64).unwrap_or(0);
+        let args = process
+            .get("argsPreview")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        lines.push(format!("  unexpected daemon pid {pid}: {args}"));
+    }
+    format!("\n{}", lines.join("\n"))
+}
+
 pub fn run_daemon_internal() -> Result<()> {
     let resolver = PathResolver::from_env();
     secure_permissions::repair_global_aimux_home(resolver.global_aimux_dir())
@@ -2421,6 +2488,11 @@ pub fn run_daemon_internal() -> Result<()> {
     );
     save_daemon_info(resolver.daemon_info_path(), &info).context("save daemon info")?;
     seed_agent_restore_prompt_gates(&resolver, &info);
+    let test_isolation_owner_gone =
+        crate::runtime_safety_guard::spawn_test_isolation_owner_watchdog(
+            &resolver.global_aimux_dir(),
+            "daemon",
+        );
     let _guard = DaemonInfoGuard {
         path: resolver.daemon_info_path(),
         pid: info.pid,
@@ -2494,7 +2566,12 @@ pub fn run_daemon_internal() -> Result<()> {
                     })
                 })
             },
-            || crate::process_signals::received_shutdown_signal().is_some(),
+            move || {
+                crate::process_signals::received_shutdown_signal().is_some()
+                    || test_isolation_owner_gone
+                        .as_ref()
+                        .is_some_and(|flag| flag.load(Ordering::SeqCst))
+            },
         ),
     );
     if let Some(signal_name) = crate::process_signals::received_shutdown_signal_name()
@@ -3419,9 +3496,15 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
             .count();
         let state = self.daemon_state();
         let cli_launch = get_aimux_current_cli_identity(AimuxCliLaunchOptions::default());
-        let process_list = list_process_args();
+        let process_list_result = try_list_process_args();
+        let (process_list, process_inventory_error) = match process_list_result {
+            Ok(processes) => (processes, None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
         let expected_project_service = self.project_service_info();
         let mut resolver = self.resolver.clone();
+        let daemon_process_inventory =
+            daemon_process_inventory_report(&process_list, Some(self.info.pid));
         let mut report = build_runtime_coherence_report_with_resolver(
             RuntimeCoherenceInput {
                 generated_at: generated_at.clone(),
@@ -3455,6 +3538,10 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         );
         if let Value::Object(object) = &mut report {
             object.insert("expectedServiceManifest".into(), expected_project_service);
+            object.insert("daemonProcessInventory".into(), daemon_process_inventory);
+            if let Some(error) = process_inventory_error {
+                object.insert("processInventoryError".into(), json!(error));
+            }
             object.insert("projectCount".into(), json!(projects.len()));
             object.insert("serviceAliveCount".into(), json!(service_alive));
             if !project_read_errors.is_empty() {
@@ -3467,7 +3554,8 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
             object.insert("catalogProjects".into(), json!(projects));
             object.insert("relay".into(), self.relay_status());
         }
-        let text = render_runtime_coherence_report(&report);
+        let mut text = render_runtime_coherence_report(&report);
+        text.push_str(&render_daemon_process_inventory_for_doctor(&report));
         Ok((report, text))
     }
 
@@ -5371,6 +5459,56 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn daemon_process_inventory_names_unexpected_daemon_processes() {
+        let processes = vec![
+            ProcessArgsEntry {
+                pid: 101,
+                args: "/Users/sam/.aimux/native/current/bin/aimux daemon run".into(),
+            },
+            ProcessArgsEntry {
+                pid: 202,
+                args: "/tmp/aimux-cargo-target-codex/debug/aimux daemon run".into(),
+            },
+            ProcessArgsEntry {
+                pid: 303,
+                args: "/tmp/aimux-cargo-target-codex/debug/aimux __project-service-internal".into(),
+            },
+        ];
+
+        let report = daemon_process_inventory_report(&processes, Some(101));
+        let text = render_daemon_process_inventory_for_doctor(&json!({
+            "daemonProcessInventory": report.clone(),
+        }));
+
+        assert_eq!(report["total"], json!(2));
+        assert_eq!(report["expectedPid"], json!(101));
+        assert_eq!(report["unexpectedCount"], json!(1));
+        assert_eq!(report["unexpected"][0]["pid"], json!(202));
+        assert!(
+            text.contains("daemon processes: 2 (1 unexpected)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("unexpected daemon pid 202"),
+            "doctor output should name the unexpected daemon, got {text}"
+        );
+    }
+
+    #[test]
+    fn daemon_process_inventory_does_not_report_legitimate_single_daemon() {
+        let processes = vec![ProcessArgsEntry {
+            pid: 101,
+            args: "/Users/sam/.aimux/native/current/bin/aimux daemon run".into(),
+        }];
+
+        let report = daemon_process_inventory_report(&processes, Some(101));
+
+        assert_eq!(report["total"], json!(1));
+        assert_eq!(report["unexpectedCount"], json!(0));
+        assert_eq!(report["unexpected"], json!([]));
+    }
 
     fn unique_temp_fixture_project_root(label: &str) -> PathBuf {
         let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);

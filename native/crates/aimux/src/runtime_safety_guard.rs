@@ -1,12 +1,18 @@
 use crate::daemon::routing::DaemonRouteUrl;
-use serde_json::Value;
+use crate::debug_logging::log_lifecycle_always;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
 
 pub const TEST_HARNESS_HEADER: &str = "x-aimux-test-harness";
 pub const TEST_ISOLATION_MARKER: &str = "test-isolation.json";
 const CARGO_TEST_HEADER_VALUE: &str = "cargo-test";
+const TEST_ISOLATION_OWNER_WATCHDOG_INTERVAL_MS: u64 = 500;
 const TEST_PROJECT_PREFIXES: &[&str] = &[
     "aimux-dashboard-cmd-installed.",
     "aimux-dashboard-cmd-source.",
@@ -81,6 +87,123 @@ pub fn load_test_isolation_lease(daemon_home: &Path) -> Result<Option<TestIsolat
         ));
     }
     Ok(Some(TestIsolationLease { kind, owner_pid }))
+}
+
+pub fn spawn_test_isolation_owner_watchdog(
+    aimux_home: &Path,
+    process_label: &'static str,
+) -> Option<Arc<AtomicBool>> {
+    let lease = match load_test_isolation_lease(aimux_home) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return None,
+        Err(error) => {
+            log_lifecycle_always(
+                "test isolation watchdog not started",
+                process_label,
+                Some(json!({ "aimuxHome": aimux_home.to_string_lossy(), "error": error })),
+            );
+            return None;
+        }
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_for_thread = Arc::clone(&stop);
+    let aimux_home = aimux_home.to_path_buf();
+    let owner_pid = lease.owner_pid;
+    let kind = lease.kind.clone();
+    let aimux_home_for_thread = aimux_home.clone();
+    let kind_for_thread = kind.clone();
+    let interval = Duration::from_millis(TEST_ISOLATION_OWNER_WATCHDOG_INTERVAL_MS);
+    thread::Builder::new()
+        .name(format!("aimux-{process_label}-test-isolation-watchdog"))
+        .spawn(move || {
+            while !stop_for_thread.load(Ordering::SeqCst) {
+                thread::sleep(interval);
+                if let Some(reason) =
+                    test_isolation_owner_stop_reason(&aimux_home_for_thread, &lease, process_label)
+                {
+                    log_lifecycle_always(
+                        "process stopping after test isolation owner ended",
+                        process_label,
+                        Some(json!({
+                            "aimuxHome": aimux_home_for_thread.to_string_lossy(),
+                            "ownerPid": owner_pid,
+                            "kind": kind_for_thread,
+                            "reason": reason,
+                        })),
+                    );
+                    stop_for_thread.store(true, Ordering::SeqCst);
+                    return;
+                }
+            }
+        })
+        .map_err(|error| {
+            log_lifecycle_always(
+                "test isolation watchdog spawn failed",
+                process_label,
+                Some(json!({
+                    "aimuxHome": aimux_home.to_string_lossy(),
+                    "ownerPid": owner_pid,
+                    "kind": kind,
+                    "error": error.to_string(),
+                })),
+            );
+        })
+        .ok()?;
+    Some(stop)
+}
+
+pub fn test_isolation_owner_stop_reason(
+    aimux_home: &Path,
+    lease: &TestIsolationLease,
+    process_label: &'static str,
+) -> Option<String> {
+    test_isolation_owner_stop_reason_with_probe(
+        aimux_home,
+        lease,
+        crate::daemon_state::try_is_pid_alive,
+        process_label,
+    )
+}
+
+pub fn test_isolation_owner_stop_reason_with_probe(
+    aimux_home: &Path,
+    lease: &TestIsolationLease,
+    pid_alive: impl Fn(i32) -> Result<bool, String>,
+    process_label: &'static str,
+) -> Option<String> {
+    let marker = aimux_home.join(TEST_ISOLATION_MARKER);
+    match marker.try_exists() {
+        Ok(true) => {}
+        Ok(false) => {
+            return Some(format!(
+                "test isolation marker disappeared: {}",
+                marker.display()
+            ));
+        }
+        Err(error) => {
+            log_lifecycle_always(
+                "test isolation marker probe failed",
+                process_label,
+                Some(json!({ "marker": marker.to_string_lossy(), "error": error.to_string() })),
+            );
+            return None;
+        }
+    }
+    match pid_alive(lease.owner_pid) {
+        Ok(true) => None,
+        Ok(false) => Some(format!(
+            "test isolation owner pid {} exited",
+            lease.owner_pid
+        )),
+        Err(error) => {
+            log_lifecycle_always(
+                "test isolation owner probe failed",
+                process_label,
+                Some(json!({ "ownerPid": lease.owner_pid, "error": error })),
+            );
+            None
+        }
+    }
 }
 
 pub fn mark_daemon_test_harness_request(headers: &mut BTreeMap<String, String>) {

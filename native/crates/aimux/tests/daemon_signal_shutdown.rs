@@ -137,6 +137,59 @@ fn daemon_sighup_preserves_project_service_children_for_restart() {
     }
 }
 
+#[test]
+fn daemon_exits_when_test_isolation_owner_exits() {
+    let isolation = TestIsolation::new("daemon-test-owner-exit");
+    let mut owner = Command::new("sleep")
+        .arg("60")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn test owner");
+    write_test_isolation_marker(isolation.aimux_home(), owner.id());
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_aimux"));
+    let mut daemon = isolation
+        .apply_to_command(&mut daemon)
+        .args(["daemon", "run"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_daemon_health(isolation.daemon_port());
+
+    signal_pid(owner.id(), libc::SIGTERM);
+    wait_for_child_exit(&mut owner, "test owner");
+    wait_for_child_exit(&mut daemon, "daemon after test owner exit");
+    assert_daemon_info_cleared(isolation.aimux_home().join("daemon/daemon.json"));
+}
+
+#[test]
+fn daemon_without_test_isolation_lease_is_not_reaped_by_watchdog() {
+    let isolation = TestIsolation::new("daemon-no-test-lease");
+    fs::remove_file(
+        isolation
+            .aimux_home()
+            .join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+    )
+    .expect("remove test isolation marker");
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_aimux"));
+    let mut daemon = isolation
+        .apply_to_command(&mut daemon)
+        .args(["daemon", "run"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_daemon_health(isolation.daemon_port());
+    std::thread::sleep(Duration::from_millis(1200));
+    wait_for_daemon_health(isolation.daemon_port());
+
+    signal_pid(daemon.id(), libc::SIGTERM);
+    wait_for_child_exit(&mut daemon, "legitimate daemon");
+}
+
 fn wait_for_daemon_health(port: u16) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -157,6 +210,14 @@ fn wait_for_daemon_health(port: u16) {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn write_test_isolation_marker(aimux_home: &std::path::Path, owner_pid: u32) {
+    fs::write(
+        aimux_home.join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+        format!(r#"{{"kind":"cargo-test","ownerPid":{owner_pid}}}"#),
+    )
+    .expect("write isolated aimux home marker");
 }
 
 fn wait_for_project_service_pids(isolation: &TestIsolation) -> Vec<u32> {
