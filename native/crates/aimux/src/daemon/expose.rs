@@ -287,7 +287,7 @@ pub struct SystemDaemonExposeFocusRuntime;
 
 impl DaemonExposeFocusRuntime for SystemDaemonExposeFocusRuntime {
     fn live_window_ids(&mut self) -> Result<BTreeSet<String>, String> {
-        crate::project_service::agents::try_live_window_ids_for_session_projection(
+        crate::project_service::agents::try_cached_live_window_ids_for_session_projection(
             "daemon-expose-focus",
         )
     }
@@ -582,7 +582,7 @@ pub fn list_all_projects_expose_items(
     session_prefix_for_project: impl Fn(&str) -> String,
 ) -> Result<Vec<crate::project_service::switchable_agents::SwitchableAgentItem>, String> {
     let live_window_ids =
-        match crate::project_service::agents::try_live_window_ids_for_session_projection(
+        match crate::project_service::agents::try_cached_live_window_ids_for_session_projection(
             "daemon-global-expose-items",
         ) {
             Ok(live_window_ids) => live_window_ids,

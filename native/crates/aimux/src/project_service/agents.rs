@@ -39,6 +39,12 @@ struct LiveWindowIdsQueryCacheEntry {
 }
 
 #[derive(Clone, Copy)]
+enum LiveWindowIdsQueryCachePolicy {
+    AllowCached,
+    RequireFresh,
+}
+
+#[derive(Clone, Copy)]
 pub enum LiveWindowIdsProjection<'a> {
     Known(&'a BTreeSet<String>),
     Unavailable(&'a str),
@@ -109,9 +115,23 @@ pub fn live_services_with_window_projection(
 pub fn try_live_window_ids_for_session_projection(
     surface: &str,
 ) -> Result<BTreeSet<String>, String> {
-    if let Some(result) = cached_live_window_ids_query() {
+    if let Some(result) = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::RequireFresh)
+    {
         return result;
     }
+    query_live_window_ids_for_session_projection(surface)
+}
+
+pub fn try_cached_live_window_ids_for_session_projection(
+    surface: &str,
+) -> Result<BTreeSet<String>, String> {
+    if let Some(result) = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::AllowCached) {
+        return result;
+    }
+    query_live_window_ids_for_session_projection(surface)
+}
+
+fn query_live_window_ids_for_session_projection(surface: &str) -> Result<BTreeSet<String>, String> {
     let result = match crate::tmux::TmuxRuntimeManager::new().try_live_window_ids() {
         Ok(live_window_ids) => Ok(live_window_ids),
         Err(error) => {
@@ -126,9 +146,25 @@ pub fn try_live_window_ids_for_session_projection(
 pub async fn try_live_window_ids_for_session_projection_async(
     surface: &str,
 ) -> Result<BTreeSet<String>, String> {
-    if let Some(result) = cached_live_window_ids_query() {
+    if let Some(result) = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::RequireFresh)
+    {
         return result;
     }
+    query_live_window_ids_for_session_projection_async(surface).await
+}
+
+pub async fn try_cached_live_window_ids_for_session_projection_async(
+    surface: &str,
+) -> Result<BTreeSet<String>, String> {
+    if let Some(result) = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::AllowCached) {
+        return result;
+    }
+    query_live_window_ids_for_session_projection_async(surface).await
+}
+
+async fn query_live_window_ids_for_session_projection_async(
+    surface: &str,
+) -> Result<BTreeSet<String>, String> {
     let mut command = crate::tmux::tmux_command_from_env();
     command.args(crate::tmux::list_all_window_ids_argv());
     let output = command
@@ -178,7 +214,12 @@ pub async fn try_live_window_ids_for_session_projection_async(
     result
 }
 
-fn cached_live_window_ids_query() -> Option<Result<BTreeSet<String>, String>> {
+fn cached_live_window_ids_query(
+    policy: LiveWindowIdsQueryCachePolicy,
+) -> Option<Result<BTreeSet<String>, String>> {
+    if matches!(policy, LiveWindowIdsQueryCachePolicy::RequireFresh) {
+        return None;
+    }
     let cache = LIVE_WINDOW_IDS_QUERY_CACHE.get_or_init(|| Mutex::new(None));
     let mut cache = cache.lock().ok()?;
     let entry = cache.as_ref()?;
@@ -965,7 +1006,8 @@ mod tests {
         clear_live_window_ids_query_cache_for_tests();
         store_live_window_ids_query(Err("tmux socket busy".to_owned()));
 
-        let cached = cached_live_window_ids_query().expect("cached result");
+        let cached = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::AllowCached)
+            .expect("cached result");
 
         assert_eq!(cached, Err("tmux socket busy".to_owned()));
         clear_live_window_ids_query_cache_for_tests();
@@ -976,12 +1018,31 @@ mod tests {
         clear_live_window_ids_query_cache_for_tests();
         store_live_window_ids_query(Ok(BTreeSet::from(["@1".to_owned(), "@2".to_owned()])));
 
-        let cached = cached_live_window_ids_query().expect("cached result");
+        let cached = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::AllowCached)
+            .expect("cached result");
 
         assert_eq!(
             cached,
             Ok(BTreeSet::from(["@1".to_owned(), "@2".to_owned()]))
         );
+        clear_live_window_ids_query_cache_for_tests();
+    }
+
+    #[test]
+    fn live_window_ids_query_cache_is_opt_in_for_authoritative_reads() {
+        clear_live_window_ids_query_cache_for_tests();
+        store_live_window_ids_query(Ok(BTreeSet::from(["@cached".to_owned()])));
+
+        assert_eq!(
+            cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::AllowCached)
+                .expect("cached result"),
+            Ok(BTreeSet::from(["@cached".to_owned()]))
+        );
+        assert!(
+            cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::RequireFresh).is_none(),
+            "authoritative inventory reads must not reuse a previous successful tmux query"
+        );
+
         clear_live_window_ids_query_cache_for_tests();
     }
 

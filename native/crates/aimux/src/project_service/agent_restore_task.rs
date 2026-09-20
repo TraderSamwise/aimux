@@ -24,7 +24,7 @@ use crate::runtime_topology::{
 use crate::team_contract::{is_project_control_session, session_with_stored_control_flags};
 
 use super::agents::{
-    session_is_backed_by_live_window, try_live_window_ids_for_session_projection_async,
+    session_is_backed_by_live_window, try_cached_live_window_ids_for_session_projection_async,
 };
 use super::lifecycle::{
     derive_agent_restore_offer, record_last_online_agents, restore_now_iso, restore_project_id,
@@ -60,7 +60,9 @@ impl LiveWindowSource for TmuxLiveWindowSource {
         &'a mut self,
         surface: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, String>> + Send + 'a>> {
-        Box::pin(async move { try_live_window_ids_for_session_projection_async(surface).await })
+        Box::pin(
+            async move { try_cached_live_window_ids_for_session_projection_async(surface).await },
+        )
     }
 }
 
