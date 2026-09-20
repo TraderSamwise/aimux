@@ -68,6 +68,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
@@ -486,6 +487,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
@@ -866,6 +868,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
@@ -1262,6 +1265,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
@@ -1666,6 +1670,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
@@ -2108,6 +2113,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
@@ -2552,6 +2558,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
@@ -2974,6 +2981,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
@@ -3392,6 +3400,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },
@@ -3474,6 +3483,7 @@
               "{\"home\":\"<aimux-home>\",\"port\":\"54321\"}"
             ]
           },
+          { "args": ["set-environment", "-t", "aimux-mobile-078d0ecd20ec", "AIMUX_TMUX_BIN", "<tmux-bin>"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix", "C-a"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "prefix2", "C-b"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "mouse", "on"] },

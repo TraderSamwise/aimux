@@ -101,6 +101,7 @@ fn is_mutating_tmux_command(program: &str, args: &[String]) -> bool {
                     | "refresh-client"
                     | "rename-session"
                     | "respawn-window"
+                    | "set-environment"
                     | "set-hook"
                     | "set-option"
                     | "set-window-option"

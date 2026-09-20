@@ -4,6 +4,7 @@ use aimux::tmux::{
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 const CONTRACT: &str =
     include_str!("../../../../../testdata/contracts/v1/tmux/runtime-session-lifecycle.json");
@@ -287,5 +288,20 @@ fn normalize_text(text: &str) -> String {
         }
     }
     output.push_str(rest);
-    output
+    replace_tmux_bin(&output)
+}
+
+/// The resolved tmux binary is an absolute host path, so the recorded contract
+/// stores a placeholder instead.
+fn replace_tmux_bin(text: &str) -> String {
+    static TMUX_BIN: OnceLock<Option<String>> = OnceLock::new();
+    let tmux_bin = TMUX_BIN.get_or_init(|| {
+        aimux::tmux::tmux_program_from_env()
+            .ok()
+            .map(|program| program.to_string_lossy().into_owned())
+    });
+    match tmux_bin {
+        Some(tmux_bin) => text.replace(tmux_bin.as_str(), "<tmux-bin>"),
+        None => text.to_owned(),
+    }
 }
