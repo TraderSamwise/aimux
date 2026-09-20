@@ -50,6 +50,7 @@ const copiedScripts = [
   "scripts/post-commit-hook.sh",
   "scripts/pre-commit.sh",
   "scripts/pre-push-hook.sh",
+  "scripts/run-yarn.mjs",
 ];
 
 const copiedHooks = [".husky/commit-msg", ".husky/post-commit", ".husky/pre-commit", ".husky/pre-push"];
@@ -82,7 +83,7 @@ function setupRepo() {
         "native:fmt:staged": stagedFmtCommand,
         "hook:attest": hookAttestCommand,
         typecheck: "node -e \"\"",
-        "verify:push": "yarn typecheck && yarn hook:attest",
+        "verify:push": "node scripts/run-yarn.mjs typecheck && node scripts/run-yarn.mjs hook:attest",
       },
     }),
   );
@@ -162,6 +163,48 @@ exit 0
   chmodSync(rustfmtWrapper, 0o755);
 
   const yarnWrapper = join(root, "bin/yarn");
+  const yarnCli = join(root, "bin/yarn-cli.mjs");
+  writeFileSync(
+    yarnCli,
+    `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+const args = process.argv.slice(2);
+appendFileSync(process.env.YARN_LOG, process.cwd() + "|" + args.join(" ") + "\\n");
+switch (args[0]) {
+  case "native:fmt:staged":
+    process.exit(spawnSync("bash", ["scripts/check-staged-rustfmt.sh"], { stdio: "inherit" }).status ?? 1);
+    break;
+  case "typecheck":
+    if (process.cwd().endsWith("aimux-index-typecheck-fixture")) {
+      process.exit(0);
+    }
+    process.exit(
+      spawnSync("bash", [
+        "-lc",
+        "[ -f src/foreign.ts ] && grep -q UNSTAGED_TYPE_ERROR src/foreign.ts && exit 42 || exit 0",
+      ], { stdio: "inherit" }).status ?? 1,
+    );
+    break;
+  case "hook:attest":
+    process.exit(spawnSync("bash", ["scripts/check-commit-hook-attestations.sh"], { stdio: "inherit" }).status ?? 1);
+    break;
+  case "verify:push":
+    process.exit(
+      spawnSync("bash", ["scripts/check-commit-hook-attestations.sh", process.env.AIMUX_HOOK_ATTESTATION_RANGE ?? ""], {
+        stdio: "inherit",
+      }).status ?? 1,
+    );
+    break;
+  default:
+    console.error("unexpected yarn command: " + args.join(" "));
+    process.exit(127);
+}
+`,
+  );
+  chmodSync(yarnCli, 0o755);
+
   writeFileSync(
     yarnWrapper,
     `#!/bin/sh
@@ -244,6 +287,7 @@ function hookEnv(root, realGit, extra = {}) {
     LINT_STAGED_LOG: join(root, "lint-staged.log"),
     REAL_GIT_BIN: realGit,
     YARN_LOG: join(root, "yarn.log"),
+    AIMUX_YARN_CLI: join(root, "bin/yarn-cli.mjs"),
     CARGO_LOG: join(root, "cargo.log"),
     ...extra,
   };
