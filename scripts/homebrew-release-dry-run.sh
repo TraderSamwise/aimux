@@ -20,6 +20,8 @@ Options:
   --version VERSION       Staging version used in generated formula metadata
   --staging-dir DIR       Directory for generated formulas and proof artifacts
   --staging-tap TAP       Temporary tap name, default aimux/dry-run-<pid>
+  --bottle-dir DIR        Directory containing aimux.bottles.tsv files
+  --bottle-root-url URL   URL prefix for bottles, default formula asset URL root
   --host-only             Exercise only the current platform's full/local assets
   --live-install          Install/uninstall staged formulas in this Homebrew prefix
   --dependency-prep-only  Prepare formula dependencies, then exit before install
@@ -279,6 +281,8 @@ HOST_ONLY=0
 STAGING_TAP="aimux/dry-run-$$"
 SKIP_ASSET_VERIFICATION=0
 SKIP_DOCTOR_PROOF=0
+BOTTLE_DIR=""
+BOTTLE_ROOT_URL=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -300,6 +304,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --staging-tap)
       STAGING_TAP="${2:-}"
+      shift 2
+      ;;
+    --bottle-dir)
+      BOTTLE_DIR="${2:-}"
+      shift 2
+      ;;
+    --bottle-root-url)
+      BOTTLE_ROOT_URL="${2:-}"
       shift 2
       ;;
     --host-only)
@@ -447,6 +459,11 @@ FORMULA_DIR="$TAP_REPO/Formula"
 
 export AIMUX_HOMEBREW_FORMULA_DIR="$FORMULA_DIR"
 export AIMUX_HOMEBREW_BASE_URL="file://$RELEASE_DIR"
+if [ -n "$BOTTLE_DIR" ]; then
+  [ -d "$BOTTLE_DIR" ] || fail "missing Homebrew bottle metadata directory: $BOTTLE_DIR"
+  export AIMUX_HOMEBREW_BOTTLE_DIR="$BOTTLE_DIR"
+  export AIMUX_HOMEBREW_BOTTLE_ROOT_URL="${BOTTLE_ROOT_URL:-"file://$RELEASE_DIR"}"
+fi
 export TAG VERSION
 export DARWIN_ARM64="$(sha_for_or_placeholder aimux-darwin-arm64.tar.gz "$HOST_FULL_ASSET")"
 export DARWIN_X64="$(sha_for_or_placeholder aimux-darwin-x64.tar.gz "$HOST_FULL_ASSET")"

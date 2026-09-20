@@ -408,10 +408,101 @@ jobs:
 
       - run: npm publish --access public --provenance
 
+  homebrew-bottles:
+    name: Build Homebrew bottles
+    runs-on: ${{ matrix.runner }}
+    needs: verify-release-assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - formula: aimux
+            runner: macos-15-intel
+          - formula: aimux-local
+            runner: macos-15-intel
+          - formula: aimux
+            runner: macos-14
+          - formula: aimux-local
+            runner: macos-14
+
+    steps:
+      - name: Checkout aimux
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Resolve version
+        id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release sha256 files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          OWNER_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p sha
+          for a in \
+            aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
+            aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
+          do
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "${a}.tar.gz.sha256" --dir sha --clobber
+          done
+
+      - name: Build Homebrew bottle
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          AIMUX_HOMEBREW_BOTTLE_ROOT_URL: https://github.com/TraderSamwise/aimux/releases/download/${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          extract() {
+            awk '{print $1}' "sha/$1.tar.gz.sha256"
+          }
+          export DARWIN_ARM64="$(extract aimux-darwin-arm64)"
+          export DARWIN_X64="$(extract aimux-darwin-x64)"
+          export LINUX_ARM64="$(extract aimux-linux-arm64)"
+          export LINUX_X64="$(extract aimux-linux-x64)"
+          export LOCAL_DARWIN_ARM64="$(extract aimux-local-darwin-arm64)"
+          export LOCAL_DARWIN_X64="$(extract aimux-local-darwin-x64)"
+          export LOCAL_LINUX_ARM64="$(extract aimux-local-linux-arm64)"
+          export LOCAL_LINUX_X64="$(extract aimux-local-linux-x64)"
+          scripts/build-homebrew-bottle.sh "${{ matrix.formula }}"
+          tag="$(awk -F '\t' 'NR == 1 { print $1 }' "homebrew-bottles/${{ matrix.formula }}.bottles.tsv")"
+          mv "homebrew-bottles/${{ matrix.formula }}.bottles.tsv" \
+            "homebrew-bottles/${{ matrix.formula }}-${tag}.bottles.tsv"
+
+      - name: Upload Homebrew bottle
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            homebrew-bottles/*.bottle.tar.gz
+            homebrew-bottles/*.bottle.json
+            homebrew-bottles/*.bottles.tsv
+
+      - name: Attest Homebrew bottle
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            homebrew-bottles/*.bottle.tar.gz
+            homebrew-bottles/*.bottle.json
+            homebrew-bottles/*.bottles.tsv
+
   update-homebrew-tap:
     name: Update Homebrew tap
     runs-on: macos-15-intel
-    needs: verify-release-assets
+    needs:
+      - verify-release-assets
+      - homebrew-bottles
     steps:
       - name: Checkout aimux
         uses: actions/checkout@v4
@@ -425,20 +516,29 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Download Homebrew gate assets and sha256 files
+      - name: Download Homebrew gate assets, sha256 files, and bottle metadata
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
           OWNER_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          mkdir -p sha homebrew-gate-release
+          mkdir -p sha homebrew-gate-release bottle-metadata-parts bottle-metadata
           for a in \
             aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
             aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sha256" --dir sha --clobber
+          done
+          gh release download "$TAG" --repo "$OWNER_REPO" \
+            --pattern "*.bottles.tsv" --dir bottle-metadata-parts --clobber
+          for formula in aimux aimux-local; do
+            if ! compgen -G "bottle-metadata-parts/${formula}-*.bottles.tsv" >/dev/null; then
+              echo "Missing Homebrew bottle metadata for ${formula}" >&2
+              exit 1
+            fi
+            cat "bottle-metadata-parts/${formula}-"*.bottles.tsv > "bottle-metadata/${formula}.bottles.tsv"
           done
           for a in aimux-darwin-x64 aimux-local-darwin-x64; do
             gh release download "$TAG" --repo "$OWNER_REPO" \
@@ -480,6 +580,8 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
           AIMUX_HOMEBREW_FORMULA_DIR: tap/Formula
+          AIMUX_HOMEBREW_BOTTLE_DIR: bottle-metadata
+          AIMUX_HOMEBREW_BOTTLE_ROOT_URL: https://github.com/TraderSamwise/aimux/releases/download/${{ steps.meta.outputs.tag }}
           DARWIN_ARM64: ${{ steps.sha.outputs.darwin_arm64 }}
           DARWIN_X64: ${{ steps.sha.outputs.darwin_x64 }}
           LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
@@ -506,6 +608,8 @@ jobs:
             --skip-bad-sha-proof \
             --tag "${{ steps.meta.outputs.tag }}" \
             --version "${{ steps.meta.outputs.version }}" \
+            --bottle-dir bottle-metadata \
+            --bottle-root-url "https://github.com/TraderSamwise/aimux/releases/download/${{ steps.meta.outputs.tag }}" \
             --staging-tap "aimux/release-dependency-prep-${{ github.run_id }}-${{ github.run_attempt }}"
 
       - name: Gate Homebrew installed command
@@ -523,6 +627,8 @@ jobs:
             --skip-bad-sha-proof \
             --tag "${{ steps.meta.outputs.tag }}" \
             --version "${{ steps.meta.outputs.version }}" \
+            --bottle-dir bottle-metadata \
+            --bottle-root-url "https://github.com/TraderSamwise/aimux/releases/download/${{ steps.meta.outputs.tag }}" \
             --staging-tap "aimux/release-tap-gate-${{ github.run_id }}-${{ github.run_attempt }}"
 
       - name: Commit and push

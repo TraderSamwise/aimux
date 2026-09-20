@@ -1152,6 +1152,113 @@ describe("verify-release-asset-set.sh", () => {
     }
   }, 30000);
 
+  it("renders Homebrew bottle blocks from bottle metadata while preserving source assets", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-render-"));
+    try {
+      const formulaDir = join(root, "Formula");
+      const bottleDir = join(root, "bottles");
+      mkdirSync(bottleDir, { recursive: true });
+      writeFileSync(
+        join(bottleDir, "aimux.bottles.tsv"),
+        [
+          [
+            "arm64_golden_gate",
+            "any_skip_relocation",
+            "a".repeat(64),
+            "aimux-0.1.45.arm64_golden_gate.bottle.tar.gz",
+            "aimux--0.1.45.arm64_golden_gate.bottle.tar.gz",
+          ].join("\t"),
+          [
+            "sequoia",
+            "any_skip_relocation",
+            "b".repeat(64),
+            "aimux-0.1.45.sequoia.bottle.tar.gz",
+            "aimux--0.1.45.sequoia.bottle.tar.gz",
+          ].join("\t"),
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        join(bottleDir, "aimux-local.bottles.tsv"),
+        [
+          [
+            "arm64_golden_gate",
+            "any_skip_relocation",
+            "c".repeat(64),
+            "aimux-local-0.1.45.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local--0.1.45.arm64_golden_gate.bottle.tar.gz",
+          ].join("\t"),
+          "",
+        ].join("\n"),
+      );
+
+      runOk("bash", [join(repoRoot, "scripts/render-homebrew-formulas.sh")], {
+        env: {
+          TAG: "v0.1.45",
+          VERSION: "0.1.45",
+          AIMUX_HOMEBREW_FORMULA_DIR: formulaDir,
+          AIMUX_HOMEBREW_BASE_URL: "https://example.test/source",
+          AIMUX_HOMEBREW_BOTTLE_DIR: bottleDir,
+          AIMUX_HOMEBREW_BOTTLE_ROOT_URL: "https://example.test/bottles",
+          DARWIN_ARM64: "1".repeat(64),
+          DARWIN_X64: "2".repeat(64),
+          LINUX_ARM64: "3".repeat(64),
+          LINUX_X64: "4".repeat(64),
+          LOCAL_DARWIN_ARM64: "5".repeat(64),
+          LOCAL_DARWIN_X64: "6".repeat(64),
+          LOCAL_LINUX_ARM64: "7".repeat(64),
+          LOCAL_LINUX_X64: "8".repeat(64),
+        },
+      });
+
+      const fullFormula = readFileSync(join(formulaDir, "aimux.rb"), "utf8");
+      const localFormula = readFileSync(join(formulaDir, "aimux-local.rb"), "utf8");
+      expect(fullFormula).toContain("bottle do");
+      expect(fullFormula).toContain('root_url "https://example.test/bottles"');
+      expect(fullFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${"a".repeat(64)}"`);
+      expect(fullFormula).toContain(`sha256 cellar: :any_skip_relocation, sequoia: "${"b".repeat(64)}"`);
+      expect(fullFormula).toContain('url "https://example.test/source/aimux-darwin-arm64.tar.gz"');
+      expect(localFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${"c".repeat(64)}"`);
+      expect(localFormula).toContain('url "https://example.test/source/aimux-local-darwin-arm64.tar.gz"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails visibly when Homebrew bottle metadata is corrupt", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-render-"));
+    try {
+      const formulaDir = join(root, "Formula");
+      const bottleDir = join(root, "bottles");
+      mkdirSync(bottleDir, { recursive: true });
+      writeFileSync(join(bottleDir, "aimux.bottles.tsv"), "arm64_golden_gate\tany_skip_relocation\tnot-a-sha\n");
+      writeFileSync(join(bottleDir, "aimux-local.bottles.tsv"), `arm64_golden_gate\tany_skip_relocation\t${"c".repeat(64)}\n`);
+
+      const result = run("bash", [join(repoRoot, "scripts/render-homebrew-formulas.sh")], {
+        env: {
+          TAG: "v0.1.45",
+          VERSION: "0.1.45",
+          AIMUX_HOMEBREW_FORMULA_DIR: formulaDir,
+          AIMUX_HOMEBREW_BASE_URL: "https://example.test/source",
+          AIMUX_HOMEBREW_BOTTLE_DIR: bottleDir,
+          DARWIN_ARM64: "1".repeat(64),
+          DARWIN_X64: "2".repeat(64),
+          LINUX_ARM64: "3".repeat(64),
+          LINUX_X64: "4".repeat(64),
+          LOCAL_DARWIN_ARM64: "5".repeat(64),
+          LOCAL_DARWIN_X64: "6".repeat(64),
+          LOCAL_LINUX_ARM64: "7".repeat(64),
+          LOCAL_LINUX_X64: "8".repeat(64),
+        },
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("invalid bottle sha256 for aimux arm64_golden_gate: not-a-sha");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails the formula gate when the installed aimux wrapper is broken", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
     try {
@@ -1337,7 +1444,15 @@ describe("release workflow", () => {
     const npmJob = workflow.slice(workflow.indexOf("  publish-npm:"), workflow.indexOf("  update-homebrew-tap:"));
     const tapJob = workflow.slice(workflow.indexOf("  update-homebrew-tap:"));
     expect(npmJob).toContain("needs: verify-release-assets");
-    expect(tapJob).toContain("needs: verify-release-assets");
+    expect(workflow).toContain("  homebrew-bottles:");
+    expect(workflow).toContain("scripts/build-homebrew-bottle.sh");
+    expect(workflow).toContain("homebrew-bottles/*.bottle.tar.gz");
+    expect(workflow).toContain("homebrew-bottles/*.bottles.tsv");
+    expect(tapJob).toContain("- homebrew-bottles");
+    expect(tapJob).toContain("AIMUX_HOMEBREW_BOTTLE_DIR: bottle-metadata");
+    expect(tapJob).toContain("--pattern \"*.bottles.tsv\"");
+    expect(tapJob).toContain("--bottle-dir bottle-metadata");
+    expect(tapJob).toContain("--bottle-root-url \"https://github.com/TraderSamwise/aimux/releases/download/${{ steps.meta.outputs.tag }}\"");
     expect(packageJson.scripts["release:homebrew:dry-run"]).toBe("bash scripts/homebrew-release-dry-run.sh");
     expect(workflow).toContain("bash scripts/render-homebrew-formulas.sh");
     expect(workflow).toContain("- name: Prepare Homebrew formula dependencies");

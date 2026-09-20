@@ -19,6 +19,9 @@ Required environment:
 Optional environment:
   AIMUX_HOMEBREW_FORMULA_DIR  Output directory, default tap/Formula
   AIMUX_HOMEBREW_BASE_URL     URL prefix for assets, default GitHub release URL
+  AIMUX_HOMEBREW_BOTTLE_DIR   Directory containing aimux.bottles.tsv files
+  AIMUX_HOMEBREW_BOTTLE_ROOT_URL
+                               URL prefix for bottles, default AIMUX_HOMEBREW_BASE_URL
 USAGE
 }
 
@@ -54,8 +57,70 @@ done
 FORMULA_DIR="${AIMUX_HOMEBREW_FORMULA_DIR:-tap/Formula}"
 BASE_URL="${AIMUX_HOMEBREW_BASE_URL:-"https://github.com/TraderSamwise/aimux/releases/download/$TAG"}"
 BASE_URL="${BASE_URL%/}"
+BOTTLE_ROOT_URL="${AIMUX_HOMEBREW_BOTTLE_ROOT_URL:-"$BASE_URL"}"
+BOTTLE_ROOT_URL="${BOTTLE_ROOT_URL%/}"
 
 mkdir -p "$FORMULA_DIR"
+
+render_ruby_cellar() {
+  local cellar="$1"
+  case "$cellar" in
+    any | :any)
+      printf ':any'
+      ;;
+    any_skip_relocation | :any_skip_relocation)
+      printf ':any_skip_relocation'
+      ;;
+    /*)
+      printf '"%s"' "$cellar"
+      ;;
+    *)
+      fail "unsupported bottle cellar value: $cellar"
+      ;;
+  esac
+}
+
+render_bottle_block() {
+  local formula="$1"
+  local bottle_dir="${AIMUX_HOMEBREW_BOTTLE_DIR:-}"
+  local metadata_file count line tag cellar sha filename local_filename ruby_cellar
+  if [ -z "$bottle_dir" ]; then
+    return 0
+  fi
+  metadata_file="$bottle_dir/$formula.bottles.tsv"
+  if [ ! -f "$metadata_file" ]; then
+    fail "missing Homebrew bottle metadata for $formula: $metadata_file"
+  fi
+  count=0
+  printf '\n  bottle do\n'
+  printf '    root_url "%s"\n' "$BOTTLE_ROOT_URL"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      '' | '#'*)
+        continue
+        ;;
+    esac
+    IFS="$(printf '\t')" read -r tag cellar sha filename local_filename <<EOF
+$line
+EOF
+    if ! printf '%s\n' "$tag" | grep -Eq '^[A-Za-z0-9_]+$'; then
+      fail "invalid bottle tag for $formula: $tag"
+    fi
+    if ! printf '%s\n' "$sha" | grep -Eq '^[a-fA-F0-9]{64}$'; then
+      fail "invalid bottle sha256 for $formula $tag: $sha"
+    fi
+    ruby_cellar="$(render_ruby_cellar "$cellar")"
+    printf '    sha256 cellar: %s, %s: "%s"\n' "$ruby_cellar" "$tag" "$sha"
+    count=$((count + 1))
+  done < "$metadata_file"
+  if [ "$count" -eq 0 ]; then
+    fail "empty Homebrew bottle metadata for $formula: $metadata_file"
+  fi
+  printf '  end\n'
+}
+
+AIMUX_BOTTLE_BLOCK="$(render_bottle_block aimux)" || exit $?
+AIMUX_LOCAL_BOTTLE_BLOCK="$(render_bottle_block aimux-local)" || exit $?
 
 cat > "$FORMULA_DIR/aimux.rb" <<EOF
 class Aimux < Formula
@@ -63,6 +128,7 @@ class Aimux < Formula
   homepage "https://aimux.app"
   version "${VERSION}"
   license "MIT"
+${AIMUX_BOTTLE_BLOCK}
 
   on_macos do
     on_arm do
@@ -105,6 +171,7 @@ class AimuxLocal < Formula
   homepage "https://aimux.app"
   version "${VERSION}"
   license "MIT"
+${AIMUX_LOCAL_BOTTLE_BLOCK}
 
   on_macos do
     on_arm do
