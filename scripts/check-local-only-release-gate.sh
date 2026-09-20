@@ -34,9 +34,12 @@ require_job_needs() {
   local dependency="$2"
   local workflow="$ROOT_DIR/.github/workflows/release.yml"
   if ! awk -v job="$job" -v dep="$dependency" '
-    $0 == "  " job ":" { in_job = 1; next }
-    in_job && $0 ~ /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    $0 == "  " job ":" { in_job = 1; in_needs = 0; next }
+    in_job && $0 ~ /^  [A-Za-z0-9_-]+:/ { in_job = 0; in_needs = 0 }
     in_job && index($0, "needs: " dep) { found = 1 }
+    in_job && $0 ~ /^    needs:[[:space:]]*$/ { in_needs = 1; next }
+    in_needs && $0 ~ /^      - / && index($0, "- " dep) { found = 1 }
+    in_needs && $0 !~ /^      - / && $0 !~ /^    needs:[[:space:]]*$/ { in_needs = 0 }
     END { exit found ? 0 : 1 }
   ' "$workflow"; then
     fail_later ".github/workflows/release.yml job $job is missing needs: $dependency"
@@ -95,6 +98,11 @@ check_release_provenance_gate() {
 }
 
 check_source_local_only_gates() {
+  require_file "scripts/check-local-network-surface.mjs" "local network surface gate"
+  require_contains "scripts/check-local-network-surface.mjs" "AUDITED_LOCAL_PACKAGE_IDENTITIES" "audited local dependency identity graph"
+  require_contains "scripts/check-local-network-surface.mjs" "cfg! compiles both branches" "remote-control cfg macro refusal message"
+  node "$ROOT_DIR/scripts/check-local-network-surface.mjs"
+
   require_contains "scripts/check-local-build-boundary.mjs" "attachments/" "project .aimux attachments ignore check"
   require_contains "scripts/check-local-build-boundary.mjs" "graveyard/" "project .aimux graveyard ignore check"
   require_contains "native/crates/aimux/src/config.rs" "attachments/" "project .aimux attachments ignore template"
