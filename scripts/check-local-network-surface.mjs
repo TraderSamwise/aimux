@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -91,6 +90,7 @@ let packageIdentitiesFile = null;
 let expectedPackageIdentitiesFile = null;
 let rootDependencyEdgesFile = null;
 let expectedRootDependencyEdgesFile = null;
+let cargoMetadataFile = null;
 let skipPackageIdentityCheck = false;
 
 for (let i = 0; i < args.length; i += 1) {
@@ -107,6 +107,8 @@ for (let i = 0; i < args.length; i += 1) {
     rootDependencyEdgesFile = resolve(args[++i]);
   } else if (arg === "--expected-root-dependency-edges-file") {
     expectedRootDependencyEdgesFile = resolve(args[++i]);
+  } else if (arg === "--cargo-metadata-file") {
+    cargoMetadataFile = resolve(args[++i]);
   } else if (arg === "--skip-package-identity-check") {
     skipPackageIdentityCheck = true;
   } else if (arg === "--write-current-package-identities") {
@@ -177,15 +179,12 @@ function collectCurrentPackageSurface() {
     };
   }
 
-  const metadata = spawnSync(
-    "cargo",
-    ["metadata", "--manifest-path", manifestPath, "--no-default-features", "--format-version=1"],
-    { cwd: sourceRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (metadata.status !== 0) {
-    throw new Error(`cargo metadata failed while checking local dependency identity:\n${metadata.stderr}`);
+  if (!cargoMetadataFile) {
+    throw new Error(
+      "cargo metadata was not provided. Run scripts/check-local-network-surface so Cargo execution stays outside the pure JS checker.",
+    );
   }
-  const parsed = JSON.parse(metadata.stdout);
+  const parsed = JSON.parse(readFileSync(cargoMetadataFile, "utf8"));
   const aimuxPackage = parsed.packages.find((pkg) => pkg.name === "aimux");
   if (!aimuxPackage) {
     throw new Error("cargo metadata did not include the aimux package");

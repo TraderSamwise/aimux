@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then
+  printf '%s must be run with bash\n' "$0" >&2
+  exit 2
+fi
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VOLTA_HOME="${VOLTA_HOME:-"$HOME/.volta"}"
+
+read_json_string() {
+  local key="$1"
+  sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$ROOT_DIR/package.json" | head -n 1
+}
+
+NODE_VERSION="${AIMUX_NODE_VERSION:-}"
+if [ -z "$NODE_VERSION" ] && [ -f "$ROOT_DIR/.nvmrc" ]; then
+  NODE_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/.nvmrc")"
+  NODE_VERSION="${NODE_VERSION#v}"
+fi
+
+YARN_VERSION="${AIMUX_YARN_VERSION:-}"
+if [ -z "$YARN_VERSION" ]; then
+  YARN_VERSION="$(read_json_string yarn)"
+fi
+YARN_VERSION="${YARN_VERSION:-1.22.21}"
+
+NODE_BIN="${AIMUX_NODE_BIN:-}"
+if [ -z "$NODE_BIN" ] && [ -n "$NODE_VERSION" ]; then
+  candidate="$VOLTA_HOME/tools/image/node/$NODE_VERSION/bin/node"
+  if [ -x "$candidate" ]; then
+    NODE_BIN="$candidate"
+  fi
+fi
+if [ -z "$NODE_BIN" ]; then
+  NODE_BIN="$(command -v node || true)"
+fi
+if [ -z "$NODE_BIN" ] || [ ! -x "$NODE_BIN" ]; then
+  printf 'unable to find executable node for run-yarn\n' >&2
+  exit 127
+fi
+
+YARN_CLI="${AIMUX_YARN_CLI:-}"
+if [ -z "$YARN_CLI" ]; then
+  candidate="$VOLTA_HOME/tools/image/yarn/$YARN_VERSION/lib/cli.js"
+  if [ -f "$candidate" ]; then
+    YARN_CLI="$candidate"
+  fi
+fi
+if [ -z "$YARN_CLI" ]; then
+  printf 'unable to find Yarn %s CLI at %s/tools/image/yarn/%s/lib/cli.js\n' \
+    "$YARN_VERSION" "$VOLTA_HOME" "$YARN_VERSION" >&2
+  exit 127
+fi
+if [ ! -f "$YARN_CLI" ]; then
+  printf 'Yarn CLI does not exist: %s\n' "$YARN_CLI" >&2
+  exit 127
+fi
+
+exec "$NODE_BIN" "$YARN_CLI" "$@"

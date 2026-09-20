@@ -15,9 +15,9 @@ describe("installed runtime gate wiring", () => {
 
     expect(packageJson.scripts?.["installed:gate"]).toBe("python3 scripts/installed-runtime-gate.py");
     expect(packageJson.scripts?.["installed:local-gate"]).toBe("python3 scripts/installed-runtime-gate.py --scenario local");
-    expect(packageJson.scripts?.["release:readiness"]).toContain("node scripts/run-yarn.mjs installed:gate");
-    expect(packageJson.scripts?.["release:readiness"]).toContain("node scripts/run-yarn.mjs installed:local-gate");
-    expect(packageJson.scripts?.verify).toBe("node scripts/run-yarn.mjs verify:fast");
+    expect(packageJson.scripts?.["release:readiness"]).toContain("scripts/run-yarn installed:gate");
+    expect(packageJson.scripts?.["release:readiness"]).toContain("scripts/run-yarn installed:local-gate");
+    expect(packageJson.scripts?.verify).toBe("scripts/run-yarn verify:fast");
   });
 
   it("documents all user-visible installed runtime checks", () => {

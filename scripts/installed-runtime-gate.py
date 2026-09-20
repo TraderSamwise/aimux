@@ -150,7 +150,7 @@ def build_release_asset(work: Path, variant: str = "full") -> Path:
         "CARGO_TARGET_DIR",
         installed_gate_cargo_target_dir(),
     )
-    run(["node", "scripts/run-yarn.mjs", "release:asset"], env=env, timeout=900)
+    run(["scripts/run-yarn", "release:asset"], env=env, timeout=900)
     pattern = "aimux-local-*.tar.gz" if variant == "local" else "aimux-*.tar.gz"
     assets = sorted(
         [

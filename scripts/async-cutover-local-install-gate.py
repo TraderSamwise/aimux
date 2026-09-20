@@ -598,7 +598,7 @@ def build_asset() -> tuple[StepResult, Path | None]:
     short_head = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
     env = cargo_env()
     env["AIMUX_RELEASE_VERSION"] = f"local-{short_head}-async-install-gate"
-    result = run_command("build release asset", ["node", "scripts/run-yarn.mjs", "release:asset"], env=env)
+    result = run_command("build release asset", ["scripts/run-yarn", "release:asset"], env=env)
     if result.returncode != 0:
         return result, None
     return result, newest_asset()
@@ -773,13 +773,13 @@ def main() -> int:
     if args.skip_verify_full:
         results.append(StepResult("verify:full", "skip", 0, {"reason": "--skip-verify-full"}))
     else:
-        results.append(run_command("verify:full", ["node", "scripts/run-yarn.mjs", "verify:full"], env=env))
+        results.append(run_command("verify:full", ["scripts/run-yarn", "verify:full"], env=env))
 
     if args.skip_async_gates:
         results.append(StepResult("async gates", "skip", 0, {"reason": "--skip-async-gates"}))
     else:
-        results.append(run_command("async blocking gate", ["node", "scripts/run-yarn.mjs", "audit:async-blocking"], env=env))
-        results.append(run_command("async seam gate", ["node", "scripts/run-yarn.mjs", "audit:async-seams"], env=env))
+        results.append(run_command("async blocking gate", ["scripts/run-yarn", "audit:async-blocking"], env=env))
+        results.append(run_command("async seam gate", ["scripts/run-yarn", "audit:async-seams"], env=env))
 
     if args.skip_ci:
         results.append(StepResult("ci status", "skip", 0, {"reason": "--skip-ci"}))

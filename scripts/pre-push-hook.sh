@@ -5,7 +5,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-node scripts/run-yarn.mjs verify:push
+scripts/run-yarn verify:push
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   if [ -z "${local_ref:-}" ] || [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then

@@ -50,7 +50,7 @@ const copiedScripts = [
   "scripts/post-commit-hook.sh",
   "scripts/pre-commit.sh",
   "scripts/pre-push-hook.sh",
-  "scripts/run-yarn.mjs",
+  "scripts/run-yarn",
 ];
 
 const copiedHooks = [".husky/commit-msg", ".husky/post-commit", ".husky/pre-commit", ".husky/pre-push"];
@@ -83,7 +83,7 @@ function setupRepo() {
         "native:fmt:staged": stagedFmtCommand,
         "hook:attest": hookAttestCommand,
         typecheck: "node -e \"\"",
-        "verify:push": "node scripts/run-yarn.mjs typecheck && node scripts/run-yarn.mjs hook:attest",
+        "verify:push": "scripts/run-yarn typecheck && scripts/run-yarn hook:attest",
       },
     }),
   );

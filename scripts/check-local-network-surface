@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then
+  printf '%s must be run with bash\n' "$0" >&2
+  exit 2
+fi
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_ROOT="$ROOT_DIR"
+MANIFEST_PATH="$ROOT_DIR/native/Cargo.toml"
+NEEDS_METADATA=1
+
+ARGS=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --source-root)
+      SOURCE_ROOT="$(cd "$2" && pwd)"
+      ARGS+=("$1" "$SOURCE_ROOT")
+      shift 2
+      ;;
+    --manifest-path)
+      MANIFEST_PATH="$2"
+      ARGS+=("$1" "$2")
+      shift 2
+      ;;
+    --package-identities-file|--skip-package-identity-check)
+      NEEDS_METADATA=0
+      ARGS+=("$1")
+      if [ "$1" = "--package-identities-file" ]; then
+        ARGS+=("$2")
+        shift 2
+      else
+        shift
+      fi
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ "$NEEDS_METADATA" -eq 0 ]; then
+  exec "$ROOT_DIR/scripts/run-yarn" node "$ROOT_DIR/scripts/check-local-network-surface.mjs" "${ARGS[@]}"
+fi
+
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aimux-local-network-surface.XXXXXX")"
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+METADATA="$TMP_DIR/cargo-metadata.json"
+cargo metadata --manifest-path "$MANIFEST_PATH" --no-default-features --format-version=1 >"$METADATA"
+exec "$ROOT_DIR/scripts/run-yarn" node "$ROOT_DIR/scripts/check-local-network-surface.mjs" "${ARGS[@]}" --cargo-metadata-file "$METADATA"

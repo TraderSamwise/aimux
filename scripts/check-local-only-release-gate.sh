@@ -99,9 +99,10 @@ check_release_provenance_gate() {
 
 check_source_local_only_gates() {
   require_file "scripts/check-local-network-surface.mjs" "local network surface gate"
+  require_file "scripts/check-local-network-surface" "local network surface launcher"
   require_contains "scripts/check-local-network-surface.mjs" "AUDITED_LOCAL_PACKAGE_IDENTITIES" "audited local dependency identity graph"
   require_contains "scripts/check-local-network-surface.mjs" "cfg! compiles both branches" "remote-control cfg macro refusal message"
-  node "$ROOT_DIR/scripts/check-local-network-surface.mjs"
+  "$ROOT_DIR/scripts/check-local-network-surface"
 
   require_contains "scripts/check-local-build-boundary.mjs" "attachments/" "project .aimux attachments ignore check"
   require_contains "scripts/check-local-build-boundary.mjs" "graveyard/" "project .aimux graveyard ignore check"

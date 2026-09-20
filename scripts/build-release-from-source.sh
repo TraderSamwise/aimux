@@ -119,7 +119,7 @@ printf 'Release directory: %s\n' "$RELEASE_DIR"
 printf 'Package profile: %s\n' "$AIMUX_PACKAGE_PROFILE"
 
 cd "$ROOT_DIR"
-node scripts/run-yarn.mjs release:asset
+scripts/run-yarn release:asset
 
 [ -f "$ASSET_PATH" ] || fail "expected archive was not produced: $ASSET_PATH"
 [ -f "$ASSET_PATH.sha256" ] || fail "expected checksum was not produced: $ASSET_PATH.sha256"

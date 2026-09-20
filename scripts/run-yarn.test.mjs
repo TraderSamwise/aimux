@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const runYarn = join(repoRoot, "scripts/run-yarn.mjs");
+const runYarn = join(repoRoot, "scripts/run-yarn");
 
 function runYarnCommand(args) {
-  return spawnSync(process.execPath, [runYarn, ...args], {
+  return spawnSync(runYarn, args, {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],

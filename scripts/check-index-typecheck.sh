@@ -45,4 +45,4 @@ link_dependency_dir node_modules
 link_dependency_dir relay/node_modules
 
 cd "$TMP_ROOT"
-node scripts/run-yarn.mjs typecheck
+scripts/run-yarn typecheck

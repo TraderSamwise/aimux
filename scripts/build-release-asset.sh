@@ -128,7 +128,7 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 if [ "$PACKAGE_PROFILE" = "full" ]; then
-  node scripts/run-yarn.mjs build:ui:local
+  scripts/run-yarn build:ui:local
 fi
 
 release_source_hash() {
