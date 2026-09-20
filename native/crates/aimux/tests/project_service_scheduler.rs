@@ -1685,6 +1685,7 @@ fn spawned_hot_task_keeps_running_when_alert_sink_blocks() {
     let hot_health = wait_for_scheduler_health(&handle, "spawned-hot", |task| task.hot)
         .expect("spawned scheduler recorded hot task");
     assert_eq!(hot_health.consecutive_hot_runs, 3);
+    wait_for_atomic_usize(&alerts, 1).expect("hot alert published");
     assert_eq!(
         alerts.load(Ordering::SeqCst),
         1,
@@ -2174,6 +2175,18 @@ fn wait_for_scheduler_health(
             .find(|task| task.name == name && predicate(task))
         {
             return Some(task);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+fn wait_for_atomic_usize(counter: &AtomicUsize, expected: usize) -> Option<usize> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(3) {
+        let value = counter.load(Ordering::SeqCst);
+        if value == expected {
+            return Some(value);
         }
         std::thread::sleep(Duration::from_millis(10));
     }
