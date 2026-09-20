@@ -7,7 +7,7 @@ use crate::daemon::scheduler::{
 use crate::daemon_projects::ProjectsRouteProject;
 use crate::daemon_state::load_metadata_state;
 use crate::paths::PathResolver;
-use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
+use crate::project_catalog::{hidden_project_tmp_dirs, try_list_registered_desktop_projects};
 use crate::project_service::agents::LiveWindowIdsProjection;
 use crate::project_service::expose_ordering::{
     ExposeOrderingOptions, ExposeSublabel, assign_worktree_tones, dashboard_worktree_order_paths,
@@ -609,9 +609,9 @@ fn list_all_projects_expose_items_with_live_window_projection(
         .list_projects()
         .map_err(|error| format!("failed to list projects: {error}"))?;
     let tmp_dirs = hidden_project_tmp_dirs(std::env::temp_dir());
-    let projects = list_registered_desktop_projects(&entries, &tmp_dirs, |entry| {
+    let projects = try_list_registered_desktop_projects(&entries, &tmp_dirs, |entry| {
         session_prefix_for_project(&entry.repo_root)
-    });
+    })?;
     let mut items = Vec::new();
     for project in projects {
         let project_state_dir = resolver.project_state_dir_for(&project.path);
