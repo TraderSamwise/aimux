@@ -374,6 +374,7 @@ mod tests {
     #[test]
     fn idle_topology_does_not_query_tmux_live_windows() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - sync test drives async restore-topology handler
         crate::async_runtime::process_runtime().block_on(async {
             let root = temp_root("agent-restore-idle");
             let project_root = root.join("repo");
@@ -422,6 +423,7 @@ mod tests {
     #[test]
     fn running_topology_still_queries_tmux_live_windows() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - sync test drives async restore-topology handler
         crate::async_runtime::process_runtime().block_on(async {
             let root = temp_root("agent-restore-running");
             let project_root = root.join("repo");
