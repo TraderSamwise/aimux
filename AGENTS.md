@@ -332,3 +332,30 @@ yarn version:bump-build production && yarn build:production
 OTA is for JavaScript and asset changes only. Use a native build when native
 dependencies, Expo plugins, permissions, icons, splash, build profiles, or
 native config changed.
+
+## Subprocess Churn
+
+Every process we spawn is assessed by the OS, and that cost lands on the
+developer's machine. A 1-second poll across N dashboards is N execs per second
+forever. A leaked daemon keeps paying it for days.
+
+- Resolve an external binary once per process and pass the absolute path to
+  children. A bare program name makes the OS walk `PATH` on every call; on a
+  developer Mac that is routinely a dozen failed execs before the hit.
+- Never retry a failed spawn on a tick. `ENOENT` does not fix itself: back off
+  and surface the error with what was searched. A silent retry loop is invisible
+  until it is a load average.
+- Shell helpers count. `rg 'Command::new("tmux")'` cannot see a bare `tmux` in a
+  `.sh` file, and scripts inherit the user's full interactive `PATH`.
+- Anything started detached — daemon, project service, dashboard — must be
+  reaped when its owner exits. Test harnesses leak all three. The lease is
+  `test-isolation.json` with `ownerPid`, and the guard keys on that owner, never
+  on a path: a guard written against `/tmp` misses worktree and install builds.
+- A running process cannot receive a fix. After installing, confirm the whole
+  fleet is on the new build before measuring anything.
+
+Measure the observable, not an internal counter. `sudo fs_usage -w -f exec` for
+a few seconds names the caller and shows whether each spawn succeeded; pid
+allocation over a window (`p1=$(sh -c 'echo $$')`, sleep, again) gives the
+system-wide rate. `yarn verify` does not catch this class — the idle spawn-rate
+gate does, so keep its budget honest instead of widening it.
