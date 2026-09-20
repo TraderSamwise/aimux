@@ -1002,6 +1002,7 @@ show_metadata_menu() {
   [ -n "$menu_session" ] || menu_session="$current_client_session"
   menu_client_tty="${live_client_tty-}"
   [ -n "$menu_client_tty" ] || menu_client_tty="$client_tty"
+  resolve_tmux_bin || return 1
   python3 - "$menu_scope" "$menu_title" "$project_root" "$current_path" "$current_window_id" "$script_dir/tmux-control.sh" "$project_state_dir" "$menu_session" "$menu_client_tty" "$current_window" "$pane_id" <<'PY'
 import json
 import os
@@ -1087,7 +1088,7 @@ for idx, item in enumerate(items[:len(keys)]):
 if len(args) <= 3:
     raise SystemExit(1)
 try:
-    subprocess.run(["tmux", *args], check=True)
+    subprocess.run([os.environ.get("AIMUX_TMUX_BIN", "tmux"), *args], check=True)
 except subprocess.CalledProcessError:
     raise SystemExit(1)
 PY
@@ -1110,10 +1111,12 @@ resolve_host_session_name() {
 resolve_local_target_from_tmux_metadata() {
   resolve_live_client || true
   host_session=$(resolve_host_session_name) || return 1
+  resolve_tmux_bin || return 1
   resolved_target=$(
     python3 - "$host_session" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" "$debug_log" <<'PY'
-import json, subprocess, sys
+import json, os, subprocess, sys
 host_session, project_root, current_path, current_window_id, explicit_window_id, action, item_index, debug_log = sys.argv[1:]
+tmux_bin = os.environ.get("AIMUX_TMUX_BIN", "tmux")
 
 def log(message):
     if action != "team":
@@ -1125,7 +1128,7 @@ def log(message):
         pass
 
 def run(*args):
-    return subprocess.check_output(["tmux", *args], text=True)
+    return subprocess.check_output([tmux_bin, *args], text=True)
 
 def is_same_or_child_path(path, parent):
     if not path or not parent:

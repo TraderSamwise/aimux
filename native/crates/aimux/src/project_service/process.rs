@@ -1210,11 +1210,11 @@ impl OutputStreamIdleBackoff {
             return;
         }
         match output_state {
-            StreamOutputState::Unchanged => {
+            StreamOutputState::Unchanged | StreamOutputState::Error => {
                 let last = STREAM_OUTPUT_IDLE_BACKOFF_MS.len().saturating_sub(1);
                 self.idle_step = (self.idle_step + 1).min(last);
             }
-            StreamOutputState::Changed | StreamOutputState::Error => {
+            StreamOutputState::Changed => {
                 self.idle_step = 0;
             }
             StreamOutputState::NotOutput => {}
@@ -2155,6 +2155,33 @@ mod tests {
             backoff.current_delay_ms(ProjectServiceStreamKind::AgentOutput),
             500,
             "actual output movement should restore the live 500ms stream cadence"
+        );
+    }
+
+    #[test]
+    fn output_stream_idle_backoff_climbs_on_repeated_errors() {
+        let mut backoff = OutputStreamIdleBackoff::new(500);
+
+        for expected in [1_000, 2_000, 5_000, 15_000, 15_000] {
+            backoff.observe(
+                ProjectServiceStreamKind::AgentOutput,
+                StreamOutputState::Error,
+            );
+            assert_eq!(
+                backoff.current_delay_ms(ProjectServiceStreamKind::AgentOutput),
+                expected,
+                "unreadable panes should become a slow backstop instead of resetting to 500ms"
+            );
+        }
+
+        backoff.observe(
+            ProjectServiceStreamKind::AgentOutput,
+            StreamOutputState::Changed,
+        );
+        assert_eq!(
+            backoff.current_delay_ms(ProjectServiceStreamKind::AgentOutput),
+            500,
+            "actual output movement should still restore the live stream cadence"
         );
     }
 
