@@ -45,6 +45,7 @@
     ["cli-unsupported", 2],
     ["job-failed", 20],
     ["job-cancelled", 21],
-    ["job-detached", 22]
+    ["job-detached", 22],
+    ["job-stream-lost", 23]
   ]
 }

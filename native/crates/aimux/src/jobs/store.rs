@@ -108,8 +108,10 @@ pub struct JobEventInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JobEvent {
     pub seq: u64,
+    #[serde(alias = "created_at_ms")]
     pub created_at_ms: u128,
     pub kind: String,
     pub data: Value,

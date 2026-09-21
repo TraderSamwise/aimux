@@ -4,6 +4,7 @@ use aimux::core_cli::{
 };
 use aimux::core_cli_executor::{
     JOB_CANCELLED_EXIT_CODE, JOB_DETACHED_EXIT_CODE, JOB_FAILED_EXIT_CODE,
+    JOB_STREAM_LOST_EXIT_CODE,
 };
 use serde_json::{Value, json};
 
@@ -47,6 +48,7 @@ fn fixture_cli_jobs_matches_native_contract() {
             "job-failed" => JOB_FAILED_EXIT_CODE,
             "job-cancelled" => JOB_CANCELLED_EXIT_CODE,
             "job-detached" => JOB_DETACHED_EXIT_CODE,
+            "job-stream-lost" => JOB_STREAM_LOST_EXIT_CODE,
             other => panic!("unknown exit-code label {other}"),
         };
         if i64::from(actual) != expected {

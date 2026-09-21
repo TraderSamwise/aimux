@@ -8,8 +8,8 @@ use crate::context_compactor::{
     CompactReport, CompactSessionStatus, context_dir, list_history_session_ids, llm_compact,
 };
 use crate::core_cli::{
-    CoreCliAction, CoreCliContext, CoreCliOperation, CoreCliOutputMode, CoreCommandCall,
-    CoreCommandOk, CoreCommandRequestOptions, CoreLoopActorContext,
+    CoreCliAction, CoreCliContext, CoreCliOperation, CoreCliOutputMode, CoreCliPlan,
+    CoreCommandCall, CoreCommandOk, CoreCommandRequestOptions, CoreLoopActorContext,
     classify_core_cli_with_project_resolver,
 };
 use crate::core_command_client::request_core_command;
@@ -78,6 +78,7 @@ const POST_RESTART_DAEMON_VERIFY_RETRY_SLEEP_MS: u64 = 250;
 pub const JOB_FAILED_EXIT_CODE: i32 = 20;
 pub const JOB_CANCELLED_EXIT_CODE: i32 = 21;
 pub const JOB_DETACHED_EXIT_CODE: i32 = 22;
+pub const JOB_STREAM_LOST_EXIT_CODE: i32 = 23;
 const JOB_STREAM_READ_TIMEOUT_MS: u64 = 250;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,7 +173,11 @@ pub trait CoreCliRuntime {
     fn read_runtime_topology(&self, path: &Path) -> Result<Value, String>;
     fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String>;
     fn attach_tmux_target(&mut self, session_name: &str, window_index: i64) -> Result<(), String> {
-        let argv = attach_session_argv(session_name, Some(window_index));
+        let argv = interactive_tmux_window_argv(
+            session_name,
+            window_index,
+            std::env::var_os("TMUX").is_some(),
+        );
         match tmux_command_from_env().args(argv).status() {
             Ok(status) if status.success() => Ok(()),
             Ok(status) => Err(format!("tmux attach exited with {status}")),
@@ -387,11 +392,11 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             .get("windowIndex")
             .and_then(Value::as_i64)
             .ok_or_else(|| "dashboard target windowIndex is required".to_owned())?;
-        let argv = if std::env::var_os("TMUX").is_some() {
-            switch_client_argv(session_name, window_index, None)
-        } else {
-            attach_session_argv(session_name, Some(window_index))
-        };
+        let argv = interactive_tmux_window_argv(
+            session_name,
+            window_index,
+            std::env::var_os("TMUX").is_some(),
+        );
         match tmux_command_from_env().args(argv).status() {
             Ok(status) if status.success() => Ok(()),
             Ok(status) => Err(format!("tmux open dashboard exited with {status}")),
@@ -978,6 +983,20 @@ pub fn run_core_cli_with<R: CoreCliRuntime>(
     raw_args: &[String],
     runtime: &mut R,
 ) -> CoreCliExecution {
+    let plan = match plan_core_cli(raw_args, runtime) {
+        Ok(plan) => plan,
+        Err(execution) => return execution,
+    };
+    match run_plan(plan.operation, plan.output_mode, plan.action, runtime) {
+        Ok(execution) => execution,
+        Err(message) => CoreCliExecution::error(format!("Error: {message}"), 1),
+    }
+}
+
+fn plan_core_cli<R: CoreCliRuntime>(
+    raw_args: &[String],
+    runtime: &mut R,
+) -> Result<CoreCliPlan, CoreCliExecution> {
     let current_working_dir = runtime.cwd();
     let current_project_root = runtime.resolve_project_root(&current_working_dir);
     let context = CoreCliContext {
@@ -991,20 +1010,28 @@ pub fn run_core_cli_with<R: CoreCliRuntime>(
         runtime.resolve_project_root(project)
     }) {
         Ok(plan) => plan,
-        Err(error) => return CoreCliExecution::error(error.to_string(), error.exit_code()),
+        Err(error) => {
+            return Err(CoreCliExecution::error(
+                error.to_string(),
+                error.exit_code(),
+            ));
+        }
     };
     if operation_requires_current_git_project(plan.operation)
         && !runtime.is_git_project_root(&context.current_project_root)
     {
-        return CoreCliExecution::error(
+        return Err(CoreCliExecution::error(
             project_checkout_required_message(&context.current_project_root),
             1,
-        );
+        ));
     }
     if let Some(project_root) = materialized_project_root_requiring_checkout(&plan)
         && !runtime.is_git_project_root(&project_root)
     {
-        return CoreCliExecution::error(project_checkout_required_message(project_root), 1);
+        return Err(CoreCliExecution::error(
+            project_checkout_required_message(project_root),
+            1,
+        ));
     }
     scope_bare_restart_to_current_project(&mut plan, &context, runtime);
     if matches!(
@@ -1012,12 +1039,9 @@ pub fn run_core_cli_with<R: CoreCliRuntime>(
         CoreCliOperation::LoopDone | CoreCliOperation::TaskComplete
     ) && let Err(message) = guard_completion_delivery(plan.operation, &plan.action, runtime)
     {
-        return CoreCliExecution::error(message, 1);
+        return Err(CoreCliExecution::error(message, 1));
     }
-    match run_plan(plan.operation, plan.output_mode, plan.action, runtime) {
-        Ok(execution) => execution,
-        Err(message) => CoreCliExecution::error(format!("Error: {message}"), 1),
-    }
+    Ok(plan)
 }
 
 pub fn run_core_cli_incremental(raw_args: &[String]) -> i32 {
@@ -1033,22 +1057,20 @@ pub fn run_core_cli_incremental_with<R: CoreCliRuntime>(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> i32 {
-    let current_working_dir = runtime.cwd();
-    let current_project_root = runtime.resolve_project_root(&current_working_dir);
-    let context = CoreCliContext {
-        current_working_dir,
-        current_project_root,
-        daemon_running: runtime.load_daemon_info().is_some(),
-        has_credentials: core_cli_has_remote_credentials(runtime),
-        loop_actor: runtime.loop_actor_context(),
-    };
-    let plan = match classify_core_cli_with_project_resolver(raw_args, &context, |project| {
-        runtime.resolve_project_root(project)
-    }) {
+    let plan = match plan_core_cli(raw_args, runtime) {
         Ok(plan) => plan,
-        Err(error) => {
-            let _ = writeln!(stderr, "{error}");
-            return error.exit_code();
+        Err(execution) => {
+            for line in execution.stderr {
+                if writeln!(stderr, "{line}").is_err() {
+                    return execution.code;
+                }
+            }
+            for line in execution.stdout {
+                if writeln!(stdout, "{line}").is_err() {
+                    return execution.code;
+                }
+            }
+            return execution.code;
         }
     };
     match &plan.action {
@@ -1157,10 +1179,18 @@ fn stream_job_events(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> i32 {
-    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
+    let signal_guard = match crate::process_signals::install_shutdown_signal_flag(
         crate::process_signals::TERMINATION_SIGNALS,
-    )
-    .ok();
+    ) {
+        Ok(guard) => guard,
+        Err(error) => {
+            let _ = writeln!(
+                stderr,
+                "Error: failed to install signal handler for job stream: {error}"
+            );
+            return 1;
+        }
+    };
     let mut response = match open_daemon_stream(
         events_path,
         DaemonRequestInit {
@@ -1175,39 +1205,67 @@ fn stream_job_events(
             return 1;
         }
     };
-    if !(200..300).contains(&response.status) {
+    let status = response.status;
+    if !(200..300).contains(&status) {
         let mut body = String::from_utf8_lossy(&response.initial_body).into_owned();
-        let _ = response.stream.read_to_string(&mut body);
+        match response.stream.read_to_string(&mut body) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(error) => {
+                let _ = writeln!(stderr, "Error: failed to read daemon error body: {error}");
+                return 1;
+            }
+        }
         let _ = writeln!(stderr, "Error: {}", body.trim());
         return 1;
     }
     let _ = response
         .stream
         .set_read_timeout(Some(Duration::from_millis(JOB_STREAM_READ_TIMEOUT_MS)));
+    stream_job_events_from_reader(
+        output_mode,
+        response.initial_body,
+        response.stream,
+        stdout,
+        stderr,
+        || signal_guard.received_signal().is_some(),
+    )
+}
+
+fn stream_job_events_from_reader(
+    output_mode: CoreCliOutputMode,
+    initial_body: Vec<u8>,
+    mut stream: impl Read,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+    signal_received: impl Fn() -> bool,
+) -> i32 {
     let mut decoder = JobSseDecoder::default();
-    if !response.initial_body.is_empty() {
-        match process_job_sse_chunk(
-            &mut decoder,
-            &response.initial_body,
-            output_mode,
-            stdout,
-            stderr,
-        ) {
+    if !initial_body.is_empty() {
+        match process_job_sse_chunk(&mut decoder, &initial_body, output_mode, stdout, stderr) {
             JobStreamStep::Continue => {}
             JobStreamStep::Exit(code) => return code,
         }
     }
     let mut buffer = [0_u8; 8192];
     loop {
-        if crate::process_signals::received_shutdown_signal().is_some() {
+        if signal_received() {
             let _ = writeln!(
                 stderr,
                 "aimux job stream detached on SIGINT; the job is still running. Use `aimux job cancel <handle>` to cancel it."
             );
             return JOB_DETACHED_EXIT_CODE;
         }
-        match response.stream.read(&mut buffer) {
-            Ok(0) => return 0,
+        match stream.read(&mut buffer) {
+            Ok(0) => {
+                let detail = if decoder.has_partial_frame() {
+                    "job event stream ended with a partial SSE frame before terminal status"
+                } else {
+                    "job event stream ended before terminal status"
+                };
+                let _ = writeln!(stderr, "Error: {detail}");
+                return JOB_STREAM_LOST_EXIT_CODE;
+            }
             Ok(count) => match process_job_sse_chunk(
                 &mut decoder,
                 &buffer[..count],
@@ -1223,10 +1281,7 @@ fn stream_job_events(
                     error.kind(),
                     std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
                 ) => {}
-            Err(error)
-                if error.kind() == std::io::ErrorKind::Interrupted
-                    && crate::process_signals::received_shutdown_signal().is_some() =>
-            {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted && signal_received() => {
                 let _ = writeln!(
                     stderr,
                     "aimux job stream detached on SIGINT; the job is still running. Use `aimux job cancel <handle>` to cancel it."
@@ -1264,7 +1319,14 @@ fn process_job_sse_chunk(
     for event in events {
         match event.name.as_str() {
             "job-event" | "terminal-status" => {
-                let code = render_job_stream_event(output_mode, &event.data, stdout, stderr);
+                let code = match render_job_stream_event(output_mode, &event.data, stdout, stderr) {
+                    Ok(code) => code,
+                    Err(StreamWriteFailure::BrokenPipe) => return JobStreamStep::Exit(0),
+                    Err(StreamWriteFailure::Other(error)) => {
+                        let _ = writeln!(stderr, "Error: {error}");
+                        return JobStreamStep::Exit(1);
+                    }
+                };
                 if event.name == "terminal-status" {
                     return JobStreamStep::Exit(code);
                 }
@@ -1289,22 +1351,22 @@ fn render_job_stream_event(
     event: &Value,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
-) -> i32 {
+) -> Result<i32, StreamWriteFailure> {
     if output_mode == CoreCliOutputMode::Json {
-        if let Ok(line) = serde_json::to_string(event) {
-            let _ = writeln!(stdout, "{line}");
-        }
+        let line = serde_json::to_string(event)
+            .map_err(|error| StreamWriteFailure::Other(error.to_string()))?;
+        write_stream_line(stdout, &line)?;
     } else if event.get("kind").and_then(Value::as_str) == Some("output")
         && let Some(text) = event
             .get("data")
             .and_then(|data| data.get("text"))
             .and_then(Value::as_str)
     {
-        let _ = write!(stdout, "{text}");
-        let _ = stdout.flush();
+        write_stream_bytes(stdout, text.as_bytes())?;
+        stdout.flush().map_err(StreamWriteFailure::from)?;
     }
     if event.get("kind").and_then(Value::as_str) != Some("terminal-status") {
-        return 0;
+        return Ok(0);
     }
     let status = event
         .get("data")
@@ -1312,8 +1374,8 @@ fn render_job_stream_event(
         .and_then(Value::as_str)
         .unwrap_or("failed");
     match status {
-        "succeeded" => 0,
-        "cancelled" => JOB_CANCELLED_EXIT_CODE,
+        "succeeded" => Ok(0),
+        "cancelled" => Ok(JOB_CANCELLED_EXIT_CODE),
         _ => {
             if output_mode == CoreCliOutputMode::Text
                 && let Some(reason) = event
@@ -1323,9 +1385,36 @@ fn render_job_stream_event(
             {
                 let _ = writeln!(stderr, "job failed: {reason}");
             }
-            JOB_FAILED_EXIT_CODE
+            Ok(JOB_FAILED_EXIT_CODE)
         }
     }
+}
+
+#[derive(Debug)]
+enum StreamWriteFailure {
+    BrokenPipe,
+    Other(String),
+}
+
+impl From<std::io::Error> for StreamWriteFailure {
+    fn from(error: std::io::Error) -> Self {
+        if error.kind() == std::io::ErrorKind::BrokenPipe {
+            Self::BrokenPipe
+        } else {
+            Self::Other(error.to_string())
+        }
+    }
+}
+
+fn write_stream_line(writer: &mut impl Write, line: &str) -> Result<(), StreamWriteFailure> {
+    writer
+        .write_all(line.as_bytes())
+        .and_then(|()| writer.write_all(b"\n"))
+        .map_err(StreamWriteFailure::from)
+}
+
+fn write_stream_bytes(writer: &mut impl Write, bytes: &[u8]) -> Result<(), StreamWriteFailure> {
+    writer.write_all(bytes).map_err(StreamWriteFailure::from)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1380,6 +1469,10 @@ impl JobSseDecoder {
         Ok(events)
     }
 
+    fn has_partial_frame(&self) -> bool {
+        !self.line.is_empty() || !self.data.is_empty() || self.event_name != "message"
+    }
+
     fn process_line(&mut self) -> Result<Option<JobSseEvent>, JobSseError> {
         let mut line = std::mem::take(&mut self.line);
         if line.last() == Some(&b'\r') {
@@ -1425,6 +1518,253 @@ impl JobSseDecoder {
         let data = serde_json::from_slice::<Value>(&data)
             .map_err(|error| JobSseError(format!("invalid job SSE JSON: {error}")))?;
         Ok(Some(JobSseEvent { name, data }))
+    }
+}
+
+#[cfg(test)]
+mod job_stream_tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::io::{Cursor, Error, ErrorKind};
+
+    struct ChunkedReader {
+        chunks: VecDeque<Result<Vec<u8>, ErrorKind>>,
+    }
+
+    impl ChunkedReader {
+        fn new(chunks: Vec<Result<Vec<u8>, ErrorKind>>) -> Self {
+            Self {
+                chunks: chunks.into_iter().collect(),
+            }
+        }
+    }
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let Some(chunk) = self.chunks.pop_front() else {
+                return Ok(0);
+            };
+            let chunk = chunk.map_err(Error::from)?;
+            let count = chunk.len().min(buffer.len());
+            buffer[..count].copy_from_slice(&chunk[..count]);
+            if count < chunk.len() {
+                self.chunks.push_front(Ok(chunk[count..].to_vec()));
+            }
+            Ok(count)
+        }
+    }
+
+    struct BrokenPipeWriter;
+
+    impl Write for BrokenPipeWriter {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(Error::from(ErrorKind::BrokenPipe))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(Error::from(ErrorKind::BrokenPipe))
+        }
+    }
+
+    fn output_event(text: &str) -> String {
+        format!(
+            "event: job-event\ndata: {}\n\n",
+            json!({
+                "seq": 0,
+                "createdAtMs": 1,
+                "kind": "output",
+                "data": { "text": text },
+            })
+        )
+    }
+
+    fn terminal_event(status: &str, reason: &str) -> String {
+        format!(
+            "event: terminal-status\ndata: {}\n\n",
+            json!({
+                "seq": 1,
+                "createdAtMs": 2,
+                "kind": "terminal-status",
+                "data": {
+                    "status": status,
+                    "exitCode": if status == "succeeded" { 0 } else { 7 },
+                    "terminalReason": reason,
+                    "cancelSignal": null,
+                },
+            })
+        )
+    }
+
+    #[test]
+    fn job_stream_client_decodes_split_frames_and_success_exits_zero() {
+        let first = output_event("hello\n");
+        let terminal = terminal_event("succeeded", "tool exited with 0");
+        let split = first.find("\"text\"").expect("split point");
+        let reader = ChunkedReader::new(vec![
+            Ok(first.as_bytes()[..split].to_vec()),
+            Ok(first.as_bytes()[split..].to_vec()),
+            Ok(terminal.into_bytes()),
+        ]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let code = stream_job_events_from_reader(
+            CoreCliOutputMode::Text,
+            Vec::new(),
+            reader,
+            &mut stdout,
+            &mut stderr,
+            || false,
+        );
+
+        assert_eq!(code, 0);
+        assert_eq!(String::from_utf8(stdout).expect("stdout utf8"), "hello\n");
+        assert_eq!(String::from_utf8(stderr).expect("stderr utf8"), "");
+    }
+
+    #[test]
+    fn job_stream_client_maps_terminal_status_exit_codes() {
+        for (status, expected) in [
+            ("succeeded", 0),
+            ("failed", JOB_FAILED_EXIT_CODE),
+            ("cancelled", JOB_CANCELLED_EXIT_CODE),
+        ] {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let code = stream_job_events_from_reader(
+                CoreCliOutputMode::Json,
+                terminal_event(status, "done").into_bytes(),
+                Cursor::new(Vec::<u8>::new()),
+                &mut stdout,
+                &mut stderr,
+                || false,
+            );
+            assert_eq!(code, expected, "status {status}");
+            let lines = String::from_utf8(stdout).expect("stdout utf8");
+            let event: Value = serde_json::from_str(lines.trim()).expect("ndjson terminal line");
+            assert_eq!(event["kind"], "terminal-status");
+            assert_eq!(event["data"]["status"], status);
+            assert!(stderr.is_empty(), "json mode keeps diagnostics quiet");
+        }
+    }
+
+    #[test]
+    fn job_stream_client_reports_premature_eof_as_stream_lost() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let code = stream_job_events_from_reader(
+            CoreCliOutputMode::Text,
+            output_event("still running\n").into_bytes(),
+            Cursor::new(Vec::<u8>::new()),
+            &mut stdout,
+            &mut stderr,
+            || false,
+        );
+
+        assert_eq!(code, JOB_STREAM_LOST_EXIT_CODE);
+        assert_eq!(
+            String::from_utf8(stdout).expect("stdout utf8"),
+            "still running\n"
+        );
+        assert!(
+            String::from_utf8(stderr)
+                .expect("stderr utf8")
+                .contains("ended before terminal status")
+        );
+    }
+
+    #[test]
+    fn job_stream_client_reports_partial_frame_eof_as_stream_lost() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let code = stream_job_events_from_reader(
+            CoreCliOutputMode::Json,
+            b"event: job-event\ndata: {\"kind\":\"output\"".to_vec(),
+            Cursor::new(Vec::<u8>::new()),
+            &mut stdout,
+            &mut stderr,
+            || false,
+        );
+
+        assert_eq!(code, JOB_STREAM_LOST_EXIT_CODE);
+        assert!(
+            String::from_utf8(stderr)
+                .expect("stderr utf8")
+                .contains("partial SSE frame")
+        );
+    }
+
+    #[test]
+    fn job_stream_client_sigint_detaches_without_cancelling() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let code = stream_job_events_from_reader(
+            CoreCliOutputMode::Text,
+            Vec::new(),
+            Cursor::new(Vec::<u8>::new()),
+            &mut stdout,
+            &mut stderr,
+            || true,
+        );
+
+        assert_eq!(code, JOB_DETACHED_EXIT_CODE);
+        assert!(
+            String::from_utf8(stderr)
+                .expect("stderr utf8")
+                .contains("job is still running")
+        );
+    }
+
+    #[test]
+    fn job_stream_client_stops_on_broken_stdout_pipe() {
+        let mut stdout = BrokenPipeWriter;
+        let mut stderr = Vec::new();
+
+        let code = stream_job_events_from_reader(
+            CoreCliOutputMode::Text,
+            output_event("first line\n").into_bytes(),
+            Cursor::new(terminal_event("succeeded", "done").into_bytes()),
+            &mut stdout,
+            &mut stderr,
+            || false,
+        );
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn malformed_job_create_response_is_not_rendered_as_ready() {
+        let missing_id = render_job_create_response(
+            CoreCliOutputMode::Text,
+            &json!({ "ok": true, "outcome": "created", "job": {} }),
+        )
+        .expect_err("missing id should fail");
+        assert!(missing_id.contains("job.id"));
+
+        let missing_outcome = render_job_create_response(
+            CoreCliOutputMode::Text,
+            &json!({ "ok": true, "job": { "id": "job-one" } }),
+        )
+        .expect_err("missing outcome should fail");
+        assert!(missing_outcome.contains("outcome"));
+    }
+
+    #[test]
+    fn job_attach_uses_switch_client_when_already_inside_tmux() {
+        let argv = interactive_tmux_window_argv("aimux-test", 3, true);
+        assert_eq!(argv.first().map(String::as_str), Some("switch-client"));
+        assert!(argv.iter().any(|part| part.contains("aimux-test:3")));
+    }
+
+    #[test]
+    fn job_attach_uses_attach_session_outside_tmux() {
+        let argv = interactive_tmux_window_argv("aimux-test", 3, false);
+        assert_eq!(argv.first().map(String::as_str), Some("attach-session"));
+        assert!(argv.iter().any(|part| part.contains("aimux-test:3")));
     }
 }
 
@@ -2271,12 +2611,26 @@ fn render_job_create_response(
         .get("job")
         .and_then(|job| job.get("id"))
         .and_then(Value::as_str)
-        .unwrap_or("unknown-job");
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "daemon job response did not include job.id".to_owned())?;
     let outcome = payload
         .get("outcome")
         .and_then(Value::as_str)
-        .unwrap_or("ready");
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "daemon job response did not include outcome".to_owned())?;
     Ok(CoreCliExecution::ok(vec![format!("job {id} {outcome}")]))
+}
+
+fn interactive_tmux_window_argv(
+    session_name: &str,
+    window_index: i64,
+    inside_tmux: bool,
+) -> Vec<String> {
+    if inside_tmux {
+        switch_client_argv(session_name, window_index, None)
+    } else {
+        attach_session_argv(session_name, Some(window_index))
+    }
 }
 
 fn run_command_action(
