@@ -105,7 +105,7 @@ pub fn parse_core_job_args<S: AsRef<str>>(args: &[S]) -> Result<CoreJobArgs, Cor
         .get(1)
         .map(AsRef::as_ref)
         .ok_or_else(|| CoreJobArgsError::new("job requires a subcommand"))?;
-    if !matches!(subcommand, "show" | "list" | "attach" | "cancel") {
+    if !matches!(subcommand, "show" | "list" | "attach" | "cancel" | "notify") {
         return Err(CoreJobArgsError::new(format!(
             "job {subcommand} is not supported"
         )));
@@ -115,6 +115,7 @@ pub fn parse_core_job_args<S: AsRef<str>>(args: &[S]) -> Result<CoreJobArgs, Cor
         handle: None,
         scope: None,
         project: None,
+        watcher_id: None,
         seq: 0,
         json: false,
     };
@@ -153,6 +154,18 @@ pub fn parse_core_job_args<S: AsRef<str>>(args: &[S]) -> Result<CoreJobArgs, Cor
                 CoreJobArgsError::new("--seq requires an unsigned integer value")
             })?)?;
             index += 2;
+            continue;
+        }
+        if parsed.subcommand == "notify" && arg == "--watcher-id" {
+            parsed.watcher_id = Some(required_non_flag(args, index, "--watcher-id")?.to_owned());
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "notify"
+            && let Some(value) = arg.strip_prefix("--watcher-id=")
+        {
+            parsed.watcher_id = Some(inline_non_flag(value, "--watcher-id")?.to_owned());
+            index += 1;
             continue;
         }
         if parsed.subcommand == "attach"

@@ -396,6 +396,8 @@ pub struct CoreJobArgs {
     pub scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watcher_id: Option<String>,
     pub seq: u64,
     pub json: bool,
 }

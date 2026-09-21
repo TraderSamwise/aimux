@@ -98,6 +98,7 @@ fn operation_name(operation: CoreCliOperation) -> &'static str {
         CoreCliOperation::JobList => "job-list",
         CoreCliOperation::JobAttach => "job-attach",
         CoreCliOperation::JobCancel => "job-cancel",
+        CoreCliOperation::JobNotify => "job-notify",
         CoreCliOperation::JobTmuxAttach => "job-tmux-attach",
         _ => "other",
     }

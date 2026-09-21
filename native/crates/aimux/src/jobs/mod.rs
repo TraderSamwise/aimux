@@ -8,7 +8,8 @@ pub use runner::{
 };
 pub use scope::{JobAddress, JobScope, JobScopeKind, parse_job_address, parse_job_scope_kind};
 pub use store::{
-    CancelOutcome, CreateOrJoin, DEFAULT_JOB_RETENTION, JobEvent, JobEventInput, JobListFilter,
-    JobMaterial, JobRecord, JobRetention, JobSpec, JobStatus, JobStore, JobStoreError,
-    JobTmuxTarget, PruneReport, validate_job_id,
+    CancelOutcome, CreateOrJoin, DEFAULT_JOB_RETENTION, DueJobCallback, JOB_CALLBACK_MAX_ATTEMPTS,
+    JOB_CALLBACK_RETRY_DELAY_MS, JOB_TERMINAL_EVENT_KIND, JobCallbackKind, JobCallbackRecord,
+    JobCallbacks, JobEvent, JobEventInput, JobListFilter, JobMaterial, JobRecord, JobRetention,
+    JobSpec, JobStatus, JobStore, JobStoreError, JobTmuxTarget, PruneReport, validate_job_id,
 };

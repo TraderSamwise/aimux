@@ -1,3 +1,4 @@
+use crate::core_command_contract::CORE_API_ROUTES;
 use crate::jobs::{
     JobEventInput, JobRecord, JobScope, JobSpec, JobStatus, JobStore, JobStoreError, JobTmuxTarget,
     validate_job_id,
@@ -564,7 +565,20 @@ fn run_job_exec_with_store(store: &JobStore, id: &str) -> Result<ExitCode, Strin
     store
         .finish(id, terminal, exit_code, reason, None)
         .map_err(|error| error.to_string())?;
+    kick_job_callbacks_next_tick();
     Ok(ExitCode::from(exit_code.unwrap_or(1) as u8))
+}
+
+fn kick_job_callbacks_next_tick() {
+    let _ = crate::core_command_transport::request_daemon_json(
+        CORE_API_ROUTES.jobs_callbacks_kick,
+        crate::core_command_transport::DaemonRequestInit {
+            method: Some(crate::core_command_transport::DaemonHttpMethod::Post),
+            headers: Default::default(),
+            body: Some("{}".to_owned()),
+            timeout_ms: Some(1_000),
+        },
+    );
 }
 
 fn kill_process_group_for_pid(pid: i32, signal: &str) -> Result<(), String> {

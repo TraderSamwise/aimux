@@ -2,13 +2,16 @@ use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::access::build_daemon_route_context;
 use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::jobs::{
-    DaemonJobRouteRuntime, JobEventStreamOptions,
+    DaemonJobRouteRuntime, JobEventStreamOptions, drain_due_job_callbacks_with,
     maybe_handle_job_event_stream_request_with_runtime_mutex, route_jobs_json_request,
     write_job_event_stream,
 };
 use aimux::daemon::listener::parse_daemon_http_request;
 use aimux::daemon::server::DaemonHttpRequest;
 use aimux::daemon::server::handle_daemon_http_request;
+use aimux::desktop_notifier::{
+    DesktopNotificationDeliveryResult, DesktopNotificationPayload, DesktopNotificationTransport,
+};
 use aimux::jobs::{
     JobCancelReport, JobEventInput, JobRecord, JobScope, JobSpec, JobStatus, JobStore,
     JobStoreError, JobTmuxTarget,
@@ -19,7 +22,10 @@ use aimux::request_actor::RELAY_FORWARDED_HEADER;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const JOBS_ROUTE_CONTRACT: &str =
@@ -29,6 +35,7 @@ const JOBS_ROUTE_CONTRACT: &str =
 struct FakeJobRuntime {
     store: JobStore,
     resolver: PathResolver,
+    forced_callbacks: Arc<AtomicUsize>,
 }
 
 impl DaemonJobRouteRuntime for FakeJobRuntime {
@@ -75,6 +82,10 @@ impl DaemonJobRouteRuntime for FakeJobRuntime {
             pid: Some(1234),
         })
     }
+
+    fn force_job_callbacks_next_tick(&self) {
+        self.forced_callbacks.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 struct Fixture {
@@ -105,6 +116,7 @@ fn fixture(label: &str) -> Fixture {
         runtime: FakeJobRuntime {
             store: JobStore::new(home.join("jobs")),
             resolver,
+            forced_callbacks: Arc::new(AtomicUsize::new(0)),
         },
         address: "tealstreet-next/main/review-pr".to_owned(),
     }
@@ -148,6 +160,16 @@ fn jobs_route_contract_fixture_names_the_registered_routes() {
             .iter()
             .any(|route| { route[0] == "POST" && route[1] == CORE_API_ROUTES.jobs_cancel })
     );
+    assert!(
+        routes
+            .iter()
+            .any(|route| { route[0] == "POST" && route[1] == CORE_API_ROUTES.jobs_notify })
+    );
+    assert!(
+        routes
+            .iter()
+            .any(|route| { route[0] == "POST" && route[1] == CORE_API_ROUTES.jobs_callbacks_kick })
+    );
 
     let mut fixture = fixture("route-contract");
     let create_remote = route_jobs_json_request(
@@ -177,6 +199,24 @@ fn jobs_route_contract_fixture_names_the_registered_routes() {
     )
     .expect("cancel route handled");
     assert_eq!(cancel_remote.status, 403);
+    let notify_remote = route_jobs_json_request(
+        &mut fixture.runtime,
+        "POST",
+        CORE_API_ROUTES.jobs_notify,
+        Some(&json!({ "handle": "job-any" })),
+        true,
+    )
+    .expect("notify route handled");
+    assert_eq!(notify_remote.status, 403);
+    let kick_remote = route_jobs_json_request(
+        &mut fixture.runtime,
+        "POST",
+        CORE_API_ROUTES.jobs_callbacks_kick,
+        Some(&json!({})),
+        true,
+    )
+    .expect("kick route handled");
+    assert_eq!(kick_remote.status, 403);
 }
 
 #[test]
@@ -449,6 +489,179 @@ fn list_jobs_filters_by_scope_without_treating_empty_as_error() {
     assert_eq!(listed["jobs"][0]["id"], created["job"]["id"]);
 }
 
+#[test]
+fn notify_route_registers_callback_and_forces_delivery_tick() {
+    let mut fixture = fixture("notify-route");
+    let created = route(
+        &mut fixture.runtime,
+        "POST",
+        CORE_API_ROUTES.jobs,
+        Some(&json!({
+            "address": fixture.address,
+            "tool": "codex",
+            "args": []
+        })),
+        false,
+    );
+    let job_id = created["job"]["id"].as_str().unwrap().to_owned();
+    let response = route(
+        &mut fixture.runtime,
+        "POST",
+        CORE_API_ROUTES.jobs_notify,
+        Some(&json!({
+            "handle": job_id,
+            "watcherId": "sam",
+        })),
+        false,
+    );
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["callback"]["watcherId"], "sam");
+    assert_eq!(fixture.runtime.forced_callbacks.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn callback_drain_delivers_two_watchers_once_across_store_restart() {
+    let fixture = fixture("callback-drain");
+    let store = fixture.runtime.store.clone();
+    let root = store.root().to_path_buf();
+    let spec = JobSpec {
+        scope: JobScope::Global,
+        skill: "review-pr".to_owned(),
+        tool: Some("codex".to_owned()),
+        args: Vec::new(),
+        cwd: None,
+        env: BTreeMap::new(),
+    };
+    let (record, _) = store.create_or_join(&spec).expect("job");
+    store
+        .register_desktop_callback(&record.id, "sam")
+        .expect("sam callback");
+    store
+        .register_desktop_callback(&record.id, "ci")
+        .expect("ci callback");
+    store
+        .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish");
+
+    let restarted = JobStore::new(root);
+    let sent = Arc::new(Mutex::new(Vec::<DesktopNotificationPayload>::new()));
+    let sent_for_sender = Arc::clone(&sent);
+    let report = drain_due_job_callbacks_with(
+        &restarted,
+        u128::MAX,
+        |_| None,
+        move |payload| {
+            sent_for_sender.lock().unwrap().push(payload.clone());
+            ok_delivery()
+        },
+    )
+    .expect("drain");
+    assert_eq!(report.attempted, 2);
+    assert_eq!(report.delivered, 2);
+    assert_eq!(sent.lock().unwrap().len(), 2);
+
+    let sent_again = Arc::new(Mutex::new(Vec::<DesktopNotificationPayload>::new()));
+    let sent_again_sender = Arc::clone(&sent_again);
+    let report = drain_due_job_callbacks_with(
+        &restarted,
+        u128::MAX,
+        |_| None,
+        move |payload| {
+            sent_again_sender.lock().unwrap().push(payload.clone());
+            ok_delivery()
+        },
+    )
+    .expect("second drain");
+    assert_eq!(report.attempted, 0);
+    assert!(sent_again.lock().unwrap().is_empty());
+}
+
+#[test]
+fn callback_guard_suppresses_without_sending() {
+    let fixture = fixture("callback-suppressed");
+    let store = fixture.runtime.store.clone();
+    let spec = JobSpec {
+        scope: JobScope::Global,
+        skill: "review-pr".to_owned(),
+        tool: Some("codex".to_owned()),
+        args: Vec::new(),
+        cwd: None,
+        env: BTreeMap::new(),
+    };
+    let (record, _) = store.create_or_join(&spec).expect("job");
+    store
+        .register_desktop_callback(&record.id, "sam")
+        .expect("callback");
+    store
+        .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish");
+    let sends = Arc::new(AtomicUsize::new(0));
+    let sends_for_sender = Arc::clone(&sends);
+    let report = drain_due_job_callbacks_with(
+        &store,
+        u128::MAX,
+        |_| Some("cargo test harness".to_owned()),
+        move |_| {
+            sends_for_sender.fetch_add(1, Ordering::SeqCst);
+            ok_delivery()
+        },
+    )
+    .expect("drain");
+    assert_eq!(report.suppressed, 1);
+    assert_eq!(sends.load(Ordering::SeqCst), 0);
+    let callbacks = store.load_callbacks(&record.id).expect("callbacks");
+    assert_eq!(
+        callbacks.watchers["sam"].suppressed_reason.as_deref(),
+        Some("cargo test harness")
+    );
+}
+
+#[test]
+fn callback_failures_eventually_abandon_and_release_prune() {
+    let fixture = fixture("callback-give-up");
+    let store = fixture.runtime.store.clone();
+    let spec = JobSpec {
+        scope: JobScope::Global,
+        skill: "review-pr".to_owned(),
+        tool: Some("codex".to_owned()),
+        args: Vec::new(),
+        cwd: None,
+        env: BTreeMap::new(),
+    };
+    let (record, _) = store.create_or_join(&spec).expect("job");
+    store
+        .register_desktop_callback(&record.id, "sam")
+        .expect("callback");
+    store
+        .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish");
+
+    let now = u128::MAX;
+    let mut abandoned = 0;
+    for _ in 0..aimux::jobs::JOB_CALLBACK_MAX_ATTEMPTS {
+        let report = drain_due_job_callbacks_with(
+            &store,
+            now,
+            |_| None,
+            |_| failed_delivery("helper missing"),
+        )
+        .expect("failed drain");
+        abandoned += report.abandoned;
+    }
+    assert_eq!(abandoned, 1);
+    let report = store
+        .prune(
+            aimux::jobs::JobRetention {
+                max_jobs: 0,
+                max_events_per_job: 1,
+                terminal_job_retention_ms: 0,
+            },
+            u128::MAX,
+        )
+        .expect("prune");
+    assert_eq!(report.removed_jobs, 1);
+}
+
 #[tokio::test]
 async fn missing_job_stream_is_http_error_not_empty_sse() {
     let fixture = fixture("missing-stream");
@@ -608,18 +821,27 @@ async fn job_stream_delivers_new_events_at_poll_interval_before_keepalive() {
                 },
             )
             .expect("append");
+        writer_store
+            .finish(
+                &writer_id,
+                JobStatus::Succeeded,
+                Some(0),
+                "tool exited with 0",
+                None,
+            )
+            .expect("finish");
     });
     let output = tokio::time::timeout(
-        std::time::Duration::from_millis(150),
+        std::time::Duration::from_millis(1_000),
         capture_job_event_stream(
             store,
             id,
             0,
             JobEventStreamOptions {
-                keepalive_ms: 1_000,
+                keepalive_ms: 5_000,
                 poll_ms: 5,
                 max_keepalives: None,
-                max_polls: Some(8),
+                max_polls: None,
             },
         ),
     )
@@ -683,6 +905,30 @@ async fn capture_intercepted_stream(
     };
     let (_, bytes) = tokio::join!(writer, reader);
     bytes
+}
+
+fn ok_delivery() -> DesktopNotificationDeliveryResult {
+    DesktopNotificationDeliveryResult {
+        transport: DesktopNotificationTransport::Disabled,
+        helper_path: None,
+        ok: true,
+        exit_code: Some(0),
+        stdout: None,
+        stderr: None,
+        error: None,
+    }
+}
+
+fn failed_delivery(error: &str) -> DesktopNotificationDeliveryResult {
+    DesktopNotificationDeliveryResult {
+        transport: DesktopNotificationTransport::Disabled,
+        helper_path: None,
+        ok: false,
+        exit_code: Some(1),
+        stdout: None,
+        stderr: None,
+        error: Some(error.to_owned()),
+    }
 }
 
 async fn capture_job_event_stream(

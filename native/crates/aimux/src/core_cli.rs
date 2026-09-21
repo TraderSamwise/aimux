@@ -113,6 +113,7 @@ pub enum CoreCliOperation {
     JobList,
     JobAttach,
     JobCancel,
+    JobNotify,
     JobTmuxAttach,
     ReviewApprove,
     ReviewRequestChanges,
@@ -722,6 +723,18 @@ where
                             "handle": parsed.handle,
                             "project": project_root,
                         })),
+                    },
+                    CoreCliFallback::None,
+                ),
+                "notify" => (
+                    CoreCliOperation::JobNotify,
+                    CoreCliAction::TextRoute {
+                        path: CORE_API_ROUTES.jobs_notify.to_owned(),
+                        body: Some(json_without_null_fields(json!({
+                            "handle": parsed.handle,
+                            "project": project_root,
+                            "watcherId": parsed.watcher_id,
+                        }))),
                     },
                     CoreCliFallback::None,
                 ),

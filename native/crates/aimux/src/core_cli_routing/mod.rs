@@ -785,7 +785,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("spawn"), _) => true,
         (Some("run"), _) => true,
         (Some("attach"), _) => true,
-        (Some("job"), Some("show" | "list" | "attach" | "cancel")) => true,
+        (Some("job"), Some("show" | "list" | "attach" | "cancel" | "notify")) => true,
         (Some("service"), Some("create")) => parse_core_service_create_args(args).is_some(),
         (Some("service"), Some("remove")) => {
             parse_core_service_status_args(args, "remove").is_some()

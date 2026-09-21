@@ -5,15 +5,21 @@ use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::scheduler::{
     DaemonPeriodicTask, DaemonSchedulerContext, PeriodicTaskFuture, scheduler_now_ms,
 };
-use crate::jobs::{
-    CancelOutcome, CreateOrJoin, DEFAULT_JOB_RETENTION, JobAddress, JobCancelReport, JobEvent,
-    JobListFilter, JobRecord, JobScope, JobSpec, JobStatus, JobStore, JobStoreError,
-    parse_job_address, validate_job_id,
+use crate::desktop_notifier::{
+    DesktopNotificationDeliveryResult, DesktopNotificationPayload,
+    send_desktop_notification_and_wait,
 };
+use crate::jobs::{
+    CancelOutcome, CreateOrJoin, DEFAULT_JOB_RETENTION, JOB_TERMINAL_EVENT_KIND, JobAddress,
+    JobCancelReport, JobEvent, JobListFilter, JobRecord, JobScope, JobSpec, JobStatus, JobStore,
+    JobStoreError, parse_job_address, validate_job_id,
+};
+use crate::notification_delivery_guard::external_notification_refusal_reason_for_event;
 use crate::paths::PathResolver;
 use crate::project_service::event_streams::{encode_sse_event, encode_sse_keepalive};
 use crate::request_actor::parse_remote_actor;
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -25,6 +31,8 @@ use tokio::time::{Instant, sleep};
 pub const JOB_EVENT_STREAM_KEEPALIVE_MS: u64 = 15_000;
 const JOB_EVENT_STREAM_POLL_MS: u64 = 500;
 const JOB_PRUNE_INTERVAL_MS: i64 = 6 * 60 * 60 * 1_000;
+const JOB_CALLBACK_BACKSTOP_INTERVAL_MS: i64 = 60_000;
+pub const DAEMON_JOB_CALLBACKS_TASK_NAME: &str = "daemon-job-callbacks";
 
 pub trait DaemonJobRouteRuntime {
     fn job_store(&self) -> JobStore;
@@ -43,6 +51,8 @@ pub trait DaemonJobRouteRuntime {
         _store: &JobStore,
         _record: &JobRecord,
     ) -> Result<JobCancelReport, JobStoreError>;
+
+    fn force_job_callbacks_next_tick(&self) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +106,24 @@ struct CreateJobRequest {
 struct CancelJobRequest {
     handle: String,
     project: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NotifyJobRequest {
+    handle: String,
+    project: Option<String>,
+    watcher_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobCallbackDrainReport {
+    pub attempted: usize,
+    pub delivered: usize,
+    pub suppressed: usize,
+    pub failed: usize,
+    pub abandoned: usize,
 }
 
 pub fn route_jobs_json_request(
@@ -159,14 +187,18 @@ pub fn route_jobs_json_request(
         if let Some(handle) = route_url.search_param("handle") {
             return Some(
                 match resolve_job_handle(&store, &mut resolver, handle, None) {
-                    Ok(resolved) => DaemonRouteResponse::json(
-                        200,
-                        json!({
-                            "ok": true,
-                            "job": resolved.record,
-                            "handleKind": handle_kind_name(resolved.kind),
-                        }),
-                    ),
+                    Ok(resolved) => match store.load_callbacks(&resolved.record.id) {
+                        Ok(callbacks) => DaemonRouteResponse::json(
+                            200,
+                            json!({
+                                "ok": true,
+                                "job": resolved.record,
+                                "handleKind": handle_kind_name(resolved.kind),
+                                "callbacks": callbacks,
+                            }),
+                        ),
+                        Err(error) => store_error_response(error),
+                    },
                     Err(error) => store_error_response(error),
                 },
             );
@@ -224,6 +256,9 @@ pub fn route_jobs_json_request(
                 } else {
                     None
                 };
+                if outcome != CancelOutcome::Noop {
+                    runtime.force_job_callbacks_next_tick();
+                }
                 let job = match store.load(&record.id) {
                     Ok(job) => job,
                     Err(error) => return Some(store_error_response(error)),
@@ -240,6 +275,53 @@ pub fn route_jobs_json_request(
             }
             Err(error) => store_error_response(error),
         });
+    }
+
+    if method == "POST" && pathname == CORE_API_ROUTES.jobs_notify {
+        if actor_present {
+            return Some(loopback_only_response());
+        }
+        let request = match parse_notify_request(body) {
+            Ok(request) => request,
+            Err(response) => return Some(response),
+        };
+        let store = runtime.job_store();
+        let mut resolver = runtime.job_path_resolver();
+        let explicit_project = request.project.as_deref().map(PathBuf::from);
+        let resolved = match resolve_job_handle(
+            &store,
+            &mut resolver,
+            &request.handle,
+            explicit_project.as_deref(),
+        ) {
+            Ok(resolved) => resolved,
+            Err(error) => return Some(store_error_response(error)),
+        };
+        let watcher_id = request.watcher_id.as_deref().unwrap_or("local-desktop");
+        return Some(
+            match store.register_desktop_callback(&resolved.record.id, watcher_id) {
+                Ok(callback) => {
+                    runtime.force_job_callbacks_next_tick();
+                    DaemonRouteResponse::json(
+                        200,
+                        json!({
+                            "ok": true,
+                            "job": resolved.record,
+                            "callback": callback,
+                        }),
+                    )
+                }
+                Err(error) => store_error_response(error),
+            },
+        );
+    }
+
+    if method == "POST" && pathname == CORE_API_ROUTES.jobs_callbacks_kick {
+        if actor_present {
+            return Some(loopback_only_response());
+        }
+        runtime.force_job_callbacks_next_tick();
+        return Some(DaemonRouteResponse::json(200, json!({ "ok": true })));
     }
 
     None
@@ -367,7 +449,12 @@ pub async fn write_job_event_stream(
         match store.read_events_from(id, next_seq) {
             Ok(events) => {
                 wrote_events = !events.is_empty();
-                next_seq = write_job_events(writer, &events, next_seq).await?;
+                let (updated_seq, saw_terminal) =
+                    write_job_events(writer, &events, next_seq).await?;
+                next_seq = updated_seq;
+                if saw_terminal {
+                    return Ok(());
+                }
             }
             Err(JobStoreError::EmptyEventLog { .. }) => {}
             Err(error) => {
@@ -381,23 +468,7 @@ pub async fn write_job_event_stream(
             }
         }
         match store.load(id) {
-            Ok(record) if record.status.is_terminal() => {
-                let terminal = JobEvent {
-                    seq: next_seq,
-                    created_at_ms: record.updated_at_ms,
-                    kind: "terminal-status".to_owned(),
-                    data: json!({
-                        "status": record.status,
-                        "exitCode": record.exit_code,
-                        "terminalReason": record.terminal_reason,
-                        "cancelSignal": record.cancel_signal,
-                    }),
-                };
-                writer
-                    .write_all(&encode_sse_event("terminal-status", &json!(terminal)))
-                    .await?;
-                return Ok(());
-            }
+            Ok(record) if record.status.is_terminal() && !wrote_events => return Ok(()),
             Ok(_) => {}
             Err(error) => {
                 writer
@@ -432,14 +503,114 @@ async fn write_job_events(
     writer: &mut (impl AsyncWrite + Unpin),
     events: &[JobEvent],
     mut next_seq: u64,
-) -> Result<u64, std::io::Error> {
+) -> Result<(u64, bool), std::io::Error> {
+    let mut saw_terminal = false;
     for event in events {
+        let event_name = if event.kind == JOB_TERMINAL_EVENT_KIND {
+            saw_terminal = true;
+            "terminal-status"
+        } else {
+            "job-event"
+        };
         writer
-            .write_all(&encode_sse_event("job-event", &json!(event)))
+            .write_all(&encode_sse_event(event_name, &json!(event)))
             .await?;
         next_seq = event.seq.saturating_add(1);
     }
-    Ok(next_seq)
+    Ok((next_seq, saw_terminal))
+}
+
+pub fn drain_due_job_callbacks(
+    store: &JobStore,
+    now_ms: u128,
+) -> Result<JobCallbackDrainReport, JobStoreError> {
+    drain_due_job_callbacks_with(
+        store,
+        now_ms,
+        |event| {
+            external_notification_refusal_reason_for_event(None, None, event).map(str::to_owned)
+        },
+        send_desktop_notification_and_wait,
+    )
+}
+
+pub fn drain_due_job_callbacks_with(
+    store: &JobStore,
+    now_ms: u128,
+    guard: impl Fn(&Value) -> Option<String>,
+    sender: impl Fn(&DesktopNotificationPayload) -> DesktopNotificationDeliveryResult,
+) -> Result<JobCallbackDrainReport, JobStoreError> {
+    let mut report = JobCallbackDrainReport::default();
+    for due in store.due_callbacks(now_ms)? {
+        report.attempted += 1;
+        let guard_event = json!({
+            "kind": "job-completion",
+            "notificationClass": "progress-or-summary",
+            "jobId": due.record.id,
+            "watcherId": due.callback.watcher_id,
+            "status": due.record.status,
+        });
+        if let Some(reason) = guard(&guard_event) {
+            store.record_callback_suppressed(
+                &due.record.id,
+                &due.callback.watcher_id,
+                due.terminal_event.seq,
+                reason,
+                now_ms,
+            )?;
+            report.suppressed += 1;
+            continue;
+        }
+        let result = sender(&notification_payload_for_job(&due.record));
+        if result.ok {
+            store.record_callback_delivered(
+                &due.record.id,
+                &due.callback.watcher_id,
+                due.terminal_event.seq,
+                now_ms,
+            )?;
+            report.delivered += 1;
+            continue;
+        }
+        let callback = store.record_callback_failed(
+            &due.record.id,
+            &due.callback.watcher_id,
+            notification_delivery_error(&result),
+            now_ms,
+        )?;
+        if callback.abandoned_at_ms.is_some() {
+            report.abandoned += 1;
+        } else {
+            report.failed += 1;
+        }
+    }
+    Ok(report)
+}
+
+fn notification_payload_for_job(record: &JobRecord) -> DesktopNotificationPayload {
+    let status = format!("{:?}", record.status).to_lowercase();
+    let reason = record
+        .terminal_reason
+        .as_deref()
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or("job finished");
+    DesktopNotificationPayload {
+        title: format!("aimux job {status}"),
+        message: format!("{}: {reason}", record.skill),
+        sound: false,
+        deep_link_url: None,
+    }
+}
+
+fn notification_delivery_error(result: &DesktopNotificationDeliveryResult) -> String {
+    result
+        .error
+        .as_deref()
+        .or(result.stderr.as_deref())
+        .or(result.stdout.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("desktop notification delivery failed")
+        .to_owned()
 }
 
 pub fn resolve_job_handle(
@@ -586,6 +757,31 @@ impl DaemonPeriodicTask for DaemonJobsReconcileTask {
     }
 }
 
+pub struct DaemonJobCallbacksTask;
+
+impl DaemonPeriodicTask for DaemonJobCallbacksTask {
+    fn name(&self) -> &str {
+        DAEMON_JOB_CALLBACKS_TASK_NAME
+    }
+
+    fn interval_ms(&self) -> i64 {
+        JOB_CALLBACK_BACKSTOP_INTERVAL_MS
+    }
+
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
+    fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            let store = JobStore::new(context.resolver.jobs_dir());
+            drain_due_job_callbacks(&store, scheduler_now_ms().max(0) as u128)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
 fn parse_create_request(body: Option<&Value>) -> Result<CreateJobRequest, DaemonRouteResponse> {
     let Some(body) = body else {
         return Err(DaemonRouteResponse::json(
@@ -603,6 +799,18 @@ fn parse_cancel_request(body: Option<&Value>) -> Result<CancelJobRequest, Daemon
         return Err(DaemonRouteResponse::json(
             400,
             json!({ "ok": false, "error": "cancel body is required" }),
+        ));
+    };
+    serde_json::from_value(body.clone()).map_err(|error| {
+        DaemonRouteResponse::json(400, json!({ "ok": false, "error": error.to_string() }))
+    })
+}
+
+fn parse_notify_request(body: Option<&Value>) -> Result<NotifyJobRequest, DaemonRouteResponse> {
+    let Some(body) = body else {
+        return Err(DaemonRouteResponse::json(
+            400,
+            json!({ "ok": false, "error": "notify body is required" }),
         ));
     };
     serde_json::from_value(body.clone()).map_err(|error| {

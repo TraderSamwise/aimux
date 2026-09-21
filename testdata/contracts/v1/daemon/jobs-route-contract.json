@@ -10,6 +10,8 @@
     ["GET", "/jobs?handle=<job-id-or-address>", "show"],
     ["GET", "/jobs?scope=<scope>", "list"],
     ["GET", "/jobs/events?handle=<job-id-or-address>&project=<project-root>&seq=<seq>", "events-sse"],
-    ["POST", "/jobs/cancel", "cancel"]
+    ["POST", "/jobs/cancel", "cancel"],
+    ["POST", "/jobs/notify", "notify-desktop"],
+    ["POST", "/jobs/callbacks/kick", "callback-delivery-kick"]
   ]
 }

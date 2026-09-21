@@ -45,8 +45,8 @@ use crate::daemon::process_inventory::{
 };
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::scheduler::{
-    DaemonPeriodicTask, DaemonSchedulerContext, PeriodicTaskFuture, daemon_scheduler_handle,
-    spawn_daemon_scheduler,
+    DaemonPeriodicTask, DaemonSchedulerContext, DaemonSchedulerHandle, PeriodicTaskFuture,
+    daemon_scheduler_handle, spawn_daemon_scheduler,
 };
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
 use crate::daemon::stability_doctor::{
@@ -207,6 +207,7 @@ pub struct RealDaemonRuntime {
     restart_managed_tmux_project_roots: Option<Result<Vec<String>, String>>,
     runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
     started_instant: Instant,
+    daemon_scheduler: Option<DaemonSchedulerHandle>,
     #[cfg(feature = "remote-control")]
     relay: Arc<crate::remote::daemon_relay::RelaySupervisor>,
 }
@@ -651,6 +652,7 @@ impl RealDaemonRuntime {
             restart_managed_tmux_project_roots: None,
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
+            daemon_scheduler: None,
             #[cfg(feature = "remote-control")]
             relay: Arc::new(crate::remote::daemon_relay::RelaySupervisor::default()),
         }
@@ -687,6 +689,7 @@ impl RealDaemonRuntime {
             restart_managed_tmux_project_roots: None,
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
+            daemon_scheduler: None,
             #[cfg(feature = "remote-control")]
             relay: Arc::new(crate::remote::daemon_relay::RelaySupervisor::default()),
         }
@@ -718,6 +721,11 @@ impl RealDaemonRuntime {
         coordinator: GlobalExposeHotSnapshotCoordinator,
     ) -> Self {
         self.global_expose_hot_snapshots = coordinator;
+        self
+    }
+
+    pub fn with_daemon_scheduler(mut self, scheduler: DaemonSchedulerHandle) -> Self {
+        self.daemon_scheduler = Some(scheduler);
         self
     }
 
@@ -2506,7 +2514,8 @@ pub fn run_daemon_internal() -> Result<()> {
         GlobalExposeHotSnapshotCoordinator::new(true).with_scheduler(daemon_scheduler.clone());
     let runtime = Arc::new(Mutex::new(
         RealDaemonRuntime::new(resolver.clone(), info)
-            .with_global_expose_hot_snapshot_coordinator(global_expose_hot_snapshots.clone()),
+            .with_global_expose_hot_snapshot_coordinator(global_expose_hot_snapshots.clone())
+            .with_daemon_scheduler(daemon_scheduler.clone()),
     ));
     #[cfg(feature = "remote-control")]
     let _hosted_server = {
@@ -2633,6 +2642,7 @@ pub fn daemon_periodic_tasks(
             Box::new(DaemonProcessHealthTask),
             Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
             Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
+            Box::new(crate::daemon::jobs::DaemonJobCallbacksTask),
             Box::new(DaemonDiskMaintenanceTask::new()),
         ]
     }
@@ -2645,6 +2655,7 @@ pub fn daemon_periodic_tasks(
             Box::new(DaemonProcessHealthTask),
             Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
             Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
+            Box::new(crate::daemon::jobs::DaemonJobCallbacksTask),
             Box::new(DaemonDiskMaintenanceTask::new()),
         ];
         tasks.insert(1, Box::new(crate::remote::hosted_server::HostedPruneTask));
@@ -4324,6 +4335,12 @@ impl DaemonJobRouteRuntime for RealDaemonRuntime {
     ) -> Result<crate::jobs::JobCancelReport, crate::jobs::JobStoreError> {
         let mut tmux = crate::tmux::TmuxRuntimeManager::new();
         crate::jobs::runner::cancel_running_job(store, &mut tmux, record)
+    }
+
+    fn force_job_callbacks_next_tick(&self) {
+        if let Some(scheduler) = self.daemon_scheduler.as_ref() {
+            scheduler.force_task_next_tick(crate::daemon::jobs::DAEMON_JOB_CALLBACKS_TASK_NAME);
+        }
     }
 }
 

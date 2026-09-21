@@ -33,6 +33,15 @@
     },
     {
       "id": "job-cli-004",
+      "args": ["job", "notify", "global/review-pr", "--watcher-id", "sam"],
+      "output": {
+        "operation": "job-notify",
+        "action": "text-route",
+        "outputMode": "text"
+      }
+    },
+    {
+      "id": "job-cli-005",
       "args": ["run", "shell", "global/review-pr"],
       "output": {
         "errorCode": 1,
