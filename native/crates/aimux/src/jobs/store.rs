@@ -963,6 +963,25 @@ mod tests {
     }
 
     #[test]
+    fn remove_record_deletes_index_before_record_dir_failure() {
+        let store = store("remove-order");
+        let (record, _) = store
+            .create_or_join(&spec_with_arg("--remove-order"))
+            .expect("created");
+        let record_dir = store.record_dir(&record.id);
+        fs::remove_dir_all(&record_dir).expect("remove record dir");
+        fs::write(&record_dir, "not a directory").expect("record path file");
+        let error = store
+            .remove_record(&record)
+            .expect_err("record dir removal should fail");
+        assert!(matches!(error, JobStoreError::StoreUnavailable { .. }));
+        assert!(
+            !store.index_path(&record.idempotency_key).exists(),
+            "index must be gone before record directory removal can fail"
+        );
+    }
+
+    #[test]
     fn event_log_assigns_seq_and_replays_from_seq() {
         let store = store("events");
         let (record, _) = store
