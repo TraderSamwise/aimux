@@ -83,7 +83,7 @@ render_ruby_cellar() {
 render_bottle_block() {
   local formula="$1"
   local bottle_dir="${AIMUX_HOMEBREW_BOTTLE_DIR:-}"
-  local metadata_file count line tag cellar sha filename local_filename ruby_cellar
+  local metadata_file count line tag cellar sha filename local_filename row_formula ruby_cellar seen_tags
   if [ -z "$bottle_dir" ]; then
     return 0
   fi
@@ -92,6 +92,7 @@ render_bottle_block() {
     fail "missing Homebrew bottle metadata for $formula: $metadata_file"
   fi
   count=0
+  seen_tags="|"
   printf '\n  bottle do\n'
   printf '    root_url "%s"\n' "$BOTTLE_ROOT_URL"
   while IFS= read -r line || [ -n "$line" ]; do
@@ -100,9 +101,18 @@ render_bottle_block() {
         continue
         ;;
     esac
-    IFS="$(printf '\t')" read -r tag cellar sha filename local_filename <<EOF
+    IFS="$(printf '\t')" read -r tag cellar sha filename local_filename row_formula <<EOF
 $line
 EOF
+    if [ "$row_formula" != "$formula" ]; then
+      fail "wrong formula in Homebrew bottle metadata for $formula $tag: ${row_formula:-<missing>}"
+    fi
+    case "$seen_tags" in
+      *"|$tag|"*)
+        fail "duplicate Homebrew bottle tag for $formula: $tag"
+        ;;
+    esac
+    seen_tags="${seen_tags}${tag}|"
     if ! printf '%s\n' "$tag" | grep -Eq '^[A-Za-z0-9_]+$'; then
       fail "invalid bottle tag for $formula: $tag"
     fi

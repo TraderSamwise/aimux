@@ -1537,6 +1537,7 @@ describe("verify-release-asset-set.sh", () => {
             "a".repeat(64),
             "aimux-0.1.45.arm64_golden_gate.bottle.tar.gz",
             "aimux--0.1.45.arm64_golden_gate.bottle.tar.gz",
+            "aimux",
           ].join("\t"),
           "",
         ].join("\n"),
@@ -1550,6 +1551,7 @@ describe("verify-release-asset-set.sh", () => {
             "c".repeat(64),
             "aimux-local-0.1.45.arm64_golden_gate.bottle.tar.gz",
             "aimux-local--0.1.45.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local",
           ].join("\t"),
           "",
         ].join("\n"),
@@ -1582,6 +1584,116 @@ describe("verify-release-asset-set.sh", () => {
       expect(fullFormula).toContain('url "https://example.test/source/aimux-darwin-arm64.tar.gz"');
       expect(localFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${"c".repeat(64)}"`);
       expect(localFormula).toContain('url "https://example.test/source/aimux-local-darwin-arm64.tar.gz"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps same-prefix Homebrew bottle metadata split by formula", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-prefix-"));
+    try {
+      const partsDir = join(root, "parts");
+      const bottleDir = join(root, "bottles");
+      const formulaDir = join(root, "Formula");
+      mkdirSync(partsDir, { recursive: true });
+      mkdirSync(bottleDir, { recursive: true });
+      const fullSha = "e".repeat(64);
+      const localSha = "7".repeat(64);
+      writeFileSync(
+        join(partsDir, "aimux-arm64_sonoma.bottles.tsv"),
+        [
+          [
+            "arm64_golden_gate",
+            "any_skip_relocation",
+            fullSha,
+            "aimux-0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux--0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux",
+          ].join("\t"),
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        join(partsDir, "aimux-local-arm64_sonoma.bottles.tsv"),
+        [
+          [
+            "arm64_golden_gate",
+            "any_skip_relocation",
+            localSha,
+            "aimux-local-0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local--0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local",
+          ].join("\t"),
+          "",
+        ].join("\n"),
+      );
+
+      runOk("bash", [
+        "-c",
+        `
+set -euo pipefail
+parts_dir="$1"
+bottle_dir="$2"
+for formula in aimux aimux-local; do
+  output="$bottle_dir/\${formula}.bottles.tsv"
+  : > "$output"
+  found=0
+  for metadata in "$parts_dir"/*.bottles.tsv; do
+    [ -f "$metadata" ] || continue
+    if awk -F '\\t' -v formula="$formula" '
+      NF && $1 !~ /^#/ && $6 == formula {
+        print
+        found = 1
+      }
+      END { exit found ? 0 : 1 }
+    ' "$metadata" >> "$output"; then
+      found=1
+    fi
+  done
+  [ "$found" -eq 1 ]
+done
+`,
+        "merge-bottle-metadata",
+        partsDir,
+        bottleDir,
+      ]);
+
+      const fullMetadata = readFileSync(join(bottleDir, "aimux.bottles.tsv"), "utf8").trimEnd().split("\n");
+      const localMetadata = readFileSync(join(bottleDir, "aimux-local.bottles.tsv"), "utf8").trimEnd().split("\n");
+      expect(fullMetadata).toHaveLength(1);
+      expect(localMetadata).toHaveLength(1);
+      expect(fullMetadata[0]).toContain(`\t${fullSha}\t`);
+      expect(fullMetadata[0]).toContain("\taimux");
+      expect(fullMetadata[0]).not.toContain(`\t${localSha}\t`);
+      expect(localMetadata[0]).toContain(`\t${localSha}\t`);
+      expect(localMetadata[0]).toContain("\taimux-local");
+      expect(localMetadata[0]).not.toContain(`\t${fullSha}\t`);
+
+      runOk("bash", [join(repoRoot, "scripts/render-homebrew-formulas.sh")], {
+        env: {
+          TAG: "v0.1.54",
+          VERSION: "0.1.54",
+          AIMUX_HOMEBREW_FORMULA_DIR: formulaDir,
+          AIMUX_HOMEBREW_BASE_URL: "https://example.test/source",
+          AIMUX_HOMEBREW_BOTTLE_DIR: bottleDir,
+          AIMUX_HOMEBREW_BOTTLE_ROOT_URL: "https://example.test/bottles",
+          DARWIN_ARM64: "1".repeat(64),
+          DARWIN_X64: "2".repeat(64),
+          LINUX_ARM64: "3".repeat(64),
+          LINUX_X64: "4".repeat(64),
+          LOCAL_DARWIN_ARM64: "5".repeat(64),
+          LOCAL_DARWIN_X64: "6".repeat(64),
+          LOCAL_LINUX_ARM64: "7".repeat(64),
+          LOCAL_LINUX_X64: "8".repeat(64),
+        },
+      });
+
+      const fullFormula = readFileSync(join(formulaDir, "aimux.rb"), "utf8");
+      const localFormula = readFileSync(join(formulaDir, "aimux-local.rb"), "utf8");
+      expect(fullFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${fullSha}"`);
+      expect(fullFormula).not.toContain(localSha);
+      expect(localFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${localSha}"`);
+      expect(localFormula).not.toContain(fullSha);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1657,6 +1769,7 @@ describe("verify-release-asset-set.sh", () => {
             "b".repeat(64),
             "aimux-local-0.1.48.arm64_golden_gate.bottle.tar.gz",
             "aimux-local--0.1.48.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local",
           ].join("\t"),
           "",
         ].join("\n"),
@@ -1664,7 +1777,7 @@ describe("verify-release-asset-set.sh", () => {
 
       writeFileSync(
         join(bottleDir, "aimux.bottles.tsv"),
-        `arm64_golden_gate\tany_skip_relocation\t${"a".repeat(64)}\taimux-0.1.48.arm64_golden_gate.bottle.tar.gz\taimux--0.1.48.arm64_golden_gate.bottle.tar.gz\n`,
+        `arm64_golden_gate\tany_skip_relocation\t${"a".repeat(64)}\taimux-0.1.48.arm64_golden_gate.bottle.tar.gz\taimux--0.1.48.arm64_golden_gate.bottle.tar.gz\taimux\n`,
       );
       runOk("bash", [join(repoRoot, "scripts/render-homebrew-formulas.sh")], {
         env: {
@@ -1686,6 +1799,77 @@ describe("verify-release-asset-set.sh", () => {
       });
       const localFormula = readFileSync(join(formulaDir, "aimux-local.rb"), "utf8");
       expect(localFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${"b".repeat(64)}"`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses cross-formula Homebrew bottle metadata rows", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-formula-"));
+    try {
+      const formulaDir = join(root, "Formula");
+      const bottleDir = join(root, "bottles");
+      mkdirSync(bottleDir, { recursive: true });
+      writeFileSync(
+        join(bottleDir, "aimux.bottles.tsv"),
+        [
+          [
+            "arm64_golden_gate",
+            "any_skip_relocation",
+            "a".repeat(64),
+            "aimux-0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux--0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux",
+          ].join("\t"),
+          [
+            "arm64_golden_gate",
+            "any_skip_relocation",
+            "b".repeat(64),
+            "aimux-local-0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local--0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local",
+          ].join("\t"),
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        join(bottleDir, "aimux-local.bottles.tsv"),
+        [
+          [
+            "arm64_golden_gate",
+            "any_skip_relocation",
+            "b".repeat(64),
+            "aimux-local-0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local--0.1.54.arm64_golden_gate.bottle.tar.gz",
+            "aimux-local",
+          ].join("\t"),
+          "",
+        ].join("\n"),
+      );
+
+      const result = run("bash", [join(repoRoot, "scripts/render-homebrew-formulas.sh")], {
+        env: {
+          TAG: "v0.1.54",
+          VERSION: "0.1.54",
+          AIMUX_HOMEBREW_FORMULA_DIR: formulaDir,
+          AIMUX_HOMEBREW_BASE_URL: "https://example.test/source",
+          AIMUX_HOMEBREW_BOTTLE_DIR: bottleDir,
+          AIMUX_HOMEBREW_BOTTLE_ROOT_URL: "https://example.test/bottles",
+          DARWIN_ARM64: "1".repeat(64),
+          DARWIN_X64: "2".repeat(64),
+          LINUX_ARM64: "3".repeat(64),
+          LINUX_X64: "4".repeat(64),
+          LOCAL_DARWIN_ARM64: "5".repeat(64),
+          LOCAL_DARWIN_X64: "6".repeat(64),
+          LOCAL_LINUX_ARM64: "7".repeat(64),
+          LOCAL_LINUX_X64: "8".repeat(64),
+        },
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "wrong formula in Homebrew bottle metadata for aimux arm64_golden_gate: aimux-local",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1851,8 +2035,10 @@ esac
       const tsv = readFileSync(join(outDir, "aimux-local.bottles.tsv"), "utf8").trimEnd().split("\t");
       const filename = tsv[3];
       const localFilename = tsv[4];
+      const formula = tsv[5];
       expect(filename).toBe("aimux-local-0.1.49.arm64_golden_gate.bottle.tar.gz");
       expect(localFilename).toBe("aimux-local--0.1.49.arm64_golden_gate.bottle.tar.gz");
+      expect(formula).toBe("aimux-local");
       expect(existsSync(join(outDir, filename))).toBe(true);
       expect(existsSync(join(outDir, localFilename))).toBe(false);
       expect(readdirSync(outDir).filter((name) => name.endsWith(".bottle.tar.gz"))).toEqual([filename]);
@@ -1867,10 +2053,10 @@ esac
       const formulaDir = join(root, "Formula");
       const bottleDir = join(root, "bottles");
       mkdirSync(bottleDir, { recursive: true });
-      writeFileSync(join(bottleDir, "aimux.bottles.tsv"), "arm64_golden_gate\tany_skip_relocation\tnot-a-sha\n");
+      writeFileSync(join(bottleDir, "aimux.bottles.tsv"), "arm64_golden_gate\tany_skip_relocation\tnot-a-sha\tbad.tar.gz\tbad.tar.gz\taimux\n");
       writeFileSync(
         join(bottleDir, "aimux-local.bottles.tsv"),
-        `arm64_golden_gate\tany_skip_relocation\t${"c".repeat(64)}\n`,
+        `arm64_golden_gate\tany_skip_relocation\t${"c".repeat(64)}\taimux-local-0.1.45.arm64_golden_gate.bottle.tar.gz\taimux-local--0.1.45.arm64_golden_gate.bottle.tar.gz\taimux-local\n`,
       );
 
       const result = run("bash", [join(repoRoot, "scripts/render-homebrew-formulas.sh")], {
@@ -2107,6 +2293,8 @@ describe("release workflow", () => {
     expect(tapJob).toContain("- homebrew-bottles");
     expect(tapJob).toContain("AIMUX_HOMEBREW_BOTTLE_DIR: bottle-metadata");
     expect(tapJob).toContain('--pattern "*.bottles.tsv"');
+    expect(tapJob).toContain("&& $6 == formula");
+    expect(tapJob).not.toContain('cat "bottle-metadata-parts/${formula}-"*.bottles.tsv');
     expect(tapJob).toContain("--bottle-dir bottle-metadata");
     expect(tapJob).toContain(
       '--bottle-root-url "https://github.com/TraderSamwise/aimux/releases/download/${{ steps.meta.outputs.tag }}"',

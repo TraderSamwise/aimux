@@ -531,11 +531,27 @@ jobs:
           gh release download "$TAG" --repo "$OWNER_REPO" \
             --pattern "*.bottles.tsv" --dir bottle-metadata-parts --clobber
           for formula in aimux aimux-local; do
-            if ! compgen -G "bottle-metadata-parts/${formula}-*.bottles.tsv" >/dev/null; then
+            output="bottle-metadata/${formula}.bottles.tsv"
+            : > "$output"
+            found=0
+            for metadata in bottle-metadata-parts/*.bottles.tsv; do
+              [ -f "$metadata" ] || continue
+              if awk -F '\t' -v formula="$formula" '
+                NF && $1 !~ /^#/ && $6 == formula {
+                  print
+                  found = 1
+                }
+                END { exit found ? 0 : 1 }
+              ' "$metadata" >> "$output"; then
+                found=1
+              fi
+            done
+            if [ "$found" -ne 1 ]; then
               echo "Missing Homebrew bottle metadata for ${formula}" >&2
               exit 1
             fi
-            cat "bottle-metadata-parts/${formula}-"*.bottles.tsv > "bottle-metadata/${formula}.bottles.tsv"
+            echo "Homebrew bottle metadata for ${formula}:"
+            cat "$output"
           done
           for a in aimux-darwin-arm64 aimux-local-darwin-arm64; do
             gh release download "$TAG" --repo "$OWNER_REPO" \

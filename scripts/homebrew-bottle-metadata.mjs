@@ -5,7 +5,7 @@ function usage() {
   return `Usage: scripts/homebrew-bottle-metadata.mjs --formula NAME --output FILE bottle.json [...]
 
 Extracts Homebrew bottle JSON into TSV rows:
-  tag<TAB>cellar<TAB>sha256<TAB>filename<TAB>local_filename
+  tag<TAB>cellar<TAB>sha256<TAB>filename<TAB>local_filename<TAB>formula
 `;
 }
 
@@ -68,7 +68,7 @@ for (const input of inputs) {
       if (!/^[A-Za-z0-9_]+$/.test(tag)) fail(`invalid bottle tag in ${input}: ${tag}`);
       if (!/^[a-fA-F0-9]{64}$/.test(sha)) fail(`invalid sha256 for ${formula} ${tag} in ${input}: ${sha}`);
       if (!filename || !localFilename) fail(`${input} entry ${fullName} is missing bottle filename for ${tag}`);
-      rows.push([tag, cellar, sha.toLowerCase(), filename, localFilename]);
+      rows.push([tag, cellar, sha.toLowerCase(), filename, localFilename, formula]);
     }
   }
 }

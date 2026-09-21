@@ -96,11 +96,14 @@ trap cleanup EXIT
 canonicalize_bottle_tarballs() {
   local metadata_file="$1"
   local output_dir="$2"
-  local tag cellar sha filename local_filename source_path target_path
-  while IFS="$(printf '\t')" read -r tag cellar sha filename local_filename || [ -n "$tag$cellar$sha$filename$local_filename" ]; do
+  local tag cellar sha filename local_filename row_formula source_path target_path
+  while IFS="$(printf '\t')" read -r tag cellar sha filename local_filename row_formula || [ -n "$tag$cellar$sha$filename$local_filename$row_formula" ]; do
     case "$tag" in
       "" | "#"*) continue ;;
     esac
+    if [ "$row_formula" != "$FORMULA" ]; then
+      fail "bottle metadata row for $FORMULA $tag belongs to ${row_formula:-<missing>}"
+    fi
     if [ -z "$filename" ] || [ -z "$local_filename" ]; then
       fail "bottle metadata row for $FORMULA $tag is missing filename/local_filename"
     fi
