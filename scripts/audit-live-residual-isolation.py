@@ -6,6 +6,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +62,46 @@ def assert_ci_runs_phase8_lanes() -> None:
             raise AssertionError(f"CI residual lane {lane} lacks its own isolated AIMUX_HOME")
 
 
+def wait_until(label: str, predicate: Any, timeout: float = 5.0) -> Any:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {label}")
+
+
+def assert_scope_cleanup_reaps_aimux_home_process(phase8: Any, true_bin: str) -> None:
+    if not Path("/proc").is_dir():
+        return
+    bash = shutil.which("bash")
+    if not bash:
+        return
+    with phase8.Scope("audit-owned-pid", Path(true_bin)) as scope:
+        proc = subprocess.Popen(
+            [bash, "-c", "exec -a aimux sleep 60"],
+            cwd=str(scope.project),
+            env=scope.env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            wait_until(
+                "scope-owned aimux process inventory",
+                lambda: proc.pid in phase8.aimux_pids_for_home(scope.aimux_home),
+            )
+            scope.stop_control_plane()
+            wait_until(
+                "scope-owned aimux process cleanup",
+                lambda: proc.poll() is not None or not phase8.pid_is_alive(proc.pid),
+            )
+        finally:
+            if proc.poll() is None:
+                phase8.terminate_pid(proc.pid)
+
+
 def main() -> int:
     compile(PHASE8_PATH.read_text(), str(PHASE8_PATH), "exec")
     compile(REMOTE_PATH.read_text(), str(REMOTE_PATH), "exec")
@@ -96,6 +138,8 @@ def main() -> int:
         port = remote_driver["free_port"]({excluded})
         if port == excluded:
             raise AssertionError("remote hosted port allocator returned excluded port")
+
+    assert_scope_cleanup_reaps_aimux_home_process(phase8, true_bin)
 
     print("live residual isolation audit passed")
     return 0

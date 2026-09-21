@@ -160,6 +160,7 @@ class Scope:
 
     def stop_control_plane(self) -> None:
         project_service_pids = self.project_service_pids()
+        scoped_aimux_pids = self.scoped_aimux_pids()
         try:
             subprocess.run(
                 [str(self.aimux_bin), "daemon", "stop", "--json"],
@@ -172,7 +173,8 @@ class Scope:
             )
         except Exception:
             pass
-        for pid in project_service_pids:
+        scoped_aimux_pids.extend(self.scoped_aimux_pids())
+        for pid in sorted(set(project_service_pids + scoped_aimux_pids), reverse=True):
             terminate_pid(pid)
 
     def project_service_pids(self) -> list[int]:
@@ -189,6 +191,9 @@ class Scope:
             if isinstance(project, dict) and isinstance(project.get("pid"), int):
                 pids.append(project["pid"])
         return pids
+
+    def scoped_aimux_pids(self) -> list[int]:
+        return aimux_pids_for_home(self.aimux_home)
 
     def __enter__(self) -> "Scope":
         return self
@@ -388,6 +393,40 @@ def terminate_pid(pid: int) -> None:
         os.kill(pid, signal.SIGKILL)
     except OSError:
         pass
+
+
+def aimux_pids_for_home(aimux_home: Path) -> list[int]:
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return []
+    expected_home = str(aimux_home)
+    pids: list[int] = []
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        try:
+            cmdline = (entry / "cmdline").read_bytes().split(b"\0")
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except OSError as error:
+            raise LiveResidualFailure(f"could not read cmdline for pid {pid}: {error}") from error
+        argv = [part.decode("utf-8", "replace") for part in cmdline if part]
+        if not argv or Path(argv[0]).name != "aimux":
+            continue
+        try:
+            environ = (entry / "environ").read_bytes().split(b"\0")
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except OSError as error:
+            raise LiveResidualFailure(f"could not read environ for aimux pid {pid}: {error}") from error
+        for item in environ:
+            if item.startswith(b"AIMUX_HOME="):
+                value = item.split(b"=", 1)[1].decode("utf-8", "replace")
+                if value == expected_home:
+                    pids.append(pid)
+                break
+    return pids
 
 
 def pid_is_alive(pid: int) -> bool:
