@@ -2,6 +2,7 @@ mod agents;
 mod args;
 mod collaboration;
 mod common;
+mod jobs;
 mod lifecycle;
 mod local;
 mod notifications;
@@ -19,6 +20,9 @@ pub use args::*;
 pub use collaboration::{parse_core_collaboration_args, parse_core_collaboration_args_result};
 pub use common::{
     core_command_args, has_core_global_logging_args, parse_core_projects_remove_args,
+};
+pub use jobs::{
+    CoreJobArgsError, parse_core_attach_args, parse_core_job_args, parse_core_job_run_args,
 };
 pub use lifecycle::{
     parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
@@ -779,6 +783,9 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             parse_core_migration_args(args).is_some()
         }
         (Some("spawn"), _) => true,
+        (Some("run"), _) => true,
+        (Some("attach"), _) => true,
+        (Some("job"), Some("show" | "list" | "attach" | "cancel")) => true,
         (Some("service"), Some("create")) => parse_core_service_create_args(args).is_some(),
         (Some("service"), Some("remove")) => {
             parse_core_service_status_args(args, "remove").is_some()

@@ -7,6 +7,7 @@ use crate::managed_launch_env::{
     build_managed_job_env, wrap_command_with_managed_launch_env_extra,
 };
 use crate::paths::PathResolver;
+use crate::state_update_lock::acquire_state_update_lock;
 use crate::tmux::{
     PanePipeFileOptions, TmuxCommandSpec, TmuxRuntimeManager, TmuxTarget, packed_argv_bytes,
     project_session, respawn_window_argv,
@@ -338,6 +339,12 @@ pub fn capture_job_output_once(
     let Some(path) = record.output_tap_path.as_ref().map(PathBuf::from) else {
         return Ok(record.clone());
     };
+    let _lock =
+        acquire_state_update_lock(&path).map_err(|error| JobStoreError::StoreUnavailable {
+            path: path.clone(),
+            error: error.to_string(),
+        })?;
+    let record = store.load(&record.id)?;
     let mut file = match fs::File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(record.clone()),

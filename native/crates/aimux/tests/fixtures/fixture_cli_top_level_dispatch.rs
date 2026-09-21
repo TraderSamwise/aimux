@@ -23,7 +23,7 @@ fn fixture_cli_top_level_dispatch_matches_native_regression_contract() {
     let cases = contract["cases"]
         .as_array()
         .expect("top-level dispatch cases");
-    assert_eq!(cases.len(), 12, "unexpected top-level dispatch case count");
+    assert_eq!(cases.len(), 15, "unexpected top-level dispatch case count");
     let mut failures = Vec::new();
     for case in cases {
         let actual = cli_top_level_dispatch_actual(case);
@@ -190,6 +190,52 @@ impl CoreCliRuntime for FakeRuntime {
         if path.starts_with("/core/services/create-text") {
             return Ok("service service-1 running\n".into());
         }
+        if path == "/jobs" {
+            return Ok(json!({
+                "ok": true,
+                "outcome": "created",
+                "job": {
+                    "id": "job-test",
+                    "idempotencyKey": "key-test",
+                    "scope": "global",
+                    "skill": "review-pr",
+                    "tool": "shell",
+                    "args": [],
+                    "cwd": "/repo",
+                    "env": {},
+                    "status": "running",
+                    "createdAtMs": 1,
+                    "updatedAtMs": 1
+                }
+            })
+            .to_string());
+        }
+        if path.starts_with("/jobs?handle=") {
+            return Ok(json!({
+                "ok": true,
+                "handleKind": "id",
+                "job": {
+                    "id": "job-test",
+                    "idempotencyKey": "key-test",
+                    "scope": "global",
+                    "skill": "review-pr",
+                    "tool": "shell",
+                    "args": [],
+                    "cwd": "/repo",
+                    "env": {},
+                    "status": "running",
+                    "tmuxTarget": {
+                        "sessionName": "aimux-jobs-test",
+                        "windowId": "@1",
+                        "windowIndex": 1,
+                        "windowName": "job-test"
+                    },
+                    "createdAtMs": 1,
+                    "updatedAtMs": 1
+                }
+            })
+            .to_string());
+        }
         Ok("ok\n".into())
     }
 
@@ -226,6 +272,14 @@ impl CoreCliRuntime for FakeRuntime {
     }
 
     fn open_dashboard_target(&mut self, _target: &Value) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn attach_tmux_target(
+        &mut self,
+        _session_name: &str,
+        _window_index: i64,
+    ) -> Result<(), String> {
         Ok(())
     }
 

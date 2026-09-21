@@ -92,6 +92,7 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
     matches!(
         word,
         "attachment"
+            | "attach"
             | "build-info"
             | "clear-notifications"
             | "compact"
@@ -108,6 +109,7 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "id"
             | "init"
             | "input"
+            | "job"
             | "kill"
             | "list"
             | "list-notifications"
@@ -130,6 +132,7 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "restart-runtime"
             | "review"
             | "rewrite"
+            | "run"
             | "scribe"
             | "serve"
             | "service"

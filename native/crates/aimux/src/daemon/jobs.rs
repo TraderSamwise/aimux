@@ -288,8 +288,14 @@ where
                     },
                     None => Ok(0),
                 };
+                let explicit_project = route_url.search_param("project").map(PathBuf::from);
                 match seq {
-                    Ok(seq) => match resolve_job_handle(&store, &mut resolver, handle, None) {
+                    Ok(seq) => match resolve_job_handle(
+                        &store,
+                        &mut resolver,
+                        handle,
+                        explicit_project.as_deref(),
+                    ) {
                         Ok(resolved) => StreamResolution::Ok {
                             store,
                             id: resolved.record.id,
@@ -335,12 +341,64 @@ pub async fn write_job_event_stream(
     let mut last_keepalive = Instant::now();
     loop {
         let mut wrote_events = false;
+        match store.load(id) {
+            Ok(record) if record.status == JobStatus::Running => {
+                if let Err(error) = crate::jobs::capture_job_output_once(store, &record) {
+                    writer
+                        .write_all(&encode_sse_event(
+                            "error",
+                            &json!({ "ok": false, "error": error.to_string() }),
+                        ))
+                        .await?;
+                    return Ok(());
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                writer
+                    .write_all(&encode_sse_event(
+                        "error",
+                        &json!({ "ok": false, "error": error.to_string() }),
+                    ))
+                    .await?;
+                return Ok(());
+            }
+        }
         match store.read_events_from(id, next_seq) {
             Ok(events) => {
                 wrote_events = !events.is_empty();
                 next_seq = write_job_events(writer, &events, next_seq).await?;
             }
             Err(JobStoreError::EmptyEventLog { .. }) => {}
+            Err(error) => {
+                writer
+                    .write_all(&encode_sse_event(
+                        "error",
+                        &json!({ "ok": false, "error": error.to_string() }),
+                    ))
+                    .await?;
+                return Ok(());
+            }
+        }
+        match store.load(id) {
+            Ok(record) if record.status.is_terminal() => {
+                let terminal = JobEvent {
+                    seq: next_seq,
+                    created_at_ms: record.updated_at_ms,
+                    kind: "terminal-status".to_owned(),
+                    data: json!({
+                        "status": record.status,
+                        "exitCode": record.exit_code,
+                        "terminalReason": record.terminal_reason,
+                        "cancelSignal": record.cancel_signal,
+                    }),
+                };
+                writer
+                    .write_all(&encode_sse_event("terminal-status", &json!(terminal)))
+                    .await?;
+                return Ok(());
+            }
+            Ok(_) => {}
             Err(error) => {
                 writer
                     .write_all(&encode_sse_event(

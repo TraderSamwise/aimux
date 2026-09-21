@@ -2,11 +2,12 @@ use crate::core_cli_routing::{
     CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreLogsArgs, CoreLogsSubcommand,
     core_command_args, is_core_cli_command, parse_core_agent_identity_args,
     parse_core_agent_input_args, parse_core_agent_list_args, parse_core_agent_migrate_args,
-    parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_attachment_publish_args,
-    parse_core_collaboration_args_result, parse_core_daemon_restart_args, parse_core_doctor_args,
-    parse_core_graveyard_args, parse_core_host_agent_read_args_result,
-    parse_core_host_agent_stream_args_result, parse_core_host_project_stop_args,
-    parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
+    parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_attach_args,
+    parse_core_attachment_publish_args, parse_core_collaboration_args_result,
+    parse_core_daemon_restart_args, parse_core_doctor_args, parse_core_graveyard_args,
+    parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
+    parse_core_host_project_stop_args, parse_core_host_restart_args, parse_core_host_topology_args,
+    parse_core_job_args, parse_core_job_run_args, parse_core_lifecycle_fork_args,
     parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
     parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
     parse_core_migration_args, parse_core_notification_args, parse_core_notification_test_args,
@@ -107,6 +108,12 @@ pub enum CoreCliOperation {
     TaskCancel,
     TaskComplete,
     TaskReopen,
+    JobRun,
+    JobShow,
+    JobList,
+    JobAttach,
+    JobCancel,
+    JobTmuxAttach,
     ReviewApprove,
     ReviewRequestChanges,
     ReviewList,
@@ -227,6 +234,18 @@ pub enum CoreCliAction {
     TextRoute {
         path: String,
         body: Option<Value>,
+    },
+    JobRun {
+        create_path: String,
+        events_path: String,
+        body: Value,
+        detach: bool,
+    },
+    JobEventStream {
+        events_path: String,
+    },
+    JobTmuxAttach {
+        show_path: String,
     },
     RestartControlPlane {
         project_root: Option<String>,
@@ -605,6 +624,109 @@ where
                 },
                 CoreCliFallback::None,
             )
+        }
+        ("run", _) => {
+            let parsed = parse_core_job_run_args(&args).map_err(|error| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: format!("aimux: {}", error.message()),
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::JobRun,
+                CoreCliAction::JobRun {
+                    create_path: CORE_API_ROUTES.jobs.to_owned(),
+                    events_path: job_events_path_from_handle("__created__", &project_root, 0),
+                    body: json_without_null_fields(json!({
+                        "address": parsed.address,
+                        "project": project_root,
+                        "tool": parsed.tool,
+                        "args": parsed.args,
+                        "cwd": context.current_working_dir,
+                        "env": {},
+                    })),
+                    detach: parsed.detach,
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("attach", _) => {
+            let parsed = parse_core_attach_args(&args).map_err(|error| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: format!("aimux: {}", error.message()),
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::JobTmuxAttach,
+                CoreCliAction::JobTmuxAttach {
+                    show_path: job_show_path(&parsed.handle, &project_root),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("job", _) => {
+            let parsed =
+                parse_core_job_args(&args).map_err(|error| CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: format!("aimux: {}", error.message()),
+                })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            match parsed.subcommand.as_str() {
+                "show" => (
+                    CoreCliOperation::JobShow,
+                    CoreCliAction::TextRoute {
+                        path: job_show_path(parsed.handle.as_deref().unwrap_or(""), &project_root),
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                ),
+                "list" => (
+                    CoreCliOperation::JobList,
+                    CoreCliAction::TextRoute {
+                        path: job_list_path(parsed.scope.as_deref(), &project_root, parsed.json),
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                ),
+                "attach" => (
+                    CoreCliOperation::JobAttach,
+                    CoreCliAction::JobEventStream {
+                        events_path: job_events_path_from_handle(
+                            parsed.handle.as_deref().unwrap_or(""),
+                            &project_root,
+                            parsed.seq,
+                        ),
+                    },
+                    CoreCliFallback::None,
+                ),
+                "cancel" => (
+                    CoreCliOperation::JobCancel,
+                    CoreCliAction::TextRoute {
+                        path: CORE_API_ROUTES.jobs_cancel.to_owned(),
+                        body: Some(json!({
+                            "handle": parsed.handle,
+                            "project": project_root,
+                        })),
+                    },
+                    CoreCliFallback::None,
+                ),
+                _ => return Err(CoreCliPlanError::Unsupported { args }),
+            }
         }
         ("service", "create") => {
             let parsed = parse_core_service_create_args(&args).ok_or_else(|| {
@@ -2276,6 +2398,41 @@ fn json_without_null_fields(value: Value) -> Value {
             .into_iter()
             .filter(|(_, value)| !value.is_null())
             .collect::<Map<_, _>>(),
+    )
+}
+
+fn job_show_path(handle: &str, project: &str) -> String {
+    format!(
+        "{}?handle={}&project={}",
+        CORE_API_ROUTES.jobs,
+        encode_query_component(handle),
+        encode_query_component(project)
+    )
+}
+
+fn job_list_path(scope: Option<&str>, project: &str, json: bool) -> String {
+    let mut path = format!(
+        "{}?project={}",
+        CORE_API_ROUTES.jobs,
+        encode_query_component(project)
+    );
+    if let Some(scope) = scope {
+        path.push_str("&scope=");
+        path.push_str(&encode_query_component(scope));
+    }
+    if json {
+        path.push_str("&json=1");
+    }
+    path
+}
+
+fn job_events_path_from_handle(handle: &str, project: &str, seq: u64) -> String {
+    format!(
+        "{}?handle={}&project={}&seq={}",
+        CORE_API_ROUTES.jobs_events,
+        encode_query_component(handle),
+        encode_query_component(project),
+        seq
     )
 }
 

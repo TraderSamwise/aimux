@@ -374,6 +374,42 @@ pub struct CoreTaskArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CoreJobRunArgs {
+    pub address: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    pub detach: bool,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreJobArgs {
+    pub subcommand: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub seq: u64,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreAttachArgs {
+    pub handle: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreThreadArgs {
     pub subcommand: String,
     #[serde(skip_serializing_if = "Option::is_none")]

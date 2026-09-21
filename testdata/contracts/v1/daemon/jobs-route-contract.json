@@ -9,7 +9,7 @@
     ["POST", "/jobs", "create-or-join"],
     ["GET", "/jobs?handle=<job-id-or-address>", "show"],
     ["GET", "/jobs?scope=<scope>", "list"],
-    ["GET", "/jobs/events?handle=<job-id-or-address>&seq=<seq>", "events-sse"],
+    ["GET", "/jobs/events?handle=<job-id-or-address>&project=<project-root>&seq=<seq>", "events-sse"],
     ["POST", "/jobs/cancel", "cancel"]
   ]
 }

@@ -1,7 +1,7 @@
 use aimux::async_subprocess::AsyncCommand;
 use aimux::config::load_config_for_project;
 use aimux::core_cli::CoreCommandRequestOptions;
-use aimux::core_cli_executor::run_core_cli;
+use aimux::core_cli_executor::{run_core_cli, run_core_cli_incremental};
 use aimux::core_cli_routing::core_command_args;
 use aimux::core_command_client::request_core_command;
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
@@ -185,14 +185,8 @@ fn main() -> Result<ExitCode> {
         .collect::<Vec<_>>();
     match cli_entry_for(&process_argv) {
         CliEntry::Core => {
-            let execution = run_core_cli(&raw_args);
-            for line in execution.stdout {
-                println!("{line}");
-            }
-            for line in execution.stderr {
-                eprintln!("{line}");
-            }
-            return Ok(ExitCode::from(execution.code as u8));
+            let code = run_core_cli_incremental(&raw_args);
+            return Ok(ExitCode::from(code as u8));
         }
         CliEntry::Expose => {
             let options = match parse_expose_args(&raw_args) {
@@ -388,7 +382,7 @@ fn print_root_help() {
     println!("{ROOT_HELP_SUFFIX}");
 }
 
-const ROOT_HELP_PREFIX: &str = "Usage: aimux [options] [command] [tool] [args...]\n\nNative CLI agent multiplexer\n\nArguments:\n  tool                         Tool to run (e.g. claude, codex, aider)\n  args                         Arguments to pass to the tool\n\nOptions:\n  --resume                     Resume previous sessions using native tool resume\n  --restore                    Start fresh sessions with injected history context\n  --debug                      Enable debug logging for this process\n  -V, --version                output the version number\n  -h, --help                   display help for command\n\nCommands:\n  init                         Initialize .aimux directory\n  restart                      Restart the Aimux control plane\n  dashboard-reload             Reload or open the dashboard\n  stop [sessionId]             Stop an agent or the current project service\n  restart-runtime              Restart the tmux runtime service\n  host                         Advanced project-service inspection commands\n  ui                           Run the first-party local web UI\n  serve                        Ensure the daemon-backed project control service is running\n  daemon                       Advanced: manage the global aimux control-plane daemon\n  projects                     Inspect known aimux projects\n  compact                      Compact session history using LLM summarization\n  worktree                     Manage git worktrees\n  thread                       Inspect and manage orchestration threads\n  threads                      List orchestration threads\n  input                        Send input to a running agent\n  attachment                   Manage session attachments\n  ps                           List running agent sessions\n  list                         List agents grouped by worktree\n  id <sessionId>               Resolve an Aimux agent id to its canonical tool and native backend id\n  loop                         Manage agents in an overseer-managed loop\n  message                      Send directed orchestration messages\n  handoff                      Send an explicit orchestration handoff\n  task                         Create and manage orchestrated tasks\n  review                       Manage review workflow tasks\n  spawn                        Spawn a new agent\n  overseer                     Manage the project overseer\n  scribe                       Manage the project scribe\n  fork                         Fork an agent session\n  graveyard                    Manage killed agents\n  rename <sessionId>           Rename an agent session\n  kill <sessionId>             Kill an agent session\n  migrate <sessionId>          Move an agent to another worktree\n  doctor                       Inspect aimux runtime state\n  notifications                Manage desktop notification delivery\n  repair                       Repair the current project runtime in place\n  migration                    Audit and migrate runtime state\n  logs                         Inspect aimux logs\n  metadata                     Inspect and mutate session metadata\n  outline                      Inspect and update work outlines\n  team                         Manage agent team roles\n";
+const ROOT_HELP_PREFIX: &str = "Usage: aimux [options] [command] [tool] [args...]\n\nNative CLI agent multiplexer\n\nArguments:\n  tool                         Tool to run (e.g. claude, codex, aider)\n  args                         Arguments to pass to the tool\n\nOptions:\n  --resume                     Resume previous sessions using native tool resume\n  --restore                    Start fresh sessions with injected history context\n  --debug                      Enable debug logging for this process\n  -V, --version                output the version number\n  -h, --help                   display help for command\n\nCommands:\n  init                         Initialize .aimux directory\n  restart                      Restart the Aimux control plane\n  dashboard-reload             Reload or open the dashboard\n  stop [sessionId]             Stop an agent or the current project service\n  restart-runtime              Restart the tmux runtime service\n  host                         Advanced project-service inspection commands\n  ui                           Run the first-party local web UI\n  serve                        Ensure the daemon-backed project control service is running\n  daemon                       Advanced: manage the global aimux control-plane daemon\n  projects                     Inspect known aimux projects\n  compact                      Compact session history using LLM summarization\n  worktree                     Manage git worktrees\n  thread                       Inspect and manage orchestration threads\n  threads                      List orchestration threads\n  input                        Send input to a running agent\n  attachment                   Manage session attachments\n  ps                           List running agent sessions\n  list                         List agents grouped by worktree\n  id <sessionId>               Resolve an Aimux agent id to its canonical tool and native backend id\n  loop                         Manage agents in an overseer-managed loop\n  message                      Send directed orchestration messages\n  handoff                      Send an explicit orchestration handoff\n  task                         Create and manage orchestrated tasks\n  review                       Manage review workflow tasks\n  spawn                        Spawn a new agent\n  run                          Run a transient job and stream output\n  job                          Inspect, tail, and cancel transient jobs\n  attach                       Attach to a transient job tmux window\n  overseer                     Manage the project overseer\n  scribe                       Manage the project scribe\n  fork                         Fork an agent session\n  graveyard                    Manage killed agents\n  rename <sessionId>           Rename an agent session\n  kill <sessionId>             Kill an agent session\n  migrate <sessionId>          Move an agent to another worktree\n  doctor                       Inspect aimux runtime state\n  notifications                Manage desktop notification delivery\n  repair                       Repair the current project runtime in place\n  migration                    Audit and migrate runtime state\n  logs                         Inspect aimux logs\n  metadata                     Inspect and mutate session metadata\n  outline                      Inspect and update work outlines\n  team                         Manage agent team roles\n";
 const ROOT_HELP_SUFFIX: &str = "  debug-state                  Read a debug snapshot\n  notify                       Send a notification\n  list-notifications           List notifications\n  clear-notifications          Clear notifications\n  read-notifications           Mark notifications read";
 
 fn core_command_help(args: &[String]) -> Option<&'static str> {
@@ -491,6 +485,13 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         ("handoff", None, _) => Some(HANDOFF_HELP),
         ("task", None, _) => Some(TASK_HELP),
         ("review", None, _) => Some(REVIEW_HELP),
+        ("run", _, true) => Some(RUN_HELP),
+        ("job", None, _) => Some(JOB_HELP),
+        ("job", Some("show"), true) => Some(JOB_SHOW_HELP),
+        ("job", Some("list"), true) => Some(JOB_LIST_HELP),
+        ("job", Some("attach"), true) => Some(JOB_ATTACH_HELP),
+        ("job", Some("cancel"), true) => Some(JOB_CANCEL_HELP),
+        ("attach", _, true) => Some(ATTACH_JOB_HELP),
         ("graveyard", None, true) => Some(GRAVEYARD_HELP),
         ("debug-state", None, true) => Some(DEBUG_STATE_HELP),
         ("worktree", Some("create" | "add"), true) => Some(WORKTREE_CREATE_HELP),
@@ -649,6 +650,13 @@ const GRAVEYARD_RESURRECT_HELP: &str = "Usage: aimux graveyard resurrect <id> [o
 const GRAVEYARD_CLEANUP_HELP: &str = "Usage: aimux graveyard cleanup [options]\n\nRemove expired graveyard agents and worktrees\n\nOptions:\n  --project <path>            Project path\n  --dry-run                   Show what would be removed\n  --json                      Emit JSON";
 const FORK_HELP: &str = "Usage: aimux fork <sourceSessionId> --tool <toolKey> [options]\n\nFork an existing agent into a new agent with handed-off context\n\nOptions:\n  --tool <toolKey>            Configured target tool key\n  --project <path>            Project path\n  --instruction <text>        Extra instruction\n  --worktree <path>           Target worktree path\n  --no-open                   Do not switch into the forked agent window\n  --json                      Emit JSON";
 const SPAWN_HELP: &str = "Usage: aimux spawn --tool <toolKey> [options]\n\nSpawn a new agent\n\nOptions:\n  --tool <toolKey>            Configured tool key\n  --project <path>            Project path\n  --worktree <path>           Target worktree path\n  --role <role>               Supervisor role to assign at launch\n  --no-open                   Do not switch into the agent window\n  --json                      Emit JSON";
+const RUN_HELP: &str = "Usage: aimux run <address> [args...] --tool <toolKey> [options]\n\nRun a transient job and stream structured output. Ctrl-C detaches from the stream and leaves the job running; use `aimux job cancel <handle>` to cancel.\n\nOptions:\n  --tool <toolKey>            Configured tool key that executes the skill\n  --project <path>            Project path used to resolve address handles\n  --detach                    Create or join the job, print its id, and exit\n  --json                      Emit NDJSON job events while streaming";
+const JOB_HELP: &str = "Usage: aimux job [command]\n\nInspect, tail, and cancel transient jobs\n\nCommands:\n  show <handle>               Show one job by id or address\n  list                        List jobs\n  attach <handle>             Tail job events from the daemon stream\n  cancel <handle>             Request cancellation";
+const JOB_SHOW_HELP: &str = "Usage: aimux job show <handle> [options]\n\nShow one job by id or scope address\n\nOptions:\n  --project <path>            Project path used to resolve address handles\n  --json                      Emit JSON";
+const JOB_LIST_HELP: &str = "Usage: aimux job list [options]\n\nList transient jobs\n\nOptions:\n  --scope <scope>             Filter by global, project, or worktree scope\n  --project <path>            Project path used to resolve scope names\n  --json                      Emit JSON";
+const JOB_ATTACH_HELP: &str = "Usage: aimux job attach <handle> [options]\n\nTail job events. Ctrl-C detaches from the stream and leaves the job running.\n\nOptions:\n  --project <path>            Project path used to resolve address handles\n  --seq <seq>                 First event sequence to stream\n  --json                      Emit NDJSON";
+const JOB_CANCEL_HELP: &str = "Usage: aimux job cancel <handle> [options]\n\nCancel a transient job\n\nOptions:\n  --project <path>            Project path used to resolve address handles\n  --json                      Emit JSON";
+const ATTACH_JOB_HELP: &str = "Usage: aimux attach <handle> [options]\n\nAttach to a transient job's managed tmux window. Detaching from tmux does not cancel the job.\n\nOptions:\n  --project <path>            Project path used to resolve address handles";
 const KILL_HELP: &str = "Usage: aimux kill <sessionId> [options]\n\nSend an agent to the graveyard\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
 const MIGRATE_HELP: &str = "Usage: aimux migrate <sessionId> --worktree <path> [options]\n\nMigrate a running agent into another worktree\n\nOptions:\n  --worktree <path>           Target worktree path\n  --project <path>            Project path\n  --json                      Emit JSON";
 const DASHBOARD_RELOAD_HELP: &str = "Usage: aimux dashboard-reload [options]\n\nRecreate and optionally reopen the dashboard window only\n\nOptions:\n  --project <path>            Project path\n  --open                      Open the dashboard after reloading\n  --client-tty <tty>          tmux client tty to switch after reloading\n  --current-client-session <name> Current client session to reopen";
@@ -811,9 +819,7 @@ fn run_root_native_dashboard() -> Result<ExitCode> {
 }
 
 fn run_core_command_and_print(args: &[String]) -> Result<ExitCode> {
-    let execution = run_core_cli(args);
-    let code = execution.code;
-    print_execution(execution);
+    let code = run_core_cli_incremental(args);
     Ok(ExitCode::from(code as u8))
 }
 

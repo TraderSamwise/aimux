@@ -63,6 +63,14 @@ pub struct DaemonBinaryResponse {
 }
 
 #[derive(Debug)]
+pub struct DaemonStreamResponse {
+    pub status: u16,
+    pub headers: BTreeMap<String, String>,
+    pub initial_body: Vec<u8>,
+    pub stream: TcpStream,
+}
+
+#[derive(Debug)]
 pub enum CoreCommandTransportError {
     DaemonNotRunning,
     EnsureDaemonNotConfigured,
@@ -231,6 +239,21 @@ pub fn request_daemon_json_at(
     )
 }
 
+pub fn open_daemon_stream(
+    path: &str,
+    init: DaemonRequestInit,
+) -> Result<DaemonStreamResponse, CoreCommandTransportError> {
+    let daemon_info_path = PathResolver::from_env().daemon_info_path();
+    let info =
+        load_daemon_info(daemon_info_path).ok_or(CoreCommandTransportError::DaemonNotRunning)?;
+    let mut init = init;
+    init.headers
+        .entry("accept".to_owned())
+        .or_insert_with(|| "text/event-stream".to_owned());
+    let request = build_daemon_json_request(&info, path, init)?;
+    open_loopback_stream_request(&request)
+}
+
 pub fn request_daemon_json_with<Load, Request>(
     path: &str,
     init: DaemonRequestInit,
@@ -375,6 +398,130 @@ fn execute_loopback_http_request(
         write_all(&mut stream, body.as_bytes(), request.timeout_ms)?;
     }
     read_response_message(&mut stream, request.timeout_ms)
+}
+
+fn open_loopback_stream_request(
+    request: &DaemonJsonRequest,
+) -> Result<DaemonStreamResponse, CoreCommandTransportError> {
+    let endpoint = parse_loopback_url(&request.url)?;
+    let mut stream = connect_loopback(&endpoint, request.timeout_ms)?;
+    let timeout = request_timeout(request.timeout_ms);
+    stream
+        .set_read_timeout(timeout)
+        .map_err(CoreCommandTransportError::Io)?;
+    stream
+        .set_write_timeout(timeout)
+        .map_err(CoreCommandTransportError::Io)?;
+
+    let mut wire = format!(
+        "{} {} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n",
+        request.method.as_str(),
+        endpoint.target,
+        endpoint.host,
+        endpoint.port
+    );
+    let mut headers = request.headers.clone();
+    if let Some(body) = request.body.as_ref() {
+        headers
+            .entry("content-length".to_owned())
+            .or_insert_with(|| body.len().to_string());
+    }
+    for (name, value) in &headers {
+        wire.push_str(name);
+        wire.push_str(": ");
+        wire.push_str(value);
+        wire.push_str("\r\n");
+    }
+    wire.push_str("\r\n");
+
+    write_all(&mut stream, wire.as_bytes(), request.timeout_ms)?;
+    if let Some(body) = request.body.as_ref() {
+        write_all(&mut stream, body.as_bytes(), request.timeout_ms)?;
+    }
+    read_stream_response_head(stream, request.timeout_ms)
+}
+
+fn read_stream_response_head(
+    mut stream: TcpStream,
+    timeout_ms: Option<u64>,
+) -> Result<DaemonStreamResponse, CoreCommandTransportError> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        if let Some(header_end) = find_header_end(&bytes) {
+            let initial_body = bytes.split_off(header_end);
+            bytes.truncate(header_end.saturating_sub(4));
+            let (status, headers) = parse_http_head(&bytes)?;
+            return Ok(DaemonStreamResponse {
+                status,
+                headers,
+                initial_body,
+                stream,
+            });
+        }
+        let count = match LoopbackRetry::new("read", timeout_ms).run(|| stream.read(&mut buffer))? {
+            Ok(count) => count,
+            Err(error) => return Err(map_io_error(error, timeout_ms)),
+        };
+        if count == 0 {
+            return Err(CoreCommandTransportError::InvalidHttpResponse(
+                "daemon stream ended before response headers completed".to_owned(),
+            ));
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        if bytes.len() > 64 * 1024 {
+            return Err(CoreCommandTransportError::InvalidHttpResponse(
+                "daemon stream response headers exceeded 65536 bytes".to_owned(),
+            ));
+        }
+    }
+}
+
+fn find_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
+}
+
+fn parse_http_head(
+    bytes: &[u8],
+) -> Result<(u16, BTreeMap<String, String>), CoreCommandTransportError> {
+    let text = String::from_utf8(bytes.to_vec()).map_err(|error| {
+        CoreCommandTransportError::InvalidHttpResponse(format!(
+            "daemon stream response headers were not UTF-8: {error}"
+        ))
+    })?;
+    let mut lines = text.split("\r\n");
+    let status_line = lines.next().ok_or_else(|| {
+        CoreCommandTransportError::InvalidHttpResponse(
+            "daemon stream response was empty".to_owned(),
+        )
+    })?;
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| {
+            CoreCommandTransportError::InvalidHttpResponse(format!(
+                "daemon stream response had invalid status line: {status_line}"
+            ))
+        })?
+        .parse::<u16>()
+        .map_err(|_| {
+            CoreCommandTransportError::InvalidHttpResponse(format!(
+                "daemon stream response had invalid status line: {status_line}"
+            ))
+        })?;
+    let mut headers = BTreeMap::new();
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_owned());
+        }
+    }
+    Ok((status, headers))
 }
 
 #[derive(Debug, PartialEq, Eq)]

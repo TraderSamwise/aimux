@@ -317,6 +317,124 @@
       }
     },
     {
+      "id": "run_command",
+      "name": "aimux run stays a core command and does not dispatch as tool run",
+      "input": {
+        "args": ["run", "--tool", "shell", "global/review-pr", "--detach", "--json"]
+      },
+      "output": {
+        "normalizedArgs": ["run", "--tool", "shell", "global/review-pr", "--detach", "--json"],
+        "rootSession": null,
+        "launchArgs": null,
+        "execution": {
+          "code": 0,
+          "stdout": [
+            {
+              "ok": true,
+              "outcome": "created",
+              "job": {
+                "id": "job-test",
+                "idempotencyKey": "key-test",
+                "scope": "global",
+                "skill": "review-pr",
+                "tool": "shell",
+                "args": [],
+                "cwd": "/repo",
+                "env": {},
+                "status": "running",
+                "createdAtMs": 1,
+                "updatedAtMs": 1
+              }
+            }
+          ],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/jobs",
+              "body": {
+                "address": "global/review-pr",
+                "project": "/repo",
+                "tool": "shell",
+                "args": [],
+                "cwd": "/repo",
+                "env": {}
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "job_command",
+      "name": "aimux job show stays a core command",
+      "input": {
+        "args": ["job", "show", "job-test", "--json"]
+      },
+      "output": {
+        "normalizedArgs": ["job", "show", "job-test", "--json"],
+        "rootSession": null,
+        "launchArgs": null,
+        "execution": {
+          "code": 0,
+          "stdout": [
+            {
+              "ok": true,
+              "handleKind": "id",
+              "job": {
+                "id": "job-test",
+                "idempotencyKey": "key-test",
+                "scope": "global",
+                "skill": "review-pr",
+                "tool": "shell",
+                "args": [],
+                "cwd": "/repo",
+                "env": {},
+                "status": "running",
+                "tmuxTarget": {
+                  "sessionName": "aimux-jobs-test",
+                  "windowId": "@1",
+                  "windowIndex": 1,
+                  "windowName": "job-test"
+                },
+                "createdAtMs": 1,
+                "updatedAtMs": 1
+              }
+            }
+          ],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/jobs?handle=job-test&project=%2Frepo",
+              "body": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "attach_command",
+      "name": "aimux attach stays a core command and does not dispatch as tool attach",
+      "input": {
+        "args": ["attach", "job-test"]
+      },
+      "output": {
+        "normalizedArgs": ["attach", "job-test"],
+        "rootSession": null,
+        "launchArgs": null,
+        "execution": {
+          "code": 0,
+          "stdout": [],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/jobs?handle=job-test&project=%2Frepo",
+              "body": null
+            }
+          ]
+        }
+      }
+    },
+    {
       "id": "disabled_tool",
       "name": "configured disabled tools do not dispatch as lifecycle spawn",
       "input": {

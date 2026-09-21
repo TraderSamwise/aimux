@@ -8,6 +8,8 @@
 mod fixture_cli_agent_id;
 #[path = "fixtures/fixture_cli_attachment.rs"]
 mod fixture_cli_attachment;
+#[path = "fixtures/fixture_cli_jobs.rs"]
+mod fixture_cli_jobs;
 #[path = "fixtures/fixture_cli_launcher.rs"]
 mod fixture_cli_launcher;
 #[path = "fixtures/fixture_cli_parsing.rs"]

@@ -15,8 +15,8 @@ use crate::core_cli::{
 use crate::core_command_client::request_core_command;
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::core_command_transport::{
-    CoreCommandTransportError, DaemonHttpMethod, DaemonRequestInit, request_daemon_json,
-    request_daemon_text,
+    CoreCommandTransportError, DaemonHttpMethod, DaemonRequestInit, open_daemon_stream,
+    request_daemon_json, request_daemon_text,
 };
 use crate::core_text::{
     render_core_daemon_projects_lines, render_core_daemon_status_lines,
@@ -64,7 +64,7 @@ use crate::tmux::{attach_session_argv, switch_client_argv, tmux_command_from_env
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -75,6 +75,10 @@ const LOOP_SELF_REPORT_DAEMON_TIMEOUT_MS: u64 = 10_000;
 const LOOP_MANAGEMENT_DAEMON_TIMEOUT_MS: u64 = 60_000;
 const POST_RESTART_DAEMON_VERIFY_TIMEOUT_MS: u64 = 30_000;
 const POST_RESTART_DAEMON_VERIFY_RETRY_SLEEP_MS: u64 = 250;
+pub const JOB_FAILED_EXIT_CODE: i32 = 20;
+pub const JOB_CANCELLED_EXIT_CODE: i32 = 21;
+pub const JOB_DETACHED_EXIT_CODE: i32 = 22;
+const JOB_STREAM_READ_TIMEOUT_MS: u64 = 250;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreCliExecution {
@@ -167,6 +171,14 @@ pub trait CoreCliRuntime {
     fn read_text_file(&self, path: &Path) -> Result<String, String>;
     fn read_runtime_topology(&self, path: &Path) -> Result<Value, String>;
     fn open_dashboard_target(&mut self, target: &Value) -> Result<(), String>;
+    fn attach_tmux_target(&mut self, session_name: &str, window_index: i64) -> Result<(), String> {
+        let argv = attach_session_argv(session_name, Some(window_index));
+        match tmux_command_from_env().args(argv).status() {
+            Ok(status) if status.success() => Ok(()),
+            Ok(status) => Err(format!("tmux attach exited with {status}")),
+            Err(error) => Err(format!("tmux attach failed: {error}")),
+        }
+    }
     fn restart_control_plane(
         &mut self,
         project_root: Option<&str>,
@@ -1008,6 +1020,414 @@ pub fn run_core_cli_with<R: CoreCliRuntime>(
     }
 }
 
+pub fn run_core_cli_incremental(raw_args: &[String]) -> i32 {
+    let mut runtime = RealCoreCliRuntime;
+    let mut stdout = std::io::stdout();
+    let mut stderr = std::io::stderr();
+    run_core_cli_incremental_with(raw_args, &mut runtime, &mut stdout, &mut stderr)
+}
+
+pub fn run_core_cli_incremental_with<R: CoreCliRuntime>(
+    raw_args: &[String],
+    runtime: &mut R,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> i32 {
+    let current_working_dir = runtime.cwd();
+    let current_project_root = runtime.resolve_project_root(&current_working_dir);
+    let context = CoreCliContext {
+        current_working_dir,
+        current_project_root,
+        daemon_running: runtime.load_daemon_info().is_some(),
+        has_credentials: core_cli_has_remote_credentials(runtime),
+        loop_actor: runtime.loop_actor_context(),
+    };
+    let plan = match classify_core_cli_with_project_resolver(raw_args, &context, |project| {
+        runtime.resolve_project_root(project)
+    }) {
+        Ok(plan) => plan,
+        Err(error) => {
+            let _ = writeln!(stderr, "{error}");
+            return error.exit_code();
+        }
+    };
+    match &plan.action {
+        CoreCliAction::JobRun {
+            create_path,
+            events_path,
+            body,
+            detach,
+        } => run_job_incremental(
+            JobRunIncremental {
+                output_mode: plan.output_mode,
+                create_path,
+                events_path,
+                body: body.clone(),
+                detach: *detach,
+            },
+            runtime,
+            stdout,
+            stderr,
+        ),
+        CoreCliAction::JobEventStream { events_path } => {
+            stream_job_events(plan.output_mode, events_path, stdout, stderr)
+        }
+        CoreCliAction::JobTmuxAttach { show_path } => match run_job_tmux_attach(show_path, runtime)
+        {
+            Ok(()) => 0,
+            Err(error) => {
+                let _ = writeln!(stderr, "Error: {error}");
+                1
+            }
+        },
+        _ => {
+            let execution = run_core_cli_with(raw_args, runtime);
+            for line in execution.stdout {
+                let _ = writeln!(stdout, "{line}");
+            }
+            for line in execution.stderr {
+                let _ = writeln!(stderr, "{line}");
+            }
+            execution.code
+        }
+    }
+}
+
+struct JobRunIncremental<'a> {
+    output_mode: CoreCliOutputMode,
+    create_path: &'a str,
+    events_path: &'a str,
+    body: Value,
+    detach: bool,
+}
+
+fn run_job_incremental(
+    options: JobRunIncremental<'_>,
+    runtime: &mut impl CoreCliRuntime,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> i32 {
+    let text = match runtime.request_daemon_text(options.create_path, Some(options.body)) {
+        Ok(text) => text,
+        Err(error) => {
+            let _ = writeln!(stderr, "Error: {error}");
+            return 1;
+        }
+    };
+    let payload = match parse_daemon_json_text(&text) {
+        Ok(payload) => payload,
+        Err(error) => {
+            let _ = writeln!(stderr, "Error: {error}");
+            return 1;
+        }
+    };
+    if options.detach {
+        match render_job_create_response(options.output_mode, &payload) {
+            Ok(execution) => {
+                for line in execution.stdout {
+                    let _ = writeln!(stdout, "{line}");
+                }
+                for line in execution.stderr {
+                    let _ = writeln!(stderr, "{line}");
+                }
+                execution.code
+            }
+            Err(error) => {
+                let _ = writeln!(stderr, "Error: {error}");
+                1
+            }
+        }
+    } else {
+        let Some(id) = payload
+            .get("job")
+            .and_then(|job| job.get("id"))
+            .and_then(Value::as_str)
+        else {
+            let _ = writeln!(stderr, "Error: daemon job response did not include job.id");
+            return 1;
+        };
+        let path = options.events_path.replace("__created__", id);
+        stream_job_events(options.output_mode, &path, stdout, stderr)
+    }
+}
+
+fn stream_job_events(
+    output_mode: CoreCliOutputMode,
+    events_path: &str,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> i32 {
+    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
+        crate::process_signals::TERMINATION_SIGNALS,
+    )
+    .ok();
+    let mut response = match open_daemon_stream(
+        events_path,
+        DaemonRequestInit {
+            method: Some(DaemonHttpMethod::Get),
+            timeout_ms: Some(1_000),
+            ..DaemonRequestInit::default()
+        },
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            let _ = writeln!(stderr, "Error: {error}");
+            return 1;
+        }
+    };
+    if !(200..300).contains(&response.status) {
+        let mut body = String::from_utf8_lossy(&response.initial_body).into_owned();
+        let _ = response.stream.read_to_string(&mut body);
+        let _ = writeln!(stderr, "Error: {}", body.trim());
+        return 1;
+    }
+    let _ = response
+        .stream
+        .set_read_timeout(Some(Duration::from_millis(JOB_STREAM_READ_TIMEOUT_MS)));
+    let mut decoder = JobSseDecoder::default();
+    if !response.initial_body.is_empty() {
+        match process_job_sse_chunk(
+            &mut decoder,
+            &response.initial_body,
+            output_mode,
+            stdout,
+            stderr,
+        ) {
+            JobStreamStep::Continue => {}
+            JobStreamStep::Exit(code) => return code,
+        }
+    }
+    let mut buffer = [0_u8; 8192];
+    loop {
+        if crate::process_signals::received_shutdown_signal().is_some() {
+            let _ = writeln!(
+                stderr,
+                "aimux job stream detached on SIGINT; the job is still running. Use `aimux job cancel <handle>` to cancel it."
+            );
+            return JOB_DETACHED_EXIT_CODE;
+        }
+        match response.stream.read(&mut buffer) {
+            Ok(0) => return 0,
+            Ok(count) => match process_job_sse_chunk(
+                &mut decoder,
+                &buffer[..count],
+                output_mode,
+                stdout,
+                stderr,
+            ) {
+                JobStreamStep::Continue => {}
+                JobStreamStep::Exit(code) => return code,
+            },
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) => {}
+            Err(error)
+                if error.kind() == std::io::ErrorKind::Interrupted
+                    && crate::process_signals::received_shutdown_signal().is_some() =>
+            {
+                let _ = writeln!(
+                    stderr,
+                    "aimux job stream detached on SIGINT; the job is still running. Use `aimux job cancel <handle>` to cancel it."
+                );
+                return JOB_DETACHED_EXIT_CODE;
+            }
+            Err(error) => {
+                let _ = writeln!(stderr, "Error: job event stream failed: {error}");
+                return 1;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JobStreamStep {
+    Continue,
+    Exit(i32),
+}
+
+fn process_job_sse_chunk(
+    decoder: &mut JobSseDecoder,
+    chunk: &[u8],
+    output_mode: CoreCliOutputMode,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> JobStreamStep {
+    let events = match decoder.push_chunk(chunk) {
+        Ok(events) => events,
+        Err(error) => {
+            let _ = writeln!(stderr, "Error: {error}");
+            return JobStreamStep::Exit(1);
+        }
+    };
+    for event in events {
+        match event.name.as_str() {
+            "job-event" | "terminal-status" => {
+                let code = render_job_stream_event(output_mode, &event.data, stdout, stderr);
+                if event.name == "terminal-status" {
+                    return JobStreamStep::Exit(code);
+                }
+            }
+            "error" => {
+                let message = event
+                    .data
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("job event stream failed");
+                let _ = writeln!(stderr, "Error: {message}");
+                return JobStreamStep::Exit(1);
+            }
+            _ => {}
+        }
+    }
+    JobStreamStep::Continue
+}
+
+fn render_job_stream_event(
+    output_mode: CoreCliOutputMode,
+    event: &Value,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> i32 {
+    if output_mode == CoreCliOutputMode::Json {
+        if let Ok(line) = serde_json::to_string(event) {
+            let _ = writeln!(stdout, "{line}");
+        }
+    } else if event.get("kind").and_then(Value::as_str) == Some("output")
+        && let Some(text) = event
+            .get("data")
+            .and_then(|data| data.get("text"))
+            .and_then(Value::as_str)
+    {
+        let _ = write!(stdout, "{text}");
+        let _ = stdout.flush();
+    }
+    if event.get("kind").and_then(Value::as_str) != Some("terminal-status") {
+        return 0;
+    }
+    let status = event
+        .get("data")
+        .and_then(|data| data.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("failed");
+    match status {
+        "succeeded" => 0,
+        "cancelled" => JOB_CANCELLED_EXIT_CODE,
+        _ => {
+            if output_mode == CoreCliOutputMode::Text
+                && let Some(reason) = event
+                    .get("data")
+                    .and_then(|data| data.get("terminalReason"))
+                    .and_then(Value::as_str)
+            {
+                let _ = writeln!(stderr, "job failed: {reason}");
+            }
+            JOB_FAILED_EXIT_CODE
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct JobSseEvent {
+    name: String,
+    data: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct JobSseError(String);
+
+impl std::fmt::Display for JobSseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct JobSseDecoder {
+    line: Vec<u8>,
+    event_name: String,
+    data: Vec<u8>,
+}
+
+impl Default for JobSseDecoder {
+    fn default() -> Self {
+        Self {
+            line: Vec::new(),
+            event_name: "message".to_owned(),
+            data: Vec::new(),
+        }
+    }
+}
+
+impl JobSseDecoder {
+    fn push_chunk(&mut self, chunk: &[u8]) -> Result<Vec<JobSseEvent>, JobSseError> {
+        let mut events = Vec::new();
+        for byte in chunk {
+            if *byte == b'\n' {
+                if let Some(event) = self.process_line()? {
+                    events.push(event);
+                }
+            } else {
+                self.line.push(*byte);
+                if self.line.len() + self.data.len() > 1024 * 1024 {
+                    return Err(JobSseError(
+                        "job SSE frame exceeded 1048576 bytes".to_owned(),
+                    ));
+                }
+            }
+        }
+        Ok(events)
+    }
+
+    fn process_line(&mut self) -> Result<Option<JobSseEvent>, JobSseError> {
+        let mut line = std::mem::take(&mut self.line);
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        if line.is_empty() {
+            return self.dispatch_event();
+        }
+        if line.starts_with(b":") {
+            return Ok(None);
+        }
+        let (field, mut value) = match line.iter().position(|byte| *byte == b':') {
+            Some(index) => (&line[..index], &line[index + 1..]),
+            None => (line.as_slice(), &[][..]),
+        };
+        if value.first() == Some(&b' ') {
+            value = &value[1..];
+        }
+        match field {
+            b"event" => {
+                self.event_name = String::from_utf8_lossy(value).into_owned();
+                if self.event_name.is_empty() {
+                    self.event_name = "message".to_owned();
+                }
+            }
+            b"data" => {
+                if !self.data.is_empty() {
+                    self.data.push(b'\n');
+                }
+                self.data.extend_from_slice(value);
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn dispatch_event(&mut self) -> Result<Option<JobSseEvent>, JobSseError> {
+        let name = std::mem::replace(&mut self.event_name, "message".to_owned());
+        let data = std::mem::take(&mut self.data);
+        if data.is_empty() {
+            return Ok(None);
+        }
+        let data = serde_json::from_slice::<Value>(&data)
+            .map_err(|error| JobSseError(format!("invalid job SSE JSON: {error}")))?;
+        Ok(Some(JobSseEvent { name, data }))
+    }
+}
+
 #[cfg(feature = "remote-control")]
 fn core_cli_has_remote_credentials(runtime: &(impl CoreCliRuntime + ?Sized)) -> bool {
     runtime.has_remote_credentials()
@@ -1176,6 +1596,18 @@ where
             runtime,
         ),
         CoreCliAction::TextRoute { path, body } => run_text_route(operation, &path, body, runtime),
+        CoreCliAction::JobRun {
+            create_path,
+            body,
+            detach,
+            ..
+        } => run_job_create_buffered(output_mode, &create_path, body, detach, runtime),
+        CoreCliAction::JobEventStream { .. } => Err(
+            "job event streaming requires the incremental CLI executor; use the native aimux binary"
+                .to_owned(),
+        ),
+        CoreCliAction::JobTmuxAttach { show_path } => run_job_tmux_attach(&show_path, runtime)
+            .map(|()| CoreCliExecution::ok(Vec::new())),
         CoreCliAction::Logs(options) => run_logs(&options, runtime),
         CoreCliAction::InitProject => run_init_project(runtime),
         CoreCliAction::HostTopology { json, raw } => run_host_topology(json, raw, runtime),
@@ -1782,6 +2214,69 @@ fn render_compact_report(
         stdout,
         stderr,
     }
+}
+
+fn run_job_create_buffered(
+    output_mode: CoreCliOutputMode,
+    create_path: &str,
+    body: Value,
+    detach: bool,
+    runtime: &mut impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let text = runtime.request_daemon_text(create_path, Some(body))?;
+    let payload = parse_daemon_json_text(&text)?;
+    if !detach {
+        return Err(
+            "job streaming requires the incremental CLI executor; use the native aimux binary"
+                .to_owned(),
+        );
+    }
+    render_job_create_response(output_mode, &payload)
+}
+
+fn run_job_tmux_attach(show_path: &str, runtime: &mut impl CoreCliRuntime) -> Result<(), String> {
+    let text = runtime.request_daemon_text(show_path, None)?;
+    let payload = parse_daemon_json_text(&text)?;
+    let target = payload
+        .get("job")
+        .and_then(|job| job.get("tmuxTarget"))
+        .ok_or_else(|| "job has no tmux target".to_owned())?;
+    let session_name = target
+        .get("sessionName")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "job tmux target is missing sessionName".to_owned())?;
+    let window_index = target
+        .get("windowIndex")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| "job tmux target is missing windowIndex".to_owned())?;
+    runtime.attach_tmux_target(session_name, window_index)
+}
+
+fn parse_daemon_json_text(text: &str) -> Result<Value, String> {
+    serde_json::from_str(text.trim())
+        .map_err(|error| format!("daemon returned invalid JSON: {error}"))
+}
+
+fn render_job_create_response(
+    output_mode: CoreCliOutputMode,
+    payload: &Value,
+) -> Result<CoreCliExecution, String> {
+    if output_mode == CoreCliOutputMode::Json {
+        return Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string(payload).map_err(|error| error.to_string())?,
+        ]));
+    }
+    let id = payload
+        .get("job")
+        .and_then(|job| job.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown-job");
+    let outcome = payload
+        .get("outcome")
+        .and_then(Value::as_str)
+        .unwrap_or("ready");
+    Ok(CoreCliExecution::ok(vec![format!("job {id} {outcome}")]))
 }
 
 fn run_command_action(

@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "source": "native transient jobs CLI",
+  "generatedBy": "native/crates/aimux/tests/fixtures/fixture_cli_jobs.rs",
+  "description": "Native CLI parsing and exit-code contract for transient jobs.",
+  "parsing": [
+    {
+      "id": "job-cli-001",
+      "args": ["run", "--tool", "shell", "global/review-pr", "arg1"],
+      "output": {
+        "operation": "job-run",
+        "action": "run",
+        "outputMode": "text"
+      }
+    },
+    {
+      "id": "job-cli-002",
+      "args": ["job", "attach", "tealstreet-next/main/review-pr", "--seq", "5", "--json"],
+      "output": {
+        "operation": "job-attach",
+        "action": "event-stream",
+        "outputMode": "json"
+      }
+    },
+    {
+      "id": "job-cli-003",
+      "args": ["attach", "job-abc123"],
+      "output": {
+        "operation": "job-tmux-attach",
+        "action": "tmux-attach",
+        "outputMode": "text"
+      }
+    },
+    {
+      "id": "job-cli-004",
+      "args": ["run", "shell", "global/review-pr"],
+      "output": {
+        "errorCode": 1,
+        "errorContains": "requires --tool"
+      }
+    }
+  ],
+  "exitCodes": [
+    ["cli-invalid-arguments", 1],
+    ["cli-unsupported", 2],
+    ["job-failed", 20],
+    ["job-cancelled", 21],
+    ["job-detached", 22]
+  ]
+}

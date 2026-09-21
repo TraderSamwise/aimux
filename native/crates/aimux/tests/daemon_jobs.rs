@@ -524,6 +524,63 @@ async fn resolved_job_streams_events_from_requested_sequence() {
 }
 
 #[tokio::test]
+async fn terminal_job_stream_emits_final_status_and_closes() {
+    let fixture = fixture("terminal-stream");
+    let spec = aimux::jobs::JobSpec {
+        scope: JobScope::Global,
+        skill: "review-pr".to_owned(),
+        tool: Some("codex".to_owned()),
+        args: Vec::new(),
+        cwd: None,
+        env: BTreeMap::new(),
+    };
+    let (record, _) = fixture.runtime.store.create_or_join(&spec).expect("job");
+    fixture
+        .runtime
+        .store
+        .append_event(
+            &record.id,
+            JobEventInput {
+                kind: "output".to_owned(),
+                data: json!({ "text": "done\n" }),
+            },
+        )
+        .expect("output event");
+    fixture
+        .runtime
+        .store
+        .finish(
+            &record.id,
+            JobStatus::Succeeded,
+            Some(0),
+            "tool exited with 0",
+            None,
+        )
+        .expect("finish");
+
+    let output = capture_job_event_stream(
+        fixture.runtime.store.clone(),
+        record.id.clone(),
+        0,
+        JobEventStreamOptions {
+            keepalive_ms: 1_000,
+            poll_ms: 1,
+            max_keepalives: None,
+            max_polls: None,
+        },
+    )
+    .await;
+    let text = String::from_utf8(output).expect("utf8");
+    assert!(text.contains("event: job-event\n"));
+    assert!(text.contains("\"text\":\"done\\n\""));
+    assert!(text.contains("\"kind\":\"terminal-status\""));
+    assert!(text.contains("event: terminal-status\n"));
+    assert!(text.contains("\"status\":\"succeeded\""));
+    assert!(text.contains("\"exitCode\":0"));
+    assert!(!text.contains(": keepalive\n\n"));
+}
+
+#[tokio::test]
 async fn job_stream_delivers_new_events_at_poll_interval_before_keepalive() {
     let fixture = fixture("event-stream-poll");
     let spec = aimux::jobs::JobSpec {

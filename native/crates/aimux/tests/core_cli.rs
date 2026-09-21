@@ -2855,6 +2855,85 @@ fn command_transport_contract_matches_posted_json_envelope() {
 }
 
 #[test]
+fn job_run_plans_incremental_create_and_stream_paths() {
+    let plan = classify_core_cli_with_project_resolver(
+        &[
+            "run",
+            "--tool",
+            "shell",
+            "--project",
+            "../repo",
+            "tealstreet-next/main/review-pr",
+            "https://example.test/pr",
+        ],
+        &context(true, true),
+        |path| format!("/resolved/{path}"),
+    )
+    .expect("job run plan");
+    assert_eq!(plan.operation, CoreCliOperation::JobRun);
+    let CoreCliAction::JobRun {
+        create_path,
+        events_path,
+        body,
+        detach,
+    } = plan.action
+    else {
+        panic!("expected job run action");
+    };
+    assert_eq!(create_path, CORE_API_ROUTES.jobs);
+    assert!(events_path.contains(CORE_API_ROUTES.jobs_events));
+    assert!(events_path.contains("handle=__created__"));
+    assert!(events_path.contains("seq=0"));
+    assert!(events_path.contains("project=%2Fresolved%2F..%2Frepo"));
+    assert!(!detach);
+    assert_eq!(body["address"], "tealstreet-next/main/review-pr");
+    assert_eq!(body["project"], "/resolved/../repo");
+    assert_eq!(body["tool"], "shell");
+    assert_eq!(body["args"], json!(["https://example.test/pr"]));
+    assert_eq!(body["cwd"], "/repo/subdir");
+}
+
+#[test]
+fn job_handle_verbs_pass_handle_verbatim_to_daemon() {
+    let attach = classify_core_cli_with_project_resolver(
+        &["attach", "tealstreet-next/main/review-pr"],
+        &context(true, true),
+        str::to_owned,
+    )
+    .expect("attach plan");
+    assert_eq!(attach.operation, CoreCliOperation::JobTmuxAttach);
+    let CoreCliAction::JobTmuxAttach { show_path } = attach.action else {
+        panic!("expected job tmux attach action");
+    };
+    assert!(show_path.contains("handle=tealstreet-next%2Fmain%2Freview-pr"));
+    assert!(show_path.contains("project=%2Frepo"));
+
+    let tail = classify_core_cli(
+        &["job", "attach", "job-abc123", "--seq", "7"],
+        &context(true, true),
+    )
+    .expect("job stream plan");
+    assert_eq!(tail.operation, CoreCliOperation::JobAttach);
+    let CoreCliAction::JobEventStream { events_path } = tail.action else {
+        panic!("expected job event stream action");
+    };
+    assert!(events_path.contains("handle=job-abc123"));
+    assert!(events_path.contains("seq=7"));
+    assert!(events_path.contains("project=%2Frepo"));
+}
+
+#[test]
+fn job_run_refuses_positional_tool_sniffing() {
+    let error = classify_core_cli(
+        &["run", "claude", "tealstreet-next/main/review-pr"],
+        &context(true, true),
+    )
+    .expect_err("positional tool sniffing is unsupported");
+    assert_eq!(error.exit_code(), 1);
+    assert!(error.to_string().contains("requires --tool"));
+}
+
+#[test]
 fn command_response_validation_matches_error_and_mismatch_behavior() {
     let response = validate_core_command_response(
         CORE_COMMAND_NAMES.ping,
