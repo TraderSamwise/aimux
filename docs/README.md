@@ -12,6 +12,7 @@ These docs are the maintained product and operations references.
   experience.
 - [Security](security.md) - remote access, notifications, hosted mode, and
   egress controls.
+- [Transient Jobs](transient-jobs-v1.md) - run, monitor, attach, and cancel local transient jobs.
 
 The production browser app is [aimux.app](https://aimux.app). iOS and Android
 clients are built from the same Expo app and are the upcoming native surfaces.
