@@ -47,7 +47,7 @@
     "audit:async-seams": "python3 scripts/audit-async-seams.py && python3 scripts/audit-async-seams-self-check.py",
     "audit:async-clippy": "CARGO_INCREMENTAL=0 ./scripts/audit-async-clippy.sh",
     "audit:contract-secrets": "./scripts/audit-contract-secrets.mjs",
-    "audit:hot-path-ensure": "node scripts/audit-hot-path-ensure.mjs",
+    "audit:hot-path-ensure": "./scripts/audit-hot-path-ensure.mjs",
     "audit:live-residual-isolation": "python3 scripts/audit-live-residual-isolation.py",
     "audit:idle-process-spawn": "python3 scripts/idle-process-spawn-gate.py",
     "audit:phase8-live-residuals": "python3 scripts/phase8-live-residuals.py",

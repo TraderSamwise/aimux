@@ -3,6 +3,10 @@ use aimux::daemon::expose::{
     GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME, GlobalExposeHotSnapshotCoordinator,
     GlobalExposeHotSnapshotTask,
 };
+use aimux::daemon::jobs::{
+    DAEMON_JOB_CALLBACKS_TASK_NAME, DAEMON_JOBS_PRUNE_TASK_NAME, DAEMON_JOBS_RECONCILE_TASK_NAME,
+};
+use aimux::daemon::process_inventory::DAEMON_PROCESS_HEALTH_TASK_NAME;
 use aimux::daemon::routing::DaemonRouteUrl;
 use aimux::daemon::runtime::{
     DAEMON_DISK_MAINTENANCE_TASK_NAME, DaemonDiskMaintenanceTask, DiskMaintenanceOptions,
@@ -45,6 +49,10 @@ fn daemon_periodic_task_list_registers_every_migrated_task() {
             GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME,
             HOSTED_PRUNE_TASK_NAME,
             HOSTED_OUTBOX_DRAIN_TASK_NAME,
+            DAEMON_PROCESS_HEALTH_TASK_NAME,
+            DAEMON_JOBS_PRUNE_TASK_NAME,
+            DAEMON_JOBS_RECONCILE_TASK_NAME,
+            DAEMON_JOB_CALLBACKS_TASK_NAME,
             DAEMON_DISK_MAINTENANCE_TASK_NAME,
         ]
     );

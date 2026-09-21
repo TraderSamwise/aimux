@@ -15,6 +15,7 @@ struct Call {
     route_path: String,
     body: Option<Value>,
     ensure_project: Option<bool>,
+    ensure_if_unreachable: Option<bool>,
     timeout_ms: Option<u64>,
 }
 
@@ -46,6 +47,7 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             route_path: route_path.into(),
             body: None,
             ensure_project: None,
+            ensure_if_unreachable: None,
             timeout_ms: None,
         });
         match route_path {
@@ -101,6 +103,7 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             route_path: route_path.into(),
             body: Some(body.clone()),
             ensure_project: Some(options.ensure_project),
+            ensure_if_unreachable: Some(options.ensure_if_unreachable),
             timeout_ms: options.timeout_ms,
         });
         match route_path {
@@ -220,7 +223,8 @@ fn lifecycle_routes_match_agent_project_service_contracts() {
     let spawn_call = runtime.calls.last().unwrap();
     assert_eq!(spawn_call.project, ".");
     assert_eq!(spawn_call.route_path, project_routes::agents::SPAWN);
-    assert_eq!(spawn_call.ensure_project, Some(true));
+    assert_eq!(spawn_call.ensure_project, Some(false));
+    assert_eq!(spawn_call.ensure_if_unreachable, Some(true));
     assert_eq!(
         spawn_call.body.as_ref().unwrap(),
         &json!({
@@ -258,7 +262,8 @@ fn lifecycle_routes_match_agent_project_service_contracts() {
     let service_call = runtime.calls.last().unwrap();
     assert_eq!(service_call.project, ".");
     assert_eq!(service_call.route_path, project_routes::services::CREATE);
-    assert_eq!(service_call.ensure_project, Some(true));
+    assert_eq!(service_call.ensure_project, Some(false));
+    assert_eq!(service_call.ensure_if_unreachable, Some(true));
     assert_eq!(
         service_call.body.as_ref().unwrap(),
         &json!({ "command": "yarn dev", "worktreePath": "/repo/wt" })
@@ -624,6 +629,10 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
     );
     assert_eq!(
         runtime.calls[runtime.calls.len() - 2].ensure_project,
+        Some(false)
+    );
+    assert_eq!(
+        runtime.calls[runtime.calls.len() - 2].ensure_if_unreachable,
         Some(true)
     );
     assert_eq!(
@@ -706,7 +715,8 @@ fn loop_exit_reports_required_state_write_failure_without_event_post() {
     assert_eq!(json_body(response)["error"], json!("loop write failed"));
     assert_eq!(runtime.calls.len(), 1);
     assert_eq!(runtime.calls[0].route_path, project_routes::agents::LOOP);
-    assert_eq!(runtime.calls[0].ensure_project, Some(true));
+    assert_eq!(runtime.calls[0].ensure_project, Some(false));
+    assert_eq!(runtime.calls[0].ensure_if_unreachable, Some(true));
     assert_eq!(runtime.calls[0].timeout_ms, Some(2_000));
 }
 

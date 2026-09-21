@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "current sync Rust binary before async cutover",
-  "recorded_from_commit": "8203a33c",
+  "recorded_from_commit": "64ea1125",
   "normalization": [
     "temporary roots, project ids, pids, ports, timestamps and build stamps are replaced with stable placeholders",
     "HTTP status lines, header order, content type, connection mode, JSON error shapes and SSE frame ordering/framing are compared literally after that normalization",
@@ -183,54 +183,54 @@
             "ok": true,
             "periodicTasks": [
               {
-                "hot": false,
+                "name": "agent-input-delivery",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "agent-input-delivery"
+                "hot": false
               },
               {
-                "hot": false,
+                "name": "agent-restore-snapshot",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "agent-restore-snapshot"
+                "hot": false
               },
               {
-                "hot": false,
+                "name": "builtin-metadata-watchers",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "builtin-metadata-watchers"
+                "hot": false
               },
               {
-                "hot": false,
+                "name": "gh-pr-context",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "gh-pr-context"
+                "hot": false
               },
               {
-                "hot": false,
+                "name": "loop-watcher",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "loop-watcher"
+                "hot": false
               },
               {
-                "hot": false,
+                "name": "project-expose-hot-snapshot-refresh",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "project-expose-hot-snapshot-refresh"
+                "hot": false
               },
               {
-                "hot": false,
+                "name": "runtime-health-recorder",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "runtime-health-recorder"
+                "hot": false
               },
               {
-                "hot": false,
+                "name": "scribe-watcher",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "scribe-watcher"
+                "hot": false
               },
               {
-                "hot": false,
+                "name": "transcript-length",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "transcript-length"
+                "hot": false
               },
               {
-                "hot": false,
+                "name": "transcript-reconciler",
                 "intervalMs": "<interval-ms-or-null>",
-                "name": "transcript-reconciler"
+                "hot": false
               }
             ]
           }
@@ -291,6 +291,7 @@
             }
           ],
           "operationFailures": [],
+          "controlPlaneWarnings": [],
           "agentRestoreOffer": null,
           "mainCheckoutInfo": {
             "name": "Main Checkout",
@@ -534,54 +535,54 @@
               "ok": true,
               "periodicTasks": [
                 {
-                  "hot": false,
+                  "name": "agent-input-delivery",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "agent-input-delivery"
+                  "hot": false
                 },
                 {
-                  "hot": false,
+                  "name": "agent-restore-snapshot",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "agent-restore-snapshot"
+                  "hot": false
                 },
                 {
-                  "hot": false,
+                  "name": "builtin-metadata-watchers",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "builtin-metadata-watchers"
+                  "hot": false
                 },
                 {
-                  "hot": false,
+                  "name": "gh-pr-context",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "gh-pr-context"
+                  "hot": false
                 },
                 {
-                  "hot": false,
+                  "name": "loop-watcher",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "loop-watcher"
+                  "hot": false
                 },
                 {
-                  "hot": false,
+                  "name": "project-expose-hot-snapshot-refresh",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "project-expose-hot-snapshot-refresh"
+                  "hot": false
                 },
                 {
-                  "hot": false,
+                  "name": "runtime-health-recorder",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "runtime-health-recorder"
+                  "hot": false
                 },
                 {
-                  "hot": false,
+                  "name": "scribe-watcher",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "scribe-watcher"
+                  "hot": false
                 },
                 {
-                  "hot": false,
+                  "name": "transcript-length",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "transcript-length"
+                  "hot": false
                 },
                 {
-                  "hot": false,
+                  "name": "transcript-reconciler",
                   "intervalMs": "<interval-ms-or-null>",
-                  "name": "transcript-reconciler"
+                  "hot": false
                 }
               ]
             }

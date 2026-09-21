@@ -37,6 +37,8 @@ const JOB_EVENT_STREAM_POLL_MS: u64 = 500;
 const JOB_PRUNE_INTERVAL_MS: i64 = 6 * 60 * 60 * 1_000;
 const JOB_CALLBACK_BACKSTOP_INTERVAL_MS: i64 = 60_000;
 const JOB_FIFO_NOTIFY_MAX_BYTES: usize = 512;
+pub const DAEMON_JOBS_PRUNE_TASK_NAME: &str = "daemon-jobs-prune";
+pub const DAEMON_JOBS_RECONCILE_TASK_NAME: &str = "daemon-jobs-reconcile";
 pub const DAEMON_JOB_CALLBACKS_TASK_NAME: &str = "daemon-job-callbacks";
 
 pub trait DaemonJobRouteRuntime {
@@ -1136,7 +1138,7 @@ pub struct DaemonJobsPruneTask;
 
 impl DaemonPeriodicTask for DaemonJobsPruneTask {
     fn name(&self) -> &str {
-        "daemon-jobs-prune"
+        DAEMON_JOBS_PRUNE_TASK_NAME
     }
 
     fn interval_ms(&self) -> i64 {
@@ -1158,7 +1160,7 @@ pub struct DaemonJobsReconcileTask;
 
 impl DaemonPeriodicTask for DaemonJobsReconcileTask {
     fn name(&self) -> &str {
-        "daemon-jobs-reconcile"
+        DAEMON_JOBS_RECONCILE_TASK_NAME
     }
 
     fn interval_ms(&self) -> i64 {

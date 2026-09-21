@@ -491,7 +491,10 @@ fn host_agent_stream_interceptor_resolves_and_pipes_upstream() {
     let response = String::from_utf8(output).unwrap();
 
     assert!(handled);
-    assert!(runtime.ensured);
+    assert!(
+        !runtime.ensured,
+        "hot host-agent streams should use the existing metadata endpoint without eager ensure"
+    );
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(response.ends_with("hello\n"));
 }
