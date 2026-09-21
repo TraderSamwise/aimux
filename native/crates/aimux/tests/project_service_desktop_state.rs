@@ -1,5 +1,7 @@
+use aimux::daemon::process_inventory::write_daemon_process_health_snapshot;
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::dashboard_model::{DashboardOperationFailure, DesktopStateSnapshot};
+use aimux::process_inspector::ProcessArgsEntry;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::desktop_state::{
@@ -431,6 +433,75 @@ fn route_desktop_state_reports_persisted_operation_failures() {
     assert_eq!(failures[0]["title"], "Worktree failed");
     assert_eq!(failures[0]["message"], "not a git repository");
     assert_eq!(failures[0]["worktreeName"], "feature");
+    cleanup(project);
+}
+
+#[test]
+fn route_desktop_state_reports_unexpected_daemon_process_warning() {
+    let (project, state_dir) = write_desktop_state_fixtures("daemon-process-warning");
+    let isolation = support::TestIsolation::new("desktop-state-daemon-process-warning");
+    let resolver = aimux::paths::PathResolver::from_env();
+    write_daemon_process_health_snapshot(
+        &resolver,
+        101,
+        Ok(vec![
+            ProcessArgsEntry {
+                pid: 101,
+                args: "/Users/sam/.aimux/native/current/bin/aimux daemon run".into(),
+            },
+            ProcessArgsEntry {
+                pid: 202,
+                args: "/tmp/aimux-cargo-target-codex/debug/aimux daemon run".into(),
+            },
+        ]),
+        "2026-09-21T00:00:00Z".into(),
+    )
+    .expect("write daemon health snapshot");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+
+    assert_eq!(response.status, 200);
+    let warnings = response.body["controlPlaneWarnings"]
+        .as_array()
+        .expect("control plane warnings");
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0]["id"], "unexpected-daemon-processes");
+    assert_eq!(
+        warnings[0]["title"],
+        "Unexpected Aimux daemon processes detected"
+    );
+    assert!(
+        warnings[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("1 unexpected daemon process"),
+        "{warnings:#?}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn route_desktop_state_has_no_daemon_process_warning_when_clean() {
+    let (project, state_dir) = write_desktop_state_fixtures("daemon-process-clean");
+    let isolation = support::TestIsolation::new("desktop-state-daemon-process-clean");
+    let resolver = aimux::paths::PathResolver::from_env();
+    write_daemon_process_health_snapshot(
+        &resolver,
+        101,
+        Ok(vec![ProcessArgsEntry {
+            pid: 101,
+            args: "/Users/sam/.aimux/native/current/bin/aimux daemon run".into(),
+        }]),
+        "2026-09-21T00:00:00Z".into(),
+    )
+    .expect("write daemon health snapshot");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["controlPlaneWarnings"], json!([]));
     cleanup(project);
 }
 

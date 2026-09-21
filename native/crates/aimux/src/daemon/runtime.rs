@@ -39,6 +39,10 @@ use crate::daemon::listener::{
     DaemonListenConfig, serve_daemon_http_with_metadata_and_interceptor_until,
 };
 use crate::daemon::process::handle_daemon_runtime_request;
+use crate::daemon::process_inventory::{
+    DaemonProcessHealthTask, daemon_process_inventory_report,
+    render_daemon_process_inventory_for_doctor,
+};
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::scheduler::{
     DaemonPeriodicTask, DaemonSchedulerContext, PeriodicTaskFuture, daemon_scheduler_handle,
@@ -105,9 +109,8 @@ use crate::lifecycle_orphans::{
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, ProjectEntry, compute_project_id};
 use crate::process_inspector::{
-    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_daemon_process_args,
-    is_aimux_project_service_process_args, is_current_native_aimux_project_service_process,
-    list_process_args, try_list_process_args,
+    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process_args,
+    is_current_native_aimux_project_service_process, list_process_args, try_list_process_args,
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, try_list_registered_desktop_projects};
@@ -2421,72 +2424,6 @@ fn process_list_json(processes: Vec<ProcessArgsEntry>) -> Vec<Value> {
         .collect()
 }
 
-fn daemon_process_inventory_report(
-    processes: &[ProcessArgsEntry],
-    expected_daemon_pid: Option<i32>,
-) -> Value {
-    let daemon_processes = processes
-        .iter()
-        .filter(|entry| is_aimux_daemon_process_args(&entry.args))
-        .collect::<Vec<_>>();
-    let unexpected = daemon_processes
-        .iter()
-        .filter(|entry| Some(entry.pid) != expected_daemon_pid)
-        .map(|entry| {
-            json!({
-                "pid": entry.pid,
-                "argsPreview": process_args_preview(&entry.args),
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({
-        "total": daemon_processes.len(),
-        "expectedPid": expected_daemon_pid,
-        "unexpectedCount": unexpected.len(),
-        "unexpected": unexpected,
-    })
-}
-
-fn process_args_preview(args: &str) -> String {
-    const MAX_PREVIEW: usize = 220;
-    if args.len() <= MAX_PREVIEW {
-        return args.to_owned();
-    }
-    format!("{}...", args.chars().take(MAX_PREVIEW).collect::<String>())
-}
-
-fn render_daemon_process_inventory_for_doctor(report: &Value) -> String {
-    let Some(inventory) = report.get("daemonProcessInventory") else {
-        return String::new();
-    };
-    let total = inventory.get("total").and_then(Value::as_u64).unwrap_or(0);
-    let unexpected_count = inventory
-        .get("unexpectedCount")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let mut lines = vec![format!(
-        "  daemon processes: {total} ({unexpected_count} unexpected)"
-    )];
-    if let Some(error) = report.get("processInventoryError").and_then(Value::as_str) {
-        lines.push(format!("  daemon process inventory error: {error}"));
-    }
-    for process in inventory
-        .get("unexpected")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .take(10)
-    {
-        let pid = process.get("pid").and_then(Value::as_i64).unwrap_or(0);
-        let args = process
-            .get("argsPreview")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        lines.push(format!("  unexpected daemon pid {pid}: {args}"));
-    }
-    format!("\n{}", lines.join("\n"))
-}
-
 pub fn run_daemon_internal() -> Result<()> {
     let resolver = PathResolver::from_env();
     secure_permissions::repair_global_aimux_home(resolver.global_aimux_dir())
@@ -2693,6 +2630,7 @@ pub fn daemon_periodic_tasks(
             Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
                 global_expose_hot_snapshots,
             )),
+            Box::new(DaemonProcessHealthTask),
             Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
             Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
             Box::new(DaemonDiskMaintenanceTask::new()),
@@ -2704,6 +2642,7 @@ pub fn daemon_periodic_tasks(
             Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
                 global_expose_hot_snapshots,
             )),
+            Box::new(DaemonProcessHealthTask),
             Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
             Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
             Box::new(DaemonDiskMaintenanceTask::new()),

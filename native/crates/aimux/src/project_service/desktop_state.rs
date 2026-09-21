@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::config::default_config;
+use crate::daemon::process_inventory::read_daemon_process_control_plane_warning;
 use crate::daemon_state::{load_daemon_info, load_daemon_info_async, load_metadata_state};
 use crate::loop_watcher::loop_alert_state_summary;
 use crate::paths::PathResolver;
@@ -119,6 +120,7 @@ pub fn route_desktop_state_request_with_runtime(
         body.insert("ok".into(), Value::Bool(true));
         body.insert("serviceInfo".into(), service_info());
         body.insert("pendingInteractions".into(), Value::Array(Vec::new()));
+        attach_control_plane_warnings(&mut body);
         let body = if include_preview {
             attach_desktop_state_previews(context, Value::Object(body), runtime)
         } else {
@@ -255,6 +257,7 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
+        attach_control_plane_warnings(object);
         object.insert(
             "loopAlertState".into(),
             loop_alert_state_summary(&project_state_dir, super::scheduler::scheduler_now_ms()),
@@ -317,6 +320,7 @@ pub async fn desktop_state_for_context_async(
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
+        attach_control_plane_warnings(object);
         object.insert(
             "loopAlertState".into(),
             loop_alert_state_summary(&project_state_dir, super::scheduler::scheduler_now_ms()),
@@ -437,6 +441,7 @@ pub fn build_desktop_state_with_live_window_projection(
     state.insert("worktrees".into(), Value::Array(worktrees));
     state.insert("worktreeGroups".into(), Value::Array(worktree_groups));
     state.insert("operationFailures".into(), Value::Array(Vec::new()));
+    state.insert("controlPlaneWarnings".into(), Value::Array(Vec::new()));
     state.insert("agentRestoreOffer".into(), Value::Null);
     state.insert(
         "mainCheckoutInfo".into(),
@@ -530,6 +535,7 @@ async fn build_desktop_state_with_live_window_projection_async(
     state.insert("worktrees".into(), Value::Array(worktrees));
     state.insert("worktreeGroups".into(), Value::Array(worktree_groups));
     state.insert("operationFailures".into(), Value::Array(Vec::new()));
+    state.insert("controlPlaneWarnings".into(), Value::Array(Vec::new()));
     state.insert("agentRestoreOffer".into(), Value::Null);
     let mut main_checkout_info = json!({
         "name": "Main Checkout",
@@ -566,6 +572,14 @@ fn tmux_live_window_query_failure(error: &str) -> Value {
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
     })
+}
+
+fn attach_control_plane_warnings(object: &mut Map<String, Value>) {
+    let resolver = PathResolver::from_env();
+    let warnings = read_daemon_process_control_plane_warning(&resolver)
+        .into_iter()
+        .collect::<Vec<_>>();
+    object.insert("controlPlaneWarnings".into(), Value::Array(warnings));
 }
 
 pub fn attach_desktop_state_previews(

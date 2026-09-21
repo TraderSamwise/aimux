@@ -2155,3 +2155,50 @@ fn renders_typed_operation_failures_in_banner_and_worktree_details() {
     assert!(plain.contains("Error: branch is busy"));
     assert!(plain.contains("Failed: just now"));
 }
+
+#[test]
+fn renders_control_plane_daemon_process_warning_banner() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full.clone();
+    snapshot.extra.insert(
+        "controlPlaneWarnings".into(),
+        json!([{
+            "id": "unexpected-daemon-processes",
+            "kind": "unexpected-daemon-processes",
+            "title": "Unexpected Aimux daemon processes detected",
+            "message": "Aimux found 1 unexpected daemon process out of 2. Work is not blocked; run `aimux doctor versions` for PIDs and details.",
+            "createdAt": "2999-01-01T00:00:00.000Z"
+        }]),
+    );
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("CONTROL PLANE"), "{plain}");
+    assert!(
+        plain.contains("Unexpected Aimux daemon processes detected"),
+        "{plain}"
+    );
+    assert!(plain.contains("Aimux found 1 unexpected daemon"), "{plain}");
+}

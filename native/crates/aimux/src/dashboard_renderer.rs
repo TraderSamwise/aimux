@@ -109,6 +109,43 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         .collect::<Vec<_>>();
     let navigation_groups = dashboard_navigation_groups(input.snapshot);
     let mut content = Vec::new();
+    let control_plane_warnings = control_plane_warnings(input.snapshot);
+    if !control_plane_warnings.is_empty() {
+        let rows = control_plane_warnings
+            .iter()
+            .take(3)
+            .map(|warning| {
+                let title = string_at(warning, &["title"]).unwrap_or("Control plane warning");
+                let message = string_at(warning, &["message"]).unwrap_or("");
+                let recency = string_at(warning, &["createdAt"])
+                    .and_then(format_relative_recency)
+                    .unwrap_or_default();
+                let recency = if recency.is_empty() {
+                    String::new()
+                } else {
+                    style(&format!(" · {recency}"), Tone::Muted)
+                };
+                format!(
+                    "{}{}{}",
+                    truncate(title, 52),
+                    if message.is_empty() {
+                        String::new()
+                    } else {
+                        style(&format!(" · {}", truncate(message, 62)), Tone::Muted)
+                    },
+                    recency
+                )
+            })
+            .collect::<Vec<_>>();
+        content.extend(card(&CardSpec {
+            tone: Tone::Attention,
+            title: &style("⚠ CONTROL PLANE", Tone::Attention),
+            summary: None,
+            rows: &rows,
+            width: card_width,
+        }));
+        content.push(String::new());
+    }
     if !input.snapshot.operation_failures.is_empty() {
         let mut failure_rows = input
             .snapshot
@@ -4055,6 +4092,15 @@ fn array_at<'a>(value: &'a Value, path: &[&str]) -> &'a [Value] {
         current = current.get(*key).unwrap_or(&Value::Null);
     }
     current.as_array().map(Vec::as_slice).unwrap_or(&[])
+}
+
+fn control_plane_warnings(snapshot: &DesktopStateSnapshot) -> &[Value] {
+    snapshot
+        .extra
+        .get("controlPlaneWarnings")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
 fn number_at(value: &Value, path: &[&str]) -> i64 {

@@ -7,6 +7,7 @@ pub mod jobs;
 pub mod json;
 pub mod listener;
 pub mod process;
+pub mod process_inventory;
 pub mod remote_control;
 pub mod router;
 pub mod routing;
