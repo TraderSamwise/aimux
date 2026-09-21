@@ -541,13 +541,10 @@ fn request_daemon_text_with_lazy_ensure(
         DaemonRequestInit,
     ) -> Result<String, CoreCommandTransportError>,
 ) -> Result<String, String> {
-    if daemon_request_init_method(&init) != DaemonHttpMethod::Get {
-        ensure_daemon_running()?;
-        return request_daemon_text(path, init).map_err(|error| error.to_string());
-    }
+    let method = daemon_request_init_method(&init);
     match request_daemon_text(path, init.clone()) {
         Ok(text) => Ok(text),
-        Err(error) if should_retry_text_request_after_ensure(&error) => {
+        Err(error) if should_retry_text_request_after_ensure(method, &error) => {
             ensure_daemon_running()?;
             request_daemon_text(path, init).map_err(|error| error.to_string())
         }
@@ -565,12 +562,19 @@ fn daemon_request_init_method(init: &DaemonRequestInit) -> DaemonHttpMethod {
     })
 }
 
-fn should_retry_text_request_after_ensure(error: &CoreCommandTransportError) -> bool {
+fn should_retry_text_request_after_ensure(
+    method: DaemonHttpMethod,
+    error: &CoreCommandTransportError,
+) -> bool {
+    if matches!(error, CoreCommandTransportError::DaemonNotRunning) {
+        return true;
+    }
+    if method != DaemonHttpMethod::Get {
+        return false;
+    }
     matches!(
         error,
-        CoreCommandTransportError::DaemonNotRunning
-            | CoreCommandTransportError::Io(_)
-            | CoreCommandTransportError::TransientIoExhausted { .. }
+        CoreCommandTransportError::Io(_) | CoreCommandTransportError::TransientIoExhausted { .. }
     )
 }
 
@@ -2205,7 +2209,7 @@ mod tests {
     }
 
     #[test]
-    fn daemon_text_request_ensures_before_mutation_routes() {
+    fn daemon_text_request_skips_ensure_for_hot_mutation_routes() {
         let ensure_calls = RefCell::new(0);
         let request_order = RefCell::new(Vec::<&'static str>::new());
 
@@ -2229,12 +2233,12 @@ mod tests {
         .expect("mutation text request");
 
         assert_eq!(result, "{\"ok\":true}\n");
-        assert_eq!(*ensure_calls.borrow(), 1);
-        assert_eq!(request_order.into_inner(), vec!["ensure", "request"]);
+        assert_eq!(*ensure_calls.borrow(), 0);
+        assert_eq!(request_order.into_inner(), vec!["request"]);
     }
 
     #[test]
-    fn daemon_text_request_ensures_and_retries_when_daemon_is_missing() {
+    fn daemon_text_request_ensures_and_retries_get_when_daemon_is_missing() {
         let ensure_calls = RefCell::new(0);
         let requests = RefCell::new(Vec::<String>::new());
 
@@ -2268,6 +2272,45 @@ mod tests {
             vec![
                 "/core/agents/ps-text?json=1".to_owned(),
                 "/core/agents/ps-text?json=1".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn daemon_text_request_ensures_and_retries_post_when_daemon_info_is_missing() {
+        let ensure_calls = RefCell::new(0);
+        let requests = RefCell::new(Vec::<String>::new());
+
+        let result = request_daemon_text_with_lazy_ensure(
+            "/core/lifecycle/spawn-text?json=1",
+            DaemonRequestInit {
+                method: Some(DaemonHttpMethod::Post),
+                body: Some("{\"tool\":\"shell\"}".to_owned()),
+                ..DaemonRequestInit::default()
+            },
+            || {
+                *ensure_calls.borrow_mut() += 1;
+                Ok(())
+            },
+            |path, _init| {
+                let mut requests = requests.borrow_mut();
+                requests.push(path.to_owned());
+                if requests.len() == 1 {
+                    Err(CoreCommandTransportError::DaemonNotRunning)
+                } else {
+                    Ok("{\"ok\":true}\n".to_owned())
+                }
+            },
+        )
+        .expect("retried mutation text request");
+
+        assert_eq!(result, "{\"ok\":true}\n");
+        assert_eq!(*ensure_calls.borrow(), 1);
+        assert_eq!(
+            requests.into_inner(),
+            vec![
+                "/core/lifecycle/spawn-text?json=1".to_owned(),
+                "/core/lifecycle/spawn-text?json=1".to_owned()
             ]
         );
     }
@@ -2334,6 +2377,37 @@ mod tests {
         assert_eq!(result, "[]\n");
         assert_eq!(*ensure_calls.borrow(), 1);
         assert_eq!(*attempts.borrow(), 2);
+    }
+
+    #[test]
+    fn daemon_text_request_does_not_retry_post_loopback_io() {
+        let ensure_calls = RefCell::new(0);
+        let attempts = RefCell::new(0);
+
+        let error = request_daemon_text_with_lazy_ensure(
+            "/core/lifecycle/spawn-text?json=1",
+            DaemonRequestInit {
+                method: Some(DaemonHttpMethod::Post),
+                body: Some("{\"tool\":\"shell\"}".to_owned()),
+                ..DaemonRequestInit::default()
+            },
+            || {
+                *ensure_calls.borrow_mut() += 1;
+                Ok(())
+            },
+            |_path, _init| {
+                *attempts.borrow_mut() += 1;
+                Err(CoreCommandTransportError::Io(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "connection reset",
+                )))
+            },
+        )
+        .expect_err("ambiguous mutation I/O should not retry");
+
+        assert_eq!(error, "connection reset");
+        assert_eq!(*ensure_calls.borrow(), 0);
+        assert_eq!(*attempts.borrow(), 1);
     }
 
     #[test]

@@ -956,6 +956,52 @@ fn ensure_project_session_preserves_existing_session_windows_on_restart() {
         }),
         "daemon/project-service restart must not kill existing agent windows"
     );
+    assert!(
+        !calls.iter().any(|args| {
+            args.first().map(String::as_str) == Some("set-option")
+                && args.get(3).map(String::as_str) == Some("@aimux-project-state-dir")
+        }),
+        "a current runtime contract should be the identity proof that the project session is already configured"
+    );
+}
+
+#[test]
+fn ensure_project_session_reconfigures_stale_runtime_contract() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+        calls_for_exec.borrow_mut().push(args.to_vec());
+        let joined = args.join(" ");
+        if joined == "has-session -t aimux-mobile-078d0ecd20ec" {
+            return Ok(String::new());
+        }
+        if joined == "show-options -v -t aimux-mobile-078d0ecd20ec @aimux-runtime-contract" {
+            return Ok("1".to_owned());
+        }
+        if joined == "show-options -v -t aimux-mobile-078d0ecd20ec terminal-features" {
+            return Ok(String::new());
+        }
+        Ok(String::new())
+    });
+
+    manager
+        .ensure_project_session("/repo/mobile", None, Some(test_runtime_config()))
+        .expect("stale tmux session should be reconfigured");
+
+    let calls = calls.borrow();
+    assert!(calls.iter().any(|args| {
+        args.first().map(String::as_str) == Some("set-option")
+            && args.get(3).map(String::as_str) == Some("@aimux-project-state-dir")
+    }));
+    assert!(calls.iter().any(|args| {
+        args == &vec![
+            "set-option".to_owned(),
+            "-t".to_owned(),
+            "aimux-mobile-078d0ecd20ec".to_owned(),
+            TMUX_RUNTIME_CONTRACT_OPTION.to_owned(),
+            AIMUX_TMUX_RUNTIME_CONTRACT_VERSION.to_owned(),
+        ]
+    }));
 }
 
 #[test]

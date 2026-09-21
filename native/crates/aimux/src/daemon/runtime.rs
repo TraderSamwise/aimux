@@ -17,7 +17,7 @@ use crate::config::{
     try_load_global_config_with_resolver,
 };
 use crate::core_command_transport::{
-    DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
+    CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
 };
 use crate::daemon::access::build_daemon_route_context;
 use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
@@ -160,6 +160,7 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Formatter};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -997,6 +998,58 @@ impl RealDaemonRuntime {
             }
         };
         self.request_project_service_json(&project_root, route_path, Some(body), timeout_ms)
+    }
+
+    fn post_hot_or_ensured_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+        body: Value,
+        timeout_ms: Option<u64>,
+    ) -> ProjectServiceJsonResult {
+        let project_root = self.resolve_project_root_value(project);
+        let Some(endpoint) = self.metadata_endpoint_for_root(&project_root) else {
+            return self.post_ensured_project_service_json(
+                &project_root,
+                route_path,
+                body,
+                timeout_ms,
+            );
+        };
+        let body_text = body.to_string();
+        let request = DaemonJsonRequest {
+            url: format!("http://{}:{}{}", endpoint.host, endpoint.port, route_path),
+            method: DaemonHttpMethod::Post,
+            headers: BTreeMap::from([
+                ("accept".to_owned(), "application/json".to_owned()),
+                ("content-type".to_owned(), "application/json".to_owned()),
+            ]),
+            body: Some(body_text),
+            timeout_ms,
+        };
+        match execute_loopback_json_request(&request) {
+            Ok(response) if (200..300).contains(&response.status) => {
+                ProjectServiceJsonResult::ok(project_root, response.json)
+            }
+            Ok(response) => {
+                let message = response
+                    .json
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("project service request failed");
+                ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
+                    response.status,
+                    format!("Error: {message}"),
+                ))
+            }
+            Err(error) if post_project_service_request_can_retry_after_ensure(&error) => {
+                self.post_ensured_project_service_json(&project_root, route_path, body, timeout_ms)
+            }
+            Err(error) => ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
+                502,
+                format!("Error: {error}"),
+            )),
+        }
     }
 
     fn project_service_json(
@@ -3826,10 +3879,25 @@ impl DaemonAgentTextRuntime for RealDaemonRuntime {
     ) -> ProjectServiceJsonResult {
         if options.ensure_project {
             self.post_ensured_project_service_json(project, route_path, body, options.timeout_ms)
+        } else if options.ensure_if_unreachable {
+            self.post_hot_or_ensured_project_service_json(
+                project,
+                route_path,
+                body,
+                options.timeout_ms,
+            )
         } else {
             self.request_project_service_json(project, route_path, Some(body), options.timeout_ms)
         }
     }
+}
+
+fn post_project_service_request_can_retry_after_ensure(error: &CoreCommandTransportError) -> bool {
+    matches!(
+        error,
+        CoreCommandTransportError::Io(io_error)
+            if io_error.kind() == io::ErrorKind::ConnectionRefused
+    )
 }
 
 impl DaemonOverseerTextRuntime for RealDaemonRuntime {
@@ -5519,6 +5587,28 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn post_project_service_retry_after_ensure_is_limited_to_unreached_service() {
+        assert!(post_project_service_request_can_retry_after_ensure(
+            &CoreCommandTransportError::Io(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                "connection refused",
+            ))
+        ));
+        assert!(!post_project_service_request_can_retry_after_ensure(
+            &CoreCommandTransportError::Io(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "connection reset",
+            ))
+        ));
+        assert!(!post_project_service_request_can_retry_after_ensure(
+            &CoreCommandTransportError::Timeout { timeout_ms: 10_000 }
+        ));
+        assert!(!post_project_service_request_can_retry_after_ensure(
+            &CoreCommandTransportError::InvalidHttpResponse("bad response".to_owned())
+        ));
+    }
 
     #[test]
     fn daemon_process_inventory_names_unexpected_daemon_processes() {

@@ -355,6 +355,11 @@ impl TmuxRuntimeManager {
             } else {
                 None
             };
+            let has_current_runtime_contract =
+                current_runtime_contract.as_deref() == Some(AIMUX_TMUX_RUNTIME_CONTRACT_VERSION);
+            if exists && has_current_runtime_contract {
+                return Ok(session);
+            }
             if !exists {
                 self.exec_owned(
                     new_session_argv(&session.session_name, &project_root_text, dashboard_command),
@@ -387,7 +392,7 @@ impl TmuxRuntimeManager {
                 Err(error) if attempt == 0 && is_no_such_session_error(&error) => continue,
                 Err(error) => return Err(error),
             }
-            if !exists || current_runtime_contract.is_none() {
+            if !exists || !has_current_runtime_contract {
                 self.set_current_runtime_contract(&session.session_name)?;
             }
             return Ok(session);

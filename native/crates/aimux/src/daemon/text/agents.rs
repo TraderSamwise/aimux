@@ -46,6 +46,7 @@ pub trait DaemonAgentTextRuntime {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProjectServicePostOptions {
     pub ensure_project: bool,
+    pub ensure_if_unreachable: bool,
     pub timeout_ms: Option<u64>,
 }
 
@@ -53,6 +54,7 @@ impl ProjectServicePostOptions {
     pub fn ensure() -> Self {
         Self {
             ensure_project: true,
+            ensure_if_unreachable: false,
             timeout_ms: None,
         }
     }
@@ -60,6 +62,15 @@ impl ProjectServicePostOptions {
     pub fn skip_ensure() -> Self {
         Self {
             ensure_project: false,
+            ensure_if_unreachable: false,
+            timeout_ms: None,
+        }
+    }
+
+    pub fn ensure_if_unreachable() -> Self {
+        Self {
+            ensure_project: false,
+            ensure_if_unreachable: true,
             timeout_ms: None,
         }
     }
@@ -67,6 +78,7 @@ impl ProjectServicePostOptions {
     pub fn ensure_with_timeout(timeout_ms: u64) -> Self {
         Self {
             ensure_project: true,
+            ensure_if_unreachable: false,
             timeout_ms: Some(timeout_ms),
         }
     }
@@ -74,6 +86,7 @@ impl ProjectServicePostOptions {
     pub fn skip_ensure_with_timeout(timeout_ms: u64) -> Self {
         Self {
             ensure_project: false,
+            ensure_if_unreachable: false,
             timeout_ms: Some(timeout_ms),
         }
     }
@@ -387,7 +400,7 @@ pub fn lifecycle_spawn_text_route(
         &project,
         project_routes::agents::SPAWN,
         Value::Object(request),
-        ProjectServicePostOptions::ensure(),
+        ProjectServicePostOptions::ensure_if_unreachable(),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -1117,5 +1130,68 @@ fn js_string(value: &Value) -> String {
         Value::String(value) => value.clone(),
         Value::Array(values) => values.iter().map(js_string).collect::<Vec<_>>().join(","),
         Value::Object(_) => "[object Object]".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct FakeAgentRuntime {
+        post_options: Option<ProjectServicePostOptions>,
+    }
+
+    impl DaemonAgentTextRuntime for FakeAgentRuntime {
+        fn resolve_project_root(&self, value: &str) -> String {
+            value.to_owned()
+        }
+
+        fn get_project_service_json(
+            &mut self,
+            _project: &str,
+            _route_path: &str,
+        ) -> ProjectServiceJsonResult {
+            ProjectServiceJsonResult::error(text_error(500, "unexpected GET"))
+        }
+
+        fn post_project_service_json(
+            &mut self,
+            project: &str,
+            route_path: &str,
+            _body: Value,
+            options: ProjectServicePostOptions,
+        ) -> ProjectServiceJsonResult {
+            self.post_options = Some(options);
+            assert_eq!(project, "/repo");
+            assert_eq!(route_path, project_routes::agents::SPAWN);
+            ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "sessionId": "shell-abc123",
+                    "tmuxTarget": {
+                        "sessionName": "aimux-repo",
+                        "windowId": "@1",
+                        "windowIndex": 1,
+                        "windowName": "shell"
+                    }
+                }),
+            )
+        }
+    }
+
+    #[test]
+    fn lifecycle_spawn_text_uses_hot_project_service_before_ensure() {
+        let mut runtime = FakeAgentRuntime::default();
+        let route_url =
+            DaemonRouteUrl::parse("/core/lifecycle/spawn-text?json=1&project=/repo&tool=shell");
+
+        let response = lifecycle_spawn_text_route(&mut runtime, &route_url, None);
+
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            runtime.post_options,
+            Some(ProjectServicePostOptions::ensure_if_unreachable())
+        );
     }
 }
