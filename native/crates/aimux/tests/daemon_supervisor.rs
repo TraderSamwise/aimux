@@ -4,12 +4,13 @@ use aimux::daemon_state::{
 };
 use aimux::daemon_supervisor::{
     DAEMON_HEALTH_KIND, DAEMON_START_LOCK_STALE_MS, RUNTIME_RESTART_LOCK_STALE_MS,
-    assert_not_stale_against_daemon_with, daemon_start_lock_path, daemon_start_steal_lock_path,
-    is_aimux_daemon_health, is_lock_stale, is_matching_daemon_health, read_lock_pid,
-    release_daemon_start_lock, runtime_restart_lock_is_owned_by, runtime_restart_lock_path,
-    runtime_restart_steal_lock_path, should_keep_unresponsive_daemon_after_pid_probe,
-    signal_number, signal_to_number, stop_daemon_info_with, stop_daemon_process_info_with,
-    try_acquire_daemon_start_lock_with, try_acquire_runtime_restart_lock_with,
+    StopDaemonInfoHooks, assert_not_stale_against_daemon_with, daemon_start_lock_path,
+    daemon_start_steal_lock_path, is_aimux_daemon_health, is_lock_stale, is_matching_daemon_health,
+    read_lock_pid, release_daemon_start_lock, runtime_restart_lock_is_owned_by,
+    runtime_restart_lock_path, runtime_restart_steal_lock_path,
+    should_keep_unresponsive_daemon_after_pid_probe, signal_number, signal_to_number,
+    stop_daemon_info_with, stop_daemon_process_info_with, try_acquire_daemon_start_lock_with,
+    try_acquire_runtime_restart_lock_with,
 };
 use aimux::paths::PathResolver;
 use aimux::project_service_manifest::{
@@ -380,16 +381,25 @@ fn stop_daemon_info_clears_state_and_returns_only_verified_services() {
         &info,
         state,
         "SIGTERM",
-        |_| false,
-        |_| true,
-        |pid, signal| {
-            signaled.push((pid, signal.to_owned()));
-            Ok(())
+        StopDaemonInfoHooks {
+            verify_project_service: Box::new(|_| false),
+            verify_daemon_process: Box::new(|_| true),
+            send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
+                signaled.push((pid, signal.to_owned()));
+                Ok(())
+            }),
+            wait_project_exit: Box::new(|_: &ProjectServiceState, _| true),
+            wait_daemon_exit: Box::new(|_: &AimuxDaemonInfo, _| true),
+            stop_tmux_runtime: Box::new(|_| {
+                panic!("unverified project service must not stop tmux")
+            }),
         },
     )
     .expect("stop daemon info");
     assert_eq!(stopped.daemon, info);
     assert!(stopped.stopped_project_services.is_empty());
+    assert!(stopped.stopped_tmux_sessions.is_empty());
+    assert!(stopped.escalations.is_empty());
     assert_eq!(signaled, vec![(9_999_991, "SIGTERM".into())]);
     assert_eq!(
         fs::read_to_string(resolver.daemon_info_path()).expect("read daemon info"),
@@ -400,6 +410,159 @@ fn stop_daemon_info_clears_state_and_returns_only_verified_services() {
         DaemonState::empty()
     );
     clear_daemon_info(resolver.daemon_info_path()).expect("clear is idempotent");
+}
+
+#[test]
+fn stop_daemon_info_stops_verified_project_tmux_runtime_before_signaling() {
+    let test_dir = TestDir::new();
+    let resolver = test_dir.resolver();
+    let info = AimuxDaemonInfo {
+        pid: 9_999_991,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    let project = ProjectServiceState {
+        project_id: "project-1".into(),
+        project_root: "/repo".into(),
+        pid: 9_999_992,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+        status: None,
+        restart_count: None,
+        last_restart_at: None,
+        last_exit: None,
+    };
+    let state = DaemonState {
+        version: 1,
+        updated_at: Some(json!("now")),
+        projects: Map::from_iter([(
+            "project-1".into(),
+            serde_json::to_value(project).expect("project JSON"),
+        )]),
+    };
+    save_daemon_info(resolver.daemon_info_path(), &info).expect("save daemon info");
+    save_daemon_state(resolver.daemon_state_path(), &state).expect("save daemon state");
+
+    let calls = RefCell::new(Vec::new());
+    let stopped = stop_daemon_info_with(
+        &resolver,
+        &info,
+        state,
+        "SIGTERM",
+        StopDaemonInfoHooks {
+            verify_project_service: Box::new(|_: &ProjectServiceState| true),
+            verify_daemon_process: Box::new(|_: &AimuxDaemonInfo| true),
+            send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
+                calls.borrow_mut().push(format!("signal:{pid}:{signal}"));
+                Ok(())
+            }),
+            wait_project_exit: Box::new(|project: &ProjectServiceState, timeout_ms| {
+                calls
+                    .borrow_mut()
+                    .push(format!("wait-project:{}:{timeout_ms}", project.pid));
+                true
+            }),
+            wait_daemon_exit: Box::new(|info: &AimuxDaemonInfo, timeout_ms| {
+                calls
+                    .borrow_mut()
+                    .push(format!("wait-daemon:{}:{timeout_ms}", info.pid));
+                true
+            }),
+            stop_tmux_runtime: Box::new(|project: &ProjectServiceState| {
+                calls
+                    .borrow_mut()
+                    .push(format!("stop-tmux:{}", project.project_root));
+                Ok(vec!["aimux-repo".into()])
+            }),
+        },
+    )
+    .expect("stop daemon info");
+
+    assert_eq!(stopped.stopped_tmux_sessions, vec!["aimux-repo"]);
+    assert_eq!(
+        calls.into_inner(),
+        [
+            "stop-tmux:/repo",
+            "signal:9999992:SIGTERM",
+            "wait-project:9999992:1500",
+            "signal:9999991:SIGTERM",
+            "wait-daemon:9999991:1500",
+        ]
+    );
+}
+
+#[test]
+fn stop_daemon_info_reports_project_service_escalation() {
+    let test_dir = TestDir::new();
+    let resolver = test_dir.resolver();
+    let info = AimuxDaemonInfo {
+        pid: 9_999_991,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    let project = ProjectServiceState {
+        project_id: "project-1".into(),
+        project_root: "/repo".into(),
+        pid: 9_999_992,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+        status: None,
+        restart_count: None,
+        last_restart_at: None,
+        last_exit: None,
+    };
+    let state = DaemonState {
+        version: 1,
+        updated_at: Some(json!("now")),
+        projects: Map::from_iter([(
+            "project-1".into(),
+            serde_json::to_value(project).expect("project JSON"),
+        )]),
+    };
+    save_daemon_info(resolver.daemon_info_path(), &info).expect("save daemon info");
+    save_daemon_state(resolver.daemon_state_path(), &state).expect("save daemon state");
+
+    let mut signaled = Vec::new();
+    let mut project_waits = [false, true].into_iter();
+    let stopped = stop_daemon_info_with(
+        &resolver,
+        &info,
+        state,
+        "SIGTERM",
+        StopDaemonInfoHooks {
+            verify_project_service: Box::new(|_: &ProjectServiceState| true),
+            verify_daemon_process: Box::new(|_: &AimuxDaemonInfo| true),
+            send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
+                signaled.push((pid, signal.to_owned()));
+                Ok(())
+            }),
+            wait_project_exit: Box::new(|_: &ProjectServiceState, _| {
+                project_waits.next().unwrap_or(true)
+            }),
+            wait_daemon_exit: Box::new(|_: &AimuxDaemonInfo, _| true),
+            stop_tmux_runtime: Box::new(|_: &ProjectServiceState| Ok(Vec::new())),
+        },
+    )
+    .expect("stop daemon info with project escalation");
+
+    assert_eq!(
+        signaled,
+        vec![
+            (9_999_992, "SIGTERM".into()),
+            (9_999_992, "SIGKILL".into()),
+            (9_999_991, "SIGTERM".into())
+        ]
+    );
+    assert_eq!(stopped.escalations.len(), 1);
+    assert_eq!(stopped.escalations[0].kind, "project-service");
+    assert_eq!(stopped.escalations[0].pid, 9_999_992);
+    assert_eq!(stopped.escalations[0].signal, "SIGKILL");
+    assert_eq!(
+        stopped.escalations[0].project_root.as_deref(),
+        Some("/repo")
+    );
 }
 
 #[test]
@@ -456,6 +619,8 @@ fn stop_daemon_process_info_preserves_project_state_and_signals_only_daemon() {
 
     assert_eq!(stopped.daemon, info);
     assert!(stopped.stopped_project_services.is_empty());
+    assert!(stopped.stopped_tmux_sessions.is_empty());
+    assert!(stopped.escalations.is_empty());
     assert_eq!(signaled, vec![(9_999_991, "SIGTERM".into())]);
     assert_eq!(waits, vec![(9_999_991, 1_500)]);
     assert_eq!(
@@ -497,6 +662,10 @@ fn stop_daemon_process_info_escalates_when_sigterm_does_not_exit() {
     .expect("stop daemon process after kill");
 
     assert_eq!(stopped.daemon, info);
+    assert_eq!(stopped.escalations.len(), 1);
+    assert_eq!(stopped.escalations[0].kind, "daemon");
+    assert_eq!(stopped.escalations[0].pid, 9_999_991);
+    assert_eq!(stopped.escalations[0].signal, "SIGKILL");
     assert_eq!(
         signaled,
         vec![(9_999_991, "SIGTERM".into()), (9_999_991, "SIGKILL".into())]
@@ -535,6 +704,8 @@ fn stop_daemon_process_info_escalates_when_sighup_does_not_exit() {
     .expect("stop daemon process");
 
     assert_eq!(stopped.daemon, info);
+    assert_eq!(stopped.escalations.len(), 1);
+    assert_eq!(stopped.escalations[0].kind, "daemon");
     assert_eq!(
         signaled.into_inner(),
         vec![(9_999_991, "SIGHUP".into()), (9_999_991, "SIGKILL".into())]
@@ -610,11 +781,16 @@ fn stop_daemon_info_refuses_to_signal_unverified_daemon_and_preserves_state() {
         &info,
         state.clone(),
         "SIGTERM",
-        |_| false,
-        |_| false,
-        |pid, signal| {
-            signaled.push((pid, signal.to_owned()));
-            Ok(())
+        StopDaemonInfoHooks {
+            verify_project_service: Box::new(|_| false),
+            verify_daemon_process: Box::new(|_| false),
+            send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
+                signaled.push((pid, signal.to_owned()));
+                Ok(())
+            }),
+            wait_project_exit: Box::new(|_: &ProjectServiceState, _| true),
+            wait_daemon_exit: Box::new(|_: &AimuxDaemonInfo, _| true),
+            stop_tmux_runtime: Box::new(|_| panic!("unverified daemon must not stop tmux")),
         },
     )
     .expect_err("unverified daemon must fail closed");

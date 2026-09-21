@@ -6,7 +6,7 @@ use crate::core_command_transport::{
     DaemonRequestInit, execute_loopback_json_request, request_daemon_json,
 };
 use crate::daemon_state::{
-    AimuxDaemonInfo, DaemonState, EnsureDaemonRunningOptions, ProjectServiceState,
+    AimuxDaemonInfo, DaemonState, EnsureDaemonRunningOptions, ProjectServiceState, StopEscalation,
     StoppedDaemonInfo, clear_daemon_info, get_daemon_base_url, get_daemon_port, load_daemon_info,
     load_daemon_state, save_daemon_info, save_daemon_state, try_is_pid_alive,
 };
@@ -767,15 +767,29 @@ pub fn stop_daemon_info(
         info,
         state,
         signal,
-        |project| {
-            let expected = ProjectServiceProcessIdentity {
-                project_id: Some(project.project_id.clone()),
-                project_root: Some(project.project_root.clone()),
-            };
-            is_aimux_project_service_process(project.pid, &expected)
+        StopDaemonInfoHooks {
+            verify_project_service: Box::new(|project: &ProjectServiceState| {
+                let expected = ProjectServiceProcessIdentity {
+                    project_id: Some(project.project_id.clone()),
+                    project_root: Some(project.project_root.clone()),
+                };
+                is_aimux_project_service_process(project.pid, &expected)
+            }),
+            verify_daemon_process: Box::new(|info: &AimuxDaemonInfo| {
+                is_aimux_daemon_process(info.pid)
+            }),
+            send_signal_to_pid: Box::new(send_signal),
+            wait_project_exit: Box::new(wait_for_project_service_info_exit),
+            wait_daemon_exit: Box::new(wait_for_daemon_info_exit),
+            stop_tmux_runtime: Box::new(|project: &ProjectServiceState| {
+                let mut resolver = resolver.clone();
+                let project_state_dir = resolver.project_state_dir_for(&project.project_root);
+                crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots(
+                    &project.project_root,
+                    project_state_dir,
+                )
+            }),
         },
-        |info| is_aimux_daemon_process(info.pid),
-        send_signal,
     )
 }
 
@@ -816,8 +830,16 @@ where
     }
     send_signal_to_pid(info.pid, signal)?;
     let mut exited = wait_daemon_exit(info, 1_500);
+    let mut escalations = Vec::new();
     if !exited && matches!(signal, "SIGTERM" | "SIGHUP") {
         let _ = send_signal_to_pid(info.pid, "SIGKILL");
+        escalations.push(StopEscalation {
+            kind: "daemon".into(),
+            pid: info.pid,
+            signal: "SIGKILL".into(),
+            reason: format!("{signal} did not stop daemon within 1500ms"),
+            project_root: None,
+        });
         exited = wait_daemon_exit(info, 1_500);
     }
     if !exited {
@@ -830,6 +852,8 @@ where
     Ok(StoppedDaemonInfo {
         daemon: info.clone(),
         stopped_project_services: Vec::new(),
+        stopped_tmux_sessions: Vec::new(),
+        escalations,
     })
 }
 
@@ -844,20 +868,53 @@ fn wait_for_daemon_info_exit(info: &AimuxDaemonInfo, timeout_ms: u64) -> bool {
     !is_aimux_daemon_process(info.pid)
 }
 
-pub fn stop_daemon_info_with<VerifyProject, VerifyDaemon, Signal>(
+fn wait_for_project_service_info_exit(project: &ProjectServiceState, timeout_ms: u64) -> bool {
+    let expected = ProjectServiceProcessIdentity {
+        project_id: Some(project.project_id.clone()),
+        project_root: Some(project.project_root.clone()),
+    };
+    let deadline = current_unix_millis() + u128::from(timeout_ms);
+    while current_unix_millis() < deadline {
+        if !is_aimux_project_service_process(project.pid, &expected) {
+            return true;
+        }
+        sleep_ms(100);
+    }
+    !is_aimux_project_service_process(project.pid, &expected)
+}
+
+pub type VerifyProjectServiceHook<'a> = Box<dyn Fn(&ProjectServiceState) -> bool + 'a>;
+pub type VerifyDaemonHook<'a> = Box<dyn Fn(&AimuxDaemonInfo) -> bool + 'a>;
+pub type SendSignalHook<'a> = Box<dyn FnMut(i32, &str) -> io::Result<()> + 'a>;
+pub type WaitProjectExitHook<'a> = Box<dyn FnMut(&ProjectServiceState, u64) -> bool + 'a>;
+pub type WaitDaemonExitHook<'a> = Box<dyn FnMut(&AimuxDaemonInfo, u64) -> bool + 'a>;
+pub type StopTmuxRuntimeHook<'a> =
+    Box<dyn FnMut(&ProjectServiceState) -> Result<Vec<String>, String> + 'a>;
+
+pub struct StopDaemonInfoHooks<'a> {
+    pub verify_project_service: VerifyProjectServiceHook<'a>,
+    pub verify_daemon_process: VerifyDaemonHook<'a>,
+    pub send_signal_to_pid: SendSignalHook<'a>,
+    pub wait_project_exit: WaitProjectExitHook<'a>,
+    pub wait_daemon_exit: WaitDaemonExitHook<'a>,
+    pub stop_tmux_runtime: StopTmuxRuntimeHook<'a>,
+}
+
+pub fn stop_daemon_info_with(
     resolver: &PathResolver,
     info: &AimuxDaemonInfo,
     state: DaemonState,
     signal: &str,
-    verify_project_service: VerifyProject,
-    verify_daemon_process: VerifyDaemon,
-    mut send_signal_to_pid: Signal,
-) -> Result<StoppedDaemonInfo, DaemonSupervisorError>
-where
-    VerifyProject: Fn(&ProjectServiceState) -> bool,
-    VerifyDaemon: Fn(&AimuxDaemonInfo) -> bool,
-    Signal: FnMut(i32, &str) -> io::Result<()>,
-{
+    hooks: StopDaemonInfoHooks<'_>,
+) -> Result<StoppedDaemonInfo, DaemonSupervisorError> {
+    let StopDaemonInfoHooks {
+        verify_project_service,
+        verify_daemon_process,
+        mut send_signal_to_pid,
+        mut wait_project_exit,
+        mut wait_daemon_exit,
+        mut stop_tmux_runtime,
+    } = hooks;
     signal_to_number(signal)?;
     if !verify_daemon_process(info) {
         return Err(DaemonSupervisorError::Message(format!(
@@ -866,6 +923,8 @@ where
         )));
     }
     let mut stopped_project_services = Vec::new();
+    let mut stopped_tmux_sessions = Vec::new();
+    let mut escalations = Vec::new();
     for entry in state.projects.values() {
         let Ok(project) = serde_json::from_value::<ProjectServiceState>(entry.clone()) else {
             continue;
@@ -873,16 +932,63 @@ where
         if !verify_project_service(&project) {
             continue;
         }
+        match stop_tmux_runtime(&project) {
+            Ok(killed) => stopped_tmux_sessions.extend(killed),
+            Err(error) => {
+                return Err(DaemonSupervisorError::Message(format!(
+                    "failed to stop tmux runtime for project {} before daemon stop: {error}",
+                    project.project_root
+                )));
+            }
+        }
         if send_signal_to_pid(project.pid, signal).is_ok() {
+            let mut exited = wait_project_exit(&project, 1_500);
+            if !exited && matches!(signal, "SIGTERM" | "SIGHUP") {
+                let _ = send_signal_to_pid(project.pid, "SIGKILL");
+                escalations.push(StopEscalation {
+                    kind: "project-service".into(),
+                    pid: project.pid,
+                    signal: "SIGKILL".into(),
+                    reason: format!("{signal} did not stop project service within 1500ms"),
+                    project_root: Some(project.project_root.clone()),
+                });
+                exited = wait_project_exit(&project, 1_500);
+            }
+            if !exited {
+                return Err(DaemonSupervisorError::Message(format!(
+                    "timed out stopping aimux project service pid={} projectRoot={}",
+                    project.pid, project.project_root
+                )));
+            }
             stopped_project_services.push(project);
         }
     }
     send_signal_to_pid(info.pid, signal)?;
+    let mut daemon_exited = wait_daemon_exit(info, 1_500);
+    if !daemon_exited && matches!(signal, "SIGTERM" | "SIGHUP") {
+        let _ = send_signal_to_pid(info.pid, "SIGKILL");
+        escalations.push(StopEscalation {
+            kind: "daemon".into(),
+            pid: info.pid,
+            signal: "SIGKILL".into(),
+            reason: format!("{signal} did not stop daemon within 1500ms"),
+            project_root: None,
+        });
+        daemon_exited = wait_daemon_exit(info, 1_500);
+    }
+    if !daemon_exited {
+        return Err(DaemonSupervisorError::Message(format!(
+            "timed out stopping aimux daemon pid={}",
+            info.pid
+        )));
+    }
     save_daemon_state(resolver.daemon_state_path(), &DaemonState::empty())?;
     clear_daemon_info(resolver.daemon_info_path())?;
     Ok(StoppedDaemonInfo {
         daemon: info.clone(),
         stopped_project_services,
+        stopped_tmux_sessions,
+        escalations,
     })
 }
 

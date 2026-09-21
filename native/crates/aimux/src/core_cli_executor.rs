@@ -1312,6 +1312,23 @@ fn render_stop_daemon_lines(signal: &str, stopped: Option<&StoppedDaemonInfo>) -
             stopped.stopped_project_services.len()
         ));
     }
+    if !stopped.stopped_tmux_sessions.is_empty() {
+        lines.push(format!(
+            "{verb} {} tmux sessions",
+            stopped.stopped_tmux_sessions.len()
+        ));
+    }
+    for escalation in &stopped.escalations {
+        let target = escalation
+            .project_root
+            .as_ref()
+            .map(|project_root| format!(" for {project_root}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "Escalated {} pid {} to {}{}: {}",
+            escalation.kind, escalation.pid, escalation.signal, target, escalation.reason
+        ));
+    }
     lines
 }
 

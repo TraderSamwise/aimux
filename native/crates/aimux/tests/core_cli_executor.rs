@@ -4,7 +4,7 @@ use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::text::operations::{
     RestartControlPlaneTextResult, render_runtime_restart_result,
 };
-use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
+use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StopEscalation, StoppedDaemonInfo};
 use aimux::git_delivery::{GitCheckoutCoherence, GitCheckoutCoherenceStatus, GitDeliveryCheck};
 use aimux::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
@@ -82,6 +82,8 @@ impl Default for FakeRuntime {
             stopped_daemon: Some(StoppedDaemonInfo {
                 daemon: daemon_info(),
                 stopped_project_services: Vec::new(),
+                stopped_tmux_sessions: Vec::new(),
+                escalations: Vec::new(),
             }),
             login_calls: Cell::new(0),
             security_unlock_calls: Cell::new(0),
@@ -3607,6 +3609,37 @@ fn daemon_stop_and_kill_execute_native_local_supervisor_action() {
     assert_eq!(kill_runtime.stop_daemon_calls, ["SIGKILL"]);
     let payload: Value = serde_json::from_str(&kill.stdout[0]).expect("stop json");
     assert_eq!(payload["stopped"], Value::Null);
+}
+
+#[test]
+fn daemon_stop_reports_sigkill_escalation_and_tmux_cleanup() {
+    let mut runtime = FakeRuntime {
+        stopped_daemon: Some(StoppedDaemonInfo {
+            daemon: daemon_info(),
+            stopped_project_services: Vec::new(),
+            stopped_tmux_sessions: vec!["aimux-repo".into()],
+            escalations: vec![StopEscalation {
+                kind: "daemon".into(),
+                pid: 9001,
+                signal: "SIGKILL".into(),
+                reason: "SIGTERM did not stop daemon within 1500ms".into(),
+                project_root: None,
+            }],
+        }),
+        ..FakeRuntime::default()
+    };
+
+    let stop = run_core_cli_with(&args(&["daemon", "stop"]), &mut runtime);
+
+    assert_eq!(stop.code, 0);
+    assert_eq!(
+        stop.stdout,
+        [
+            "Stopped aimux daemon pid 9001",
+            "Stopped 1 tmux sessions",
+            "Escalated daemon pid 9001 to SIGKILL: SIGTERM did not stop daemon within 1500ms",
+        ]
+    );
 }
 
 #[test]

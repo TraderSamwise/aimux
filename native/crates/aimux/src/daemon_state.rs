@@ -67,6 +67,21 @@ pub struct StoppedDaemonInfo {
     #[serde(flatten)]
     pub daemon: AimuxDaemonInfo,
     pub stopped_project_services: Vec<ProjectServiceState>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stopped_tmux_sessions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub escalations: Vec<StopEscalation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StopEscalation {
+    pub kind: String,
+    pub pid: i32,
+    pub signal: String,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
