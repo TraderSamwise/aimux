@@ -1538,13 +1538,6 @@ describe("verify-release-asset-set.sh", () => {
             "aimux-0.1.45.arm64_golden_gate.bottle.tar.gz",
             "aimux--0.1.45.arm64_golden_gate.bottle.tar.gz",
           ].join("\t"),
-          [
-            "sequoia",
-            "any_skip_relocation",
-            "b".repeat(64),
-            "aimux-0.1.45.sequoia.bottle.tar.gz",
-            "aimux--0.1.45.sequoia.bottle.tar.gz",
-          ].join("\t"),
           "",
         ].join("\n"),
       );
@@ -1586,7 +1579,6 @@ describe("verify-release-asset-set.sh", () => {
       expect(fullFormula).toContain("bottle do");
       expect(fullFormula).toContain('root_url "https://example.test/bottles"');
       expect(fullFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${"a".repeat(64)}"`);
-      expect(fullFormula).toContain(`sha256 cellar: :any_skip_relocation, sequoia: "${"b".repeat(64)}"`);
       expect(fullFormula).toContain('url "https://example.test/source/aimux-darwin-arm64.tar.gz"');
       expect(localFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${"c".repeat(64)}"`);
       expect(localFormula).toContain('url "https://example.test/source/aimux-local-darwin-arm64.tar.gz"');
@@ -1634,11 +1626,6 @@ describe("verify-release-asset-set.sh", () => {
                 cellar: "any_skip_relocation",
                 rebuild: 0,
                 tags: {
-                  sequoia: {
-                    sha256: "C".repeat(64),
-                    filename: "aimux-local-0.1.48.sequoia.bottle.tar.gz",
-                    local_filename: "aimux-local--0.1.48.sequoia.bottle.tar.gz",
-                  },
                   arm64_golden_gate: {
                     sha256: "b".repeat(64),
                     filename: "aimux-local-0.1.48.arm64_golden_gate.bottle.tar.gz",
@@ -1671,13 +1658,6 @@ describe("verify-release-asset-set.sh", () => {
             "aimux-local-0.1.48.arm64_golden_gate.bottle.tar.gz",
             "aimux-local--0.1.48.arm64_golden_gate.bottle.tar.gz",
           ].join("\t"),
-          [
-            "sequoia",
-            "any_skip_relocation",
-            "c".repeat(64),
-            "aimux-local-0.1.48.sequoia.bottle.tar.gz",
-            "aimux-local--0.1.48.sequoia.bottle.tar.gz",
-          ].join("\t"),
           "",
         ].join("\n"),
       );
@@ -1706,7 +1686,6 @@ describe("verify-release-asset-set.sh", () => {
       });
       const localFormula = readFileSync(join(formulaDir, "aimux-local.rb"), "utf8");
       expect(localFormula).toContain(`sha256 cellar: :any_skip_relocation, arm64_golden_gate: "${"b".repeat(64)}"`);
-      expect(localFormula).toContain(`sha256 cellar: :any_skip_relocation, sequoia: "${"c".repeat(64)}"`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1814,8 +1793,8 @@ case "$cmd" in
     exit 0
     ;;
   bottle)
-    printf 'bottle bytes\\n' > aimux-local--0.1.49.arm64_sequoia.bottle.tar.gz
-    cat > aimux-local--0.1.49.arm64_sequoia.bottle.json <<'JSON'
+    printf 'bottle bytes\\n' > aimux-local--0.1.49.arm64_golden_gate.bottle.tar.gz
+    cat > aimux-local--0.1.49.arm64_golden_gate.bottle.json <<'JSON'
 {
   "aimux/bottle-aimux_local-fixture/aimux-local": {
     "formula": {
@@ -1827,10 +1806,10 @@ case "$cmd" in
       "cellar": "any_skip_relocation",
       "rebuild": 0,
       "tags": {
-        "arm64_sequoia": {
+        "arm64_golden_gate": {
           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "filename": "aimux-local-0.1.49.arm64_sequoia.bottle.tar.gz",
-          "local_filename": "aimux-local--0.1.49.arm64_sequoia.bottle.tar.gz"
+          "filename": "aimux-local-0.1.49.arm64_golden_gate.bottle.tar.gz",
+          "local_filename": "aimux-local--0.1.49.arm64_golden_gate.bottle.tar.gz"
         }
       }
     }
@@ -1872,8 +1851,8 @@ esac
       const tsv = readFileSync(join(outDir, "aimux-local.bottles.tsv"), "utf8").trimEnd().split("\t");
       const filename = tsv[3];
       const localFilename = tsv[4];
-      expect(filename).toBe("aimux-local-0.1.49.arm64_sequoia.bottle.tar.gz");
-      expect(localFilename).toBe("aimux-local--0.1.49.arm64_sequoia.bottle.tar.gz");
+      expect(filename).toBe("aimux-local-0.1.49.arm64_golden_gate.bottle.tar.gz");
+      expect(localFilename).toBe("aimux-local--0.1.49.arm64_golden_gate.bottle.tar.gz");
       expect(existsSync(join(outDir, filename))).toBe(true);
       expect(existsSync(join(outDir, localFilename))).toBe(false);
       expect(readdirSync(outDir).filter((name) => name.endsWith(".bottle.tar.gz"))).toEqual([filename]);
@@ -2102,12 +2081,29 @@ describe("release workflow", () => {
     const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 
     const npmJob = workflow.slice(workflow.indexOf("  publish-npm:"), workflow.indexOf("  update-homebrew-tap:"));
+    const assetJob = workflow.slice(
+      workflow.indexOf("  release-assets:"),
+      workflow.indexOf("  verify-release-assets:"),
+    );
+    const bottleJob = workflow.slice(
+      workflow.indexOf("  homebrew-bottles:"),
+      workflow.indexOf("  update-homebrew-tap:"),
+    );
     const tapJob = workflow.slice(workflow.indexOf("  update-homebrew-tap:"));
     expect(npmJob).toContain("needs: verify-release-assets");
+    expect(assetJob).toContain("asset: aimux-darwin-x64");
+    expect(assetJob).toContain("asset: aimux-local-darwin-x64");
+    expect(assetJob).toContain("runner: macos-15-intel");
     expect(workflow).toContain("  homebrew-bottles:");
     expect(workflow).toContain("scripts/build-homebrew-bottle.sh");
     expect(workflow).toContain("homebrew-bottles/*.bottle.tar.gz");
     expect(workflow).toContain("homebrew-bottles/*.bottles.tsv");
+    expect(bottleJob).toContain("runner: macos-14");
+    expect(bottleJob).not.toContain("macos-15-intel");
+    expect(tapJob).toContain("runs-on: macos-14");
+    expect(tapJob).not.toContain("runs-on: macos-15-intel");
+    expect(tapJob).toContain("for a in aimux-darwin-arm64 aimux-local-darwin-arm64");
+    expect(tapJob).not.toContain("for a in aimux-darwin-x64 aimux-local-darwin-x64");
     expect(tapJob).toContain("- homebrew-bottles");
     expect(tapJob).toContain("AIMUX_HOMEBREW_BOTTLE_DIR: bottle-metadata");
     expect(tapJob).toContain('--pattern "*.bottles.tsv"');
