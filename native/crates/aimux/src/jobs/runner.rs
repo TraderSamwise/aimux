@@ -16,6 +16,7 @@ use crate::tmux::{
 use serde_json::json;
 use sha1::{Digest, Sha1};
 use std::fs;
+use std::io::Write;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -223,7 +224,9 @@ pub fn launch_job_in_tmux(
     let metadata = json!({
         "kind": "job",
         "jobId": record.id,
+        "address": record.address,
         "skill": record.skill,
+        "payloadKind": record.payload_kind,
         "tool": record.tool,
     });
     tmux.set_window_metadata(&target.window_id, &metadata)
@@ -294,6 +297,7 @@ pub fn build_launch_plan(
     record: &JobRecord,
     spec: &JobSpec,
 ) -> Result<JobLaunchPlan, JobStoreError> {
+    spec.validate_payload()?;
     spec.tool
         .as_deref()
         .map(str::trim)
@@ -388,6 +392,8 @@ pub fn reconcile_running_jobs(
     let mut changed = 0;
     let records = store.list(crate::jobs::JobListFilter {
         scope: None,
+        address_prefix: None,
+        depth: None,
         status: Some(JobStatus::Running),
     })?;
     if records.is_empty() {
@@ -540,16 +546,32 @@ fn run_job_exec_with_store(store: &JobStore, id: &str) -> Result<ExitCode, Strin
         .map(str::trim)
         .filter(|tool| !tool.is_empty())
         .ok_or_else(|| "job tool is required".to_owned())?;
-    let prompt = job_prompt(&record.skill, &material.args);
-    let filtered_env = build_managed_job_env(material.env);
-    let status = Command::new(tool)
-        .arg(prompt)
+    let filtered_env = build_managed_job_env(material.env.clone());
+    let mut command = Command::new(tool);
+    command
         .envs(filtered_env)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+        .stderr(Stdio::inherit());
+    if material.prompt.is_some() {
+        command.stdin(Stdio::piped());
+    } else {
+        command.arg(job_prompt(&material));
+    }
+    let mut child = command
+        .spawn()
         .map_err(|error| format!("failed to execute job tool {tool}: {error}"))?;
+    let material_prompt = job_prompt(&material);
+    if material.prompt.is_some()
+        && let Some(mut stdin) = child.stdin.take()
+    {
+        stdin
+            .write_all(material_prompt.as_bytes())
+            .map_err(|error| format!("failed to write job prompt to {tool} stdin: {error}"))?;
+    }
+    let status = child
+        .wait()
+        .map_err(|error| format!("failed waiting for job tool {tool}: {error}"))?;
     let exit_code = status.code();
     capture_job_output_once(store, &store.load(id).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
@@ -627,11 +649,15 @@ fn job_window_name(record: &JobRecord) -> String {
     format!("job-{}", &suffix[..8.min(suffix.len())])
 }
 
-fn job_prompt(skill: &str, args: &[String]) -> String {
-    let mut prompt = format!("/{skill}");
-    if !args.is_empty() {
+fn job_prompt(material: &crate::jobs::JobMaterial) -> String {
+    let mut prompt = if let Some(prompt) = material.prompt.as_deref() {
+        prompt.to_owned()
+    } else {
+        format!("/{}", material.skill)
+    };
+    if !material.args.is_empty() {
         prompt.push(' ');
-        prompt.push_str(&args.join(" "));
+        prompt.push_str(&material.args.join(" "));
     }
     prompt
 }
@@ -763,8 +789,13 @@ mod tests {
 
     fn spec(args: Vec<String>) -> JobSpec {
         JobSpec {
+            address: crate::jobs::JobAddress {
+                scope: JobScope::Global,
+                slot: vec!["review-pr".to_owned()],
+            },
             scope: JobScope::Global,
             skill: "review-pr".to_owned(),
+            prompt: None,
             tool: Some("/bin/true".to_owned()),
             args,
             cwd: Some(std::env::temp_dir().to_string_lossy().into_owned()),
@@ -811,6 +842,74 @@ mod tests {
         assert_eq!(tmux.metadata[0]["jobId"], record.id);
         assert_eq!(tmux.tools, vec!["job"]);
         assert!(tmux.piped[0].ends_with("output.tap"));
+    }
+
+    #[test]
+    fn raw_prompt_spills_to_private_material_and_never_reaches_tmux_argv() {
+        let store = store("raw-prompt-spill");
+        let mut resolver = PathResolver::new(std::env::temp_dir(), store.root(), None);
+        let raw_prompt = "say \"hello\"\nthen $(rm -rf /) && echo done";
+        let mut spec = spec(Vec::new());
+        spec.skill.clear();
+        spec.prompt = Some(raw_prompt.to_owned());
+        let (record, outcome) = store.create_or_join(&spec).expect("record");
+        assert_eq!(outcome, CreateOrJoin::Created);
+        let mut tmux = FakeTmux::default();
+        launch_job_in_tmux(&store, &mut resolver, &mut tmux, &record, &spec).expect("launch");
+        assert!(!tmux.created_args.iter().any(|arg| arg.contains(raw_prompt)));
+        assert!(
+            !tmux
+                .respawned_args
+                .iter()
+                .any(|arg| arg.contains(raw_prompt))
+        );
+        assert!(tmux.respawned_args.iter().any(|arg| arg == &record.id));
+        let material = store.load_material(&record.id).expect("material");
+        assert_eq!(material.prompt.as_deref(), Some(raw_prompt));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn raw_prompt_runs_through_stdin_not_tool_argv() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let store = store("raw-prompt-stdin");
+        let tool_path = store.root().join("record-tool.sh");
+        let argv_path = store.root().join("argv.txt");
+        let stdin_path = store.root().join("stdin.txt");
+        fs::create_dir_all(store.root()).expect("store root");
+        fs::write(
+            &tool_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\ncat > '{}'\n",
+                argv_path.display(),
+                stdin_path.display()
+            ),
+        )
+        .expect("tool script");
+        fs::set_permissions(&tool_path, fs::Permissions::from_mode(0o700)).expect("chmod");
+        let raw_prompt = "say \"hello\"\nthen $(rm -rf /) && echo done";
+        let mut spec = spec(Vec::new());
+        spec.skill.clear();
+        spec.prompt = Some(raw_prompt.to_owned());
+        spec.tool = Some(tool_path.to_string_lossy().into_owned());
+        let (record, _) = store.create_or_join(&spec).expect("record");
+        fs::write(store.output_tap_path(&record.id), "").expect("tap");
+        store
+            .mark_running(
+                &record.id,
+                JobTmuxTarget {
+                    session_name: "aimux-test".to_owned(),
+                    window_id: "@1".to_owned(),
+                    window_index: 1,
+                    window_name: "job-test".to_owned(),
+                },
+                store.output_tap_path(&record.id).to_string_lossy(),
+            )
+            .expect("running");
+        run_job_exec_with_store(&store, &record.id).expect("exec");
+        assert_eq!(fs::read_to_string(&stdin_path).expect("stdin"), raw_prompt);
+        assert_eq!(fs::read_to_string(&argv_path).expect("argv"), "\n");
     }
 
     #[test]
@@ -1030,6 +1129,8 @@ mod tests {
             store
                 .list(JobListFilter {
                     scope: None,
+                    address_prefix: None,
+                    depth: None,
                     status: Some(JobStatus::Running)
                 })
                 .unwrap()

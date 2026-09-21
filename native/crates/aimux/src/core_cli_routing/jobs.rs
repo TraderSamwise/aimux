@@ -26,6 +26,9 @@ pub fn parse_core_job_run_args<S: AsRef<str>>(
         return Err(CoreJobArgsError::new("run command is required"));
     }
     let mut tool = None;
+    let mut skill = None;
+    let mut prompt = None;
+    let mut notify_fifo = None;
     let mut project = None;
     let mut detach = false;
     let mut json = false;
@@ -61,6 +64,40 @@ pub fn parse_core_job_run_args<S: AsRef<str>>(
             index += 1;
             continue;
         }
+        if arg == "--skill" {
+            skill = Some(required_non_flag(args, index, "--skill")?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--skill=") {
+            skill = Some(inline_non_flag(value, "--skill")?.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--prompt" {
+            prompt = Some(
+                required_value(args, index)
+                    .ok_or_else(|| CoreJobArgsError::new("--prompt requires a value"))?
+                    .to_owned(),
+            );
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--prompt=") {
+            prompt = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--notify-fifo" {
+            notify_fifo = Some(required_non_flag(args, index, "--notify-fifo")?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--notify-fifo=") {
+            notify_fifo = Some(inline_non_flag(value, "--notify-fifo")?.to_owned());
+            index += 1;
+            continue;
+        }
         if arg == "--project" {
             project = Some(required_non_flag(args, index, "--project")?.to_owned());
             index += 2;
@@ -87,9 +124,23 @@ pub fn parse_core_job_run_args<S: AsRef<str>>(
             "aimux run requires --tool <tool>; positional tool sniffing is intentionally unsupported",
         ));
     }
+    let has_skill = skill
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_prompt = prompt
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    if has_skill == has_prompt {
+        return Err(CoreJobArgsError::new(
+            "aimux run requires exactly one payload: --skill <name> or --prompt <text>",
+        ));
+    }
     Ok(CoreJobRunArgs {
         address,
         tool,
+        skill,
+        prompt,
+        notify_fifo,
         project,
         args: positionals.into_iter().skip(1).collect(),
         detach,
@@ -105,7 +156,10 @@ pub fn parse_core_job_args<S: AsRef<str>>(args: &[S]) -> Result<CoreJobArgs, Cor
         .get(1)
         .map(AsRef::as_ref)
         .ok_or_else(|| CoreJobArgsError::new("job requires a subcommand"))?;
-    if !matches!(subcommand, "show" | "list" | "attach" | "cancel" | "notify") {
+    if !matches!(
+        subcommand,
+        "show" | "list" | "tail" | "wait" | "cancel" | "notify"
+    ) {
         return Err(CoreJobArgsError::new(format!(
             "job {subcommand} is not supported"
         )));
@@ -116,6 +170,7 @@ pub fn parse_core_job_args<S: AsRef<str>>(args: &[S]) -> Result<CoreJobArgs, Cor
         scope: None,
         project: None,
         watcher_id: None,
+        depth: None,
         seq: 0,
         json: false,
     };
@@ -149,7 +204,21 @@ pub fn parse_core_job_args<S: AsRef<str>>(args: &[S]) -> Result<CoreJobArgs, Cor
             index += 1;
             continue;
         }
-        if parsed.subcommand == "attach" && arg == "--seq" {
+        if parsed.subcommand == "list" && arg == "--depth" {
+            parsed.depth = Some(parse_depth(required_value(args, index).ok_or_else(
+                || CoreJobArgsError::new("--depth requires an unsigned integer value"),
+            )?)?);
+            index += 2;
+            continue;
+        }
+        if parsed.subcommand == "list"
+            && let Some(value) = arg.strip_prefix("--depth=")
+        {
+            parsed.depth = Some(parse_depth(value)?);
+            index += 1;
+            continue;
+        }
+        if matches!(parsed.subcommand.as_str(), "tail" | "wait") && arg == "--seq" {
             parsed.seq = parse_seq(required_value(args, index).ok_or_else(|| {
                 CoreJobArgsError::new("--seq requires an unsigned integer value")
             })?)?;
@@ -168,7 +237,7 @@ pub fn parse_core_job_args<S: AsRef<str>>(args: &[S]) -> Result<CoreJobArgs, Cor
             index += 1;
             continue;
         }
-        if parsed.subcommand == "attach"
+        if matches!(parsed.subcommand.as_str(), "tail" | "wait")
             && let Some(value) = arg.strip_prefix("--seq=")
         {
             parsed.seq = parse_seq(value)?;
@@ -240,6 +309,11 @@ pub fn parse_core_attach_args<S: AsRef<str>>(
 fn parse_seq(raw: &str) -> Result<u64, CoreJobArgsError> {
     raw.parse::<u64>()
         .map_err(|_| CoreJobArgsError::new("seq must be an unsigned integer"))
+}
+
+fn parse_depth(raw: &str) -> Result<usize, CoreJobArgsError> {
+    raw.parse::<usize>()
+        .map_err(|_| CoreJobArgsError::new("depth must be an unsigned integer"))
 }
 
 fn required_non_flag<'a, S: AsRef<str>>(

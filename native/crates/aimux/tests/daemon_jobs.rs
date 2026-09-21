@@ -4,7 +4,7 @@ use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::jobs::{
     DaemonJobRouteRuntime, JobEventStreamOptions, drain_due_job_callbacks_with,
     maybe_handle_job_event_stream_request_with_runtime_mutex, route_jobs_json_request,
-    write_job_event_stream,
+    write_job_event_stream, write_job_list_stream,
 };
 use aimux::daemon::listener::parse_daemon_http_request;
 use aimux::daemon::server::DaemonHttpRequest;
@@ -13,7 +13,7 @@ use aimux::desktop_notifier::{
     DesktopNotificationDeliveryResult, DesktopNotificationPayload, DesktopNotificationTransport,
 };
 use aimux::jobs::{
-    JobCancelReport, JobEventInput, JobRecord, JobScope, JobSpec, JobStatus, JobStore,
+    JobAddress, JobCancelReport, JobEventInput, JobRecord, JobScope, JobSpec, JobStatus, JobStore,
     JobStoreError, JobTmuxTarget,
 };
 use aimux::paths::{PathResolver, ProjectEntry, ProjectsRegistry, compute_project_id};
@@ -21,11 +21,13 @@ use aimux::remote::daemon_relay::build_request_head;
 use aimux::request_actor::RELAY_FORWARDED_HEADER;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Read;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const JOBS_ROUTE_CONTRACT: &str =
@@ -122,6 +124,22 @@ fn fixture(label: &str) -> Fixture {
     }
 }
 
+fn job_spec(slot: &str) -> JobSpec {
+    JobSpec {
+        address: JobAddress {
+            scope: JobScope::Global,
+            slot: vec![slot.to_owned()],
+        },
+        scope: JobScope::Global,
+        skill: "review-pr".to_owned(),
+        prompt: None,
+        tool: Some("codex".to_owned()),
+        args: Vec::new(),
+        cwd: None,
+        env: BTreeMap::new(),
+    }
+}
+
 fn json_body(response: aimux::daemon::routing::DaemonRouteResponse) -> Value {
     match response.body {
         DaemonResponseBody::Json(value) => value,
@@ -176,7 +194,7 @@ fn jobs_route_contract_fixture_names_the_registered_routes() {
         &mut fixture.runtime,
         "POST",
         CORE_API_ROUTES.jobs,
-        Some(&json!({ "address": fixture.address, "args": [] })),
+        Some(&json!({ "address": fixture.address, "args": [], "skill": "review-pr" })),
         true,
     )
     .expect("create route handled");
@@ -225,6 +243,7 @@ fn post_jobs_is_idempotent_over_http_and_address_handle_resolves_same_job() {
     let body = json!({
         "address": fixture.address,
         "tool": "codex",
+            "skill": "review-pr",
         "args": ["--pr", "123"],
         "cwd": "/repo/main",
         "env": { "AIMUX_TEST": "1" }
@@ -281,6 +300,7 @@ fn post_job_mutations_reject_remote_actor_headers() {
     let create_body = json!({
         "address": fixture.address,
         "tool": "codex",
+            "skill": "review-pr",
         "args": []
     });
     let create = route_jobs_json_request(
@@ -323,6 +343,7 @@ fn relay_forwarded_job_create_without_actor_headers_is_still_remote() {
     let body = json!({
         "address": fixture.address,
         "tool": "codex",
+            "skill": "review-pr",
         "args": ["--from-relay"]
     })
     .to_string();
@@ -421,18 +442,10 @@ fn job_id_handle_rejects_path_traversal() {
 #[test]
 fn cancel_terminal_job_is_http_noop_and_does_not_rewrite_status() {
     let mut fixture = fixture("cancel-terminal");
-    let scope = JobScope::Global;
     let (record, _) = fixture
         .runtime
         .store
-        .create_or_join(&aimux::jobs::JobSpec {
-            scope,
-            skill: "review-pr".to_owned(),
-            tool: Some("codex".to_owned()),
-            args: Vec::new(),
-            cwd: None,
-            env: BTreeMap::new(),
-        })
+        .create_or_join(&job_spec("review-pr"))
         .expect("created");
     fixture
         .runtime
@@ -468,6 +481,7 @@ fn list_jobs_filters_by_scope_without_treating_empty_as_error() {
     let body = json!({
         "address": fixture.address,
         "tool": "codex",
+            "skill": "review-pr",
         "args": []
     });
     let created = route(
@@ -490,6 +504,84 @@ fn list_jobs_filters_by_scope_without_treating_empty_as_error() {
 }
 
 #[test]
+fn list_jobs_scope_is_recursive_by_default_and_depth_limited_by_segments() {
+    let mut fixture = fixture("list-depth");
+    let sibling =
+        std::env::temp_dir().join(format!("aimux-daemon-jobs-sibling-{}", std::process::id()));
+    fs::create_dir_all(sibling.join(".git")).expect("sibling git marker");
+    let project = std::env::temp_dir().join(format!(
+        "aimux-daemon-jobs-list-depth-project-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(project.join(".git")).expect("project git marker");
+    fixture
+        .runtime
+        .resolver
+        .save_registry(&ProjectsRegistry {
+            version: aimux::paths::PROJECTS_REGISTRY_VERSION,
+            projects: vec![
+                ProjectEntry {
+                    id: compute_project_id(&project),
+                    name: "tealstreet-next".to_owned(),
+                    repo_root: project.to_string_lossy().into_owned(),
+                    last_seen: "2026-09-21T00:00:00.000Z".to_owned(),
+                },
+                ProjectEntry {
+                    id: compute_project_id(&sibling),
+                    name: "tealstreet-next-2".to_owned(),
+                    repo_root: sibling.to_string_lossy().into_owned(),
+                    last_seen: "2026-09-21T00:00:00.000Z".to_owned(),
+                },
+            ],
+        })
+        .expect("registry write");
+    for address in [
+        "tealstreet-next",
+        "tealstreet-next/main",
+        "tealstreet-next/main/foo",
+        "tealstreet-next-2",
+    ] {
+        let response = route(
+            &mut fixture.runtime,
+            "POST",
+            CORE_API_ROUTES.jobs,
+            Some(&json!({
+                "address": address,
+                "tool": "codex",
+                "skill": "review-pr",
+                "args": []
+            })),
+            false,
+        );
+        assert_eq!(response["ok"], true, "{address}");
+    }
+    let recursive = route(
+        &mut fixture.runtime,
+        "GET",
+        &format!("{}?scope=tealstreet-next", CORE_API_ROUTES.jobs),
+        None,
+        false,
+    );
+    assert_eq!(recursive["jobs"].as_array().unwrap().len(), 3);
+    let exact = route(
+        &mut fixture.runtime,
+        "GET",
+        &format!("{}?scope=tealstreet-next&depth=0", CORE_API_ROUTES.jobs),
+        None,
+        false,
+    );
+    assert_eq!(exact["jobs"].as_array().unwrap().len(), 1);
+    let direct = route(
+        &mut fixture.runtime,
+        "GET",
+        &format!("{}?scope=tealstreet-next&depth=1", CORE_API_ROUTES.jobs),
+        None,
+        false,
+    );
+    assert_eq!(direct["jobs"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn notify_route_registers_callback_and_forces_delivery_tick() {
     let mut fixture = fixture("notify-route");
     let created = route(
@@ -499,6 +591,7 @@ fn notify_route_registers_callback_and_forces_delivery_tick() {
         Some(&json!({
             "address": fixture.address,
             "tool": "codex",
+            "skill": "review-pr",
             "args": []
         })),
         false,
@@ -529,14 +622,7 @@ fn callback_drain_delivers_two_watchers_once_across_store_restart() {
     let fixture = fixture("callback-drain");
     let store = fixture.runtime.store.clone();
     let root = store.root().to_path_buf();
-    let spec = JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (record, _) = store.create_or_join(&spec).expect("job");
     store
         .register_desktop_callback(&record.id, "sam")
@@ -585,14 +671,7 @@ fn callback_drain_delivers_two_watchers_once_across_store_restart() {
 fn callback_guard_suppresses_without_sending() {
     let fixture = fixture("callback-suppressed");
     let store = fixture.runtime.store.clone();
-    let spec = JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (record, _) = store.create_or_join(&spec).expect("job");
     store
         .register_desktop_callback(&record.id, "sam")
@@ -625,14 +704,7 @@ fn callback_guard_suppresses_without_sending() {
 fn disabled_desktop_delivery_is_suppressed_once_without_retrying() {
     let fixture = fixture("callback-disabled");
     let store = fixture.runtime.store.clone();
-    let spec = JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (record, _) = store.create_or_join(&spec).expect("job");
     store
         .register_desktop_callback(&record.id, "sam")
@@ -675,19 +747,76 @@ fn disabled_desktop_delivery_is_suppressed_once_without_retrying() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn fifo_callback_writes_one_terminal_line_exactly_once() {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let fixture = fixture("callback-fifo");
+    let store = fixture.runtime.store.clone();
+    let spec = job_spec("review-pr");
+    let (record, _) = store.create_or_join(&spec).expect("job");
+    let fifo_path = store.root().join("notify.fifo");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo_path)
+        .status()
+        .expect("mkfifo");
+    assert!(status.success(), "mkfifo failed");
+    let mut reader = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&fifo_path)
+        .expect("open fifo reader");
+    store
+        .register_fifo_callback(&record.id, "fifo-test", fifo_path.to_str().unwrap())
+        .expect("fifo callback");
+    store
+        .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish");
+    let report =
+        aimux::daemon::jobs::drain_due_job_callbacks(&store, u128::MAX).expect("fifo drain");
+    assert_eq!(report.delivered, 1);
+    let mut text = String::new();
+    reader.read_to_string(&mut text).expect("read fifo");
+    assert!(text.contains(&record.id));
+    assert!(text.contains("\"status\":\"succeeded\""));
+    let second =
+        aimux::daemon::jobs::drain_due_job_callbacks(&store, u128::MAX).expect("second drain");
+    assert_eq!(second.attempted, 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn fifo_callback_without_reader_does_not_block_daemon() {
+    let fixture = fixture("callback-fifo-no-reader");
+    let store = fixture.runtime.store.clone();
+    let spec = job_spec("review-pr");
+    let (record, _) = store.create_or_join(&spec).expect("job");
+    let fifo_path = store.root().join("notify.fifo");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo_path)
+        .status()
+        .expect("mkfifo");
+    assert!(status.success(), "mkfifo failed");
+    store
+        .register_fifo_callback(&record.id, "fifo-test", fifo_path.to_str().unwrap())
+        .expect("fifo callback");
+    store
+        .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish");
+    let started = Instant::now();
+    let report =
+        aimux::daemon::jobs::drain_due_job_callbacks(&store, u128::MAX).expect("fifo drain");
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert_eq!(report.failed, 1);
+}
+
 #[test]
 fn callback_send_before_delivery_record_is_replayed_after_restart_once() {
     let fixture = fixture("callback-send-record-crash");
     let store = fixture.runtime.store.clone();
     let root = store.root().to_path_buf();
-    let spec = JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (record, _) = store.create_or_join(&spec).expect("job");
     store
         .register_desktop_callback(&record.id, "sam")
@@ -731,14 +860,7 @@ fn callback_send_before_delivery_record_is_replayed_after_restart_once() {
 fn corrupt_callback_record_does_not_block_other_due_notifications() {
     let fixture = fixture("callback-head-of-line");
     let store = fixture.runtime.store.clone();
-    let spec = JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (poisoned, _) = store.create_or_join(&spec).expect("poisoned job");
     store
         .register_desktop_callback(&poisoned.id, "poisoned")
@@ -756,7 +878,7 @@ fn corrupt_callback_record_does_not_block_other_due_notifications() {
     )
     .expect("corrupt callbacks");
 
-    let mut second_spec = spec;
+    let mut second_spec = job_spec("review-pr-second");
     second_spec.args.push("--second".to_owned());
     let (healthy, _) = store.create_or_join(&second_spec).expect("healthy job");
     store
@@ -787,14 +909,7 @@ fn corrupt_callback_record_does_not_block_other_due_notifications() {
 fn callback_failures_eventually_abandon_and_release_prune() {
     let fixture = fixture("callback-give-up");
     let store = fixture.runtime.store.clone();
-    let spec = JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (record, _) = store.create_or_join(&spec).expect("job");
     store
         .register_desktop_callback(&record.id, "sam")
@@ -873,14 +988,7 @@ async fn missing_job_stream_is_http_error_not_empty_sse() {
 #[tokio::test]
 async fn resolved_job_streams_events_from_requested_sequence() {
     let fixture = fixture("event-stream");
-    let spec = aimux::jobs::JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (record, _) = fixture.runtime.store.create_or_join(&spec).expect("job");
     fixture
         .runtime
@@ -928,14 +1036,7 @@ async fn resolved_job_streams_events_from_requested_sequence() {
 #[tokio::test]
 async fn terminal_job_stream_emits_final_status_and_closes() {
     let fixture = fixture("terminal-stream");
-    let spec = aimux::jobs::JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (record, _) = fixture.runtime.store.create_or_join(&spec).expect("job");
     fixture
         .runtime
@@ -985,14 +1086,7 @@ async fn terminal_job_stream_emits_final_status_and_closes() {
 #[tokio::test]
 async fn job_stream_delivers_new_events_at_poll_interval_before_keepalive() {
     let fixture = fixture("event-stream-poll");
-    let spec = aimux::jobs::JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (record, _) = fixture.runtime.store.create_or_join(&spec).expect("job");
     let store = fixture.runtime.store.clone();
     let writer_store = store.clone();
@@ -1045,14 +1139,7 @@ async fn job_stream_delivers_new_events_at_poll_interval_before_keepalive() {
 #[tokio::test]
 async fn drained_job_stream_keeps_connection_alive_with_keepalive() {
     let fixture = fixture("drained-stream");
-    let spec = aimux::jobs::JobSpec {
-        scope: JobScope::Global,
-        skill: "review-pr".to_owned(),
-        tool: Some("codex".to_owned()),
-        args: Vec::new(),
-        cwd: None,
-        env: BTreeMap::new(),
-    };
+    let spec = job_spec("review-pr");
     let (record, _) = fixture.runtime.store.create_or_join(&spec).expect("job");
     let output = capture_job_event_stream(
         fixture.runtime.store.clone(),
@@ -1070,6 +1157,60 @@ async fn drained_job_stream_keeps_connection_alive_with_keepalive() {
     assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(text.contains(": keepalive\n\n"));
     assert!(!text.contains("event: error"));
+}
+
+#[tokio::test]
+async fn job_list_stream_uses_same_recursive_prefix_semantics_as_list_route() {
+    let fixture = fixture("list-stream");
+    let store = fixture.runtime.store.clone();
+    let mut parent = job_spec("parent");
+    parent.address = JobAddress {
+        scope: JobScope::Global,
+        slot: Vec::new(),
+    };
+    let mut child = job_spec("parent-child");
+    child.address = JobAddress {
+        scope: JobScope::Global,
+        slot: vec!["child".to_owned()],
+    };
+    let mut grandchild = job_spec("parent-grandchild");
+    grandchild.address = JobAddress {
+        scope: JobScope::Global,
+        slot: vec!["child".to_owned(), "deep".to_owned()],
+    };
+    let mut project = job_spec("project");
+    project.address = JobAddress {
+        scope: JobScope::Project {
+            project_id: "project-1".to_owned(),
+        },
+        slot: Vec::new(),
+    };
+    project.scope = project.address.scope.clone();
+    let (parent_record, _) = store.create_or_join(&parent).expect("parent");
+    let (child_record, _) = store.create_or_join(&child).expect("child");
+    let (grandchild_record, _) = store.create_or_join(&grandchild).expect("grandchild");
+    let (project_record, _) = store.create_or_join(&project).expect("project");
+    let output = capture_job_list_stream(
+        store,
+        Some(JobAddress {
+            scope: JobScope::Global,
+            slot: Vec::new(),
+        }),
+        Some(1),
+        JobEventStreamOptions {
+            keepalive_ms: 1_000,
+            poll_ms: 1,
+            max_keepalives: None,
+            max_polls: Some(1),
+        },
+    )
+    .await;
+    let text = String::from_utf8(output).expect("utf8");
+    assert!(text.contains("event: jobs-snapshot"));
+    assert!(text.contains(&parent_record.id));
+    assert!(text.contains(&child_record.id));
+    assert!(!text.contains(&grandchild_record.id));
+    assert!(!text.contains(&project_record.id));
 }
 
 async fn capture_intercepted_stream(
@@ -1141,6 +1282,28 @@ async fn capture_job_event_stream(
     let (mut client, mut server) = tokio::io::duplex(16 * 1024);
     let writer = async {
         write_job_event_stream(&store, &id, seq, &mut server, options)
+            .await
+            .expect("stream write");
+        server.shutdown().await.expect("shutdown");
+    };
+    let reader = async {
+        let mut bytes = Vec::new();
+        client.read_to_end(&mut bytes).await.expect("read");
+        bytes
+    };
+    let (_, bytes) = tokio::join!(writer, reader);
+    bytes
+}
+
+async fn capture_job_list_stream(
+    store: JobStore,
+    address_prefix: Option<JobAddress>,
+    depth: Option<usize>,
+    options: JobEventStreamOptions,
+) -> Vec<u8> {
+    let (mut client, mut server) = tokio::io::duplex(16 * 1024);
+    let writer = async {
+        write_job_list_stream(&store, address_prefix, depth, &mut server, options)
             .await
             .expect("stream write");
         server.shutdown().await.expect("shutdown");

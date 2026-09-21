@@ -21,7 +21,11 @@ use crate::request_actor::parse_remote_actor;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -92,8 +96,10 @@ struct CreateJobRequest {
     address: Option<String>,
     scope: Option<JobScope>,
     skill: Option<String>,
+    prompt: Option<String>,
     project: Option<String>,
     tool: Option<String>,
+    notify_fifo: Option<String>,
     #[serde(default)]
     args: Vec<String>,
     cwd: Option<String>,
@@ -144,6 +150,7 @@ pub fn route_jobs_json_request(
             Ok(request) => request,
             Err(response) => return Some(response),
         };
+        let notify_fifo_raw = request.notify_fifo.clone();
         let store = runtime.job_store();
         let mut resolver = runtime.job_path_resolver();
         let spec = match request.into_spec(&mut resolver) {
@@ -155,6 +162,18 @@ pub fn route_jobs_json_request(
                 ));
             }
         };
+        let notify_fifo = match notify_fifo_raw.as_deref() {
+            Some(path) => match validate_notify_fifo_path(path) {
+                Ok(path) => Some(path),
+                Err(error) => {
+                    return Some(DaemonRouteResponse::json(
+                        400,
+                        json!({ "ok": false, "error": error }),
+                    ));
+                }
+            },
+            None => None,
+        };
         return Some(match store.create_or_join(&spec) {
             Ok((record, outcome)) => {
                 let record = if outcome == CreateOrJoin::Created {
@@ -165,13 +184,32 @@ pub fn route_jobs_json_request(
                 } else {
                     record
                 };
+                let fifo_callback = if let Some(path) = notify_fifo.as_deref() {
+                    match store.register_fifo_callback(
+                        &record.id,
+                        &fifo_watcher_id(path),
+                        path.to_string_lossy().as_ref(),
+                    ) {
+                        Ok(registration) => {
+                            runtime.force_job_callbacks_next_tick();
+                            Some(json!({
+                                "callback": registration.callback,
+                                "outcome": registration.outcome,
+                            }))
+                        }
+                        Err(error) => return Some(store_error_response(error)),
+                    }
+                } else {
+                    None
+                };
                 DaemonRouteResponse::json(
                     200,
-                    json!({
+                    json_without_null_fields(json!({
                         "ok": true,
                         "job": record,
                         "outcome": create_or_join_name(outcome),
-                    }),
+                        "notifyFifo": fifo_callback,
+                    })),
                 )
             }
             Err(error) => store_error_response(error),
@@ -203,9 +241,21 @@ pub fn route_jobs_json_request(
                 },
             );
         }
-        let scope = match route_url.search_param("scope") {
+        let depth = match route_url.search_param("depth") {
+            Some(raw) => match raw.parse::<usize>() {
+                Ok(depth) => Some(depth),
+                Err(_) => {
+                    return Some(DaemonRouteResponse::json(
+                        400,
+                        json!({ "ok": false, "error": "depth must be an unsigned integer" }),
+                    ));
+                }
+            },
+            None => None,
+        };
+        let address_prefix = match route_url.search_param("scope") {
             Some(scope) => match parse_job_scope_handle(scope, &mut resolver) {
-                Ok(scope) => Some(scope),
+                Ok(address) => Some(address),
                 Err(error) => {
                     return Some(DaemonRouteResponse::json(
                         400,
@@ -217,7 +267,9 @@ pub fn route_jobs_json_request(
         };
         return Some(
             match store.list(JobListFilter {
-                scope,
+                scope: None,
+                address_prefix,
+                depth,
                 status: None,
             }) {
                 Ok(jobs) => DaemonRouteResponse::json(200, json!({ "ok": true, "jobs": jobs })),
@@ -369,6 +421,11 @@ where
             id: String,
             seq: u64,
         },
+        List {
+            store: JobStore,
+            prefix: Option<JobAddress>,
+            depth: Option<usize>,
+        },
         Err(DaemonRouteResponse),
     }
 
@@ -406,6 +463,37 @@ where
                     Err(response) => StreamResolution::Err(response),
                 }
             }
+            None if route_url.search_param("scope").is_some() => {
+                let scope = route_url.search_param("scope").unwrap_or_default();
+                match route_url
+                    .search_param("depth")
+                    .map(|raw| raw.parse::<usize>())
+                {
+                    Some(Err(_)) => StreamResolution::Err(DaemonRouteResponse::json(
+                        400,
+                        json!({ "ok": false, "error": "depth must be an unsigned integer" }),
+                    )),
+                    depth_result => {
+                        let depth = depth_result.and_then(Result::ok);
+                        match parse_job_scope_handle(scope, &mut resolver) {
+                            Ok(prefix) => StreamResolution::List {
+                                store,
+                                prefix: Some(prefix),
+                                depth,
+                            },
+                            Err(error) => StreamResolution::Err(DaemonRouteResponse::json(
+                                400,
+                                json!({ "ok": false, "error": error }),
+                            )),
+                        }
+                    }
+                }
+            }
+            None if route_url.search_param("all").is_some() => StreamResolution::List {
+                store,
+                prefix: None,
+                depth: None,
+            },
             None => StreamResolution::Err(DaemonRouteResponse::json(
                 400,
                 json!({ "ok": false, "error": "handle is required" }),
@@ -418,11 +506,96 @@ where
             write_job_event_stream(&store, &id, seq, writer, JobEventStreamOptions::default())
                 .await?;
         }
+        StreamResolution::List {
+            store,
+            prefix,
+            depth,
+        } => {
+            write_job_list_stream(
+                &store,
+                prefix,
+                depth,
+                writer,
+                JobEventStreamOptions::default(),
+            )
+            .await?;
+        }
         StreamResolution::Err(response) => {
             write_route_response_async(writer, &response).await?;
         }
     }
     Ok(true)
+}
+
+pub async fn write_job_list_stream(
+    store: &JobStore,
+    address_prefix: Option<JobAddress>,
+    depth: Option<usize>,
+    writer: &mut (impl AsyncWrite + Unpin),
+    options: JobEventStreamOptions,
+) -> Result<(), std::io::Error> {
+    writer.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache, no-transform\r\nconnection: close\r\n\r\n").await?;
+    let mut keepalives = 0_usize;
+    let mut polls = 0_usize;
+    let keepalive_interval = Duration::from_millis(options.keepalive_ms);
+    let poll_interval = Duration::from_millis(options.poll_ms);
+    let mut last_keepalive = Instant::now();
+    let mut last_snapshot = None;
+    loop {
+        match store.list(JobListFilter {
+            scope: None,
+            address_prefix: address_prefix.clone(),
+            depth,
+            status: None,
+        }) {
+            Ok(jobs) => {
+                let snapshot = json!({ "ok": true, "jobs": jobs });
+                let encoded = match serde_json::to_string(&snapshot) {
+                    Ok(encoded) => encoded,
+                    Err(error) => {
+                        writer
+                            .write_all(&encode_sse_event(
+                                "error",
+                                &json!({ "ok": false, "error": error.to_string() }),
+                            ))
+                            .await?;
+                        return Ok(());
+                    }
+                };
+                if last_snapshot.as_deref() != Some(encoded.as_str()) {
+                    writer
+                        .write_all(&encode_sse_event("jobs-snapshot", &snapshot))
+                        .await?;
+                    last_snapshot = Some(encoded);
+                    last_keepalive = Instant::now();
+                } else if last_keepalive.elapsed() >= keepalive_interval {
+                    writer.write_all(&encode_sse_keepalive()).await?;
+                    keepalives += 1;
+                    last_keepalive = Instant::now();
+                }
+            }
+            Err(error) => {
+                writer
+                    .write_all(&encode_sse_event(
+                        "error",
+                        &json!({ "ok": false, "error": error.to_string() }),
+                    ))
+                    .await?;
+                return Ok(());
+            }
+        }
+        polls += 1;
+        if options
+            .max_keepalives
+            .is_some_and(|max_keepalives| keepalives >= max_keepalives)
+            || options
+                .max_polls
+                .is_some_and(|max_polls| polls >= max_polls)
+        {
+            return Ok(());
+        }
+        sleep(poll_interval).await;
+    }
 }
 
 pub async fn write_job_event_stream(
@@ -566,32 +739,37 @@ pub fn drain_due_job_callbacks_with(
     let mut report = JobCallbackDrainReport::default();
     for due in store.due_callbacks(now_ms)? {
         report.attempted += 1;
-        let guard_event = json!({
-            "kind": "job-completion",
-            "notificationClass": "progress-or-summary",
-            "jobId": due.record.id,
-            "watcherId": due.callback.watcher_id,
-            "status": due.record.status,
-            "scope": due.record.scope,
-        });
-        if let Some(reason) = guard(&guard_event) {
-            if store
-                .record_callback_suppressed(
-                    &due.record.id,
-                    &due.callback.watcher_id,
-                    due.terminal_event.seq,
-                    reason,
-                    now_ms,
-                )
-                .is_ok()
-            {
-                report.suppressed += 1;
-            } else {
-                report.failed += 1;
+        let result = match due.callback.kind {
+            crate::jobs::JobCallbackKind::DesktopNotification => {
+                let guard_event = json!({
+                    "kind": "job-completion",
+                    "notificationClass": "progress-or-summary",
+                    "jobId": due.record.id,
+                    "watcherId": due.callback.watcher_id,
+                    "status": due.record.status,
+                    "scope": due.record.scope,
+                });
+                if let Some(reason) = guard(&guard_event) {
+                    if store
+                        .record_callback_suppressed(
+                            &due.record.id,
+                            &due.callback.watcher_id,
+                            due.terminal_event.seq,
+                            reason,
+                            now_ms,
+                        )
+                        .is_ok()
+                    {
+                        report.suppressed += 1;
+                    } else {
+                        report.failed += 1;
+                    }
+                    continue;
+                }
+                sender(&notification_payload_for_job(&due.record))
             }
-            continue;
-        }
-        let result = sender(&notification_payload_for_job(&due.record));
+            crate::jobs::JobCallbackKind::Fifo => write_fifo_notification(&due),
+        };
         if notification_delivery_is_unavailable(&result) {
             if store
                 .record_callback_suppressed(
@@ -651,6 +829,80 @@ fn notification_delivery_is_unavailable(result: &DesktopNotificationDeliveryResu
         result.transport,
         DesktopNotificationTransport::Disabled | DesktopNotificationTransport::PlatformUnsupported
     )
+}
+
+fn write_fifo_notification(due: &crate::jobs::DueJobCallback) -> DesktopNotificationDeliveryResult {
+    let Some(path) = due.callback.fifo_path.as_deref() else {
+        return DesktopNotificationDeliveryResult {
+            ok: false,
+            transport: DesktopNotificationTransport::Disabled,
+            helper_path: None,
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            error: Some("fifo callback path is missing".to_owned()),
+        };
+    };
+    let payload = json!({
+        "jobId": due.record.id,
+        "status": due.record.status,
+        "exitCode": due.record.exit_code,
+        "terminalReason": due.record.terminal_reason,
+        "seq": due.terminal_event.seq,
+    });
+    let mut line = match serde_json::to_string(&payload) {
+        Ok(line) => line,
+        Err(error) => {
+            return DesktopNotificationDeliveryResult {
+                ok: false,
+                transport: DesktopNotificationTransport::Fifo,
+                helper_path: None,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                error: Some(error.to_string()),
+            };
+        }
+    };
+    line.push('\n');
+    let mut options = OpenOptions::new();
+    options.write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    match options.open(path) {
+        Ok(mut file) => match file.write_all(line.as_bytes()) {
+            Ok(()) => DesktopNotificationDeliveryResult {
+                ok: true,
+                transport: DesktopNotificationTransport::Fifo,
+                helper_path: None,
+                exit_code: Some(0),
+                stdout: None,
+                stderr: None,
+                error: None,
+            },
+            Err(error) => DesktopNotificationDeliveryResult {
+                ok: false,
+                transport: DesktopNotificationTransport::Fifo,
+                helper_path: None,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                error: Some(error.to_string()),
+            },
+        },
+        Err(error) => DesktopNotificationDeliveryResult {
+            ok: false,
+            transport: DesktopNotificationTransport::Fifo,
+            helper_path: None,
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            error: Some(error.to_string()),
+        },
+    }
 }
 
 fn job_project_state_dir_from_event(store: &JobStore, event: &Value) -> Option<PathBuf> {
@@ -717,11 +969,12 @@ fn resolve_job_address(
 ) -> Result<ResolvedJobHandle, JobStoreError> {
     let mut matches = store
         .list(JobListFilter {
-            scope: Some(address.scope.clone()),
+            scope: None,
+            address_prefix: Some(address.clone()),
+            depth: Some(0),
             status: None,
         })?
         .into_iter()
-        .filter(|record| record.skill == address.skill)
         .collect::<Vec<_>>();
     matches.sort_by_key(|record| record.created_at_ms);
     let record = matches
@@ -736,7 +989,7 @@ fn resolve_job_address(
         .cloned()
         .or_else(|| matches.pop())
         .ok_or_else(|| JobStoreError::MissingJob {
-            id: format!("address:{}", address.skill),
+            id: format!("address:{}", address.display()),
         })?;
     Ok(ResolvedJobHandle {
         record,
@@ -744,14 +997,9 @@ fn resolve_job_address(
     })
 }
 
-fn parse_job_scope_handle(scope: &str, resolver: &mut PathResolver) -> Result<JobScope, String> {
+fn parse_job_scope_handle(scope: &str, resolver: &mut PathResolver) -> Result<JobAddress, String> {
     let trimmed = scope.trim();
-    if trimmed == "global" {
-        return Ok(JobScope::Global);
-    }
-    let sentinel_skill = "__aimux_scope_filter__";
-    let address = parse_job_address(&format!("{trimmed}/{sentinel_skill}"), resolver, None)?;
-    Ok(address.scope)
+    parse_job_address(trimmed, resolver, None)
 }
 
 fn loopback_only_response() -> DaemonRouteResponse {
@@ -765,30 +1013,76 @@ fn validate_job_id_handle(id: &str) -> Result<(), JobStoreError> {
     validate_job_id(id)
 }
 
+fn validate_notify_fifo_path(path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path);
+    let metadata = fs::metadata(&path)
+        .map_err(|error| format!("notify fifo {} is not readable: {error}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if !metadata.file_type().is_fifo() {
+            return Err(format!(
+                "notify fifo {} is not a FIFO; create it with mkfifo and retry",
+                path.display()
+            ));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        return Err("notify fifo is supported only on Unix hosts".to_owned());
+    }
+    Ok(path)
+}
+
+fn fifo_watcher_id(path: &std::path::Path) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(path.to_string_lossy().as_bytes());
+    format!("fifo-{:x}", hasher.finalize())
+}
+
+fn json_without_null_fields(value: Value) -> Value {
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .filter(|(_, value)| !value.is_null())
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 impl CreateJobRequest {
     fn into_spec(self, resolver: &mut PathResolver) -> Result<JobSpec, String> {
         let explicit_project = self.project.as_deref().map(PathBuf::from);
-        let (scope, skill) = match (self.address, self.scope, self.skill) {
-            (Some(address), None, None) => {
-                let parsed = parse_job_address(&address, resolver, explicit_project.as_deref())?;
-                (parsed.scope, parsed.skill)
+        let address = match (self.address, self.scope) {
+            (Some(address), None) => {
+                parse_job_address(&address, resolver, explicit_project.as_deref())?
             }
-            (None, Some(scope), Some(skill)) => (scope, skill),
-            (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
-                return Err("address cannot be combined with scope or skill".to_owned());
+            (None, Some(scope)) => JobAddress {
+                scope,
+                slot: Vec::new(),
+            },
+            (Some(_), Some(_)) => {
+                return Err("address cannot be combined with scope".to_owned());
             }
-            (None, _, _) => {
-                return Err("address or scope+skill is required".to_owned());
+            (None, None) => {
+                return Err("address is required".to_owned());
             }
         };
-        Ok(JobSpec {
-            scope,
-            skill,
+        let spec = JobSpec {
+            scope: address.scope.clone(),
+            address,
+            skill: self.skill.unwrap_or_default(),
+            prompt: self.prompt,
             tool: self.tool,
             args: self.args,
             cwd: self.cwd,
             env: self.env,
-        })
+        };
+        spec.validate_payload().map_err(|error| error.to_string())?;
+        Ok(spec)
     }
 }
 
@@ -906,7 +1200,8 @@ fn store_error_response(error: JobStoreError) -> DaemonRouteResponse {
     let status = match &error {
         JobStoreError::MissingJob { .. } | JobStoreError::EmptyEventLog { .. } => 404,
         JobStoreError::InvalidSpec(_) => 400,
-        JobStoreError::InvalidStatusTransition { .. } => 409,
+        JobStoreError::InvalidStatusTransition { .. }
+        | JobStoreError::JobAddressConflict { .. } => 409,
         JobStoreError::StoreUnavailable { .. } | JobStoreError::CorruptStore { .. } => 500,
     };
     DaemonRouteResponse::json(status, json!({ "ok": false, "error": error.to_string() }))

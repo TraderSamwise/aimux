@@ -221,11 +221,19 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "native/crates/aimux/src/jobs/runner.rs",
-    marker: "Command::new(tool)",
+    marker: "Command::new(tool);",
     command: "job tool from JobRecord.tool",
-    argv: "single structured prompt argument built from the job skill plus private material args; no shell wrapper",
+    argv: "skill payload as one structured prompt argument, or no prompt argv for raw-prompt jobs; no shell wrapper",
     input:
       "local-only daemon job route data already authenticated as local and stored in the private job material file",
+  },
+  {
+    path: "native/crates/aimux/src/jobs/scope.rs",
+    marker: 'Command::new("git")',
+    command: "git",
+    argv: "literal worktree list --porcelain",
+    input:
+      "project root resolved from the Aimux project registry or explicit project path; used only to classify job address lanes",
   },
   {
     path: "native/crates/aimux/src/jobs/runner.rs",

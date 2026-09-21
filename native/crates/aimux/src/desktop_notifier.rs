@@ -20,6 +20,7 @@ pub struct DesktopNotificationPayload {
 pub enum DesktopNotificationTransport {
     MacHelper,
     OsaScript,
+    Fifo,
     PlatformUnsupported,
     Disabled,
 }
@@ -358,6 +359,7 @@ fn transport_name(transport: &DesktopNotificationTransport) -> &'static str {
     match transport {
         DesktopNotificationTransport::MacHelper => "mac-helper",
         DesktopNotificationTransport::OsaScript => "osascript",
+        DesktopNotificationTransport::Fifo => "fifo",
         DesktopNotificationTransport::PlatformUnsupported => "platform-unsupported",
         DesktopNotificationTransport::Disabled => "disabled",
     }

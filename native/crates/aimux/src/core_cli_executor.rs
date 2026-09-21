@@ -79,6 +79,7 @@ pub const JOB_FAILED_EXIT_CODE: i32 = 20;
 pub const JOB_CANCELLED_EXIT_CODE: i32 = 21;
 pub const JOB_DETACHED_EXIT_CODE: i32 = 22;
 pub const JOB_STREAM_LOST_EXIT_CODE: i32 = 23;
+pub const JOB_ADDRESS_CONFLICT_EXIT_CODE: i32 = 24;
 const JOB_STREAM_READ_TIMEOUT_MS: u64 = 250;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1091,8 +1092,8 @@ pub fn run_core_cli_incremental_with<R: CoreCliRuntime>(
             stdout,
             stderr,
         ),
-        CoreCliAction::JobEventStream { events_path } => {
-            stream_job_events(plan.output_mode, events_path, stdout, stderr)
+        CoreCliAction::JobEventStream { events_path, quiet } => {
+            stream_job_events(plan.output_mode, events_path, *quiet, stdout, stderr)
         }
         CoreCliAction::JobTmuxAttach { show_path } => match run_job_tmux_attach(show_path, runtime)
         {
@@ -1133,7 +1134,11 @@ fn run_job_incremental(
         Ok(text) => text,
         Err(error) => {
             let _ = writeln!(stderr, "Error: {error}");
-            return 1;
+            return if error.contains("a different job is already running") {
+                JOB_ADDRESS_CONFLICT_EXIT_CODE
+            } else {
+                1
+            };
         }
     };
     let payload = match parse_daemon_json_text(&text) {
@@ -1169,13 +1174,14 @@ fn run_job_incremental(
             return 1;
         };
         let path = options.events_path.replace("__created__", id);
-        stream_job_events(options.output_mode, &path, stdout, stderr)
+        stream_job_events(options.output_mode, &path, false, stdout, stderr)
     }
 }
 
 fn stream_job_events(
     output_mode: CoreCliOutputMode,
     events_path: &str,
+    quiet: bool,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> i32 {
@@ -1226,6 +1232,7 @@ fn stream_job_events(
         output_mode,
         response.initial_body,
         response.stream,
+        quiet,
         stdout,
         stderr,
         || signal_guard.received_signal().is_some(),
@@ -1236,13 +1243,21 @@ fn stream_job_events_from_reader(
     output_mode: CoreCliOutputMode,
     initial_body: Vec<u8>,
     mut stream: impl Read,
+    quiet: bool,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
     signal_received: impl Fn() -> bool,
 ) -> i32 {
     let mut decoder = JobSseDecoder::default();
     if !initial_body.is_empty() {
-        match process_job_sse_chunk(&mut decoder, &initial_body, output_mode, stdout, stderr) {
+        match process_job_sse_chunk(
+            &mut decoder,
+            &initial_body,
+            output_mode,
+            quiet,
+            stdout,
+            stderr,
+        ) {
             JobStreamStep::Continue => {}
             JobStreamStep::Exit(code) => return code,
         }
@@ -1270,6 +1285,7 @@ fn stream_job_events_from_reader(
                 &mut decoder,
                 &buffer[..count],
                 output_mode,
+                quiet,
                 stdout,
                 stderr,
             ) {
@@ -1306,6 +1322,7 @@ fn process_job_sse_chunk(
     decoder: &mut JobSseDecoder,
     chunk: &[u8],
     output_mode: CoreCliOutputMode,
+    quiet: bool,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> JobStreamStep {
@@ -1319,7 +1336,13 @@ fn process_job_sse_chunk(
     for event in events {
         match event.name.as_str() {
             "job-event" | "terminal-status" => {
-                let code = match render_job_stream_event(output_mode, &event.data, stdout, stderr) {
+                let code = match render_job_stream_event(
+                    output_mode,
+                    &event.data,
+                    quiet,
+                    stdout,
+                    stderr,
+                ) {
                     Ok(code) => code,
                     Err(StreamWriteFailure::BrokenPipe) => return JobStreamStep::Exit(0),
                     Err(StreamWriteFailure::Other(error)) => {
@@ -1349,10 +1372,13 @@ fn process_job_sse_chunk(
 fn render_job_stream_event(
     output_mode: CoreCliOutputMode,
     event: &Value,
+    quiet: bool,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> Result<i32, StreamWriteFailure> {
-    if output_mode == CoreCliOutputMode::Json {
+    if quiet {
+        // wait mode intentionally prints nothing and communicates only through exit status.
+    } else if output_mode == CoreCliOutputMode::Json {
         let line = serde_json::to_string(event)
             .map_err(|error| StreamWriteFailure::Other(error.to_string()))?;
         write_stream_line(stdout, &line)?;
@@ -1377,7 +1403,8 @@ fn render_job_stream_event(
         "succeeded" => Ok(0),
         "cancelled" => Ok(JOB_CANCELLED_EXIT_CODE),
         _ => {
-            if output_mode == CoreCliOutputMode::Text
+            if !quiet
+                && output_mode == CoreCliOutputMode::Text
                 && let Some(reason) = event
                     .get("data")
                     .and_then(|data| data.get("terminalReason"))
@@ -1612,6 +1639,7 @@ mod job_stream_tests {
             CoreCliOutputMode::Text,
             Vec::new(),
             reader,
+            false,
             &mut stdout,
             &mut stderr,
             || false,
@@ -1635,6 +1663,7 @@ mod job_stream_tests {
                 CoreCliOutputMode::Json,
                 terminal_event(status, "done").into_bytes(),
                 Cursor::new(Vec::<u8>::new()),
+                false,
                 &mut stdout,
                 &mut stderr,
                 || false,
@@ -1649,6 +1678,24 @@ mod job_stream_tests {
     }
 
     #[test]
+    fn job_wait_stream_exits_with_job_code_without_stdout() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let code = stream_job_events_from_reader(
+            CoreCliOutputMode::Text,
+            terminal_event("failed", "boom").into_bytes(),
+            Cursor::new(Vec::<u8>::new()),
+            true,
+            &mut stdout,
+            &mut stderr,
+            || false,
+        );
+        assert_eq!(code, JOB_FAILED_EXIT_CODE);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
     fn job_stream_client_reports_premature_eof_as_stream_lost() {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -1657,6 +1704,7 @@ mod job_stream_tests {
             CoreCliOutputMode::Text,
             output_event("still running\n").into_bytes(),
             Cursor::new(Vec::<u8>::new()),
+            false,
             &mut stdout,
             &mut stderr,
             || false,
@@ -1683,6 +1731,7 @@ mod job_stream_tests {
             CoreCliOutputMode::Json,
             b"event: job-event\ndata: {\"kind\":\"output\"".to_vec(),
             Cursor::new(Vec::<u8>::new()),
+            false,
             &mut stdout,
             &mut stderr,
             || false,
@@ -1705,6 +1754,7 @@ mod job_stream_tests {
             CoreCliOutputMode::Text,
             Vec::new(),
             Cursor::new(Vec::<u8>::new()),
+            false,
             &mut stdout,
             &mut stderr,
             || true,
@@ -1727,6 +1777,7 @@ mod job_stream_tests {
             CoreCliOutputMode::Text,
             output_event("first line\n").into_bytes(),
             Cursor::new(terminal_event("succeeded", "done").into_bytes()),
+            false,
             &mut stdout,
             &mut stderr,
             || false,

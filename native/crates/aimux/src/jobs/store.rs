@@ -16,7 +16,7 @@ use crate::paths::PathResolver;
 use crate::secure_permissions::{self, PRIVATE_FILE_MODE};
 use crate::state_update_lock::acquire_state_update_lock;
 
-use super::scope::JobScope;
+use super::scope::{JobAddress, JobScope};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreateOrJoin {
@@ -50,20 +50,78 @@ impl JobStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobSpec {
+    pub address: JobAddress,
     pub scope: JobScope,
     pub skill: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     pub tool: Option<String>,
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
 }
 
+impl JobSpec {
+    pub fn validate_payload(&self) -> Result<()> {
+        let has_skill = !self.skill.trim().is_empty();
+        let has_prompt = self
+            .prompt
+            .as_ref()
+            .is_some_and(|prompt| !prompt.trim().is_empty());
+        match (has_skill, has_prompt) {
+            (true, false) | (false, true) => Ok(()),
+            (true, true) => Err(JobStoreError::InvalidSpec(
+                "supply exactly one job payload: --skill <name> or --prompt <text>".to_owned(),
+            )),
+            (false, false) => Err(JobStoreError::InvalidSpec(
+                "job payload is required: supply --skill <name> or --prompt <text>".to_owned(),
+            )),
+        }
+    }
+
+    pub fn payload_kind(&self) -> &'static str {
+        if self.prompt.is_some() {
+            "prompt"
+        } else {
+            "skill"
+        }
+    }
+
+    pub fn payload_display_label(&self) -> String {
+        if let Some(prompt) = self.prompt.as_deref() {
+            summarize_for_conflict(prompt)
+        } else {
+            self.skill.clone()
+        }
+    }
+
+    pub fn conflict_summary(&self) -> String {
+        format!(
+            "tool={}, payload={}:{}, args={}, cwd={}, envKeys={}",
+            self.tool.as_deref().unwrap_or("<none>"),
+            self.payload_kind(),
+            self.payload_display_label(),
+            summarize_vec(&self.args),
+            self.cwd.as_deref().unwrap_or("<none>"),
+            summarize_keys(&self.env),
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobRecord {
     pub id: String,
     pub idempotency_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<JobAddress>,
     pub scope: JobScope,
     pub skill: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "payloadKind"
+    )]
+    pub payload_kind: Option<String>,
     pub tool: Option<String>,
     pub args: Vec<String>,
     pub cwd: Option<String>,
@@ -96,6 +154,10 @@ pub struct JobTmuxTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobMaterial {
+    #[serde(default)]
+    pub skill: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
@@ -128,6 +190,7 @@ const JOB_CALLBACK_NEVER_RETRY_MS: u128 = u64::MAX as u128;
 #[serde(rename_all = "kebab-case")]
 pub enum JobCallbackKind {
     DesktopNotification,
+    Fifo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +209,8 @@ pub struct JobCallbackRecord {
     pub delivered_at_ms: Option<u128>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suppressed_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fifoPath")]
+    pub fifo_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abandoned_at_ms: Option<u128>,
     pub created_at_ms: u128,
@@ -191,6 +256,8 @@ pub struct DueJobCallback {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct JobListFilter {
     pub scope: Option<JobScope>,
+    pub address_prefix: Option<JobAddress>,
+    pub depth: Option<usize>,
     pub status: Option<JobStatus>,
 }
 
@@ -230,6 +297,13 @@ pub enum JobStoreError {
         to: JobStatus,
     },
     InvalidSpec(String),
+    JobAddressConflict {
+        address: String,
+        job_id: String,
+        running: String,
+        requested: String,
+        differing_fields: Vec<String>,
+    },
     StoreUnavailable {
         path: PathBuf,
         error: String,
@@ -250,6 +324,17 @@ impl fmt::Display for JobStoreError {
                 "invalid job status transition for {id}: {from:?} -> {to:?}"
             ),
             Self::InvalidSpec(error) => write!(formatter, "invalid job spec: {error}"),
+            Self::JobAddressConflict {
+                address,
+                job_id,
+                running,
+                requested,
+                differing_fields,
+            } => write!(
+                formatter,
+                "a different job is already running at {address}: job {job_id} is running {running}; requested {requested}; differing fields: {}; watch it with `aimux job tail {address}` or `aimux job wait {address}`, or stop it with `aimux job cancel {address}`",
+                differing_fields.join(", ")
+            ),
             Self::StoreUnavailable { path, error } => {
                 write!(
                     formatter,
@@ -326,6 +411,7 @@ impl JobStore {
                     let entry = self.read_joined_index_entry(&entry_path)?;
                     match self.load_joined_record(&entry.job_id) {
                         Ok(record) if !record.status.is_terminal() => {
+                            self.ensure_live_record_matches_spec(&record, spec)?;
                             return Ok((record, CreateOrJoin::Joined));
                         }
                         Ok(_) | Err(JobStoreError::MissingJob { .. }) => {
@@ -348,8 +434,10 @@ impl JobStore {
         JobRecord {
             id: job_id.to_owned(),
             idempotency_key: key.to_owned(),
+            address: Some(spec.address.clone()),
             scope: spec.scope.clone(),
-            skill: sanitize_log_string(&spec.skill),
+            skill: sanitize_log_string(&spec.payload_display_label()),
+            payload_kind: Some(spec.payload_kind().to_owned()),
             tool: spec.tool.as_deref().map(sanitize_log_string),
             args: spec
                 .args
@@ -586,6 +674,7 @@ impl JobStore {
             callback.delivered_seq = None;
             callback.delivered_at_ms = None;
             callback.suppressed_reason = None;
+            callback.fifo_path = None;
             callback.abandoned_at_ms = None;
             callback.created_at_ms = now;
             callback.updated_at_ms = now;
@@ -607,6 +696,74 @@ impl JobStore {
             delivered_seq: None,
             delivered_at_ms: None,
             suppressed_reason: None,
+            fifo_path: None,
+            abandoned_at_ms: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        callbacks
+            .watchers
+            .insert(watcher_id.to_owned(), callback.clone());
+        self.write_callbacks_unlocked(id, &callbacks)?;
+        Ok(JobCallbackRegistration {
+            callback,
+            outcome: JobCallbackRegistrationOutcome::Created,
+        })
+    }
+
+    pub fn register_fifo_callback(
+        &self,
+        id: &str,
+        watcher_id: &str,
+        fifo_path: &str,
+    ) -> Result<JobCallbackRegistration> {
+        self.load(id)?;
+        let watcher_id = normalize_watcher_id(watcher_id)?;
+        let fifo_path = sanitize_log_string(fifo_path);
+        let path = self.callbacks_path(id);
+        let _lock =
+            acquire_state_update_lock(&path).map_err(|error| JobStoreError::StoreUnavailable {
+                path: path.clone(),
+                error,
+            })?;
+        let mut callbacks = self.read_callbacks_unlocked(id)?;
+        if let Some(callback) = callbacks.watchers.get_mut(&watcher_id) {
+            let now = now_ms();
+            let was_pending = callback.is_pending();
+            callback.kind = JobCallbackKind::Fifo;
+            callback.attempts = 0;
+            callback.last_error = None;
+            callback.next_attempt_ms = now;
+            callback.delivered_seq = None;
+            callback.delivered_at_ms = None;
+            callback.suppressed_reason = None;
+            callback.fifo_path = Some(fifo_path);
+            callback.abandoned_at_ms = None;
+            callback.created_at_ms = now;
+            callback.updated_at_ms = now;
+            let callback = callback.clone();
+            self.write_callbacks_unlocked(id, &callbacks)?;
+            return Ok(JobCallbackRegistration {
+                callback,
+                outcome: if was_pending {
+                    JobCallbackRegistrationOutcome::Existing
+                } else {
+                    JobCallbackRegistrationOutcome::Rearmed
+                },
+            });
+        }
+        let now = now_ms();
+        let callback = JobCallbackRecord {
+            job_id: id.to_owned(),
+            watcher_id: watcher_id.clone(),
+            kind: JobCallbackKind::Fifo,
+            attempts: 0,
+            last_error: None,
+            next_attempt_ms: now,
+            delivered_seq: None,
+            delivered_at_ms: None,
+            suppressed_reason: None,
+            fifo_path: Some(fifo_path),
             abandoned_at_ms: None,
             created_at_ms: now,
             updated_at_ms: now,
@@ -767,6 +924,14 @@ impl JobStore {
                     {
                         continue;
                     }
+                    if filter.address_prefix.as_ref().is_some_and(|prefix| {
+                        !record
+                            .address
+                            .as_ref()
+                            .is_some_and(|address| address.matches_prefix(prefix, filter.depth))
+                    }) {
+                        continue;
+                    }
                     if filter
                         .status
                         .as_ref()
@@ -852,6 +1017,42 @@ impl JobStore {
         }
         Err(JobStoreError::MissingJob {
             id: last_missing.unwrap_or_else(|| id.to_owned()),
+        })
+    }
+
+    fn ensure_live_record_matches_spec(&self, record: &JobRecord, spec: &JobSpec) -> Result<()> {
+        let material = self.load_material(&record.id)?;
+        let mut differing_fields = Vec::new();
+        if record.address.as_ref() != Some(&spec.address) {
+            differing_fields.push("address".to_owned());
+        }
+        if record.scope != spec.scope {
+            differing_fields.push("scope".to_owned());
+        }
+        if material.skill != spec.skill || material.prompt != spec.prompt {
+            differing_fields.push("payload".to_owned());
+        }
+        if record.tool != spec.tool {
+            differing_fields.push("tool".to_owned());
+        }
+        if material.args != spec.args {
+            differing_fields.push("args".to_owned());
+        }
+        if material.cwd != spec.cwd {
+            differing_fields.push("cwd".to_owned());
+        }
+        if material.env != spec.env {
+            differing_fields.push("env".to_owned());
+        }
+        if differing_fields.is_empty() {
+            return Ok(());
+        }
+        Err(JobStoreError::JobAddressConflict {
+            address: spec.address.display(),
+            job_id: record.id.clone(),
+            running: record_conflict_summary(record, Some(&material)),
+            requested: spec.conflict_summary(),
+            differing_fields,
         })
     }
 
@@ -1033,6 +1234,8 @@ impl JobStore {
     fn write_material(&self, id: &str, spec: &JobSpec) -> Result<()> {
         let path = self.material_path(id);
         let material = JobMaterial {
+            skill: spec.skill.clone(),
+            prompt: spec.prompt.clone(),
             args: spec.args.clone(),
             cwd: spec.cwd.clone(),
             env: spec.env.clone(),
@@ -1269,18 +1472,9 @@ pub fn prune_jobs(retention: JobRetention, now_ms: u128) -> Result<PruneReport> 
 }
 
 pub fn idempotency_key(spec: &JobSpec) -> Result<String> {
-    if spec.skill.trim().is_empty() {
-        return Err(JobStoreError::InvalidSpec(
-            "skill must not be empty".to_owned(),
-        ));
-    }
+    spec.validate_payload()?;
     let identity = json!({
-        "scope": spec.scope.identity_value(),
-        "skill": &spec.skill,
-        "tool": &spec.tool,
-        "args": &spec.args,
-        "cwd": &spec.cwd,
-        "env": &spec.env,
+        "address": spec.address.identity_value(),
     });
     let raw = serde_json::to_vec(&identity).map_err(|error| {
         JobStoreError::InvalidSpec(format!("could not encode idempotency identity: {error}"))
@@ -1288,6 +1482,81 @@ pub fn idempotency_key(spec: &JobSpec) -> Result<String> {
     let mut hasher = Sha256::new();
     hasher.update(raw);
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn record_conflict_summary(record: &JobRecord, material: Option<&JobMaterial>) -> String {
+    let payload_kind = record.payload_kind.as_deref().unwrap_or(
+        if material
+            .and_then(|material| material.prompt.as_ref())
+            .is_some()
+        {
+            "prompt"
+        } else {
+            "skill"
+        },
+    );
+    let payload_label = material
+        .and_then(|material| {
+            material
+                .prompt
+                .as_deref()
+                .map(summarize_for_conflict)
+                .or_else(|| Some(material.skill.clone()))
+        })
+        .unwrap_or_else(|| record.skill.clone());
+    let args = material
+        .map(|material| summarize_vec(&material.args))
+        .unwrap_or_else(|| summarize_vec(&record.args));
+    let cwd = material
+        .and_then(|material| material.cwd.as_deref())
+        .or(record.cwd.as_deref())
+        .unwrap_or("<none>");
+    let env_keys = material
+        .map(|material| summarize_keys(&material.env))
+        .unwrap_or_else(|| summarize_keys(&record.env));
+    format!(
+        "tool={}, payload={payload_kind}:{payload_label}, args={args}, cwd={cwd}, envKeys={env_keys}, startedAtMs={}",
+        record.tool.as_deref().unwrap_or("<none>"),
+        record.created_at_ms,
+    )
+}
+
+fn summarize_for_conflict(value: &str) -> String {
+    let sanitized = sanitize_log_string(value).replace('\n', "\\n");
+    const MAX: usize = 80;
+    if sanitized.chars().count() <= MAX {
+        sanitized
+    } else {
+        let mut summary = sanitized.chars().take(MAX).collect::<String>();
+        summary.push_str("...");
+        summary
+    }
+}
+
+fn summarize_vec(values: &[String]) -> String {
+    if values.is_empty() {
+        "[]".to_owned()
+    } else {
+        format!(
+            "[{}]",
+            values
+                .iter()
+                .map(|value| summarize_for_conflict(value))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+fn summarize_keys(values: &BTreeMap<String, String>) -> String {
+    if values.is_empty() {
+        "[]".to_owned()
+    } else {
+        format!(
+            "[{}]",
+            values.keys().cloned().collect::<Vec<_>>().join(", ")
+        )
+    }
 }
 
 static JOB_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -1412,11 +1681,21 @@ mod tests {
     }
 
     fn spec_with_arg(arg: &str) -> JobSpec {
+        spec_with_arg_at(arg, "main")
+    }
+
+    fn spec_with_arg_at(arg: &str, slot: &str) -> JobSpec {
+        let scope = JobScope::Project {
+            project_id: "project-1".to_owned(),
+        };
         JobSpec {
-            scope: JobScope::Project {
-                project_id: "project-1".to_owned(),
+            address: JobAddress {
+                scope: scope.clone(),
+                slot: vec![slot.to_owned()],
             },
+            scope,
             skill: "review-pr".to_owned(),
+            prompt: None,
             tool: Some("codex".to_owned()),
             args: vec![arg.to_owned()],
             cwd: Some("/repo/main".to_owned()),
@@ -1458,12 +1737,15 @@ mod tests {
     }
 
     #[test]
-    fn idempotency_keys_use_scope_skill_tool_context_and_raw_args() {
+    fn idempotency_keys_use_address_only() {
         let same_a = spec_with_arg("token=alpha");
         let same_b = spec_with_arg("token=alpha");
         let different_arg = spec_with_arg("token=bravo");
-        let different_scope = JobSpec {
-            scope: JobScope::Global,
+        let different_address = JobSpec {
+            address: JobAddress {
+                scope: same_a.scope.clone(),
+                slot: vec!["other".to_owned()],
+            },
             ..same_a.clone()
         };
         let different_tool = JobSpec {
@@ -1486,29 +1768,109 @@ mod tests {
             idempotency_key(&same_a).unwrap(),
             idempotency_key(&same_b).unwrap()
         );
-        assert_ne!(
+        assert_eq!(
             idempotency_key(&same_a).unwrap(),
             idempotency_key(&different_arg).unwrap()
         );
         assert_ne!(
             idempotency_key(&same_a).unwrap(),
-            idempotency_key(&different_scope).unwrap()
+            idempotency_key(&different_address).unwrap()
         );
-        assert_ne!(
+        assert_eq!(
             idempotency_key(&same_a).unwrap(),
             idempotency_key(&different_tool).unwrap()
         );
-        assert_ne!(
+        assert_eq!(
             idempotency_key(&same_a).unwrap(),
             idempotency_key(&absent_tool).unwrap()
         );
-        assert_ne!(
+        assert_eq!(
             idempotency_key(&same_a).unwrap(),
             idempotency_key(&different_cwd).unwrap()
         );
-        assert_ne!(
+        assert_eq!(
             idempotency_key(&same_a).unwrap(),
             idempotency_key(&different_env).unwrap()
+        );
+    }
+
+    #[test]
+    fn live_address_joins_only_when_full_spec_matches() {
+        let store = store("conflict");
+        let same_a = spec_with_arg("token=alpha");
+        let same_b = spec_with_arg("token=alpha");
+        let different = spec_with_arg("token=bravo");
+        let (created, created_outcome) = store.create_or_join(&same_a).expect("created");
+        assert_eq!(created_outcome, CreateOrJoin::Created);
+        let (joined, joined_outcome) = store.create_or_join(&same_b).expect("joined");
+        assert_eq!(joined.id, created.id);
+        assert_eq!(joined_outcome, CreateOrJoin::Joined);
+        match store.create_or_join(&different) {
+            Err(JobStoreError::JobAddressConflict {
+                address,
+                job_id,
+                differing_fields,
+                ..
+            }) => {
+                assert_eq!(address, same_a.address.display());
+                assert_eq!(job_id, created.id);
+                assert_eq!(differing_fields, vec!["args"]);
+            }
+            other => panic!("expected address conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn concurrent_different_specs_create_one_job_and_refuse_the_other() {
+        let store = Arc::new(store("race-conflict"));
+        let winner = Arc::new(spec_with_arg("token=alpha"));
+        let loser = Arc::new(spec_with_arg("token=bravo"));
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = [
+            {
+                let store = store.clone();
+                let spec = winner.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    store.create_or_join(&spec)
+                })
+            },
+            {
+                let store = store.clone();
+                let spec = loser.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    store.create_or_join(&spec)
+                })
+            },
+        ];
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("thread joined"))
+            .collect::<Vec<_>>();
+        let created = results
+            .iter()
+            .filter(|result| matches!(result, Ok((_, CreateOrJoin::Created))))
+            .count();
+        let conflicts = results
+            .iter()
+            .filter(|result| matches!(result, Err(JobStoreError::JobAddressConflict { .. })))
+            .count();
+        assert_eq!(created, 1);
+        assert_eq!(conflicts, 1);
+        assert_eq!(
+            store
+                .list(JobListFilter {
+                    scope: None,
+                    address_prefix: None,
+                    depth: None,
+                    status: None,
+                })
+                .expect("list")
+                .len(),
+            1
         );
     }
 
@@ -1524,17 +1886,29 @@ mod tests {
         let mut resolver = PathResolver::new(&repo, root.join("home"), None);
         let direct = JobScope::project_for(&mut resolver, &repo);
         let dotted = JobScope::project_for(&mut resolver, repo.join("."));
+        let address_a = JobAddress {
+            scope: direct.clone(),
+            slot: Vec::new(),
+        };
+        let address_b = JobAddress {
+            scope: dotted.clone(),
+            slot: Vec::new(),
+        };
         let spec_a = JobSpec {
+            address: address_a,
             scope: direct,
             skill: "build".to_owned(),
+            prompt: None,
             tool: Some("codex".to_owned()),
             args: vec!["--fast".to_owned()],
             cwd: Some(repo.to_string_lossy().into_owned()),
             env: BTreeMap::new(),
         };
         let spec_b = JobSpec {
+            address: address_b,
             scope: dotted,
             skill: "build".to_owned(),
+            prompt: None,
             tool: Some("codex".to_owned()),
             args: vec!["--fast".to_owned()],
             cwd: Some(repo.to_string_lossy().into_owned()),
@@ -1856,7 +2230,7 @@ mod tests {
         assert_eq!(events[0].kind, "cancel-requested");
 
         let (terminal, _) = store
-            .create_or_join(&spec_with_arg("--terminal"))
+            .create_or_join(&spec_with_arg_at("--terminal", "terminal"))
             .expect("terminal created");
         store
             .set_status(&terminal.id, JobStatus::Succeeded)
@@ -1954,7 +2328,10 @@ mod tests {
                 .expect("append");
         }
         let (running, _) = store
-            .create_or_join(&spec_with_arg("--running-retention"))
+            .create_or_join(&spec_with_arg_at(
+                "--running-retention",
+                "running-retention",
+            ))
             .expect("running");
         for index in 0..5 {
             store
@@ -1970,7 +2347,8 @@ mod tests {
         store
             .set_status(&record.id, JobStatus::Succeeded)
             .expect("terminal");
-        let orphan_key = idempotency_key(&spec_with_arg("--orphan-index")).expect("orphan key");
+        let orphan_key = idempotency_key(&spec_with_arg_at("--orphan-index", "orphan-index"))
+            .expect("orphan key");
         let orphan_entry = JobIndexEntry {
             job_id: "job-orphan-index".to_owned(),
             idempotency_key: orphan_key.clone(),

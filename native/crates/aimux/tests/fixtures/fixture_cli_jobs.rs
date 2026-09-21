@@ -3,8 +3,8 @@ use aimux::core_cli::{
     CoreLoopActorContext, classify_core_cli,
 };
 use aimux::core_cli_executor::{
-    JOB_CANCELLED_EXIT_CODE, JOB_DETACHED_EXIT_CODE, JOB_FAILED_EXIT_CODE,
-    JOB_STREAM_LOST_EXIT_CODE,
+    JOB_ADDRESS_CONFLICT_EXIT_CODE, JOB_CANCELLED_EXIT_CODE, JOB_DETACHED_EXIT_CODE,
+    JOB_FAILED_EXIT_CODE, JOB_STREAM_LOST_EXIT_CODE,
 };
 use serde_json::{Value, json};
 
@@ -49,6 +49,7 @@ fn fixture_cli_jobs_matches_native_contract() {
             "job-cancelled" => JOB_CANCELLED_EXIT_CODE,
             "job-detached" => JOB_DETACHED_EXIT_CODE,
             "job-stream-lost" => JOB_STREAM_LOST_EXIT_CODE,
+            "job-address-conflict" => JOB_ADDRESS_CONFLICT_EXIT_CODE,
             other => panic!("unknown exit-code label {other}"),
         };
         if i64::from(actual) != expected {
@@ -96,7 +97,8 @@ fn operation_name(operation: CoreCliOperation) -> &'static str {
         CoreCliOperation::JobRun => "job-run",
         CoreCliOperation::JobShow => "job-show",
         CoreCliOperation::JobList => "job-list",
-        CoreCliOperation::JobAttach => "job-attach",
+        CoreCliOperation::JobTail => "job-tail",
+        CoreCliOperation::JobWait => "job-wait",
         CoreCliOperation::JobCancel => "job-cancel",
         CoreCliOperation::JobNotify => "job-notify",
         CoreCliOperation::JobTmuxAttach => "job-tmux-attach",

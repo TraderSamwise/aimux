@@ -379,6 +379,12 @@ pub struct CoreJobRunArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notify_fifo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
@@ -398,6 +404,8 @@ pub struct CoreJobArgs {
     pub project: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub watcher_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<usize>,
     pub seq: u64,
     pub json: bool,
 }

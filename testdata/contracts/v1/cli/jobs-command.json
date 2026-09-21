@@ -6,7 +6,7 @@
   "parsing": [
     {
       "id": "job-cli-001",
-      "args": ["run", "--tool", "shell", "global/review-pr", "arg1"],
+      "args": ["run", "--tool", "shell", "--skill", "review-pr", "global/review-pr", "arg1"],
       "output": {
         "operation": "job-run",
         "action": "run",
@@ -15,9 +15,9 @@
     },
     {
       "id": "job-cli-002",
-      "args": ["job", "attach", "tealstreet-next/main/review-pr", "--seq", "5", "--json"],
+      "args": ["job", "tail", "tealstreet-next/main/review-pr", "--seq", "5", "--json"],
       "output": {
-        "operation": "job-attach",
+        "operation": "job-tail",
         "action": "event-stream",
         "outputMode": "json"
       }
@@ -55,6 +55,7 @@
     ["job-failed", 20],
     ["job-cancelled", 21],
     ["job-detached", 22],
-    ["job-stream-lost", 23]
+    ["job-stream-lost", 23],
+    ["job-address-conflict", 24]
   ]
 }

@@ -111,7 +111,8 @@ pub enum CoreCliOperation {
     JobRun,
     JobShow,
     JobList,
-    JobAttach,
+    JobTail,
+    JobWait,
     JobCancel,
     JobNotify,
     JobTmuxAttach,
@@ -244,6 +245,7 @@ pub enum CoreCliAction {
     },
     JobEventStream {
         events_path: String,
+        quiet: bool,
     },
     JobTmuxAttach {
         show_path: String,
@@ -647,6 +649,9 @@ where
                         "address": parsed.address,
                         "project": project_root,
                         "tool": parsed.tool,
+                        "skill": parsed.skill,
+                        "prompt": parsed.prompt,
+                        "notifyFifo": parsed.notify_fifo,
                         "args": parsed.args,
                         "cwd": context.current_working_dir,
                         "env": {},
@@ -699,19 +704,37 @@ where
                 "list" => (
                     CoreCliOperation::JobList,
                     CoreCliAction::TextRoute {
-                        path: job_list_path(parsed.scope.as_deref(), &project_root, parsed.json),
+                        path: job_list_path(
+                            parsed.scope.as_deref(),
+                            parsed.depth,
+                            &project_root,
+                            parsed.json,
+                        ),
                         body: None,
                     },
                     CoreCliFallback::None,
                 ),
-                "attach" => (
-                    CoreCliOperation::JobAttach,
+                "tail" => (
+                    CoreCliOperation::JobTail,
                     CoreCliAction::JobEventStream {
                         events_path: job_events_path_from_handle(
                             parsed.handle.as_deref().unwrap_or(""),
                             &project_root,
                             parsed.seq,
                         ),
+                        quiet: false,
+                    },
+                    CoreCliFallback::None,
+                ),
+                "wait" => (
+                    CoreCliOperation::JobWait,
+                    CoreCliAction::JobEventStream {
+                        events_path: job_events_path_from_handle(
+                            parsed.handle.as_deref().unwrap_or(""),
+                            &project_root,
+                            parsed.seq,
+                        ),
+                        quiet: true,
                     },
                     CoreCliFallback::None,
                 ),
@@ -2444,7 +2467,7 @@ fn job_show_path(handle: &str, project: &str) -> String {
     )
 }
 
-fn job_list_path(scope: Option<&str>, project: &str, json: bool) -> String {
+fn job_list_path(scope: Option<&str>, depth: Option<usize>, project: &str, json: bool) -> String {
     let mut path = format!(
         "{}?project={}",
         CORE_API_ROUTES.jobs,
@@ -2453,6 +2476,10 @@ fn job_list_path(scope: Option<&str>, project: &str, json: bool) -> String {
     if let Some(scope) = scope {
         path.push_str("&scope=");
         path.push_str(&encode_query_component(scope));
+    }
+    if let Some(depth) = depth {
+        path.push_str("&depth=");
+        path.push_str(&depth.to_string());
     }
     if json {
         path.push_str("&json=1");

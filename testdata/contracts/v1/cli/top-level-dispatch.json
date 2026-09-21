@@ -310,9 +310,14 @@
         "launchArgs": null,
         "execution": {
           "code": 0,
-          "stdout": ["No aimux projects found."],
+          "stdout": ["ok"],
           "stderr": [],
-          "textRoutes": []
+          "textRoutes": [
+            {
+              "path": "/core/projects-list-text",
+              "body": null
+            }
+          ]
         }
       }
     },
@@ -320,10 +325,10 @@
       "id": "run_command",
       "name": "aimux run stays a core command and does not dispatch as tool run",
       "input": {
-        "args": ["run", "--tool", "shell", "global/review-pr", "--detach", "--json"]
+        "args": ["run", "--tool", "shell", "--skill", "review-pr", "global/review-pr", "--detach", "--json"]
       },
       "output": {
-        "normalizedArgs": ["run", "--tool", "shell", "global/review-pr", "--detach", "--json"],
+        "normalizedArgs": ["run", "--tool", "shell", "--skill", "review-pr", "global/review-pr", "--detach", "--json"],
         "rootSession": null,
         "launchArgs": null,
         "execution": {
@@ -355,6 +360,7 @@
                 "address": "global/review-pr",
                 "project": "/repo",
                 "tool": "shell",
+                "skill": "review-pr",
                 "args": [],
                 "cwd": "/repo",
                 "env": {}

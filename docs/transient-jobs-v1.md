@@ -3,14 +3,17 @@
 Status: shipped reference
 
 Transient jobs let a local shell start an Aimux-managed, resumable job and then
-watch, detach, reattach, cancel, or request a desktop notification for it. They
-are designed for scripts that need a stable handle and replayable status instead
+watch, detach, tail, wait, cancel, or request a notification for it. They are
+designed for scripts that need a stable address and replayable status instead
 of a one-shot process whose output disappears when the terminal closes.
 
 ## Goals
 
-- Run a named skill through an explicit tool with a stable job handle.
-- Make repeated equivalent calls join a running job instead of duplicating work.
+- Run a payload through an explicit tool with a stable job handle.
+- Treat the address as the job slot: one live job per address.
+- Make repeated equivalent calls join and tail a running job instead of
+  duplicating work.
+- Refuse a conflicting live job at the same address with an actionable error.
 - Let scripts detach and later resume event output from a known sequence number.
 - Keep job invocation local-only; remote clients cannot start, cancel, or read
   jobs.
@@ -31,8 +34,6 @@ of a one-shot process whose output disappears when the terminal closes.
   uid against someone else's job.
 - Inferred tools. `--tool` is mandatory; Aimux does not guess from the address,
   positional args, project, cwd, or installed CLIs.
-- Address fallback to the current working directory. Project-scope shorthand
-  requires `--project`.
 
 Webhook and command callbacks are deferred pending an explicit decision from
 Sam, not a hidden TODO in the current feature.
@@ -42,93 +43,143 @@ Sam, not a hidden TODO in the current feature.
 Start or join a job:
 
 ```sh
-aimux run <address> --tool <tool> [--project <project>] [--detach] [--json] [-- args...]
+aimux run <address> --tool <tool> (--skill <name> | --prompt <text>) [--project <project>] [--detach] [--json] [--notify-fifo <path>] [-- args...]
 ```
 
-`--tool <tool>` is required. There is no default and no positional tool sniffing.
-Use `--` before job arguments when they could be parsed as Aimux flags.
+`--tool <tool>` is required. Exactly one payload selector is required:
+`--skill <name>` or `--prompt <text>`. Use `--` before job arguments when they
+could be parsed as Aimux flags.
 
 Inspect and control jobs:
 
 ```sh
-aimux job list [--scope <scope>]
+aimux job list [--scope <address>] [--depth <n>]
 aimux job show <handle>
-aimux job attach <handle> [--seq <n>]
+aimux job tail <handle> [--seq <n>]
+aimux job wait <handle> [--seq <n>]
 aimux job cancel <handle>
 aimux job notify <handle> --watcher-id <id>
 aimux attach <handle>
 ```
 
-`show`, `attach`, `cancel`, and `notify` each take exactly one handle. `list`
-takes no handle. `--scope` is list-only, `--seq` is attach-only, and
-`--watcher-id` is notify-only. `aimux attach <handle>` is a separate top-level
-verb for attaching to a job handle.
+`show`, `tail`, `wait`, `cancel`, and `notify` each take exactly one handle.
+`list` takes no handle. `--scope` and `--depth` are list-only, `--seq` is for
+tail/wait, and `--watcher-id` is notify-only.
+
+`aimux job tail <handle>` streams structured job output. `aimux job wait
+<handle>` waits for terminal status, prints nothing, and exits with the job's
+own outcome code. `aimux attach <handle>` is a separate top-level verb for
+interactive tmux attach/detach.
 
 ## Address Grammar
 
-An address identifies scope plus skill:
+An address identifies a job slot. It does not identify the skill or prompt.
 
 | Address | Meaning |
 | --- | --- |
-| `<skill>` | Project-scope skill. Requires `--project`; no cwd fallback. |
-| `global/<skill>` | Global-scope skill. |
-| `<project>/<skill>` | Project resolved through the registry by name or id. |
-| `<project>/<lane>/<skill>` | Project and lane resolved through the registry by name or id. |
+| `global` | The one global job slot. |
+| `global/<slot>/...` | Named global job slots at arbitrary depth. |
+| `<project>` | The one project job slot. |
+| `<project>/<lane>` | The one job slot for that worktree lane, if the second segment is a real lane. |
+| `<project>/<slot>/...` | Project-scoped user slots when the second segment is not a real lane. |
+| `<project>/<lane>/<slot>/...` | Worktree-scoped user slots beneath a real lane. |
+
+Project names are resolved through the Aimux project registry to a project id.
+Equivalent spellings for the same project resolve to the same identity.
+
+Lane-vs-slot precedence is deliberate: if the second segment matches a real
+worktree lane for the project, it is a lane. A user cannot create a project slot
+whose first segment collides with an existing lane name.
 
 Invalid or reserved forms:
 
-- `global/<x>/<y>` is an error.
-- `global` is reserved. If a real project is named `global`, address it with
-  `--project` rather than the address prefix.
+- `global` is reserved as the first segment. If a real project is named
+  `global`, address it with `--project <path>` and `.` for the project slot.
+- Any address segment starting with `job-` is reserved because job ids use that
+  prefix.
+- Empty segments, whitespace, `.`, `..`, and unsupported characters are refused
+  at creation. Address segments currently allow ASCII letters, digits, `.`,
+  `_`, and `-`.
 
 Examples:
 
 ```sh
-# Project shorthand: --project is required.
-aimux run summarize --project /Users/sam/cs/aimux --tool codex -- --since HEAD~1
+# Global slot with a skill payload.
+aimux run global --tool codex --skill daily-check --detach
 
-# Global skill.
-aimux run global/daily-check --tool codex --detach
+# Named global slot.
+aimux run global/release-watch --tool claude --prompt "watch the release lane"
 
-# Project by registered name or id.
-aimux run aimux/smoke --tool claude -- --fast
+# Project slot by registered name or id.
+aimux run aimux --tool codex --skill smoke -- --fast
 
-# Project lane by registered name or id.
-aimux run aimux/release/readiness --tool codex --json
+# Worktree lane slot. "main" is a lane if it exists for this project.
+aimux run aimux/main --tool claude --prompt "review this checkout"
+
+# User-chosen sub-slot under a lane.
+aimux run aimux/main/review-pr-123 --tool codex --skill review-pr -- https://github.com/example/repo/pull/123
 ```
 
 ## Identity And Joining
 
-Aimux computes the idempotency key as a SHA-256 over:
+The idempotency key is the resolved address alone. The address is the job slot,
+and there can be only one live job at that slot.
 
-- scope identity
-- skill
-- tool
-- args
-- cwd
-- env
+Create-or-join has three cases:
 
-The key uses the project id, not the project name. It does not include caller
-identity, timestamp, `--detach`, or `--json`.
+- No live job at the address: create the job and stream it.
+- A live job at the address with the same spec: join and tail the existing job.
+- A live job at the address with a different spec: refuse with exit code 24.
 
-This has two important consequences:
+A terminal job at the address is reclaimed and replaced. Recent terminal history
+remains addressable by job id until retention removes it.
 
-- A second caller with the same full spec joins a running job instead of
-  starting another one.
-- If the existing job is terminal, the index entry is reclaimed and a fresh job
-  starts. "Same address twice" means join while running, re-run after finish.
+The conflict refusal names the address, existing job id, running tool and
+payload summary, requested tool and payload summary, the differing fields, and
+the two safe next commands: `aimux job tail <address>` or `aimux job wait
+<address>` to watch what is there, and `aimux job cancel <address>` to stop it.
+There is no `--force` or `--replace`.
 
-The address is not the whole identity. A different `--tool` is a completely
-different job and can run concurrently. The same is true for any change to args,
-cwd, or env. Callers often assume the address alone is the identity; it is not.
-The whole hashed spec is the identity.
+For logging safety, displayed record fields can be sanitized, while the private
+material file keeps the raw execution payload for the runner.
 
-For logging safety, displayed record fields can be sanitized, while the
-idempotency key hashes the raw values.
+## Payloads
+
+Each job has exactly one payload:
+
+- `--skill <name>` sends the tool the skill invocation, such as `/review-pr`.
+- `--prompt <text>` sends the raw prompt text to the tool on stdin.
+
+Raw prompts can contain quotes, newlines, and shell metacharacters. They are
+stored in the private `material.json` file and never passed through shell
+wrapping or argv. The tmux launch receives only the job id; the internal runner
+loads the private material file.
+
+## Listing And Prefix Streams
+
+`aimux job list --scope <address>` is recursive by default. It includes a job at
+the address itself and all jobs beneath it.
+
+Depth narrows the recursion:
+
+| Flag | Meaning |
+| --- | --- |
+| no `--depth` | Unlimited depth. |
+| `--depth 0` | Exact address only. |
+| `--depth 1` | Address plus direct children. |
+| `--depth N` | Address plus up to N additional segments. |
+
+Matching uses resolved address segments, not string prefixes. For example,
+`--scope tealstreet-next` does not match a different project named
+`tealstreet-next-2`. `--scope global` lists only global slots.
+
+The daemon's job-list stream uses the same predicate as list, so GUI dashboards
+that subscribe to a prefix see the same recursive/default-depth behavior as the
+CLI.
 
 ## Exit Codes
 
-`aimux run` and attach-style streams use these exit codes:
+`aimux run`, `aimux job tail`, and `aimux job wait` use these exit codes:
 
 | Code | Meaning |
 | ---: | --- |
@@ -137,28 +188,30 @@ idempotency key hashes the raw values.
 | 21 | Job was cancelled. |
 | 22 | The local caller detached on `SIGINT`. |
 | 23 | Stream lost before terminal status, including a partial SSE frame. |
+| 24 | A different live job already owns the requested address. |
 | 1 | Other stream I/O error. |
 
 `Ctrl-C` detaches. It does not cancel the job. Aimux prints that the job is
 still running and points at `aimux job cancel`.
 
-## Events And Attach
+## Events, Tail, And Wait
 
 Each job has ordered events with a per-job `seq`. Sequence numbers are 0-based
-and gapless. `aimux job attach --seq N <handle>` replays every event whose
+and gapless. `aimux job tail --seq N <handle>` replays every event whose
 sequence is greater than or equal to `N`.
 
-The `seq` guarantee is for events. The output tap is byte-offset based, not
-event-sequence based.
+`aimux job wait <handle>` uses the same stream but suppresses event rendering.
+It exits with the terminal job outcome, so scripts can wait without keeping a
+stdout stream open.
 
-Example resumable attach loop:
+Example resumable tail loop:
 
 ```sh
 handle="<handle printed by aimux run --detach>"
-aimux job attach "$handle" --seq 0
+aimux job tail "$handle" --seq 0
 
 # Later, after recording the last event seq as 42:
-aimux job attach "$handle" --seq 43
+aimux job tail "$handle" --seq 43
 ```
 
 If the stream ends before terminal status, including because of a partial SSE
@@ -183,15 +236,20 @@ Register a desktop notification callback:
 aimux job notify "$handle" --watcher-id "release-readiness-terminal"
 ```
 
-There is exactly one callback kind: `DesktopNotification`. It is keyed by
-`watcher-id`, with outcomes:
+Register a FIFO notification at creation time:
 
-- `Created`
-- `Existing`
-- `Rearmed`
+```sh
+mkfifo /tmp/aimux-job.done
+aimux run aimux/main --tool codex --skill smoke --notify-fifo /tmp/aimux-job.done --detach
+```
 
-Delivery is attempted up to 5 times, 60 seconds apart, with a 900 second
-give-up window.
+The FIFO must already exist and must be a FIFO. Aimux writes one JSON line when
+the job reaches terminal status. Opening the FIFO is nonblocking; a missing
+reader or closed reader is recorded as a delivery failure and does not block the
+daemon.
+
+Callback outcomes are durable and visible. Desktop notifications are attempted
+up to 5 times, 60 seconds apart, with a 900 second give-up window.
 
 ## Storage And Retention
 
@@ -248,33 +306,29 @@ cancel, read, or attach to a job.
 Neither `--detach` nor `Ctrl-C` stops a job. They only stop the local stream.
 Use `aimux job cancel <handle>` to request cancellation.
 
-### Same Spec Joins While Running
+### Same Address Means One Live Job
 
-If a matching job is running, a second caller joins it. If the previous matching
-job is terminal, a new job starts. This is intentional idempotency, not a lock.
+If the same spec is already running at an address, `aimux run` joins it. If a
+different spec is already running at that address, `aimux run` refuses with exit
+code 24. Use `aimux job tail <address>` or `aimux job wait <address>` when you
+want to observe whatever is already there without asserting a spec.
 
-### Tool, Args, Cwd, And Env Are Part Of Identity
+### Lanes Take Precedence Over Slots
 
-These two commands are different jobs and can run concurrently:
-
-```sh
-aimux run aimux/smoke --tool codex
-aimux run aimux/smoke --tool claude
-```
-
-So are calls that change args, cwd, or env. Do not treat the displayed address
-as the complete idempotency identity.
+At `<project>/<x>`, `x` is a lane when it matches a real worktree lane. This
+means users cannot create a project slot whose first segment collides with a
+lane name.
 
 ### Displayed Spec May Be Sanitized
 
-Records are sanitized for logging. The key hashes raw values. If a displayed
-field is redacted, that does not mean the redacted value was used for identity.
+Records are sanitized for logging. Raw payloads and args live in the private
+material file for execution.
 
 ### Pending Notifications Extend Retention
 
-Terminal jobs usually age out after 14 days, but a pending desktop notification
-callback protects the job until the callback either delivers or gives up, up to
-900 seconds beyond the usual window.
+Terminal jobs usually age out after 14 days, but a pending notification callback
+protects the job until the callback either delivers or gives up, up to 900
+seconds beyond the usual window.
 
 ## Rejected Designs
 
@@ -283,15 +337,17 @@ callback protects the job until the callback either delivers or gives up, up to
 Rejected. Tool inference makes shell scripts ambiguous and can start the wrong
 agent when multiple tools support a skill name. `--tool` is mandatory.
 
-### Cwd Fallback For `<skill>`
+### Skill As The Address Suffix
 
-Rejected. `<skill>` requires `--project` so a script cannot accidentally run
-against whatever checkout happens to be current.
+Rejected. The address is a slot, not a payload. A slot can run a skill or a raw
+prompt, and the same address is the stable handle for tail, wait, cancel, and
+dashboard subscription.
 
-### Address-Only Idempotency
+### Multi-Job Address Identity
 
-Rejected. The address alone does not capture the actual work. Tool, args, cwd,
-and env materially change the job and belong in the idempotency key.
+Rejected. Tool, payload, args, cwd, and env describe the live job occupying an
+address. They do not create parallel live jobs at the same address. A different
+live spec at the same address is a conflict, not a new idempotency key.
 
 ### Remote Job Routes
 

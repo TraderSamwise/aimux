@@ -1,5 +1,8 @@
 use aimux::core_cli::{CoreCliOutputMode, CoreCommandCall, CoreCommandOk, CoreLoopActorContext};
-use aimux::core_cli_executor::{CoreCliExecution, CoreCliRuntime, run_core_cli_with};
+use aimux::core_cli_executor::{
+    CoreCliExecution, CoreCliRuntime, JOB_ADDRESS_CONFLICT_EXIT_CODE,
+    run_core_cli_incremental_with, run_core_cli_with,
+};
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::text::operations::{
     RestartControlPlaneTextResult, render_runtime_restart_result,
@@ -593,6 +596,10 @@ fn fake_text_response(path: &str) -> String {
             "  projects: 0 (0 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n"
         )
         .into()
+    } else if path.starts_with("/core/projects-list-text?json=1") {
+        "{\n  \"generatedAt\": \"now\",\n  \"projects\": [{\"name\":\"repo\",\"status\":\"live\",\"path\":\"/repo\"}]\n}\n".into()
+    } else if path.starts_with("/core/projects-list-text") {
+        "repo  live  /repo\n".into()
     } else if path.ends_with("?json=1") {
         "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
     } else {
@@ -880,16 +887,7 @@ fn host_status_and_projects_render_text_and_json_like_core_cli() {
 
     let host = run_core_cli_with(&args(&["host", "status"]), &mut runtime);
     assert_eq!(host.code, 0);
-    assert_eq!(
-        host.stdout,
-        [
-            "Service: live",
-            "Service pid=9002",
-            "Metadata: {\"host\":\"127.0.0.1\",\"port\":44000}",
-            "Expected manifest: {\"apiVersion\":5,\"buildStamp\":\"stamp\",\"capabilities\":{}}",
-            "Tmux session: aimux-repo"
-        ]
-    );
+    assert_eq!(host.stdout, ["Runtime Coherence\n  ok"]);
 
     let bare_projects = run_core_cli_with(&args(&["projects"]), &mut runtime);
     assert_eq!(bare_projects.code, 0);
@@ -899,6 +897,36 @@ fn host_status_and_projects_render_text_and_json_like_core_cli() {
     assert_eq!(projects.code, 0);
     let parsed: Value = serde_json::from_str(&projects.stdout[0]).expect("projects JSON");
     assert_eq!(parsed["projects"][0]["path"], "/repo");
+}
+
+#[test]
+fn job_run_conflict_exits_with_address_conflict_code() {
+    let mut runtime = FakeRuntime {
+        text_route_error: Some(
+            "a different job is already running at global/release: job job-test is running tool=codex, payload=skill:smoke; requested tool=claude, payload=skill:smoke; differing fields: tool; watch it with `aimux job tail global/release` or `aimux job wait global/release`, or stop it with `aimux job cancel global/release`"
+                .to_owned(),
+        ),
+        ..FakeRuntime::default()
+    };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let code = run_core_cli_incremental_with(
+        &args(&[
+            "run",
+            "global/release",
+            "--tool",
+            "claude",
+            "--skill",
+            "smoke",
+        ]),
+        &mut runtime,
+        &mut stdout,
+        &mut stderr,
+    );
+    assert_eq!(code, JOB_ADDRESS_CONFLICT_EXIT_CODE);
+    assert!(stdout.is_empty());
+    let stderr = String::from_utf8(stderr).expect("stderr utf8");
+    assert!(stderr.contains("a different job is already running at global/release"));
 }
 
 #[test]

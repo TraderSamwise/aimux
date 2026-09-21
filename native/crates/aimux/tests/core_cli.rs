@@ -2873,6 +2873,8 @@ fn job_run_plans_incremental_create_and_stream_paths() {
             "run",
             "--tool",
             "shell",
+            "--skill",
+            "review-pr",
             "--project",
             "../repo",
             "tealstreet-next/main/review-pr",
@@ -2901,6 +2903,7 @@ fn job_run_plans_incremental_create_and_stream_paths() {
     assert_eq!(body["address"], "tealstreet-next/main/review-pr");
     assert_eq!(body["project"], "/resolved/../repo");
     assert_eq!(body["tool"], "shell");
+    assert_eq!(body["skill"], "review-pr");
     assert_eq!(body["args"], json!(["https://example.test/pr"]));
     assert_eq!(body["cwd"], "/repo/subdir");
 }
@@ -2921,17 +2924,26 @@ fn job_handle_verbs_pass_handle_verbatim_to_daemon() {
     assert!(show_path.contains("project=%2Frepo"));
 
     let tail = classify_core_cli(
-        &["job", "attach", "job-abc123", "--seq", "7"],
+        &["job", "tail", "job-abc123", "--seq", "7"],
         &context(true, true),
     )
     .expect("job stream plan");
-    assert_eq!(tail.operation, CoreCliOperation::JobAttach);
-    let CoreCliAction::JobEventStream { events_path } = tail.action else {
+    assert_eq!(tail.operation, CoreCliOperation::JobTail);
+    let CoreCliAction::JobEventStream { events_path, quiet } = tail.action else {
         panic!("expected job event stream action");
     };
+    assert!(!quiet);
     assert!(events_path.contains("handle=job-abc123"));
     assert!(events_path.contains("seq=7"));
     assert!(events_path.contains("project=%2Frepo"));
+
+    let wait = classify_core_cli(&["job", "wait", "job-abc123"], &context(true, true))
+        .expect("job wait plan");
+    assert_eq!(wait.operation, CoreCliOperation::JobWait);
+    let CoreCliAction::JobEventStream { quiet, .. } = wait.action else {
+        panic!("expected quiet job event stream action");
+    };
+    assert!(quiet);
 }
 
 #[test]
