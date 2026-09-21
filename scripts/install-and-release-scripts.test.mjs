@@ -1403,6 +1403,113 @@ describe("verify-release-asset-set.sh", () => {
     }
   });
 
+  it("renames Homebrew bottle archives to the TSV filename column before upload", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-name-"));
+    try {
+      const bin = join(root, "bin");
+      const tapRepo = join(root, "tap-repo");
+      const outDir = join(root, "homebrew-bottles");
+      mkdirSync(bin, { recursive: true });
+      writeExecutable(
+        join(bin, "brew"),
+        `#!/usr/bin/env bash
+set -euo pipefail
+cmd="\${1:-}"
+tap_repo="\${AIMUX_FAKE_BREW_TAP_REPO:?missing AIMUX_FAKE_BREW_TAP_REPO}"
+case "$cmd" in
+  tap)
+    exit 0
+    ;;
+  tap-new)
+    mkdir -p "$tap_repo/Formula"
+    exit 0
+    ;;
+  help)
+    [ "\${2:-}" = trust ]
+    exit 0
+    ;;
+  trust)
+    exit 0
+    ;;
+  --repo)
+    printf '%s\\n' "$tap_repo"
+    exit 0
+    ;;
+  list)
+    exit 1
+    ;;
+  install)
+    exit 0
+    ;;
+  bottle)
+    printf 'bottle bytes\\n' > aimux-local--0.1.49.arm64_sequoia.bottle.tar.gz
+    cat > aimux-local--0.1.49.arm64_sequoia.bottle.json <<'JSON'
+{
+  "aimux/bottle-aimux_local-fixture/aimux-local": {
+    "formula": {
+      "name": "aimux-local",
+      "pkg_version": "0.1.49"
+    },
+    "bottle": {
+      "root_url": "https://example.test/bottles",
+      "cellar": "any_skip_relocation",
+      "rebuild": 0,
+      "tags": {
+        "arm64_sequoia": {
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "filename": "aimux-local-0.1.49.arm64_sequoia.bottle.tar.gz",
+          "local_filename": "aimux-local--0.1.49.arm64_sequoia.bottle.tar.gz"
+        }
+      }
+    }
+  }
+}
+JSON
+    exit 0
+    ;;
+  untap)
+    exit 0
+    ;;
+  *)
+    printf 'unexpected fake brew command: %s\\n' "$*" >&2
+    exit 127
+    ;;
+esac
+`,
+      );
+
+      const result = run("bash", [join(repoRoot, "scripts/build-homebrew-bottle.sh"), "aimux-local"], {
+        env: {
+          TAG: "v0.1.49",
+          VERSION: "0.1.49",
+          AIMUX_HOMEBREW_BREW: join(bin, "brew"),
+          AIMUX_FAKE_BREW_TAP_REPO: tapRepo,
+          AIMUX_HOMEBREW_BOTTLE_OUT_DIR: outDir,
+          DARWIN_ARM64: "1".repeat(64),
+          DARWIN_X64: "2".repeat(64),
+          LINUX_ARM64: "3".repeat(64),
+          LINUX_X64: "4".repeat(64),
+          LOCAL_DARWIN_ARM64: "5".repeat(64),
+          LOCAL_DARWIN_X64: "6".repeat(64),
+          LOCAL_LINUX_ARM64: "7".repeat(64),
+          LOCAL_LINUX_X64: "8".repeat(64),
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const tsv = readFileSync(join(outDir, "aimux-local.bottles.tsv"), "utf8").trimEnd().split("\t");
+      const filename = tsv[3];
+      const localFilename = tsv[4];
+      expect(filename).toBe("aimux-local-0.1.49.arm64_sequoia.bottle.tar.gz");
+      expect(localFilename).toBe("aimux-local--0.1.49.arm64_sequoia.bottle.tar.gz");
+      expect(existsSync(join(outDir, filename))).toBe(true);
+      expect(existsSync(join(outDir, localFilename))).toBe(false);
+      expect(readdirSync(outDir).filter((name) => name.endsWith(".bottle.tar.gz"))).toEqual([filename]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails visibly when Homebrew bottle metadata is corrupt", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-render-"));
     try {

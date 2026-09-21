@@ -66,7 +66,7 @@ case "$FORMULA" in
 esac
 
 append_standard_path_dirs
-for command in awk find mkdir mktemp node rm sed; do
+for command in awk find mkdir mktemp mv node rm sed; do
   need "$command"
 done
 BREW="${AIMUX_HOMEBREW_BREW:-brew}"
@@ -92,6 +92,32 @@ cleanup() {
 trap cleanup EXIT
 
 . "$ROOT_DIR/scripts/lib/run-and-capture.sh"
+
+canonicalize_bottle_tarballs() {
+  local metadata_file="$1"
+  local output_dir="$2"
+  local tag cellar sha filename local_filename source_path target_path
+  while IFS="$(printf '\t')" read -r tag cellar sha filename local_filename || [ -n "$tag$cellar$sha$filename$local_filename" ]; do
+    case "$tag" in
+      "" | "#"*) continue ;;
+    esac
+    if [ -z "$filename" ] || [ -z "$local_filename" ]; then
+      fail "bottle metadata row for $FORMULA $tag is missing filename/local_filename"
+    fi
+    source_path="$output_dir/$local_filename"
+    target_path="$output_dir/$filename"
+    if [ "$source_path" = "$target_path" ]; then
+      [ -f "$target_path" ] || fail "brew bottle did not produce expected archive: $target_path"
+      continue
+    fi
+    [ -f "$source_path" ] || fail "brew bottle did not produce local archive from metadata: $source_path"
+    if [ -e "$target_path" ]; then
+      fail "canonical bottle archive already exists before rename: $target_path"
+    fi
+    mv "$source_path" "$target_path"
+    printf 'Renamed Homebrew bottle archive for upload: %s -> %s\n' "$local_filename" "$filename"
+  done < "$metadata_file"
+}
 
 if "$BREW" tap | grep -Fx "$STAGING_TAP" >/dev/null 2>&1; then
   fail "temporary Homebrew tap already exists: $STAGING_TAP"
@@ -140,6 +166,7 @@ node "$ROOT_DIR/scripts/homebrew-bottle-metadata.mjs" \
   --formula "$FORMULA" \
   --output "$OUT_DIR/$FORMULA.bottles.tsv" \
   "${bottle_json[@]}"
+canonicalize_bottle_tarballs "$OUT_DIR/$FORMULA.bottles.tsv" "$OUT_DIR"
 
 printf 'Built Homebrew bottle for %s:\n' "$FORMULA"
 printf '  output: %s\n' "$OUT_DIR"
