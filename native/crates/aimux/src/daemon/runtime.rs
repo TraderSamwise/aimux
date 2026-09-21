@@ -82,7 +82,8 @@ use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetContext, DashboardTargetRef, DashboardTargetTmux,
     find_live_dashboard_target_with_context, find_recoverable_dashboard_target_with_context,
-    resolve_dashboard_target, resolve_dashboard_target_for_restart_with_context,
+    resolve_dashboard_target, resolve_dashboard_target_for_reload,
+    resolve_dashboard_target_for_restart_with_context,
 };
 use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 use crate::event_loop_budget::{
@@ -1353,14 +1354,7 @@ impl RealDaemonRuntime {
     ) -> Result<Value, String> {
         <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
         let mut tmux = TmuxRuntimeManager::new();
-        let target = resolve_dashboard_target(
-            project_root,
-            &mut tmux,
-            DashboardResolveOptions {
-                force_reload: true,
-                open_in_host_session: false,
-            },
-        )?;
+        let target = resolve_dashboard_target_for_reload(project_root, &mut tmux)?;
         self.refresh_project_statusline(project_root);
         dashboard_payload_from_target(project_root, &target.dashboard_target, open)
     }

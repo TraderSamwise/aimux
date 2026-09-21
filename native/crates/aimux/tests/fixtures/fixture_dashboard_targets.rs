@@ -3,8 +3,8 @@ use serde_json::{Value, json};
 
 use aimux::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetContext, DashboardTargetTmux,
-    find_live_dashboard_target_with_context, resolve_dashboard_target_with_context,
-    run_dashboard_targets_contract_case,
+    find_live_dashboard_target_with_context, resolve_dashboard_target_for_reload_with_context,
+    resolve_dashboard_target_with_context, run_dashboard_targets_contract_case,
 };
 use aimux::tmux::{
     TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION,
@@ -81,6 +81,47 @@ fn restart_resolution_reuses_usable_dashboard_without_replacement() {
     assert!(!methods.contains(&"ensureProjectSession"));
     assert!(!methods.contains(&"ensureDashboardWindow"));
     assert!(!methods.contains(&"replaceWindowWhenReady"));
+}
+
+#[test]
+fn dashboard_reload_uses_fast_readiness_budget_but_restart_keeps_repair_budget() {
+    let context = fake_context();
+    let mut reload_tmux = ExistingDashboardTmux::new("aimux");
+
+    resolve_dashboard_target_for_reload_with_context("/repo/mobile", &mut reload_tmux, &context)
+        .expect("reload dashboard target");
+
+    let reload_timeout = reload_tmux
+        .replace_timeouts
+        .first()
+        .copied()
+        .expect("reload replacement timeout recorded");
+    assert_eq!(
+        reload_timeout, 3_000,
+        "dashboard-reload must fail before an 8s headless caller timeout"
+    );
+
+    let mut restart_tmux = ExistingDashboardTmux::new("aimux");
+    resolve_dashboard_target_with_context(
+        "/repo/mobile",
+        &mut restart_tmux,
+        DashboardResolveOptions {
+            force_reload: true,
+            open_in_host_session: false,
+        },
+        &context,
+    )
+    .expect("restart dashboard target");
+
+    let restart_timeout = restart_tmux
+        .replace_timeouts
+        .first()
+        .copied()
+        .expect("restart replacement timeout recorded");
+    assert_eq!(
+        restart_timeout, 20_000,
+        "control-plane restart keeps the longer repair readiness budget"
+    );
 }
 
 #[test]
@@ -504,6 +545,7 @@ impl DashboardTargetTmux for CreatedDashboardTmux {
 struct ExistingDashboardTmux {
     pane_command: String,
     replace_calls: usize,
+    replace_timeouts: Vec<u64>,
     reports: Vec<RepairReport>,
 }
 
@@ -512,6 +554,7 @@ impl ExistingDashboardTmux {
         Self {
             pane_command: pane_command.to_owned(),
             replace_calls: 0,
+            replace_timeouts: Vec::new(),
             reports: Vec::new(),
         }
     }
@@ -639,9 +682,10 @@ impl DashboardTargetTmux for ExistingDashboardTmux {
         _dashboard_command: &TmuxCommandSpec,
         _readiness_option: &str,
         _readiness_value: &str,
-        _timeout_ms: u64,
+        timeout_ms: u64,
     ) -> Result<TmuxTarget, String> {
         self.replace_calls += 1;
+        self.replace_timeouts.push(timeout_ms);
         Ok(self.dashboard_target("@fresh"))
     }
 

@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS: u64 = 20_000;
+const DASHBOARD_RELOAD_READY_TIMEOUT_MS: u64 = 3_000;
 const CONTRACT_NODE_EXEC_PATH: &str = "/opt/homebrew/Cellar/node/25.8.1_1/bin/node";
 const CONTRACT_HOME_DIR: &str = "/Users/sam";
 const CONTRACT_PROJECT_ROOT: &str = "/Users/sam/cs/glyde-frontend";
@@ -268,6 +269,31 @@ pub fn resolve_dashboard_target(
     resolve_dashboard_target_with_context(project_root, tmux, options, &context)
 }
 
+pub fn resolve_dashboard_target_for_reload(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+) -> Result<DashboardTargetRef, String> {
+    let context = DashboardTargetContext::for_project(project_root)?;
+    resolve_dashboard_target_for_reload_with_context(project_root, tmux, &context)
+}
+
+pub fn resolve_dashboard_target_for_reload_with_context(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+    context: &DashboardTargetContext,
+) -> Result<DashboardTargetRef, String> {
+    resolve_dashboard_target_with_context_and_timeout(
+        project_root,
+        tmux,
+        DashboardResolveOptions {
+            force_reload: true,
+            open_in_host_session: false,
+        },
+        context,
+        DASHBOARD_RELOAD_READY_TIMEOUT_MS,
+    )
+}
+
 pub fn resolve_dashboard_target_for_restart(
     project_root: &str,
     tmux: &mut impl DashboardTargetTmux,
@@ -392,6 +418,22 @@ pub fn resolve_dashboard_target_with_context(
     options: DashboardResolveOptions,
     context: &DashboardTargetContext,
 ) -> Result<DashboardTargetRef, String> {
+    resolve_dashboard_target_with_context_and_timeout(
+        project_root,
+        tmux,
+        options,
+        context,
+        DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS,
+    )
+}
+
+fn resolve_dashboard_target_with_context_and_timeout(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+    options: DashboardResolveOptions,
+    context: &DashboardTargetContext,
+    ready_timeout_ms: u64,
+) -> Result<DashboardTargetRef, String> {
     if !options.force_reload
         && let Some(live) = find_live_dashboard_target_with_context(project_root, tmux, context)?
     {
@@ -454,7 +496,7 @@ pub fn resolve_dashboard_target_with_context(
             tmux,
             &dashboard_target,
             &context.dashboard_build_stamp,
-            DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS,
+            ready_timeout_ms,
         )?;
     } else if !repair_reasons.is_empty() {
         let repair_details = json!({
@@ -475,7 +517,7 @@ pub fn resolve_dashboard_target_with_context(
             &context.dashboard_command,
             TMUX_DASHBOARD_READY_OPTION,
             &context.dashboard_build_stamp,
-            DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS,
+            ready_timeout_ms,
         );
         match replacement {
             Ok(replacement) => {
