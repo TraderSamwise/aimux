@@ -13,8 +13,8 @@ use super::agent_input_delivery::{
     enqueue_agent_input_delivery, record_agent_input_delivery_probe_failure,
 };
 use super::agent_output::{
-    AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime, deliver_prompt_to_tmux,
-    resolve_live_window_id,
+    AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime, deliver_prompt_to_tmux_for_tool,
+    resolve_live_session_target,
 };
 use super::agents::{resolve_direct_teammates, topology_desktop_verified_session_list_for_context};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -1572,8 +1572,8 @@ fn deliver_prompt_to_recipients(
         if matches!(recipient.as_str(), "" | "user" | "aimux") {
             continue;
         }
-        let window_id = match resolve_live_window_id(context, recipient) {
-            Ok(Some(window_id)) => window_id,
+        let target = match resolve_live_session_target(context, recipient) {
+            Ok(Some(target)) => target,
             Ok(None) => {
                 outcome.failures.push(format!(
                     "{recipient}: no live tmux window in runtime topology"
@@ -1589,7 +1589,7 @@ fn deliver_prompt_to_recipients(
         let now_ms = scheduler_now_ms();
         let decision = decide_agent_input_delivery(
             false,
-            runtime.agent_input_window_activity(&window_id),
+            runtime.agent_input_window_activity(&target.window_id),
             now_ms,
             now_ms,
         );
@@ -1602,7 +1602,12 @@ fn deliver_prompt_to_recipients(
         }
         if let AgentInputDeliveryDecision::Hold { reason, .. } = decision {
             match enqueue_agent_input_delivery(
-                context, recipient, &window_id, &prompt, &reason, now_ms,
+                context,
+                recipient,
+                &target.window_id,
+                &prompt,
+                &reason,
+                now_ms,
             ) {
                 Ok(_) => {
                     if reason.starts_with("tmux client activity probe failed") {
@@ -1614,14 +1619,21 @@ fn deliver_prompt_to_recipients(
                     outcome.queued_to.push(recipient.clone());
                 }
                 Err(error) => outcome.failures.push(format!(
-                    "{recipient}: delivery to tmux window {window_id} could not be queued: {error}"
+                    "{recipient}: delivery to tmux window {} could not be queued: {error}",
+                    target.window_id
                 )),
             }
             continue;
         }
-        if let Err(error) = deliver_prompt_to_tmux(runtime, &window_id, &prompt) {
+        if let Err(error) = deliver_prompt_to_tmux_for_tool(
+            runtime,
+            &target.window_id,
+            &prompt,
+            target.tool.as_deref(),
+        ) {
             outcome.failures.push(format!(
-                "{recipient}: delivery to tmux window {window_id} failed: {error}"
+                "{recipient}: delivery to tmux window {} failed: {error}",
+                target.window_id
             ));
             continue;
         }

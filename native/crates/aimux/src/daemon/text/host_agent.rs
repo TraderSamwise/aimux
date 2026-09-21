@@ -141,18 +141,24 @@ pub fn resolve_host_agent_stream_text_route(
     }
 
     let project_root = runtime.resolve_project_root(&project);
-    if let Err(error) = runtime.ensure_project(&project_root) {
-        return HostAgentStreamResolution::Err {
-            response: text_error(502, format!("Error: {error}")),
-        };
-    }
-    let Some(endpoint) = runtime.metadata_endpoint(&project_root) else {
-        return HostAgentStreamResolution::Err {
-            response: text_error(
-                503,
-                format!("Error: project service unavailable for {project_root}"),
-            ),
-        };
+    let endpoint = match runtime.metadata_endpoint(&project_root) {
+        Some(endpoint) => endpoint,
+        None => {
+            if let Err(error) = runtime.ensure_project(&project_root) {
+                return HostAgentStreamResolution::Err {
+                    response: text_error(502, format!("Error: {error}")),
+                };
+            }
+            let Some(endpoint) = runtime.metadata_endpoint(&project_root) else {
+                return HostAgentStreamResolution::Err {
+                    response: text_error(
+                        503,
+                        format!("Error: project service unavailable for {project_root}"),
+                    ),
+                };
+            };
+            endpoint
+        }
     };
     let params = format!(
         "sessionId={}&startLine={}&intervalMs={}",

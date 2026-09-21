@@ -22,6 +22,7 @@ struct Call {
 struct FakeMetadataRuntime {
     calls: Vec<Call>,
     endpoint: Option<MetadataApiEndpoint>,
+    endpoint_after_ensure: Option<MetadataApiEndpoint>,
     fail_ensure: bool,
     post_result: ProjectServiceJsonResult,
 }
@@ -36,6 +37,7 @@ impl Default for FakeMetadataRuntime {
                 pid: 100,
                 updated_at: "now".into(),
             }),
+            endpoint_after_ensure: None,
             fail_ensure: false,
             post_result: ProjectServiceJsonResult::ok("/repo", json!({ "ok": true })),
         }
@@ -58,6 +60,9 @@ impl DaemonMetadataTextRuntime for FakeMetadataRuntime {
             route_path: None,
             body: None,
         });
+        if let Some(endpoint) = self.endpoint_after_ensure.clone() {
+            self.endpoint = Some(endpoint);
+        }
         if self.fail_ensure {
             Err("start failed".into())
         } else {
@@ -271,7 +276,7 @@ fn metadata_parser_matches_event_services_and_rejection_contracts() {
 }
 
 #[test]
-fn metadata_text_route_serves_endpoint_after_ensure() {
+fn metadata_text_route_serves_warm_endpoint_without_ensure() {
     let mut runtime = FakeMetadataRuntime::default();
     let response = route_metadata_text_request(
         &mut runtime,
@@ -282,6 +287,30 @@ fn metadata_text_route_serves_endpoint_after_ensure() {
 
     assert_eq!(response.status, 200);
     assert_eq!(text_body(response), "http://127.0.0.1:44291\n");
+    assert!(runtime.calls.is_empty());
+}
+
+#[test]
+fn metadata_text_route_ensures_when_warm_endpoint_is_missing() {
+    let mut runtime = FakeMetadataRuntime {
+        endpoint: None,
+        endpoint_after_ensure: Some(MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 44292,
+            pid: 101,
+            updated_at: "later".into(),
+        }),
+        ..FakeMetadataRuntime::default()
+    };
+    let response = route_metadata_text_request(
+        &mut runtime,
+        "POST",
+        "/core/metadata-text?project=.&arg=metadata&arg=endpoint",
+    )
+    .expect("metadata route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(text_body(response), "http://127.0.0.1:44292\n");
     assert_eq!(
         runtime.calls,
         [Call {

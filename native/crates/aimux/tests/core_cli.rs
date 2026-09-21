@@ -81,33 +81,9 @@ fn assert_loop_report_id_shape(report_id: &str) {
 fn sidecar_owned_commands_map_to_authoritative_names_and_payloads() {
     let cases = [
         (
-            vec!["host", "status"],
-            CoreCliOperation::HostStatus,
-            CORE_COMMAND_NAMES.status,
-            None,
-        ),
-        (
             vec!["daemon", "ensure"],
             CoreCliOperation::DaemonEnsure,
             CORE_COMMAND_NAMES.status,
-            None,
-        ),
-        (
-            vec!["daemon", "projects"],
-            CoreCliOperation::DaemonProjects,
-            CORE_COMMAND_NAMES.projects_list,
-            None,
-        ),
-        (
-            vec!["projects", "list"],
-            CoreCliOperation::ProjectsList,
-            CORE_COMMAND_NAMES.projects_list,
-            None,
-        ),
-        (
-            vec!["projects"],
-            CoreCliOperation::ProjectsList,
-            CORE_COMMAND_NAMES.projects_list,
             None,
         ),
         (
@@ -139,6 +115,42 @@ fn sidecar_owned_commands_map_to_authoritative_names_and_payloads() {
         assert!(actual.2, "{args:?}");
         assert_eq!(actual.3, None, "{args:?}");
         assert!(!actual.4, "{args:?}");
+    }
+}
+
+#[test]
+fn read_only_inventory_commands_use_lazy_ensure_text_routes() {
+    let cases = [
+        (
+            vec!["host", "status", "--json"],
+            CoreCliOperation::HostStatus,
+            "/core/host-status-text?project=%2Frepo&json=1",
+        ),
+        (
+            vec!["daemon", "projects", "--json"],
+            CoreCliOperation::DaemonProjects,
+            "/core/daemon-projects-text?json=1",
+        ),
+        (
+            vec!["projects", "list", "--json"],
+            CoreCliOperation::ProjectsList,
+            "/core/projects-list-text?json=1",
+        ),
+        (
+            vec!["projects"],
+            CoreCliOperation::ProjectsList,
+            "/core/projects-list-text",
+        ),
+    ];
+
+    for (args, operation, expected_path) in cases {
+        let plan = classify_core_cli(&args, &context(true, true)).expect("valid plan");
+        assert_eq!(plan.operation, operation, "{args:?}");
+        let CoreCliAction::TextRoute { path, body } = plan.action else {
+            panic!("expected text route action for {args:?}");
+        };
+        assert_eq!(path, expected_path, "{args:?}");
+        assert_eq!(body, None, "{args:?}");
     }
 }
 

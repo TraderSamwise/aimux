@@ -21,6 +21,7 @@ struct Call {
 struct FakeHostAgentRuntime {
     calls: Vec<Call>,
     endpoint: Option<MetadataApiEndpoint>,
+    endpoint_after_ensure: Option<MetadataApiEndpoint>,
     output: Value,
     fail_ensure: bool,
 }
@@ -35,6 +36,7 @@ impl Default for FakeHostAgentRuntime {
                 pid: 100,
                 updated_at: "now".into(),
             }),
+            endpoint_after_ensure: None,
             output: json!({ "ok": true, "output": "pane output" }),
             fail_ensure: false,
         }
@@ -56,6 +58,9 @@ impl DaemonHostAgentTextRuntime for FakeHostAgentRuntime {
             project: project_root.into(),
             route_path: None,
         });
+        if let Some(endpoint) = self.endpoint_after_ensure.clone() {
+            self.endpoint = Some(endpoint);
+        }
         if self.fail_ensure {
             Err("start failed".into())
         } else {
@@ -208,7 +213,7 @@ fn host_agent_read_rejects_bad_start_line_before_upstream_request() {
 }
 
 #[test]
-fn host_agent_stream_resolves_upstream_url_after_local_preflight_and_ensure() {
+fn host_agent_stream_resolves_upstream_url_without_warm_path_ensure() {
     let mut runtime = FakeHostAgentRuntime::default();
     let resolution = resolve_host_agent_stream_text_route(
         &mut runtime,
@@ -227,14 +232,7 @@ fn host_agent_stream_resolves_upstream_url_after_local_preflight_and_ensure() {
             ),
         }
     );
-    assert_eq!(
-        runtime.calls,
-        [Call {
-            kind: "ensure",
-            project: "/repo".into(),
-            route_path: None,
-        }]
-    );
+    assert!(runtime.calls.is_empty());
 
     let default_resolution = resolve_host_agent_stream_text_route(
         &mut runtime,
@@ -251,6 +249,46 @@ fn host_agent_stream_resolves_upstream_url_after_local_preflight_and_ensure() {
                 project_routes::agents::OUTPUT_STREAM
             ),
         }
+    );
+    assert!(runtime.calls.is_empty());
+}
+
+#[test]
+fn host_agent_stream_ensures_when_warm_endpoint_is_missing() {
+    let mut runtime = FakeHostAgentRuntime {
+        endpoint: None,
+        endpoint_after_ensure: Some(MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 44292,
+            pid: 101,
+            updated_at: "later".into(),
+        }),
+        ..FakeHostAgentRuntime::default()
+    };
+    let resolution = resolve_host_agent_stream_text_route(
+        &mut runtime,
+        "/core/host-agent-stream-text?project=.&sessionId=claude-1",
+        None,
+        false,
+    );
+
+    assert_eq!(
+        resolution,
+        HostAgentStreamResolution::Ok {
+            session_id: "claude-1".into(),
+            url: format!(
+                "http://127.0.0.1:44292{}?sessionId=claude-1&startLine=-2000&intervalMs=500",
+                project_routes::agents::OUTPUT_STREAM
+            ),
+        }
+    );
+    assert_eq!(
+        runtime.calls,
+        [Call {
+            kind: "ensure",
+            project: "/repo".into(),
+            route_path: None,
+        }]
     );
 }
 

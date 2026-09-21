@@ -3858,7 +3858,7 @@ impl DaemonOverseerTextRuntime for RealDaemonRuntime {
         route_path: &str,
         body: Value,
     ) -> ProjectServiceJsonResult {
-        self.post_ensured_project_service_json(project, route_path, body, None)
+        self.post_hot_or_ensured_project_service_json(project, route_path, body, None)
     }
 }
 
@@ -3881,7 +3881,7 @@ impl DaemonScribeTextRuntime for RealDaemonRuntime {
         route_path: &str,
         body: Value,
     ) -> ProjectServiceJsonResult {
-        self.post_ensured_project_service_json(project, route_path, body, None)
+        self.post_hot_or_ensured_project_service_json(project, route_path, body, None)
     }
 }
 
@@ -3891,7 +3891,7 @@ impl DaemonNotificationTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.get_ensured_project_service_json(project, route_path)
+        self.get_hot_or_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -3901,7 +3901,7 @@ impl DaemonNotificationTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
+        self.post_hot_or_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 }
 
@@ -3911,7 +3911,7 @@ impl DaemonTeamTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.get_ensured_project_service_json(project, route_path)
+        self.get_hot_or_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -3921,7 +3921,7 @@ impl DaemonTeamTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
+        self.post_hot_or_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 }
 
@@ -3935,7 +3935,7 @@ impl DaemonWorktreeTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.get_ensured_project_service_json(project, route_path)
+        self.get_hot_or_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -3945,7 +3945,7 @@ impl DaemonWorktreeTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
+        self.post_hot_or_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 
     fn prune_git_worktree_metadata(
@@ -4006,7 +4006,7 @@ impl DaemonCollaborationTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.get_ensured_project_service_json(project, route_path)
+        self.get_hot_or_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -4016,7 +4016,7 @@ impl DaemonCollaborationTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
+        self.post_hot_or_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 }
 
@@ -4026,7 +4026,7 @@ impl DaemonProjectContentTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.get_ensured_project_service_json(project, route_path)
+        self.get_hot_or_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -4036,7 +4036,7 @@ impl DaemonProjectContentTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
+        self.post_hot_or_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 
     fn host_published_attachment(

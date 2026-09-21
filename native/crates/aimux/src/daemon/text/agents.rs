@@ -83,6 +83,14 @@ impl ProjectServicePostOptions {
         }
     }
 
+    pub fn ensure_if_unreachable_with_timeout(timeout_ms: u64) -> Self {
+        Self {
+            ensure_project: false,
+            ensure_if_unreachable: true,
+            timeout_ms: Some(timeout_ms),
+        }
+    }
+
     pub fn skip_ensure_with_timeout(timeout_ms: u64) -> Self {
         Self {
             ensure_project: false,
@@ -136,7 +144,6 @@ pub fn route_agent_text_request(
                 route_path: project_routes::agents::STOP,
                 render: render_core_lifecycle_stop_lines,
                 require_previous_status: false,
-                ensure_project: false,
             },
         ));
     }
@@ -150,7 +157,6 @@ pub fn route_agent_text_request(
                 route_path: project_routes::agents::KILL,
                 render: render_core_lifecycle_kill_lines,
                 require_previous_status: true,
-                ensure_project: false,
             },
         ));
     }
@@ -298,7 +304,7 @@ pub fn service_create_text_route(
         &project,
         project_routes::services::CREATE,
         Value::Object(request),
-        ProjectServicePostOptions::ensure(),
+        ProjectServicePostOptions::ensure_if_unreachable(),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -452,16 +458,11 @@ pub fn lifecycle_status_text_route(
         Ok(session_id) => session_id,
         Err(response) => return response,
     };
-    let options = if input.ensure_project {
-        ProjectServicePostOptions::ensure()
-    } else {
-        ProjectServicePostOptions::skip_ensure()
-    };
     let (json, project_root) = match unwrap_project_result(runtime.post_project_service_json(
         &project,
         input.route_path,
         json!({ "sessionId": session_id }),
-        options,
+        ProjectServicePostOptions::skip_ensure(),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -528,7 +529,7 @@ pub fn lifecycle_fork_text_route(
         &project,
         project_routes::agents::FORK,
         Value::Object(request),
-        ProjectServicePostOptions::ensure(),
+        ProjectServicePostOptions::ensure_if_unreachable(),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -581,7 +582,7 @@ pub fn agent_input_text_route(
             &project,
             project_routes::agents::INPUT,
             json!({ "sessionId": session_id, "text": text, "force": force }),
-            ProjectServicePostOptions::ensure(),
+            ProjectServicePostOptions::ensure_if_unreachable(),
         )) {
             Ok(result) => result,
             Err(response) => return response,
@@ -769,7 +770,7 @@ pub fn agent_rename_text_route(
         &project,
         project_routes::agents::RENAME,
         json!({ "sessionId": session_id, "label": label }),
-        ProjectServicePostOptions::ensure(),
+        ProjectServicePostOptions::ensure_if_unreachable(),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -816,7 +817,7 @@ pub fn agent_migrate_text_route(
         &project_root,
         project_routes::agents::MIGRATE,
         json!({ "sessionId": session_id, "worktreePath": resolved_worktree_path }),
-        ProjectServicePostOptions::ensure(),
+        ProjectServicePostOptions::ensure_if_unreachable(),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -873,7 +874,7 @@ pub fn loop_text_route(
         &project,
         project_routes::agents::LOOP,
         Value::Object(request),
-        ProjectServicePostOptions::ensure(),
+        ProjectServicePostOptions::ensure_if_unreachable(),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -923,7 +924,9 @@ pub fn loop_exit_text_route(
         &project,
         project_routes::agents::LOOP,
         Value::Object(request),
-        ProjectServicePostOptions::ensure_with_timeout(LOOP_EXIT_STATE_WRITE_TIMEOUT_MS),
+        ProjectServicePostOptions::ensure_if_unreachable_with_timeout(
+            LOOP_EXIT_STATE_WRITE_TIMEOUT_MS,
+        ),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -995,7 +998,7 @@ pub fn loop_alert_text_route(
         &project,
         project_routes::agents::LOOP_ALERTS,
         Value::Object(request),
-        ProjectServicePostOptions::ensure(),
+        ProjectServicePostOptions::ensure_if_unreachable(),
     )) {
         Ok(result) => result,
         Err(response) => return response,
@@ -1020,7 +1023,6 @@ pub struct LifecycleStatusInput {
     route_path: &'static str,
     render: fn(&Value) -> Vec<String>,
     require_previous_status: bool,
-    ensure_project: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1137,9 +1139,15 @@ fn js_string(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct PostCall {
+        route_path: String,
+        options: ProjectServicePostOptions,
+    }
+
     #[derive(Default)]
     struct FakeAgentRuntime {
-        post_options: Option<ProjectServicePostOptions>,
+        post_calls: Vec<PostCall>,
     }
 
     impl DaemonAgentTextRuntime for FakeAgentRuntime {
@@ -1159,24 +1167,62 @@ mod tests {
             &mut self,
             project: &str,
             route_path: &str,
-            _body: Value,
+            body: Value,
             options: ProjectServicePostOptions,
         ) -> ProjectServiceJsonResult {
-            self.post_options = Some(options);
+            self.post_calls.push(PostCall {
+                route_path: route_path.to_owned(),
+                options,
+            });
             assert_eq!(project, "/repo");
-            assert_eq!(route_path, project_routes::agents::SPAWN);
-            ProjectServiceJsonResult::ok(
-                "/repo",
-                json!({
-                    "sessionId": "shell-abc123",
-                    "tmuxTarget": {
-                        "sessionName": "aimux-repo",
-                        "windowId": "@1",
-                        "windowIndex": 1,
-                        "windowName": "shell"
-                    }
-                }),
-            )
+            let response = match route_path {
+                project_routes::services::CREATE => {
+                    json!({ "serviceId": "svc-1" })
+                }
+                project_routes::agents::SPAWN => {
+                    json!({
+                        "sessionId": "shell-abc123",
+                        "tmuxTarget": {
+                            "sessionName": "aimux-repo",
+                            "windowId": "@1",
+                            "windowIndex": 1,
+                            "windowName": "shell"
+                        }
+                    })
+                }
+                project_routes::agents::FORK => {
+                    json!({ "sessionId": "fork-1", "threadId": "thread-1" })
+                }
+                project_routes::agents::INPUT => {
+                    json!({ "sessionId": body.get("sessionId").cloned().unwrap_or(Value::Null) })
+                }
+                project_routes::agents::RENAME => {
+                    json!({
+                        "sessionId": body.get("sessionId").cloned().unwrap_or(Value::Null),
+                        "label": body.get("label").cloned().unwrap_or(Value::Null),
+                    })
+                }
+                project_routes::agents::MIGRATE => {
+                    json!({
+                        "sessionId": body.get("sessionId").cloned().unwrap_or(Value::Null),
+                        "worktreePath": body.get("worktreePath").cloned().unwrap_or(Value::Null),
+                    })
+                }
+                project_routes::agents::LOOP => {
+                    json!({
+                        "sessionId": body.get("sessionId").cloned().unwrap_or(Value::Null),
+                        "loop": { "goal": body.get("goal").cloned().unwrap_or(Value::Null) },
+                    })
+                }
+                project_routes::agents::LOOP_ALERTS => {
+                    json!({ "sessionId": body.get("sessionId").cloned().unwrap_or(Value::Null) })
+                }
+                project_routes::runtime::EVENT => {
+                    json!({ "ok": true })
+                }
+                other => panic!("unexpected route path {other}"),
+            };
+            ProjectServiceJsonResult::ok("/repo", response)
         }
     }
 
@@ -1190,8 +1236,142 @@ mod tests {
 
         assert_eq!(response.status, 200);
         assert_eq!(
-            runtime.post_options,
-            Some(ProjectServicePostOptions::ensure_if_unreachable())
+            runtime.post_calls,
+            [PostCall {
+                route_path: project_routes::agents::SPAWN.into(),
+                options: ProjectServicePostOptions::ensure_if_unreachable(),
+            }]
         );
+    }
+
+    #[test]
+    fn mutation_routes_use_hot_project_service_before_ensure() {
+        type RouteCaseRunner =
+            Box<dyn FnOnce(&mut FakeAgentRuntime, DaemonRouteUrl) -> DaemonRouteResponse>;
+        type RouteCase = (&'static str, RouteCaseRunner, Vec<PostCall>);
+
+        let cases: Vec<RouteCase> = vec![
+            (
+                "service create",
+                Box::new(|runtime, url| service_create_text_route(runtime, &url, None)),
+                vec![PostCall {
+                    route_path: project_routes::services::CREATE.into(),
+                    options: ProjectServicePostOptions::ensure_if_unreachable(),
+                }],
+            ),
+            (
+                "lifecycle fork",
+                Box::new(|runtime, url| lifecycle_fork_text_route(runtime, &url, None)),
+                vec![PostCall {
+                    route_path: project_routes::agents::FORK.into(),
+                    options: ProjectServicePostOptions::ensure_if_unreachable(),
+                }],
+            ),
+            (
+                "agent input",
+                Box::new(|runtime, url| agent_input_text_route(runtime, &url, None)),
+                vec![PostCall {
+                    route_path: project_routes::agents::INPUT.into(),
+                    options: ProjectServicePostOptions::ensure_if_unreachable(),
+                }],
+            ),
+            (
+                "agent rename",
+                Box::new(|runtime, url| agent_rename_text_route(runtime, &url, None)),
+                vec![PostCall {
+                    route_path: project_routes::agents::RENAME.into(),
+                    options: ProjectServicePostOptions::ensure_if_unreachable(),
+                }],
+            ),
+            (
+                "agent migrate",
+                Box::new(|runtime, url| agent_migrate_text_route(runtime, &url, None)),
+                vec![PostCall {
+                    route_path: project_routes::agents::MIGRATE.into(),
+                    options: ProjectServicePostOptions::ensure_if_unreachable(),
+                }],
+            ),
+            (
+                "loop add",
+                Box::new(|runtime, url| {
+                    loop_text_route(
+                        runtime,
+                        &url,
+                        None,
+                        LoopInput {
+                            active: true,
+                            source: None,
+                            render: render_core_loop_add_lines,
+                        },
+                    )
+                }),
+                vec![PostCall {
+                    route_path: project_routes::agents::LOOP.into(),
+                    options: ProjectServicePostOptions::ensure_if_unreachable(),
+                }],
+            ),
+            (
+                "loop done",
+                Box::new(|runtime, url| {
+                    loop_exit_text_route(
+                        runtime,
+                        &url,
+                        None,
+                        LoopExitInput {
+                            action: "done",
+                            event_kind: "loop_done",
+                            default_message: "loop done",
+                            tone: Some("success"),
+                            render: render_core_loop_done_lines,
+                        },
+                    )
+                }),
+                vec![
+                    PostCall {
+                        route_path: project_routes::agents::LOOP.into(),
+                        options: ProjectServicePostOptions::ensure_if_unreachable_with_timeout(
+                            LOOP_EXIT_STATE_WRITE_TIMEOUT_MS,
+                        ),
+                    },
+                    PostCall {
+                        route_path: project_routes::runtime::EVENT.into(),
+                        options: ProjectServicePostOptions::skip_ensure_with_timeout(
+                            LOOP_EXIT_EVENT_TIMEOUT_MS,
+                        ),
+                    },
+                ],
+            ),
+            (
+                "loop pause",
+                Box::new(|runtime, url| {
+                    loop_alert_text_route(
+                        runtime,
+                        &url,
+                        None,
+                        LoopAlertInput {
+                            paused: true,
+                            render: render_core_loop_pause_lines,
+                        },
+                    )
+                }),
+                vec![PostCall {
+                    route_path: project_routes::agents::LOOP_ALERTS.into(),
+                    options: ProjectServicePostOptions::ensure_if_unreachable(),
+                }],
+            ),
+        ];
+
+        for (label, run, expected_calls) in cases {
+            let mut runtime = FakeAgentRuntime::default();
+            let route_url = DaemonRouteUrl::parse(
+                "/core/test?json=1&project=/repo&tool=shell&sourceSessionId=source-1\
+                 &sessionId=agent-1&text=hello&label=Renamed&worktreePath=worktree&goal=ship",
+            );
+
+            let response = run(&mut runtime, route_url);
+
+            assert_eq!(response.status, 200, "{label}");
+            assert_eq!(runtime.post_calls, expected_calls, "{label}");
+        }
     }
 }

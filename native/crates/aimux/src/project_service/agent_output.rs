@@ -81,6 +81,18 @@ const TMUX_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const AGENT_INPUT_ROUTE_TIMEOUT: Duration = Duration::from_secs(10);
 static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LiveSessionTarget {
+    pub window_id: String,
+    pub tool: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptSubmitMode {
+    AgentComposer,
+    DirectShell,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentOutputCaptureWindow {
     pub requested_start_line: i64,
@@ -1422,12 +1434,12 @@ fn resize_live_pane_route(
         },
         None => return json_error(400, "rows must be an integer"),
     };
-    let window_id = match resolve_live_window_id(context, &session_id) {
-        Ok(Some(window_id)) => window_id,
+    let target = match resolve_live_session_target(context, &session_id) {
+        Ok(Some(target)) => target,
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    if let Err(error) = runtime.resize_window(&window_id, cols, rows) {
+    if let Err(error) = runtime.resize_window(&target.window_id, cols, rows) {
         return json_error(500, error);
     }
     ProjectServiceDispatchResponse::json(
@@ -1446,12 +1458,12 @@ fn interrupt_live_pane_route(
     else {
         return json_error(400, "sessionId is required");
     };
-    let window_id = match resolve_live_window_id(context, &session_id) {
-        Ok(Some(window_id)) => window_id,
+    let target = match resolve_live_session_target(context, &session_id) {
+        Ok(Some(target)) => target,
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    if let Err(error) = runtime.send_escape(&window_id) {
+    if let Err(error) = runtime.send_escape(&target.window_id) {
         return json_error(500, error);
     }
     mark_session_interrupted(context, &session_id);
@@ -1529,8 +1541,8 @@ fn input_live_pane_route(
         };
         attachments.push(record);
     }
-    let window_id = match resolve_live_window_id(context, &session_id) {
-        Ok(Some(window_id)) => window_id,
+    let target = match resolve_live_session_target(context, &session_id) {
+        Ok(Some(target)) => target,
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
@@ -1554,7 +1566,7 @@ fn input_live_pane_route(
     let activity = if force {
         Ok(AgentInputWindowActivity::Unattended)
     } else {
-        runtime.agent_input_window_activity(&window_id)
+        runtime.agent_input_window_activity(&target.window_id)
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
     if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
@@ -1572,7 +1584,7 @@ fn input_live_pane_route(
         let pending = match enqueue_agent_input_delivery(
             context,
             &session_id,
-            &window_id,
+            &target.window_id,
             &prompt,
             &reason,
             now_ms,
@@ -1604,7 +1616,9 @@ fn input_live_pane_route(
             }),
         );
     }
-    if let Err(error) = deliver_prompt_to_tmux(runtime, &window_id, &prompt) {
+    if let Err(error) =
+        deliver_prompt_to_tmux_for_tool(runtime, &target.window_id, &prompt, target.tool.as_deref())
+    {
         return json_error(500, error);
     }
     ProjectServiceDispatchResponse::json(
@@ -1762,12 +1776,14 @@ async fn resize_live_pane_route_async(
         },
         None => return json_error(400, "rows must be an integer"),
     };
-    let window_id = match resolve_live_window_id(context, &session_id) {
-        Ok(Some(window_id)) => window_id,
+    let target = match resolve_live_session_target(context, &session_id) {
+        Ok(Some(target)) => target,
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    if let Err(error) = resize_window_async(&window_id, cols, rows, TMUX_COMMAND_TIMEOUT).await {
+    if let Err(error) =
+        resize_window_async(&target.window_id, cols, rows, TMUX_COMMAND_TIMEOUT).await
+    {
         return json_error(500, error);
     }
     ProjectServiceDispatchResponse::json(
@@ -1785,12 +1801,12 @@ async fn interrupt_live_pane_route_async(
     else {
         return json_error(400, "sessionId is required");
     };
-    let window_id = match resolve_live_window_id(context, &session_id) {
-        Ok(Some(window_id)) => window_id,
+    let target = match resolve_live_session_target(context, &session_id) {
+        Ok(Some(target)) => target,
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    if let Err(error) = send_escape_async(&window_id, TMUX_COMMAND_TIMEOUT).await {
+    if let Err(error) = send_escape_async(&target.window_id, TMUX_COMMAND_TIMEOUT).await {
         return json_error(500, error);
     }
     mark_session_interrupted(context, &session_id);
@@ -1868,8 +1884,8 @@ async fn input_live_pane_route_async(
         };
         attachments.push(record);
     }
-    let window_id = match resolve_live_window_id(context, &session_id) {
-        Ok(Some(window_id)) => window_id,
+    let target = match resolve_live_session_target(context, &session_id) {
+        Ok(Some(target)) => target,
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
@@ -1893,7 +1909,7 @@ async fn input_live_pane_route_async(
     let activity = if force {
         Ok(AgentInputWindowActivity::Unattended)
     } else {
-        tmux_agent_input_window_activity_async(&window_id, TMUX_COMMAND_TIMEOUT).await
+        tmux_agent_input_window_activity_async(&target.window_id, TMUX_COMMAND_TIMEOUT).await
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
     if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
@@ -1911,7 +1927,7 @@ async fn input_live_pane_route_async(
         let pending = match enqueue_agent_input_delivery(
             context,
             &session_id,
-            &window_id,
+            &target.window_id,
             &prompt,
             &reason,
             now_ms,
@@ -1946,8 +1962,13 @@ async fn input_live_pane_route_async(
     if let Some(flag) = irreversible_input {
         flag.store(true, Ordering::SeqCst);
     }
-    if let Err(error) =
-        deliver_prompt_to_tmux_async(&window_id, &prompt, AGENT_INPUT_ROUTE_TIMEOUT).await
+    if let Err(error) = deliver_prompt_to_tmux_async_for_tool(
+        &target.window_id,
+        &prompt,
+        AGENT_INPUT_ROUTE_TIMEOUT,
+        target.tool.as_deref(),
+    )
+    .await
     {
         return json_error(500, error);
     }
@@ -1966,10 +1987,22 @@ pub(super) fn resolve_live_window_id(
     context: &ProjectServiceRequestContext,
     session_id: &str,
 ) -> Result<Option<String>, String> {
+    Ok(resolve_live_session_target(context, session_id)?.map(|target| target.window_id))
+}
+
+pub(super) fn resolve_live_session_target(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+) -> Result<Option<LiveSessionTarget>, String> {
     let project_state_dir = context.project_state_dir();
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
         .map_err(|error| format!("runtime topology could not be read: {error}"))?;
-    Ok(resolve_session_window_id(&topology, session_id))
+    Ok(
+        resolve_session_window_id(&topology, session_id).map(|window_id| LiveSessionTarget {
+            window_id,
+            tool: resolve_session_tool(&topology, session_id),
+        }),
+    )
 }
 
 fn mark_session_interrupted(context: &ProjectServiceRequestContext, session_id: &str) {
@@ -2048,13 +2081,17 @@ pub(super) fn send_prompt_to_tmux(
     flush_tmux_text(runtime, window_id, &mut pending)
 }
 
-pub(super) fn deliver_prompt_to_tmux(
+pub(super) fn deliver_prompt_to_tmux_for_tool(
     runtime: &mut impl AgentOutputCaptureRuntime,
     window_id: &str,
     prompt: &str,
+    tool: Option<&str>,
 ) -> Result<(), String> {
     send_prompt_to_tmux(runtime, window_id, prompt)?;
-    runtime.submit_prompt(window_id, prompt)
+    match prompt_submit_mode_for_tool(tool) {
+        PromptSubmitMode::DirectShell => runtime.send_carriage_return(window_id),
+        PromptSubmitMode::AgentComposer => runtime.submit_prompt(window_id, prompt),
+    }
 }
 
 fn flush_tmux_text(
@@ -2427,9 +2464,37 @@ pub(super) async fn deliver_prompt_to_tmux_async(
     prompt: &str,
     timeout: Duration,
 ) -> Result<(), String> {
+    deliver_prompt_to_tmux_async_for_tool(window_id, prompt, timeout, None).await
+}
+
+pub(super) async fn deliver_prompt_to_tmux_async_for_tool(
+    window_id: &str,
+    prompt: &str,
+    timeout: Duration,
+    tool: Option<&str>,
+) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
-    wait_for_prompt_submit_async(window_id, prompt, deadline).await
+    match prompt_submit_mode_for_tool(tool) {
+        PromptSubmitMode::DirectShell => run_tmux_argv_with_timeout_async(
+            send_carriage_return_argv(window_id),
+            format!("tmux send carriage return failed for {window_id}"),
+            remaining_until(deadline)?,
+        )
+        .await
+        .map(|_| ()),
+        PromptSubmitMode::AgentComposer => {
+            wait_for_prompt_submit_async(window_id, prompt, deadline).await
+        }
+    }
+}
+
+fn prompt_submit_mode_for_tool(tool: Option<&str>) -> PromptSubmitMode {
+    if tool.is_some_and(|tool| tool.trim() == "shell") {
+        PromptSubmitMode::DirectShell
+    } else {
+        PromptSubmitMode::AgentComposer
+    }
 }
 
 async fn send_prompt_to_tmux_async(
@@ -2962,6 +3027,68 @@ fn object_value(value: Value) -> Map<String, Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct FakeAgentInputRuntime {
+        text_sends: Vec<String>,
+        key_sends: Vec<String>,
+        carriage_returns: usize,
+        submit_prompts: Vec<String>,
+    }
+
+    impl AgentOutputCaptureRuntime for FakeAgentInputRuntime {
+        fn capture_pane(
+            &mut self,
+            _window_id: &str,
+            _options: CapturePaneOptions,
+        ) -> Result<String, String> {
+            Ok(String::new())
+        }
+
+        fn send_text(&mut self, _window_id: &str, text: &str) -> Result<(), String> {
+            self.text_sends.push(text.to_owned());
+            Ok(())
+        }
+
+        fn send_key(&mut self, _window_id: &str, key: &str) -> Result<(), String> {
+            self.key_sends.push(key.to_owned());
+            Ok(())
+        }
+
+        fn send_carriage_return(&mut self, _window_id: &str) -> Result<(), String> {
+            self.carriage_returns += 1;
+            Ok(())
+        }
+
+        fn submit_prompt(&mut self, _window_id: &str, draft: &str) -> Result<(), String> {
+            self.submit_prompts.push(draft.to_owned());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn shell_prompt_delivery_submits_directly_without_composer_wait() {
+        let mut runtime = FakeAgentInputRuntime::default();
+
+        deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", "echo hi", Some("shell"))
+            .expect("shell delivery");
+
+        assert_eq!(runtime.text_sends, vec!["echo hi"]);
+        assert_eq!(runtime.carriage_returns, 1);
+        assert!(runtime.submit_prompts.is_empty());
+    }
+
+    #[test]
+    fn agent_prompt_delivery_keeps_composer_submit_verification() {
+        let mut runtime = FakeAgentInputRuntime::default();
+
+        deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", "hello agent", Some("codex"))
+            .expect("agent delivery");
+
+        assert_eq!(runtime.text_sends, vec!["hello agent"]);
+        assert_eq!(runtime.carriage_returns, 0);
+        assert_eq!(runtime.submit_prompts, vec!["hello agent"]);
+    }
 
     struct FakeAsyncPromptSubmitRuntime {
         current: bool,

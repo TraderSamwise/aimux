@@ -63,19 +63,22 @@ pub fn metadata_text_route(
     let project_root = runtime.resolve_project_root(project);
     match parsed {
         MetadataCliResult::Endpoint => {
-            if let Err(error) = runtime.ensure_project(&project_root) {
-                return text_error(502, format!("Error: {error}"));
-            }
-            match runtime.metadata_endpoint(&project_root) {
-                Some(endpoint) => DaemonRouteResponse::text(
-                    200,
-                    format!("http://{}:{}\n", endpoint.host, endpoint.port),
-                ),
-                None => text_error(
-                    503,
-                    format!("Error: project service unavailable for {project_root}"),
-                ),
-            }
+            let endpoint = match runtime.metadata_endpoint(&project_root) {
+                Some(endpoint) => endpoint,
+                None => {
+                    if let Err(error) = runtime.ensure_project(&project_root) {
+                        return text_error(502, format!("Error: {error}"));
+                    }
+                    let Some(endpoint) = runtime.metadata_endpoint(&project_root) else {
+                        return text_error(
+                            503,
+                            format!("Error: project service unavailable for {project_root}"),
+                        );
+                    };
+                    endpoint
+                }
+            };
+            DaemonRouteResponse::text(200, format!("http://{}:{}\n", endpoint.host, endpoint.port))
         }
         MetadataCliResult::Post { route_path, body } => {
             match runtime.post_project_service_json(&project_root, &route_path, body) {

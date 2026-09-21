@@ -15,8 +15,9 @@ use crate::backlog_metrics::{
 use crate::debug_logging::{LogLevel, log_at};
 
 use super::agent_output::{
-    AgentOutputCaptureRuntime, deliver_prompt_to_tmux, deliver_prompt_to_tmux_async,
-    resolve_live_window_id, tmux_agent_input_window_activity_async,
+    AgentOutputCaptureRuntime, LiveSessionTarget, deliver_prompt_to_tmux_async_for_tool,
+    deliver_prompt_to_tmux_for_tool, resolve_live_session_target,
+    tmux_agent_input_window_activity_async,
 };
 use super::operation_failures::{
     OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
@@ -101,7 +102,7 @@ struct AgentInputDeliveryState {
 }
 
 enum QueuedDeliveryTarget {
-    Deliverable(String),
+    Deliverable(LiveSessionTarget),
     Blocked(String),
 }
 
@@ -364,8 +365,8 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             remaining.extend(ready);
             break;
         }
-        let window_id = match resolve_queued_delivery_target(context, &pending) {
-            QueuedDeliveryTarget::Deliverable(window_id) => window_id,
+        let target = match resolve_queued_delivery_target(context, &pending) {
+            QueuedDeliveryTarget::Deliverable(target) => target,
             QueuedDeliveryTarget::Blocked(reason) => {
                 record_agent_input_delivery_failure(
                     context,
@@ -378,7 +379,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             }
         };
         let decision = {
-            let activity = runtime.agent_input_window_activity(&window_id);
+            let activity = runtime.agent_input_window_activity(&target.window_id);
             decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
         };
         match decision {
@@ -395,7 +396,12 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             }
             AgentInputDeliveryDecision::DeliverNow { reason } => {
                 delivery_attempts += 1;
-                match deliver_prompt_to_tmux(runtime, &window_id, &pending.prompt) {
+                match deliver_prompt_to_tmux_for_tool(
+                    runtime,
+                    &target.window_id,
+                    &pending.prompt,
+                    target.tool.as_deref(),
+                ) {
                     Ok(()) => {
                         clear_agent_input_delivery_failure(context, &pending.session_id);
                         log_at(
@@ -404,7 +410,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
                             "agent-input-delivery",
                             Some(json!({
                                 "sessionId": pending.session_id,
-                                "windowId": window_id,
+                                "windowId": target.window_id,
                                 "reason": reason,
                             })),
                         );
@@ -506,8 +512,8 @@ pub async fn run_pending_agent_input_deliveries_async(
             remaining.extend(ready);
             break;
         }
-        let window_id = match resolve_queued_delivery_target(context, &pending) {
-            QueuedDeliveryTarget::Deliverable(window_id) => window_id,
+        let target = match resolve_queued_delivery_target(context, &pending) {
+            QueuedDeliveryTarget::Deliverable(target) => target,
             QueuedDeliveryTarget::Blocked(reason) => {
                 record_agent_input_delivery_failure(
                     context,
@@ -521,8 +527,11 @@ pub async fn run_pending_agent_input_deliveries_async(
             }
         };
         let decision = {
-            let activity =
-                tmux_agent_input_window_activity_async(&window_id, DELIVERY_ACTIVITY_TIMEOUT).await;
+            let activity = tmux_agent_input_window_activity_async(
+                &target.window_id,
+                DELIVERY_ACTIVITY_TIMEOUT,
+            )
+            .await;
             decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
         };
         match decision {
@@ -540,10 +549,11 @@ pub async fn run_pending_agent_input_deliveries_async(
             }
             AgentInputDeliveryDecision::DeliverNow { reason } => {
                 delivery_attempts += 1;
-                match deliver_prompt_to_tmux_async(
-                    &window_id,
+                match deliver_prompt_to_tmux_async_for_tool(
+                    &target.window_id,
                     &pending.prompt,
                     DELIVERY_SUBMIT_TIMEOUT,
+                    target.tool.as_deref(),
                 )
                 .await
                 {
@@ -555,7 +565,7 @@ pub async fn run_pending_agent_input_deliveries_async(
                             "agent-input-delivery",
                             Some(json!({
                                 "sessionId": pending.session_id,
-                                "windowId": window_id,
+                                "windowId": target.window_id,
                                 "reason": reason,
                             })),
                         );
@@ -649,8 +659,8 @@ fn resolve_queued_delivery_target(
     context: &ProjectServiceRequestContext,
     pending: &PendingAgentInputDelivery,
 ) -> QueuedDeliveryTarget {
-    match resolve_live_window_id(context, &pending.session_id) {
-        Ok(Some(window_id)) => QueuedDeliveryTarget::Deliverable(window_id),
+    match resolve_live_session_target(context, &pending.session_id) {
+        Ok(Some(target)) => QueuedDeliveryTarget::Deliverable(target),
         Ok(None) => QueuedDeliveryTarget::Blocked(format!(
             "Kept queued input for {} because runtime topology has no live tmux window for that session; refused stale queued tmux target {}",
             pending.session_id, pending.window_id

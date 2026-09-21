@@ -1866,7 +1866,14 @@ where
         }
         ("host", "status") => (
             CoreCliOperation::HostStatus,
-            command_action(default_call(CORE_COMMAND_NAMES.status, None)),
+            CoreCliAction::TextRoute {
+                path: project_text_path(
+                    CORE_API_ROUTES.host_status_text,
+                    &context.current_project_root,
+                    mode == CoreCliOutputMode::Json,
+                ),
+                body: None,
+            },
             CoreCliFallback::None,
         ),
         ("host", "agent-read") => {
@@ -2092,7 +2099,14 @@ where
         ),
         ("daemon", "projects") => (
             CoreCliOperation::DaemonProjects,
-            command_action(default_call(CORE_COMMAND_NAMES.projects_list, None)),
+            CoreCliAction::TextRoute {
+                path: if mode == CoreCliOutputMode::Json {
+                    format!("{}?json=1", CORE_API_ROUTES.daemon_projects_text)
+                } else {
+                    CORE_API_ROUTES.daemon_projects_text.to_owned()
+                },
+                body: None,
+            },
             CoreCliFallback::None,
         ),
         ("daemon", "project-ensure") => {
@@ -2352,7 +2366,14 @@ where
         }
         ("projects", "") | ("projects", "list") => (
             CoreCliOperation::ProjectsList,
-            command_action(default_call(CORE_COMMAND_NAMES.projects_list, None)),
+            CoreCliAction::TextRoute {
+                path: if mode == CoreCliOutputMode::Json {
+                    format!("{}?json=1", CORE_API_ROUTES.projects_list_text)
+                } else {
+                    CORE_API_ROUTES.projects_list_text.to_owned()
+                },
+                body: None,
+            },
             CoreCliFallback::None,
         ),
         ("projects", "remove" | "unregister") => {
