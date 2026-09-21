@@ -2641,6 +2641,7 @@ pub fn daemon_periodic_tasks(
                 global_expose_hot_snapshots,
             )),
             Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
+            Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
             Box::new(DaemonDiskMaintenanceTask::new()),
         ]
     }
@@ -2651,6 +2652,7 @@ pub fn daemon_periodic_tasks(
                 global_expose_hot_snapshots,
             )),
             Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
+            Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
             Box::new(DaemonDiskMaintenanceTask::new()),
         ];
         tasks.insert(1, Box::new(crate::remote::hosted_server::HostedPruneTask));
@@ -4295,6 +4297,26 @@ impl DaemonJobRouteRuntime for RealDaemonRuntime {
 
     fn job_path_resolver(&self) -> PathResolver {
         self.resolver.clone()
+    }
+
+    fn start_created_job(
+        &mut self,
+        store: &crate::jobs::JobStore,
+        record: crate::jobs::JobRecord,
+        spec: &crate::jobs::JobSpec,
+    ) -> Result<crate::jobs::JobRecord, crate::jobs::JobStoreError> {
+        let mut resolver = self.resolver.clone();
+        let mut tmux = crate::tmux::TmuxRuntimeManager::new();
+        crate::jobs::launch_job_in_tmux(store, &mut resolver, &mut tmux, &record, spec)
+    }
+
+    fn cancel_running_job(
+        &mut self,
+        store: &crate::jobs::JobStore,
+        record: &crate::jobs::JobRecord,
+    ) -> Result<crate::jobs::JobCancelReport, crate::jobs::JobStoreError> {
+        let mut tmux = crate::tmux::TmuxRuntimeManager::new();
+        crate::jobs::runner::cancel_running_job(store, &mut tmux, record)
     }
 }
 

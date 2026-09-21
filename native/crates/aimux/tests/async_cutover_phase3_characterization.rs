@@ -30,7 +30,7 @@ use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, save_metadata_state,
 };
-use aimux::jobs::JobStore;
+use aimux::jobs::{JobCancelReport, JobRecord, JobSpec, JobStatus, JobStore, JobStoreError};
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::AgentInputWindowActivity;
@@ -1015,6 +1015,33 @@ impl DaemonJobRouteRuntime for FakeRuntime {
         let root =
             std::env::temp_dir().join(format!("aimux-async-cutover-paths-{}", std::process::id()));
         PathResolver::new(&root, root.join("home"), None)
+    }
+
+    fn start_created_job(
+        &mut self,
+        _store: &JobStore,
+        record: JobRecord,
+        _spec: &JobSpec,
+    ) -> Result<JobRecord, JobStoreError> {
+        Ok(record)
+    }
+
+    fn cancel_running_job(
+        &mut self,
+        store: &JobStore,
+        record: &JobRecord,
+    ) -> Result<JobCancelReport, JobStoreError> {
+        store.finish(
+            &record.id,
+            JobStatus::Cancelled,
+            None,
+            "cancelled by SIGTERM",
+            Some("SIGTERM".to_owned()),
+        )?;
+        Ok(JobCancelReport {
+            signal: "SIGTERM".to_owned(),
+            pid: None,
+        })
     }
 }
 

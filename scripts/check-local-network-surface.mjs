@@ -220,6 +220,14 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     input: "repo paths/refs supplied by delivery checker",
   },
   {
+    path: "native/crates/aimux/src/jobs/runner.rs",
+    marker: "Command::new(tool)",
+    command: "job tool from JobRecord.tool",
+    argv: "single structured prompt argument built from the job skill plus private material args; no shell wrapper",
+    input:
+      "local-only daemon job route data already authenticated as local and stored in the private job material file",
+  },
+  {
     path: "native/crates/aimux/src/lifecycle_orphans.rs",
     marker: 'AsyncCommand::new("kill")',
     command: "kill",

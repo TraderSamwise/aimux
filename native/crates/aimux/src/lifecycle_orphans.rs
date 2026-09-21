@@ -773,6 +773,11 @@ fn wait_for_pid_exit(
     !runtime.is_pid_alive(pid)
 }
 
+pub fn wait_for_pid_exit_with(pid: i32, timeout: Duration) -> bool {
+    let mut runtime = SystemLifecycleOrphanRuntime::new();
+    wait_for_pid_exit(&mut runtime, pid, timeout)
+}
+
 fn list_live_tmux_pane_pids() -> Result<BTreeSet<i32>, String> {
     let output = tmux_command_from_env()
         .args(["list-panes", "-a", "-F", "#{pane_pid}"])
@@ -796,7 +801,7 @@ fn list_live_tmux_pane_pids() -> Result<BTreeSet<i32>, String> {
         .collect())
 }
 
-fn kill_pid(pid: i32, signal: &str) -> Result<(), String> {
+pub fn kill_pid(pid: i32, signal: &str) -> Result<(), String> {
     #[cfg(unix)]
     {
         let signal = match signal {

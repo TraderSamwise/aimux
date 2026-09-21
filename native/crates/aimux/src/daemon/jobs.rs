@@ -6,8 +6,9 @@ use crate::daemon::scheduler::{
     DaemonPeriodicTask, DaemonSchedulerContext, PeriodicTaskFuture, scheduler_now_ms,
 };
 use crate::jobs::{
-    CreateOrJoin, DEFAULT_JOB_RETENTION, JobAddress, JobEvent, JobListFilter, JobRecord, JobScope,
-    JobSpec, JobStatus, JobStore, JobStoreError, parse_job_address,
+    CancelOutcome, CreateOrJoin, DEFAULT_JOB_RETENTION, JobAddress, JobCancelReport, JobEvent,
+    JobListFilter, JobRecord, JobScope, JobSpec, JobStatus, JobStore, JobStoreError,
+    parse_job_address,
 };
 use crate::paths::PathResolver;
 use crate::project_service::event_streams::{encode_sse_event, encode_sse_keepalive};
@@ -29,6 +30,19 @@ pub trait DaemonJobRouteRuntime {
     fn job_store(&self) -> JobStore;
 
     fn job_path_resolver(&self) -> PathResolver;
+
+    fn start_created_job(
+        &mut self,
+        _store: &JobStore,
+        record: JobRecord,
+        _spec: &JobSpec,
+    ) -> Result<JobRecord, JobStoreError>;
+
+    fn cancel_running_job(
+        &mut self,
+        _store: &JobStore,
+        _record: &JobRecord,
+    ) -> Result<JobCancelReport, JobStoreError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,14 +128,24 @@ pub fn route_jobs_json_request(
             }
         };
         return Some(match store.create_or_join(&spec) {
-            Ok((record, outcome)) => DaemonRouteResponse::json(
-                200,
-                json!({
-                    "ok": true,
-                    "job": record,
-                    "outcome": create_or_join_name(outcome),
-                }),
-            ),
+            Ok((record, outcome)) => {
+                let record = if outcome == CreateOrJoin::Created {
+                    match runtime.start_created_job(&store, record, &spec) {
+                        Ok(record) => record,
+                        Err(error) => return Some(store_error_response(error)),
+                    }
+                } else {
+                    record
+                };
+                DaemonRouteResponse::json(
+                    200,
+                    json!({
+                        "ok": true,
+                        "job": record,
+                        "outcome": create_or_join_name(outcome),
+                    }),
+                )
+            }
             Err(error) => store_error_response(error),
         });
     }
@@ -191,14 +215,26 @@ pub fn route_jobs_json_request(
             Err(error) => return Some(store_error_response(error)),
         };
         return Some(match store.cancel(&resolved.record.id) {
-            Ok((record, outcome)) => DaemonRouteResponse::json(
-                200,
-                json!({
-                    "ok": true,
-                    "job": record,
-                    "outcome": outcome,
-                }),
-            ),
+            Ok((record, outcome)) => {
+                let cancel = if outcome == CancelOutcome::CancelRequested {
+                    match runtime.cancel_running_job(&store, &record) {
+                        Ok(report) => Some(report),
+                        Err(error) => return Some(store_error_response(error)),
+                    }
+                } else {
+                    None
+                };
+                let job = store.load(&record.id).unwrap_or(record);
+                DaemonRouteResponse::json(
+                    200,
+                    json!({
+                        "ok": true,
+                        "job": job,
+                        "outcome": outcome,
+                        "cancel": cancel,
+                    }),
+                )
+            }
             Err(error) => store_error_response(error),
         });
     }
@@ -471,6 +507,32 @@ impl DaemonPeriodicTask for DaemonJobsPruneTask {
             let store = JobStore::new(context.resolver.jobs_dir());
             store
                 .prune(DEFAULT_JOB_RETENTION, scheduler_now_ms().max(0) as u128)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
+pub struct DaemonJobsReconcileTask;
+
+impl DaemonPeriodicTask for DaemonJobsReconcileTask {
+    fn name(&self) -> &str {
+        "daemon-jobs-reconcile"
+    }
+
+    fn interval_ms(&self) -> i64 {
+        1_000
+    }
+
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
+    fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            let store = JobStore::new(context.resolver.jobs_dir());
+            let mut tmux = crate::tmux::TmuxRuntimeManager::new();
+            crate::jobs::reconcile_running_jobs(&store, &mut tmux)
                 .map(|_| ())
                 .map_err(|error| error.to_string())
         })

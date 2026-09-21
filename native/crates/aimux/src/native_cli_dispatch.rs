@@ -146,6 +146,7 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "__tmux-statusline-internal"
             | "__tmux-open-hyperlink-internal"
             | "__project-service-internal"
+            | "__job-exec-internal"
     ) || remote_control_command_word(word)
 }
 

@@ -127,6 +127,8 @@ enum Command {
         #[arg(long)]
         pid: i32,
     },
+    #[command(name = "__job-exec-internal", hide = true)]
+    JobExecInternal { id: String },
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -252,6 +254,10 @@ fn main() -> Result<ExitCode> {
             },
         );
     }
+    if let Command::JobExecInternal { id } = cli.command.clone() {
+        return aimux::jobs::run_job_exec(&id)
+            .map_err(|error| anyhow::anyhow!("job exec failed: {error}"));
+    }
     match cli.command {
         Command::BuildInfo { json } => print_value(aimux::build_info(), json),
         Command::Daemon {
@@ -332,6 +338,7 @@ fn main() -> Result<ExitCode> {
         Command::TmuxClientIsMoshInternal { .. } => {
             unreachable!("handled before native command match")
         }
+        Command::JobExecInternal { .. } => unreachable!("handled before native command match"),
     }?;
     Ok(ExitCode::SUCCESS)
 }
@@ -351,6 +358,7 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, ..] if command == "__tmux-statusline-internal" => true,
         [command, ..] if command == "__tmux-open-hyperlink-internal" => true,
         [command, ..] if command == "__tmux-client-is-mosh-internal" => true,
+        [command, ..] if command == "__job-exec-internal" => true,
         _ => false,
     }
 }

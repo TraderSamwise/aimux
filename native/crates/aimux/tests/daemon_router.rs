@@ -31,7 +31,7 @@ use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
 use aimux::debug_logging::{
     LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
 };
-use aimux::jobs::JobStore;
+use aimux::jobs::{JobCancelReport, JobRecord, JobSpec, JobStatus, JobStore, JobStoreError};
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
 use aimux::remote::daemon_auth_text::{
@@ -836,6 +836,33 @@ impl DaemonJobRouteRuntime for FakeRouterRuntime {
         let root =
             std::env::temp_dir().join(format!("aimux-daemon-router-paths-{}", std::process::id()));
         PathResolver::new(&root, root.join("home"), None)
+    }
+
+    fn start_created_job(
+        &mut self,
+        _store: &JobStore,
+        record: JobRecord,
+        _spec: &JobSpec,
+    ) -> Result<JobRecord, JobStoreError> {
+        Ok(record)
+    }
+
+    fn cancel_running_job(
+        &mut self,
+        store: &JobStore,
+        record: &JobRecord,
+    ) -> Result<JobCancelReport, JobStoreError> {
+        store.finish(
+            &record.id,
+            JobStatus::Cancelled,
+            None,
+            "cancelled by SIGTERM",
+            Some("SIGTERM".to_owned()),
+        )?;
+        Ok(JobCancelReport {
+            signal: "SIGTERM".to_owned(),
+            pid: None,
+        })
     }
 }
 

@@ -9,7 +9,10 @@ use aimux::daemon::jobs::{
 use aimux::daemon::listener::parse_daemon_http_request;
 use aimux::daemon::server::DaemonHttpRequest;
 use aimux::daemon::server::handle_daemon_http_request;
-use aimux::jobs::{JobEventInput, JobScope, JobStatus, JobStore};
+use aimux::jobs::{
+    JobCancelReport, JobEventInput, JobRecord, JobScope, JobSpec, JobStatus, JobStore,
+    JobStoreError, JobTmuxTarget,
+};
 use aimux::paths::{PathResolver, ProjectEntry, ProjectsRegistry, compute_project_id};
 use aimux::remote::daemon_relay::build_request_head;
 use aimux::request_actor::RELAY_FORWARDED_HEADER;
@@ -35,6 +38,42 @@ impl DaemonJobRouteRuntime for FakeJobRuntime {
 
     fn job_path_resolver(&self) -> PathResolver {
         self.resolver.clone()
+    }
+
+    fn start_created_job(
+        &mut self,
+        store: &JobStore,
+        record: JobRecord,
+        _spec: &JobSpec,
+    ) -> Result<JobRecord, JobStoreError> {
+        store.mark_running(
+            &record.id,
+            JobTmuxTarget {
+                session_name: "aimux-test".to_owned(),
+                window_id: format!("@{}", record.id.len()),
+                window_index: 1,
+                window_name: "job-test".to_owned(),
+            },
+            store.output_tap_path(&record.id).to_string_lossy(),
+        )
+    }
+
+    fn cancel_running_job(
+        &mut self,
+        store: &JobStore,
+        record: &JobRecord,
+    ) -> Result<JobCancelReport, JobStoreError> {
+        store.finish(
+            &record.id,
+            JobStatus::Cancelled,
+            None,
+            "cancelled by SIGTERM",
+            Some("SIGTERM".to_owned()),
+        )?;
+        Ok(JobCancelReport {
+            signal: "SIGTERM".to_owned(),
+            pid: Some(1234),
+        })
     }
 }
 

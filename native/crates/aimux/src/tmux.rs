@@ -395,6 +395,42 @@ impl TmuxRuntimeManager {
         Ok(session)
     }
 
+    pub fn ensure_named_idle_session(
+        &mut self,
+        session_name: &str,
+        cwd: impl AsRef<Path>,
+    ) -> Result<String, String> {
+        let cwd = cwd.as_ref().to_string_lossy().into_owned();
+        if !self.has_session(session_name) {
+            let argv = vec![
+                "new-session".to_owned(),
+                "-d".to_owned(),
+                "-s".to_owned(),
+                session_name.to_owned(),
+                "-c".to_owned(),
+                cwd.clone(),
+                "-n".to_owned(),
+                "jobs".to_owned(),
+                "sh".to_owned(),
+                "-lc".to_owned(),
+                "tail -f /dev/null".to_owned(),
+            ];
+            self.exec_owned(
+                argv,
+                Some(TmuxExecOptions {
+                    cwd: Some(cwd),
+                    ..TmuxExecOptions::default()
+                }),
+            )?;
+            if !self.wait_for_session(session_name, Duration::from_millis(500)) {
+                return Err(format!(
+                    "tmux session {session_name} was not visible after creation"
+                ));
+            }
+        }
+        Ok(session_name.to_owned())
+    }
+
     fn wait_for_session(&mut self, session_name: &str, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
@@ -513,6 +549,11 @@ impl TmuxRuntimeManager {
     pub fn is_window_active(&mut self, target: &TmuxTarget) -> bool {
         self.display_message_raw("#{window_active}", Some(&target.window_id))
             .is_ok_and(|value| value.trim() == "1")
+    }
+
+    pub fn pane_pid(&mut self, target: &TmuxTarget) -> Result<Option<i32>, String> {
+        let raw = self.display_message_raw("#{pane_pid}", Some(&target.window_id))?;
+        Ok(raw.trim().parse::<i32>().ok())
     }
 
     pub fn create_window(

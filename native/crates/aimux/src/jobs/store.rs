@@ -69,8 +69,29 @@ pub struct JobRecord {
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
     pub status: JobStatus,
+    #[serde(default, rename = "tmuxTarget")]
+    pub tmux_target: Option<JobTmuxTarget>,
+    #[serde(default, rename = "outputTapPath")]
+    pub output_tap_path: Option<String>,
+    #[serde(default, rename = "outputOffset")]
+    pub output_offset: u64,
+    #[serde(default, rename = "exitCode")]
+    pub exit_code: Option<i32>,
+    #[serde(default, rename = "terminalReason")]
+    pub terminal_reason: Option<String>,
+    #[serde(default, rename = "cancelSignal")]
+    pub cancel_signal: Option<String>,
     pub created_at_ms: u128,
     pub updated_at_ms: u128,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobTmuxTarget {
+    pub session_name: String,
+    pub window_id: String,
+    pub window_index: i64,
+    pub window_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +285,12 @@ impl JobStore {
             cwd: spec.cwd.as_deref().map(sanitize_log_string),
             env: sanitize_env_map(&spec.env),
             status: JobStatus::Queued,
+            tmux_target: None,
+            output_tap_path: None,
+            output_offset: 0,
+            exit_code: None,
+            terminal_reason: None,
+            cancel_signal: None,
             created_at_ms: now,
             updated_at_ms: now,
         }
@@ -340,6 +367,70 @@ impl JobStore {
             });
         }
         record.status = status;
+        record.updated_at_ms = now_ms();
+        self.write_record(&record)?;
+        Ok(record)
+    }
+
+    pub fn mark_running(
+        &self,
+        id: &str,
+        target: JobTmuxTarget,
+        output_tap_path: impl Into<String>,
+    ) -> Result<JobRecord> {
+        let mut record = self.load(id)?;
+        if !status_transition_allowed(&record.status, &JobStatus::Running) {
+            return Err(JobStoreError::InvalidStatusTransition {
+                id: id.to_owned(),
+                from: record.status,
+                to: JobStatus::Running,
+            });
+        }
+        record.status = JobStatus::Running;
+        record.tmux_target = Some(target);
+        record.output_tap_path = Some(output_tap_path.into());
+        record.output_offset = 0;
+        record.updated_at_ms = now_ms();
+        self.write_record(&record)?;
+        Ok(record)
+    }
+
+    pub fn set_output_offset(&self, id: &str, output_offset: u64) -> Result<JobRecord> {
+        let mut record = self.load(id)?;
+        record.output_offset = output_offset;
+        record.updated_at_ms = now_ms();
+        self.write_record(&record)?;
+        Ok(record)
+    }
+
+    pub fn finish(
+        &self,
+        id: &str,
+        status: JobStatus,
+        exit_code: Option<i32>,
+        reason: impl Into<String>,
+        cancel_signal: Option<String>,
+    ) -> Result<JobRecord> {
+        let mut record = self.load(id)?;
+        if !status.is_terminal() {
+            return Err(JobStoreError::InvalidSpec(
+                "job finish requires a terminal status".to_owned(),
+            ));
+        }
+        if record.status.is_terminal() {
+            return Ok(record);
+        }
+        if !status_transition_allowed(&record.status, &status) {
+            return Err(JobStoreError::InvalidStatusTransition {
+                id: id.to_owned(),
+                from: record.status,
+                to: status,
+            });
+        }
+        record.status = status;
+        record.exit_code = exit_code;
+        record.terminal_reason = Some(sanitize_log_string(&reason.into()));
+        record.cancel_signal = cancel_signal.map(|signal| sanitize_log_string(&signal));
         record.updated_at_ms = now_ms();
         self.write_record(&record)?;
         Ok(record)
@@ -691,6 +782,10 @@ impl JobStore {
     fn events_path(&self, id: &str) -> PathBuf {
         self.record_dir(id).join("events.ndjson")
     }
+
+    pub fn output_tap_path(&self, id: &str) -> PathBuf {
+        self.record_dir(id).join("output.tap")
+    }
 }
 
 pub fn prune_jobs(retention: JobRetention, now_ms: u128) -> Result<PruneReport> {
@@ -779,7 +874,12 @@ fn status_transition_allowed(from: &JobStatus, to: &JobStatus) -> bool {
     }
     match from {
         JobStatus::Queued => true,
-        JobStatus::Running => matches!(to, JobStatus::Succeeded | JobStatus::Failed),
+        JobStatus::Running => {
+            matches!(
+                to,
+                JobStatus::Succeeded | JobStatus::Failed | JobStatus::Cancelled
+            )
+        }
         JobStatus::Succeeded | JobStatus::Failed | JobStatus::Cancelled => false,
     }
 }

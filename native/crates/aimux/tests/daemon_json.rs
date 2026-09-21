@@ -11,7 +11,7 @@ use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
-use aimux::jobs::JobStore;
+use aimux::jobs::{JobCancelReport, JobRecord, JobSpec, JobStatus, JobStore, JobStoreError};
 use aimux::notification_delivery_guard::{
     TEST_NOTIFICATION_SOURCE_FIELD, TEST_NOTIFICATION_SOURCE_VALUE,
 };
@@ -217,6 +217,33 @@ impl DaemonJobRouteRuntime for FakeJsonRuntime {
         let root =
             std::env::temp_dir().join(format!("aimux-daemon-json-paths-{}", std::process::id()));
         PathResolver::new(&root, root.join("home"), None)
+    }
+
+    fn start_created_job(
+        &mut self,
+        _store: &JobStore,
+        record: JobRecord,
+        _spec: &JobSpec,
+    ) -> Result<JobRecord, JobStoreError> {
+        Ok(record)
+    }
+
+    fn cancel_running_job(
+        &mut self,
+        store: &JobStore,
+        record: &JobRecord,
+    ) -> Result<JobCancelReport, JobStoreError> {
+        store.finish(
+            &record.id,
+            JobStatus::Cancelled,
+            None,
+            "cancelled by SIGTERM",
+            Some("SIGTERM".to_owned()),
+        )?;
+        Ok(JobCancelReport {
+            signal: "SIGTERM".to_owned(),
+            pid: None,
+        })
     }
 }
 
