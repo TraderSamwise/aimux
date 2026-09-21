@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -45,6 +46,8 @@ pub struct JobSpec {
     pub skill: String,
     pub tool: Option<String>,
     pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,9 +58,18 @@ pub struct JobRecord {
     pub skill: String,
     pub tool: Option<String>,
     pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: BTreeMap<String, String>,
     pub status: JobStatus,
     pub created_at_ms: u128,
     pub updated_at_ms: u128,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobMaterial {
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,6 +108,7 @@ pub const DEFAULT_JOB_RETENTION: JobRetention = JobRetention {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PruneReport {
     pub removed_jobs: usize,
+    pub removed_orphan_indexes: usize,
     pub truncated_event_logs: usize,
     pub removed_events: usize,
 }
@@ -163,43 +176,69 @@ impl JobStore {
 
     pub fn create_or_join(&self, spec: &JobSpec) -> Result<(JobRecord, CreateOrJoin)> {
         let key = idempotency_key(spec)?;
-        let job_id = job_id_for_key(&key);
         self.ensure_dirs()?;
         let entry_path = self.index_path(&key);
-        let entry = JobIndexEntry {
-            job_id: job_id.clone(),
-            idempotency_key: key.clone(),
-        };
-        match create_index_entry(&entry_path, &entry) {
-            Ok(()) => {
-                let now = now_ms();
-                let record = JobRecord {
-                    id: job_id,
-                    idempotency_key: key,
-                    scope: spec.scope.clone(),
-                    skill: sanitize_log_string(&spec.skill),
-                    tool: spec.tool.as_deref().map(sanitize_log_string),
-                    args: spec
-                        .args
-                        .iter()
-                        .map(|arg| sanitize_log_string(arg))
-                        .collect(),
-                    status: JobStatus::Queued,
-                    created_at_ms: now,
-                    updated_at_ms: now,
-                };
-                if let Err(error) = self.write_record(&record) {
-                    let _ = fs::remove_file(&entry_path);
-                    return Err(error);
+        for _ in 0..10 {
+            let job_id = new_job_id(&key);
+            let entry = JobIndexEntry {
+                job_id: job_id.clone(),
+                idempotency_key: key.clone(),
+            };
+            match create_index_entry(&entry_path, &entry) {
+                Ok(()) => {
+                    let now = now_ms();
+                    let record = self.record_for_spec(spec, &key, &job_id, now);
+                    if let Err(error) = self.write_material(&record.id, spec) {
+                        let _ = fs::remove_file(&entry_path);
+                        let _ = fs::remove_dir_all(self.record_dir(&record.id));
+                        return Err(error);
+                    }
+                    if let Err(error) = self.write_record(&record) {
+                        let _ = fs::remove_file(&entry_path);
+                        let _ = fs::remove_dir_all(self.record_dir(&record.id));
+                        return Err(error);
+                    }
+                    return Ok((record, CreateOrJoin::Created));
                 }
-                Ok((record, CreateOrJoin::Created))
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    let entry = self.read_joined_index_entry(&entry_path)?;
+                    match self.load_joined_record(&entry.job_id) {
+                        Ok(record) if !record.status.is_terminal() => {
+                            return Ok((record, CreateOrJoin::Joined));
+                        }
+                        Ok(_) | Err(JobStoreError::MissingJob { .. }) => {
+                            self.reclaim_index_entry(&entry_path, &entry)?;
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                Err(error) => return Err(io_error(&entry_path, error)),
             }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let entry = self.read_joined_index_entry(&entry_path)?;
-                let record = self.load_joined_record(&entry.job_id)?;
-                Ok((record, CreateOrJoin::Joined))
-            }
-            Err(error) => Err(io_error(&entry_path, error)),
+        }
+        Err(JobStoreError::StoreUnavailable {
+            path: entry_path,
+            error: "job index was repeatedly reclaimed while creating job".to_owned(),
+        })
+    }
+
+    fn record_for_spec(&self, spec: &JobSpec, key: &str, job_id: &str, now: u128) -> JobRecord {
+        JobRecord {
+            id: job_id.to_owned(),
+            idempotency_key: key.to_owned(),
+            scope: spec.scope.clone(),
+            skill: sanitize_log_string(&spec.skill),
+            tool: spec.tool.as_deref().map(sanitize_log_string),
+            args: spec
+                .args
+                .iter()
+                .map(|arg| sanitize_log_string(arg))
+                .collect(),
+            cwd: spec.cwd.as_deref().map(sanitize_log_string),
+            env: sanitize_env_map(&spec.env),
+            status: JobStatus::Queued,
+            created_at_ms: now,
+            updated_at_ms: now,
         }
     }
 
@@ -212,6 +251,24 @@ impl JobStore {
             }),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 Err(JobStoreError::MissingJob { id: id.to_owned() })
+            }
+            Err(error) => Err(io_error(&path, error)),
+        }
+    }
+
+    pub fn load_material(&self, id: &str) -> Result<JobMaterial> {
+        self.load(id)?;
+        let path = self.material_path(id);
+        match fs::read_to_string(&path) {
+            Ok(raw) => serde_json::from_str(&raw).map_err(|error| JobStoreError::CorruptStore {
+                path,
+                error: error.to_string(),
+            }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                Err(JobStoreError::CorruptStore {
+                    path,
+                    error: "job execution material is missing".to_owned(),
+                })
             }
             Err(error) => Err(io_error(&path, error)),
         }
@@ -269,7 +326,11 @@ impl JobStore {
                         continue;
                     }
                     let id = entry.file_name().to_string_lossy().into_owned();
-                    let record = self.load(&id)?;
+                    let record = match self.load(&id) {
+                        Ok(record) => record,
+                        Err(JobStoreError::MissingJob { .. }) => continue,
+                        Err(error) => return Err(error),
+                    };
                     if filter
                         .scope
                         .as_ref()
@@ -298,12 +359,16 @@ impl JobStore {
         let mut report = PruneReport::default();
         let records = self.list(JobListFilter::default())?;
         for record in &records {
+            if !record.status.is_terminal() {
+                continue;
+            }
             let (truncated, removed) = self.prune_events(record, retention.max_events_per_job)?;
             if truncated {
                 report.truncated_event_logs += 1;
                 report.removed_events += removed;
             }
         }
+        report.removed_orphan_indexes += self.prune_orphan_index_entries()?;
 
         let cutoff = now_ms.saturating_sub(retention.terminal_job_retention_ms);
         let mut removable = records
@@ -344,6 +409,26 @@ impl JobStore {
         })
     }
 
+    fn reclaim_index_entry(&self, path: &Path, expected: &JobIndexEntry) -> Result<()> {
+        let _lock =
+            acquire_state_update_lock(path).map_err(|error| JobStoreError::StoreUnavailable {
+                path: path.to_path_buf(),
+                error,
+            })?;
+        match self.read_index_entry(path) {
+            Ok(current) if current.job_id == expected.job_id => fs::remove_file(path)
+                .map_err(|error| io_error(path, error))
+                .map(|_| ()),
+            Ok(_) => Ok(()),
+            Err(JobStoreError::StoreUnavailable { path: _, error })
+                if error.contains("No such file") || error.contains("not found") =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     fn read_joined_index_entry(&self, path: &Path) -> Result<JobIndexEntry> {
         let mut last_error = None;
         for _ in 0..50 {
@@ -378,9 +463,13 @@ impl JobStore {
             Err(error) => return Err(io_error(&path, error)),
         }
         let mut events = Vec::new();
-        for (index, line) in raw.lines().enumerate() {
+        let lines = raw.lines().collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
             if line.trim().is_empty() {
                 continue;
+            }
+            if index == lines.len().saturating_sub(1) && !raw.ends_with('\n') {
+                break;
             }
             let event = serde_json::from_str::<JobEvent>(line).map_err(|error| {
                 JobStoreError::CorruptStore {
@@ -392,16 +481,26 @@ impl JobStore {
                 events.push(event);
             }
         }
-        if events.is_empty() {
+        if events.is_empty() && seq == 0 {
             return Err(JobStoreError::EmptyEventLog { id: id.to_owned() });
         }
         Ok(events)
     }
 
     fn prune_events(&self, record: &JobRecord, max_events: usize) -> Result<(bool, usize)> {
+        if !record.status.is_terminal() {
+            return Ok((false, 0));
+        }
         if max_events == 0 {
             return Ok((false, 0));
         }
+        let events_path = self.events_path(&record.id);
+        let _lock = acquire_state_update_lock(&events_path).map_err(|error| {
+            JobStoreError::StoreUnavailable {
+                path: events_path.clone(),
+                error,
+            }
+        })?;
         let all_events = match self.read_events_from_unlocked(&record.id, 0) {
             Ok(events) => events,
             Err(JobStoreError::EmptyEventLog { .. }) => return Ok((false, 0)),
@@ -422,23 +521,50 @@ impl JobStore {
             text.push_str(&line);
             text.push('\n');
         }
-        atomic_write(self.events_path(&record.id), text)
-            .map_err(|error| io_error(&self.events_path(&record.id), error))?;
+        atomic_write(&events_path, text).map_err(|error| io_error(&events_path, error))?;
         Ok((true, removed))
     }
 
-    fn remove_record(&self, record: &JobRecord) -> Result<()> {
-        let record_dir = self.record_dir(&record.id);
-        match fs::remove_dir_all(&record_dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io_error(&record_dir, error)),
+    fn prune_orphan_index_entries(&self) -> Result<usize> {
+        let index_dir = self.index_dir();
+        let entries = match fs::read_dir(&index_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(io_error(&index_dir, error)),
+        };
+        let mut removed = 0;
+        for entry in entries {
+            let entry = entry.map_err(|error| io_error(&index_dir, error))?;
+            if !entry
+                .file_type()
+                .map_err(|error| io_error(&entry.path(), error))?
+                .is_file()
+            {
+                continue;
+            }
+            let path = entry.path();
+            let index = self.read_index_entry(&path)?;
+            if self.status_path(&index.job_id).exists() {
+                continue;
+            }
+            self.reclaim_index_entry(&path, &index)?;
+            removed += 1;
         }
+        Ok(removed)
+    }
+
+    fn remove_record(&self, record: &JobRecord) -> Result<()> {
         let index_path = self.index_path(&record.idempotency_key);
         match fs::remove_file(&index_path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(io_error(&index_path, error)),
+        }
+        let record_dir = self.record_dir(&record.id);
+        match fs::remove_dir_all(&record_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error(&record_dir, error)),
         }
         Ok(())
     }
@@ -446,6 +572,16 @@ impl JobStore {
     fn write_record(&self, record: &JobRecord) -> Result<()> {
         let path = self.status_path(&record.id);
         write_json_atomic(&path, record).map_err(|error| io_error(&path, error))
+    }
+
+    fn write_material(&self, id: &str, spec: &JobSpec) -> Result<()> {
+        let path = self.material_path(id);
+        let material = JobMaterial {
+            args: spec.args.clone(),
+            cwd: spec.cwd.clone(),
+            env: spec.env.clone(),
+        };
+        write_json_atomic(&path, &material).map_err(|error| io_error(&path, error))
     }
 
     fn read_index_entry(&self, path: &Path) -> Result<JobIndexEntry> {
@@ -484,6 +620,10 @@ impl JobStore {
         self.record_dir(id).join("status.json")
     }
 
+    fn material_path(&self, id: &str) -> PathBuf {
+        self.record_dir(id).join("material.json")
+    }
+
     fn events_path(&self, id: &str) -> PathBuf {
         self.record_dir(id).join("events.ndjson")
     }
@@ -501,8 +641,11 @@ pub fn idempotency_key(spec: &JobSpec) -> Result<String> {
     }
     let identity = json!({
         "scope": spec.scope.identity_value(),
-        "skill": spec.skill,
-        "args": spec.args,
+        "skill": &spec.skill,
+        "tool": &spec.tool,
+        "args": &spec.args,
+        "cwd": &spec.cwd,
+        "env": &spec.env,
     });
     let raw = serde_json::to_vec(&identity).map_err(|error| {
         JobStoreError::InvalidSpec(format!("could not encode idempotency identity: {error}"))
@@ -512,8 +655,16 @@ pub fn idempotency_key(spec: &JobSpec) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn job_id_for_key(key: &str) -> String {
-    format!("job-{key}")
+static JOB_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn new_job_id(key: &str) -> String {
+    let sequence = JOB_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let prefix = &key[..16];
+    format!(
+        "job-{prefix}-{}-{}-{sequence}",
+        now_ms(),
+        std::process::id()
+    )
 }
 
 fn create_index_entry(path: &Path, entry: &JobIndexEntry) -> io::Result<()> {
@@ -547,11 +698,22 @@ fn append_jsonl(path: &Path, value: &impl Serialize) -> Result<()> {
     file.sync_all().map_err(|error| io_error(path, error))
 }
 
+fn sanitize_env_map(env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let sanitized = sanitize_log_value(&json!(env));
+    let Value::Object(fields) = sanitized else {
+        return BTreeMap::new();
+    };
+    fields
+        .into_iter()
+        .filter_map(|(key, value)| value.as_str().map(|value| (key, value.to_owned())))
+        .collect()
+}
+
 fn now_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis(),
+        Err(error) => error.duration().as_millis(),
+    }
 }
 
 fn io_error(path: &Path, error: io::Error) -> JobStoreError {
@@ -565,7 +727,10 @@ fn io_error(path: &Path, error: io::Error) -> JobStoreError {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::{Arc, Barrier};
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicBool, Ordering},
+    };
 
     fn store(label: &str) -> JobStore {
         let root = std::env::temp_dir().join(format!(
@@ -584,6 +749,8 @@ mod tests {
             skill: "review-pr".to_owned(),
             tool: Some("codex".to_owned()),
             args: vec![arg.to_owned()],
+            cwd: Some("/repo/main".to_owned()),
+            env: BTreeMap::new(),
         }
     }
 
@@ -621,12 +788,28 @@ mod tests {
     }
 
     #[test]
-    fn idempotency_keys_use_scope_skill_and_raw_args() {
+    fn idempotency_keys_use_scope_skill_tool_context_and_raw_args() {
         let same_a = spec_with_arg("token=alpha");
         let same_b = spec_with_arg("token=alpha");
         let different_arg = spec_with_arg("token=bravo");
         let different_scope = JobSpec {
             scope: JobScope::Global,
+            ..same_a.clone()
+        };
+        let different_tool = JobSpec {
+            tool: Some("claude".to_owned()),
+            ..same_a.clone()
+        };
+        let absent_tool = JobSpec {
+            tool: None,
+            ..same_a.clone()
+        };
+        let different_cwd = JobSpec {
+            cwd: Some("/repo/other".to_owned()),
+            ..same_a.clone()
+        };
+        let different_env = JobSpec {
+            env: BTreeMap::from([("AIMUX_PROFILE".to_owned(), "review".to_owned())]),
             ..same_a.clone()
         };
         assert_eq!(
@@ -640,6 +823,22 @@ mod tests {
         assert_ne!(
             idempotency_key(&same_a).unwrap(),
             idempotency_key(&different_scope).unwrap()
+        );
+        assert_ne!(
+            idempotency_key(&same_a).unwrap(),
+            idempotency_key(&different_tool).unwrap()
+        );
+        assert_ne!(
+            idempotency_key(&same_a).unwrap(),
+            idempotency_key(&absent_tool).unwrap()
+        );
+        assert_ne!(
+            idempotency_key(&same_a).unwrap(),
+            idempotency_key(&different_cwd).unwrap()
+        );
+        assert_ne!(
+            idempotency_key(&same_a).unwrap(),
+            idempotency_key(&different_env).unwrap()
         );
     }
 
@@ -660,12 +859,16 @@ mod tests {
             skill: "build".to_owned(),
             tool: Some("codex".to_owned()),
             args: vec!["--fast".to_owned()],
+            cwd: Some(repo.to_string_lossy().into_owned()),
+            env: BTreeMap::new(),
         };
         let spec_b = JobSpec {
             scope: dotted,
             skill: "build".to_owned(),
             tool: Some("codex".to_owned()),
             args: vec!["--fast".to_owned()],
+            cwd: Some(repo.to_string_lossy().into_owned()),
+            env: BTreeMap::new(),
         };
         assert_eq!(
             idempotency_key(&spec_a).unwrap(),
@@ -695,20 +898,68 @@ mod tests {
     }
 
     #[test]
-    fn status_persists_sanitized_args_but_key_uses_raw_args() {
+    fn status_persists_sanitized_args_but_material_keeps_raw_execution_args() {
         let store = store("sanitized");
-        let spec = spec_with_arg("apiToken=super-secret-token");
+        let mut spec = spec_with_arg("apiToken=super-secret-token");
+        spec.env.insert(
+            "AIMUX_JOB_TOKEN".to_owned(),
+            "secret-token-from-env".to_owned(),
+        );
         let key = idempotency_key(&spec).expect("key");
         let (record, created) = store.create_or_join(&spec).expect("created");
         assert_eq!(created, CreateOrJoin::Created);
         let raw_status =
             fs::read_to_string(store.status_path(&record.id)).expect("status file readable");
         assert!(!raw_status.contains("super-secret-token"));
+        assert!(!raw_status.contains("secret-token-from-env"));
         assert!(raw_status.contains("<redacted>"));
+        let material = store.load_material(&record.id).expect("raw material");
+        assert_eq!(material.args, vec!["apiToken=super-secret-token"]);
+        assert_eq!(
+            material.env.get("AIMUX_JOB_TOKEN").map(String::as_str),
+            Some("secret-token-from-env")
+        );
         let (joined, joined_outcome) = store.create_or_join(&spec).expect("joined");
         assert_eq!(joined_outcome, CreateOrJoin::Joined);
         assert_eq!(joined.id, record.id);
         assert_eq!(joined.idempotency_key, key);
+    }
+
+    #[test]
+    fn terminal_job_is_not_rejoined_and_history_stays_addressable() {
+        let store = store("terminal-recreate");
+        let spec = spec_with_arg("--terminal");
+        let (first, first_outcome) = store.create_or_join(&spec).expect("first");
+        assert_eq!(first_outcome, CreateOrJoin::Created);
+        store
+            .set_status(&first.id, JobStatus::Succeeded)
+            .expect("terminal");
+        let (second, second_outcome) = store.create_or_join(&spec).expect("second");
+        assert_eq!(second_outcome, CreateOrJoin::Created);
+        assert_ne!(first.id, second.id);
+        assert_eq!(
+            store.load(&first.id).expect("old job history").status,
+            JobStatus::Succeeded
+        );
+    }
+
+    #[test]
+    fn stale_index_with_missing_record_is_reclaimed() {
+        let store = store("stale-index");
+        let spec = spec_with_arg("--stale");
+        let key = idempotency_key(&spec).expect("key");
+        let stale_entry = JobIndexEntry {
+            job_id: "job-stale-missing".to_owned(),
+            idempotency_key: key.clone(),
+        };
+        create_index_entry(&store.index_path(&key), &stale_entry).expect("stale index");
+        let (record, outcome) = store.create_or_join(&spec).expect("reclaimed");
+        assert_eq!(outcome, CreateOrJoin::Created);
+        assert_ne!(record.id, stale_entry.job_id);
+        let index = store
+            .read_index_entry(&store.index_path(&key))
+            .expect("current index");
+        assert_eq!(index.job_id, record.id);
     }
 
     #[test]
@@ -739,10 +990,12 @@ mod tests {
         assert_eq!(second.seq, 1);
         let replay = store.read_events_from(&record.id, 1).expect("replay");
         assert_eq!(replay, vec![second]);
+        let drained = store.read_events_from(&record.id, 2).expect("drained");
+        assert!(drained.is_empty());
     }
 
     #[test]
-    fn retention_truncates_event_log_cap() {
+    fn retention_truncates_only_terminal_event_logs_and_reaps_orphan_indexes() {
         let store = store("retention");
         let (record, _) = store
             .create_or_join(&spec_with_arg("--retention"))
@@ -758,6 +1011,29 @@ mod tests {
                 )
                 .expect("append");
         }
+        let (running, _) = store
+            .create_or_join(&spec_with_arg("--running-retention"))
+            .expect("running");
+        for index in 0..5 {
+            store
+                .append_event(
+                    &running.id,
+                    JobEventInput {
+                        kind: "line".to_owned(),
+                        data: json!({ "index": index }),
+                    },
+                )
+                .expect("append running");
+        }
+        store
+            .set_status(&record.id, JobStatus::Succeeded)
+            .expect("terminal");
+        let orphan_key = idempotency_key(&spec_with_arg("--orphan-index")).expect("orphan key");
+        let orphan_entry = JobIndexEntry {
+            job_id: "job-orphan-index".to_owned(),
+            idempotency_key: orphan_key.clone(),
+        };
+        create_index_entry(&store.index_path(&orphan_key), &orphan_entry).expect("orphan index");
         let report = store
             .prune(
                 JobRetention {
@@ -770,9 +1046,61 @@ mod tests {
             .expect("prune");
         assert_eq!(report.truncated_event_logs, 1);
         assert_eq!(report.removed_events, 3);
+        assert_eq!(report.removed_orphan_indexes, 1);
         let events = store.read_events_from(&record.id, 0).expect("events");
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].seq, 3);
         assert_eq!(events[1].seq, 4);
+        let running_events = store
+            .read_events_from(&running.id, 0)
+            .expect("running events");
+        assert_eq!(running_events.len(), 5);
+        assert!(!store.index_path(&orphan_key).exists());
+    }
+
+    #[test]
+    fn prune_waits_for_event_log_lock_before_truncating_terminal_log() {
+        let store = Arc::new(store("prune-lock"));
+        let (record, _) = store
+            .create_or_join(&spec_with_arg("--prune-lock"))
+            .expect("created");
+        for index in 0..3 {
+            store
+                .append_event(
+                    &record.id,
+                    JobEventInput {
+                        kind: "line".to_owned(),
+                        data: json!({ "index": index }),
+                    },
+                )
+                .expect("append");
+        }
+        store
+            .set_status(&record.id, JobStatus::Succeeded)
+            .expect("terminal");
+        let lock = acquire_state_update_lock(&store.events_path(&record.id)).expect("held lock");
+        let finished = Arc::new(AtomicBool::new(false));
+        let worker_store = store.clone();
+        let worker_finished = finished.clone();
+        let handle = thread::spawn(move || {
+            let result = worker_store.prune(
+                JobRetention {
+                    max_jobs: 100,
+                    max_events_per_job: 1,
+                    terminal_job_retention_ms: DEFAULT_JOB_RETENTION.terminal_job_retention_ms,
+                },
+                now_ms(),
+            );
+            worker_finished.store(true, Ordering::SeqCst);
+            result
+        });
+        thread::sleep(Duration::from_millis(50));
+        assert!(
+            !finished.load(Ordering::SeqCst),
+            "prune must wait for the event-log lock"
+        );
+        drop(lock);
+        let report = handle.join().expect("worker joined").expect("pruned");
+        assert_eq!(report.truncated_event_logs, 1);
     }
 }
