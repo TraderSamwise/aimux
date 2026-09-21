@@ -383,6 +383,34 @@ function writeHomebrewGateAssets(root) {
   }
 }
 
+function linuxHomebrewGateEnv(root, extra = {}) {
+  const bin = join(root, "bin");
+  const tapRepo = join(root, "tap-repo");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(tapRepo, { recursive: true });
+  writeLiveFakeBrew(bin);
+  writeExecutable(
+    join(bin, "uname"),
+    `#!/bin/sh
+case "$1" in
+  -s) printf 'Linux\\n' ;;
+  -m) printf 'x86_64\\n' ;;
+  *) printf 'Linux\\n' ;;
+esac
+`,
+  );
+  return {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH}`,
+    AIMUX_FAKE_BREW_LOG: join(root, "brew.log"),
+    AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+    AIMUX_FAKE_BREW_STATE: join(root, "state"),
+    AIMUX_FAKE_BREW_TAP_REPO: tapRepo,
+    AIMUX_HOMEBREW_LINUX_GATE_LOG_DIR: join(root, "logs"),
+    ...extra,
+  };
+}
+
 function releaseScriptEnv(root, extra = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
@@ -1134,6 +1162,58 @@ describe("verify-release-asset-set.sh", () => {
       expect(result.stderr).toContain("not an aimux formula failure");
       expect(result.stdout).toContain("Homebrew full installed command proof passed");
       expect(result.stdout).toContain("Homebrew local installed command proof passed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("gates Linux Homebrew installed commands in local-then-full order", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-linux-homebrew-gate-"));
+    try {
+      const result = run("bash", [join(repoRoot, "scripts/linux-homebrew-installed-command-gate.sh")], {
+        env: linuxHomebrewGateEnv(root),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Linux Homebrew tap fetch for tradersamwise/aimux passed");
+      expect(result.stdout).toContain("Linux Homebrew formula install for aimux-local passed");
+      expect(result.stdout).toContain("Linux Homebrew installed-command proof passed for aimux-local");
+      expect(result.stdout).toContain("Linux Homebrew formula uninstall for aimux-local passed");
+      expect(result.stdout).toContain("Linux Homebrew formula install for aimux passed");
+      expect(result.stdout).toContain("Linux Homebrew installed-command proof passed for aimux");
+      expect(result.stdout).toContain("Linux Homebrew installed-command gate passed for tradersamwise/aimux");
+
+      const brewLines = readFileSync(join(root, "brew.log"), "utf8").trim().split("\n");
+      const indexOfLine = (line) => brewLines.findIndex((entry) => entry === line);
+      expect(indexOfLine("tap tradersamwise/aimux")).toBeLessThan(
+        indexOfLine("install --formula tradersamwise/aimux/aimux-local"),
+      );
+      expect(indexOfLine("install --formula tradersamwise/aimux/aimux-local")).toBeLessThan(
+        indexOfLine("uninstall --formula tradersamwise/aimux/aimux-local"),
+      );
+      expect(indexOfLine("uninstall --formula tradersamwise/aimux/aimux-local")).toBeLessThan(
+        indexOfLine("install --formula tradersamwise/aimux/aimux"),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("names the installed-command side when the Linux Homebrew launcher is broken", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-linux-homebrew-broken-launcher-"));
+    try {
+      const result = run("bash", [join(repoRoot, "scripts/linux-homebrew-installed-command-gate.sh")], {
+        env: linuxHomebrewGateEnv(root, {
+          AIMUX_FAKE_BREW_BROKEN_FORMULA: "aimux-local",
+        }),
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Linux Homebrew installed-command gate failed");
+      expect(result.stderr).toContain("installed-command step for aimux-local failed");
+      expect(result.stderr).toContain("/bin/aimux --help exited");
+      expect(result.stdout).toContain("Linux Homebrew formula install for aimux-local passed");
+      expect(result.stdout).not.toContain("Linux Homebrew formula install for aimux passed");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -2393,6 +2473,7 @@ describe("release workflow", () => {
       workflow.indexOf("  update-homebrew-tap:"),
     );
     const tapJob = workflow.slice(workflow.indexOf("  update-homebrew-tap:"));
+    const linuxHomebrewJob = workflow.slice(workflow.indexOf("  linux-homebrew-installed-command:"));
     expect(npmJob).toContain("needs: verify-release-assets");
     expect(assetJob).toContain("asset: aimux-darwin-x64");
     expect(assetJob).toContain("asset: aimux-local-darwin-x64");
@@ -2426,6 +2507,13 @@ describe("release workflow", () => {
     expect(workflow).toContain("--skip-dependency-prep");
     expect(workflow).toContain("--skip-doctor-proof");
     expect(workflow).toContain("AIMUX_HOMEBREW_FORMULA_DIR: tap/Formula");
+    expect(workflow).toContain("  linux-homebrew-installed-command:");
+    expect(linuxHomebrewJob).toContain("runs-on: ubuntu-latest");
+    expect(linuxHomebrewJob).toContain("needs: update-homebrew-tap");
+    expect(linuxHomebrewJob).toContain('HOMEBREW_NO_AUTO_UPDATE: "1"');
+    expect(linuxHomebrewJob).toContain('HOMEBREW_VERSION: "7.0.5"');
+    expect(linuxHomebrewJob).toContain("timeout 180 git clone");
+    expect(linuxHomebrewJob).toContain("bash scripts/linux-homebrew-installed-command-gate.sh");
     expect(renderer).toContain('conflicts_with "aimux", because: "both install the aimux command"');
     expect(renderer.match(/depends_on "tmux"/g) ?? []).toHaveLength(2);
     expect(renderer).not.toContain('depends_on "openssl@3"');

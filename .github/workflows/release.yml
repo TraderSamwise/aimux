@@ -665,3 +665,50 @@ jobs:
           fi
           git commit -m "aimux ${TAG}"
           git push
+
+  linux-homebrew-installed-command:
+    name: Gate Linux Homebrew installed command
+    runs-on: ubuntu-latest
+    needs: update-homebrew-tap
+    timeout-minutes: 15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+      HOMEBREW_VERSION: "7.0.5"
+    steps:
+      - name: Checkout aimux
+        uses: actions/checkout@v4
+
+      - name: Set up Linux Homebrew
+        run: |
+          set -euo pipefail
+          brew_prefix="$HOME/.linuxbrew"
+          if [ ! -x "$brew_prefix/bin/brew" ]; then
+            mkdir -p "$brew_prefix"
+            timeout 180 git clone \
+              --depth=1 \
+              --branch "$HOMEBREW_VERSION" \
+              https://github.com/Homebrew/brew \
+              "$brew_prefix/Homebrew" || {
+                echo "Linux Homebrew setup failed: could not clone Homebrew/brew $HOMEBREW_VERSION" >&2
+                exit 1
+              }
+            mkdir -p \
+              "$brew_prefix/bin" \
+              "$brew_prefix/etc" \
+              "$brew_prefix/include" \
+              "$brew_prefix/lib" \
+              "$brew_prefix/opt" \
+              "$brew_prefix/sbin" \
+              "$brew_prefix/share" \
+              "$brew_prefix/var/homebrew/linked"
+            ln -s ../Homebrew/bin/brew "$brew_prefix/bin/brew"
+          fi
+          echo "$brew_prefix/bin" >> "$GITHUB_PATH"
+          timeout 180 "$brew_prefix/bin/brew" --version || {
+            echo "Linux Homebrew setup failed: brew --version did not complete" >&2
+            exit 1
+          }
+
+      - name: Gate Linux Homebrew installed command
+        run: bash scripts/linux-homebrew-installed-command-gate.sh
