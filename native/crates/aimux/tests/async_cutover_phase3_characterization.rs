@@ -30,6 +30,7 @@ use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, save_metadata_state,
 };
+use aimux::jobs::JobStore;
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::AgentInputWindowActivity;
@@ -1003,7 +1004,25 @@ impl DaemonJsonRouteRuntime for FakeRuntime {
     }
 }
 
-impl DaemonJobRouteRuntime for FakeRuntime {}
+impl DaemonJobRouteRuntime for FakeRuntime {
+    fn job_store(&self) -> JobStore {
+        JobStore::new(
+            std::env::temp_dir().join(format!("aimux-async-cutover-jobs-{}", std::process::id())),
+        )
+    }
+
+    fn job_path_resolver(&self) -> PathResolver {
+        let root =
+            std::env::temp_dir().join(format!("aimux-async-cutover-paths-{}", std::process::id()));
+        PathResolver::new(&root, root.join("home"), None)
+    }
+}
+
+#[test]
+fn fake_async_cutover_runtime_jobs_store_is_sandboxed() {
+    let runtime = FakeRuntime::empty();
+    assert!(runtime.job_store().root().starts_with(std::env::temp_dir()));
+}
 
 impl DaemonSystemTextRuntime for FakeRuntime {
     fn selected_log_path(

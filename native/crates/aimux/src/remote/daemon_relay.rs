@@ -30,6 +30,7 @@ use crate::remote::relay_runner::{
     RelayHandle, RelayRunner,
 };
 use crate::remote::websocket::{BoxFuture, TokioTungsteniteConnector};
+use crate::request_actor::RELAY_FORWARDED_HEADER;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Relay request/response traffic is control JSON, not attachment bytes or bulk
@@ -130,12 +131,14 @@ pub fn build_request_head(
                 "host" | "content-length" | "connection" | "transfer-encoding"
             ) || name.contains(['\r', '\n', ':'])
                 || value.contains(['\r', '\n'])
+                || lower == RELAY_FORWARDED_HEADER
             {
                 continue;
             }
             wire.push_str(&format!("{name}: {value}\r\n"));
         }
     }
+    wire.push_str(&format!("{RELAY_FORWARDED_HEADER}: 1\r\n"));
     if let Some(body) = body {
         wire.push_str(&format!(
             "Content-Type: application/json\r\nContent-Length: {}\r\n",

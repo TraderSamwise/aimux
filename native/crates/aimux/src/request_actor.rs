@@ -6,6 +6,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub const RELAY_FORWARDED_HEADER: &str = "x-aimux-relay-forwarded";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RemoteActorRole {
@@ -433,6 +435,7 @@ fn has_relay_actor_headers(headers: &BTreeMap<String, String>) -> bool {
     headers
         .keys()
         .any(|key| key.to_ascii_lowercase().starts_with("x-aimux-"))
+        || header_value(headers, RELAY_FORWARDED_HEADER).is_some()
 }
 
 #[derive(Debug, Deserialize)]

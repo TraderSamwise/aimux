@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -508,37 +508,44 @@ impl JobStore {
 
     fn read_events_from_unlocked(&self, id: &str, seq: u64) -> Result<Vec<JobEvent>> {
         let path = self.events_path(id);
-        let mut raw = String::new();
-        match fs::File::open(&path) {
-            Ok(mut file) => {
-                file.read_to_string(&mut raw)
-                    .map_err(|error| io_error(&path, error))?;
-            }
+        let file = match fs::File::open(&path) {
+            Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Err(JobStoreError::EmptyEventLog { id: id.to_owned() });
             }
             Err(error) => return Err(io_error(&path, error)),
-        }
+        };
+        let mut reader = BufReader::new(file);
         let mut events = Vec::new();
-        let lines = raw.lines().collect::<Vec<_>>();
-        for (index, line) in lines.iter().enumerate() {
+        let mut saw_complete_event = false;
+        let mut line_number = 0_usize;
+        loop {
+            let mut line = String::new();
+            let bytes = reader
+                .read_line(&mut line)
+                .map_err(|error| io_error(&path, error))?;
+            if bytes == 0 {
+                break;
+            }
+            line_number += 1;
+            if !line.ends_with('\n') {
+                break;
+            }
             if line.trim().is_empty() {
                 continue;
             }
-            if index == lines.len().saturating_sub(1) && !raw.ends_with('\n') {
-                break;
-            }
-            let event = serde_json::from_str::<JobEvent>(line).map_err(|error| {
+            saw_complete_event = true;
+            let event = serde_json::from_str::<JobEvent>(&line).map_err(|error| {
                 JobStoreError::CorruptStore {
                     path: path.clone(),
-                    error: format!("line {}: {error}", index + 1),
+                    error: format!("line {line_number}: {error}"),
                 }
             })?;
             if event.seq >= seq {
                 events.push(event);
             }
         }
-        if events.is_empty() && seq == 0 {
+        if !saw_complete_event && seq == 0 {
             return Err(JobStoreError::EmptyEventLog { id: id.to_owned() });
         }
         Ok(events)

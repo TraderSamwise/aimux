@@ -11,6 +11,7 @@ use crate::jobs::{
 };
 use crate::paths::PathResolver;
 use crate::project_service::event_streams::{encode_sse_event, encode_sse_keepalive};
+use crate::request_actor::parse_remote_actor;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -18,20 +19,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep};
 
 pub const JOB_EVENT_STREAM_KEEPALIVE_MS: u64 = 15_000;
 const JOB_EVENT_STREAM_POLL_MS: u64 = 500;
 const JOB_PRUNE_INTERVAL_MS: i64 = 6 * 60 * 60 * 1_000;
 
 pub trait DaemonJobRouteRuntime {
-    fn job_store(&self) -> JobStore {
-        JobStore::from_env()
-    }
+    fn job_store(&self) -> JobStore;
 
-    fn job_path_resolver(&self) -> PathResolver {
-        PathResolver::from_env()
-    }
+    fn job_path_resolver(&self) -> PathResolver;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +48,7 @@ pub struct JobEventStreamOptions {
     pub keepalive_ms: u64,
     pub poll_ms: u64,
     pub max_keepalives: Option<usize>,
+    pub max_polls: Option<usize>,
 }
 
 impl Default for JobEventStreamOptions {
@@ -59,6 +57,7 @@ impl Default for JobEventStreamOptions {
             keepalive_ms: JOB_EVENT_STREAM_KEEPALIVE_MS,
             poll_ms: JOB_EVENT_STREAM_POLL_MS,
             max_keepalives: None,
+            max_polls: None,
         }
     }
 }
@@ -97,10 +96,7 @@ pub fn route_jobs_json_request(
 
     if method == "POST" && pathname == CORE_API_ROUTES.jobs {
         if actor_present {
-            return Some(DaemonRouteResponse::json(
-                403,
-                json!({ "ok": false, "error": "job routes are loopback-only" }),
-            ));
+            return Some(loopback_only_response());
         }
         let request = match parse_create_request(body) {
             Ok(request) => request,
@@ -131,6 +127,9 @@ pub fn route_jobs_json_request(
     }
 
     if method == "GET" && pathname == CORE_API_ROUTES.jobs {
+        if actor_present {
+            return Some(loopback_only_response());
+        }
         let store = runtime.job_store();
         let mut resolver = runtime.job_path_resolver();
         if let Some(handle) = route_url.search_param("handle") {
@@ -173,10 +172,7 @@ pub fn route_jobs_json_request(
 
     if method == "POST" && pathname == CORE_API_ROUTES.jobs_cancel {
         if actor_present {
-            return Some(DaemonRouteResponse::json(
-                403,
-                json!({ "ok": false, "error": "job routes are loopback-only" }),
-            ));
+            return Some(loopback_only_response());
         }
         let request = match parse_cancel_request(body) {
             Ok(request) => request,
@@ -222,6 +218,10 @@ where
     let route_url = DaemonRouteUrl::parse(&request.path);
     if request.method != "GET" || route_url.pathname() != CORE_API_ROUTES.jobs_events {
         return Ok(false);
+    }
+    if parse_remote_actor(&request.headers).is_some() {
+        write_route_response_async(writer, &loopback_only_response()).await?;
+        return Ok(true);
     }
 
     enum StreamResolution {
@@ -290,9 +290,15 @@ pub async fn write_job_event_stream(
     writer.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache, no-transform\r\nconnection: close\r\n\r\n").await?;
     let mut next_seq = seq;
     let mut keepalives = 0_usize;
+    let mut polls = 0_usize;
+    let keepalive_interval = Duration::from_millis(options.keepalive_ms);
+    let poll_interval = Duration::from_millis(options.poll_ms);
+    let mut last_keepalive = Instant::now();
     loop {
+        let mut wrote_events = false;
         match store.read_events_from(id, next_seq) {
             Ok(events) => {
+                wrote_events = !events.is_empty();
                 next_seq = write_job_events(writer, &events, next_seq).await?;
             }
             Err(JobStoreError::EmptyEventLog { .. }) => {}
@@ -306,21 +312,22 @@ pub async fn write_job_event_stream(
                 return Ok(());
             }
         }
-        writer.write_all(&encode_sse_keepalive()).await?;
-        keepalives += 1;
+        if !wrote_events && last_keepalive.elapsed() >= keepalive_interval {
+            writer.write_all(&encode_sse_keepalive()).await?;
+            keepalives += 1;
+            last_keepalive = Instant::now();
+        }
+        polls += 1;
         if options
             .max_keepalives
             .is_some_and(|max_keepalives| keepalives >= max_keepalives)
+            || options
+                .max_polls
+                .is_some_and(|max_polls| polls >= max_polls)
         {
             return Ok(());
         }
-        sleep(Duration::from_millis(options.keepalive_ms)).await;
-        if options.poll_ms > options.keepalive_ms {
-            sleep(Duration::from_millis(
-                options.poll_ms.saturating_sub(options.keepalive_ms),
-            ))
-            .await;
-        }
+        sleep(poll_interval).await;
     }
 }
 
@@ -346,6 +353,7 @@ pub fn resolve_job_handle(
 ) -> Result<ResolvedJobHandle, JobStoreError> {
     let trimmed = handle.trim();
     if trimmed.starts_with("job-") {
+        validate_job_id_handle(trimmed)?;
         return store.load(trimmed).map(|record| ResolvedJobHandle {
             record,
             kind: JobHandleKind::Id,
@@ -397,6 +405,27 @@ fn parse_job_scope_handle(scope: &str, resolver: &mut PathResolver) -> Result<Jo
     let sentinel_skill = "__aimux_scope_filter__";
     let address = parse_job_address(&format!("{trimmed}/{sentinel_skill}"), resolver, None)?;
     Ok(address.scope)
+}
+
+fn loopback_only_response() -> DaemonRouteResponse {
+    DaemonRouteResponse::json(
+        403,
+        json!({ "ok": false, "error": "job routes are loopback-only" }),
+    )
+}
+
+fn validate_job_id_handle(id: &str) -> Result<(), JobStoreError> {
+    let valid = id.strip_prefix("job-").is_some_and(|rest| !rest.is_empty())
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+    if valid {
+        Ok(())
+    } else {
+        Err(JobStoreError::InvalidSpec(
+            "job id handle contains invalid characters".to_owned(),
+        ))
+    }
 }
 
 impl CreateJobRequest {

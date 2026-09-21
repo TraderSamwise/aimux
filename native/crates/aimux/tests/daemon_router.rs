@@ -31,6 +31,8 @@ use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
 use aimux::debug_logging::{
     LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
 };
+use aimux::jobs::JobStore;
+use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
 use aimux::remote::daemon_auth_text::{
     AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
@@ -823,7 +825,25 @@ impl DaemonJsonRouteRuntime for FakeRouterRuntime {
     }
 }
 
-impl DaemonJobRouteRuntime for FakeRouterRuntime {}
+impl DaemonJobRouteRuntime for FakeRouterRuntime {
+    fn job_store(&self) -> JobStore {
+        JobStore::new(
+            std::env::temp_dir().join(format!("aimux-daemon-router-jobs-{}", std::process::id())),
+        )
+    }
+
+    fn job_path_resolver(&self) -> PathResolver {
+        let root =
+            std::env::temp_dir().join(format!("aimux-daemon-router-paths-{}", std::process::id()));
+        PathResolver::new(&root, root.join("home"), None)
+    }
+}
+
+#[test]
+fn fake_router_runtime_jobs_store_is_sandboxed() {
+    let runtime = FakeRouterRuntime::default();
+    assert!(runtime.job_store().root().starts_with(std::env::temp_dir()));
+}
 
 fn text_body(response: DaemonRouteResponse) -> String {
     match response.body {

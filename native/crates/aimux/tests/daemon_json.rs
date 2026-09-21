@@ -11,9 +11,11 @@ use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
+use aimux::jobs::JobStore;
 use aimux::notification_delivery_guard::{
     TEST_NOTIFICATION_SOURCE_FIELD, TEST_NOTIFICATION_SOURCE_VALUE,
 };
+use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
@@ -204,7 +206,25 @@ impl DaemonJsonRouteRuntime for FakeJsonRuntime {
     }
 }
 
-impl DaemonJobRouteRuntime for FakeJsonRuntime {}
+impl DaemonJobRouteRuntime for FakeJsonRuntime {
+    fn job_store(&self) -> JobStore {
+        JobStore::new(
+            std::env::temp_dir().join(format!("aimux-daemon-json-jobs-{}", std::process::id())),
+        )
+    }
+
+    fn job_path_resolver(&self) -> PathResolver {
+        let root =
+            std::env::temp_dir().join(format!("aimux-daemon-json-paths-{}", std::process::id()));
+        PathResolver::new(&root, root.join("home"), None)
+    }
+}
+
+#[test]
+fn fake_json_runtime_jobs_store_is_sandboxed() {
+    let runtime = FakeJsonRuntime::default();
+    assert!(runtime.job_store().root().starts_with(std::env::temp_dir()));
+}
 
 fn json_body(response: DaemonRouteResponse) -> Value {
     match response.body {
