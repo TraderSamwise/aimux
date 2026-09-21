@@ -142,6 +142,22 @@ pub fn send_desktop_notification_and_wait(
     disabled_delivery("macOS notification helper not found")
 }
 
+pub fn desktop_notification_unavailable_reason() -> Option<String> {
+    if external_notifications_disabled() {
+        return Some("desktop notifications are disabled".to_owned());
+    }
+    if let Some(reason) = current_process_external_notification_refusal_reason() {
+        return Some(reason.to_owned());
+    }
+    if std::env::consts::OS != "macos" {
+        return Some(DESKTOP_NOTIFICATIONS_MACOS_ONLY.to_owned());
+    }
+    if find_mac_notifier_helper().is_none() {
+        return Some("macOS notification helper not found".to_owned());
+    }
+    None
+}
+
 pub fn build_desktop_notifier_doctor_report() -> DesktopNotifierDoctorReport {
     let platform = std::env::consts::OS.to_owned();
     let helper_candidates = if platform == "macos" {

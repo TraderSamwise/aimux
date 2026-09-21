@@ -6,8 +6,8 @@ use crate::daemon::scheduler::{
     DaemonPeriodicTask, DaemonSchedulerContext, PeriodicTaskFuture, scheduler_now_ms,
 };
 use crate::desktop_notifier::{
-    DesktopNotificationDeliveryResult, DesktopNotificationPayload,
-    send_desktop_notification_and_wait,
+    DesktopNotificationDeliveryResult, DesktopNotificationPayload, DesktopNotificationTransport,
+    desktop_notification_unavailable_reason, send_desktop_notification_and_wait,
 };
 use crate::jobs::{
     CancelOutcome, CreateOrJoin, DEFAULT_JOB_RETENTION, JOB_TERMINAL_EVENT_KIND, JobAddress,
@@ -300,14 +300,32 @@ pub fn route_jobs_json_request(
         let watcher_id = request.watcher_id.as_deref().unwrap_or("local-desktop");
         return Some(
             match store.register_desktop_callback(&resolved.record.id, watcher_id) {
-                Ok(callback) => {
-                    runtime.force_job_callbacks_next_tick();
+                Ok(registration) => {
+                    let mut callback = registration.callback;
+                    let unavailable_reason = desktop_notification_unavailable_reason();
+                    if let Some(reason) = unavailable_reason.as_deref() {
+                        match store.record_callback_unavailable(
+                            &resolved.record.id,
+                            &callback.watcher_id,
+                            reason,
+                        ) {
+                            Ok(updated) => callback = updated,
+                            Err(error) => return Some(store_error_response(error)),
+                        }
+                    } else {
+                        runtime.force_job_callbacks_next_tick();
+                    }
                     DaemonRouteResponse::json(
                         200,
                         json!({
                             "ok": true,
                             "job": resolved.record,
                             "callback": callback,
+                            "outcome": registration.outcome,
+                            "desktopNotification": {
+                                "available": unavailable_reason.is_none(),
+                                "reason": unavailable_reason,
+                            },
                         }),
                     )
                 }
@@ -528,7 +546,12 @@ pub fn drain_due_job_callbacks(
         store,
         now_ms,
         |event| {
-            external_notification_refusal_reason_for_event(None, None, event).map(str::to_owned)
+            external_notification_refusal_reason_for_event(
+                None,
+                job_project_state_dir_from_event(store, event).as_deref(),
+                event,
+            )
+            .map(str::to_owned)
         },
         send_desktop_notification_and_wait,
     )
@@ -549,35 +572,71 @@ pub fn drain_due_job_callbacks_with(
             "jobId": due.record.id,
             "watcherId": due.callback.watcher_id,
             "status": due.record.status,
+            "scope": due.record.scope,
         });
         if let Some(reason) = guard(&guard_event) {
-            store.record_callback_suppressed(
-                &due.record.id,
-                &due.callback.watcher_id,
-                due.terminal_event.seq,
-                reason,
-                now_ms,
-            )?;
-            report.suppressed += 1;
+            if store
+                .record_callback_suppressed(
+                    &due.record.id,
+                    &due.callback.watcher_id,
+                    due.terminal_event.seq,
+                    reason,
+                    now_ms,
+                )
+                .is_ok()
+            {
+                report.suppressed += 1;
+            } else {
+                report.failed += 1;
+            }
             continue;
         }
         let result = sender(&notification_payload_for_job(&due.record));
-        if result.ok {
-            store.record_callback_delivered(
-                &due.record.id,
-                &due.callback.watcher_id,
-                due.terminal_event.seq,
-                now_ms,
-            )?;
-            report.delivered += 1;
+        if notification_delivery_is_unavailable(&result) {
+            if store
+                .record_callback_suppressed(
+                    &due.record.id,
+                    &due.callback.watcher_id,
+                    due.terminal_event.seq,
+                    notification_delivery_error(&result),
+                    now_ms,
+                )
+                .is_ok()
+            {
+                report.suppressed += 1;
+            } else {
+                report.failed += 1;
+            }
             continue;
         }
-        let callback = store.record_callback_failed(
+        if result.ok {
+            if store
+                .record_callback_delivered(
+                    &due.record.id,
+                    &due.callback.watcher_id,
+                    due.terminal_event.seq,
+                    now_ms,
+                )
+                .is_ok()
+            {
+                report.delivered += 1;
+            } else {
+                report.failed += 1;
+            }
+            continue;
+        }
+        let callback = match store.record_callback_failed(
             &due.record.id,
             &due.callback.watcher_id,
             notification_delivery_error(&result),
             now_ms,
-        )?;
+        ) {
+            Ok(callback) => callback,
+            Err(_) => {
+                report.failed += 1;
+                continue;
+            }
+        };
         if callback.abandoned_at_ms.is_some() {
             report.abandoned += 1;
         } else {
@@ -585,6 +644,26 @@ pub fn drain_due_job_callbacks_with(
         }
     }
     Ok(report)
+}
+
+fn notification_delivery_is_unavailable(result: &DesktopNotificationDeliveryResult) -> bool {
+    matches!(
+        result.transport,
+        DesktopNotificationTransport::Disabled | DesktopNotificationTransport::PlatformUnsupported
+    )
+}
+
+fn job_project_state_dir_from_event(store: &JobStore, event: &Value) -> Option<PathBuf> {
+    let scope = event.get("scope")?;
+    let kind = scope.get("kind").and_then(Value::as_str)?;
+    let project_id = match kind {
+        "project" | "worktree" => scope.get("projectId").and_then(Value::as_str)?,
+        _ => return None,
+    };
+    store
+        .root()
+        .parent()
+        .map(|aimux_home| aimux_home.join("projects").join(project_id))
 }
 
 fn notification_payload_for_job(record: &JobRecord) -> DesktopNotificationPayload {
@@ -774,10 +853,15 @@ impl DaemonPeriodicTask for DaemonJobCallbacksTask {
 
     fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
-            let store = JobStore::new(context.resolver.jobs_dir());
-            drain_due_job_callbacks(&store, scheduler_now_ms().max(0) as u128)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
+            let jobs_dir = context.resolver.jobs_dir();
+            tokio::task::spawn_blocking(move || {
+                let store = JobStore::new(jobs_dir);
+                drain_due_job_callbacks(&store, scheduler_now_ms().max(0) as u128)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| error.to_string())?
         })
     }
 }

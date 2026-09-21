@@ -120,6 +120,9 @@ pub struct JobEvent {
 pub const JOB_TERMINAL_EVENT_KIND: &str = "terminal-status";
 pub const JOB_CALLBACK_MAX_ATTEMPTS: u32 = 5;
 pub const JOB_CALLBACK_RETRY_DELAY_MS: u128 = 60_000;
+pub const JOB_CALLBACK_PENDING_GIVE_UP_MS: u128 =
+    JOB_CALLBACK_RETRY_DELAY_MS * JOB_CALLBACK_MAX_ATTEMPTS as u128 * 3;
+const JOB_CALLBACK_NEVER_RETRY_MS: u128 = u64::MAX as u128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -162,6 +165,20 @@ impl JobCallbackRecord {
 pub struct JobCallbacks {
     #[serde(default)]
     pub watchers: BTreeMap<String, JobCallbackRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum JobCallbackRegistrationOutcome {
+    Created,
+    Existing,
+    Rearmed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobCallbackRegistration {
+    pub callback: JobCallbackRecord,
+    pub outcome: JobCallbackRegistrationOutcome,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -412,7 +429,10 @@ impl JobStore {
     }
 
     pub fn read_events_from(&self, id: &str, seq: u64) -> Result<Vec<JobEvent>> {
-        self.load(id)?;
+        let record = self.load(id)?;
+        if record.status.is_terminal() {
+            self.ensure_terminal_event_for_record(&record)?;
+        }
         self.read_events_from_unlocked(id, seq)
     }
 
@@ -504,14 +524,8 @@ impl JobStore {
         record.terminal_reason = Some(sanitize_log_string(&reason.into()));
         record.cancel_signal = cancel_signal.map(|signal| sanitize_log_string(&signal));
         record.updated_at_ms = now_ms();
+        self.ensure_terminal_event_for_record(&record)?;
         self.write_record(&record)?;
-        self.append_event(
-            id,
-            JobEventInput {
-                kind: JOB_TERMINAL_EVENT_KIND.to_owned(),
-                data: terminal_event_data(&record),
-            },
-        )?;
         Ok(record)
     }
 
@@ -548,7 +562,7 @@ impl JobStore {
         &self,
         id: &str,
         watcher_id: &str,
-    ) -> Result<JobCallbackRecord> {
+    ) -> Result<JobCallbackRegistration> {
         self.load(id)?;
         let watcher_id = normalize_watcher_id(watcher_id)?;
         let path = self.callbacks_path(id);
@@ -558,8 +572,29 @@ impl JobStore {
                 error,
             })?;
         let mut callbacks = self.read_callbacks_unlocked(id)?;
-        if let Some(callback) = callbacks.watchers.get(&watcher_id) {
-            return Ok(callback.clone());
+        if let Some(callback) = callbacks.watchers.get_mut(&watcher_id) {
+            if callback.is_pending() {
+                return Ok(JobCallbackRegistration {
+                    callback: callback.clone(),
+                    outcome: JobCallbackRegistrationOutcome::Existing,
+                });
+            }
+            let now = now_ms();
+            callback.attempts = 0;
+            callback.last_error = None;
+            callback.next_attempt_ms = now;
+            callback.delivered_seq = None;
+            callback.delivered_at_ms = None;
+            callback.suppressed_reason = None;
+            callback.abandoned_at_ms = None;
+            callback.created_at_ms = now;
+            callback.updated_at_ms = now;
+            let callback = callback.clone();
+            self.write_callbacks_unlocked(id, &callbacks)?;
+            return Ok(JobCallbackRegistration {
+                callback,
+                outcome: JobCallbackRegistrationOutcome::Rearmed,
+            });
         }
         let now = now_ms();
         let callback = JobCallbackRecord {
@@ -580,7 +615,10 @@ impl JobStore {
             .watchers
             .insert(watcher_id.to_owned(), callback.clone());
         self.write_callbacks_unlocked(id, &callbacks)?;
-        Ok(callback)
+        Ok(JobCallbackRegistration {
+            callback,
+            outcome: JobCallbackRegistrationOutcome::Created,
+        })
     }
 
     pub fn load_callbacks(&self, id: &str) -> Result<JobCallbacks> {
@@ -590,15 +628,25 @@ impl JobStore {
 
     pub fn due_callbacks(&self, now_ms: u128) -> Result<Vec<DueJobCallback>> {
         let mut due = Vec::new();
-        for record in self.list(JobListFilter::default())? {
+        for record in self.maintenance_records()? {
             if !record.status.is_terminal() {
                 continue;
             }
-            let terminal_event = match self.terminal_event(&record.id)? {
-                Some(event) => event,
-                None => continue,
+            let terminal_event = match self.ensure_terminal_event_for_record(&record) {
+                Ok(event) => event,
+                Err(_) => {
+                    let _ = self.abandon_stale_pending_callbacks(
+                        &record.id,
+                        now_ms,
+                        "terminal event was unavailable before the callback give-up window elapsed",
+                    );
+                    continue;
+                }
             };
-            let callbacks = self.read_callbacks_unlocked(&record.id)?;
+            let callbacks = match self.read_callbacks_unlocked(&record.id) {
+                Ok(callbacks) => callbacks,
+                Err(_) => continue,
+            };
             due.extend(
                 callbacks
                     .watchers
@@ -626,6 +674,7 @@ impl JobStore {
         self.update_callback(id, watcher_id, |callback| {
             callback.delivered_seq = Some(delivered_seq);
             callback.delivered_at_ms = Some(now_ms);
+            callback.next_attempt_ms = JOB_CALLBACK_NEVER_RETRY_MS;
             callback.last_error = None;
             callback.updated_at_ms = now_ms;
         })
@@ -643,9 +692,28 @@ impl JobStore {
         self.update_callback(id, watcher_id, |callback| {
             callback.delivered_seq = Some(delivered_seq);
             callback.delivered_at_ms = Some(now_ms);
+            callback.next_attempt_ms = JOB_CALLBACK_NEVER_RETRY_MS;
             callback.suppressed_reason = Some(reason.clone());
             callback.last_error = None;
             callback.updated_at_ms = now_ms;
+        })
+    }
+
+    pub fn record_callback_unavailable(
+        &self,
+        id: &str,
+        watcher_id: &str,
+        reason: impl Into<String>,
+    ) -> Result<JobCallbackRecord> {
+        let now = now_ms();
+        let reason = sanitize_log_string(&reason.into());
+        self.update_callback(id, watcher_id, |callback| {
+            callback.delivered_seq = None;
+            callback.delivered_at_ms = Some(now);
+            callback.next_attempt_ms = JOB_CALLBACK_NEVER_RETRY_MS;
+            callback.suppressed_reason = Some(reason.clone());
+            callback.last_error = None;
+            callback.updated_at_ms = now;
         })
     }
 
@@ -663,7 +731,7 @@ impl JobStore {
             callback.updated_at_ms = now_ms;
             if callback.attempts >= JOB_CALLBACK_MAX_ATTEMPTS {
                 callback.abandoned_at_ms = Some(now_ms);
-                callback.next_attempt_ms = u128::MAX;
+                callback.next_attempt_ms = JOB_CALLBACK_NEVER_RETRY_MS;
             } else {
                 callback.next_attempt_ms = now_ms.saturating_add(
                     JOB_CALLBACK_RETRY_DELAY_MS.saturating_mul(callback.attempts as u128),
@@ -718,17 +786,21 @@ impl JobStore {
 
     pub fn prune(&self, retention: JobRetention, now_ms: u128) -> Result<PruneReport> {
         let mut report = PruneReport::default();
-        let records = self.list(JobListFilter::default())?;
+        let records = self.maintenance_records()?;
         for record in &records {
             if !record.status.is_terminal() {
                 continue;
             }
-            if self.has_pending_callbacks(&record.id)? {
+            self.abandon_stale_pending_callbacks(
+                &record.id,
+                now_ms,
+                "callback give-up window elapsed before pruning",
+            )?;
+            if self.has_pending_callbacks_lenient(&record.id) {
                 report.protected_pending_callbacks += 1;
                 continue;
             }
-            let (truncated, removed) = self.prune_events(record, retention.max_events_per_job)?;
-            if truncated {
+            if let Ok((true, removed)) = self.prune_events(record, retention.max_events_per_job) {
                 report.truncated_event_logs += 1;
                 report.removed_events += removed;
             }
@@ -748,7 +820,12 @@ impl JobStore {
             .map(|record| record.id.clone())
             .collect::<BTreeSet<_>>();
         for record in removable {
-            if self.has_pending_callbacks(&record.id)? {
+            self.abandon_stale_pending_callbacks(
+                &record.id,
+                now_ms,
+                "callback give-up window elapsed before pruning",
+            )?;
+            if self.has_pending_callbacks_lenient(&record.id) {
                 report.protected_pending_callbacks += 1;
                 continue;
             }
@@ -867,7 +944,7 @@ impl JobStore {
         if !record.status.is_terminal() {
             return Ok((false, 0));
         }
-        if self.has_pending_callbacks(&record.id)? {
+        if self.has_pending_callbacks_lenient(&record.id) {
             return Ok((false, 0));
         }
         if max_events == 0 {
@@ -963,23 +1040,115 @@ impl JobStore {
         write_json_atomic(&path, &material).map_err(|error| io_error(&path, error))
     }
 
-    fn terminal_event(&self, id: &str) -> Result<Option<JobEvent>> {
-        match self.read_events_from_unlocked(id, 0) {
-            Ok(events) => Ok(events
-                .into_iter()
-                .rev()
-                .find(|event| event.kind == JOB_TERMINAL_EVENT_KIND)),
-            Err(JobStoreError::EmptyEventLog { .. }) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-
     fn has_pending_callbacks(&self, id: &str) -> Result<bool> {
         Ok(self
             .read_callbacks_unlocked(id)?
             .watchers
             .values()
             .any(JobCallbackRecord::is_pending))
+    }
+
+    fn has_pending_callbacks_lenient(&self, id: &str) -> bool {
+        self.has_pending_callbacks(id).unwrap_or(true)
+    }
+
+    fn abandon_stale_pending_callbacks(
+        &self,
+        id: &str,
+        now_ms: u128,
+        reason: &str,
+    ) -> Result<usize> {
+        let path = self.callbacks_path(id);
+        let _lock =
+            acquire_state_update_lock(&path).map_err(|error| JobStoreError::StoreUnavailable {
+                path: path.clone(),
+                error,
+            })?;
+        let mut callbacks = self.read_callbacks_unlocked(id)?;
+        let mut abandoned = 0_usize;
+        for callback in callbacks.watchers.values_mut() {
+            if !callback.is_pending() {
+                continue;
+            }
+            let give_up_at = callback
+                .created_at_ms
+                .saturating_add(JOB_CALLBACK_PENDING_GIVE_UP_MS);
+            if now_ms < give_up_at {
+                continue;
+            }
+            callback.abandoned_at_ms = Some(now_ms);
+            callback.next_attempt_ms = JOB_CALLBACK_NEVER_RETRY_MS;
+            callback.last_error = Some(sanitize_log_string(reason));
+            callback.updated_at_ms = now_ms;
+            abandoned += 1;
+        }
+        if abandoned > 0 {
+            self.write_callbacks_unlocked(id, &callbacks)?;
+        }
+        Ok(abandoned)
+    }
+
+    fn ensure_terminal_event_for_record(&self, record: &JobRecord) -> Result<JobEvent> {
+        if !record.status.is_terminal() {
+            return Err(JobStoreError::InvalidSpec(
+                "terminal event requires a terminal job".to_owned(),
+            ));
+        }
+        let events_path = self.events_path(&record.id);
+        let _lock = acquire_state_update_lock(&events_path).map_err(|error| {
+            JobStoreError::StoreUnavailable {
+                path: events_path.clone(),
+                error,
+            }
+        })?;
+        let events = match self.read_events_from_unlocked(&record.id, 0) {
+            Ok(events) => events,
+            Err(JobStoreError::EmptyEventLog { .. }) => Vec::new(),
+            Err(error) => return Err(error),
+        };
+        if let Some(event) = events
+            .iter()
+            .rev()
+            .find(|event| event.kind == JOB_TERMINAL_EVENT_KIND)
+        {
+            return Ok(event.clone());
+        }
+        let seq = events.last().map(|event| event.seq + 1).unwrap_or(0);
+        let event = JobEvent {
+            seq,
+            created_at_ms: now_ms(),
+            kind: JOB_TERMINAL_EVENT_KIND.to_owned(),
+            data: terminal_event_data(record),
+        };
+        append_jsonl(&events_path, &event)?;
+        Ok(event)
+    }
+
+    fn maintenance_records(&self) -> Result<Vec<JobRecord>> {
+        let records_dir = self.records_dir();
+        let entries = match fs::read_dir(&records_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(io_error(&records_dir, error)),
+        };
+        let mut records = Vec::new();
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let id = entry.file_name().to_string_lossy().into_owned();
+            if let Ok(record) = self.load(&id) {
+                records.push(record);
+            }
+        }
+        records.sort_by_key(|record| record.created_at_ms);
+        Ok(records)
     }
 
     fn update_callback(
@@ -1553,6 +1722,76 @@ mod tests {
     }
 
     #[test]
+    fn terminal_record_without_terminal_event_is_healed_for_callbacks_and_late_readers() {
+        let store = store("callback-terminal-heal");
+        let (record, _) = store
+            .create_or_join(&spec_with_arg("--callback-terminal-heal"))
+            .expect("created");
+        store
+            .register_desktop_callback(&record.id, "sam")
+            .expect("callback");
+        let mut terminal = record.clone();
+        terminal.status = JobStatus::Succeeded;
+        terminal.exit_code = Some(0);
+        terminal.terminal_reason = Some("legacy terminal record".to_owned());
+        terminal.updated_at_ms = terminal.updated_at_ms.saturating_add(1);
+        store
+            .write_record(&terminal)
+            .expect("legacy terminal status write");
+
+        let due = store.due_callbacks(u128::MAX).expect("due");
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].terminal_event.kind, JOB_TERMINAL_EVENT_KIND);
+        let events = store.read_events_from(&record.id, 0).expect("events");
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind == JOB_TERMINAL_EVENT_KIND)
+        );
+    }
+
+    #[test]
+    fn corrupt_missing_terminal_event_cannot_pin_callback_forever() {
+        let store = store("callback-corrupt-terminal");
+        let (record, _) = store
+            .create_or_join(&spec_with_arg("--callback-corrupt-terminal"))
+            .expect("created");
+        store
+            .register_desktop_callback(&record.id, "sam")
+            .expect("callback");
+        let mut terminal = record.clone();
+        terminal.status = JobStatus::Succeeded;
+        terminal.exit_code = Some(0);
+        terminal.terminal_reason = Some("legacy terminal record".to_owned());
+        terminal.updated_at_ms = terminal.updated_at_ms.saturating_add(1);
+        store
+            .write_record(&terminal)
+            .expect("legacy terminal status write");
+        fs::write(store.events_path(&record.id), "{not-json}\n").expect("corrupt events log");
+
+        let due = store
+            .due_callbacks(u128::MAX)
+            .expect("corrupt terminal scan keeps going");
+        assert!(due.is_empty());
+        let callbacks = store.load_callbacks(&record.id).expect("callbacks");
+        assert!(
+            callbacks.watchers["sam"].abandoned_at_ms.is_some(),
+            "undeliverable callback must be abandoned rather than pinning the job forever"
+        );
+        let report = store
+            .prune(
+                JobRetention {
+                    max_jobs: 0,
+                    max_events_per_job: 1,
+                    terminal_job_retention_ms: 0,
+                },
+                u128::MAX,
+            )
+            .expect("prune with corrupt events");
+        assert_eq!(report.removed_jobs, 1);
+    }
+
+    #[test]
     fn prune_protects_pending_callbacks_until_give_up_bound() {
         let store = store("callback-prune");
         let (record, _) = store
@@ -1569,7 +1808,7 @@ mod tests {
             max_events_per_job: 1,
             terminal_job_retention_ms: 0,
         };
-        let report = store.prune(retention, u128::MAX).expect("protected prune");
+        let report = store.prune(retention, 0).expect("protected prune");
         assert_eq!(report.removed_jobs, 0);
         assert_eq!(report.protected_pending_callbacks, 2);
         assert!(store.load(&record.id).is_ok());

@@ -516,7 +516,12 @@ fn notify_route_registers_callback_and_forces_delivery_tick() {
     );
     assert_eq!(response["ok"], true);
     assert_eq!(response["callback"]["watcherId"], "sam");
-    assert_eq!(fixture.runtime.forced_callbacks.load(Ordering::SeqCst), 1);
+    assert_eq!(response["desktopNotification"]["available"], false);
+    assert_eq!(
+        response["callback"]["suppressedReason"],
+        "cargo test harness"
+    );
+    assert_eq!(fixture.runtime.forced_callbacks.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -617,6 +622,168 @@ fn callback_guard_suppresses_without_sending() {
 }
 
 #[test]
+fn disabled_desktop_delivery_is_suppressed_once_without_retrying() {
+    let fixture = fixture("callback-disabled");
+    let store = fixture.runtime.store.clone();
+    let spec = JobSpec {
+        scope: JobScope::Global,
+        skill: "review-pr".to_owned(),
+        tool: Some("codex".to_owned()),
+        args: Vec::new(),
+        cwd: None,
+        env: BTreeMap::new(),
+    };
+    let (record, _) = store.create_or_join(&spec).expect("job");
+    store
+        .register_desktop_callback(&record.id, "sam")
+        .expect("callback");
+    store
+        .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish");
+
+    let sends = Arc::new(AtomicUsize::new(0));
+    let sends_for_sender = Arc::clone(&sends);
+    let report = drain_due_job_callbacks_with(
+        &store,
+        u128::MAX,
+        |_| None,
+        move |_| {
+            sends_for_sender.fetch_add(1, Ordering::SeqCst);
+            disabled_delivery("desktop notifications are disabled")
+        },
+    )
+    .expect("drain");
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.suppressed, 1);
+    assert_eq!(report.failed, 0);
+    assert_eq!(report.abandoned, 0);
+    assert_eq!(sends.load(Ordering::SeqCst), 1);
+
+    let report = drain_due_job_callbacks_with(
+        &store,
+        u128::MAX,
+        |_| None,
+        |_| panic!("disabled callback should not retry"),
+    )
+    .expect("second drain");
+    assert_eq!(report.attempted, 0);
+    let callbacks = store.load_callbacks(&record.id).expect("callbacks");
+    assert_eq!(callbacks.watchers["sam"].attempts, 0);
+    assert_eq!(
+        callbacks.watchers["sam"].suppressed_reason.as_deref(),
+        Some("desktop notifications are disabled")
+    );
+}
+
+#[test]
+fn callback_send_before_delivery_record_is_replayed_after_restart_once() {
+    let fixture = fixture("callback-send-record-crash");
+    let store = fixture.runtime.store.clone();
+    let root = store.root().to_path_buf();
+    let spec = JobSpec {
+        scope: JobScope::Global,
+        skill: "review-pr".to_owned(),
+        tool: Some("codex".to_owned()),
+        args: Vec::new(),
+        cwd: None,
+        env: BTreeMap::new(),
+    };
+    let (record, _) = store.create_or_join(&spec).expect("job");
+    store
+        .register_desktop_callback(&record.id, "sam")
+        .expect("callback");
+    store
+        .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish");
+
+    let due_before_crash = store.due_callbacks(u128::MAX).expect("due");
+    assert_eq!(due_before_crash.len(), 1);
+    assert_eq!(due_before_crash[0].record.status, JobStatus::Succeeded);
+
+    let restarted = JobStore::new(root);
+    let sends = Arc::new(AtomicUsize::new(0));
+    let sends_for_sender = Arc::clone(&sends);
+    let report = drain_due_job_callbacks_with(
+        &restarted,
+        u128::MAX,
+        |_| None,
+        move |_| {
+            sends_for_sender.fetch_add(1, Ordering::SeqCst);
+            ok_delivery()
+        },
+    )
+    .expect("restarted drain");
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.delivered, 1);
+    assert_eq!(sends.load(Ordering::SeqCst), 1);
+
+    let report = drain_due_job_callbacks_with(
+        &restarted,
+        u128::MAX,
+        |_| None,
+        |_| panic!("delivered callback should not replay again"),
+    )
+    .expect("second drain");
+    assert_eq!(report.attempted, 0);
+}
+
+#[test]
+fn corrupt_callback_record_does_not_block_other_due_notifications() {
+    let fixture = fixture("callback-head-of-line");
+    let store = fixture.runtime.store.clone();
+    let spec = JobSpec {
+        scope: JobScope::Global,
+        skill: "review-pr".to_owned(),
+        tool: Some("codex".to_owned()),
+        args: Vec::new(),
+        cwd: None,
+        env: BTreeMap::new(),
+    };
+    let (poisoned, _) = store.create_or_join(&spec).expect("poisoned job");
+    store
+        .register_desktop_callback(&poisoned.id, "poisoned")
+        .expect("poisoned callback");
+    store
+        .finish(&poisoned.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish poisoned");
+    fs::write(
+        store
+            .root()
+            .join("records")
+            .join(&poisoned.id)
+            .join("callbacks.json"),
+        "{not-json}\n",
+    )
+    .expect("corrupt callbacks");
+
+    let mut second_spec = spec;
+    second_spec.args.push("--second".to_owned());
+    let (healthy, _) = store.create_or_join(&second_spec).expect("healthy job");
+    store
+        .register_desktop_callback(&healthy.id, "sam")
+        .expect("healthy callback");
+    store
+        .finish(&healthy.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish healthy");
+
+    let sends = Arc::new(AtomicUsize::new(0));
+    let sends_for_sender = Arc::clone(&sends);
+    let report = drain_due_job_callbacks_with(
+        &store,
+        u128::MAX,
+        |_| None,
+        move |_| {
+            sends_for_sender.fetch_add(1, Ordering::SeqCst);
+            ok_delivery()
+        },
+    )
+    .expect("drain should skip poisoned record and continue");
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.delivered, 1);
+    assert_eq!(sends.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn callback_failures_eventually_abandon_and_release_prune() {
     let fixture = fixture("callback-give-up");
     let store = fixture.runtime.store.clone();
@@ -636,9 +803,14 @@ fn callback_failures_eventually_abandon_and_release_prune() {
         .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
         .expect("finish");
 
-    let now = u128::MAX;
+    let first_due = store
+        .load_callbacks(&record.id)
+        .expect("callbacks")
+        .watchers["sam"]
+        .next_attempt_ms;
     let mut abandoned = 0;
-    for _ in 0..aimux::jobs::JOB_CALLBACK_MAX_ATTEMPTS {
+    let mut now = first_due;
+    for attempt in 0..aimux::jobs::JOB_CALLBACK_MAX_ATTEMPTS {
         let report = drain_due_job_callbacks_with(
             &store,
             now,
@@ -647,6 +819,23 @@ fn callback_failures_eventually_abandon_and_release_prune() {
         )
         .expect("failed drain");
         abandoned += report.abandoned;
+        if attempt + 1 < aimux::jobs::JOB_CALLBACK_MAX_ATTEMPTS {
+            let before_next = store
+                .load_callbacks(&record.id)
+                .expect("callbacks")
+                .watchers["sam"]
+                .next_attempt_ms
+                .saturating_sub(1);
+            let early = drain_due_job_callbacks_with(
+                &store,
+                before_next,
+                |_| None,
+                |_| panic!("callback retried before its backoff elapsed"),
+            )
+            .expect("early drain");
+            assert_eq!(early.attempted, 0);
+            now = before_next.saturating_add(1);
+        }
     }
     assert_eq!(abandoned, 1);
     let report = store
@@ -909,7 +1098,7 @@ async fn capture_intercepted_stream(
 
 fn ok_delivery() -> DesktopNotificationDeliveryResult {
     DesktopNotificationDeliveryResult {
-        transport: DesktopNotificationTransport::Disabled,
+        transport: DesktopNotificationTransport::MacHelper,
         helper_path: None,
         ok: true,
         exit_code: Some(0),
@@ -921,10 +1110,22 @@ fn ok_delivery() -> DesktopNotificationDeliveryResult {
 
 fn failed_delivery(error: &str) -> DesktopNotificationDeliveryResult {
     DesktopNotificationDeliveryResult {
-        transport: DesktopNotificationTransport::Disabled,
+        transport: DesktopNotificationTransport::MacHelper,
         helper_path: None,
         ok: false,
         exit_code: Some(1),
+        stdout: None,
+        stderr: None,
+        error: Some(error.to_owned()),
+    }
+}
+
+fn disabled_delivery(error: &str) -> DesktopNotificationDeliveryResult {
+    DesktopNotificationDeliveryResult {
+        transport: DesktopNotificationTransport::Disabled,
+        helper_path: None,
+        ok: false,
+        exit_code: None,
         stdout: None,
         stderr: None,
         error: Some(error.to_owned()),
