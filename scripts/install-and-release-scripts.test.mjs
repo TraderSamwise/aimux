@@ -283,8 +283,20 @@ case "$1" in
     ;;
   upgrade|install)
     shift
-    while [ "$#" -gt 0 ] && [ "$1" = "--formula" ]; do
-      shift
+    build_from_source=0
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --formula)
+          shift
+          ;;
+        --build-from-source)
+          build_from_source=1
+          shift
+          ;;
+        *)
+          break
+          ;;
+      esac
     done
     formula="$1"
     short="\${formula##*/}"
@@ -314,6 +326,17 @@ case "$1" in
     fi
     if [ "\${AIMUX_FAKE_BREW_DEP_HARD_FAIL:-}" = "$short" ]; then
       printf 'failed to install dependency %s\\n' "$short" >&2
+      exit 1
+    fi
+    if [ "\${AIMUX_FAKE_BREW_DEP_NO_BOTTLE:-}" = "$short" ] && [ "$build_from_source" -eq 0 ]; then
+      printf '%s: no bottle available!\\n' "$short" >&2
+      printf "If you're feeling brave, you can try to install from source with:\\n" >&2
+      printf '  brew install --build-from-source %s\\n' "$short" >&2
+      printf 'This is a Tier 3 configuration: https://docs.brew.sh/Support-Tiers#tier-3\\n' >&2
+      exit 1
+    fi
+    if [ "\${AIMUX_FAKE_BREW_DEP_SOURCE_FAIL:-}" = "$short" ] && [ "$build_from_source" -eq 1 ]; then
+      printf 'source build failed deliberately for dependency %s\\n' "$short" >&2
       exit 1
     fi
     touch "$state/installed/$short"
@@ -1152,6 +1175,103 @@ describe("verify-release-asset-set.sh", () => {
     }
   }, 30000);
 
+  it("falls back to source build when a Homebrew dependency has no bottle", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const brewLog = join(root, "brew.log");
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_DEP_NO_BOTTLE: "tmux",
+        AIMUX_FAKE_BREW_LOG: brewLog,
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--live-install",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Homebrew dependency tmux for aimux formula has no bottle available on");
+      expect(result.stdout).toContain("retrying with --build-from-source");
+      expect(result.stdout).toContain("Homebrew dependency preparation passed for tmux");
+      expect(result.stdout).toContain("Homebrew full installed command proof passed");
+      const log = readFileSync(brewLog, "utf8");
+      expect(log).toContain("install --formula tmux");
+      expect(log).toContain("install --formula --build-from-source tmux");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("hard-fails when the no-bottle dependency source build also fails", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const brewLog = join(root, "brew.log");
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_DEP_NO_BOTTLE: "tmux",
+        AIMUX_FAKE_BREW_DEP_SOURCE_FAIL: "tmux",
+        AIMUX_FAKE_BREW_LOG: brewLog,
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--dependency-prep-only",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("Homebrew dependency tmux for aimux formula has no bottle available on");
+      expect(result.stdout).toContain("retrying with --build-from-source");
+      expect(result.stderr).toContain("source build failed deliberately for dependency tmux");
+      expect(result.stderr).toContain("Homebrew dependency preparation failed for tmux");
+      expect(result.stderr).toContain("before the dependency was installed");
+      expect(readFileSync(brewLog, "utf8")).toContain("install --formula --build-from-source tmux");
+      expect(readFileSync(brewLog, "utf8")).not.toContain("install --formula aimux/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
   it("renders Homebrew bottle blocks from bottle metadata while preserving source assets", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-render-"));
     try {
@@ -1397,7 +1517,9 @@ describe("verify-release-asset-set.sh", () => {
         malformed,
       ]);
       expect(malformedResult.status).toBe(1);
-      expect(malformedResult.stderr).toContain(`${malformed} entry aimux/bottle-aimux_local-26375/aimux-local is missing bottle tags`);
+      expect(malformedResult.stderr).toContain(
+        `${malformed} entry aimux/bottle-aimux_local-26375/aimux-local is missing bottle tags`,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1517,7 +1639,10 @@ esac
       const bottleDir = join(root, "bottles");
       mkdirSync(bottleDir, { recursive: true });
       writeFileSync(join(bottleDir, "aimux.bottles.tsv"), "arm64_golden_gate\tany_skip_relocation\tnot-a-sha\n");
-      writeFileSync(join(bottleDir, "aimux-local.bottles.tsv"), `arm64_golden_gate\tany_skip_relocation\t${"c".repeat(64)}\n`);
+      writeFileSync(
+        join(bottleDir, "aimux-local.bottles.tsv"),
+        `arm64_golden_gate\tany_skip_relocation\t${"c".repeat(64)}\n`,
+      );
 
       const result = run("bash", [join(repoRoot, "scripts/render-homebrew-formulas.sh")], {
         env: {
@@ -1735,9 +1860,11 @@ describe("release workflow", () => {
     expect(workflow).toContain("homebrew-bottles/*.bottles.tsv");
     expect(tapJob).toContain("- homebrew-bottles");
     expect(tapJob).toContain("AIMUX_HOMEBREW_BOTTLE_DIR: bottle-metadata");
-    expect(tapJob).toContain("--pattern \"*.bottles.tsv\"");
+    expect(tapJob).toContain('--pattern "*.bottles.tsv"');
     expect(tapJob).toContain("--bottle-dir bottle-metadata");
-    expect(tapJob).toContain("--bottle-root-url \"https://github.com/TraderSamwise/aimux/releases/download/${{ steps.meta.outputs.tag }}\"");
+    expect(tapJob).toContain(
+      '--bottle-root-url "https://github.com/TraderSamwise/aimux/releases/download/${{ steps.meta.outputs.tag }}"',
+    );
     expect(packageJson.scripts["release:homebrew:dry-run"]).toBe("bash scripts/homebrew-release-dry-run.sh");
     expect(workflow).toContain("bash scripts/render-homebrew-formulas.sh");
     expect(workflow).toContain("- name: Prepare Homebrew formula dependencies");

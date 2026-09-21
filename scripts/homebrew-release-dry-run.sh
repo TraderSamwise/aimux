@@ -108,6 +108,11 @@ dependency_problem() {
   fi
 }
 
+homebrew_log_reports_no_bottle() {
+  local log_path="$1"
+  grep -Eiq '(^|[^[:alpha:]])no bottle available([^[:alpha:]]|$)' "$log_path"
+}
+
 prepare_formula_dependencies() {
   local formula="$1"
   local label="$2"
@@ -115,6 +120,7 @@ prepare_formula_dependencies() {
   local dep
   local status
   local dep_log
+  local dep_action
   local saw_dependency=0
 
   if [ "$IGNORE_DEPENDENCIES" -eq 1 ]; then
@@ -137,15 +143,28 @@ prepare_formula_dependencies() {
     saw_dependency=1
     dep_log="$LOG_DIR/dependency-$label-${dep//[^A-Za-z0-9_.@-]/_}.log"
     if brew list --formula --versions "$dep" >/dev/null 2>&1; then
+      dep_action=upgrade
       printf 'Preparing Homebrew dependency for %s formula: brew upgrade %s\n' "$label" "$dep"
       set +e
       brew upgrade --formula "$dep" >"$dep_log" 2>&1
       status=$?
       set -e
     else
+      dep_action=install
       printf 'Preparing Homebrew dependency for %s formula: brew install %s\n' "$label" "$dep"
       set +e
       brew install --formula "$dep" >"$dep_log" 2>&1
+      status=$?
+      set -e
+    fi
+    if [ "$status" -ne 0 ] && homebrew_log_reports_no_bottle "$dep_log"; then
+      printf 'Homebrew dependency %s for %s formula has no bottle available on %s; retrying with --build-from-source\n' "$dep" "$label" "$PLATFORM_ARCH"
+      set +e
+      if [ "$dep_action" = upgrade ]; then
+        brew upgrade --formula --build-from-source "$dep" >>"$dep_log" 2>&1
+      else
+        brew install --formula --build-from-source "$dep" >>"$dep_log" 2>&1
+      fi
       status=$?
       set -e
     fi
