@@ -101,7 +101,7 @@ fn fixture(label: &str) -> Fixture {
     let _ = fs::remove_dir_all(&root);
     let home = root.join("home");
     let project = root.join("projects").join("tealstreet-next");
-    fs::create_dir_all(project.join(".git")).expect("project git marker");
+    init_git_repo(&project);
     let resolver = PathResolver::new(&project, &home, None);
     resolver
         .save_registry(&ProjectsRegistry {
@@ -122,6 +122,17 @@ fn fixture(label: &str) -> Fixture {
         },
         address: "tealstreet-next/main/review-pr".to_owned(),
     }
+}
+
+fn init_git_repo(path: &std::path::Path) {
+    fs::create_dir_all(path).expect("repo dir");
+    let status = std::process::Command::new("git")
+        .arg("init")
+        .arg("-q")
+        .arg(path)
+        .status()
+        .expect("git init");
+    assert!(status.success(), "git init failed for {}", path.display());
 }
 
 fn job_spec(slot: &str) -> JobSpec {
@@ -508,12 +519,12 @@ fn list_jobs_scope_is_recursive_by_default_and_depth_limited_by_segments() {
     let mut fixture = fixture("list-depth");
     let sibling =
         std::env::temp_dir().join(format!("aimux-daemon-jobs-sibling-{}", std::process::id()));
-    fs::create_dir_all(sibling.join(".git")).expect("sibling git marker");
+    init_git_repo(&sibling);
     let project = std::env::temp_dir().join(format!(
         "aimux-daemon-jobs-list-depth-project-{}",
         std::process::id()
     ));
-    fs::create_dir_all(project.join(".git")).expect("project git marker");
+    init_git_repo(&project);
     fixture
         .runtime
         .resolver
@@ -809,6 +820,42 @@ fn fifo_callback_without_reader_does_not_block_daemon() {
         aimux::daemon::jobs::drain_due_job_callbacks(&store, u128::MAX).expect("fifo drain");
     assert!(started.elapsed() < Duration::from_millis(500));
     assert_eq!(report.failed, 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn fifo_callback_revalidates_open_fd_after_path_swap() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = fixture("callback-fifo-symlink-swap");
+    let store = fixture.runtime.store.clone();
+    let spec = job_spec("review-pr");
+    let (record, _) = store.create_or_join(&spec).expect("job");
+    let fifo_path = store.root().join("notify.fifo");
+    let target_path = store.root().join("not-a-fifo.txt");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo_path)
+        .status()
+        .expect("mkfifo");
+    assert!(status.success(), "mkfifo failed");
+    fs::write(&target_path, "before").expect("target file");
+    store
+        .register_fifo_callback(&record.id, "fifo-test", fifo_path.to_str().unwrap())
+        .expect("fifo callback");
+    fs::remove_file(&fifo_path).expect("remove fifo");
+    symlink(&target_path, &fifo_path).expect("swap symlink");
+    store
+        .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
+        .expect("finish");
+
+    let report =
+        aimux::daemon::jobs::drain_due_job_callbacks(&store, u128::MAX).expect("fifo drain");
+
+    assert_eq!(report.failed, 1);
+    assert_eq!(
+        fs::read_to_string(&target_path).expect("target unchanged"),
+        "before"
+    );
 }
 
 #[test]
@@ -1161,7 +1208,7 @@ async fn drained_job_stream_keeps_connection_alive_with_keepalive() {
 
 #[tokio::test]
 async fn job_list_stream_uses_same_recursive_prefix_semantics_as_list_route() {
-    let fixture = fixture("list-stream");
+    let mut fixture = fixture("list-stream");
     let store = fixture.runtime.store.clone();
     let mut parent = job_spec("parent");
     parent.address = JobAddress {
@@ -1190,6 +1237,18 @@ async fn job_list_stream_uses_same_recursive_prefix_semantics_as_list_route() {
     let (child_record, _) = store.create_or_join(&child).expect("child");
     let (grandchild_record, _) = store.create_or_join(&grandchild).expect("grandchild");
     let (project_record, _) = store.create_or_join(&project).expect("project");
+    let list = route(
+        &mut fixture.runtime,
+        "GET",
+        &format!("{}?scope=global&depth=1", CORE_API_ROUTES.jobs),
+        None,
+        false,
+    );
+    let list_text = serde_json::to_string(&list["jobs"]).expect("list json");
+    assert!(list_text.contains(&parent_record.id));
+    assert!(list_text.contains(&child_record.id));
+    assert!(!list_text.contains(&grandchild_record.id));
+    assert!(!list_text.contains(&project_record.id));
     let output = capture_job_list_stream(
         store,
         Some(JobAddress {

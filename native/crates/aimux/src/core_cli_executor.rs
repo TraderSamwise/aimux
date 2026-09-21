@@ -1400,9 +1400,18 @@ fn render_job_stream_event(
         .and_then(Value::as_str)
         .unwrap_or("failed");
     match status {
-        "succeeded" => Ok(0),
+        "succeeded" => Ok(if quiet {
+            terminal_tool_exit_code(event).unwrap_or(0)
+        } else {
+            0
+        }),
         "cancelled" => Ok(JOB_CANCELLED_EXIT_CODE),
         _ => {
+            if quiet {
+                return Ok(terminal_signal_exit_code(event)
+                    .or_else(|| terminal_tool_exit_code(event))
+                    .unwrap_or(JOB_FAILED_EXIT_CODE));
+            }
             if !quiet
                 && output_mode == CoreCliOutputMode::Text
                 && let Some(reason) = event
@@ -1414,6 +1423,52 @@ fn render_job_stream_event(
             }
             Ok(JOB_FAILED_EXIT_CODE)
         }
+    }
+}
+
+fn terminal_tool_exit_code(event: &Value) -> Option<i32> {
+    let code = event
+        .get("data")
+        .and_then(|data| data.get("exitCode"))
+        .and_then(Value::as_i64)?;
+    (0..=255).contains(&code).then_some(code as i32)
+}
+
+fn terminal_signal_exit_code(event: &Value) -> Option<i32> {
+    let signal = event
+        .get("data")
+        .and_then(|data| data.get("cancelSignal"))
+        .and_then(Value::as_str)?;
+    let number = signal_number(signal)?;
+    Some(128 + number)
+}
+
+fn signal_number(signal: &str) -> Option<i32> {
+    let trimmed = signal.trim();
+    if let Ok(number) = trimmed.parse::<i32>() {
+        return (1..=127).contains(&number).then_some(number);
+    }
+    let name = trimmed.strip_prefix("SIG").unwrap_or(trimmed);
+    if let Ok(number) = name.parse::<i32>() {
+        return (1..=127).contains(&number).then_some(number);
+    }
+    match name {
+        "HUP" => Some(1),
+        "INT" => Some(2),
+        "QUIT" => Some(3),
+        "ILL" => Some(4),
+        "TRAP" => Some(5),
+        "ABRT" => Some(6),
+        "BUS" => Some(7),
+        "FPE" => Some(8),
+        "KILL" => Some(9),
+        "USR1" => Some(10),
+        "SEGV" => Some(11),
+        "USR2" => Some(12),
+        "PIPE" => Some(13),
+        "ALRM" => Some(14),
+        "TERM" => Some(15),
+        _ => None,
     }
 }
 
@@ -1606,6 +1661,24 @@ mod job_stream_tests {
     }
 
     fn terminal_event(status: &str, reason: &str) -> String {
+        terminal_event_with_data(
+            status,
+            if status == "succeeded" {
+                Some(0)
+            } else {
+                Some(7)
+            },
+            reason,
+            None,
+        )
+    }
+
+    fn terminal_event_with_data(
+        status: &str,
+        exit_code: Option<i32>,
+        reason: &str,
+        signal: Option<&str>,
+    ) -> String {
         format!(
             "event: terminal-status\ndata: {}\n\n",
             json!({
@@ -1614,9 +1687,9 @@ mod job_stream_tests {
                 "kind": "terminal-status",
                 "data": {
                     "status": status,
-                    "exitCode": if status == "succeeded" { 0 } else { 7 },
+                    "exitCode": exit_code,
                     "terminalReason": reason,
-                    "cancelSignal": null,
+                    "cancelSignal": signal,
                 },
             })
         )
@@ -1690,7 +1763,31 @@ mod job_stream_tests {
             &mut stderr,
             || false,
         );
-        assert_eq!(code, JOB_FAILED_EXIT_CODE);
+        assert_eq!(code, 7);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn job_wait_stream_maps_signal_death_to_shell_convention() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let code = stream_job_events_from_reader(
+            CoreCliOutputMode::Text,
+            terminal_event_with_data(
+                "failed",
+                None,
+                "tool terminated by SIGTERM",
+                Some("SIGTERM"),
+            )
+            .into_bytes(),
+            Cursor::new(Vec::<u8>::new()),
+            true,
+            &mut stdout,
+            &mut stderr,
+            || false,
+        );
+        assert_eq!(code, 143);
         assert!(stdout.is_empty());
         assert!(stderr.is_empty());
     }

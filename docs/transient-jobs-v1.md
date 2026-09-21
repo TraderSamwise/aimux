@@ -184,7 +184,8 @@ CLI.
 | Code | Meaning |
 | ---: | --- |
 | 0 | Job succeeded. |
-| 20 | Job failed. |
+| 1-255 | `aimux job wait` returns the tool's own exit code when the job ran and exited. A signal death follows shell convention, `128 + signal`. |
+| 20 | `aimux run` or `aimux job tail` saw a terminal failed job. |
 | 21 | Job was cancelled. |
 | 22 | The local caller detached on `SIGINT`. |
 | 23 | Stream lost before terminal status, including a partial SSE frame. |

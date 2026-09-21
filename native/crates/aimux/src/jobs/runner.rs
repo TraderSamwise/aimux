@@ -19,7 +19,7 @@ use std::fs;
 use std::io::Write;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use std::time::Duration;
 
 pub const JOB_TMUX_ARGV_MAX_BYTES: usize = 16_350;
@@ -540,9 +540,10 @@ fn run_job_exec_with_store(store: &JobStore, id: &str) -> Result<ExitCode, Strin
         ));
     }
     let material = store.load_material(id).map_err(|error| error.to_string())?;
-    let tool = record
+    let tool = material
         .tool
         .as_deref()
+        .or(record.tool.as_deref())
         .map(str::trim)
         .filter(|tool| !tool.is_empty())
         .ok_or_else(|| "job tool is required".to_owned())?;
@@ -580,15 +581,32 @@ fn run_job_exec_with_store(store: &JobStore, id: &str) -> Result<ExitCode, Strin
     } else {
         JobStatus::Failed
     };
+    let signal = signal_name_from_status(&status);
     let reason = exit_code.map_or_else(
-        || "tool terminated by signal".to_owned(),
+        || {
+            signal.as_deref().map_or_else(
+                || "tool terminated by signal".to_owned(),
+                |signal| format!("tool terminated by {signal}"),
+            )
+        },
         |code| format!("tool exited with {code}"),
     );
     store
-        .finish(id, terminal, exit_code, reason, None)
+        .finish(id, terminal, exit_code, reason, signal)
         .map_err(|error| error.to_string())?;
     kick_job_callbacks_next_tick();
     Ok(ExitCode::from(exit_code.unwrap_or(1) as u8))
+}
+
+#[cfg(unix)]
+fn signal_name_from_status(status: &ExitStatus) -> Option<String> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal().map(|signal| format!("SIG{signal}"))
+}
+
+#[cfg(not(unix))]
+fn signal_name_from_status(_status: &ExitStatus) -> Option<String> {
+    None
 }
 
 fn kick_job_callbacks_next_tick() {

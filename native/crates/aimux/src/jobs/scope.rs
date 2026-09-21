@@ -150,6 +150,17 @@ pub fn parse_job_address(
     resolver: &mut PathResolver,
     explicit_project: Option<&Path>,
 ) -> Result<JobAddress, String> {
+    parse_job_address_with_lane_lookup(address, resolver, explicit_project, |project_root| {
+        worktree_lane_names(project_root)
+    })
+}
+
+fn parse_job_address_with_lane_lookup(
+    address: &str,
+    resolver: &mut PathResolver,
+    explicit_project: Option<&Path>,
+    mut lane_lookup: impl FnMut(&Path) -> Result<BTreeSet<String>, String>,
+) -> Result<JobAddress, String> {
     let raw = address.trim();
     if raw.is_empty() {
         return Err("job address is required".to_owned());
@@ -157,7 +168,7 @@ pub fn parse_job_address(
     let segments = raw
         .split('/')
         .map(|segment| {
-            if segment == "." && explicit_project.is_some() {
+            if raw == "." && segment == "." && explicit_project.is_some() {
                 Ok(segment)
             } else {
                 validate_address_segment(segment).map(|_| segment)
@@ -184,7 +195,7 @@ pub fn parse_job_address(
             }),
             [] => Err(format!("invalid job address: {address}")),
             [first, rest @ ..] => {
-                let lane_names = worktree_lane_names(project_root);
+                let lane_names = lane_lookup(project_root)?;
                 if lane_names.contains(*first) {
                     Ok(JobAddress {
                         scope: JobScope::worktree_for(resolver, project_root, *first),
@@ -209,7 +220,7 @@ pub fn parse_job_address(
         }),
         [project, first, rest @ ..] => {
             let entry = resolve_project_entry_from_registry(resolver, project)?;
-            let lane_names = worktree_lane_names(&entry.repo_root);
+            let lane_names = lane_lookup(Path::new(&entry.repo_root))?;
             if lane_names.contains(*first) {
                 Ok(JobAddress {
                     scope: JobScope::Worktree {
@@ -300,7 +311,7 @@ fn resolve_project_entry_from_registry(
     }
 }
 
-fn worktree_lane_names(project_root: impl AsRef<Path>) -> BTreeSet<String> {
+fn worktree_lane_names(project_root: impl AsRef<Path>) -> Result<BTreeSet<String>, String> {
     let project_root = project_root.as_ref();
     let mut lanes = BTreeSet::from(["main".to_owned()]);
     let output = Command::new("git")
@@ -312,11 +323,20 @@ fn worktree_lane_names(project_root: impl AsRef<Path>) -> BTreeSet<String> {
         .env_remove("GIT_OBJECT_DIRECTORY")
         .env_remove("GIT_COMMON_DIR")
         .output();
-    let Ok(output) = output else {
-        return lanes;
-    };
+    let output = output.map_err(|error| {
+        format!(
+            "could not determine worktree lanes for {}: git worktree list failed to start: {error}",
+            project_root.display()
+        )
+    })?;
     if !output.status.success() {
-        return lanes;
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(format!(
+            "could not determine worktree lanes for {}: git worktree list exited with {}; {}",
+            project_root.display(),
+            output.status,
+            stderr
+        ));
     }
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let Some(path) = line.strip_prefix("worktree ") else {
@@ -331,7 +351,7 @@ fn worktree_lane_names(project_root: impl AsRef<Path>) -> BTreeSet<String> {
             lanes.insert(name.to_owned());
         }
     }
-    lanes
+    Ok(lanes)
 }
 
 #[cfg(test)]
@@ -484,6 +504,33 @@ mod tests {
         let allowed =
             parse_job_address("global/jobs-deadbeef", &mut resolver, None).expect("allowed");
         assert_eq!(allowed.slot, vec!["jobs-deadbeef"]);
+
+        let explicit_project = cwd.join("repo");
+        let dotted_slot =
+            parse_job_address("./x", &mut resolver, Some(&explicit_project)).expect_err("dot");
+        assert!(dotted_slot.contains("path traversal"));
+    }
+
+    #[test]
+    fn lane_lookup_failure_is_not_treated_as_no_lanes() {
+        let root =
+            std::env::temp_dir().join(format!("aimux-jobs-lane-failure-{}", std::process::id()));
+        let home = root.join("home");
+        let project = root.join("repo");
+        init_git_repo(&project);
+        let mut registrar = PathResolver::new(&project, &home, None);
+        registrar
+            .register_project(&project)
+            .expect("registered")
+            .expect("project entry");
+        let mut resolver = PathResolver::new(&root, &home, None);
+
+        let error = parse_job_address_with_lane_lookup("repo/feature", &mut resolver, None, |_| {
+            Err("git worktree list failed".to_owned())
+        })
+        .expect_err("lane lookup failure");
+
+        assert!(error.contains("git worktree list failed"));
     }
 
     #[test]

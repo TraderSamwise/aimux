@@ -97,12 +97,14 @@ impl JobSpec {
 
     pub fn conflict_summary(&self) -> String {
         format!(
-            "tool={}, payload={}:{}, args={}, cwd={}, envKeys={}",
-            self.tool.as_deref().unwrap_or("<none>"),
+            "tool={}, payload={}, args={}, cwd={}, envKeys={}",
+            self.tool
+                .as_deref()
+                .map(sanitize_log_string)
+                .unwrap_or_else(|| "<none>".to_owned()),
             self.payload_kind(),
-            self.payload_display_label(),
-            summarize_vec(&self.args),
-            self.cwd.as_deref().unwrap_or("<none>"),
+            summarize_count(self.args.len()),
+            presence_label(self.cwd.as_deref()),
             summarize_keys(&self.env),
         )
     }
@@ -154,6 +156,8 @@ pub struct JobTmuxTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobMaterial {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
     #[serde(default)]
     pub skill: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -436,7 +440,11 @@ impl JobStore {
             idempotency_key: key.to_owned(),
             address: Some(spec.address.clone()),
             scope: spec.scope.clone(),
-            skill: sanitize_log_string(&spec.payload_display_label()),
+            skill: if spec.prompt.is_some() {
+                "prompt".to_owned()
+            } else {
+                sanitize_log_string(&spec.skill)
+            },
             payload_kind: Some(spec.payload_kind().to_owned()),
             tool: spec.tool.as_deref().map(sanitize_log_string),
             args: spec
@@ -1032,7 +1040,8 @@ impl JobStore {
         if material.skill != spec.skill || material.prompt != spec.prompt {
             differing_fields.push("payload".to_owned());
         }
-        if record.tool != spec.tool {
+        let material_tool = material.tool.as_ref().or(record.tool.as_ref());
+        if material_tool != spec.tool.as_ref() {
             differing_fields.push("tool".to_owned());
         }
         if material.args != spec.args {
@@ -1234,6 +1243,7 @@ impl JobStore {
     fn write_material(&self, id: &str, spec: &JobSpec) -> Result<()> {
         let path = self.material_path(id);
         let material = JobMaterial {
+            tool: spec.tool.clone(),
             skill: spec.skill.clone(),
             prompt: spec.prompt.clone(),
             args: spec.args.clone(),
@@ -1495,28 +1505,24 @@ fn record_conflict_summary(record: &JobRecord, material: Option<&JobMaterial>) -
             "skill"
         },
     );
-    let payload_label = material
-        .and_then(|material| {
-            material
-                .prompt
-                .as_deref()
-                .map(summarize_for_conflict)
-                .or_else(|| Some(material.skill.clone()))
-        })
-        .unwrap_or_else(|| record.skill.clone());
-    let args = material
-        .map(|material| summarize_vec(&material.args))
-        .unwrap_or_else(|| summarize_vec(&record.args));
+    let args_count = material
+        .map(|material| material.args.len())
+        .unwrap_or(record.args.len());
     let cwd = material
         .and_then(|material| material.cwd.as_deref())
-        .or(record.cwd.as_deref())
-        .unwrap_or("<none>");
+        .or(record.cwd.as_deref());
     let env_keys = material
         .map(|material| summarize_keys(&material.env))
         .unwrap_or_else(|| summarize_keys(&record.env));
     format!(
-        "tool={}, payload={payload_kind}:{payload_label}, args={args}, cwd={cwd}, envKeys={env_keys}, startedAtMs={}",
-        record.tool.as_deref().unwrap_or("<none>"),
+        "tool={}, payload={payload_kind}, args={}, cwd={}, envKeys={env_keys}, startedAtMs={}",
+        material
+            .and_then(|material| material.tool.as_deref())
+            .or(record.tool.as_deref())
+            .map(sanitize_log_string)
+            .unwrap_or_else(|| "<none>".to_owned()),
+        summarize_count(args_count),
+        presence_label(cwd),
         record.created_at_ms,
     )
 }
@@ -1533,19 +1539,16 @@ fn summarize_for_conflict(value: &str) -> String {
     }
 }
 
-fn summarize_vec(values: &[String]) -> String {
-    if values.is_empty() {
-        "[]".to_owned()
-    } else {
-        format!(
-            "[{}]",
-            values
-                .iter()
-                .map(|value| summarize_for_conflict(value))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+fn summarize_count(count: usize) -> String {
+    match count {
+        0 => "none".to_owned(),
+        1 => "1 value".to_owned(),
+        count => format!("{count} values"),
     }
+}
+
+fn presence_label(value: Option<&str>) -> &'static str {
+    if value.is_some() { "present" } else { "absent" }
 }
 
 fn summarize_keys(values: &BTreeMap<String, String>) -> String {
@@ -1809,14 +1812,69 @@ mod tests {
             Err(JobStoreError::JobAddressConflict {
                 address,
                 job_id,
+                running,
+                requested,
                 differing_fields,
-                ..
             }) => {
                 assert_eq!(address, same_a.address.display());
                 assert_eq!(job_id, created.id);
                 assert_eq!(differing_fields, vec!["args"]);
+                let message = format!("{running}; {requested}");
+                assert!(message.contains("args=1 value"));
+                assert!(!message.contains("token=alpha"));
+                assert!(!message.contains("token=bravo"));
             }
             other => panic!("expected address conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn address_conflict_names_fields_without_leaking_private_material() {
+        let store = store("conflict-redaction");
+        let mut first = spec_with_arg("https://example.invalid/?token=caller-a-secret");
+        first.args.push("BARE_CALLER_A_ARG_SECRET".to_owned());
+        first.prompt = Some("summarize this\nSECRET_BARE_POSITIONAL".to_owned());
+        first.skill.clear();
+        first.cwd = Some("/tmp/customer-secret-path".to_owned());
+        first
+            .env
+            .insert("API_TOKEN".to_owned(), "env-secret".to_owned());
+        let mut second = spec_with_arg("https://example.invalid/?token=caller-b-secret");
+        second.args.push("BARE_CALLER_B_ARG_SECRET".to_owned());
+        second.prompt = Some("different prompt with other secret".to_owned());
+        second.skill.clear();
+        second.cwd = Some("/tmp/other-secret-path".to_owned());
+        second
+            .env
+            .insert("API_TOKEN".to_owned(), "other-env-secret".to_owned());
+
+        let (record, _) = store.create_or_join(&first).expect("created");
+        let status = fs::read_to_string(store.status_path(&record.id)).expect("status");
+        assert!(!status.contains("SECRET_BARE_POSITIONAL"));
+        let error = store
+            .create_or_join(&second)
+            .expect_err("different spec conflicts");
+        let message = error.to_string();
+
+        assert!(message.contains("differing fields: payload, args, cwd, env"));
+        assert!(message.contains("watch it with `aimux job tail"));
+        assert!(message.contains("aimux job wait"));
+        assert!(message.contains("aimux job cancel"));
+        for leaked in [
+            "caller-a-secret",
+            "caller-b-secret",
+            "SECRET_BARE_POSITIONAL",
+            "BARE_CALLER_A_ARG_SECRET",
+            "BARE_CALLER_B_ARG_SECRET",
+            "customer-secret-path",
+            "other-secret-path",
+            "env-secret",
+            "other-env-secret",
+        ] {
+            assert!(
+                !message.contains(leaked),
+                "conflict leaked private material {leaked}: {message}"
+            );
         }
     }
 
@@ -1945,6 +2003,7 @@ mod tests {
     fn status_persists_sanitized_args_but_material_keeps_raw_execution_args() {
         let store = store("sanitized");
         let mut spec = spec_with_arg("apiToken=super-secret-token");
+        spec.tool = Some("apiToken=tool-secret".to_owned());
         spec.env.insert(
             "AIMUX_JOB_TOKEN".to_owned(),
             "secret-token-from-env".to_owned(),
@@ -1955,9 +2014,11 @@ mod tests {
         let raw_status =
             fs::read_to_string(store.status_path(&record.id)).expect("status file readable");
         assert!(!raw_status.contains("super-secret-token"));
+        assert!(!raw_status.contains("tool-secret"));
         assert!(!raw_status.contains("secret-token-from-env"));
         assert!(raw_status.contains("<redacted>"));
         let material = store.load_material(&record.id).expect("raw material");
+        assert_eq!(material.tool.as_deref(), Some("apiToken=tool-secret"));
         assert_eq!(material.args, vec!["apiToken=super-secret-token"]);
         assert_eq!(
             material.env.get("AIMUX_JOB_TOKEN").map(String::as_str),

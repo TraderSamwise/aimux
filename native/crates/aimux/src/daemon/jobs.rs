@@ -36,6 +36,7 @@ pub const JOB_EVENT_STREAM_KEEPALIVE_MS: u64 = 15_000;
 const JOB_EVENT_STREAM_POLL_MS: u64 = 500;
 const JOB_PRUNE_INTERVAL_MS: i64 = 6 * 60 * 60 * 1_000;
 const JOB_CALLBACK_BACKSTOP_INTERVAL_MS: i64 = 60_000;
+const JOB_FIFO_NOTIFY_MAX_BYTES: usize = 512;
 pub const DAEMON_JOB_CALLBACKS_TASK_NAME: &str = "daemon-job-callbacks";
 
 pub trait DaemonJobRouteRuntime {
@@ -865,16 +866,22 @@ fn write_fifo_notification(due: &crate::jobs::DueJobCallback) -> DesktopNotifica
         }
     };
     line.push('\n');
-    let mut options = OpenOptions::new();
-    options.write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
+    if line.len() > JOB_FIFO_NOTIFY_MAX_BYTES {
+        return DesktopNotificationDeliveryResult {
+            ok: false,
+            transport: DesktopNotificationTransport::Fifo,
+            helper_path: None,
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            error: Some(format!(
+                "fifo notification exceeds {JOB_FIFO_NOTIFY_MAX_BYTES} byte atomic write budget"
+            )),
+        };
     }
-    match options.open(path) {
-        Ok(mut file) => match file.write_all(line.as_bytes()) {
-            Ok(()) => DesktopNotificationDeliveryResult {
+    match open_fifo_notification_writer(path) {
+        Ok(mut file) => match file.write(line.as_bytes()) {
+            Ok(count) if count == line.len() => DesktopNotificationDeliveryResult {
                 ok: true,
                 transport: DesktopNotificationTransport::Fifo,
                 helper_path: None,
@@ -882,6 +889,18 @@ fn write_fifo_notification(due: &crate::jobs::DueJobCallback) -> DesktopNotifica
                 stdout: None,
                 stderr: None,
                 error: None,
+            },
+            Ok(count) => DesktopNotificationDeliveryResult {
+                ok: false,
+                transport: DesktopNotificationTransport::Fifo,
+                helper_path: None,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                error: Some(format!(
+                    "fifo notification partial write: wrote {count} of {} bytes",
+                    line.len()
+                )),
             },
             Err(error) => DesktopNotificationDeliveryResult {
                 ok: false,
@@ -903,6 +922,33 @@ fn write_fifo_notification(due: &crate::jobs::DueJobCallback) -> DesktopNotifica
             error: Some(error.to_string()),
         },
     }
+}
+
+#[cfg(unix)]
+fn open_fifo_notification_writer(path: &str) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
+
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.file_type().is_fifo() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("notify fifo {path} is not a FIFO"),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_fifo_notification_writer(_path: &str) -> std::io::Result<std::fs::File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "notify fifo is supported only on Unix hosts",
+    ))
 }
 
 fn job_project_state_dir_from_event(store: &JobStore, event: &Value) -> Option<PathBuf> {
@@ -1015,7 +1061,7 @@ fn validate_job_id_handle(id: &str) -> Result<(), JobStoreError> {
 
 fn validate_notify_fifo_path(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
-    let metadata = fs::metadata(&path)
+    let metadata = fs::symlink_metadata(&path)
         .map_err(|error| format!("notify fifo {} is not readable: {error}", path.display()))?;
     #[cfg(unix)]
     {
