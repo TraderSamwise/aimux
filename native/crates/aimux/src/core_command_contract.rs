@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    108,
+    111,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -47,6 +47,9 @@ define_string_contract!(
         host_agent_read_text => ("hostAgentReadText", "/core/host-agent-read-text"),
         host_agent_stream_text => ("hostAgentStreamText", "/core/host-agent-stream-text"),
         host_status_text => ("hostStatusText", "/core/host-status-text"),
+        jobs => ("jobs", "/jobs"),
+        jobs_cancel => ("jobsCancel", "/jobs/cancel"),
+        jobs_events => ("jobsEvents", "/jobs/events"),
         agent_input_text => ("agentInputText", "/core/agents/input-text"),
         agent_list_text => ("agentListText", "/core/agents/list-text"),
         agent_migrate_text => ("agentMigrateText", "/core/agents/migrate-text"),

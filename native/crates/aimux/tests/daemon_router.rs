@@ -4,6 +4,7 @@ use aimux::attachment_hosting::{
 use aimux::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use aimux::daemon::http::DaemonResponseBody;
+use aimux::daemon::jobs::DaemonJobRouteRuntime;
 use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
@@ -821,6 +822,8 @@ impl DaemonJsonRouteRuntime for FakeRouterRuntime {
         })
     }
 }
+
+impl DaemonJobRouteRuntime for FakeRouterRuntime {}
 
 fn text_body(response: DaemonRouteResponse) -> String {
     match response.body {

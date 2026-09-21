@@ -1,5 +1,6 @@
 use aimux::async_runtime::{AsyncTaskKind, doctor_tasks_report, process_runtime, spawn_named};
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
+use aimux::daemon::jobs::DaemonJobRouteRuntime;
 use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
@@ -350,6 +351,8 @@ impl DaemonJsonRouteRuntime for FakeRuntime {
         Ok(self.proxy_binary.clone())
     }
 }
+
+impl DaemonJobRouteRuntime for FakeRuntime {}
 
 impl DaemonSystemTextRuntime for FakeRuntime {
     fn selected_log_path(

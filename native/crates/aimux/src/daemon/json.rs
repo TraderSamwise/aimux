@@ -5,6 +5,7 @@ use crate::core_command_transport::{
 };
 use crate::daemon::core_commands::DaemonCoreCommandRuntime;
 use crate::daemon::http::DaemonResponseBody;
+use crate::daemon::jobs::{DaemonJobRouteRuntime, route_jobs_json_request};
 use crate::daemon::remote_control::route_remote_json_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::project_api_contract::routes as project_routes;
@@ -66,7 +67,7 @@ pub trait DaemonJsonRouteRuntime: DaemonCoreCommandRuntime {
 }
 
 pub fn route_json_daemon_request(
-    runtime: &mut impl DaemonJsonRouteRuntime,
+    runtime: &mut (impl DaemonJsonRouteRuntime + DaemonJobRouteRuntime),
     method: &str,
     path: &str,
     body: Option<&Value>,
@@ -77,6 +78,10 @@ pub fn route_json_daemon_request(
     let pathname = route_url.pathname();
 
     if let Some(response) = route_remote_json_request(runtime, method, pathname) {
+        return Some(response);
+    }
+
+    if let Some(response) = route_jobs_json_request(runtime, method, path, body, actor_present) {
         return Some(response);
     }
 

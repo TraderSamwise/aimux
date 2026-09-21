@@ -1,5 +1,6 @@
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::daemon::core_commands::{DaemonCoreCommandRuntime, route_core_command};
+use crate::daemon::jobs::DaemonJobRouteRuntime;
 use crate::daemon::json::{DaemonJsonRouteRuntime, route_json_daemon_request};
 use crate::daemon::remote_control::{MaybeDaemonRemoteTextRuntime, route_remote_text_request};
 use crate::daemon::routing::{
@@ -46,6 +47,7 @@ pub trait DaemonRouteRuntime:
     + DaemonProjectContentTextRuntime
     + MaybeDaemonRemoteTextRuntime
     + DaemonJsonRouteRuntime
+    + DaemonJobRouteRuntime
 {
 }
 
@@ -66,6 +68,7 @@ impl<T> DaemonRouteRuntime for T where
         + DaemonProjectContentTextRuntime
         + MaybeDaemonRemoteTextRuntime
         + DaemonJsonRouteRuntime
+        + DaemonJobRouteRuntime
 {
 }
 

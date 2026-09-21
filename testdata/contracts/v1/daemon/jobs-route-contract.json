@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-21T00:00:00.000Z",
+  "generatedBy": "native/crates/aimux/tests/daemon_jobs.rs",
+  "source": "native/crates/aimux/src/daemon/jobs.rs",
+  "subject": "daemon transient jobs routes",
+  "description": "Daemon-level transient job routes use query/body handles because daemon routing has exact path matches and does not percent-decode path parameters.",
+  "routes": [
+    ["POST", "/jobs", "create-or-join"],
+    ["GET", "/jobs?handle=<job-id-or-address>", "show"],
+    ["GET", "/jobs?scope=<scope>", "list"],
+    ["GET", "/jobs/events?handle=<job-id-or-address>&seq=<seq>", "events-sse"],
+    ["POST", "/jobs/cancel", "cancel"]
+  ]
+}

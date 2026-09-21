@@ -28,6 +28,9 @@ use crate::daemon::expose::{
 };
 use crate::daemon::http::DaemonResponseBody;
 use crate::daemon::http::PreparedDaemonResponse;
+use crate::daemon::jobs::{
+    DaemonJobRouteRuntime, maybe_handle_job_event_stream_request_with_runtime_mutex,
+};
 use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
     execute_proxy_binary_request, execute_proxy_json_request, route_stateless_proxy_daemon_request,
@@ -2563,6 +2566,19 @@ pub fn run_daemon_internal() -> Result<()> {
                     {
                         return Ok(true);
                     }
+                    if maybe_handle_job_event_stream_request_with_runtime_mutex(
+                        &stream_runtime,
+                        request,
+                        writer,
+                    )
+                    .await
+                    .map_err(|error| {
+                        crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                            error.to_string(),
+                        ))
+                    })? {
+                        return Ok(true);
+                    }
                     maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
                         &stream_runtime,
                         request,
@@ -2624,6 +2640,7 @@ pub fn daemon_periodic_tasks(
             Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
                 global_expose_hot_snapshots,
             )),
+            Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
             Box::new(DaemonDiskMaintenanceTask::new()),
         ]
     }
@@ -2633,6 +2650,7 @@ pub fn daemon_periodic_tasks(
             Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
                 global_expose_hot_snapshots,
             )),
+            Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
             Box::new(DaemonDiskMaintenanceTask::new()),
         ];
         tasks.insert(1, Box::new(crate::remote::hosted_server::HostedPruneTask));
@@ -4267,6 +4285,16 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         max_bytes: usize,
     ) -> Result<ProxyBinaryResponse, String> {
         execute_proxy_binary_request(target_url, method, headers, timeout_ms, max_bytes)
+    }
+}
+
+impl DaemonJobRouteRuntime for RealDaemonRuntime {
+    fn job_store(&self) -> crate::jobs::JobStore {
+        crate::jobs::JobStore::new(self.resolver.jobs_dir())
+    }
+
+    fn job_path_resolver(&self) -> PathResolver {
+        self.resolver.clone()
     }
 }
 

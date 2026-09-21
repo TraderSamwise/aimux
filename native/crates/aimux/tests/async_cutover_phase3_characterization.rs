@@ -1,6 +1,7 @@
 #![cfg(unix)]
 
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
+use aimux::daemon::jobs::DaemonJobRouteRuntime;
 use aimux::daemon::json::ProjectEventStreamTarget;
 use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
@@ -1001,6 +1002,8 @@ impl DaemonJsonRouteRuntime for FakeRuntime {
         Ok(self.proxy_binary.clone())
     }
 }
+
+impl DaemonJobRouteRuntime for FakeRuntime {}
 
 impl DaemonSystemTextRuntime for FakeRuntime {
     fn selected_log_path(

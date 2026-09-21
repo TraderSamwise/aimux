@@ -24,6 +24,14 @@ pub enum CreateOrJoin {
     Joined,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CancelOutcome {
+    Cancelled,
+    CancelRequested,
+    Noop,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum JobStatus {
@@ -115,11 +123,26 @@ pub struct PruneReport {
 
 #[derive(Debug)]
 pub enum JobStoreError {
-    MissingJob { id: String },
-    EmptyEventLog { id: String },
+    MissingJob {
+        id: String,
+    },
+    EmptyEventLog {
+        id: String,
+    },
+    InvalidStatusTransition {
+        id: String,
+        from: JobStatus,
+        to: JobStatus,
+    },
     InvalidSpec(String),
-    StoreUnavailable { path: PathBuf, error: String },
-    CorruptStore { path: PathBuf, error: String },
+    StoreUnavailable {
+        path: PathBuf,
+        error: String,
+    },
+    CorruptStore {
+        path: PathBuf,
+        error: String,
+    },
 }
 
 impl fmt::Display for JobStoreError {
@@ -127,6 +150,10 @@ impl fmt::Display for JobStoreError {
         match self {
             Self::MissingJob { id } => write!(formatter, "job not found: {id}"),
             Self::EmptyEventLog { id } => write!(formatter, "job event log is empty: {id}"),
+            Self::InvalidStatusTransition { id, from, to } => write!(
+                formatter,
+                "invalid job status transition for {id}: {from:?} -> {to:?}"
+            ),
             Self::InvalidSpec(error) => write!(formatter, "invalid job spec: {error}"),
             Self::StoreUnavailable { path, error } => {
                 write!(
@@ -305,10 +332,40 @@ impl JobStore {
 
     pub fn set_status(&self, id: &str, status: JobStatus) -> Result<JobRecord> {
         let mut record = self.load(id)?;
+        if !status_transition_allowed(&record.status, &status) {
+            return Err(JobStoreError::InvalidStatusTransition {
+                id: id.to_owned(),
+                from: record.status,
+                to: status,
+            });
+        }
         record.status = status;
         record.updated_at_ms = now_ms();
         self.write_record(&record)?;
         Ok(record)
+    }
+
+    pub fn cancel(&self, id: &str) -> Result<(JobRecord, CancelOutcome)> {
+        let record = self.load(id)?;
+        match record.status {
+            JobStatus::Queued => {
+                let record = self.set_status(id, JobStatus::Cancelled)?;
+                Ok((record, CancelOutcome::Cancelled))
+            }
+            JobStatus::Running => {
+                self.append_event(
+                    id,
+                    JobEventInput {
+                        kind: "cancel-requested".to_owned(),
+                        data: json!({}),
+                    },
+                )?;
+                Ok((self.load(id)?, CancelOutcome::CancelRequested))
+            }
+            JobStatus::Succeeded | JobStatus::Failed | JobStatus::Cancelled => {
+                Ok((record, CancelOutcome::Noop))
+            }
+        }
     }
 
     pub fn list(&self, filter: JobListFilter) -> Result<Vec<JobRecord>> {
@@ -709,6 +766,17 @@ fn sanitize_env_map(env: &BTreeMap<String, String>) -> BTreeMap<String, String> 
         .collect()
 }
 
+fn status_transition_allowed(from: &JobStatus, to: &JobStatus) -> bool {
+    if from == to {
+        return true;
+    }
+    match from {
+        JobStatus::Queued => true,
+        JobStatus::Running => matches!(to, JobStatus::Succeeded | JobStatus::Failed),
+        JobStatus::Succeeded | JobStatus::Failed | JobStatus::Cancelled => false,
+    }
+}
+
 fn now_ms() -> u128 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(duration) => duration.as_millis(),
@@ -941,6 +1009,67 @@ mod tests {
             store.load(&first.id).expect("old job history").status,
             JobStatus::Succeeded
         );
+    }
+
+    #[test]
+    fn status_guard_refuses_terminal_rewrite_to_cancelled() {
+        let store = store("terminal-status-guard");
+        let spec = spec_with_arg("--pr=123");
+        let (record, _) = store.create_or_join(&spec).expect("created");
+        store
+            .set_status(&record.id, JobStatus::Succeeded)
+            .expect("succeeded");
+
+        let error = store
+            .set_status(&record.id, JobStatus::Cancelled)
+            .expect_err("terminal rewrite refused");
+        assert!(matches!(
+            error,
+            JobStoreError::InvalidStatusTransition {
+                from: JobStatus::Succeeded,
+                to: JobStatus::Cancelled,
+                ..
+            }
+        ));
+        assert_eq!(
+            store.load(&record.id).expect("load").status,
+            JobStatus::Succeeded
+        );
+    }
+
+    #[test]
+    fn cancel_is_noop_for_terminal_jobs_and_event_for_running_jobs() {
+        let store = store("cancel-outcomes");
+        let (queued, _) = store
+            .create_or_join(&spec_with_arg("--queued"))
+            .expect("queued created");
+        let (queued, outcome) = store.cancel(&queued.id).expect("queued cancelled");
+        assert_eq!(outcome, CancelOutcome::Cancelled);
+        assert_eq!(queued.status, JobStatus::Cancelled);
+
+        let (running, _) = store
+            .create_or_join(&spec_with_arg("--running"))
+            .expect("running created");
+        store
+            .set_status(&running.id, JobStatus::Running)
+            .expect("running");
+        let (running_after, outcome) = store.cancel(&running.id).expect("running cancel");
+        assert_eq!(outcome, CancelOutcome::CancelRequested);
+        assert_eq!(running_after.status, JobStatus::Running);
+        let events = store
+            .read_events_from(&running.id, 0)
+            .expect("cancel event");
+        assert_eq!(events[0].kind, "cancel-requested");
+
+        let (terminal, _) = store
+            .create_or_join(&spec_with_arg("--terminal"))
+            .expect("terminal created");
+        store
+            .set_status(&terminal.id, JobStatus::Succeeded)
+            .expect("succeeded");
+        let (terminal_after, outcome) = store.cancel(&terminal.id).expect("terminal no-op");
+        assert_eq!(outcome, CancelOutcome::Noop);
+        assert_eq!(terminal_after.status, JobStatus::Succeeded);
     }
 
     #[test]

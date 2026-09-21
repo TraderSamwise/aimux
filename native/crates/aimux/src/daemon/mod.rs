@@ -3,6 +3,7 @@ pub mod core_commands;
 pub mod disk_doctor;
 pub mod expose;
 pub mod http;
+pub mod jobs;
 pub mod json;
 pub mod listener;
 pub mod process;

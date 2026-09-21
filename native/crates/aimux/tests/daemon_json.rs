@@ -1,6 +1,7 @@
 use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use aimux::daemon::http::DaemonResponseBody;
+use aimux::daemon::jobs::DaemonJobRouteRuntime;
 use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, PROXY_MAX_BINARY_BYTES, PROXY_TIMEOUT_MS,
     ProxyBinaryResponse, ProxyJsonResponse, resolve_project_event_stream,
@@ -202,6 +203,8 @@ impl DaemonJsonRouteRuntime for FakeJsonRuntime {
         Ok(self.binary.clone())
     }
 }
+
+impl DaemonJobRouteRuntime for FakeJsonRuntime {}
 
 fn json_body(response: DaemonRouteResponse) -> Value {
     match response.body {
