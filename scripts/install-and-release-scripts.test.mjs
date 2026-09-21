@@ -243,6 +243,11 @@ case "$1" in
     mkdir -p "$tap_repo/Formula"
     exit 0
     ;;
+  help)
+    [ "\${2:-}" = "trust" ] && exit 0
+    printf 'unexpected fake brew help topic: %s\\n' "\${2:-}" >&2
+    exit 127
+    ;;
   trust)
     exit 0
     ;;
@@ -1176,6 +1181,7 @@ describe("verify-release-asset-set.sh", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("Linux Homebrew tap fetch for tradersamwise/aimux passed");
+      expect(result.stdout).toContain("Linux Homebrew tap trust for tradersamwise/aimux passed");
       expect(result.stdout).toContain("Linux Homebrew formula install for aimux-local passed");
       expect(result.stdout).toContain("Linux Homebrew installed-command proof passed for aimux-local");
       expect(result.stdout).toContain("Linux Homebrew formula uninstall for aimux-local passed");
@@ -1186,6 +1192,9 @@ describe("verify-release-asset-set.sh", () => {
       const brewLines = readFileSync(join(root, "brew.log"), "utf8").trim().split("\n");
       const indexOfLine = (line) => brewLines.findIndex((entry) => entry === line);
       expect(indexOfLine("tap tradersamwise/aimux")).toBeLessThan(
+        indexOfLine("trust tradersamwise/aimux"),
+      );
+      expect(indexOfLine("trust tradersamwise/aimux")).toBeLessThan(
         indexOfLine("install --formula tradersamwise/aimux/aimux-local"),
       );
       expect(indexOfLine("install --formula tradersamwise/aimux/aimux-local")).toBeLessThan(
@@ -1212,6 +1221,7 @@ describe("verify-release-asset-set.sh", () => {
       expect(result.stderr).toContain("Linux Homebrew installed-command gate failed");
       expect(result.stderr).toContain("installed-command step for aimux-local failed");
       expect(result.stderr).toContain("/bin/aimux --help exited");
+      expect(result.stdout).toContain("Linux Homebrew tap trust for tradersamwise/aimux passed");
       expect(result.stdout).toContain("Linux Homebrew formula install for aimux-local passed");
       expect(result.stdout).not.toContain("Linux Homebrew formula install for aimux passed");
     } finally {

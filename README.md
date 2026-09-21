@@ -43,8 +43,10 @@ brew trust TraderSamwise/aimux
 brew install aimux
 ```
 
-Homebrew may refuse third-party taps until they are explicitly trusted; run the
-`brew trust` command after tapping if your Homebrew version enforces tap trust.
+Current Homebrew versions can refuse third-party formulas from untrusted taps,
+including the companion `aimux-local` formula referenced by the tap metadata.
+Run `brew trust TraderSamwise/aimux` once after tapping, then install either
+`aimux` or `aimux-local`.
 
 ### Standalone
 

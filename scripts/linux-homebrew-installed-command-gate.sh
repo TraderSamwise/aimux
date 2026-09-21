@@ -130,6 +130,17 @@ run_logged \
   "$LOG_DIR/tap.log" \
   brew tap "$TAP"
 
+if brew help trust >/dev/null 2>&1; then
+  run_logged \
+    "Linux Homebrew tap trust for $TAP" \
+    "tap trust step failed for $TAP" \
+    60 \
+    "$LOG_DIR/trust.log" \
+    brew trust "$TAP"
+else
+  printf 'Linux Homebrew tap trust skipped for %s because this Homebrew has no trust command\n' "$TAP"
+fi
+
 if brew list --formula --versions aimux >/dev/null 2>&1; then
   fail "preflight found aimux already installed in $(brew --prefix); refusing to overwrite a live Homebrew formula"
 fi
