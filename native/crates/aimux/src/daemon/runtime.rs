@@ -3775,7 +3775,7 @@ impl DaemonHostAgentTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.get_ensured_project_service_json(project, route_path)
+        self.get_hot_or_ensured_project_service_json(project, route_path)
     }
 }
 

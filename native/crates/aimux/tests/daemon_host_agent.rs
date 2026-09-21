@@ -115,6 +115,27 @@ fn host_agent_read_routes_to_live_pane_output_and_adds_trailing_newline() {
 }
 
 #[test]
+fn real_host_agent_read_uses_hot_forwarder_before_ensure() {
+    let source = include_str!("../src/daemon/runtime.rs");
+    let marker = "impl DaemonHostAgentTextRuntime for RealDaemonRuntime";
+    let block = source
+        .split(marker)
+        .nth(1)
+        .and_then(|tail| tail.split("impl DaemonMetadataTextRuntime").next())
+        .expect("real host-agent runtime impl");
+
+    assert!(
+        block.contains("self.get_hot_or_ensured_project_service_json(project, route_path)"),
+        "host agent-read must use the hot project-service endpoint first; falling straight through \
+         ensure reintroduces the constant read floor"
+    );
+    assert!(
+        !block.contains("self.get_ensured_project_service_json(project, route_path)"),
+        "host agent-read must not force the full project-service ensure path before every pane read"
+    );
+}
+
+#[test]
 fn host_agent_read_json_returns_payload_without_losing_plain_text_route() {
     let mut runtime = FakeHostAgentRuntime::default();
     let response = route_host_agent_text_request(
