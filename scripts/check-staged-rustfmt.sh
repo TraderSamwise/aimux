@@ -11,10 +11,20 @@ if ! command -v rustfmt >/dev/null 2>&1; then
 fi
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aimux-staged-rustfmt-XXXXXX")"
+SCRIPT_COMPLETED=0
 cleanup() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
   rm -rf "$TMP_ROOT"
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/check-staged-rustfmt.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 failed=0
 
@@ -35,3 +45,4 @@ if [ "$failed" -ne 0 ]; then
   echo "Run rustfmt on the staged Rust files before committing." >&2
   exit 1
 fi
+SCRIPT_COMPLETED=1

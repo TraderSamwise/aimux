@@ -13,10 +13,20 @@ case "$COMMON_DIR" in
 esac
 PRIMARY_ROOT="$(dirname "$COMMON_DIR")"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aimux-index-typecheck-XXXXXX")"
+SCRIPT_COMPLETED=0
 cleanup() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
   rm -rf "$TMP_ROOT"
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/check-index-typecheck.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 cd "$ROOT"
 git checkout-index --all --force --prefix="$TMP_ROOT/"
@@ -46,3 +56,4 @@ link_dependency_dir relay/node_modules
 
 cd "$TMP_ROOT"
 scripts/run-yarn typecheck
+SCRIPT_COMPLETED=1

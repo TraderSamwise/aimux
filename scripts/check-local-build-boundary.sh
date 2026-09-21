@@ -155,12 +155,22 @@ check_source_remote_gate() {
 check_source_remote_gate
 
 TMP_DIR=""
+SCRIPT_COMPLETED=0
 cleanup() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
   if [ -n "$TMP_DIR" ]; then
     rm -rf "$TMP_DIR"
   fi
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/check-local-build-boundary.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 if [ -n "$ARCHIVE" ]; then
   need tar
@@ -262,3 +272,4 @@ else
 fi
 
 printf 'aimux %s build boundary check passed: %s\n' "$VARIANT" "$BINARY"
+SCRIPT_COMPLETED=1

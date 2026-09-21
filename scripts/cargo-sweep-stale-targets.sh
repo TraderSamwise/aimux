@@ -147,10 +147,20 @@ recently_touched() {
 
 active_target_snapshot="$(mktemp "${TMPDIR:-/tmp}/aimux-cargo-sweep-active-targets.XXXXXX")"
 active_target_raw_snapshot="$(mktemp "${TMPDIR:-/tmp}/aimux-cargo-sweep-active-targets-raw.XXXXXX")"
+SCRIPT_COMPLETED=0
 cleanup_temp_files() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
   rm -f "$active_target_snapshot" "$active_target_raw_snapshot"
+  exit "$cleanup_status"
 }
 trap cleanup_temp_files EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/cargo-sweep-stale-targets.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 process_scan_error=""
 
@@ -344,45 +354,48 @@ actively_used() {
   return 1
 }
 
-for target_dir in "${target_dirs[@]}"; do
-  if actively_used "$target_dir"; then
-    printf 'Skipping active target dir: %s\n' "$target_dir"
-    continue
-  fi
-  active_status="$?"
-  if [ "$active_status" -eq 2 ]; then
-    skip_reason=""
-    if [ "$process_scan_ok" -ne 1 ]; then
-      skip_reason="$process_scan_error"
+if [ "${#target_dirs[@]}" -gt 0 ]; then
+  for target_dir in "${target_dirs[@]}"; do
+    if actively_used "$target_dir"; then
+      printf 'Skipping active target dir: %s\n' "$target_dir"
+      continue
     fi
-    if [ -n "$open_file_scan_error" ]; then
-      if [ -n "$skip_reason" ]; then
-        skip_reason="$skip_reason; $open_file_scan_error"
-      else
-        skip_reason="$open_file_scan_error"
+    active_status="$?"
+    if [ "$active_status" -eq 2 ]; then
+      skip_reason=""
+      if [ "$process_scan_ok" -ne 1 ]; then
+        skip_reason="$process_scan_error"
       fi
+      if [ -n "$open_file_scan_error" ]; then
+        if [ -n "$skip_reason" ]; then
+          skip_reason="$skip_reason; $open_file_scan_error"
+        else
+          skip_reason="$open_file_scan_error"
+        fi
+      fi
+      if [ -z "$skip_reason" ]; then
+        skip_reason="could not determine active process usage"
+      fi
+      printf 'Skipping target dir because active-use scan failed: %s (%s)\n' "$target_dir" "$skip_reason" >&2
+      continue
     fi
-    if [ -z "$skip_reason" ]; then
-      skip_reason="could not determine active process usage"
+
+    if recently_touched "$target_dir"; then
+      printf 'Skipping recently active target dir: %s\n' "$target_dir"
+      continue
     fi
-    printf 'Skipping target dir because active-use scan failed: %s (%s)\n' "$target_dir" "$skip_reason" >&2
-    continue
-  fi
 
-  if recently_touched "$target_dir"; then
-    printf 'Skipping recently active target dir: %s\n' "$target_dir"
-    continue
-  fi
-
-  printf 'Sweeping %s artifacts older than %s day(s).\n' "$target_dir" "$DAYS"
-  if [ "$MODE" = "apply" ]; then
-    CARGO_TARGET_DIR="$target_dir" cargo sweep --time "$DAYS" "$workspace_root"
-  else
-    CARGO_TARGET_DIR="$target_dir" cargo sweep --dry-run --time "$DAYS" "$workspace_root"
-  fi
-done
+    printf 'Sweeping %s artifacts older than %s day(s).\n' "$target_dir" "$DAYS"
+    if [ "$MODE" = "apply" ]; then
+      CARGO_TARGET_DIR="$target_dir" cargo sweep --time "$DAYS" "$workspace_root"
+    else
+      CARGO_TARGET_DIR="$target_dir" cargo sweep --dry-run --time "$DAYS" "$workspace_root"
+    fi
+  done
+fi
 
 if [ "$PRUNE_WORKTREES" = "0" ]; then
+  SCRIPT_COMPLETED=1
   exit 0
 fi
 
@@ -396,3 +409,4 @@ for repo in $WORKTREE_REPOS; do
     git -C "$repo" worktree prune --dry-run
   fi
 done
+SCRIPT_COMPLETED=1

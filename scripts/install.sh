@@ -117,10 +117,20 @@ case "$VERSION" in
 esac
 
 TMP_DIR="$(mktemp -d)"
+SCRIPT_COMPLETED=0
 cleanup() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
   rm -rf "$TMP_DIR"
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/install.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 ARCHIVE="$TMP_DIR/$ASSET"
 CHECKSUM="$TMP_DIR/$ASSET.sha256"
@@ -252,3 +262,4 @@ case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) printf 'Add %s to PATH to run aimux from any shell.\n' "$BIN_DIR" ;;
 esac
+SCRIPT_COMPLETED=1

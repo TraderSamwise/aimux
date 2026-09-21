@@ -120,11 +120,22 @@ else
 fi
 OUT_DIR="${AIMUX_RELEASE_DIR:-"$ROOT_DIR/release"}"
 TMP_DIR="$(mktemp -d)"
+SCRIPT_COMPLETED=0
+
 
 cleanup() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
   rm -rf "$TMP_DIR"
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/build-release-asset.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 cd "$ROOT_DIR"
 if [ "$PACKAGE_PROFILE" = "full" ]; then
@@ -244,3 +255,4 @@ else
 fi
 
 printf 'Built %s\n' "$OUT_DIR/$ASSET"
+SCRIPT_COMPLETED=1

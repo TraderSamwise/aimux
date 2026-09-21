@@ -27,10 +27,20 @@ for command in grep shasum tar mktemp rm sed; do
 done
 
 TMP_DIR="$(mktemp -d)"
+SCRIPT_COMPLETED=0
 cleanup() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
   rm -rf "$TMP_DIR"
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/verify-release-asset-set.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 verify_checksum() {
   local asset="$1"
@@ -136,3 +146,4 @@ done
 if [ "$missing" -ne 0 ]; then
   exit 1
 fi
+SCRIPT_COMPLETED=1

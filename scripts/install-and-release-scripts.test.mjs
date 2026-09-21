@@ -1522,6 +1522,123 @@ describe("verify-release-asset-set.sh", () => {
     }
   }, 30000);
 
+  it("preserves non-zero status from fatal errors after cleanup traps are installed", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-trap-status-"));
+    try {
+      const bin = join(root, "bin");
+      const home = join(root, "home");
+      const releaseDir = join(root, "release");
+      const cargoWorkspace = join(root, "native");
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(home, { recursive: true });
+      mkdirSync(releaseDir, { recursive: true });
+      mkdirSync(cargoWorkspace, { recursive: true });
+      writeFileSync(join(cargoWorkspace, "Cargo.toml"), "[workspace]\n");
+      writeExecutable(join(bin, "brew"), "#!/usr/bin/env bash\nexit 0\n");
+      writeExecutable(join(bin, "cargo-sweep"), "#!/usr/bin/env bash\nexit 0\n");
+      writeExecutable(join(bin, "docker"), "#!/usr/bin/env bash\nexit 0\n");
+      writeExecutable(join(bin, "rustfmt"), "#!/usr/bin/env bash\nexit 0\n");
+
+      const cases = [
+        {
+          script: "scripts/build-homebrew-bottle.sh",
+          args: ["aimux"],
+          env: { AIMUX_HOMEBREW_BREW: join(bin, "brew") },
+        },
+        { script: "scripts/build-release-asset.sh", args: [] },
+        {
+          script: "scripts/cargo-sweep-stale-targets.sh",
+          args: [],
+          env: {
+            AIMUX_CARGO_SWEEP_TMP_ROOTS: join(root, "missing-tmp"),
+            AIMUX_CARGO_SWEEP_WORKSPACE_ROOT: cargoWorkspace,
+            AIMUX_CARGO_SWEEP_PRUNE_WORKTREES: "0",
+          },
+        },
+        { script: "scripts/check-index-native-clippy.sh", args: [] },
+        { script: "scripts/check-index-typecheck.sh", args: [] },
+        {
+          script: "scripts/check-local-build-boundary.sh",
+          args: ["--variant", "local", "--binary", join(root, "aimux"), "--skip-cargo-tree"],
+        },
+        { script: "scripts/check-staged-rustfmt.sh", args: [] },
+        { script: "scripts/install.sh", args: [] },
+        { script: "scripts/linux-release-repro.sh", args: [] },
+        { script: "scripts/verify-commit-tree-clean.sh", args: ["HEAD"] },
+        { script: "scripts/verify-release-asset-set.sh", args: [releaseDir] },
+        { script: "scripts/verify-release-asset.sh", args: [join(root, "asset.tar.gz"), "darwin-arm64"] },
+      ];
+
+      for (const testCase of cases) {
+        const result = run("/bin/bash", [join(repoRoot, testCase.script), ...testCase.args], {
+          env: {
+            PATH: `${bin}:${process.env.PATH}`,
+            HOME: home,
+            TMPDIR: root,
+            AIMUX_TRAP_STATUS_PROOF: testCase.script,
+            ...(testCase.env ?? {}),
+          },
+        });
+        expect(result.status, `${testCase.script}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).not.toBe(0);
+        expect(result.stderr, testCase.script).toContain("AIMUX_TRAP_STATUS_PROOF_UNSET");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a failed install archive extraction instead of succeeding through cleanup", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-install-fail-"));
+    try {
+      const archive = join(root, "not-a-release.tar.gz");
+      writeFileSync(archive, "not a tarball\n");
+      const result = run("/bin/bash", [join(repoRoot, "scripts/install.sh")], {
+        env: {
+          HOME: join(root, "home"),
+          TMPDIR: root,
+          AIMUX_ARCHIVE: archive,
+          AIMUX_INSTALL_ROOT: join(root, "install"),
+          AIMUX_BIN_DIR: join(root, "bin"),
+          AIMUX_SKIP_POST_INSTALL_RESTART: "1",
+        },
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain(`Installing aimux from local archive ${archive}`);
+      expect(result.stderr).not.toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs cargo sweep with no target dirs under /bin/bash without empty-array failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-cargo-sweep-empty-"));
+    try {
+      const bin = join(root, "bin");
+      const cargoWorkspace = join(root, "native");
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(cargoWorkspace, { recursive: true });
+      writeFileSync(join(cargoWorkspace, "Cargo.toml"), "[workspace]\n");
+      writeExecutable(join(bin, "cargo-sweep"), "#!/usr/bin/env bash\nexit 0\n");
+
+      const result = run("/bin/bash", [join(repoRoot, "scripts/cargo-sweep-stale-targets.sh")], {
+        env: {
+          PATH: `${bin}:${process.env.PATH}`,
+          TMPDIR: root,
+          AIMUX_CARGO_SWEEP_TMP_ROOTS: join(root, "missing-tmp"),
+          AIMUX_CARGO_SWEEP_WORKSPACE_ROOT: cargoWorkspace,
+          AIMUX_CARGO_SWEEP_PRUNE_WORKTREES: "0",
+        },
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("No Aimux Cargo target dirs found.");
+      expect(result.stderr).not.toContain("unbound variable");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("renders Homebrew bottle blocks from bottle metadata while preserving source assets", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-bottle-render-"));
     try {

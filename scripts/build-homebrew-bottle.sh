@@ -82,14 +82,25 @@ BOTTLE_ROOT_URL="${BOTTLE_ROOT_URL%/}"
 TMP_DIR="$(mktemp -d)"
 STAGING_TAP="aimux/bottle-${FORMULA//-/_}-$$"
 CREATED_STAGING_TAP=0
+SCRIPT_COMPLETED=0
+
 
 cleanup() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
   if [ "$CREATED_STAGING_TAP" -eq 1 ]; then
     "$BREW" untap "$STAGING_TAP" >/dev/null 2>&1 || true
   fi
   rm -rf "$TMP_DIR"
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/build-homebrew-bottle.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 . "$ROOT_DIR/scripts/lib/run-and-capture.sh"
 
@@ -168,9 +179,10 @@ fi
 node "$ROOT_DIR/scripts/homebrew-bottle-metadata.mjs" \
   --formula "$FORMULA" \
   --output "$OUT_DIR/$FORMULA.bottles.tsv" \
-  "${bottle_json[@]}"
+  ${bottle_json[@]+"${bottle_json[@]}"}
 canonicalize_bottle_tarballs "$OUT_DIR/$FORMULA.bottles.tsv" "$OUT_DIR"
 
 printf 'Built Homebrew bottle for %s:\n' "$FORMULA"
 printf '  output: %s\n' "$OUT_DIR"
 printf '  metadata: %s\n' "$OUT_DIR/$FORMULA.bottles.tsv"
+SCRIPT_COMPLETED=1

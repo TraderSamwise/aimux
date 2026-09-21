@@ -56,7 +56,20 @@ esac
 
 TMPDIR="${TMPDIR:-/tmp}"
 DOCKERFILE="$(mktemp "$TMPDIR/aimux-linux-release-repro.Dockerfile.XXXXXX")"
-trap 'rm -f "$DOCKERFILE"' EXIT
+SCRIPT_COMPLETED=0
+cleanup() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
+  rm -f "$DOCKERFILE"
+  exit "$cleanup_status"
+}
+trap cleanup EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/linux-release-repro.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 cat > "$DOCKERFILE" <<'DOCKERFILE'
 FROM ubuntu:24.04
@@ -197,3 +210,4 @@ echo "aimux: running $MODE lane in $PLATFORM Ubuntu container"
     echo "running: $REPRO_COMMAND"
     bash -lc "$REPRO_COMMAND"
   '
+SCRIPT_COMPLETED=1

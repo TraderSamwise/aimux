@@ -18,8 +18,20 @@ CHANGED="$(git diff-tree --no-commit-id --name-only -r "$COMMIT")"
 [ -n "$CHANGED" ] || exit 0
 
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/aimux-attest-XXXXXX")"
-cleanup() { rm -rf "$WORKDIR"; }
+SCRIPT_COMPLETED=0
+cleanup() {
+  cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
+  rm -rf "$WORKDIR"
+  exit "$cleanup_status"
+}
 trap cleanup EXIT
+if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/verify-commit-tree-clean.sh" ]; then
+  : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
 
 status=0
 while IFS= read -r path; do
@@ -38,4 +50,5 @@ while IFS= read -r path; do
   esac
 done <<< "$CHANGED"
 
+SCRIPT_COMPLETED=1
 exit "$status"

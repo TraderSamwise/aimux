@@ -450,7 +450,7 @@ else
 fi
 
 cleanup() {
-  local cleanup_status=$?
+  cleanup_status=$?
   set +e
   if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
     cleanup_status=1
