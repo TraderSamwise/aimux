@@ -164,6 +164,10 @@ impl PathResolver {
         self.hosted_dir().join("outbox.jsonl")
     }
 
+    pub fn jobs_dir(&self) -> PathBuf {
+        self.global_aimux_dir().join("jobs")
+    }
+
     pub fn daemon_state_path(&self) -> PathBuf {
         self.daemon_dir().join("state.json")
     }

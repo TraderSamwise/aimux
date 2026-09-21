@@ -59,6 +59,7 @@ pub mod git_delivery;
 pub mod inbox_cleanup;
 pub mod install_cleanup;
 pub mod install_config;
+pub mod jobs;
 pub mod launcher_env;
 pub mod lifecycle_orphans;
 pub mod local_ui_server;
@@ -146,3 +147,14 @@ pub use contracts::{
     find_contract_repo_root, missing_contract_manifest_sources,
 };
 pub use translation_plan::{PhaseStatus, RewritePhase, RewriteStatus, rewrite_status};
+
+#[cfg(test)]
+mod jobs_export_tests {
+    #[test]
+    fn jobs_module_exports_scope_vocabulary() {
+        assert_eq!(
+            crate::jobs::parse_job_scope_kind("global"),
+            Some(crate::jobs::JobScopeKind::Global)
+        );
+    }
+}
