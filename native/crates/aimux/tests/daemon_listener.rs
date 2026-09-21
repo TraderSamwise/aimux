@@ -13,6 +13,7 @@ use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::server::handle_daemon_http_request;
 use aimux::request_actor::RemoteAccessDecision;
 use serde_json::json;
+use std::future::Future;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::pin::Pin;
@@ -408,6 +409,7 @@ fn async_response_write_allows_slow_progressing_reader() {
         .expect("test runtime");
     runtime.block_on(async {
         tokio::time::pause();
+        let writer_idle_timeout = Duration::from_millis(50);
         let stream = SlowProgressingAsyncStream::new(
             b"GET /large HTTP/1.1\r\nHost: local\r\n\r\n",
             16,
@@ -431,7 +433,7 @@ fn async_response_write_allows_slow_progressing_reader() {
                         })
                     },
                     None,
-                    Some(Duration::from_millis(50)),
+                    Some(writer_idle_timeout),
                 )
                 .await;
             (result, stream)
@@ -441,14 +443,14 @@ fn async_response_write_allows_slow_progressing_reader() {
             if server.is_finished() {
                 break;
             }
-            tokio::time::advance(Duration::from_millis(10)).await;
+            tokio::time::advance(writer_idle_timeout + Duration::from_millis(10)).await;
             tokio::task::yield_now().await;
         }
 
         let (result, stream) = server.await.expect("server task");
         result.expect("slow progressing writer should receive response");
         assert!(
-            stream.virtual_write_delay() > Duration::from_millis(50),
+            stream.virtual_write_delay() > writer_idle_timeout,
             "test must take longer than the idle timeout in virtual time"
         );
         assert!(
@@ -542,8 +544,7 @@ struct SlowProgressingAsyncStream {
     max_write: usize,
     write_delay: Duration,
     delay_before_next_write: bool,
-    write_delay_ready: Arc<AtomicBool>,
-    write_delay_scheduled: bool,
+    write_delay_sleep: Option<Pin<Box<tokio::time::Sleep>>>,
     write_count: usize,
     write_delay_count: usize,
 }
@@ -557,8 +558,7 @@ impl SlowProgressingAsyncStream {
             max_write,
             write_delay,
             delay_before_next_write: false,
-            write_delay_ready: Arc::new(AtomicBool::new(false)),
-            write_delay_scheduled: false,
+            write_delay_sleep: None,
             write_count: 0,
             write_delay_count: 0,
         }
@@ -599,26 +599,18 @@ impl AsyncWrite for SlowProgressingAsyncStream {
             return Poll::Ready(Ok(0));
         }
         if self.delay_before_next_write {
-            if self.write_delay_ready.load(Ordering::SeqCst) {
-                self.delay_before_next_write = false;
-                self.write_delay_scheduled = false;
-            } else {
-                if !self.write_delay_scheduled {
-                    self.write_delay_scheduled = true;
-                    self.write_delay_count += 1;
-                    let ready = Arc::clone(&self.write_delay_ready);
-                    let waker = cx.waker().clone();
-                    let delay = self.write_delay;
-                    tokio::spawn(async move {
-                        tokio::time::sleep(delay).await;
-                        ready.store(true, Ordering::SeqCst);
-                        waker.wake();
-                    });
-                }
+            if self.write_delay_sleep.is_none() {
+                self.write_delay_count += 1;
+                self.write_delay_sleep = Some(Box::pin(tokio::time::sleep(self.write_delay)));
+            }
+            if let Some(sleep) = self.write_delay_sleep.as_mut()
+                && sleep.as_mut().poll(cx).is_pending()
+            {
                 return Poll::Pending;
             }
+            self.delay_before_next_write = false;
+            self.write_delay_sleep = None;
         }
-        self.write_delay_ready.store(false, Ordering::SeqCst);
         let count = self.max_write.min(buffer.len());
         self.output.extend_from_slice(&buffer[..count]);
         self.write_count += 1;
