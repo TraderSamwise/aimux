@@ -43,7 +43,7 @@ pub enum JobStatus {
 }
 
 impl JobStatus {
-    fn is_terminal(&self) -> bool {
+    pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
     }
 }
@@ -297,6 +297,7 @@ impl JobStore {
     }
 
     pub fn load(&self, id: &str) -> Result<JobRecord> {
+        validate_job_id(id)?;
         let path = self.status_path(id);
         match fs::read_to_string(&path) {
             Ok(raw) => serde_json::from_str(&raw).map_err(|error| JobStoreError::CorruptStore {
@@ -311,6 +312,7 @@ impl JobStore {
     }
 
     pub fn load_material(&self, id: &str) -> Result<JobMaterial> {
+        validate_job_id(id)?;
         self.load(id)?;
         let path = self.material_path(id);
         match fs::read_to_string(&path) {
@@ -418,7 +420,11 @@ impl JobStore {
             ));
         }
         if record.status.is_terminal() {
-            return Ok(record);
+            return Err(JobStoreError::InvalidStatusTransition {
+                id: id.to_owned(),
+                from: record.status,
+                to: status,
+            });
         }
         if !status_transition_allowed(&record.status, &status) {
             return Err(JobStoreError::InvalidStatusTransition {
@@ -788,6 +794,20 @@ impl JobStore {
     }
 }
 
+pub fn validate_job_id(id: &str) -> Result<()> {
+    let valid = id.strip_prefix("job-").is_some_and(|rest| !rest.is_empty())
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+    if valid {
+        Ok(())
+    } else {
+        Err(JobStoreError::InvalidSpec(
+            "job id contains invalid characters".to_owned(),
+        ))
+    }
+}
+
 pub fn prune_jobs(retention: JobRetention, now_ms: u128) -> Result<PruneReport> {
     JobStore::from_env().prune(retention, now_ms)
 }
@@ -1054,8 +1074,8 @@ mod tests {
     #[test]
     fn missing_job_empty_log_and_corrupt_store_are_distinct() {
         let store = store("errors");
-        match store.load("missing") {
-            Err(JobStoreError::MissingJob { id }) => assert_eq!(id, "missing"),
+        match store.load("job-missing") {
+            Err(JobStoreError::MissingJob { id }) => assert_eq!(id, "job-missing"),
             other => panic!("expected missing job, got {other:?}"),
         }
         let (record, _) = store
@@ -1142,6 +1162,27 @@ mod tests {
             store.load(&record.id).expect("load").status,
             JobStatus::Succeeded
         );
+    }
+
+    #[test]
+    fn finish_refuses_terminal_noop_so_late_writers_are_visible() {
+        let store = store("terminal-finish-guard");
+        let spec = spec_with_arg("--terminal");
+        let (record, _) = store.create_or_join(&spec).expect("created");
+        store
+            .finish(&record.id, JobStatus::Succeeded, Some(0), "done", None)
+            .expect("first finish");
+        let error = store
+            .finish(&record.id, JobStatus::Failed, Some(1), "late", None)
+            .expect_err("second finish must be visible");
+        assert!(matches!(
+            error,
+            JobStoreError::InvalidStatusTransition {
+                from: JobStatus::Succeeded,
+                to: JobStatus::Failed,
+                ..
+            }
+        ));
     }
 
     #[test]

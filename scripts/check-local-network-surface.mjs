@@ -228,6 +228,23 @@ const AUDITED_PROCESS_SPAWN_SITES = [
       "local-only daemon job route data already authenticated as local and stored in the private job material file",
   },
   {
+    path: "native/crates/aimux/src/jobs/runner.rs",
+    marker: "respawn_window_argv(",
+    command: "tmux respawn-window argv budget check for job launch",
+    argv: "fixed internal __job-exec-internal plus job id",
+    input:
+      "local-only job record id; raw job args/env remain in the private material file and are not in tmux argv",
+  },
+  {
+    path: "native/crates/aimux/src/jobs/runner.rs",
+    marker: "TmuxCommandSpec {",
+    count: 2,
+    command: "tmux job launch command spec",
+    argv: "fixed internal __job-exec-internal plus job id, and test fake capture of that spec",
+    input:
+      "local-only job record id; actual tool/args/env are loaded by the internal runner from private job state",
+  },
+  {
     path: "native/crates/aimux/src/lifecycle_orphans.rs",
     marker: 'AsyncCommand::new("kill")',
     command: "kill",

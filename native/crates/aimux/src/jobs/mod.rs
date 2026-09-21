@@ -10,5 +10,5 @@ pub use scope::{JobAddress, JobScope, JobScopeKind, parse_job_address, parse_job
 pub use store::{
     CancelOutcome, CreateOrJoin, DEFAULT_JOB_RETENTION, JobEvent, JobEventInput, JobListFilter,
     JobMaterial, JobRecord, JobRetention, JobSpec, JobStatus, JobStore, JobStoreError,
-    JobTmuxTarget, PruneReport,
+    JobTmuxTarget, PruneReport, validate_job_id,
 };

@@ -117,6 +117,14 @@ pub fn build_managed_launch_env(
     env
 }
 
+pub fn build_managed_job_env(
+    env: impl IntoIterator<Item = (String, String)>,
+) -> BTreeMap<String, String> {
+    let mut env = build_managed_launch_env(env);
+    env.remove("PATH");
+    env
+}
+
 fn should_exclude_env_key(key: &str) -> bool {
     if key.starts_with("LC_") {
         return false;

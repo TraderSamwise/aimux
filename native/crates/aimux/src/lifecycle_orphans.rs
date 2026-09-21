@@ -9,6 +9,7 @@ use crate::tmux::{
     is_dashboard_window_name, tmux_command_from_env,
 };
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -80,6 +81,9 @@ pub trait LifecycleOrphanRuntime {
     fn tmux_is_available(&mut self) -> bool;
     fn list_tmux_session_names(&mut self) -> Vec<String>;
     fn get_tmux_session_option(&mut self, session_name: &str, key: &str) -> Option<String>;
+    fn get_tmux_window_option(&mut self, _window_id: &str, _key: &str) -> Option<String> {
+        None
+    }
     fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo>;
     fn kill_tmux_window(&mut self, target: &TmuxTarget) -> Result<(), String>;
     fn kill_tmux_session(&mut self, session_name: &str) -> Result<(), String>;
@@ -143,6 +147,10 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
 
     fn get_tmux_session_option(&mut self, session_name: &str, key: &str) -> Option<String> {
         self.tmux.get_session_option(session_name, key)
+    }
+
+    fn get_tmux_window_option(&mut self, window_id: &str, key: &str) -> Option<String> {
+        self.tmux.get_window_option(window_id, key)
     }
 
     fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
@@ -519,6 +527,9 @@ fn unrecognized_same_owner_dashboard_window_targets(
             continue;
         }
         for window in runtime.list_tmux_windows(&session_name) {
+            if is_job_window(runtime, &window.id) {
+                continue;
+            }
             if !is_dashboard_window_name(&window.name) || !seen.insert(window.id.clone()) {
                 continue;
             }
@@ -536,6 +547,27 @@ fn unrecognized_same_owner_dashboard_window_targets(
         }
     }
     windows
+}
+
+fn is_job_window(runtime: &mut impl LifecycleOrphanRuntime, window_id: &str) -> bool {
+    if runtime
+        .get_tmux_window_option(window_id, "@aimux-tool")
+        .as_deref()
+        == Some("job")
+    {
+        return true;
+    }
+    runtime
+        .get_tmux_window_option(window_id, "@aimux-meta")
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|metadata| {
+            metadata
+                .get("kind")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some("job")
 }
 
 fn is_unrecognized_project_root(root: &str, recognized_roots: &BTreeSet<String>) -> bool {
@@ -864,6 +896,7 @@ mod tests {
         tmux_available: bool,
         tmux_sessions: Vec<String>,
         tmux_options: HashMap<(String, String), String>,
+        tmux_window_options: HashMap<(String, String), String>,
         tmux_windows: HashMap<String, Vec<TmuxWindowInfo>>,
         live_pane_pids: BTreeSet<i32>,
         live_pane_pids_error: Option<String>,
@@ -882,6 +915,12 @@ mod tests {
         fn option(mut self, session_name: &str, key: &str, value: &str) -> Self {
             self.tmux_options
                 .insert((session_name.to_owned(), key.to_owned()), value.to_owned());
+            self
+        }
+
+        fn window_option(mut self, window_id: &str, key: &str, value: &str) -> Self {
+            self.tmux_window_options
+                .insert((window_id.to_owned(), key.to_owned()), value.to_owned());
             self
         }
 
@@ -968,6 +1007,12 @@ mod tests {
         fn get_tmux_session_option(&mut self, session_name: &str, key: &str) -> Option<String> {
             self.tmux_options
                 .get(&(session_name.to_owned(), key.to_owned()))
+                .cloned()
+        }
+
+        fn get_tmux_window_option(&mut self, window_id: &str, key: &str) -> Option<String> {
+            self.tmux_window_options
+                .get(&(window_id.to_owned(), key.to_owned()))
                 .cloned()
         }
 
@@ -1536,6 +1581,46 @@ mod tests {
         assert_eq!(result.tmux_windows, vec!["aimux-sam-5e9c1a8e1d4e:@1190"]);
         assert_eq!(runtime.killed_windows, vec!["aimux-sam-5e9c1a8e1d4e:@1190"]);
         assert!(runtime.killed_sessions.is_empty());
+    }
+
+    #[test]
+    fn lifecycle_cleanup_does_not_reap_job_tagged_window() {
+        let mut runtime = FakeLifecycleRuntime {
+            tmux_available: true,
+            tmux_sessions: vec!["aimux-sam-5e9c1a8e1d4e".into()],
+            ..Default::default()
+        }
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            "@aimux-project-root",
+            "/Users/sam",
+        )
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            TMUX_RUNTIME_OWNER_OPTION,
+            "owner-new",
+        )
+        .dashboard_window("aimux-sam-5e9c1a8e1d4e", "@job")
+        .window_option("@job", "@aimux-tool", "job")
+        .window_option("@job", "@aimux-meta", r#"{"kind":"job","jobId":"job-1"}"#);
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(ProjectServiceOrphanScope {
+                    aimux_home: "/Users/sam/.aimux".into(),
+                    runtime_owner: "owner-new".into(),
+                    recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
+                }),
+            },
+        );
+
+        assert!(result.attempted_tmux_windows.is_empty());
+        assert!(result.tmux_windows.is_empty());
+        assert!(runtime.killed_windows.is_empty());
     }
 
     #[test]

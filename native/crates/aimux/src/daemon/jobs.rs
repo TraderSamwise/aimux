@@ -8,7 +8,7 @@ use crate::daemon::scheduler::{
 use crate::jobs::{
     CancelOutcome, CreateOrJoin, DEFAULT_JOB_RETENTION, JobAddress, JobCancelReport, JobEvent,
     JobListFilter, JobRecord, JobScope, JobSpec, JobStatus, JobStore, JobStoreError,
-    parse_job_address,
+    parse_job_address, validate_job_id,
 };
 use crate::paths::PathResolver;
 use crate::project_service::event_streams::{encode_sse_event, encode_sse_keepalive};
@@ -224,7 +224,10 @@ pub fn route_jobs_json_request(
                 } else {
                     None
                 };
-                let job = store.load(&record.id).unwrap_or(record);
+                let job = match store.load(&record.id) {
+                    Ok(job) => job,
+                    Err(error) => return Some(store_error_response(error)),
+                };
                 DaemonRouteResponse::json(
                     200,
                     json!({
@@ -451,17 +454,7 @@ fn loopback_only_response() -> DaemonRouteResponse {
 }
 
 fn validate_job_id_handle(id: &str) -> Result<(), JobStoreError> {
-    let valid = id.strip_prefix("job-").is_some_and(|rest| !rest.is_empty())
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
-    if valid {
-        Ok(())
-    } else {
-        Err(JobStoreError::InvalidSpec(
-            "job id handle contains invalid characters".to_owned(),
-        ))
-    }
+    validate_job_id(id)
 }
 
 impl CreateJobRequest {
@@ -521,11 +514,7 @@ impl DaemonPeriodicTask for DaemonJobsReconcileTask {
     }
 
     fn interval_ms(&self) -> i64 {
-        1_000
-    }
-
-    fn run_immediately(&self) -> bool {
-        true
+        30_000
     }
 
     fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {

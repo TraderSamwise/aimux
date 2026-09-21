@@ -1,12 +1,15 @@
 use crate::jobs::{
     JobEventInput, JobRecord, JobScope, JobSpec, JobStatus, JobStore, JobStoreError, JobTmuxTarget,
+    validate_job_id,
 };
 use crate::lifecycle_orphans::{kill_pid, wait_for_pid_exit_with};
-use crate::managed_launch_env::wrap_command_with_managed_launch_env_extra;
+use crate::managed_launch_env::{
+    build_managed_job_env, wrap_command_with_managed_launch_env_extra,
+};
 use crate::paths::PathResolver;
 use crate::tmux::{
-    PanePipeFileOptions, TmuxRuntimeManager, TmuxTarget, new_window_argv, packed_argv_bytes,
-    project_session,
+    PanePipeFileOptions, TmuxCommandSpec, TmuxRuntimeManager, TmuxTarget, packed_argv_bytes,
+    project_session, respawn_window_argv,
 };
 use serde_json::json;
 use sha1::{Digest, Sha1};
@@ -65,6 +68,13 @@ pub trait JobTmuxRuntime {
         target: &TmuxTarget,
         file_path: &str,
     ) -> std::result::Result<(), String>;
+    fn is_pane_piped(&mut self, target: &TmuxTarget) -> std::result::Result<bool, String>;
+    fn respawn_window(
+        &mut self,
+        target: &TmuxTarget,
+        spec: &TmuxCommandSpec,
+    ) -> std::result::Result<(), String>;
+    fn kill_window(&mut self, target: &TmuxTarget) -> std::result::Result<(), String>;
     fn live_window_ids(
         &mut self,
     ) -> std::result::Result<std::collections::BTreeSet<String>, String>;
@@ -126,6 +136,22 @@ impl JobTmuxRuntime for TmuxRuntimeManager {
         )
     }
 
+    fn is_pane_piped(&mut self, target: &TmuxTarget) -> std::result::Result<bool, String> {
+        Ok(self.is_pane_piped(target))
+    }
+
+    fn respawn_window(
+        &mut self,
+        target: &TmuxTarget,
+        spec: &TmuxCommandSpec,
+    ) -> std::result::Result<(), String> {
+        self.respawn_window(target, spec)
+    }
+
+    fn kill_window(&mut self, target: &TmuxTarget) -> std::result::Result<(), String> {
+        self.kill_window(target)
+    }
+
     fn live_window_ids(
         &mut self,
     ) -> std::result::Result<std::collections::BTreeSet<String>, String> {
@@ -185,8 +211,8 @@ pub fn launch_job_in_tmux(
             &plan.session_name,
             &job_window_name(record),
             &plan.cwd,
-            &plan.command,
-            &plan.args,
+            "tail",
+            &["-f".to_owned(), "/dev/null".to_owned()],
         )
         .map_err(|error| JobStoreError::StoreUnavailable {
             path: plan.tap_path.clone(),
@@ -208,21 +234,56 @@ pub fn launch_job_in_tmux(
             path: plan.tap_path.clone(),
             error,
         })?;
+    if tmux
+        .is_pane_piped(&target)
+        .map_err(|error| JobStoreError::StoreUnavailable {
+            path: plan.tap_path.clone(),
+            error,
+        })?
+    {
+        return Err(JobStoreError::StoreUnavailable {
+            path: plan.tap_path.clone(),
+            error: format!(
+                "job pane {} is already piped; refusing to lose job output",
+                target.window_id
+            ),
+        });
+    }
     tmux.pipe_target_to_file(&target, &plan.tap_path.to_string_lossy())
         .map_err(|error| JobStoreError::StoreUnavailable {
             path: plan.tap_path.clone(),
             error,
         })?;
-    store.mark_running(
+    let running = store.mark_running(
         &record.id,
         JobTmuxTarget {
-            session_name: target.session_name,
-            window_id: target.window_id,
+            session_name: target.session_name.clone(),
+            window_id: target.window_id.clone(),
             window_index: target.window_index,
-            window_name: target.window_name,
+            window_name: target.window_name.clone(),
         },
         plan.tap_path.to_string_lossy(),
-    )
+    )?;
+    let spec = TmuxCommandSpec {
+        cwd: plan.cwd,
+        command: plan.command,
+        args: plan.args,
+    };
+    if let Err(error) = tmux.respawn_window(&target, &spec) {
+        let _ = tmux.kill_window(&target);
+        let _ = store.finish(
+            &running.id,
+            JobStatus::Failed,
+            None,
+            format!("failed to launch job command: {error}"),
+            None,
+        );
+        return Err(JobStoreError::StoreUnavailable {
+            path: plan.tap_path,
+            error,
+        });
+    }
+    store.load(&running.id)
 }
 
 pub fn build_launch_plan(
@@ -231,8 +292,7 @@ pub fn build_launch_plan(
     record: &JobRecord,
     spec: &JobSpec,
 ) -> Result<JobLaunchPlan, JobStoreError> {
-    let tool = spec
-        .tool
+    spec.tool
         .as_deref()
         .map(str::trim)
         .filter(|tool| !tool.is_empty())
@@ -249,23 +309,16 @@ pub fn build_launch_plan(
         error: error.to_string(),
     })?;
     let args = vec!["__job-exec-internal".to_owned(), record.id.clone()];
-    let extra_env = spec
-        .env
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .chain([
-            ("AIMUX_JOB_ID".to_owned(), record.id.clone()),
-            ("AIMUX_JOB_TOOL".to_owned(), tool.to_owned()),
-        ]);
+    let extra_env = [("AIMUX_JOB_ID".to_owned(), record.id.clone())];
     let (command, args) =
         wrap_command_with_managed_launch_env_extra(exe.to_string_lossy(), args, extra_env);
-    let argv = new_window_argv(
-        &session_name,
-        &job_window_name(record),
-        &cwd.to_string_lossy(),
-        &command,
-        &args,
-        true,
+    let argv = respawn_window_argv(
+        "@job-argv-budget",
+        &TmuxCommandSpec {
+            cwd: cwd.to_string_lossy().into_owned(),
+            command: command.clone(),
+            args: args.clone(),
+        },
     );
     let argv_bytes = packed_argv_bytes(&argv);
     Ok(JobLaunchPlan {
@@ -324,17 +377,21 @@ pub fn reconcile_running_jobs(
     store: &JobStore,
     tmux: &mut impl JobTmuxRuntime,
 ) -> Result<usize, JobStoreError> {
+    let mut changed = 0;
+    let records = store.list(crate::jobs::JobListFilter {
+        scope: None,
+        status: Some(JobStatus::Running),
+    })?;
+    if records.is_empty() {
+        return Ok(0);
+    }
     let live_windows = tmux
         .live_window_ids()
         .map_err(|error| JobStoreError::StoreUnavailable {
             path: store.root().to_path_buf(),
             error,
         })?;
-    let mut changed = 0;
-    for record in store.list(crate::jobs::JobListFilter {
-        scope: None,
-        status: Some(JobStatus::Running),
-    })? {
+    for record in records {
         let refreshed = capture_job_output_once(store, &record)?;
         let Some(target) = refreshed.tmux_target.as_ref() else {
             store.finish(
@@ -348,13 +405,21 @@ pub fn reconcile_running_jobs(
             continue;
         };
         if !live_windows.contains(&target.window_id) {
-            store.finish(
-                &refreshed.id,
-                JobStatus::Failed,
-                None,
-                "tmux window disappeared before job reported exit",
-                None,
-            )?;
+            let target = TmuxTarget {
+                session_name: target.session_name.clone(),
+                window_id: target.window_id.clone(),
+                window_index: target.window_index,
+                window_name: target.window_name.clone(),
+                pane_dead: None,
+            };
+            let kill_result = tmux.kill_window(&target);
+            let reason = match kill_result {
+                Ok(()) => "tmux window disappeared before job reported exit".to_owned(),
+                Err(error) => format!(
+                    "tmux window disappeared before job reported exit; reap attempted and failed: {error}"
+                ),
+            };
+            store.finish(&refreshed.id, JobStatus::Failed, None, reason, None)?;
             changed += 1;
         }
     }
@@ -405,17 +470,27 @@ pub fn cancel_running_job(
             pid: None,
         });
     };
-    kill_pid(pid, "SIGTERM").map_err(|error| JobStoreError::StoreUnavailable {
-        path: store.root().to_path_buf(),
-        error,
+    kill_process_group_for_pid(pid, "SIGTERM").map_err(|error| {
+        JobStoreError::StoreUnavailable {
+            path: store.root().to_path_buf(),
+            error,
+        }
     })?;
     let signal = if wait_for_pid_exit_with(pid, Duration::from_millis(JOB_CANCEL_TERM_GRACE_MS)) {
         "SIGTERM"
     } else {
-        kill_pid(pid, "SIGKILL").map_err(|error| JobStoreError::StoreUnavailable {
-            path: store.root().to_path_buf(),
-            error,
+        kill_process_group_for_pid(pid, "SIGKILL").map_err(|error| {
+            JobStoreError::StoreUnavailable {
+                path: store.root().to_path_buf(),
+                error,
+            }
         })?;
+        if !wait_for_pid_exit_with(pid, Duration::from_millis(500)) {
+            kill_pid(pid, "SIGKILL").map_err(|error| JobStoreError::StoreUnavailable {
+                path: store.root().to_path_buf(),
+                error,
+            })?;
+        }
         "SIGKILL"
     };
     store.finish(
@@ -433,7 +508,23 @@ pub fn cancel_running_job(
 
 pub fn run_job_exec(id: &str) -> Result<ExitCode, String> {
     let store = JobStore::from_env();
+    run_job_exec_with_store(&store, id)
+}
+
+fn run_job_exec_with_store(store: &JobStore, id: &str) -> Result<ExitCode, String> {
+    validate_job_id(id).map_err(|error| error.to_string())?;
     let record = store.load(id).map_err(|error| error.to_string())?;
+    if record.status != JobStatus::Running
+        || record.tmux_target.is_none()
+        || record.output_tap_path.is_none()
+    {
+        return Err(format!(
+            "job {id} is not launchable: status={:?}, tmuxTarget={}, outputTapPath={}",
+            record.status,
+            record.tmux_target.is_some(),
+            record.output_tap_path.is_some()
+        ));
+    }
     let material = store.load_material(id).map_err(|error| error.to_string())?;
     let tool = record
         .tool
@@ -442,31 +533,42 @@ pub fn run_job_exec(id: &str) -> Result<ExitCode, String> {
         .filter(|tool| !tool.is_empty())
         .ok_or_else(|| "job tool is required".to_owned())?;
     let prompt = job_prompt(&record.skill, &material.args);
+    let filtered_env = build_managed_job_env(material.env);
     let status = Command::new(tool)
         .arg(prompt)
+        .envs(filtered_env)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
         .map_err(|error| format!("failed to execute job tool {tool}: {error}"))?;
-    let exit_code = status.code().unwrap_or(1);
-    capture_job_output_once(&store, &store.load(id).map_err(|error| error.to_string())?)
+    let exit_code = status.code();
+    capture_job_output_once(store, &store.load(id).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
     let terminal = if status.success() {
         JobStatus::Succeeded
     } else {
         JobStatus::Failed
     };
+    let reason = exit_code.map_or_else(
+        || "tool terminated by signal".to_owned(),
+        |code| format!("tool exited with {code}"),
+    );
     store
-        .finish(
-            id,
-            terminal,
-            Some(exit_code),
-            format!("tool exited with {exit_code}"),
-            None,
-        )
+        .finish(id, terminal, exit_code, reason, None)
         .map_err(|error| error.to_string())?;
-    Ok(ExitCode::from(exit_code as u8))
+    Ok(ExitCode::from(exit_code.unwrap_or(1) as u8))
+}
+
+fn kill_process_group_for_pid(pid: i32, signal: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let pgid = unsafe { libc::getpgid(pid) };
+        if pgid > 0 {
+            return kill_pid(-pgid, signal);
+        }
+    }
+    kill_pid(pid, signal)
 }
 
 fn job_cwd(resolver: &PathResolver, spec: &JobSpec) -> Result<PathBuf, JobStoreError> {
@@ -518,6 +620,8 @@ mod tests {
     use super::*;
     use crate::jobs::{CreateOrJoin, JobListFilter};
     use std::collections::BTreeSet;
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
     use std::process::Command;
 
     #[derive(Default)]
@@ -528,6 +632,10 @@ mod tests {
         tools: Vec<String>,
         piped: Vec<String>,
         created_args: Vec<String>,
+        respawned_args: Vec<String>,
+        killed_windows: Vec<String>,
+        already_piped: bool,
+        live_queries: usize,
     }
 
     impl JobTmuxRuntime for FakeTmux {
@@ -595,7 +703,29 @@ mod tests {
             Ok(())
         }
 
+        fn is_pane_piped(&mut self, _target: &TmuxTarget) -> std::result::Result<bool, String> {
+            Ok(self.already_piped)
+        }
+
+        fn respawn_window(
+            &mut self,
+            _target: &TmuxTarget,
+            spec: &TmuxCommandSpec,
+        ) -> std::result::Result<(), String> {
+            self.respawned_args = std::iter::once(spec.command.clone())
+                .chain(spec.args.iter().cloned())
+                .collect();
+            Ok(())
+        }
+
+        fn kill_window(&mut self, target: &TmuxTarget) -> std::result::Result<(), String> {
+            self.killed_windows.push(target.window_id.clone());
+            self.live.remove(&target.window_id);
+            Ok(())
+        }
+
         fn live_window_ids(&mut self) -> std::result::Result<BTreeSet<String>, String> {
+            self.live_queries += 1;
             Ok(self.live.clone())
         }
 
@@ -626,15 +756,36 @@ mod tests {
         let store = store("launch-spill");
         let mut resolver = PathResolver::new(std::env::temp_dir(), store.root(), None);
         let huge = "x".repeat(JOB_TMUX_ARGV_MAX_BYTES * 2);
-        let spec = spec(vec![huge.clone()]);
+        let mut spec = spec(vec![huge.clone()]);
+        spec.env.insert("AIMUX_HUGE".to_owned(), huge.clone());
+        spec.env
+            .insert("PATH".to_owned(), "/tmp/attacker".to_owned());
+        spec.env
+            .insert("LD_PRELOAD".to_owned(), "token-secret".to_owned());
         let (record, outcome) = store.create_or_join(&spec).expect("record");
         assert_eq!(outcome, CreateOrJoin::Created);
         let mut tmux = FakeTmux::default();
         let running =
             launch_job_in_tmux(&store, &mut resolver, &mut tmux, &record, &spec).expect("launch");
         assert_eq!(running.status, JobStatus::Running);
-        assert!(tmux.created_args.iter().any(|arg| arg == &record.id));
+        assert_eq!(tmux.created_args, vec!["tail", "-f", "/dev/null"]);
+        assert!(tmux.respawned_args.iter().any(|arg| arg == &record.id));
         assert!(!tmux.created_args.iter().any(|arg| arg.contains(&huge)));
+        assert!(!tmux.respawned_args.iter().any(|arg| arg.contains(&huge)));
+        assert!(
+            !tmux
+                .respawned_args
+                .iter()
+                .any(|arg| arg.contains("/tmp/attacker"))
+        );
+        assert!(
+            !tmux
+                .respawned_args
+                .iter()
+                .any(|arg| arg.contains("LD_PRELOAD") || arg.contains("token-secret"))
+        );
+        let plan = build_launch_plan(&store, &mut resolver, &record, &spec).expect("plan");
+        assert!(plan.argv_bytes <= JOB_TMUX_ARGV_MAX_BYTES);
         assert_eq!(tmux.metadata[0]["kind"], "job");
         assert_eq!(tmux.metadata[0]["jobId"], record.id);
         assert_eq!(tmux.tools, vec!["job"]);
@@ -642,17 +793,56 @@ mod tests {
     }
 
     #[test]
-    fn launch_refuses_when_managed_env_would_exceed_tmux_argv_cap() {
+    fn launch_refuses_when_existing_pipe_would_lose_job_output() {
         let store = store("argv-cap");
         let mut resolver = PathResolver::new(std::env::temp_dir(), store.root(), None);
-        let mut spec = spec(Vec::new());
-        spec.env.insert("AIMUX_HUGE".to_owned(), "x".repeat(20_000));
+        let spec = spec(Vec::new());
         let (record, _) = store.create_or_join(&spec).expect("record");
-        let mut tmux = FakeTmux::default();
+        let mut tmux = FakeTmux {
+            already_piped: true,
+            ..FakeTmux::default()
+        };
         let error = launch_job_in_tmux(&store, &mut resolver, &mut tmux, &record, &spec)
-            .expect_err("argv cap should refuse before tmux");
-        assert!(error.to_string().contains("over cap"));
-        assert!(tmux.created_args.is_empty());
+            .expect_err("existing pipe must not be silently stolen");
+        assert!(error.to_string().contains("already piped"));
+        assert!(tmux.piped.is_empty());
+        assert!(tmux.respawned_args.is_empty());
+    }
+
+    #[test]
+    fn internal_exec_rejects_path_traversal_and_terminal_jobs() {
+        let store = store("exec-guard");
+        let spec = spec(Vec::new());
+        let (record, _) = store.create_or_join(&spec).expect("record");
+        assert!(
+            run_job_exec_with_store(&store, "../../../x")
+                .expect_err("invalid ids must not reach store paths")
+                .contains("invalid characters")
+        );
+        let running = store
+            .mark_running(
+                &record.id,
+                JobTmuxTarget {
+                    session_name: "aimux-jobs".to_owned(),
+                    window_id: "@exec".to_owned(),
+                    window_index: 1,
+                    window_name: "job".to_owned(),
+                },
+                store.output_tap_path(&record.id).to_string_lossy(),
+            )
+            .expect("running");
+        store
+            .finish(
+                &running.id,
+                JobStatus::Succeeded,
+                Some(0),
+                "already complete",
+                None,
+            )
+            .expect("finish");
+        let error = run_job_exec_with_store(&store, &running.id)
+            .expect_err("terminal jobs must not re-exec");
+        assert!(error.contains("not launchable"), "{error}");
     }
 
     #[test]
@@ -709,6 +899,7 @@ mod tests {
         assert_eq!(running.status, JobStatus::Running);
         let mut tmux = FakeTmux::default();
         assert_eq!(reconcile_running_jobs(&store, &mut tmux).unwrap(), 1);
+        assert_eq!(tmux.killed_windows, vec!["@missing"]);
         let finished = store.load(&record.id).unwrap();
         assert_eq!(finished.status, JobStatus::Failed);
         assert!(
@@ -717,6 +908,14 @@ mod tests {
                 .unwrap()
                 .contains("tmux window disappeared")
         );
+    }
+
+    #[test]
+    fn reconcile_idle_store_does_not_query_tmux() {
+        let store = store("reconcile-idle");
+        let mut tmux = FakeTmux::default();
+        assert_eq!(reconcile_running_jobs(&store, &mut tmux).unwrap(), 0);
+        assert_eq!(tmux.live_queries, 0);
     }
 
     #[test]
@@ -736,7 +935,17 @@ mod tests {
                 store.output_tap_path(&record.id).to_string_lossy(),
             )
             .expect("running");
-        let mut child = Command::new("sleep").arg("30").spawn().expect("sleep");
+        let pid_file = store.root().join("child.pid");
+        let mut child = {
+            let mut command = Command::new("sh");
+            command
+                .arg("-c")
+                .arg(format!("sleep 30 & echo $! > {}; wait", pid_file.display()));
+            #[cfg(unix)]
+            command.process_group(0);
+            command.spawn().expect("wrapper")
+        };
+        let child_pid = wait_for_pid_file(&pid_file);
         let mut tmux = FakeTmux {
             next_pid: Some(child.id() as i32),
             ..FakeTmux::default()
@@ -744,9 +953,34 @@ mod tests {
         let report = cancel_running_job(&store, &mut tmux, &running).expect("cancel");
         let _ = child.wait();
         assert_eq!(report.signal, "SIGTERM");
+        assert!(!pid_is_alive(child_pid), "job child process was orphaned");
         let record = store.load(&record.id).unwrap();
         assert_eq!(record.status, JobStatus::Cancelled);
         assert_eq!(record.cancel_signal.as_deref(), Some("SIGTERM"));
+    }
+
+    fn wait_for_pid_file(path: &Path) -> i32 {
+        for _ in 0..50 {
+            if let Ok(raw) = fs::read_to_string(path)
+                && let Ok(pid) = raw.trim().parse::<i32>()
+            {
+                return pid;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("child pid file was not written");
+    }
+
+    fn pid_is_alive(pid: i32) -> bool {
+        #[cfg(unix)]
+        {
+            unsafe { libc::kill(pid, 0) == 0 }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+            false
+        }
     }
 
     #[test]
