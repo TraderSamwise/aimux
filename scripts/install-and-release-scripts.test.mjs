@@ -293,6 +293,9 @@ case "$1" in
           build_from_source=1
           shift
           ;;
+        --ignore-dependencies)
+          shift
+          ;;
         *)
           break
           ;;
@@ -1347,7 +1350,7 @@ describe("verify-release-asset-set.sh", () => {
       };
 
       const result = run(
-        "bash",
+        "/bin/bash",
         [
           join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
           "--release-dir",
@@ -1371,6 +1374,149 @@ describe("verify-release-asset-set.sh", () => {
       expect(result.stderr).toContain("aimux formula gate failed: Homebrew did not install aimux formula");
       const log = readFileSync(brewLog, "utf8");
       expect(log).toContain("install --formula --build-from-source aimux/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("runs gated Homebrew install under /bin/bash with empty optional install args", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const brewLog = join(root, "brew.log");
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_LOG: brewLog,
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "/bin/bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--live-install",
+          "--skip-dependency-prep",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stderr).not.toContain("unbound variable");
+      expect(result.stdout).toContain("Homebrew full installed command proof passed");
+      expect(readFileSync(brewLog, "utf8")).toContain("install --formula aimux/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("runs gated Homebrew install under /bin/bash with populated optional install args", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const brewLog = join(root, "brew.log");
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_LOG: brewLog,
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "/bin/bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--live-install",
+          "--skip-dependency-prep",
+          "--ignore-dependencies",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stderr).not.toContain("unbound variable");
+      expect(result.stdout).toContain("Homebrew full installed command proof passed");
+      expect(readFileSync(brewLog, "utf8")).toContain("install --formula --ignore-dependencies aimux/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("preserves set -u fatal status through cleanup trap under /bin/bash", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-cleanup-trap-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const fixtureRepo = join(root, "repo");
+      const scriptDir = join(fixtureRepo, "scripts");
+      const libDir = join(scriptDir, "lib");
+      mkdirSync(libDir, { recursive: true });
+      const scriptCopy = join(scriptDir, "homebrew-release-dry-run-fatal.sh");
+      const script = readFileSync(join(repoRoot, "scripts/homebrew-release-dry-run.sh"), "utf8");
+      writeFileSync(
+        scriptCopy,
+        script.replace("trap cleanup EXIT", 'trap cleanup EXIT\n: "${AIMUX_INTENTIONAL_UNSET_FOR_TRAP_PROOF}"'),
+      );
+      writeFileSync(
+        join(libDir, "run-and-capture.sh"),
+        readFileSync(join(repoRoot, "scripts/lib/run-and-capture.sh"), "utf8"),
+      );
+      chmodSync(scriptCopy, 0o755);
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_LOG: join(root, "brew.log"),
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "/bin/bash",
+        [
+          scriptCopy,
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("AIMUX_INTENTIONAL_UNSET_FOR_TRAP_PROOF");
+      expect(result.stderr).toContain("unbound variable");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

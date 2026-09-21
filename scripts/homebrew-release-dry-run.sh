@@ -142,7 +142,7 @@ brew_install_formula() {
   if [ "$IGNORE_DEPENDENCIES" -eq 1 ]; then
     extra_args+=(--ignore-dependencies)
   fi
-  run_brew_formula_action install "$formula" "$context" "$log_path" "${extra_args[@]}"
+  run_brew_formula_action install "$formula" "$context" "$log_path" ${extra_args[@]+"${extra_args[@]}"}
 }
 
 prepare_formula_dependencies() {
@@ -450,6 +450,11 @@ else
 fi
 
 cleanup() {
+  local cleanup_status=$?
+  set +e
+  if [ "$cleanup_status" -eq 0 ] && [ "${SCRIPT_COMPLETED:-0}" -ne 1 ]; then
+    cleanup_status=1
+  fi
   if [ "$LIVE_INSTALL" -eq 1 ] && [ "${INSTALLED_LOCAL:-0}" -eq 1 ]; then
     brew uninstall --formula aimux-local >/dev/null 2>&1 || true
   fi
@@ -462,8 +467,10 @@ cleanup() {
   if [ "${CREATED_STAGING_TAP:-0}" -eq 1 ]; then
     brew untap "$STAGING_TAP" >/dev/null 2>&1 || true
   fi
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+SCRIPT_COMPLETED=0
 
 LOG_DIR="$STAGING_DIR/logs"
 CACHE_DIR="$STAGING_DIR/brew-cache"
@@ -560,6 +567,7 @@ Aimux Homebrew dependency preparation finished:
   logs: $LOG_DIR
   current platform: $PLATFORM_ARCH
 EOF
+    SCRIPT_COMPLETED=1
     exit 0
   fi
 
@@ -645,3 +653,4 @@ Aimux Homebrew release dry-run passed:
   asset verification skipped: $SKIP_ASSET_VERIFICATION
   doctor proof skipped: $SKIP_DOCTOR_PROOF
 EOF
+SCRIPT_COMPLETED=1
