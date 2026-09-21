@@ -14,9 +14,6 @@ set -euo pipefail
 
 COMMIT="${1:?commit is required}"
 
-CHANGED="$(git diff-tree --no-commit-id --name-only -r "$COMMIT")"
-[ -n "$CHANGED" ] || exit 0
-
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/aimux-attest-XXXXXX")"
 SCRIPT_COMPLETED=0
 cleanup() {
@@ -31,6 +28,14 @@ cleanup() {
 trap cleanup EXIT
 if [ "${AIMUX_TRAP_STATUS_PROOF:-}" = "scripts/verify-commit-tree-clean.sh" ]; then
   : "${AIMUX_TRAP_STATUS_PROOF_UNSET}"
+fi
+
+# A commit that changes nothing satisfies the invariant vacuously. This check
+# runs after the trap so the status proof above cannot be skipped by it.
+CHANGED="$(git diff-tree --no-commit-id --name-only -r "$COMMIT")"
+if [ -z "$CHANGED" ]; then
+  SCRIPT_COMPLETED=1
+  exit 0
 fi
 
 status=0
