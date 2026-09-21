@@ -92,14 +92,6 @@ ensure_asset_pair() {
 
 . "$ROOT_DIR/scripts/lib/run-and-capture.sh"
 
-brew_install_formula() {
-  if [ "$IGNORE_DEPENDENCIES" -eq 1 ]; then
-    brew install --formula --ignore-dependencies "$@"
-  else
-    brew install --formula "$@"
-  fi
-}
-
 dependency_problem() {
   local message="$1"
   printf '%s\n' "$message" >&2
@@ -113,6 +105,46 @@ homebrew_log_reports_no_bottle() {
   grep -Eiq '(^|[^[:alpha:]])no bottle available([^[:alpha:]]|$)' "$log_path"
 }
 
+run_brew_formula_action() {
+  local action="$1"
+  local formula="$2"
+  local context="$3"
+  local log_path="$4"
+  shift 4
+  local status
+  local command=(brew "$action" --formula "$@")
+  command+=("$formula")
+
+  set +e
+  "${command[@]}" >"$log_path" 2>&1
+  status=$?
+  set -e
+
+  if [ "$status" -ne 0 ] && homebrew_log_reports_no_bottle "$log_path"; then
+    printf 'Homebrew %s has no bottle available on %s; retrying with --build-from-source\n' "$context" "$PLATFORM_ARCH"
+    local source_command=(brew "$action" --formula --build-from-source "$@")
+    source_command+=("$formula")
+    set +e
+    "${source_command[@]}" >>"$log_path" 2>&1
+    status=$?
+    set -e
+  fi
+
+  return "$status"
+}
+
+brew_install_formula() {
+  local formula="$1"
+  local context="$2"
+  local log_path="$3"
+  local extra_args=()
+
+  if [ "$IGNORE_DEPENDENCIES" -eq 1 ]; then
+    extra_args+=(--ignore-dependencies)
+  fi
+  run_brew_formula_action install "$formula" "$context" "$log_path" "${extra_args[@]}"
+}
+
 prepare_formula_dependencies() {
   local formula="$1"
   local label="$2"
@@ -120,7 +152,6 @@ prepare_formula_dependencies() {
   local dep
   local status
   local dep_log
-  local dep_action
   local saw_dependency=0
 
   if [ "$IGNORE_DEPENDENCIES" -eq 1 ]; then
@@ -143,30 +174,19 @@ prepare_formula_dependencies() {
     saw_dependency=1
     dep_log="$LOG_DIR/dependency-$label-${dep//[^A-Za-z0-9_.@-]/_}.log"
     if brew list --formula --versions "$dep" >/dev/null 2>&1; then
-      dep_action=upgrade
       printf 'Preparing Homebrew dependency for %s formula: brew upgrade %s\n' "$label" "$dep"
-      set +e
-      brew upgrade --formula "$dep" >"$dep_log" 2>&1
-      status=$?
-      set -e
-    else
-      dep_action=install
-      printf 'Preparing Homebrew dependency for %s formula: brew install %s\n' "$label" "$dep"
-      set +e
-      brew install --formula "$dep" >"$dep_log" 2>&1
-      status=$?
-      set -e
-    fi
-    if [ "$status" -ne 0 ] && homebrew_log_reports_no_bottle "$dep_log"; then
-      printf 'Homebrew dependency %s for %s formula has no bottle available on %s; retrying with --build-from-source\n' "$dep" "$label" "$PLATFORM_ARCH"
-      set +e
-      if [ "$dep_action" = upgrade ]; then
-        brew upgrade --formula --build-from-source "$dep" >>"$dep_log" 2>&1
+      if run_brew_formula_action upgrade "$dep" "dependency $dep for $label formula" "$dep_log"; then
+        status=0
       else
-        brew install --formula --build-from-source "$dep" >>"$dep_log" 2>&1
+        status=$?
       fi
-      status=$?
-      set -e
+    else
+      printf 'Preparing Homebrew dependency for %s formula: brew install %s\n' "$label" "$dep"
+      if run_brew_formula_action install "$dep" "dependency $dep for $label formula" "$dep_log"; then
+        status=0
+      else
+        status=$?
+      fi
     fi
     if [ "$status" -ne 0 ]; then
       sed 's/^/  /' "$dep_log" >&2
@@ -196,10 +216,11 @@ install_formula_for_gate() {
   local status
 
   printf 'Running Homebrew gated install for %s formula: brew_install_formula %s\n' "$label" "$formula"
-  set +e
-  brew_install_formula "$formula" >"$install_log" 2>&1
-  status=$?
-  set -e
+  if brew_install_formula "$formula" "$label formula" "$install_log"; then
+    status=0
+  else
+    status=$?
+  fi
   if [ "$status" -eq 0 ]; then
     printf 'Homebrew gated install for %s formula passed\n' "$label"
     return 0
@@ -551,7 +572,7 @@ EOF
   printf 'Homebrew full formula installed command: %s\n' "$(brew --prefix)/bin/aimux"
   prove_installed_aimux_command aimux full
 
-  if brew_install_formula "$STAGING_TAP/aimux-local" >"$LOG_DIR/conflict-local-while-full.log" 2>&1; then
+  if brew_install_formula "$STAGING_TAP/aimux-local" "aimux-local formula" "$LOG_DIR/conflict-local-while-full.log"; then
     fail "Homebrew allowed aimux-local to install while aimux was installed"
   fi
   if ! grep -E "conflict|Formulae found in multiple taps" "$LOG_DIR/conflict-local-while-full.log" >/dev/null 2>&1; then
@@ -594,7 +615,7 @@ EOF
     printf 'Homebrew local doctor variant proof skipped by explicit request\n'
   fi
 
-  if brew_install_formula "$STAGING_TAP/aimux" >"$LOG_DIR/conflict-full-while-local.log" 2>&1; then
+  if brew_install_formula "$STAGING_TAP/aimux" "aimux formula" "$LOG_DIR/conflict-full-while-local.log"; then
     fail "Homebrew allowed aimux to install while aimux-local was installed"
   fi
   if ! grep -E "conflict|Formulae found in multiple taps" "$LOG_DIR/conflict-full-while-local.log" >/dev/null 2>&1; then

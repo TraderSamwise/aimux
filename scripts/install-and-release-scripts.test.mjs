@@ -300,6 +300,23 @@ case "$1" in
     done
     formula="$1"
     short="\${formula##*/}"
+    no_bottle_for="\${AIMUX_FAKE_BREW_NO_BOTTLE:-\${AIMUX_FAKE_BREW_DEP_NO_BOTTLE:-}}"
+    source_fail_for="\${AIMUX_FAKE_BREW_SOURCE_FAIL:-\${AIMUX_FAKE_BREW_DEP_SOURCE_FAIL:-}}"
+    if [ "$no_bottle_for" = "$short" ] && [ "$build_from_source" -eq 0 ]; then
+      printf '%s: no bottle available!\\n' "$short" >&2
+      printf "If you're feeling brave, you can try to install from source with:\\n" >&2
+      printf '  brew install --build-from-source %s\\n' "$short" >&2
+      printf 'This is a Tier 3 configuration: https://docs.brew.sh/Support-Tiers#tier-3\\n' >&2
+      exit 1
+    fi
+    if [ "$source_fail_for" = "$short" ] && [ "$build_from_source" -eq 1 ]; then
+      if [ "\${AIMUX_FAKE_BREW_DEP_SOURCE_FAIL:-}" = "$short" ]; then
+        printf 'source build failed deliberately for dependency %s\\n' "$short" >&2
+      else
+        printf 'source build failed deliberately for formula %s\\n' "$short" >&2
+      fi
+      exit 1
+    fi
     if [ "$short" = "aimux" ] || [ "$short" = "aimux-local" ]; then
       if [ "$short" = "aimux-local" ] && [ -f "$state/installed/aimux" ]; then
         printf 'conflict: aimux-local conflicts with aimux\\n' >&2
@@ -326,17 +343,6 @@ case "$1" in
     fi
     if [ "\${AIMUX_FAKE_BREW_DEP_HARD_FAIL:-}" = "$short" ]; then
       printf 'failed to install dependency %s\\n' "$short" >&2
-      exit 1
-    fi
-    if [ "\${AIMUX_FAKE_BREW_DEP_NO_BOTTLE:-}" = "$short" ] && [ "$build_from_source" -eq 0 ]; then
-      printf '%s: no bottle available!\\n' "$short" >&2
-      printf "If you're feeling brave, you can try to install from source with:\\n" >&2
-      printf '  brew install --build-from-source %s\\n' "$short" >&2
-      printf 'This is a Tier 3 configuration: https://docs.brew.sh/Support-Tiers#tier-3\\n' >&2
-      exit 1
-    fi
-    if [ "\${AIMUX_FAKE_BREW_DEP_SOURCE_FAIL:-}" = "$short" ] && [ "$build_from_source" -eq 1 ]; then
-      printf 'source build failed deliberately for dependency %s\\n' "$short" >&2
       exit 1
     fi
     touch "$state/installed/$short"
@@ -1267,6 +1273,104 @@ describe("verify-release-asset-set.sh", () => {
       expect(result.stderr).toContain("before the dependency was installed");
       expect(readFileSync(brewLog, "utf8")).toContain("install --formula --build-from-source tmux");
       expect(readFileSync(brewLog, "utf8")).not.toContain("install --formula aimux/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("falls back to source build when the gated Homebrew install has no bottle", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const brewLog = join(root, "brew.log");
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_NO_BOTTLE: "aimux",
+        AIMUX_FAKE_BREW_LOG: brewLog,
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--live-install",
+          "--skip-dependency-prep",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Homebrew aimux formula has no bottle available on");
+      expect(result.stdout).toContain("retrying with --build-from-source");
+      expect(result.stdout).toContain("Homebrew gated install for aimux formula passed");
+      expect(result.stdout).toContain("Homebrew full installed command proof passed");
+      const log = readFileSync(brewLog, "utf8");
+      expect(log).toContain("install --formula aimux/");
+      expect(log).toContain("install --formula --build-from-source aimux/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it("hard-fails when the gated no-bottle source build also fails", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const brewLog = join(root, "brew.log");
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_NO_BOTTLE: "aimux",
+        AIMUX_FAKE_BREW_SOURCE_FAIL: "aimux",
+        AIMUX_FAKE_BREW_LOG: brewLog,
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--live-install",
+          "--skip-dependency-prep",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("Homebrew aimux formula has no bottle available on");
+      expect(result.stdout).toContain("retrying with --build-from-source");
+      expect(result.stderr).toContain("source build failed deliberately for formula aimux");
+      expect(result.stderr).toContain("aimux formula gate failed: Homebrew did not install aimux formula");
+      const log = readFileSync(brewLog, "utf8");
+      expect(log).toContain("install --formula --build-from-source aimux/");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
