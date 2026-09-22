@@ -223,6 +223,11 @@ impl TestProject {
             .expect("agent restore task should run");
     }
 
+    fn run_task_with_only_live_windows(&self, window_ids: &[&str]) {
+        self.run_task_with(FakeLiveWindows::only(window_ids))
+            .expect("agent restore task should run");
+    }
+
     fn run_task_with(&self, live_windows: FakeLiveWindows) -> Result<(), String> {
         aimux::async_runtime::init_process_runtime().expect("runtime initialized");
         let context = self.context();
@@ -439,6 +444,25 @@ impl TestProject {
             .expect("write topology");
     }
 
+    /// Move a session to a terminal status without going through stop, which
+    /// is how the graveyard sweep and worktree cleanup finish a session.
+    fn set_session_status(&self, session_id: &str, status: &str) {
+        let mut topology =
+            read_runtime_topology(runtime_topology_path(&self.state_dir)).expect("read topology");
+        let Some(sessions) = topology.get_mut("sessions").and_then(Value::as_array_mut) else {
+            panic!("sessions array");
+        };
+        let Some(Value::Object(session)) = sessions
+            .iter_mut()
+            .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+        else {
+            panic!("session {session_id} exists");
+        };
+        session.insert("status".into(), Value::String(status.to_owned()));
+        write_runtime_topology(runtime_topology_path(&self.state_dir), &topology)
+            .expect("write topology");
+    }
+
     fn move_session_to_worktree(&self, session_id: &str, worktree_name: &str) {
         let worktree = self.project_root.join(worktree_name);
         fs::create_dir_all(&worktree).expect("worktree dir");
@@ -495,6 +519,14 @@ impl FakeLiveWindows {
 
     fn none() -> Self {
         Self(Ok(LiveWindowIndex::default()))
+    }
+
+    /// Some windows survived and some did not, which is what a partial tmux
+    /// loss looks like from inside the tick.
+    fn only(window_ids: &[&str]) -> Self {
+        Self(Ok(LiveWindowIndex::from_pairs(
+            window_ids.iter().map(|id| (*id, AGENT_TMUX_SESSION)),
+        )))
     }
 
     fn unavailable() -> Self {
@@ -588,4 +620,68 @@ impl ProjectLifecycleRuntime for StubLifecycleRuntime {
     fn rename_window(&mut self, _window_id: &str, _name: &str) -> Result<(), String> {
         Ok(())
     }
+}
+
+/// The bug this file exists to prevent, in the shape that actually happened:
+/// the snapshot was rebuilt from "who is backed by a live window right now", so
+/// when a tmux server took every window with it, nine recorded sessions were
+/// overwritten with the two whose ids happened to still match. The snapshot
+/// must only shrink when a human stops an agent.
+#[test]
+fn a_session_that_lost_its_window_stays_in_the_snapshot() {
+    let project = TestProject::new("window-loss-retention");
+    project.run_task();
+    assert_eq!(
+        session_ids(&project.snapshot().expect("both agents recorded")),
+        AGENT_IDS
+    );
+
+    // codex-two's window is gone; claude-one's survived. Nobody stopped
+    // anything, and the topology still holds both sessions.
+    project.run_task_with_only_live_windows(&[AGENT_WINDOW_IDS[0]]);
+
+    let snapshot = project.snapshot().expect("snapshot survives the loss");
+    assert_eq!(
+        session_ids(&snapshot),
+        AGENT_IDS,
+        "an agent whose window vanished is still restorable and stays recorded"
+    );
+}
+
+/// The other direction: the retention must not resurrect an agent a human
+/// stopped. Stop is the one thing that removes a session from the record.
+#[test]
+fn a_stopped_session_is_not_retained_by_the_next_tick() {
+    let project = TestProject::new("stop-beats-retention");
+    project.run_task();
+    project.stop_agent(AGENT_IDS[1]);
+
+    project.run_task_with_only_live_windows(&[AGENT_WINDOW_IDS[0]]);
+
+    let snapshot = project.snapshot().expect("the other agent is still there");
+    assert_eq!(
+        session_ids(&snapshot),
+        vec![AGENT_IDS[0].to_owned()],
+        "a deliberately stopped agent must not come back through retention"
+    );
+}
+
+/// Retention keeps a session only while the project is still willing to
+/// restore it. A session the graveyard finished is not restorable, so it must
+/// fall out of the snapshot on the next tick rather than being carried forward
+/// forever by a lost window.
+#[test]
+fn a_graveyarded_session_is_not_retained_by_the_next_tick() {
+    let project = TestProject::new("graveyard-not-retained");
+    project.run_task();
+    project.set_session_status(AGENT_IDS[1], "graveyard");
+
+    project.run_task_with_only_live_windows(&[AGENT_WINDOW_IDS[0]]);
+
+    let snapshot = project.snapshot().expect("the other agent is still there");
+    assert_eq!(
+        session_ids(&snapshot),
+        vec![AGENT_IDS[0].to_owned()],
+        "a finished session must not be retained on the strength of a lost window"
+    );
 }

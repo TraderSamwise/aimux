@@ -96,18 +96,32 @@ fn normalize_last_online_snapshot(value: &Value) -> Option<Value> {
     }))
 }
 
-/// Record the agents that are online now.
+/// Record the agents that are online now, keeping the ones the snapshot
+/// already holds that are still restorable.
 ///
 /// Never writes an empty snapshot: an empty online set is what a machine looks
 /// like both after a clean shutdown and one tick before a crash, and only the
 /// deliberate-teardown path can tell those apart.
+///
+/// `retainable_session_ids` is the reason the snapshot survives the event it
+/// exists to survive. When the tmux server dies, every agent stops being backed
+/// by a live window at once, and a snapshot rebuilt from "who is online now"
+/// overwrote nine recorded sessions with the two whose ids happened to still
+/// match. Removal belongs to `remove_last_online_agent_sessions`, which the
+/// stop and kill routes call — the two places a human said they were done.
 pub(crate) fn record_last_online_agents(
     project_state_dir: &Path,
     sessions: &[Value],
+    retainable_session_ids: &BTreeSet<String>,
     now: &str,
 ) -> RestoreStateResult<Option<Value>> {
-    let Some(sessions) = normalize_agent_restore_sessions(Some(&Value::Array(sessions.to_vec())))
-    else {
+    let existing_for_retention = read_last_online_agents_snapshot(project_state_dir)?;
+    let sessions = merge_retained_sessions(
+        sessions,
+        existing_for_retention.as_ref(),
+        retainable_session_ids,
+    );
+    let Some(sessions) = normalize_agent_restore_sessions(Some(&Value::Array(sessions))) else {
         return read_last_online_agents_snapshot(project_state_dir);
     };
     let existing = read_last_online_agents_snapshot(project_state_dir)?;
@@ -120,15 +134,22 @@ pub(crate) fn record_last_online_agents(
         return Ok(existing);
     }
     // Cosmetic churn — a renamed label, a headline change — must not roll the
-    // generation id, because the prompt gate and the ack both key on it.
-    let reuse = own_previous
+    // generation id, because the prompt gate and the ack both key on it. The
+    // same holds across runs: when the recorded set is unchanged, this run has
+    // observed the previous run's record rather than replaced it, so the whole
+    // identity carries over. Restamping it would orphan the boot gate and lose
+    // the offer the snapshot exists to produce.
+    let reuse = existing
+        .as_ref()
         .filter(|previous| same_restore_session_ids(&array_field(previous, "sessions"), &sessions));
     let snapshot = json!({
         "version": 1,
         "id": reuse
             .map(|previous| string_field(previous, "id"))
             .unwrap_or_else(new_snapshot_id),
-        "writerInstanceId": project_service_writer_id(),
+        "writerInstanceId": reuse
+            .map(|previous| string_field(previous, "writerInstanceId"))
+            .unwrap_or_else(|| project_service_writer_id().to_owned()),
         "createdAt": reuse
             .map(|previous| string_field(previous, "createdAt"))
             .unwrap_or_else(|| now.to_owned()),
@@ -139,6 +160,31 @@ pub(crate) fn record_last_online_agents(
     });
     write_restore_state(&last_online_agents_path(project_state_dir), &snapshot)?;
     Ok(Some(snapshot))
+}
+
+/// Online sessions, plus the recorded ones that are still restorable and are
+/// not already in the online set. Order puts the online ones first so the
+/// snapshot reads as "these now, those before".
+fn merge_retained_sessions(
+    online: &[Value],
+    existing: Option<&Value>,
+    retainable_session_ids: &BTreeSet<String>,
+) -> Vec<Value> {
+    let mut merged = online.to_vec();
+    let online_ids = online
+        .iter()
+        .map(|session| string_field(session, "id"))
+        .collect::<BTreeSet<_>>();
+    let Some(existing) = existing else {
+        return merged;
+    };
+    for session in array_field(existing, "sessions") {
+        let id = string_field(&session, "id");
+        if !id.is_empty() && retainable_session_ids.contains(&id) && !online_ids.contains(&id) {
+            merged.push(session);
+        }
+    }
+    merged
 }
 
 /// Drop sessions from the snapshot, deleting it when the last one goes.

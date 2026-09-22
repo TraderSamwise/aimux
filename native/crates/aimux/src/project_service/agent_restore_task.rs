@@ -37,6 +37,9 @@ use super::scheduler::{CachedProjectConfig, PeriodicTask, PeriodicTaskFuture};
 /// `online_sessions` — but a session that is not even claiming to be live can
 /// be skipped without asking tmux anything.
 const ONLINE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
+/// Statuses that mean the project is done with this session. Everything else,
+/// `offline` included, can still be restored.
+const FINISHED_SESSION_STATUSES: &[&str] = &["graveyard", "exited"];
 /// Two seconds. The tick loop runs every 250ms; one tick is more often than the
 /// snapshot ever changes, and the cost of the cadence is how stale the snapshot
 /// can be at the instant the process dies.
@@ -65,6 +68,27 @@ impl LiveWindowSource for TmuxLiveWindowSource {
             async move { try_cached_live_window_ids_for_session_projection_async(surface).await },
         )
     }
+}
+
+/// Sessions the topology still holds and has not finished with.
+///
+/// A session that was deliberately torn down is removed from the snapshot by
+/// the stop and kill routes; a session that is merely not running right now —
+/// including every session at once after a tmux server restart — is still a
+/// candidate for restore and must not be dropped on that basis.
+fn restorable_session_ids(topology: &Value) -> BTreeSet<String> {
+    topology
+        .get("sessions")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|session| {
+            !FINISHED_SESSION_STATUSES.contains(&string_field(session, "status").as_str())
+        })
+        .map(|session| string_field(session, "id"))
+        .filter(|id| !id.is_empty())
+        .collect()
 }
 
 pub struct AgentRestoreSnapshotTask {
@@ -207,11 +231,20 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                 .iter()
                 .map(|session| string_field(session, "id"))
                 .collect::<BTreeSet<_>>();
+            // A session the topology still knows and has not finished with can
+            // come back, so it stays in the snapshot even with no live window.
+            // This is what survives a tmux server dying under every agent at once.
+            let retainable_session_ids = restorable_session_ids(&topology);
 
             let key = serde_json::to_string(&sessions).unwrap_or_default();
             if self.last_recorded_key.as_deref() != Some(key.as_str()) {
                 let now = now_iso();
-                if let Err(error) = record_last_online_agents(&project_state_dir, &sessions, &now) {
+                if let Err(error) = record_last_online_agents(
+                    &project_state_dir,
+                    &sessions,
+                    &retainable_session_ids,
+                    &now,
+                ) {
                     log_lifecycle_always(
                         "agent restore snapshot record failed",
                         "agent-restore",
