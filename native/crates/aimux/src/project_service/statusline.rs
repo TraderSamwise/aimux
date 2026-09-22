@@ -988,8 +988,8 @@ fn resolve_scoped_sessions<'a>(
     options: RenderOptions<'_>,
 ) -> Vec<(&'a Value, bool)> {
     let scoped_path = resolve_scoped_worktree_path(snapshot, project_root, options.current_path);
-    let mut agents = Vec::new();
-    let mut services = Vec::new();
+    let mut agents: Vec<&Value> = Vec::new();
+    let mut services: Vec<&Value> = Vec::new();
     for session in statusline_session_group(snapshot, "sessions")
         .into_iter()
         .filter(|session| is_live_footer_session(session))
@@ -1004,6 +1004,12 @@ fn resolve_scoped_sessions<'a>(
             agents.push(session);
         }
     }
+    // These chips render the same agents the dashboard numbers [1]..[N], so they
+    // share its order. Unsorted, they rendered the snapshot's raw order and then
+    // took the first five of it — neither the dashboard's order nor its first
+    // five. Agents still lead services; the comparator orders within each.
+    agents.sort_by(|left, right| crate::team_contract::compare_agent_display_order(left, right));
+    services.sort_by(|left, right| crate::team_contract::compare_agent_display_order(left, right));
     agents
         .into_iter()
         .chain(services)

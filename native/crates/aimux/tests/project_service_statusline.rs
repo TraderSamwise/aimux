@@ -453,3 +453,68 @@ fn temp_project(label: &str) -> PathBuf {
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
 }
+
+/// The footer chips render the same agents the dashboard numbers [1]..[N].
+///
+/// They used to render the snapshot's raw order and then take the first five of
+/// it — neither the dashboard's order nor its first five. On Sam's machine the
+/// dashboard read 3, 21, 22, 99, needs-input unread while the chips read
+/// 22, 99, on-you, 21, 2. Chips carry no ids, so the unread counts are the
+/// discriminator here, exactly as they were when he spotted it.
+#[test]
+fn footer_chips_render_in_the_dashboard_order() {
+    fn agent(id: &str, created_at: &str, unread: i64) -> Value {
+        json!({
+            "id": id,
+            "kind": "agent",
+            "tool": "claude",
+            "toolConfigKey": "claude",
+            "status": "running",
+            "createdAt": created_at,
+            "worktreePath": "/repo",
+            "semantic": {
+                "presentation": { "compactHint": format!("{unread} unread") },
+            },
+        })
+    }
+
+    // Supplied in an order that is neither sorted nor reversed, mirroring the
+    // raw snapshot order that produced the wrong chips.
+    let snapshot = json!({
+        "sessions": [
+            agent("7owt0o", "2026-09-09T05:28:51.186Z", 22),
+            agent("2jdcpa", "2026-09-08T04:08:35.809Z", 99),
+            agent("3yfqu7", "2026-09-07T09:51:17.999Z", 4),
+            agent("a88iz7", "2026-09-17T04:44:22.673Z", 21),
+            agent("6nenaq", "2026-09-21T09:06:27.160Z", 3),
+        ],
+    });
+
+    let rendered = aimux::project_service::statusline::render_tmux_statusline_contract(&json!({
+        "data": snapshot,
+        "projectRoot": "/repo",
+        "line": "bottom",
+        "options": { "currentPath": "/repo", "width": 400 },
+    }));
+    let text = rendered["text"].as_str().expect("statusline text");
+
+    // Newest first, which is the dashboard's order: 3, 21, 22, 99, 4.
+    let positions = [
+        "3 unread",
+        "21 unread",
+        "22 unread",
+        "99 unread",
+        "4 unread",
+    ]
+    .iter()
+    .map(|chip| {
+        text.find(chip)
+            .unwrap_or_else(|| panic!("chip {chip} is rendered: {text}"))
+    })
+    .collect::<Vec<_>>();
+
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "chips must read newest-first like the dashboard, got {text}"
+    );
+}
