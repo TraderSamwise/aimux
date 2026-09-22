@@ -931,8 +931,8 @@
       },
       "output": {
         "top": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[range=user|pr]PR #456#[norange]  ·  :4173  ·  tasks 2/1  ·  needs input  ·  #[fg=cyan]tokens 42k#[d…",
-        "bottom": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new  ·  yarn dev:web:loca…  |  Fix statusline parity across the visible …  ·  team: review 2 new, impl answer  ·  #[fg=green]synced#[default]",
-        "frame": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[range=user|pr]PR #456#[norange]  ·  :4173  ·  tasks 2/1  ·  needs input  ·  #[fg=cyan]tokens 42k#[d…\n#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new  ·  yarn dev:web:loca…  |  Fix statusline parity across the visible …  ·  team: review 2 new, impl answer  ·  #[fg=green]synced#[default]"
+        "bottom": "claude 7 new  ·  #[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  yarn dev:web:loca…  |  Fix statusline parity across the visible …  ·  team: review 2 new, impl answer  ·  #[fg=green]synced#[default]",
+        "frame": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[range=user|pr]PR #456#[norange]  ·  :4173  ·  tasks 2/1  ·  needs input  ·  #[fg=cyan]tokens 42k#[d…\nclaude 7 new  ·  #[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  yarn dev:web:loca…  |  Fix statusline parity across the visible …  ·  team: review 2 new, impl answer  ·  #[fg=green]synced#[default]"
       },
       "inputSha256": "294d7328949ed43bc56dd9da501de74e2a6f2a90cbd500f1dd7d7de6211ab759"
     },
@@ -1393,8 +1393,8 @@
       },
       "output": {
         "top": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[ran…",
-        "bottom": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new",
-        "frame": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[ran…\n#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new"
+        "bottom": "claude 7 new  ·  #[fg=black,bg=yellow] coder(coder) on you ? #[default]",
+        "frame": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[ran…\nclaude 7 new  ·  #[fg=black,bg=yellow] coder(coder) on you ? #[default]"
       },
       "inputSha256": "f2d8b0c5c1541490f09881a30e97d2b8534bf27d181a2dd915dbaf676c126a76"
     },
@@ -3241,8 +3241,8 @@
       },
       "output": {
         "top": "aimux aimux  ·  ctl ok  ·  app  ·  tasks 2/1",
-        "bottom": "coder(coder) on you ?  ·  #[fg=black,bg=yellow] claude 7 new #[default]  ·  yarn dev:web:loca…",
-        "frame": "aimux aimux  ·  ctl ok  ·  app  ·  tasks 2/1\ncoder(coder) on you ?  ·  #[fg=black,bg=yellow] claude 7 new #[default]  ·  yarn dev:web:loca…"
+        "bottom": "#[fg=black,bg=yellow] claude 7 new #[default]  ·  coder(coder) on you ?  ·  yarn dev:web:loca…",
+        "frame": "aimux aimux  ·  ctl ok  ·  app  ·  tasks 2/1\n#[fg=black,bg=yellow] claude 7 new #[default]  ·  coder(coder) on you ?  ·  yarn dev:web:loca…"
       },
       "inputSha256": "1c5c276d6f2c38496a0e146bb124cbb2e86181c1e4084d7c60114a7283c0dd1b"
     }

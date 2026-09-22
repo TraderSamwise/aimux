@@ -11,7 +11,11 @@ function session(input: Partial<DesktopSession> & Pick<DesktopSession, "id">): D
 }
 
 describe("desktop state model", () => {
-  it("orders supervisor lane sessions by declared role order without reordering worktree agents", () => {
+  // The service already ordered this lane. The client re-sorted it by
+  // roleState.exposeOrder — a different field than the service used — so the
+  // two agreed only by luck. The input below is deliberately not in
+  // exposeOrder: re-introducing a client sort flips it and fails here.
+  it("renders the supervisor lane in the order the project service sent", () => {
     const state: DesktopState = {
       ok: true,
       mainCheckoutInfo: { name: "aimux", branch: "master" },
@@ -58,7 +62,7 @@ describe("desktop state model", () => {
 
     const [supervisor, main, feature] = groupByWorktree(state);
 
-    expect(supervisor?.sessions.map((item) => item.id)).toEqual(["overseer", "scribe"]);
+    expect(supervisor?.sessions.map((item) => item.id)).toEqual(["scribe", "overseer"]);
     expect(main?.sessions.map((item) => item.id)).toEqual(["main-agent"]);
     expect(feature?.sessions.map((item) => item.id)).toEqual(["worker-agent"]);
   });

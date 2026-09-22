@@ -516,7 +516,7 @@
         }
       },
       "output": {
-        "text": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  worker ✓  ·  yarn dev  |  Fix auth flow  ·  team: reviewer idle  ·  #[fg=green]80kb#[default]"
+        "text": "worker ✓  ·  #[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  yarn dev  |  Fix auth flow  ·  team: reviewer idle  ·  #[fg=green]80kb#[default]"
       },
       "inputSha256": "1b925903f6f2013376f8cbbe7414993a5ff82e952bf4d066eb638e08f799b87a"
     },
@@ -643,7 +643,7 @@
           "width": 58
         }
       },
-      "output": { "text": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  worker ✓  ·  yarn dev" },
+      "output": { "text": "worker ✓  ·  #[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  yarn dev" },
       "inputSha256": "c6252657a3aacb076b7ea755423e9caa430ec8d1c38491a1ec91c3e2a495616d"
     },
     {
