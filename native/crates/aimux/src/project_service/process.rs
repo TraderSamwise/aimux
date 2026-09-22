@@ -2735,7 +2735,10 @@ mod tests {
             create_git_checkout(&project_root);
             let context = Arc::new(
                 ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
-                    .with_live_window_ids(["@1"]),
+                    .with_live_windows(crate::tmux::LiveWindowIndex::from_pairs([(
+                        "@1",
+                        "aimux-test",
+                    )])),
             );
             let (mut client, mut server) = tokio::io::duplex(4096);
             let task = tokio::spawn(async move {

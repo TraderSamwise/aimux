@@ -10,8 +10,8 @@
 //! This is the one place that asks the question, so resume, restore, and the
 //! snapshot producer cannot drift into three different answers.
 
+use crate::tmux::LiveWindowIndex;
 use serde_json::Value;
-use std::collections::BTreeSet;
 
 use crate::project_service::agents::{
     session_is_backed_by_live_window, try_live_window_ids_for_session_projection,
@@ -26,7 +26,7 @@ use super::json_helpers::string_field;
 ///
 /// A query that failed is not an empty window list: every caller here falls
 /// back to the durable status rather than declaring every agent dead.
-pub(super) struct LiveWindows(Result<BTreeSet<String>, String>);
+pub(super) struct LiveWindows(Result<LiveWindowIndex, String>);
 
 impl LiveWindows {
     /// Prefers the inventory the request already carries, so one request does
@@ -39,7 +39,7 @@ impl LiveWindows {
         }
     }
 
-    /// True only when tmux answered and the session's window was not in it.
+    /// True only when tmux answered and the session's own window was not in it.
     fn window_is_provably_gone(&self, session: &Value, topology: &Value) -> bool {
         let Ok(live_window_ids) = self.0.as_ref() else {
             return false;
@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn empty_successful_live_window_set_marks_running_session_gone() {
         let (session, topology) = topology_with_running_session("@1");
-        let live_windows = LiveWindows(Ok(BTreeSet::new()));
+        let live_windows = LiveWindows(Ok(LiveWindowIndex::default()));
 
         assert!(
             !live_windows.session_is_live(&session, &topology),

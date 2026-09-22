@@ -1,6 +1,6 @@
+use crate::tmux::LiveWindowIndex;
 use serde_json::Value;
 use serde_json::json;
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::config::load_config_for_project;
@@ -139,7 +139,7 @@ pub fn watched_by_overseer_notification_refusal_reason_for_state(
     notifications: &Value,
     metadata: &Value,
     sessions: &[Value],
-    live_window_ids: Result<&BTreeSet<String>, &str>,
+    live_window_ids: Result<&LiveWindowIndex, &str>,
 ) -> Option<&'static str> {
     if bool_field(event, "forceExternalNotification", false)
         || bool_field(notifications, "notifyWhenWatchedByOverseer", false)
@@ -203,7 +203,7 @@ fn agent_forces_watched_overseer_notifications(session_metadata: &Value) -> bool
 fn overseer_is_verified_alive(
     sessions: &[Value],
     overseer_id: &str,
-    live_window_ids: Result<&BTreeSet<String>, &str>,
+    live_window_ids: Result<&LiveWindowIndex, &str>,
 ) -> bool {
     let Ok(live_window_ids) = live_window_ids else {
         return false;

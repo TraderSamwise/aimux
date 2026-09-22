@@ -78,9 +78,7 @@ pub trait JobTmuxRuntime {
         spec: &TmuxCommandSpec,
     ) -> std::result::Result<(), String>;
     fn kill_window(&mut self, target: &TmuxTarget) -> std::result::Result<(), String>;
-    fn live_window_ids(
-        &mut self,
-    ) -> std::result::Result<std::collections::BTreeSet<String>, String>;
+    fn live_window_ids(&mut self) -> std::result::Result<crate::tmux::LiveWindowIndex, String>;
     fn pane_pid(&mut self, target: &TmuxTarget) -> std::result::Result<Option<i32>, String>;
 }
 
@@ -155,10 +153,8 @@ impl JobTmuxRuntime for TmuxRuntimeManager {
         self.kill_window(target)
     }
 
-    fn live_window_ids(
-        &mut self,
-    ) -> std::result::Result<std::collections::BTreeSet<String>, String> {
-        self.try_live_window_ids()
+    fn live_window_ids(&mut self) -> std::result::Result<crate::tmux::LiveWindowIndex, String> {
+        self.try_live_windows()
     }
 
     fn pane_pid(&mut self, target: &TmuxTarget) -> std::result::Result<Option<i32>, String> {
@@ -418,7 +414,7 @@ pub fn reconcile_running_jobs(
             changed += 1;
             continue;
         };
-        if !live_windows.contains(&target.window_id) {
+        if !live_windows.window_is_in_session(&target.window_id, &target.session_name) {
             let target = TmuxTarget {
                 session_name: target.session_name.clone(),
                 window_id: target.window_id.clone(),
@@ -789,9 +785,11 @@ mod tests {
             Ok(())
         }
 
-        fn live_window_ids(&mut self) -> std::result::Result<BTreeSet<String>, String> {
+        fn live_window_ids(&mut self) -> std::result::Result<crate::tmux::LiveWindowIndex, String> {
             self.live_queries += 1;
-            Ok(self.live.clone())
+            Ok(crate::tmux::LiveWindowIndex::from_pairs(
+                self.live.iter().map(|window_id| (window_id, "aimux-jobs")),
+            ))
         }
 
         fn pane_pid(&mut self, _target: &TmuxTarget) -> std::result::Result<Option<i32>, String> {

@@ -11,8 +11,8 @@ use aimux::notification_delivery_guard::{
     fixture_notification_refusal_reason_for_event, fixture_notification_refusal_reason_for_payload,
     watched_by_overseer_notification_refusal_reason_for_state,
 };
+use aimux::tmux::LiveWindowIndex;
 use serde_json::json;
-use std::collections::BTreeSet;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, remove_file};
 use std::path::PathBuf;
 
@@ -308,6 +308,6 @@ fn watched_sessions(
     vec![json!({ "id": "worker-1", "status": "idle" }), overseer]
 }
 
-fn live_window_ids(ids: &[&str]) -> BTreeSet<String> {
-    ids.iter().map(|id| (*id).to_owned()).collect()
+fn live_window_ids(ids: &[&str]) -> LiveWindowIndex {
+    LiveWindowIndex::from_pairs(ids.iter().map(|id| (*id, "aimux-repo")))
 }

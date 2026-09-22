@@ -39,7 +39,7 @@ fn advertised_gui_capabilities_have_backing_http_contracts() {
     let state_dir = project.join("state");
     seed_gui_project(&project, &state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1", "@2"]));
 
     let health = route_project_service_request(&context, "GET", routes::HEALTH, None);
     assert_eq!(health.status, 200);
@@ -152,7 +152,7 @@ fn desktop_state_route_matches_app_contract_shape() {
     let state_dir = project.join("state");
     seed_gui_project(&project, &state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1", "@2"]));
 
     let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
 

@@ -51,7 +51,7 @@ fn treats_missing_tmux_server_as_empty_session_inventory() {
 fn treats_missing_tmux_server_as_empty_live_window_inventory() {
     let mut manager =
         TmuxRuntimeManager::with_exec(|args, _options| match args.join(" ").as_str() {
-            "list-windows -a -F #{window_id}" => Err(
+            "list-windows -a -F #{window_id}\t#{session_name}" => Err(
                 "error connecting to /private/tmp/tmux-501/default (No such file or directory)"
                     .to_owned(),
             ),
@@ -59,9 +59,7 @@ fn treats_missing_tmux_server_as_empty_live_window_inventory() {
         });
 
     assert_eq!(
-        manager
-            .try_live_window_ids()
-            .expect("live window inventory"),
+        manager.try_live_windows().expect("live window inventory"),
         Default::default()
     );
 }
@@ -73,7 +71,7 @@ fn treats_no_server_running_as_empty_tmux_inventory() {
             "list-sessions -F #{session_name}" => {
                 Err("no server running on /private/tmp/tmux-501/default".to_owned())
             }
-            "list-windows -a -F #{window_id}" => {
+            "list-windows -a -F #{window_id}\t#{session_name}" => {
                 Err("no server running on /private/tmp/tmux-501/default".to_owned())
             }
             _ => Ok(String::new()),
@@ -84,9 +82,7 @@ fn treats_no_server_running_as_empty_tmux_inventory() {
         Vec::<String>::new()
     );
     assert_eq!(
-        manager
-            .try_live_window_ids()
-            .expect("live window inventory"),
+        manager.try_live_windows().expect("live window inventory"),
         Default::default()
     );
 }
@@ -98,7 +94,7 @@ fn tmux_inventory_failures_remain_errors() {
             "list-sessions -F #{session_name}" => Err(
                 "error connecting to /private/tmp/tmux-501/default (Permission denied)".to_owned(),
             ),
-            "list-windows -a -F #{window_id}" => Err(
+            "list-windows -a -F #{window_id}\t#{session_name}" => Err(
                 "error connecting to /private/tmp/tmux-501/default (Permission denied)".to_owned(),
             ),
             _ => Ok(String::new()),
@@ -112,7 +108,7 @@ fn tmux_inventory_failures_remain_errors() {
     );
     assert!(
         manager
-            .try_live_window_ids()
+            .try_live_windows()
             .expect_err("live-window inventory failure must stay an error")
             .contains("Permission denied")
     );
@@ -543,19 +539,19 @@ fn live_window_inventory_can_use_bounded_timeout() {
     let captured_timeout = Rc::new(RefCell::new(None::<Duration>));
     let captured_timeout_for_exec = Rc::clone(&captured_timeout);
     let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
-        if args.join(" ") == "list-windows -a -F #{window_id}" {
+        if args.join(" ") == "list-windows -a -F #{window_id}\t#{session_name}" {
             *captured_timeout_for_exec.borrow_mut() = options.and_then(|options| options.timeout);
-            return Ok("@1\n@2\n".to_owned());
+            return Ok("@1\taimux-repo\n@2\taimux-repo\n".to_owned());
         }
         Ok(String::new())
     });
 
     let ids = manager
-        .try_live_window_ids_with_timeout(TMUX_CAPTURE_TARGET_TIMEOUT)
+        .try_live_windows_with_timeout(TMUX_CAPTURE_TARGET_TIMEOUT)
         .expect("live window ids");
 
-    assert!(ids.contains("@1"));
-    assert!(ids.contains("@2"));
+    assert!(ids.window_is_in_session("@1", "aimux-repo"));
+    assert!(ids.window_is_in_session("@2", "aimux-repo"));
     assert_eq!(
         *captured_timeout.borrow(),
         Some(TMUX_CAPTURE_TARGET_TIMEOUT),

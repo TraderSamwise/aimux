@@ -22,8 +22,8 @@ use aimux::project_service::transcript_reconciler_task::TranscriptReconcilerTask
 use aimux::runtime_topology::{
     empty_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
+use aimux::tmux::LiveWindowIndex;
 use serde_json::json;
-use std::collections::BTreeSet;
 use std::fs;
 use std::future::Future;
 use std::os::unix::fs::PermissionsExt;
@@ -1228,13 +1228,13 @@ fn scheduler_health_for(scheduler: &PeriodicScheduler, name: &str) -> PeriodicTa
 }
 
 struct FakeRestoreLiveWindows {
-    result: Result<BTreeSet<String>, String>,
+    result: Result<LiveWindowIndex, String>,
 }
 
 impl FakeRestoreLiveWindows {
     fn none() -> Self {
         Self {
-            result: Ok(BTreeSet::new()),
+            result: Ok(LiveWindowIndex::default()),
         }
     }
 }
@@ -1243,7 +1243,7 @@ impl LiveWindowSource for FakeRestoreLiveWindows {
     fn live_window_ids<'a>(
         &'a mut self,
         _surface: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, String>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<LiveWindowIndex, String>> + Send + 'a>> {
         Box::pin(async move { self.result.clone() })
     }
 }

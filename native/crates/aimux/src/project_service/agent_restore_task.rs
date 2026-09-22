@@ -9,6 +9,7 @@
 //! looking, which is the point: the snapshot has to be current at the moment
 //! the process dies, and nobody is watching then.
 
+use crate::tmux::LiveWindowIndex;
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
@@ -50,7 +51,7 @@ pub trait LiveWindowSource: Send {
     fn live_window_ids<'a>(
         &'a mut self,
         surface: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, String>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<LiveWindowIndex, String>> + Send + 'a>>;
 }
 
 pub struct TmuxLiveWindowSource;
@@ -59,7 +60,7 @@ impl LiveWindowSource for TmuxLiveWindowSource {
     fn live_window_ids<'a>(
         &'a mut self,
         surface: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, String>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<LiveWindowIndex, String>> + Send + 'a>> {
         Box::pin(
             async move { try_cached_live_window_ids_for_session_projection_async(surface).await },
         )
@@ -154,7 +155,7 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
             // But when topology has no session that even claims to be online, tmux
             // has nothing to prove. Avoid waking tmux forever for idle projects.
             let live_window_ids = if candidate_sessions.is_empty() {
-                BTreeSet::new()
+                LiveWindowIndex::default()
             } else {
                 match self
                     .live_windows
@@ -342,11 +343,11 @@ mod tests {
 
     struct CountingLiveWindowSource {
         calls: Arc<AtomicUsize>,
-        result: Arc<Mutex<Result<BTreeSet<String>, String>>>,
+        result: Arc<Mutex<Result<LiveWindowIndex, String>>>,
     }
 
     impl CountingLiveWindowSource {
-        fn new(result: Result<BTreeSet<String>, String>) -> (Self, Arc<AtomicUsize>) {
+        fn new(result: Result<LiveWindowIndex, String>) -> (Self, Arc<AtomicUsize>) {
             let calls = Arc::new(AtomicUsize::new(0));
             (
                 Self {
@@ -362,7 +363,7 @@ mod tests {
         fn live_window_ids<'a>(
             &'a mut self,
             _surface: &'a str,
-        ) -> Pin<Box<dyn Future<Output = Result<BTreeSet<String>, String>> + Send + 'a>> {
+        ) -> Pin<Box<dyn Future<Output = Result<LiveWindowIndex, String>> + Send + 'a>> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let result = self
                 .result
@@ -491,7 +492,10 @@ mod tests {
                 &state_dir,
             ));
             let (source, calls) =
-                CountingLiveWindowSource::new(Ok(BTreeSet::from(["@agent".to_owned()])));
+                CountingLiveWindowSource::new(Ok(LiveWindowIndex::from_pairs([(
+                    "@agent",
+                    "aimux-test",
+                )])));
             let mut task =
                 AgentRestoreSnapshotTask::with_live_window_source(&context, Box::new(source));
 

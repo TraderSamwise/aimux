@@ -1,5 +1,6 @@
+use crate::tmux::LiveWindowIndex;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -67,7 +68,7 @@ pub struct ProjectServiceRequestContext {
     pub request_headers: BTreeMap<String, String>,
     pub remote_address: Option<String>,
     pub desktop_state: Option<Value>,
-    pub live_window_ids: Option<Result<BTreeSet<String>, String>>,
+    pub live_window_ids: Option<Result<LiveWindowIndex, String>>,
     pub output_cache: AgentOutputCaptureCache,
     pub osc_notifications: OscNotificationOutputState,
     pub lifecycle_mutations: LifecycleMutationQueue,
@@ -161,13 +162,11 @@ impl ProjectServiceRequestContext {
         self
     }
 
+    /// Test seam: each entry is the window id and the tmux session it lives
+    /// in, because a window id alone cannot say whose window it is.
     #[doc(hidden)]
-    pub fn with_live_window_ids<I, S>(mut self, live_window_ids: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.live_window_ids = Some(Ok(live_window_ids.into_iter().map(Into::into).collect()));
+    pub fn with_live_windows(mut self, live_windows: LiveWindowIndex) -> Self {
+        self.live_window_ids = Some(Ok(live_windows));
         self
     }
 
@@ -177,13 +176,13 @@ impl ProjectServiceRequestContext {
         self
     }
 
-    pub fn live_window_ids(&self) -> Option<&BTreeSet<String>> {
+    pub fn live_window_ids(&self) -> Option<&LiveWindowIndex> {
         self.live_window_ids
             .as_ref()
             .and_then(|result| result.as_ref().ok())
     }
 
-    pub fn live_window_ids_status(&self) -> Option<Result<&BTreeSet<String>, &str>> {
+    pub fn live_window_ids_status(&self) -> Option<Result<&LiveWindowIndex, &str>> {
         self.live_window_ids.as_ref().map(|result| match result {
             Ok(live_window_ids) => Ok(live_window_ids),
             Err(error) => Err(error.as_str()),

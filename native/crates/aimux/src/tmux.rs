@@ -13,7 +13,7 @@ use crate::tmux_query_memo::{
 };
 use serde_json::Value;
 use sha1::{Digest, Sha1};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io::IsTerminal;
@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 pub const TMUX_SEND_TEXT_CHUNK_BYTES: usize = 4_000;
 pub const TMUX_CAPTURE_TARGET_TIMEOUT: Duration = Duration::from_secs(2);
+pub const LIVE_WINDOW_INDEX_FORMAT: &str = "#{window_id}\t#{session_name}";
 pub const WINDOW_TARGET_FORMAT: &str = "#{window_id}\t#{window_index}\t#{window_name}";
 pub const WINDOW_LIST_FORMAT: &str = "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}";
 pub const MANAGED_TMUX_TERMINAL_FEATURES: [&str; 5] = [
@@ -101,6 +102,68 @@ pub struct TmuxTarget {
     pub window_index: i64,
     pub window_name: String,
     pub pane_dead: Option<bool>,
+}
+
+/// The live tmux windows, each with the tmux sessions it currently belongs to.
+///
+/// A window id alone cannot identify a window across a tmux server restart:
+/// ids are assigned per server and start over when it dies, so a persisted
+/// `@3` routinely comes back owned by a different project. The session name a
+/// binding recorded is the other half of that identity. One window can be
+/// linked into several sessions, so the value is a set.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LiveWindowIndex {
+    sessions_by_window_id: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl LiveWindowIndex {
+    pub fn from_pairs<I, W, S>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (W, S)>,
+        W: Into<String>,
+        S: Into<String>,
+    {
+        let mut sessions_by_window_id: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for (window_id, session_name) in pairs {
+            sessions_by_window_id
+                .entry(window_id.into())
+                .or_default()
+                .insert(session_name.into());
+        }
+        Self {
+            sessions_by_window_id,
+        }
+    }
+
+    /// Whether the id exists anywhere on the server. Only right for callers
+    /// that genuinely do not know which session should own the window.
+    pub fn contains_window(&self, window_id: &str) -> bool {
+        self.sessions_by_window_id.contains_key(window_id)
+    }
+
+    /// Whether this exact window is in that exact tmux session. This is the
+    /// check a persisted binding needs.
+    pub fn window_is_in_session(&self, window_id: &str, session_name: &str) -> bool {
+        self.sessions_by_window_id
+            .get(window_id)
+            .is_some_and(|sessions| sessions.contains(session_name))
+    }
+
+    pub fn sessions_for_window(&self, window_id: &str) -> Option<&BTreeSet<String>> {
+        self.sessions_by_window_id.get(window_id)
+    }
+
+    pub fn window_ids(&self) -> impl Iterator<Item = &str> {
+        self.sessions_by_window_id.keys().map(String::as_str)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.sessions_by_window_id.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.sessions_by_window_id.len()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -506,39 +569,35 @@ impl TmuxRuntimeManager {
         })
     }
 
-    /// Window ids that currently exist across every tmux session on this server.
-    /// One call, so a caller validating many sessions does not spawn tmux per session.
-    pub fn try_live_window_ids(&mut self) -> Result<std::collections::BTreeSet<String>, String> {
-        self.try_live_window_ids_with_options(None)
+    /// Every window that exists across every tmux session on this server, with
+    /// the sessions each one belongs to. One call, so a caller validating many
+    /// sessions does not spawn tmux per session.
+    pub fn try_live_windows(&mut self) -> Result<LiveWindowIndex, String> {
+        self.try_live_windows_with_options(None)
     }
 
-    pub fn try_live_window_ids_with_timeout(
+    pub fn try_live_windows_with_timeout(
         &mut self,
         timeout: Duration,
-    ) -> Result<std::collections::BTreeSet<String>, String> {
-        self.try_live_window_ids_with_options(Some(TmuxExecOptions {
+    ) -> Result<LiveWindowIndex, String> {
+        self.try_live_windows_with_options(Some(TmuxExecOptions {
             timeout: Some(timeout),
             ..TmuxExecOptions::default()
         }))
     }
 
-    fn try_live_window_ids_with_options(
+    fn try_live_windows_with_options(
         &mut self,
         options: Option<TmuxExecOptions>,
-    ) -> Result<std::collections::BTreeSet<String>, String> {
-        let raw = match self.exec_owned(list_all_window_ids_argv(), options) {
+    ) -> Result<LiveWindowIndex, String> {
+        let raw = match self.exec_owned(list_all_windows_argv(), options) {
             Ok(raw) => raw,
             Err(error) if tmux_list_sessions_failed_because_no_server(&error) => {
-                return Ok(Default::default());
+                return Ok(LiveWindowIndex::default());
             }
             Err(error) => return Err(error),
         };
-        Ok(raw
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_owned)
-            .collect::<std::collections::BTreeSet<_>>())
+        Ok(parse_live_window_index(&raw))
     }
 
     pub fn has_window(&mut self, target: &TmuxTarget) -> bool {
@@ -2993,13 +3052,25 @@ pub fn list_sessions_argv() -> Vec<String> {
     ]
 }
 
-pub fn list_all_window_ids_argv() -> Vec<String> {
+pub fn list_all_windows_argv() -> Vec<String> {
     vec![
         "list-windows".to_owned(),
         "-a".to_owned(),
         "-F".to_owned(),
-        "#{window_id}".to_owned(),
+        LIVE_WINDOW_INDEX_FORMAT.to_owned(),
     ]
+}
+
+/// A line missing its session name is dropped rather than indexed under an
+/// empty session: a half-parsed row would claim the window belongs to no
+/// session, which reads as "not yours" for every caller.
+pub fn parse_live_window_index(raw: &str) -> LiveWindowIndex {
+    LiveWindowIndex::from_pairs(raw.lines().filter_map(|line| {
+        let mut parts = line.trim_end_matches('\r').split('\t');
+        let window_id = parts.next().unwrap_or_default().trim();
+        let session_name = parts.next().unwrap_or_default().trim();
+        (!window_id.is_empty() && !session_name.is_empty()).then_some((window_id, session_name))
+    }))
 }
 
 pub fn list_windows_argv(session_name: &str) -> Vec<String> {

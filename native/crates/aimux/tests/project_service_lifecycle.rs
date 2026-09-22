@@ -15,7 +15,7 @@ use aimux::project_service::runtime_exchange::runtime_exchange_path;
 use aimux::runtime_topology::{
     coerce_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
-use aimux::tmux::TmuxTarget;
+use aimux::tmux::{LiveWindowIndex, TmuxTarget};
 use aimux::tui_render::text::strip_ansi;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -250,7 +250,7 @@ fn agent_stop_takes_session_offline_and_kills_window() {
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@agent"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([("@agent", "aimux")]));
     let mut runtime = FakeLifecycleRuntime::default();
     assert!(set_prompt_context(&state_dir, "codex-live", "form=event").is_some());
 
@@ -291,7 +291,7 @@ fn agent_stop_reports_tmux_kill_failure_without_taking_session_offline() {
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@agent"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([("@agent", "aimux")]));
     let mut runtime = FakeLifecycleRuntime {
         kill_window_result: Some(Err("tmux server refused kill-window".into())),
         ..Default::default()
@@ -392,7 +392,10 @@ fn agent_stop_marks_codex_without_backend_history_fresh_relaunchable() {
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@agent", "@service"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([
+            ("@agent", "aimux"),
+            ("@service", "aimux"),
+        ]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -419,7 +422,7 @@ fn agent_stop_records_discovered_codex_backend_before_taking_offline() {
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@agent"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([("@agent", "aimux")]));
     let mut runtime = FakeLifecycleRuntime::default();
     let project_cwd = project.to_string_lossy().into_owned();
     runtime.codex_backend_ids_by_cwd.insert(
@@ -809,7 +812,7 @@ fn overseer_spawn_reuses_stopped_project_control_session_identity() {
         }),
     );
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(Vec::<String>::new());
+        .with_live_windows(LiveWindowIndex::default());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1383,7 +1386,7 @@ fn teammate_create_rejects_nested_team_parent() {
     let state_dir = project.join("state");
     write_teammate_parent_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(Vec::<String>::new());
+        .with_live_windows(LiveWindowIndex::default());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1415,7 +1418,10 @@ fn teammate_create_with_initial_task_persists_task_and_thread() {
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@agent", "@service"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([
+            ("@agent", "aimux"),
+            ("@service", "aimux"),
+        ]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1459,7 +1465,10 @@ fn teammate_create_initial_task_requires_prompt_or_body() {
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@agent", "@service"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([
+            ("@agent", "aimux"),
+            ("@service", "aimux"),
+        ]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1491,7 +1500,7 @@ fn teammate_stop_routes_through_agent_stop_with_parent_metadata() {
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@child"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([("@child", "aimux")]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1560,7 +1569,7 @@ fn teammate_resume_routes_through_agent_resume_with_parent_metadata() {
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "offline", Some("backend-child"));
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(Vec::<String>::new());
+        .with_live_windows(LiveWindowIndex::default());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1591,7 +1600,7 @@ fn teammate_kill_routes_through_agent_kill_with_parent_metadata() {
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "running", Some("backend-child"));
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@child"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([("@child", "aimux")]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -1622,7 +1631,7 @@ fn teammate_resurrect_routes_through_graveyard_resurrect_with_parent_metadata() 
     let state_dir = project.join("state");
     write_teammate_lifecycle_topology(&state_dir, "graveyard", Some("backend-child"));
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(Vec::<String>::new());
+        .with_live_windows(LiveWindowIndex::default());
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -2595,7 +2604,10 @@ fn service_lifecycle_status_surfaces_in_gui_read_models() {
     write_lifecycle_topology(&state_dir);
     move_fixture_service_to_project_root(&state_dir, &project);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@service", "@11"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([
+            ("@service", "aimux"),
+            ("@11", "aimux"),
+        ]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     assert_gui_service_status(&context, "svc-web", "running");
@@ -3765,7 +3777,7 @@ fn agent_restore_previous_without_offer_returns_not_accepted() {
     let state_dir = project.join("state");
     write_restore_previous_topology(&state_dir, &project);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@stale"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([("@stale", "aimux")]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -3797,7 +3809,7 @@ fn agent_restore_previous_reconciles_offer_restores_ready_sessions_and_writes_re
     // codex-stale still holds a live window, so it is genuinely running and
     // must not be offered back; the other two are restorable.
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@stale"]);
+        .with_live_windows(LiveWindowIndex::from_pairs([("@stale", "aimux")]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(

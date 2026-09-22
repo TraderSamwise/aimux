@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use aimux::project_service::router::ProjectServiceRequestContext;
-use std::collections::BTreeSet;
+use aimux::tmux::LiveWindowIndex;
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -60,7 +60,7 @@ impl TestIsolation {
             project_root.as_ref(),
             project_state_dir.as_ref(),
         )
-        .with_live_window_ids(default_live_window_ids())
+        .with_live_windows(default_live_windows())
     }
 
     pub fn root(&self) -> &Path {
@@ -182,12 +182,26 @@ fn pid_alive(pid: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-pub fn live_window_ids(ids: &[&str]) -> BTreeSet<String> {
-    ids.iter().map(|id| (*id).to_owned()).collect()
+/// tmux session names the fixture topologies in this suite bind windows to.
+/// The default inventory lists every id under each of them, so a test that is
+/// not about window ownership does not have to name one; a test that IS about
+/// ownership builds its pairs explicitly instead.
+pub const FIXTURE_TMUX_SESSION_NAMES: &[&str] = &["aimux", "aimux-repo", "aimux-test"];
+
+pub fn live_windows(session_name: &str, ids: &[&str]) -> LiveWindowIndex {
+    LiveWindowIndex::from_pairs(ids.iter().map(|id| (*id, session_name)))
 }
 
-fn default_live_window_ids() -> BTreeSet<String> {
-    live_window_ids(&[
+pub fn live_windows_in_fixture_sessions(ids: &[&str]) -> LiveWindowIndex {
+    LiveWindowIndex::from_pairs(
+        FIXTURE_TMUX_SESSION_NAMES
+            .iter()
+            .flat_map(|session_name| ids.iter().map(move |id| (*id, *session_name))),
+    )
+}
+
+fn default_live_windows() -> LiveWindowIndex {
+    live_windows_in_fixture_sessions(&[
         "@1",
         "@2",
         "@3",

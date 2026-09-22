@@ -1637,7 +1637,7 @@ mod tests {
         .expect("write topology");
         let body = json!({ "tool": "mock", "overseer": true, "open": false });
         let context = ProjectServiceRequestContext::with_project_state_dir(&root, &state_dir)
-            .with_live_window_ids(Vec::<String>::new());
+            .with_live_windows(crate::tmux::LiveWindowIndex::default());
         let progress =
             async_lifecycle_progress_for_request("POST", routes::agents::SPAWN, Some(&body))
                 .expect("spawn lifecycle progress");

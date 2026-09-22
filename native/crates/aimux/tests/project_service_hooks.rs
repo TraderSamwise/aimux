@@ -7,6 +7,7 @@ use aimux::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
     update_runtime_topology, write_runtime_topology,
 };
+use aimux::tmux::LiveWindowIndex;
 use aimux::tui_render::text::strip_ansi;
 use serde_json::json;
 use std::fs::{create_dir_all, remove_dir_all, write};
@@ -159,7 +160,7 @@ fn claude_hook_backend_id_updates_the_topology_session_row() {
         Some("claude-backend-1"),
     );
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@1"])
+        .with_live_windows(LiveWindowIndex::from_pairs([("@1", "aimux-test")]))
         .with_request_headers([("x-aimux-session-id", "claude-backend-1")]);
 
     let response = route_project_service_request(

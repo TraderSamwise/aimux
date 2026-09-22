@@ -1,5 +1,5 @@
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -13,6 +13,7 @@ use crate::runtime_topology::{
 use crate::team_contract::{
     agent_lane, agent_role, agent_role_state, session_with_stored_control_flags,
 };
+use crate::tmux::LiveWindowIndex;
 use crate::tool_capabilities::exact_backend_resume_blocked_reason;
 
 use super::agent_roles::{load_agent_role_registry, overlay_agent_role_registry};
@@ -34,7 +35,7 @@ static LIVE_WINDOW_IDS_QUERY_CACHE: OnceLock<Mutex<Option<LiveWindowIdsQueryCach
 
 #[derive(Clone)]
 struct LiveWindowIdsQueryCacheEntry {
-    result: Result<BTreeSet<String>, String>,
+    result: Result<LiveWindowIndex, String>,
     captured_at: Instant,
 }
 
@@ -46,7 +47,7 @@ enum LiveWindowIdsQueryCachePolicy {
 
 #[derive(Clone, Copy)]
 pub enum LiveWindowIdsProjection<'a> {
-    Known(&'a BTreeSet<String>),
+    Known(&'a LiveWindowIndex),
     Unavailable(&'a str),
 }
 
@@ -56,24 +57,30 @@ pub enum LiveWindowIdsProjection<'a> {
 /// window dropped out on its own. The native service has no such runtime object and
 /// treats topology as durable, so liveness has to be re-derived from tmux on read;
 /// otherwise a killed tmux server leaves every session reading `running` forever.
-pub fn session_is_backed_by_live_window(
-    session: &Value,
-    live_window_ids: &BTreeSet<String>,
-) -> bool {
-    value_is_backed_by_live_window(session, live_window_ids)
+pub fn session_is_backed_by_live_window(session: &Value, live_windows: &LiveWindowIndex) -> bool {
+    value_is_backed_by_live_window(session, live_windows)
 }
 
-pub fn value_is_backed_by_live_window(value: &Value, live_window_ids: &BTreeSet<String>) -> bool {
-    value
-        .get("tmuxTarget")
-        .and_then(|target| target.get("windowId"))
-        .and_then(Value::as_str)
-        .map(|window_id| live_window_ids.contains(window_id))
-        .unwrap_or(false)
+/// A recorded target is backed only when that window is in the tmux session the
+/// record names. Matching on the window id alone made a persisted id that tmux
+/// had since reassigned to another project read as this session's own live
+/// window, which is how entering an agent switched projects after a reboot.
+/// A target with no session name can only be checked by id.
+pub fn value_is_backed_by_live_window(value: &Value, live_windows: &LiveWindowIndex) -> bool {
+    let Some(target) = value.get("tmuxTarget") else {
+        return false;
+    };
+    let Some(window_id) = target.get("windowId").and_then(Value::as_str) else {
+        return false;
+    };
+    match target.get("sessionName").and_then(Value::as_str) {
+        Some(session_name) => live_windows.window_is_in_session(window_id, session_name),
+        None => live_windows.contains_window(window_id),
+    }
 }
 
 pub fn live_window_projection_for_owned_ids<'a>(
-    live_window_ids: Option<&'a BTreeSet<String>>,
+    live_window_ids: Option<&'a LiveWindowIndex>,
     live_window_query_error: Option<&'a str>,
 ) -> LiveWindowIdsProjection<'a> {
     match live_window_ids {
@@ -89,12 +96,20 @@ pub fn live_service_is_backed_by_verified_window(
     live_window_ids: LiveWindowIdsProjection<'_>,
 ) -> bool {
     match live_window_ids {
-        LiveWindowIdsProjection::Known(live_window_ids) => service
-            .get("tmuxTarget")
-            .and_then(|target| target.get("windowId"))
-            .and_then(Value::as_str)
-            .map(|window_id| live_window_ids.contains(window_id))
-            .unwrap_or(true),
+        LiveWindowIdsProjection::Known(live_windows) => {
+            match service.get("tmuxTarget").and_then(|target| {
+                Some((
+                    target.get("windowId").and_then(Value::as_str)?,
+                    target.get("sessionName").and_then(Value::as_str),
+                ))
+            }) {
+                Some((window_id, Some(session_name))) => {
+                    live_windows.window_is_in_session(window_id, session_name)
+                }
+                Some((window_id, None)) => live_windows.contains_window(window_id),
+                None => true,
+            }
+        }
         LiveWindowIdsProjection::Unavailable(_) => true,
     }
 }
@@ -114,7 +129,7 @@ pub fn live_services_with_window_projection(
 
 pub fn try_live_window_ids_for_session_projection(
     surface: &str,
-) -> Result<BTreeSet<String>, String> {
+) -> Result<LiveWindowIndex, String> {
     if let Some(result) = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::RequireFresh)
     {
         return result;
@@ -124,15 +139,15 @@ pub fn try_live_window_ids_for_session_projection(
 
 pub fn try_cached_live_window_ids_for_session_projection(
     surface: &str,
-) -> Result<BTreeSet<String>, String> {
+) -> Result<LiveWindowIndex, String> {
     if let Some(result) = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::AllowCached) {
         return result;
     }
     query_live_window_ids_for_session_projection(surface)
 }
 
-fn query_live_window_ids_for_session_projection(surface: &str) -> Result<BTreeSet<String>, String> {
-    let result = match crate::tmux::TmuxRuntimeManager::new().try_live_window_ids() {
+fn query_live_window_ids_for_session_projection(surface: &str) -> Result<LiveWindowIndex, String> {
+    let result = match crate::tmux::TmuxRuntimeManager::new().try_live_windows() {
         Ok(live_window_ids) => Ok(live_window_ids),
         Err(error) => {
             log_live_window_query_failure(surface, &error);
@@ -145,7 +160,7 @@ fn query_live_window_ids_for_session_projection(surface: &str) -> Result<BTreeSe
 
 pub async fn try_live_window_ids_for_session_projection_async(
     surface: &str,
-) -> Result<BTreeSet<String>, String> {
+) -> Result<LiveWindowIndex, String> {
     if let Some(result) = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::RequireFresh)
     {
         return result;
@@ -155,7 +170,7 @@ pub async fn try_live_window_ids_for_session_projection_async(
 
 pub async fn try_cached_live_window_ids_for_session_projection_async(
     surface: &str,
-) -> Result<BTreeSet<String>, String> {
+) -> Result<LiveWindowIndex, String> {
     if let Some(result) = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::AllowCached) {
         return result;
     }
@@ -164,9 +179,9 @@ pub async fn try_cached_live_window_ids_for_session_projection_async(
 
 async fn query_live_window_ids_for_session_projection_async(
     surface: &str,
-) -> Result<BTreeSet<String>, String> {
+) -> Result<LiveWindowIndex, String> {
     let mut command = crate::tmux::tmux_command_from_env();
-    command.args(crate::tmux::list_all_window_ids_argv());
+    command.args(crate::tmux::list_all_windows_argv());
     let output = command
         .output_timeout_async(std::time::Duration::from_secs(2))
         .await
@@ -204,19 +219,14 @@ async fn query_live_window_ids_for_session_projection_async(
             return result;
         }
     };
-    let result = Ok(raw
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect());
+    let result = Ok(crate::tmux::parse_live_window_index(&raw));
     store_live_window_ids_query(result.clone());
     result
 }
 
 fn cached_live_window_ids_query(
     policy: LiveWindowIdsQueryCachePolicy,
-) -> Option<Result<BTreeSet<String>, String>> {
+) -> Option<Result<LiveWindowIndex, String>> {
     if matches!(policy, LiveWindowIdsQueryCachePolicy::RequireFresh) {
         return None;
     }
@@ -230,7 +240,7 @@ fn cached_live_window_ids_query(
     None
 }
 
-fn store_live_window_ids_query(result: Result<BTreeSet<String>, String>) {
+fn store_live_window_ids_query(result: Result<LiveWindowIndex, String>) {
     let cache = LIVE_WINDOW_IDS_QUERY_CACHE.get_or_init(|| Mutex::new(None));
     if let Ok(mut cache) = cache.lock() {
         *cache = Some(LiveWindowIdsQueryCacheEntry {
@@ -389,7 +399,7 @@ pub async fn route_agent_read_request_async(
 
 pub struct TopologyDesktopSessionProjection {
     pub sessions: Vec<Value>,
-    pub live_window_ids: Option<BTreeSet<String>>,
+    pub live_window_ids: Option<LiveWindowIndex>,
     pub live_window_query_error: Option<String>,
 }
 
@@ -577,7 +587,7 @@ pub fn topology_desktop_session_list_with_live_window_ids(
     topology: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
     tools: &Map<String, Value>,
-    live_window_ids: &BTreeSet<String>,
+    live_window_ids: &LiveWindowIndex,
 ) -> Vec<Value> {
     topology_desktop_session_list_with_live_window_projection(
         topology,
@@ -1016,14 +1026,20 @@ mod tests {
     #[test]
     fn live_window_ids_query_cache_preserves_successful_ids() {
         clear_live_window_ids_query_cache_for_tests();
-        store_live_window_ids_query(Ok(BTreeSet::from(["@1".to_owned(), "@2".to_owned()])));
+        store_live_window_ids_query(Ok(LiveWindowIndex::from_pairs([
+            ("@1", "aimux-one"),
+            ("@2", "aimux-one"),
+        ])));
 
         let cached = cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::AllowCached)
             .expect("cached result");
 
         assert_eq!(
             cached,
-            Ok(BTreeSet::from(["@1".to_owned(), "@2".to_owned()]))
+            Ok(LiveWindowIndex::from_pairs([
+                ("@1", "aimux-one"),
+                ("@2", "aimux-one"),
+            ]))
         );
         clear_live_window_ids_query_cache_for_tests();
     }
@@ -1031,12 +1047,12 @@ mod tests {
     #[test]
     fn live_window_ids_query_cache_is_opt_in_for_authoritative_reads() {
         clear_live_window_ids_query_cache_for_tests();
-        store_live_window_ids_query(Ok(BTreeSet::from(["@cached".to_owned()])));
+        store_live_window_ids_query(Ok(LiveWindowIndex::from_pairs([("@cached", "aimux-one")])));
 
         assert_eq!(
             cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::AllowCached)
                 .expect("cached result"),
-            Ok(BTreeSet::from(["@cached".to_owned()]))
+            Ok(LiveWindowIndex::from_pairs([("@cached", "aimux-one")]))
         );
         assert!(
             cached_live_window_ids_query(LiveWindowIdsQueryCachePolicy::RequireFresh).is_none(),

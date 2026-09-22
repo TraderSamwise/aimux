@@ -151,9 +151,9 @@ use crate::secure_permissions;
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
 use crate::team_contract::{is_overseer_session, is_project_control_session};
 use crate::tmux::{
-    TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
-    TMUX_RUNTIME_OWNER_OPTION, TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name,
-    is_tmux_client_session_for_host,
+    LiveWindowIndex, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
+    TMUX_RUNTIME_CONTRACT_OPTION, TMUX_RUNTIME_OWNER_OPTION, TmuxRuntimeManager, TmuxTarget,
+    is_dashboard_window_name, is_tmux_client_session_for_host,
 };
 use crate::tmux_exec_metrics::get_tmux_exec_metrics;
 use crate::tmux_runtime_stop::list_managed_project_session_names;
@@ -203,7 +203,7 @@ pub struct RealDaemonRuntime {
     restart_live_project_service_pids: Option<BTreeMap<String, Vec<i32>>>,
     restart_backend_id_capture_timeout: Duration,
     restart_backend_id_capture_poll: Duration,
-    restart_backend_id_live_window_ids: Option<Result<BTreeSet<String>, String>>,
+    restart_backend_id_live_window_ids: Option<Result<LiveWindowIndex, String>>,
     restart_managed_tmux_project_roots: Option<Result<Vec<String>, String>>,
     runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
     started_instant: Instant,
@@ -1677,7 +1677,7 @@ impl RealDaemonRuntime {
     ) -> Result<Vec<RestartBackendIdRisk>, String> {
         let live_window_ids = match self.restart_backend_id_live_window_ids.clone() {
             Some(result) => result,
-            None => TmuxRuntimeManager::new().try_live_window_ids(),
+            None => TmuxRuntimeManager::new().try_live_windows(),
         }?;
         Ok(restart_backend_id_at_risk_sessions_with_live_window_ids(
             &self.resolver,
@@ -5246,7 +5246,7 @@ fn restart_backend_id_at_risk_sessions(
     resolver: &PathResolver,
     project_roots: &[String],
 ) -> Result<Vec<RestartBackendIdRisk>, String> {
-    let live_window_ids = TmuxRuntimeManager::new().try_live_window_ids()?;
+    let live_window_ids = TmuxRuntimeManager::new().try_live_windows()?;
     Ok(restart_backend_id_at_risk_sessions_with_live_window_ids(
         resolver,
         project_roots,
@@ -5257,7 +5257,7 @@ fn restart_backend_id_at_risk_sessions(
 fn restart_backend_id_at_risk_sessions_with_live_window_ids(
     resolver: &PathResolver,
     project_roots: &[String],
-    live_window_ids: Option<&BTreeSet<String>>,
+    live_window_ids: Option<&LiveWindowIndex>,
 ) -> Vec<RestartBackendIdRisk> {
     let mut risks = Vec::new();
     for project_root in project_roots {
@@ -5317,16 +5317,12 @@ fn restart_backend_id_at_risk_sessions_with_live_window_ids(
 
 fn restart_guard_session_is_backed_by_live_window(
     session: &Value,
-    live_window_ids: Option<&BTreeSet<String>>,
+    live_windows: Option<&LiveWindowIndex>,
 ) -> bool {
-    let Some(live_window_ids) = live_window_ids else {
+    let Some(live_windows) = live_windows else {
         return true;
     };
-    session
-        .get("tmuxTarget")
-        .and_then(|target| target.get("windowId"))
-        .and_then(Value::as_str)
-        .is_some_and(|window_id| live_window_ids.contains(window_id))
+    crate::project_service::agents::value_is_backed_by_live_window(session, live_windows)
 }
 
 fn config_duration_millis(config: &Value, path: &[&str]) -> Option<Duration> {
@@ -6134,7 +6130,10 @@ mod tests {
         let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_007]));
         let mut runtime = fixture.runtime(launcher.clone(), verifier);
         runtime.restart_backend_id_capture_timeout = Duration::ZERO;
-        runtime.restart_backend_id_live_window_ids = Some(Ok(["@codex-pending".to_owned()].into()));
+        runtime.restart_backend_id_live_window_ids = Some(Ok(LiveWindowIndex::from_pairs([(
+            "@codex-pending",
+            "aimux-test",
+        )])));
 
         let error = runtime
             .prepare_restart_control_plane_runtime(None, false, false)
@@ -6168,7 +6167,7 @@ mod tests {
         let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_009]));
         let mut runtime = fixture.runtime(launcher.clone(), verifier);
         runtime.restart_backend_id_capture_timeout = Duration::ZERO;
-        runtime.restart_backend_id_live_window_ids = Some(Ok(BTreeSet::new()));
+        runtime.restart_backend_id_live_window_ids = Some(Ok(LiveWindowIndex::default()));
 
         let notice = runtime
             .prepare_restart_control_plane_runtime(None, false, false)
@@ -6203,7 +6202,10 @@ mod tests {
         let risks = restart_backend_id_at_risk_sessions_with_live_window_ids(
             &fixture.resolver,
             std::slice::from_ref(&project),
-            Some(&["@codex-overseer".to_owned()].into()),
+            Some(&LiveWindowIndex::from_pairs([(
+                "@codex-overseer",
+                "aimux-test",
+            )])),
         );
 
         assert_eq!(
@@ -6234,7 +6236,10 @@ mod tests {
         let risks = restart_backend_id_at_risk_sessions_with_live_window_ids(
             &fixture.resolver,
             std::slice::from_ref(&project),
-            Some(&["@other-live".to_owned()].into()),
+            Some(&LiveWindowIndex::from_pairs([(
+                "@other-live",
+                "aimux-test",
+            )])),
         );
 
         assert!(risks.is_empty());
@@ -6307,7 +6312,7 @@ mod tests {
             TmuxRuntimeManager::with_exec(|_args, _options| Err("tmux unavailable".to_owned()));
 
         let error = tmux
-            .try_live_window_ids()
+            .try_live_windows()
             .expect_err("tmux query failure must stay distinct from no live windows");
 
         assert!(error.contains("tmux unavailable"));
@@ -6401,7 +6406,10 @@ mod tests {
         let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_017]));
         let mut runtime = fixture.runtime(launcher.clone(), verifier);
         runtime.restart_backend_id_capture_timeout = Duration::ZERO;
-        runtime.restart_backend_id_live_window_ids = Some(Ok(["@codex-pending".to_owned()].into()));
+        runtime.restart_backend_id_live_window_ids = Some(Ok(LiveWindowIndex::from_pairs([(
+            "@codex-pending",
+            "aimux-test",
+        )])));
 
         runtime
             .prepare_restart_control_plane_runtime(None, true, false)
@@ -6444,7 +6452,10 @@ mod tests {
         let risks = restart_backend_id_at_risk_sessions_with_live_window_ids(
             &fixture.resolver,
             std::slice::from_ref(&project),
-            Some(&["@claude-pending".to_owned()].into()),
+            Some(&LiveWindowIndex::from_pairs([(
+                "@claude-pending",
+                "aimux-test",
+            )])),
         );
 
         assert_eq!(

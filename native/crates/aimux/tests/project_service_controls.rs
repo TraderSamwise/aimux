@@ -536,8 +536,10 @@ fn focus_window_reaches_a_scribe_window_hidden_from_switch_cycling() {
         "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z"
     }));
     write_topology(&state_dir, topology);
-    let context = fixture_context(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@3", "@4", "@7", "@9"]));
+    let context = fixture_context(&project, &state_dir).with_live_windows(support::live_windows(
+        "aimux-repo",
+        &["@1", "@3", "@4", "@7", "@9"],
+    ));
     let mut runtime = FakeControlRuntime::default();
 
     let response = route_control_request_with_runtime(
@@ -589,7 +591,7 @@ fn async_attention_switch_preserves_tmux_query_error_when_no_target_resolves() {
     );
 
     let empty_context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&[]));
+        .with_live_windows(support::live_windows("aimux-repo", &[]));
     let mut empty_runtime = FakeAsyncControlRuntime::default();
     // aimux-async-seam: test - control route test drives async handler
     let empty = aimux::async_runtime::block_on_named(
@@ -655,8 +657,9 @@ fn write_topology(state_dir: &PathBuf, topology: Value) {
 }
 
 fn fixture_context(project: &PathBuf, state_dir: &PathBuf) -> ProjectServiceRequestContext {
-    ProjectServiceRequestContext::with_project_state_dir(project, state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@3", "@4", "@9"]))
+    ProjectServiceRequestContext::with_project_state_dir(project, state_dir).with_live_windows(
+        support::live_windows("aimux-repo", &["@1", "@3", "@4", "@9"]),
+    )
 }
 
 fn topology_fixture() -> Value {

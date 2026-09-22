@@ -211,7 +211,7 @@ fn topology_entries_apply_stored_control_demotion_over_stale_tmux_metadata() {
     let context = context("@1", "/repo");
 
     let request_context = ProjectServiceRequestContext::new("/repo")
-        .with_live_window_ids(support::live_window_ids(&["@7"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@7"]));
 
     let entries =
         topology_switchable_entries_for_context(&request_context, &topology, &metadata).entries;
@@ -511,7 +511,7 @@ fn route_switchable_agents_reads_topology_metadata_and_last_used() {
     .unwrap();
 
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1", "@2", "@3"]));
     let response = route_project_service_request(
         &context,
         "GET",
@@ -559,7 +559,7 @@ fn route_switchable_agents_drops_services_without_live_tmux_windows() {
     .unwrap();
 
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1", "@2"]));
     let response = route_project_service_request(
         &context,
         "GET",
@@ -634,7 +634,7 @@ fn route_switchable_agents_topology_read_failure_is_error_not_empty_expose_tiles
     let state_dir = project.join("state");
     create_dir_all(&state_dir).unwrap();
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1"]));
 
     let response = route_project_service_request(
         &context,
@@ -691,7 +691,7 @@ fn route_switchable_agents_drops_sessions_without_live_tmux_windows() {
     .unwrap();
 
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1"]));
     let response = route_project_service_request(
         &context,
         "GET",
@@ -761,7 +761,10 @@ fn route_switchable_agents_expose_liveness_policy_excludes_offline_sessions() {
     .unwrap();
 
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3", "@4"]));
+        .with_live_windows(support::live_windows(
+            "aimux-repo",
+            &["@1", "@2", "@3", "@4"],
+        ));
     let response = route_project_service_request(
         &context,
         "GET",
@@ -838,7 +841,10 @@ fn route_switchable_agents_expose_uses_role_visibility_and_orders_overseer_first
 
     let context = support::TestIsolation::new("switchable-expose-role-visibility")
         .project_context(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3", "@4"]));
+        .with_live_windows(support::live_windows(
+            "aimux-repo",
+            &["@1", "@2", "@3", "@4"],
+        ));
     let response = route_project_service_request(
         &context,
         "GET",
@@ -892,7 +898,7 @@ fn async_route_switchable_agents_preserves_live_sessions_when_tmux_query_is_unav
 
     let empty_inventory_context =
         ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-            .with_live_window_ids(support::live_window_ids(&[]));
+            .with_live_windows(support::live_windows("aimux-repo", &[]));
     // aimux-async-seam: test - switchable-agents route test drives async handler
     let empty_inventory_response = aimux::async_runtime::block_on_named(
         "test:switchable-agents-empty-inventory",
@@ -979,7 +985,7 @@ fn route_switchable_agents_attaches_expose_previews_through_capture_cache() {
     )
     .unwrap();
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1", "@2", "@3"]));
     let path = "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1";
     let mut runtime = FakePreviewRuntime {
         output: format!("{}tail", "x".repeat(9_000)),
@@ -1068,7 +1074,7 @@ fn route_switchable_agents_marks_preview_capture_failure() {
     )
     .unwrap();
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1", "@2", "@3"]));
     let mut runtime = FakePreviewRuntime {
         output: String::new(),
         error: Some("tmux capture-pane failed for @1".into()),
@@ -1140,7 +1146,7 @@ fn route_switchable_agents_uses_remote_address_for_anonymous_preview_client_id()
     .unwrap();
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
         .with_remote_address("::ffff:10.0.0.5")
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1", "@2", "@3"]));
     let mut runtime = FakePreviewRuntime {
         output: "preview".into(),
         error: None,

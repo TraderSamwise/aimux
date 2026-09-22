@@ -124,11 +124,7 @@ fn session_is_live_for_context(context: &ProjectServiceRequestContext, session: 
     let Some(live_window_ids) = context.live_window_ids() else {
         return true;
     };
-    session
-        .get("tmuxTarget")
-        .and_then(|target| target.get("windowId"))
-        .and_then(Value::as_str)
-        .is_some_and(|window_id| live_window_ids.contains(window_id))
+    crate::project_service::agents::value_is_backed_by_live_window(session, live_window_ids)
 }
 
 fn live_replacement_for_stale_session<'a>(

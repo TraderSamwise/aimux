@@ -23,6 +23,7 @@ use crate::project_service::switchable_agents::{
 };
 use crate::project_service::usage::load_last_used_state;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
+use crate::tmux::LiveWindowIndex;
 use crate::tmux::{
     CapturePaneOptions, TMUX_CAPTURE_TARGET_TIMEOUT, TmuxRuntimeManager, TmuxTarget,
     attach_session_argv, is_dashboard_window_name, is_tmux_client_session_for_host,
@@ -36,7 +37,7 @@ use crate::tmux_expose_hot_snapshot_worker::{
 };
 use crate::visual_client_leases::{VisualClientLeaseRegistry, parse_visual_client_kind};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -265,7 +266,7 @@ pub fn run_global_expose_scheduler_refresh(
 }
 
 pub trait DaemonExposeFocusRuntime {
-    fn live_window_ids(&mut self) -> Result<BTreeSet<String>, String>;
+    fn live_window_ids(&mut self) -> Result<LiveWindowIndex, String>;
     fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String>;
     fn target_by_window_id(
         &mut self,
@@ -286,7 +287,7 @@ pub trait DaemonExposeFocusRuntime {
 pub struct SystemDaemonExposeFocusRuntime;
 
 impl DaemonExposeFocusRuntime for SystemDaemonExposeFocusRuntime {
-    fn live_window_ids(&mut self) -> Result<BTreeSet<String>, String> {
+    fn live_window_ids(&mut self) -> Result<LiveWindowIndex, String> {
         crate::project_service::agents::try_cached_live_window_ids_for_session_projection(
             "daemon-expose-focus",
         )
@@ -378,7 +379,7 @@ pub fn expose_items_route(
     let include_chat_preview = route_url.search_param("includeChatPreview") == Some("1");
     let project_state_dirs = project_state_dirs_by_id(resolver, projects_for_refresh);
     let live_window_ids =
-        TmuxRuntimeManager::new().try_live_window_ids_with_timeout(TMUX_CAPTURE_TARGET_TIMEOUT);
+        TmuxRuntimeManager::new().try_live_windows_with_timeout(TMUX_CAPTURE_TARGET_TIMEOUT);
     let mut live_window_query_error = None;
     let items = match &live_window_ids {
         Ok(live_window_ids) => list_live_projects_expose_items(

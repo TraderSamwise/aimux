@@ -32,8 +32,9 @@ use aimux::remote::remote_credentials::{AimuxCredentials, load_credentials, save
 use aimux::runtime_coherence::{RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use aimux::tmux::{
-    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
-    TMUX_RUNTIME_CONTRACT_OPTION, TMUX_RUNTIME_OWNER_OPTION, TmuxTarget,
+    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, LiveWindowIndex, TMUX_DASHBOARD_BUILD_OPTION,
+    TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_CONTRACT_OPTION, TMUX_RUNTIME_OWNER_OPTION,
+    TmuxTarget,
 };
 use aimux::tmux_exec_metrics::{TmuxExecMode, record_tmux_exec, reset_tmux_exec_metrics};
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
@@ -724,7 +725,7 @@ fn native_daemon_expose_focus_resolves_global_item_and_delegates_tmux_focus() {
     )
     .expect("write topology");
     let mut fake = FakeExposeFocusRuntime {
-        live_window_ids: ["@7".to_owned()].into(),
+        live_window_ids: LiveWindowIndex::from_pairs([("@7", "aimux-repo")]),
         clients: vec![TmuxClientInfo {
             tty: "/dev/ttys123".into(),
             session_name: "client-session".into(),
@@ -967,14 +968,14 @@ fn native_text_read_uses_hot_project_service_without_supervisory_ensure() {
 
 #[derive(Debug, Default)]
 struct FakeExposeFocusRuntime {
-    live_window_ids: BTreeSet<String>,
+    live_window_ids: LiveWindowIndex,
     clients: Vec<TmuxClientInfo>,
     linked_targets: Vec<TmuxTarget>,
     calls: Vec<Value>,
 }
 
 impl DaemonExposeFocusRuntime for FakeExposeFocusRuntime {
-    fn live_window_ids(&mut self) -> Result<BTreeSet<String>, String> {
+    fn live_window_ids(&mut self) -> Result<LiveWindowIndex, String> {
         Ok(self.live_window_ids.clone())
     }
 

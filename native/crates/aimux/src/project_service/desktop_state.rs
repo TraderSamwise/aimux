@@ -356,7 +356,7 @@ pub fn build_desktop_state(input: DesktopStateInput<'_>) -> Value {
 
 pub fn build_desktop_state_with_live_window_ids(
     input: DesktopStateInput<'_>,
-    live_window_ids: Option<&std::collections::BTreeSet<String>>,
+    live_window_ids: Option<&crate::tmux::LiveWindowIndex>,
 ) -> Value {
     match live_window_ids {
         Some(live_window_ids) => build_desktop_state_with_live_window_projection(

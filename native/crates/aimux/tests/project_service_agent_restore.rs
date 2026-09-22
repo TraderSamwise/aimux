@@ -16,7 +16,7 @@ use aimux::project_service::scheduler::PeriodicTask;
 use aimux::runtime_topology::{
     coerce_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
-use aimux::tmux::TmuxTarget;
+use aimux::tmux::{LiveWindowIndex, TmuxTarget};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
@@ -29,6 +29,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const AGENT_IDS: [&str; 2] = ["claude-one", "codex-two"];
 const AGENT_WINDOW_IDS: [&str; 2] = ["@0", "@1"];
+const AGENT_TMUX_SESSION: &str = "aimux";
 
 #[test]
 fn unsafe_exit_leaves_a_snapshot_that_becomes_a_restore_offer() {
@@ -236,7 +237,7 @@ impl TestProject {
             &self.project_root,
             &self.state_dir,
         )
-        .with_live_window_ids(Vec::<String>::new());
+        .with_live_windows(LiveWindowIndex::default());
         let mut runtime = StubLifecycleRuntime;
         route_lifecycle_request_with_runtime(
             &context,
@@ -483,18 +484,17 @@ fn session_ids(value: &Value) -> Vec<String> {
         .collect()
 }
 
-struct FakeLiveWindows(Result<BTreeSet<String>, String>);
+struct FakeLiveWindows(Result<LiveWindowIndex, String>);
 
 impl FakeLiveWindows {
     fn alive() -> Self {
-        Self(Ok(AGENT_WINDOW_IDS
-            .iter()
-            .map(|id| (*id).to_owned())
-            .collect()))
+        Self(Ok(LiveWindowIndex::from_pairs(
+            AGENT_WINDOW_IDS.iter().map(|id| (*id, AGENT_TMUX_SESSION)),
+        )))
     }
 
     fn none() -> Self {
-        Self(Ok(BTreeSet::new()))
+        Self(Ok(LiveWindowIndex::default()))
     }
 
     fn unavailable() -> Self {
@@ -507,7 +507,7 @@ impl LiveWindowSource for FakeLiveWindows {
         &'a mut self,
         _surface: &'a str,
     ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<BTreeSet<String>, String>> + Send + 'a>,
+        Box<dyn std::future::Future<Output = Result<LiveWindowIndex, String>> + Send + 'a>,
     > {
         Box::pin(async move { self.0.clone() })
     }

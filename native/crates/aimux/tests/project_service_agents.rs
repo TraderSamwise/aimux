@@ -120,7 +120,7 @@ fn computes_offline_restore_state_like_typescript() {
         &topology,
         &metadata,
         &tools,
-        &support::live_window_ids(&["@1", "@2", "@3"]),
+        &support::live_windows("aimux-repo", &["@1", "@2", "@3"]),
     );
     assert_eq!(find(&sessions, "codex-offline")["restoreState"], "ready");
     assert_eq!(find(&sessions, "codex-fresh")["restoreState"], "ready");
@@ -266,7 +266,7 @@ fn route_agents_reconciles_live_dead_and_unavailable_tmux_liveness() {
 
     let live_inventory_context =
         ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-            .with_live_window_ids(support::live_window_ids(&["@1"]));
+            .with_live_windows(support::live_windows("aimux-repo", &["@1"]));
     let live_inventory_response =
         route_project_service_request(&live_inventory_context, "GET", routes::agents::LIST, None);
     assert_eq!(live_inventory_response.status, 200);
@@ -279,7 +279,7 @@ fn route_agents_reconciles_live_dead_and_unavailable_tmux_liveness() {
 
     let empty_inventory_context =
         ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-            .with_live_window_ids(support::live_window_ids(&[]));
+            .with_live_windows(support::live_windows("aimux-repo", &[]));
     let empty_inventory_response =
         route_project_service_request(&empty_inventory_context, "GET", routes::agents::LIST, None);
     assert_eq!(empty_inventory_response.status, 200);
@@ -330,7 +330,7 @@ fn async_route_agents_reconciles_tmux_liveness_on_native_service_path() {
 
         let live_context =
             ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-                .with_live_window_ids(support::live_window_ids(&["@1"]));
+                .with_live_windows(support::live_windows("aimux-repo", &["@1"]));
         let live_response =
             route_agent_read_request_async(&live_context, "GET", routes::agents::LIST)
                 .await
@@ -341,7 +341,7 @@ fn async_route_agents_reconciles_tmux_liveness_on_native_service_path() {
 
         let gone_context =
             ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-                .with_live_window_ids(support::live_window_ids(&[]));
+                .with_live_windows(support::live_windows("aimux-repo", &[]));
         let gone_response =
             route_agent_read_request_async(&gone_context, "GET", routes::agents::LIST)
                 .await

@@ -162,7 +162,7 @@ fn route_keeps_live_cold_teammate_service_and_missing_targets_visible() {
     write_runtime_exchange(runtime_exchange_path(&state_dir), &exchange_fixture()).unwrap();
 
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(support::live_window_ids(&["@1", "@2"]));
+        .with_live_windows(support::live_windows("aimux-repo", &["@1", "@2"]));
     let response = route_project_service_request(
         &context,
         "GET",

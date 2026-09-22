@@ -67,7 +67,10 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
             metadata_sessions: &metadata,
             exchange: &exchange,
         },
-        Some(&support::live_window_ids(&["@1", "@2", "@3", "@4"])),
+        Some(&support::live_windows(
+            "aimux-repo",
+            &["@1", "@2", "@3", "@4"],
+        )),
     );
 
     assert_eq!(state["ok"], true);
@@ -294,7 +297,10 @@ fn supervisor_lane_sessions_use_declared_role_order_without_reordering_worktree_
             ]),
             exchange: &json!({}),
         },
-        Some(&support::live_window_ids(&["@1", "@2", "@3", "@4"])),
+        Some(&support::live_windows(
+            "aimux-repo",
+            &["@1", "@2", "@3", "@4"],
+        )),
     );
 
     let supervisor_sessions = state["supervisorLane"]["sessions"].as_array().unwrap();
@@ -328,7 +334,7 @@ fn desktop_state_drops_services_without_live_tmux_windows() {
             metadata_sessions: &metadata,
             exchange: &exchange,
         },
-        Some(&support::live_window_ids(&["@1", "@2", "@3"])),
+        Some(&support::live_windows("aimux-repo", &["@1", "@2", "@3"])),
     );
 
     let services = state["services"].as_array().unwrap();
@@ -985,7 +991,7 @@ fn a_graveyarded_worktree_leaves_the_dashboard_even_with_an_offline_agent_in_it(
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
         },
-        Some(&support::live_window_ids(&[])),
+        Some(&support::live_windows("aimux-repo", &[])),
     );
 
     let groups = state["worktreeGroups"].as_array().expect("worktree groups");
@@ -1043,7 +1049,7 @@ fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
         },
-        Some(&support::live_window_ids(&["@1", "@2"])),
+        Some(&support::live_windows("aimux-repo", &["@1", "@2"])),
     );
 
     let groups = state["worktreeGroups"].as_array().expect("worktree groups");
@@ -1107,7 +1113,7 @@ fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashbo
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
         },
-        Some(&support::live_window_ids(&[])),
+        Some(&support::live_windows("aimux-repo", &[])),
     );
 
     let snapshot: DesktopStateSnapshot =

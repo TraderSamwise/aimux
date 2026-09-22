@@ -7,6 +7,7 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::switchable_agents::route_switchable_agent_request_async;
 use aimux::runtime_topology::runtime_topology_path;
+use aimux::tmux::LiveWindowIndex;
 use aimux::tmux_expose::{
     EXPOSE_HTTP_TIMEOUT_MS, ExposeClientSizeProbe, ExposeConfig, ExposeHttpClient,
     ExposeHttpRequest, ExposeInputEvent, ExposeInputSource, ExposeScope, ExposeScopeView,
@@ -892,7 +893,7 @@ fn runner_renders_topology_backed_tiles_when_live_window_projection_erases_expos
     .expect("write topology");
     let request_context =
         ProjectServiceRequestContext::with_project_state_dir(Path::new("/repo"), &state_dir)
-            .with_live_window_ids(Vec::<String>::new());
+            .with_live_windows(LiveWindowIndex::default());
     // aimux-async-seam: test - Expose regression drives the async switchable-agents route
     let route_response = aimux::async_runtime::block_on_named(
         "test:expose-projection-erased-items",
