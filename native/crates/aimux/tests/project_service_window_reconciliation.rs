@@ -171,13 +171,18 @@ mod task {
     };
     use aimux::runtime_topology::{read_runtime_topology, runtime_topology_path};
     use serde_json::{Value, json};
+    use std::future::Future;
     use std::path::{Path, PathBuf};
+    use std::pin::Pin;
 
     struct FakeWindows(Result<Vec<OwnedWindow>, String>);
 
     impl OwnedWindowSource for FakeWindows {
-        fn owned_windows(&mut self, _project_root: &Path) -> Result<Vec<OwnedWindow>, String> {
-            self.0.clone()
+        fn owned_windows<'a>(
+            &'a mut self,
+            _project_root: &'a Path,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<OwnedWindow>, String>> + Send + 'a>> {
+            Box::pin(std::future::ready(self.0.clone()))
         }
     }
 
@@ -315,4 +320,31 @@ mod task {
         assert_eq!(bindings[0]["tmuxWindowIndex"], json!(2));
         let _ = std::fs::remove_dir_all(&root);
     }
+}
+
+/// The real tmux inventory is a blocking multi-command walk. Running it inline
+/// inside the tick task panics the whole task, which is exactly what shipped
+/// the first time: the fake source never exercised the blocking path.
+#[test]
+fn real_tmux_inventory_does_not_panic_inside_the_tick_task() {
+    use aimux::async_runtime::{block_on_named, init_process_runtime, spawn_named};
+    use aimux::project_service::window_reconciliation::{OwnedWindowSource, TmuxOwnedWindowSource};
+    use std::path::PathBuf;
+
+    init_process_runtime().expect("process runtime");
+    let project_root = PathBuf::from("/nonexistent-aimux-window-reconciliation");
+
+    // aimux-async-seam: test - sync test drives async handler
+    let outcome = block_on_named("window-reconciliation-blocking-seam", async move {
+        spawn_named("window-reconciliation-blocking-seam-inner", async move {
+            let mut source = TmuxOwnedWindowSource;
+            source.owned_windows(&project_root).await
+        })
+        .await
+    });
+
+    assert!(
+        outcome.is_ok(),
+        "the tmux inventory must not panic when driven from an async task: {outcome:?}"
+    );
 }

@@ -12,9 +12,13 @@
 //! name or index, which collide across projects — is what makes the repair
 //! safe to apply without asking.
 
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 
 use serde_json::{Value, json};
+
+use crate::async_runtime::{scoped_task_name, spawn_blocking_named};
 
 use crate::debug_logging::log_lifecycle_always;
 use crate::runtime_topology::{
@@ -215,20 +219,37 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 ///
 /// Behind a trait so the repair rules can be tested without a tmux server, and
 /// so an inventory failure stays an error rather than becoming an empty list
-/// that would invalidate every live binding.
+/// that would invalidate every live binding. Async because the tmux inventory
+/// is a blocking multi-command walk: running it inline panics the tick task.
 pub trait OwnedWindowSource: Send {
-    fn owned_windows(&mut self, project_root: &Path) -> Result<Vec<OwnedWindow>, String>;
+    fn owned_windows<'a>(
+        &'a mut self,
+        project_root: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<OwnedWindow>, String>> + Send + 'a>>;
 }
 
 pub struct TmuxOwnedWindowSource;
 
 impl OwnedWindowSource for TmuxOwnedWindowSource {
-    fn owned_windows(&mut self, project_root: &Path) -> Result<Vec<OwnedWindow>, String> {
-        Ok(TmuxRuntimeManager::new()
-            .list_project_managed_windows(project_root)?
-            .iter()
-            .map(OwnedWindow::from_managed)
-            .collect())
+    fn owned_windows<'a>(
+        &'a mut self,
+        project_root: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<OwnedWindow>, String>> + Send + 'a>> {
+        let project_root = project_root.to_path_buf();
+        Box::pin(async move {
+            spawn_blocking_named(
+                scoped_task_name("window-reconciliation", "tmux-inventory", "project"),
+                move || {
+                    Ok(TmuxRuntimeManager::new()
+                        .list_project_managed_windows(&project_root)?
+                        .iter()
+                        .map(OwnedWindow::from_managed)
+                        .collect::<Vec<_>>())
+                },
+            )
+            .await
+            .map_err(|error| format!("tmux inventory task did not finish: {error}"))?
+        })
     }
 }
 
@@ -283,12 +304,13 @@ impl PeriodicTask for WindowReconciliationTask {
             let topology_path = runtime_topology_path(context.project_state_dir());
             let topology = read_runtime_topology(&topology_path)
                 .map_err(|error| format!("window reconciliation topology unavailable: {error}"))?;
-            let owned_windows =
-                self.windows
-                    .owned_windows(context.project_root())
-                    .map_err(|error| {
-                        format!("window reconciliation tmux inventory unavailable: {error}")
-                    })?;
+            let owned_windows = self
+                .windows
+                .owned_windows(context.project_root())
+                .await
+                .map_err(|error| {
+                    format!("window reconciliation tmux inventory unavailable: {error}")
+                })?;
             let repairs = plan_binding_repairs(&topology, &owned_windows);
             if repairs.is_empty() {
                 return Ok(());
