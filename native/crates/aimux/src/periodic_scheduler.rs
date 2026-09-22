@@ -3,7 +3,7 @@ use std::fmt;
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::Poll;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -757,22 +757,40 @@ fn log_task_result(
     timed_out: bool,
     failed_error: Option<String>,
 ) {
-    log_at(
-        LogLevel::Debug,
-        labels.task_ran,
-        labels.component,
-        Some(json!({
-            "task": name,
-            "elapsedMs": elapsed_ms,
-            "intervalMs": interval_ms,
-            "tickMultiple": tick_multiple,
-            "forced": forced,
-            "panicked": panicked,
-            "timedOut": timed_out,
-            "failed": failed_error.is_some(),
-            "error": failed_error.clone(),
-        })),
-    );
+    let notable = forced || panicked || timed_out || failed_error.is_some();
+    if notable {
+        log_at(
+            LogLevel::Debug,
+            labels.task_ran,
+            labels.component,
+            Some(json!({
+                "task": name,
+                "elapsedMs": elapsed_ms,
+                "intervalMs": interval_ms,
+                "tickMultiple": tick_multiple,
+                "forced": forced,
+                "panicked": panicked,
+                "timedOut": timed_out,
+                "failed": failed_error.is_some(),
+                "error": failed_error.clone(),
+            })),
+        );
+    } else if let Some(rollup) = record_uneventful_run(name, elapsed_ms) {
+        log_at(
+            LogLevel::Debug,
+            labels.task_ran,
+            labels.component,
+            Some(json!({
+                "task": name,
+                "runs": rollup.runs,
+                "windowMs": rollup.window_ms,
+                "maxElapsedMs": rollup.max_elapsed_ms,
+                "totalElapsedMs": rollup.total_elapsed_ms,
+                "intervalMs": interval_ms,
+                "tickMultiple": tick_multiple,
+            })),
+        );
+    }
     if panicked {
         log_lifecycle_always(
             labels.task_panicked,
@@ -805,6 +823,79 @@ fn log_task_result(
             })),
         );
     }
+}
+
+/// One rollup line stands in for a window of runs that did nothing worth
+/// reading. An uneventful run is not information, and at one line per task per
+/// 250ms tick it evicted every diagnostic from the log inside a minute.
+const UNEVENTFUL_RUN_ROLLUP_MS: i64 = 60_000;
+
+static UNEVENTFUL_RUNS: OnceLock<Mutex<BTreeMap<String, UneventfulRunWindow>>> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy)]
+struct UneventfulRunWindow {
+    runs: u64,
+    total_elapsed_ms: i64,
+    max_elapsed_ms: i64,
+    opened_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UneventfulRunRollup {
+    runs: u64,
+    window_ms: i64,
+    total_elapsed_ms: i64,
+    max_elapsed_ms: i64,
+}
+
+/// Accumulates one clean run, and returns a rollup only when the window is up.
+fn record_uneventful_run(name: &str, elapsed_ms: i64) -> Option<UneventfulRunRollup> {
+    let windows = UNEVENTFUL_RUNS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut windows = windows.lock().ok()?;
+    record_uneventful_run_in(
+        &mut windows,
+        name,
+        elapsed_ms,
+        scheduler_now_ms(),
+        UNEVENTFUL_RUN_ROLLUP_MS,
+    )
+}
+
+fn record_uneventful_run_in(
+    windows: &mut BTreeMap<String, UneventfulRunWindow>,
+    name: &str,
+    elapsed_ms: i64,
+    now_ms: i64,
+    rollup_ms: i64,
+) -> Option<UneventfulRunRollup> {
+    let window = windows
+        .entry(name.to_owned())
+        .or_insert(UneventfulRunWindow {
+            runs: 0,
+            total_elapsed_ms: 0,
+            max_elapsed_ms: 0,
+            opened_at_ms: now_ms,
+        });
+    window.runs += 1;
+    window.total_elapsed_ms = window.total_elapsed_ms.saturating_add(elapsed_ms);
+    window.max_elapsed_ms = window.max_elapsed_ms.max(elapsed_ms);
+    let age_ms = now_ms.saturating_sub(window.opened_at_ms);
+    if age_ms < rollup_ms {
+        return None;
+    }
+    let rollup = UneventfulRunRollup {
+        runs: window.runs,
+        window_ms: age_ms,
+        total_elapsed_ms: window.total_elapsed_ms,
+        max_elapsed_ms: window.max_elapsed_ms,
+    };
+    *window = UneventfulRunWindow {
+        runs: 0,
+        total_elapsed_ms: 0,
+        max_elapsed_ms: 0,
+        opened_at_ms: now_ms,
+    };
+    Some(rollup)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -886,6 +977,72 @@ fn limit_last_error(error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One clean run per 250ms tick per task evicted every diagnostic from the
+    /// log inside a minute. Clean runs now accumulate and report once a window.
+    #[test]
+    fn uneventful_runs_report_once_per_window_not_once_per_run() {
+        let mut windows = BTreeMap::new();
+        let opened_at = 1_000_000;
+
+        for step in 0..10 {
+            assert!(
+                record_uneventful_run_in(
+                    &mut windows,
+                    "watcher",
+                    step,
+                    opened_at + step * 100,
+                    60_000,
+                )
+                .is_none(),
+                "a clean run inside the window must not produce a line"
+            );
+        }
+
+        let rollup =
+            record_uneventful_run_in(&mut windows, "watcher", 7, opened_at + 60_000, 60_000)
+                .expect("the window closing reports once");
+
+        assert_eq!(rollup.runs, 11);
+        assert_eq!(rollup.max_elapsed_ms, 9);
+        assert_eq!(rollup.window_ms, 60_000);
+    }
+
+    /// The window resets, so the next minute is counted from zero rather than
+    /// reporting on every run once the first window has closed.
+    #[test]
+    fn closing_a_window_starts_a_fresh_one() {
+        let mut windows = BTreeMap::new();
+        let opened_at = 2_000_000;
+        record_uneventful_run_in(&mut windows, "watcher", 1, opened_at, 60_000);
+        record_uneventful_run_in(&mut windows, "watcher", 1, opened_at + 60_000, 60_000)
+            .expect("first window closes");
+
+        assert!(
+            record_uneventful_run_in(&mut windows, "watcher", 1, opened_at + 60_100, 60_000)
+                .is_none(),
+            "the run after a rollup opens a new window rather than reporting again"
+        );
+    }
+
+    /// Each task keeps its own window, so a fast task cannot suppress a slow
+    /// one's line or drag it into a report that is not about it.
+    #[test]
+    fn each_task_accumulates_its_own_window() {
+        let mut windows = BTreeMap::new();
+        let opened_at = 3_000_000;
+        record_uneventful_run_in(&mut windows, "fast", 1, opened_at, 60_000);
+        record_uneventful_run_in(&mut windows, "slow", 40, opened_at + 30_000, 60_000);
+
+        let fast = record_uneventful_run_in(&mut windows, "fast", 2, opened_at + 60_000, 60_000)
+            .expect("fast window closes on its own schedule");
+        assert_eq!(fast.runs, 2);
+        assert_eq!(fast.max_elapsed_ms, 2);
+        assert!(
+            record_uneventful_run_in(&mut windows, "slow", 3, opened_at + 60_000, 60_000).is_none(),
+            "slow opened its window later, so it is not due yet"
+        );
+    }
 
     #[test]
     fn unreadable_scheduler_health_reports_failure_not_empty() {
