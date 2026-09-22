@@ -133,7 +133,7 @@ pub fn build_coherence_report(
     let mut checks = vec![
         check_stale_window_bindings(runtime, project_root, &topology, &owned_windows, repair),
         check_sessions_without_windows(runtime, project_root, &topology, &owned_windows, repair),
-        check_restore_snapshot(runtime, project_root, &topology, repair),
+        check_restore_snapshot(runtime, project_root, &topology, &owned_windows, repair),
         check_duplicate_dashboards(runtime),
         check_unreachable_projects(runtime),
     ];
@@ -282,16 +282,32 @@ fn check_sessions_without_windows(
 /// The snapshot is what the restore prompt is built from. When it holds fewer
 /// sessions than the topology still says are restorable, the prompt will offer
 /// back less than it could — which is how eight agents went unoffered.
+/// The snapshot records the agents that were ONLINE, so that a run which dies
+/// with agents up can offer them back. An agent someone stopped is absent by
+/// design, and so is one that went offline in some previous era.
+///
+/// Comparing the snapshot against every non-finished session in the topology
+/// therefore reported history as drift: on tealstreet-next it flagged 24
+/// sessions, some offline since August, none of which the snapshot ever held.
+///
+/// The checkable contradiction is narrower and has no false positives: an agent
+/// running in a window this project owns RIGHT NOW must be in the snapshot,
+/// because that is exactly what the snapshot claims to describe.
 fn check_restore_snapshot(
     runtime: &mut impl CoherenceDoctorRuntime,
     project_root: &Path,
     topology: &Result<Value, String>,
+    owned_windows: &Result<Vec<OwnedWindow>, String>,
     repair: bool,
 ) -> CoherenceCheck {
     let name = "restore-snapshot";
-    let title = "restore snapshot against the sessions that are still restorable";
+    let title = "restore snapshot against the agents that are online now";
     let Ok(topology) = topology else {
         return unavailable(name, title, topology.clone().unwrap_err());
+    };
+    let owned_windows = match owned_windows {
+        Ok(owned_windows) => owned_windows,
+        Err(error) => return unavailable(name, title, error.clone()),
     };
     let snapshot_ids = match runtime.restore_snapshot_session_ids(project_root) {
         Ok(ids) => ids,
@@ -301,13 +317,8 @@ fn check_restore_snapshot(
         // No snapshot is a legitimate state: it is what a clean shutdown leaves.
         return clean(name, title);
     }
-    let restorable = array_of(topology, "sessions")
-        .iter()
-        .filter(|session| !FINISHED_STATUSES.contains(&string_of(session, "status").as_str()))
-        .map(|session| string_of(session, "id"))
-        .filter(|id| !id.is_empty())
-        .collect::<BTreeSet<_>>();
-    let missing = restorable
+    let online = online_session_ids(topology, owned_windows);
+    let missing = online
         .difference(&snapshot_ids)
         .cloned()
         .collect::<Vec<_>>();
@@ -321,7 +332,8 @@ fn check_restore_snapshot(
             .iter()
             .map(|session_id| CoherenceFinding {
                 subject: session_id.clone(),
-                detail: "still restorable in the topology but missing from the restore snapshot"
+                detail: "running in a window this project owns, but missing from the restore \
+                         snapshot that is supposed to record who is online"
                     .to_owned(),
                 repair: "re-record the snapshot from the topology".to_owned(),
             })
@@ -430,8 +442,36 @@ fn check_unreachable_projects(runtime: &mut impl CoherenceDoctorRuntime) -> Cohe
     }
 }
 
+/// Sessions claiming a live status whose bound window this project actually
+/// owns. Anything else is offline, however it got there.
+fn online_session_ids(topology: &Value, owned_windows: &[OwnedWindow]) -> BTreeSet<String> {
+    let bound_windows = array_of(topology, "bindings")
+        .iter()
+        .map(|binding| {
+            (
+                string_of(binding, "nodeId"),
+                string_of(binding, "tmuxWindowId"),
+            )
+        })
+        .collect::<Vec<_>>();
+    array_of(topology, "sessions")
+        .iter()
+        .filter(|session| LIVE_STATUSES.contains(&string_of(session, "status").as_str()))
+        .filter(|session| {
+            let node_id = string_of(session, "nodeId");
+            bound_windows.iter().any(|(bound_node, window_id)| {
+                bound_node == &node_id
+                    && owned_windows
+                        .iter()
+                        .any(|owned| &owned.window_id == window_id)
+            })
+        })
+        .map(|session| string_of(session, "id"))
+        .filter(|id| !id.is_empty())
+        .collect()
+}
+
 const LIVE_STATUSES: &[&str] = &["starting", "running", "idle"];
-const FINISHED_STATUSES: &[&str] = &["graveyard", "exited"];
 
 fn clean(name: &'static str, title: &'static str) -> CoherenceCheck {
     CoherenceCheck {

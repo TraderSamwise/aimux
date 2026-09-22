@@ -241,19 +241,37 @@ fn an_offline_session_with_no_binding_is_not_a_finding() {
     );
 }
 
-/// Eight agents were restorable and the snapshot listed none of them, which is
-/// why the prompt offered 1 of 9.
+fn online_topology() -> Value {
+    json!({
+        "nodes": [{ "id": "n1" }, { "id": "n2" }],
+        "sessions": [
+            { "id": "codex-one", "nodeId": "n1", "status": "running" },
+            { "id": "codex-two", "nodeId": "n2", "status": "running" },
+        ],
+        "bindings": [
+            { "nodeId": "n1", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1" },
+            { "nodeId": "n2", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2" },
+        ],
+    })
+}
+
+fn owned(window_id: &str) -> OwnedWindow {
+    OwnedWindow {
+        session_id: None,
+        tmux_session: "aimux-repo".to_owned(),
+        window_id: window_id.to_owned(),
+        window_index: 0,
+        window_name: "codex".to_owned(),
+    }
+}
+
+/// An agent running in a window this project owns must be in the snapshot the
+/// snapshot claims to be: a record of who is online.
 #[test]
-fn a_snapshot_missing_restorable_sessions_is_reported() {
+fn an_online_agent_missing_from_the_snapshot_is_reported() {
     let mut runtime = FakeRuntime {
-        topology: Some(Ok(json!({
-            "nodes": [{ "id": "n1" }, { "id": "n2" }],
-            "sessions": [
-                { "id": "codex-one", "nodeId": "n1", "status": "offline" },
-                { "id": "codex-two", "nodeId": "n2", "status": "offline" },
-            ],
-            "bindings": [],
-        }))),
+        topology: Some(Ok(online_topology())),
+        owned_windows: Some(Ok(vec![owned("@1"), owned("@2")])),
         snapshot_ids: Some(Ok(BTreeSet::from(["codex-one".to_owned()]))),
         ..FakeRuntime::default()
     };
@@ -265,15 +283,62 @@ fn a_snapshot_missing_restorable_sessions_is_reported() {
     assert_eq!(check.findings()[0].subject, "codex-two");
 }
 
+/// The false positive this check used to produce: on tealstreet-next it flagged
+/// 24 sessions, some offline since August, none of which the snapshot ever
+/// held. An agent that is not online is absent from the snapshot by design —
+/// a deliberate stop prunes it — so it is not drift.
+#[test]
+fn offline_sessions_absent_from_the_snapshot_are_not_findings() {
+    let mut runtime = FakeRuntime {
+        topology: Some(Ok(json!({
+            "nodes": [{ "id": "n1" }, { "id": "n2" }, { "id": "n3" }],
+            "sessions": [
+                { "id": "codex-live", "nodeId": "n1", "status": "running" },
+                { "id": "claude-stopped-in-august", "nodeId": "n2", "status": "offline" },
+                { "id": "claude-also-stopped", "nodeId": "n3", "status": "offline" },
+            ],
+            "bindings": [
+                { "nodeId": "n1", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1" },
+            ],
+        }))),
+        owned_windows: Some(Ok(vec![owned("@1")])),
+        snapshot_ids: Some(Ok(BTreeSet::from(["codex-live".to_owned()]))),
+        ..FakeRuntime::default()
+    };
+
+    assert!(
+        check(&report(&mut runtime, false), "restore-snapshot")
+            .findings()
+            .is_empty(),
+        "an agent nobody is running is not missing from a record of who is running"
+    );
+}
+
+/// A session claiming to run in a window this project does NOT own is not
+/// online, so its absence from the snapshot is not drift either.
+#[test]
+fn a_session_bound_to_a_foreign_window_is_not_treated_as_online() {
+    let mut runtime = FakeRuntime {
+        topology: Some(Ok(online_topology())),
+        owned_windows: Some(Ok(vec![owned("@1")])),
+        snapshot_ids: Some(Ok(BTreeSet::from(["codex-one".to_owned()]))),
+        ..FakeRuntime::default()
+    };
+
+    assert!(
+        check(&report(&mut runtime, false), "restore-snapshot")
+            .findings()
+            .is_empty(),
+        "codex-two's window @2 is not owned here, so it is not online"
+    );
+}
+
 /// No snapshot at all is what a clean shutdown leaves behind, not a defect.
 #[test]
 fn no_snapshot_is_not_a_snapshot_finding() {
     let mut runtime = FakeRuntime {
-        topology: Some(Ok(json!({
-            "nodes": [{ "id": "n1" }],
-            "sessions": [{ "id": "codex-one", "nodeId": "n1", "status": "offline" }],
-            "bindings": [],
-        }))),
+        topology: Some(Ok(online_topology())),
+        owned_windows: Some(Ok(vec![owned("@1"), owned("@2")])),
         snapshot_ids: Some(Ok(BTreeSet::new())),
         ..FakeRuntime::default()
     };
@@ -476,14 +541,8 @@ fn a_report_without_repair_writes_no_status() {
 #[test]
 fn repair_rebuilds_a_snapshot_that_is_missing_restorable_sessions() {
     let mut runtime = FakeRuntime {
-        topology: Some(Ok(json!({
-            "nodes": [{ "id": "n1" }, { "id": "n2" }],
-            "sessions": [
-                { "id": "codex-one", "nodeId": "n1", "status": "offline" },
-                { "id": "codex-two", "nodeId": "n2", "status": "offline" },
-            ],
-            "bindings": [],
-        }))),
+        topology: Some(Ok(online_topology())),
+        owned_windows: Some(Ok(vec![owned("@1"), owned("@2")])),
         snapshot_ids: Some(Ok(BTreeSet::from(["codex-one".to_owned()]))),
         ..FakeRuntime::default()
     };
@@ -497,11 +556,8 @@ fn repair_rebuilds_a_snapshot_that_is_missing_restorable_sessions() {
 #[test]
 fn a_report_without_repair_never_rewrites_the_snapshot() {
     let mut runtime = FakeRuntime {
-        topology: Some(Ok(json!({
-            "nodes": [{ "id": "n1" }],
-            "sessions": [{ "id": "codex-one", "nodeId": "n1", "status": "offline" }],
-            "bindings": [],
-        }))),
+        topology: Some(Ok(online_topology())),
+        owned_windows: Some(Ok(vec![owned("@1"), owned("@2")])),
         snapshot_ids: Some(Ok(BTreeSet::from(["codex-other".to_owned()]))),
         ..FakeRuntime::default()
     };
