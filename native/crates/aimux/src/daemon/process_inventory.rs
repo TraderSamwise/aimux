@@ -1,3 +1,4 @@
+use crate::async_runtime::{scoped_task_name, spawn_blocking_named};
 use crate::atomic_write::write_json_atomic;
 use crate::daemon::scheduler::{DaemonPeriodicTask, DaemonSchedulerContext, PeriodicTaskFuture};
 use crate::paths::PathResolver;
@@ -34,10 +35,18 @@ impl DaemonPeriodicTask for DaemonProcessHealthTask {
 
     fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
+            // `try_list_process_args` spawns `ps` through the sync subprocess
+            // seam, which panics when it runs on an async worker thread.
+            let processes = spawn_blocking_named(
+                scoped_task_name(DAEMON_PROCESS_HEALTH_TASK_NAME, "process-args", "daemon"),
+                try_list_process_args,
+            )
+            .await
+            .map_err(|error| format!("process inventory task did not finish: {error}"))?;
             write_daemon_process_health_snapshot(
                 &context.resolver,
                 context.info.pid,
-                try_list_process_args(),
+                processes,
                 now_iso(),
             )
         })

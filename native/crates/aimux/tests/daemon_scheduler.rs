@@ -459,6 +459,50 @@ fn device_record(principal_id: &str, last_seen: &str) -> DeviceRecord {
     }
 }
 
+/// The process-health task shells out to `ps` through the sync subprocess
+/// seam. Running that inline on an async worker panics the task, so the
+/// snapshot silently stopped being written every 60 seconds. Drive the real
+/// task from inside a spawned async task, which is where the scheduler runs
+/// it.
+#[test]
+fn daemon_process_health_task_does_not_panic_inside_an_async_task() {
+    use aimux::async_runtime::spawn_named;
+    use aimux::daemon::process_inventory::{DaemonProcessHealthTask, daemon_process_health_path};
+
+    init_process_runtime().expect("process runtime");
+    let fixture = DaemonSchedulerFixture::new("process-health-async");
+    let context = Arc::new(DaemonSchedulerContext::new(
+        fixture.resolver.clone(),
+        daemon_info(),
+    ));
+    fs::create_dir_all(fixture.resolver.daemon_dir()).expect("daemon dir");
+
+    // aimux-async-seam: test - sync test drives async handler
+    let outcome = block_on_named("daemon-process-health-async-seam", {
+        let context = Arc::clone(&context);
+        async move {
+            spawn_named("daemon-process-health-async-seam-inner", async move {
+                let mut task = DaemonProcessHealthTask;
+                task.run(&context).await
+            })
+            .await
+        }
+    });
+
+    let joined = outcome.expect("the process health task must not panic on an async worker");
+    assert!(joined.is_ok(), "process health task failed: {joined:?}");
+
+    let snapshot: Value = serde_json::from_str(
+        &fs::read_to_string(daemon_process_health_path(&fixture.resolver))
+            .expect("process health snapshot"),
+    )
+    .expect("snapshot json");
+    assert!(
+        snapshot.get("daemonProcessInventory").is_some(),
+        "the snapshot must carry a real inventory, not an error: {snapshot}"
+    );
+}
+
 fn daemon_info() -> AimuxDaemonInfo {
     AimuxDaemonInfo {
         pid: 1,

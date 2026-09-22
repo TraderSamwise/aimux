@@ -1176,7 +1176,7 @@ fn collect_nested_runtime_panic_lines_from_dir(
         }
         for line in contents.lines() {
             if line.contains("Cannot start a runtime from within a runtime")
-                || line.contains("block_on_named was called from an async task")
+                || line.contains("was called from an async task")
                 || line.contains("panicked at crates/aimux/src/async_runtime.rs")
             {
                 report.panic_lines.push(format!("{relative}: {line}"));

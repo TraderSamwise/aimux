@@ -117,7 +117,8 @@ pub fn block_on_named<F>(name: impl Into<String>, future: F) -> F::Output
 where
     F: Future,
 {
-    let guard = registry().register(name.into(), AsyncTaskKind::Async);
+    let name = name.into();
+    let guard = registry().register(name.clone(), AsyncTaskKind::Async);
     let future = async move {
         let _guard = guard;
         future.await
@@ -127,8 +128,10 @@ where
         return handle.block_on(future);
     }
     match Handle::try_current() {
+        // Name the caller: without it the log says only that some task did
+        // this, and the offending task has to be found by reading the source.
         Ok(_) => panic!(
-            "block_on_named was called from an async task; move this caller to async or spawn_blocking_named"
+            "block_on_named({name}) was called from an async task; move this caller to async or spawn_blocking_named"
         ),
         // aimux-async-seam: permanent - process-entry bridge when no async runtime is entered
         Err(_) => process_runtime().block_on(future),
