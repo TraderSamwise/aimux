@@ -15,7 +15,7 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_worktree_states, read_runtime_topology,
     runtime_topology_path,
 };
-use crate::team_contract::{agent_lane, agent_role, agent_role_display_order, agent_role_state};
+use crate::team_contract::{agent_lane, agent_role, agent_role_state};
 use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
@@ -37,7 +37,9 @@ use super::preview_snapshots::{
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::session_semantics::{SessionSemanticsInput, derive_session_semantics};
-use super::session_visibility::{AgentVisibilityInput, AgentVisibilityRule};
+use super::session_visibility::{
+    AgentVisibilityInput, AgentVisibilityRule, session_is_in_supervisor_plane,
+};
 use super::usage::parse_recency_timestamp;
 use super::visual_clients::VisualClientLeaseRoute;
 
@@ -1027,21 +1029,17 @@ fn supervisor_lane_from_sessions(sessions: &[Value]) -> Option<Value> {
         .iter()
         .enumerate()
         .filter(|(_, session)| session_is_in_supervisor_plane(session))
-        .map(|(index, session)| {
-            (
-                agent_role_display_order(Some(session)),
-                index,
-                session.clone(),
-            )
-        })
+        .map(|(index, session)| (index, session.clone()))
         .collect::<Vec<_>>();
+    // Role order used to lead here. The plane decides membership and the tmux
+    // window decides the sequence, so the arrival index is only the tiebreak.
     sessions.sort_by(|left, right| {
-        crate::team_contract::compare_agent_display_order(&left.2, &right.2)
-            .then_with(|| left.1.cmp(&right.1))
+        crate::team_contract::compare_agent_canonical_order(&left.1, &right.1)
+            .then_with(|| left.0.cmp(&right.0))
     });
     let sessions = sessions
         .into_iter()
-        .map(|(_, _, session)| session)
+        .map(|(_, session)| session)
         .collect::<Vec<_>>();
     (!sessions.is_empty()).then(|| json!({ "sessions": sessions }))
 }
@@ -1312,7 +1310,7 @@ fn set_indexes(items: &mut [Value]) {
 }
 
 fn sorted_dashboard_items(mut items: Vec<Value>) -> Vec<Value> {
-    items.sort_by(crate::team_contract::compare_agent_display_order);
+    items.sort_by(crate::team_contract::compare_agent_canonical_order);
     items
 }
 
@@ -1621,16 +1619,6 @@ fn dashboard_session_visibility_allows(session: &Value) -> bool {
         window_name: None,
         window_id: None,
     })
-}
-
-/// Which lane a session is SHOWN in. Membership is the plane, not the
-/// project-control role flag: an ordinary agent can be moved into the
-/// supervisor plane and an overseer can be moved out of it.
-fn session_is_in_supervisor_plane(session: &Value) -> bool {
-    agent_lane(Some(session))
-        .get("kind")
-        .and_then(Value::as_str)
-        == Some("supervisor")
 }
 
 fn main_checkout_branch(project_root: &str, worktrees: Option<&Value>) -> String {

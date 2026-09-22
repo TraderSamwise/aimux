@@ -1344,14 +1344,14 @@ fn build_dashboard_worktree_groups_value(
         .filter(|session| !is_project_control_session_value(session))
         .cloned()
         .collect::<Vec<_>>();
-    let main_sessions = sort_dashboard_entries_by_created_at_value(
+    let main_sessions = sort_dashboard_entries_in_canonical_order(
         groupable
             .iter()
             .filter(|session| !has_string_field(session, "worktreePath"))
             .cloned()
             .collect(),
     );
-    let main_services = sort_dashboard_entries_by_created_at_value(
+    let main_services = sort_dashboard_entries_in_canonical_order(
         services
             .iter()
             .filter(|service| !has_string_field(service, "worktreePath"))
@@ -1396,14 +1396,14 @@ fn build_dashboard_worktree_groups_value(
         })
         .map(|worktree| {
             let path = string_field_value(worktree, "path");
-            let wt_sessions = sort_dashboard_entries_by_created_at_value(
+            let wt_sessions = sort_dashboard_entries_in_canonical_order(
                 groupable
                     .iter()
                     .filter(|session| string_field_value(session, "worktreePath") == path)
                     .cloned()
                     .collect(),
             );
-            let wt_services = sort_dashboard_entries_by_created_at_value(
+            let wt_services = sort_dashboard_entries_in_canonical_order(
                 services
                     .iter()
                     .filter(|service| string_field_value(service, "worktreePath") == path)
@@ -1430,7 +1430,7 @@ fn compose_dashboard_worktree_groups_value(
             .iter()
             .map(|group| {
                 let path = group.get("path").and_then(Value::as_str);
-                let group_sessions = sort_dashboard_entries_by_created_at_value(
+                let group_sessions = sort_dashboard_entries_in_canonical_order(
                     sessions
                         .iter()
                         .filter(|session| {
@@ -1440,7 +1440,7 @@ fn compose_dashboard_worktree_groups_value(
                         .cloned()
                         .collect(),
                 );
-                let group_services = sort_dashboard_entries_by_created_at_value(
+                let group_services = sort_dashboard_entries_in_canonical_order(
                     services
                         .iter()
                         .filter(|service| {
@@ -1497,14 +1497,20 @@ fn group_from_worktree(worktree: &Value, sessions: Vec<Value>, services: Vec<Val
     Value::Object(object)
 }
 
-fn sort_worktree_groups_value(groups: Vec<Value>) -> Vec<Value> {
-    sort_dashboard_entries_by_created_at_value(groups)
-}
-
-fn sort_dashboard_entries_by_created_at_value(mut entries: Vec<Value>) -> Vec<Value> {
-    entries.sort_by(|left, right| {
+/// Worktree groups are not agents and hold no tmux window of their own, so
+/// they keep their own order. Only what sits INSIDE a group is agent-ordered.
+fn sort_worktree_groups_value(mut groups: Vec<Value>) -> Vec<Value> {
+    groups.sort_by(|left, right| {
         dashboard_created_sort_key_value(right).cmp(&dashboard_created_sort_key_value(left))
     });
+    groups
+}
+
+/// The TUI dashboard renders directly above the footer chips, so it takes the
+/// same order they do. It used to sort createdAt-descending while they sorted
+/// another way entirely, which is the mismatch this whole change removes.
+fn sort_dashboard_entries_in_canonical_order(mut entries: Vec<Value>) -> Vec<Value> {
+    entries.sort_by(crate::team_contract::compare_agent_canonical_order);
     entries
 }
 

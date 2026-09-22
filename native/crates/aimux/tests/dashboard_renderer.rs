@@ -1147,7 +1147,7 @@ fn renders_selected_session_details_sidebar_when_visible() {
 }
 
 #[test]
-fn renders_selected_teammates_in_node_order() {
+fn renders_selected_teammates_in_tmux_window_order() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_light.clone();
@@ -1157,13 +1157,14 @@ fn renders_selected_teammates_in_node_order() {
     second.id = "claude-second".into();
     second.label = Some("Second".into());
     second.created_at = Some("2026-01-01T00:00:01.000Z".into());
+    second.tmux_window_index = Some(2);
     second.team = Some(
         serde_json::from_value(json!({
             "teamId": "team-1",
             "parentSessionId": parent_id,
             "role": "reviewer",
             "label": "Second",
-            "order": 2
+            "order": 1
         }))
         .expect("team metadata parses"),
     );
@@ -1172,13 +1173,14 @@ fn renders_selected_teammates_in_node_order() {
     first.id = "claude-first".into();
     first.label = Some("First".into());
     first.created_at = Some("2026-01-01T00:00:02.000Z".into());
+    first.tmux_window_index = Some(1);
     first.team = Some(
         serde_json::from_value(json!({
             "teamId": "team-1",
             "parentSessionId": parent_id,
             "role": "coder",
             "label": "First",
-            "order": 1
+            "order": 9
         }))
         .expect("team metadata parses"),
     );
@@ -1186,6 +1188,7 @@ fn renders_selected_teammates_in_node_order() {
     invalid_created.id = "claude-invalid-created".into();
     invalid_created.label = Some("Invalid Created".into());
     invalid_created.created_at = Some("0000".into());
+    invalid_created.tmux_window_index = Some(4);
     invalid_created.team = Some(
         serde_json::from_value(json!({
             "teamId": "team-1",
@@ -1200,6 +1203,7 @@ fn renders_selected_teammates_in_node_order() {
     valid_created.id = "claude-valid-created".into();
     valid_created.label = Some("Valid Created".into());
     valid_created.created_at = Some("2026-01-01T00:00:03.000Z".into());
+    valid_created.tmux_window_index = Some(3);
     valid_created.team = Some(
         serde_json::from_value(json!({
             "teamId": "team-1",
@@ -1243,6 +1247,9 @@ fn renders_selected_teammates_in_node_order() {
         .find("Invalid Created(reviewer)")
         .expect("invalid-created teammate row");
 
+    // Windows 1, 2, 3, 4. `team.order` says the opposite for the first two
+    // and is ignored: a roster position someone assigned does not move an
+    // agent, the window it runs in does.
     assert!(first_index < second_index);
     assert!(second_index < valid_index);
     assert!(valid_index < invalid_index);

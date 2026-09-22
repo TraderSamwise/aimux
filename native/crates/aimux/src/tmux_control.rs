@@ -5,7 +5,6 @@ use crate::cli_launcher::{
 };
 use crate::dashboard_command_spec::get_dashboard_command_spec;
 use crate::tmux::{new_dashboard_window_argv, tmux_command_from_env};
-use crate::tmux_expose::expose_project_control_flag_from_metadata;
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::ffi::OsStr;
@@ -159,7 +158,7 @@ struct NavItem {
     kind: String,
     session_id: String,
     worktree_path: String,
-    project_control: bool,
+    supervisor_plane: bool,
     attention: String,
     unseen_count: i64,
     status_text: String,
@@ -962,7 +961,7 @@ impl TmuxControl {
                     self.options.daemon_host, self.options.daemon_port
                 )
             };
-        let current_project_control = self.current_window_project_control();
+        let current_supervisor_plane = self.current_window_in_supervisor_plane();
         let mut settled_resize_relaunches = 0_usize;
         let mut selected_expose_window = String::new();
         let popup_status = loop {
@@ -989,7 +988,7 @@ impl TmuxControl {
                 self.options.current_path.clone(),
                 self.options.pane_id.clone(),
                 self.options.aimux_home.clone(),
-                current_project_control
+                current_supervisor_plane
                     .map(|value| if value { "1" } else { "0" }.to_owned())
                     .unwrap_or_default(),
                 expose_status.to_string_lossy().into_owned(),
@@ -1099,7 +1098,13 @@ impl TmuxControl {
         true
     }
 
-    fn current_window_project_control(&mut self) -> Option<bool> {
+    /// Whether the window you are in belongs to the supervisor plane.
+    ///
+    /// This picks the Exposé scope, so it has to agree with the n/p cycle and
+    /// its no-op gate. Left on the role flag it would have disagreed with
+    /// both: an agent moved into the plane got n/p-noop but worktree-scoped
+    /// Exposé.
+    fn current_window_in_supervisor_plane(&mut self) -> Option<bool> {
         let window_id = self.options.current_window_id.trim().to_owned();
         if window_id.is_empty() {
             return None;
@@ -1107,7 +1112,7 @@ impl TmuxControl {
         let raw =
             self.tmux_output(&["show-window-options", "-v", "-t", &window_id, "@aimux-meta"])?;
         let metadata = serde_json::from_str::<Value>(&raw).ok()?;
-        Some(expose_project_control_flag_from_metadata(&metadata))
+        Some(crate::project_service::session_visibility::session_is_in_supervisor_plane(&metadata))
     }
 
     fn wait_for_expose_client_resize_settle(&mut self, tty: &str) -> bool {
@@ -1221,7 +1226,7 @@ impl TmuxControl {
                 .and_then(Value::as_str)
                 .unwrap_or(&self.options.project_root)
                 .to_owned();
-            let project_control = is_project_control_meta(&meta, &team);
+            let supervisor_plane = is_supervisor_plane_meta(&meta, &team);
             items.push(NavItem {
                 window_id: window_id.to_owned(),
                 window_index: parts[1].parse().unwrap_or(0),
@@ -1236,7 +1241,7 @@ impl TmuxControl {
                     .unwrap_or_default()
                     .to_owned(),
                 worktree_path: worktree,
-                project_control,
+                supervisor_plane,
                 attention: meta
                     .get("attention")
                     .and_then(Value::as_str)
@@ -1327,7 +1332,7 @@ impl TmuxControl {
             .iter()
             .find(|item| item.window_id == self.options.current_window_id)
             .cloned();
-        if current.as_ref().is_some_and(|item| item.project_control)
+        if current.as_ref().is_some_and(|item| item.supervisor_plane)
             && matches!(self.options.action.as_str(), "next" | "prev")
         {
             return TargetResolution::Noop;
@@ -1342,7 +1347,7 @@ impl TmuxControl {
             sort_teammates(&mut items);
         } else {
             items.retain(|item| {
-                !item.project_control
+                !item.supervisor_plane
                     && team_parent_id(&item.team)
                         .map(str::is_empty)
                         .unwrap_or(true)
@@ -2318,10 +2323,19 @@ fn value_as_i64(value: &Value) -> Option<i64> {
         })
 }
 
-fn is_project_control_meta(meta: &Value, team: &Value) -> bool {
+/// Whether a window belongs to the supervisor plane.
+///
+/// `@aimux-meta` carries the stored plane, so n/p can share the one rule
+/// rather than keep its own role-flag copy. Both uses flip together: who is in
+/// the cycle, and whether n/p does anything from the window you are in. Keyed
+/// separately they disagreed the moment plane and role stopped being one
+/// field.
+fn is_supervisor_plane_meta(meta: &Value, team: &Value) -> bool {
     let mut probe = meta.as_object().cloned().unwrap_or_else(Map::new);
     probe.insert("team".into(), team.clone());
-    expose_project_control_flag_from_metadata(&Value::Object(probe))
+    crate::project_service::session_visibility::session_is_in_supervisor_plane(&Value::Object(
+        probe,
+    ))
 }
 
 fn team_parent_id(team: &Value) -> Option<&str> {

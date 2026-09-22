@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-use crate::team_contract::{agent_should_show_in_expose, is_project_control_session};
+use crate::team_contract::{agent_lane, agent_should_show_in_expose};
 
 pub const LIVE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
 pub const DASHBOARD_SESSION_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
@@ -99,7 +99,7 @@ fn switchable_roles_allow(policy: &SwitchableRolePolicy, input: &AgentVisibility
         if input.kind != Some("service") && !agent_should_show_in_expose(Some(input.metadata)) {
             return false;
         }
-    } else if is_project_control_session(Some(input.metadata)) {
+    } else if session_is_in_supervisor_plane(input.metadata) {
         return false;
     }
     if let Some(parent_session_id) = policy.teammate_parent_session_id.as_deref()
@@ -114,11 +114,36 @@ fn switchable_roles_allow(policy: &SwitchableRolePolicy, input: &AgentVisibility
     policy.scope_all_worktrees || input_worktree_matches_scope(input, &policy.scoped_worktree_path)
 }
 
+/// Whether an agent is shown in the supervisor plane.
+///
+/// This is the one rule, shared by every surface that hides supervisor-plane
+/// agents from a worktree scope -- the dashboard, the switcher, the footer
+/// chips and `prefix n`/`p`. It keys on the PLANE, because the plane is
+/// membership: an ordinary agent moved into the supervisor plane belongs
+/// there, and an overseer moved out does not.
+pub fn session_is_in_supervisor_plane(session: &Value) -> bool {
+    agent_lane(Some(session))
+        .get("kind")
+        .and_then(Value::as_str)
+        == Some("supervisor")
+}
+
+/// The scope compares the agent's PLANE, which is its worktree path unless a
+/// stored plane says otherwise -- so this only differs from reading
+/// `worktreePath` for an agent that has actually been moved.
 fn input_worktree_matches_scope(
     input: &AgentVisibilityInput<'_>,
     scoped_worktree_path: &str,
 ) -> bool {
-    clean_path_string(input.worktree_path.unwrap_or("")) == scoped_worktree_path
+    let lane = agent_lane(Some(input.metadata));
+    let lane_path = lane
+        .get("worktreePath")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned);
+    let path = lane_path.unwrap_or_else(|| input.worktree_path.unwrap_or("").to_owned());
+    clean_path_string(&path) == scoped_worktree_path
 }
 
 fn is_dashboard_window_name(name: &str) -> bool {

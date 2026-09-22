@@ -12,8 +12,8 @@ use crate::runtime_topology::{
 };
 use crate::team_contract::{
     agent_expose_order, agent_lane, agent_role, agent_role_state, agent_should_show_in_expose,
-    is_overseer_session, is_project_control_session as team_is_project_control_session,
-    is_scribe_session, project_control_display_role, session_with_stored_control_flags,
+    is_overseer_session, is_scribe_session, project_control_display_role,
+    session_with_stored_control_flags,
 };
 use crate::tmux::TmuxTarget;
 
@@ -38,6 +38,7 @@ use super::preview_snapshots::{
 use super::router::ProjectServiceRequestContext;
 use super::session_visibility::{
     AgentVisibilityInput, AgentVisibilityRule, SessionLivenessPolicy, SwitchableRolePolicy,
+    session_is_in_supervisor_plane,
 };
 use super::usage::{load_last_used_state, parse_recency_timestamp};
 use super::visual_clients::VisualClientLeaseRoute;
@@ -1109,8 +1110,9 @@ fn current_window_is_project_control(
     metadata_sessions: &BTreeMap<String, Value>,
     context: &SwitchableContext,
 ) -> bool {
-    resolve_current_managed_window(entries, context)
-        .is_some_and(|entry| is_project_control_window(metadata_sessions, &entry.metadata))
+    resolve_current_managed_window(entries, context).is_some_and(|entry| {
+        current_window_is_in_supervisor_plane(metadata_sessions, &entry.metadata)
+    })
 }
 
 fn compare_switchable_windows(
@@ -1170,14 +1172,20 @@ fn order_managed_entries_by_display_order<'a>(
     sorted
 }
 
-fn is_project_control_window(
+/// Whether the window you are in belongs to the supervisor plane.
+///
+/// This gates "n/p does nothing from here", so it has to agree with the filter
+/// that decides who is in the cycle. Keyed on the role flag it disagreed the
+/// moment the two stopped being the same field: an overseer moved out of the
+/// plane appeared in the cycle list while n/p from its own window did nothing.
+fn current_window_is_in_supervisor_plane(
     metadata_sessions: &BTreeMap<String, Value>,
     metadata: &Value,
 ) -> bool {
-    team_is_project_control_session(Some(&metadata_with_stored_control_flags(
+    session_is_in_supervisor_plane(&metadata_with_stored_control_flags(
         metadata,
         metadata_sessions,
-    )))
+    ))
 }
 
 fn metadata_with_stored_control_flags(

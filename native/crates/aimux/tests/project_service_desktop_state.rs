@@ -282,7 +282,7 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
 }
 
 #[test]
-fn supervisor_lane_sessions_use_declared_role_order_without_reordering_worktree_agents() {
+fn lanes_render_in_tmux_window_order_not_role_order() {
     let topology = supervisor_lane_topology();
 
     let state = build_desktop_state_with_live_window_ids(
@@ -308,11 +308,13 @@ fn supervisor_lane_sessions_use_declared_role_order_without_reordering_worktree_
     );
 
     let supervisor_sessions = state["supervisorLane"]["sessions"].as_array().unwrap();
+    // scribe holds @1 and overseer holds @3, so the window order puts scribe
+    // first. Role order used to decide this, which is why the dashboard and
+    // the footer chips could disagree about the same two agents.
     assert_eq!(
         ids(supervisor_sessions),
-        vec!["overseer".to_owned(), "scribe".to_owned()]
+        vec!["scribe".to_owned(), "overseer".to_owned()]
     );
-    assert_eq!(supervisor_sessions[0]["roleState"]["exposeOrder"], 0);
 
     let groups = state["worktreeGroups"].as_array().unwrap();
     assert_eq!(
@@ -366,8 +368,8 @@ fn a_stored_plane_moves_an_agent_between_lanes_without_changing_its_role() {
     let supervisor_sessions = state["supervisorLane"]["sessions"].as_array().unwrap();
     assert_eq!(
         ids(supervisor_sessions),
-        vec!["main-agent".to_owned(), "scribe".to_owned()],
-        "the stored plane decides the lane, not the project-control flag"
+        vec!["scribe".to_owned(), "main-agent".to_owned()],
+        "the stored plane decides the lane; window order decides the sequence"
     );
 
     let groups = state["worktreeGroups"].as_array().unwrap();
@@ -1125,7 +1127,7 @@ fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
     assert_eq!(main_groups.len(), 1, "{groups:#?}");
     assert_eq!(
         ids(main_groups[0]["sessions"].as_array().unwrap()),
-        vec!["codex-alias".to_owned(), "codex-real".to_owned()]
+        vec!["codex-real".to_owned(), "codex-alias".to_owned()]
     );
     cleanup(project);
 }

@@ -696,50 +696,65 @@ fn entries_for_group_services<'a>(
     }
 }
 
+/// Dashboard movement walks the list the dashboard renders, so it orders the
+/// same way: tmux window position, then creation time for anything with no
+/// window. Sorting it createdAt-descending here made `j`/`k` step through a
+/// different sequence than the one on screen.
 fn sort_sessions_by_created(sessions: &mut [&DashboardSession]) {
     sessions.sort_by(|left, right| {
-        dashboard_created_sort_key_session(right).cmp(&dashboard_created_sort_key_session(left))
+        crate::team_contract::compare_agent_canonical_order(
+            &navigation_order_probe(left.tmux_window_index, left.created_at.as_deref(), &left.id),
+            &navigation_order_probe(
+                right.tmux_window_index,
+                right.created_at.as_deref(),
+                &right.id,
+            ),
+        )
     });
 }
 
 fn sort_services_by_created(services: &mut [&DashboardService]) {
     services.sort_by(|left, right| {
-        dashboard_created_sort_key_service(right).cmp(&dashboard_created_sort_key_service(left))
+        crate::team_contract::compare_agent_canonical_order(
+            &navigation_order_probe(left.tmux_window_index, left.created_at.as_deref(), &left.id),
+            &navigation_order_probe(
+                right.tmux_window_index,
+                right.created_at.as_deref(),
+                &right.id,
+            ),
+        )
     });
 }
 
-fn dashboard_created_sort_key_session(session: &DashboardSession) -> i128 {
-    created_sort_key(
-        session.created_at.as_deref(),
-        session.tmux_window_index,
-        Some(session.index),
-    )
-}
-
-fn dashboard_created_sort_key_service(service: &DashboardService) -> i128 {
-    created_sort_key(
-        service.created_at.as_deref(),
-        service.tmux_window_index,
-        None,
-    )
+/// The comparator reads JSON, and these are typed rows, so hand it the three
+/// fields it keys on rather than a second implementation of the same rule.
+pub(crate) fn navigation_order_probe(
+    tmux_window_index: Option<usize>,
+    created_at: Option<&str>,
+    id: &str,
+) -> Value {
+    let mut probe = serde_json::Map::new();
+    probe.insert("id".into(), Value::String(id.to_owned()));
+    if let Some(window_index) = tmux_window_index {
+        probe.insert("tmuxWindowIndex".into(), Value::from(window_index));
+    }
+    if let Some(created_at) = created_at {
+        probe.insert("createdAt".into(), Value::String(created_at.to_owned()));
+    }
+    Value::Object(probe)
 }
 
 fn dashboard_created_sort_key_group(group: &WorktreeGroup) -> i128 {
     let created_at = string_at_extra(&group.extra, "createdAt");
     let tmux_window_index = number_at_extra(&group.extra, "tmuxWindowIndex");
-    created_sort_key(created_at, tmux_window_index, None)
+    created_sort_key(created_at, tmux_window_index)
 }
 
-fn created_sort_key(
-    created_at: Option<&str>,
-    tmux_window_index: Option<usize>,
-    index: Option<usize>,
-) -> i128 {
+fn created_sort_key(created_at: Option<&str>, tmux_window_index: Option<usize>) -> i128 {
     created_at
         .and_then(parse_timestamp_ms)
         .map(|value| value as i128)
         .or_else(|| tmux_window_index.map(|value| value as i128))
-        .or_else(|| index.map(|value| value as i128))
         .unwrap_or(0)
 }
 

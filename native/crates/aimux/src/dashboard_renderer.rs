@@ -2354,30 +2354,24 @@ fn selected_teammates<'a>(input: &'a DashboardRenderInput<'_>) -> Vec<&'a Dashbo
                 .is_some_and(|team| team.parent_session_id == parent.id)
         })
         .collect::<Vec<_>>();
+    // Teammate rows render in the same tmux screen as the footer chips, so
+    // they take the same order. `team.order` was a roster position someone
+    // assigned; the window an agent runs in is what decides now.
     teammates.sort_by(|left, right| {
-        let left_order = left.team.as_ref().and_then(|team| team.order);
-        let right_order = right.team.as_ref().and_then(|team| team.order);
-        left_order
-            .unwrap_or(usize::MAX)
-            .cmp(&right_order.unwrap_or(usize::MAX))
-            .then_with(|| {
-                compare_teammate_created_at(left.created_at.as_deref(), right.created_at.as_deref())
-            })
-            .then_with(|| left.id.cmp(&right.id))
+        crate::team_contract::compare_agent_canonical_order(
+            &crate::dashboard_navigation::navigation_order_probe(
+                left.tmux_window_index,
+                left.created_at.as_deref(),
+                &left.id,
+            ),
+            &crate::dashboard_navigation::navigation_order_probe(
+                right.tmux_window_index,
+                right.created_at.as_deref(),
+                &right.id,
+            ),
+        )
     });
     teammates
-}
-
-fn compare_teammate_created_at(left: Option<&str>, right: Option<&str>) -> std::cmp::Ordering {
-    match (
-        left.and_then(parse_timestamp_ms),
-        right.and_then(parse_timestamp_ms),
-    ) {
-        (Some(left), Some(right)) => left.cmp(&right),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    }
 }
 
 fn summarize_teammate(session: &DashboardSession) -> String {

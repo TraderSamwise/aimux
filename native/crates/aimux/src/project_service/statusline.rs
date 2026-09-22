@@ -1,4 +1,6 @@
 use serde_json::{Map, Value, json};
+
+use super::session_visibility::session_is_in_supervisor_plane;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::future::Future;
@@ -14,10 +16,7 @@ use crate::paths::basename_like_node_posix;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 use crate::secure_permissions;
-use crate::team_contract::{
-    is_overseer_session, is_project_control_session as team_is_project_control_session,
-    is_scribe_session, project_control_display_role,
-};
+use crate::team_contract::{is_overseer_session, is_scribe_session, project_control_display_role};
 use crate::tmux::{refresh_status_argv, tmux_command_from_env};
 
 use super::agents::LiveWindowIdsProjection;
@@ -524,6 +523,11 @@ fn statusline_sessions(sessions: Vec<Value>, kind: &str) -> Vec<Value> {
                 "status",
                 "active",
                 "worktreePath",
+                "lane",
+                // A windowless agent has no tmux position, so `createdAt` is
+                // the only key left that orders it. Without it every offline
+                // chip collapses to id order.
+                "createdAt",
                 "semantic",
                 "team",
                 "overseer",
@@ -993,9 +997,12 @@ fn resolve_scoped_sessions<'a>(
     for session in statusline_session_group(snapshot, "sessions")
         .into_iter()
         .filter(|session| is_live_footer_session(session))
-        .filter(|session| !team_is_project_control_session(Some(session)))
+        .filter(|session| !session_is_in_supervisor_plane(session))
         .filter(|session| {
-            normalize_path(string_field(session, "worktreePath"), project_root) == scoped_path
+            normalize_path(
+                session_plane_worktree_path(session).as_deref(),
+                project_root,
+            ) == scoped_path
         })
     {
         if string_field(session, "kind") == Some("service") {
@@ -1008,8 +1015,9 @@ fn resolve_scoped_sessions<'a>(
     // share its order. Unsorted, they rendered the snapshot's raw order and then
     // took the first five of it — neither the dashboard's order nor its first
     // five. Agents still lead services; the comparator orders within each.
-    agents.sort_by(|left, right| crate::team_contract::compare_agent_display_order(left, right));
-    services.sort_by(|left, right| crate::team_contract::compare_agent_display_order(left, right));
+    agents.sort_by(|left, right| crate::team_contract::compare_agent_canonical_order(left, right));
+    services
+        .sort_by(|left, right| crate::team_contract::compare_agent_canonical_order(left, right));
     agents
         .into_iter()
         .chain(services)
@@ -1407,8 +1415,21 @@ fn render_semantic_badge(semantic: Option<&Value>) -> Option<String> {
 
 /// The footer chips render the same agents the dashboard numbers [1]..[N], so
 /// they share its comparator rather than sorting independently.
+/// Teammate chips render beside the main chips, so they take the same order.
 fn compare_teammate_sessions(left: &&Value, right: &&Value) -> std::cmp::Ordering {
-    crate::team_contract::compare_agent_display_order(left, right)
+    crate::team_contract::compare_agent_canonical_order(left, right)
+}
+
+/// The worktree an agent is SHOWN in, which is its plane. This differs from
+/// its `worktreePath` only for an agent that has actually been moved.
+fn session_plane_worktree_path(session: &Value) -> Option<String> {
+    crate::team_contract::agent_lane(Some(session))
+        .get("worktreePath")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .or_else(|| string_field(session, "worktreePath").map(str::to_owned))
 }
 
 fn normalize_path(path: Option<&str>, project_root: &str) -> String {

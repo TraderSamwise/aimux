@@ -432,7 +432,7 @@
     },
     {
       "id": "dashboard-worktree-groups-007",
-      "name": "entries inside a group sort by createdAt then tmux index fallback",
+      "name": "entries inside a group sort by tmux window position, then creation time",
       "source": "src/multiplexer/dashboard-model.ts",
       "api": "composeDashboardWorktreeGroups",
       "input": {
@@ -505,21 +505,21 @@
           "sessions": [
             {
               "index": 0,
-              "id": "newer",
-              "command": "codex",
-              "status": "running",
-              "active": false,
-              "worktreePath": "/repo/.aimux/worktrees/demo",
-              "createdAt": "2026-01-02T00:00:00.000Z"
-            },
-            {
-              "index": 0,
               "id": "older",
               "command": "codex",
               "status": "running",
               "active": false,
               "worktreePath": "/repo/.aimux/worktrees/demo",
               "createdAt": "2026-01-01T00:00:00.000Z"
+            },
+            {
+              "index": 0,
+              "id": "newer",
+              "command": "codex",
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "createdAt": "2026-01-02T00:00:00.000Z"
             },
             {
               "index": 7,
@@ -532,15 +532,6 @@
           ],
           "services": [
             {
-              "id": "svc-high",
-              "command": "shell",
-              "args": [],
-              "status": "running",
-              "active": false,
-              "worktreePath": "/repo/.aimux/worktrees/demo",
-              "tmuxWindowIndex": 8
-            },
-            {
               "id": "svc-low",
               "command": "shell",
               "args": [],
@@ -548,6 +539,15 @@
               "active": false,
               "worktreePath": "/repo/.aimux/worktrees/demo",
               "tmuxWindowIndex": 2
+            },
+            {
+              "id": "svc-high",
+              "command": "shell",
+              "args": [],
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "tmuxWindowIndex": 8
             }
           ]
         }

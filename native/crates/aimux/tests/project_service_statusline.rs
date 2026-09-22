@@ -454,7 +454,8 @@ fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
 }
 
-/// The footer chips render the same agents the dashboard numbers [1]..[N].
+/// The footer chips render the same agents the dashboard numbers [1]..[N], in
+/// the same order, and that order is the tmux window order.
 ///
 /// They used to render the snapshot's raw order and then take the first five of
 /// it — neither the dashboard's order nor its first five. On Sam's machine the
@@ -462,8 +463,8 @@ fn cleanup(path: PathBuf) {
 /// 22, 99, on-you, 21, 2. Chips carry no ids, so the unread counts are the
 /// discriminator here, exactly as they were when he spotted it.
 #[test]
-fn footer_chips_render_in_the_dashboard_order() {
-    fn agent(id: &str, created_at: &str, unread: i64) -> Value {
+fn footer_chips_render_in_tmux_window_order() {
+    fn agent(id: &str, created_at: &str, window_index: i64, unread: i64) -> Value {
         json!({
             "id": id,
             "kind": "agent",
@@ -471,6 +472,8 @@ fn footer_chips_render_in_the_dashboard_order() {
             "toolConfigKey": "claude",
             "status": "running",
             "createdAt": created_at,
+            "tmuxWindowId": format!("@{window_index}"),
+            "tmuxWindowIndex": window_index,
             "worktreePath": "/repo",
             "semantic": {
                 "presentation": { "compactHint": format!("{unread} unread") },
@@ -478,43 +481,67 @@ fn footer_chips_render_in_the_dashboard_order() {
         })
     }
 
+    fn chip_order(snapshot: &Value, expected: &[&str]) {
+        let rendered =
+            aimux::project_service::statusline::render_tmux_statusline_contract(&json!({
+                "data": snapshot,
+                "projectRoot": "/repo",
+                "line": "bottom",
+                "options": { "currentPath": "/repo", "width": 400 },
+            }));
+        let text = rendered["text"].as_str().expect("statusline text");
+        let positions = expected
+            .iter()
+            .map(|chip| {
+                text.find(chip)
+                    .unwrap_or_else(|| panic!("chip {chip} is rendered: {text}"))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "chips must read in {expected:?} order, got {text}"
+        );
+    }
+
     // Supplied in an order that is neither sorted nor reversed, mirroring the
-    // raw snapshot order that produced the wrong chips.
-    let snapshot = json!({
-        "sessions": [
-            agent("7owt0o", "2026-09-09T05:28:51.186Z", 22),
-            agent("2jdcpa", "2026-09-08T04:08:35.809Z", 99),
-            agent("3yfqu7", "2026-09-07T09:51:17.999Z", 4),
-            agent("a88iz7", "2026-09-17T04:44:22.673Z", 21),
-            agent("6nenaq", "2026-09-21T09:06:27.160Z", 3),
+    // raw snapshot order that produced the wrong chips. Window index decides,
+    // and it deliberately disagrees with both creation order and the input.
+    chip_order(
+        &json!({
+            "sessions": [
+                agent("7owt0o", "2026-09-09T05:28:51.186Z", 3, 22),
+                agent("2jdcpa", "2026-09-08T04:08:35.809Z", 5, 99),
+                agent("3yfqu7", "2026-09-07T09:51:17.999Z", 1, 4),
+                agent("a88iz7", "2026-09-17T04:44:22.673Z", 4, 21),
+                agent("6nenaq", "2026-09-21T09:06:27.160Z", 2, 3),
+            ],
+        }),
+        &[
+            "4 unread",
+            "3 unread",
+            "22 unread",
+            "21 unread",
+            "99 unread",
         ],
-    });
+    );
 
-    let rendered = aimux::project_service::statusline::render_tmux_statusline_contract(&json!({
-        "data": snapshot,
-        "projectRoot": "/repo",
-        "line": "bottom",
-        "options": { "currentPath": "/repo", "width": 400 },
-    }));
-    let text = rendered["text"].as_str().expect("statusline text");
-
-    // Newest first, which is the dashboard's order: 3, 21, 22, 99, 4.
-    let positions = [
-        "3 unread",
-        "21 unread",
-        "22 unread",
-        "99 unread",
-        "4 unread",
-    ]
-    .iter()
-    .map(|chip| {
-        text.find(chip)
-            .unwrap_or_else(|| panic!("chip {chip} is rendered: {text}"))
-    })
-    .collect::<Vec<_>>();
-
-    assert!(
-        positions.windows(2).all(|pair| pair[0] < pair[1]),
-        "chips must read newest-first like the dashboard, got {text}"
+    // An agent with no window has no tmux position, so it falls back to
+    // creation order — the only other key on an agent that cannot move.
+    chip_order(
+        &json!({
+            "sessions": [
+                json!({
+                    "id": "late", "kind": "agent", "tool": "claude", "status": "running",
+                    "createdAt": "2026-09-21T09:06:27.160Z", "worktreePath": "/repo",
+                    "semantic": { "presentation": { "compactHint": "77 unread" } },
+                }),
+                json!({
+                    "id": "early", "kind": "agent", "tool": "claude", "status": "running",
+                    "createdAt": "2026-09-07T09:51:17.999Z", "worktreePath": "/repo",
+                    "semantic": { "presentation": { "compactHint": "11 unread" } },
+                }),
+            ],
+        }),
+        &["11 unread", "77 unread"],
     );
 }
