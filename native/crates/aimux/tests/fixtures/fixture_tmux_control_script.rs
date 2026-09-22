@@ -871,6 +871,11 @@ fn run_exec_call(
             ),
         );
     }
+    // Never inherit the ambient AIMUX_HOME. Sibling fixtures in this binary set
+    // it process-wide while these cases run, and a home with no isolation lease
+    // makes the runtime guard add an `x-aimux-test-harness` header that the
+    // captured contract does not carry.
+    process.env("AIMUX_HOME", isolated_fixture_aimux_home(root));
     if let Some(env) = call["env"].as_object() {
         for (key, value) in env {
             if key == "PATH" || value.is_null() {
@@ -892,6 +897,22 @@ fn run_exec_call(
             "status": output.status.code(),
         }))
     }
+}
+
+/// A leased, per-case AIMUX_HOME. `list_root_files` skips directories, so this
+/// does not enter the captured root snapshot.
+fn isolated_fixture_aimux_home(root: &Path) -> PathBuf {
+    let home = root.join("aimux-home");
+    fs::create_dir_all(&home).expect("create fixture aimux home");
+    fs::write(
+        home.join("test-isolation.json"),
+        format!(
+            r#"{{"ownerPid":{},"kind":"cargo-test"}}"#,
+            std::process::id()
+        ),
+    )
+    .expect("write fixture aimux home lease");
+    home
 }
 
 fn native_aimux_binary() -> String {
