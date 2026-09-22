@@ -685,3 +685,43 @@ fn a_graveyarded_session_is_not_retained_by_the_next_tick() {
         "a finished session must not be retained on the strength of a lost window"
     );
 }
+
+/// The regression Sam hit: ten agents were running the whole time, aimux
+/// offered to restore them anyway, and the restore answered "this session has
+/// nothing to restore" and dropped him out of the dashboard.
+///
+/// The snapshot had carried the previous run's writer id forward because the
+/// session set was unchanged, so a live run's own record looked foreign
+/// forever and the offer kept firing.
+#[test]
+fn agents_this_run_can_see_running_are_never_offered_back() {
+    let project = TestProject::new("live-agents-not-offered");
+    project.run_task();
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-with-agents-still-up");
+
+    // The new run sees both agents alive — nothing went away.
+    project.run_task();
+
+    assert!(
+        project.offer().is_none(),
+        "a run that can see its agents running must not offer to restore them"
+    );
+}
+
+/// The other direction, unchanged: a run that sees nothing alive is describing
+/// the previous run's agents, and that is exactly when the offer belongs.
+#[test]
+fn agents_no_run_can_see_are_still_offered_back() {
+    let project = TestProject::new("dead-agents-offered");
+    project.run_task();
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-after-crash");
+
+    project.run_task_with_no_live_windows();
+
+    assert!(
+        project.offer().is_some(),
+        "agents that died with the previous run are what the offer exists for"
+    );
+}

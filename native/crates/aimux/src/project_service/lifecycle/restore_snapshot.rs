@@ -116,6 +116,10 @@ pub(crate) fn record_last_online_agents(
     now: &str,
 ) -> RestoreStateResult<Option<Value>> {
     let existing_for_retention = read_last_online_agents_snapshot(project_state_dir)?;
+    // Did THIS run see anything online, or is the whole snapshot carried over?
+    // That is what decides whose observation the record is, and therefore
+    // whether a restore is offered from it.
+    let observed_online = !sessions.is_empty();
     let sessions = merge_retained_sessions(
         sessions,
         existing_for_retention.as_ref(),
@@ -135,10 +139,17 @@ pub(crate) fn record_last_online_agents(
     }
     // Cosmetic churn — a renamed label, a headline change — must not roll the
     // generation id, because the prompt gate and the ack both key on it. The
-    // same holds across runs: when the recorded set is unchanged, this run has
-    // observed the previous run's record rather than replaced it, so the whole
-    // identity carries over. Restamping it would orphan the boot gate and lose
-    // the offer the snapshot exists to produce.
+    // generation id carries across runs for the same reason.
+    //
+    // The WRITER id says which process run OBSERVED this set, and the offer is
+    // derived precisely when a different run wrote it. So it carries over only
+    // while this run has observed nothing online and the record is still the
+    // previous run's observation — the crash case the offer exists for. The
+    // moment this run sees an agent alive, the record becomes its own.
+    //
+    // Carrying it over unconditionally made a live run's snapshot look foreign
+    // forever: aimux offered to restore ten agents that had been running the
+    // whole time, and the restore answered "nothing to restore".
     let reuse = existing
         .as_ref()
         .filter(|previous| same_restore_session_ids(&array_field(previous, "sessions"), &sessions));
@@ -147,9 +158,10 @@ pub(crate) fn record_last_online_agents(
         "id": reuse
             .map(|previous| string_field(previous, "id"))
             .unwrap_or_else(new_snapshot_id),
-        "writerInstanceId": reuse
-            .map(|previous| string_field(previous, "writerInstanceId"))
-            .unwrap_or_else(|| project_service_writer_id().to_owned()),
+        "writerInstanceId": match reuse.filter(|_| !observed_online) {
+            Some(previous) => string_field(previous, "writerInstanceId"),
+            None => project_service_writer_id().to_owned(),
+        },
         "createdAt": reuse
             .map(|previous| string_field(previous, "createdAt"))
             .unwrap_or_else(|| now.to_owned()),

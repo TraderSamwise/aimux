@@ -12,7 +12,7 @@ use aimux::dashboard_targets::{
     DashboardResolveOptions, find_live_dashboard_target, resolve_dashboard_target,
 };
 use aimux::debug_logging::{
-    LogLevel, configure_daemon_logging, configure_process_logging, log_at,
+    LogLevel, configure_daemon_logging, configure_process_logging, log_always_at, log_at,
     parse_logging_cli_options,
 };
 use aimux::launcher_env::{CliEntry, cli_entry_for, prepare_stable_process_env};
@@ -152,7 +152,58 @@ enum RewriteCommand {
     },
 }
 
+/// A fatal CLI error used to reach only stderr, so it died with the process.
+/// The tmux attach timeout that ejected anyone sitting in the dashboard for
+/// 30 seconds left nothing behind in any log — which is exactly the shape of
+/// failure a user can only report as "it kicked me out". Every fatal exit is
+/// now written to the log first, with the argv that produced it.
 fn main() -> Result<ExitCode> {
+    install_fatal_logging_panic_hook();
+    match run() {
+        Ok(code) => Ok(code),
+        Err(error) => {
+            log_always_at(
+                LogLevel::Error,
+                "aimux command failed",
+                "cli",
+                Some(serde_json::json!({
+                    "error": format!("{error:#}"),
+                    "argv": std::env::args().skip(1).collect::<Vec<_>>(),
+                })),
+            );
+            Err(error)
+        }
+    }
+}
+
+/// Panics bypass the `Result` path entirely and reach only stderr, which dies
+/// with the process. A user who hit one could report nothing but "it crashed",
+/// so the message and its location are written to the log before the default
+/// handler prints and unwinds.
+fn install_fatal_logging_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_owned())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic with no message".to_owned());
+        log_always_at(
+            LogLevel::Error,
+            "aimux command panicked",
+            "cli",
+            Some(serde_json::json!({
+                "error": message,
+                "location": info.location().map(std::string::ToString::to_string),
+                "argv": std::env::args().skip(1).collect::<Vec<_>>(),
+            })),
+        );
+        previous(info);
+    }));
+}
+
+fn run() -> Result<ExitCode> {
     prepare_stable_process_env();
     aimux::async_runtime::init_process_runtime()?;
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();

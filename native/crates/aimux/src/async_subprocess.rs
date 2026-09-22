@@ -155,6 +155,20 @@ impl AsyncCommand {
         self.status_timeout_async(DEFAULT_COMMAND_TIMEOUT).await
     }
 
+    /// Run to completion with no deadline.
+    ///
+    /// For a command whose whole job is to block until the user is done with
+    /// it — a tmux attach, a `switch-client` that hands the terminal over. The
+    /// 30s default is right for a query and catastrophic here: it ends the
+    /// session out from under whoever is looking at it.
+    pub fn status_unbounded(
+        &mut self,
+        name: impl Into<String>,
+    ) -> Result<ExitStatus, AsyncCommandError> {
+        // aimux-async-seam: permanent - interactive foreground bridge; the child owns the terminal until the user leaves
+        block_on_named(name, run_status_unbounded(self))
+    }
+
     pub fn status_timeout(
         &mut self,
         name: impl Into<String>,
@@ -251,6 +265,15 @@ async fn run_status(
             duration: timeout,
         }),
     }
+}
+
+async fn run_status_unbounded(command: &mut AsyncCommand) -> Result<ExitStatus, AsyncCommandError> {
+    let program = command.program_display();
+    let mut command = command.build_tokio_command();
+    command
+        .status()
+        .await
+        .map_err(|source| AsyncCommandError::Spawn { program, source })
 }
 
 async fn run_spawn_detached(command: &mut AsyncCommand) -> Result<u32, AsyncCommandError> {

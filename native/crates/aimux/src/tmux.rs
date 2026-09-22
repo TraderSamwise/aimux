@@ -3586,8 +3586,11 @@ fn default_interactive_exec(
     if let Some(cwd) = options.and_then(|options| options.cwd.as_deref()) {
         command.current_dir(cwd);
     }
+    // An interactive tmux command owns the terminal until the user leaves it.
+    // Running it under the default 30s subprocess timeout ejected anyone who
+    // sat in the dashboard for half a minute.
     let status = command
-        .status()
+        .status_unbounded(format!("tmux interactive {}", args.join(" ")))
         .map_err(|error| format!("failed to run tmux: {error}"))?;
     if status.success() {
         Ok(())
