@@ -44,6 +44,31 @@ pub fn dashboard_project_root_of(args: &str) -> Option<String> {
     None
 }
 
+/// The tmux session a dashboard process is running in, found by walking up
+/// from the process to the pane that hosts it.
+///
+/// A project legitimately has one dashboard per attached client session as well
+/// as the one in its own session, so "two dashboards for this project root" is
+/// not by itself a leak. The session is what separates the two cases, and the
+/// dashboard's own argv does not carry it.
+pub fn tmux_session_for_process(
+    pid: i32,
+    parents: &BTreeMap<i32, i32>,
+    session_by_pane_pid: &BTreeMap<i32, String>,
+) -> Option<String> {
+    let mut current = pid;
+    for _ in 0..8 {
+        if let Some(session) = session_by_pane_pid.get(&current) {
+            return Some(session.clone());
+        }
+        match parents.get(&current) {
+            Some(parent) if *parent > 0 && *parent != current => current = *parent,
+            _ => break,
+        }
+    }
+    None
+}
+
 pub fn is_dashboard_process_args(args: &str) -> bool {
     DASHBOARD_ENTRYPOINTS
         .iter()

@@ -189,17 +189,26 @@ fn parse_process_args_line(line: &str) -> Option<ProcessArgsEntry> {
     (pid > 0 && !args.is_empty()).then_some(ProcessArgsEntry { pid, args })
 }
 
-pub fn list_process_parents() -> Vec<(i32, i32)> {
-    let Ok(output) = AsyncCommand::new("ps")
+/// The pid-to-parent map, with a failed `ps` kept as an error.
+///
+/// `list_process_parents` returns an empty list when `ps` fails, which is right
+/// for a best-effort reaper that simply skips a pass. A diagnostic that answers
+/// "are there duplicates?" needs the difference: an empty map would read as
+/// "nothing wrong".
+pub fn try_list_process_parents() -> Result<BTreeMap<i32, i32>, String> {
+    let output = AsyncCommand::new("ps")
         .args(["-axo", "pid=,ppid="])
         .output()
-    else {
-        return Vec::new();
-    };
+        .map_err(|error| format!("failed to run ps: {error}"))?;
     if !output.status.success() {
-        return Vec::new();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if stderr.is_empty() {
+            format!("ps exited with {}", output.status)
+        } else {
+            format!("ps failed: {stderr}")
+        });
     }
-    String::from_utf8_lossy(&output.stdout)
+    Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|line| {
             let mut parts = line.split_whitespace();
@@ -207,7 +216,15 @@ pub fn list_process_parents() -> Vec<(i32, i32)> {
             let ppid = parts.next()?.parse::<i32>().ok()?;
             (pid > 0 && ppid >= 0).then_some((pid, ppid))
         })
-        .collect()
+        .collect())
+}
+
+/// Best-effort parents for the reaper, which simply skips a pass when `ps`
+/// fails. One spawn site: this delegates rather than running its own `ps`.
+pub fn list_process_parents() -> Vec<(i32, i32)> {
+    try_list_process_parents()
+        .map(|parents| parents.into_iter().collect())
+        .unwrap_or_default()
 }
 
 pub fn read_process_cwd(pid: i32) -> Option<String> {

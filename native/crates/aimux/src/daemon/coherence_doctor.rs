@@ -11,7 +11,7 @@
 //! never reported as clean: "could not ask" and "nothing wrong" are different
 //! answers, and only one of them means the machine is healthy.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -95,6 +95,13 @@ pub trait CoherenceDoctorRuntime {
         project_root: &Path,
     ) -> Result<BTreeSet<String>, String>;
     fn dashboard_processes(&mut self) -> Result<Vec<DashboardProcess>, String>;
+    /// The tmux session each dashboard process runs in, keyed by its pid. A
+    /// dashboard whose session cannot be resolved falls back to being grouped
+    /// by project root alone, which is the older, coarser rule.
+    fn dashboard_tmux_sessions(
+        &mut self,
+        dashboards: &[DashboardProcess],
+    ) -> Result<BTreeMap<i32, String>, String>;
     fn registered_project_roots(&mut self) -> Result<Vec<String>, String>;
     fn project_root_is_reachable(&mut self, project_root: &str) -> bool;
     /// Applies binding repairs to the durable topology. Only called under
@@ -341,28 +348,45 @@ fn check_duplicate_dashboards(runtime: &mut impl CoherenceDoctorRuntime) -> Cohe
         Ok(processes) => processes,
         Err(error) => return unavailable(name, title, error),
     };
+    let sessions = match runtime.dashboard_tmux_sessions(&processes) {
+        Ok(sessions) => sessions,
+        Err(error) => return unavailable(name, title, error),
+    };
+    // One dashboard per project per tmux session: a project legitimately has
+    // one in its own session and one in each attached client session, so the
+    // session is part of the key rather than the project root alone.
     let mut findings = Vec::new();
     let dashboards = processes
         .iter()
         .filter_map(|process| {
-            dashboard_project_root_of(&process.args).map(|root| (root, process.pid))
+            dashboard_project_root_of(&process.args).map(|root| {
+                let session = sessions.get(&process.pid).cloned().unwrap_or_default();
+                ((root, session), process.pid)
+            })
         })
         .collect::<Vec<_>>();
-    let roots = dashboards
+    let keys = dashboards
         .iter()
-        .map(|(root, _)| root.clone())
+        .map(|(key, _)| key.clone())
         .collect::<BTreeSet<_>>();
-    for root in roots {
+    for (root, session) in keys {
         let pids = dashboards
             .iter()
-            .filter(|(candidate, _)| candidate == &root)
+            .filter(|((candidate_root, candidate_session), _)| {
+                candidate_root == &root && candidate_session == &session
+            })
             .map(|(_, pid)| *pid)
             .collect::<Vec<_>>();
         if pids.len() > 1 {
+            let location = if session.is_empty() {
+                "with no resolvable tmux session".to_owned()
+            } else {
+                format!("in tmux session {session}")
+            };
             findings.push(CoherenceFinding {
                 subject: root.clone(),
                 detail: format!(
-                    "{} dashboard processes for one project: {}",
+                    "{} dashboard processes {location} for one project: {}",
                     pids.len(),
                     pids.iter()
                         .map(i32::to_string)
@@ -589,6 +613,25 @@ impl CoherenceDoctorRuntime for SystemCoherenceDoctorRuntime {
             .map(|entry| DashboardProcess {
                 pid: entry.pid,
                 args: entry.args,
+            })
+            .collect())
+    }
+
+    fn dashboard_tmux_sessions(
+        &mut self,
+        dashboards: &[DashboardProcess],
+    ) -> Result<BTreeMap<i32, String>, String> {
+        let parents = crate::process_inspector::try_list_process_parents()?;
+        let session_by_pane_pid = crate::tmux::TmuxRuntimeManager::new().try_pane_session_pids()?;
+        Ok(dashboards
+            .iter()
+            .filter_map(|dashboard| {
+                crate::dashboard_processes::tmux_session_for_process(
+                    dashboard.pid,
+                    &parents,
+                    &session_by_pane_pid,
+                )
+                .map(|session| (dashboard.pid, session))
             })
             .collect())
     }

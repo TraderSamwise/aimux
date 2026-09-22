@@ -600,6 +600,39 @@ impl TmuxRuntimeManager {
         Ok(parse_live_window_index(&raw))
     }
 
+    /// Each live pane's process id and the tmux session it belongs to.
+    ///
+    /// The session a process runs in is not in its own argv, so this is how a
+    /// dashboard is attributed to the project session or to an attached
+    /// client session. A failed query stays an error: an empty map would say
+    /// every process is in no session.
+    pub fn try_pane_session_pids(&mut self) -> Result<BTreeMap<i32, String>, String> {
+        let raw = match self.exec_owned(
+            vec![
+                "list-panes".to_owned(),
+                "-a".to_owned(),
+                "-F".to_owned(),
+                "#{pane_pid}\t#{session_name}".to_owned(),
+            ],
+            None,
+        ) {
+            Ok(raw) => raw,
+            Err(error) if tmux_list_sessions_failed_because_no_server(&error) => {
+                return Ok(BTreeMap::new());
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(raw
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.trim().split('\t');
+                let pid = parts.next()?.trim().parse::<i32>().ok()?;
+                let session = parts.next()?.trim();
+                (pid > 0 && !session.is_empty()).then(|| (pid, session.to_owned()))
+            })
+            .collect())
+    }
+
     pub fn has_window(&mut self, target: &TmuxTarget) -> bool {
         self.get_target_by_window_id(&target.session_name, &target.window_id)
             .is_some()

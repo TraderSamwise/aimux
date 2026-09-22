@@ -11,7 +11,7 @@ use aimux::daemon::coherence_doctor::{
 use aimux::dashboard_processes::DashboardProcess;
 use aimux::project_service::window_reconciliation::{BindingRepair, OwnedWindow};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Default)]
@@ -20,6 +20,7 @@ struct FakeRuntime {
     owned_windows: Option<Result<Vec<OwnedWindow>, String>>,
     snapshot_ids: Option<Result<BTreeSet<String>, String>>,
     dashboards: Option<Result<Vec<DashboardProcess>, String>>,
+    dashboard_sessions: Option<Result<BTreeMap<i32, String>, String>>,
     registered_roots: Vec<String>,
     unreachable_roots: BTreeSet<String>,
     written_repairs: Vec<BindingRepair>,
@@ -50,6 +51,15 @@ impl CoherenceDoctorRuntime for FakeRuntime {
 
     fn dashboard_processes(&mut self) -> Result<Vec<DashboardProcess>, String> {
         self.dashboards.clone().unwrap_or_else(|| Ok(Vec::new()))
+    }
+
+    fn dashboard_tmux_sessions(
+        &mut self,
+        _dashboards: &[DashboardProcess],
+    ) -> Result<BTreeMap<i32, String>, String> {
+        self.dashboard_sessions
+            .clone()
+            .unwrap_or_else(|| Ok(BTreeMap::new()))
     }
 
     fn registered_project_roots(&mut self) -> Result<Vec<String>, String> {
@@ -499,4 +509,87 @@ fn a_report_without_repair_never_rewrites_the_snapshot() {
     report(&mut runtime, false);
 
     assert_eq!(runtime.snapshot_rebuilds, 0);
+}
+
+/// A project legitimately runs one dashboard in its own tmux session and one in
+/// each attached client session. Grouping by project root alone reported that
+/// as a leak; the tmux session is what separates the two cases.
+#[test]
+fn a_client_session_dashboard_is_not_a_duplicate() {
+    let mut runtime = FakeRuntime {
+        dashboards: Some(Ok(vec![
+            DashboardProcess {
+                pid: 100,
+                args: "aimux __dashboard-internal-native --project-root /Users/sam/cs/aimux".into(),
+            },
+            DashboardProcess {
+                pid: 200,
+                args: "aimux __dashboard-internal-native --project-root /Users/sam/cs/aimux".into(),
+            },
+        ])),
+        dashboard_sessions: Some(Ok(BTreeMap::from([
+            (100, "aimux-aimux-4bf69b728633".to_owned()),
+            (200, "aimux-aimux-4bf69b728633-client-c536d2bb".to_owned()),
+        ]))),
+        ..FakeRuntime::default()
+    };
+
+    assert!(
+        check(&report(&mut runtime, false), "duplicate-dashboards")
+            .findings()
+            .is_empty(),
+        "one per attached client is the rule, not a leak"
+    );
+}
+
+/// Two in the same session is the leak.
+#[test]
+fn two_dashboards_in_one_tmux_session_are_a_duplicate() {
+    let mut runtime = FakeRuntime {
+        dashboards: Some(Ok(vec![
+            DashboardProcess {
+                pid: 72612,
+                args: "aimux __dashboard-internal-native --project-root /Users/sam/cs/aimux".into(),
+            },
+            DashboardProcess {
+                pid: 3729,
+                args: "aimux __dashboard-internal-native --project-root /Users/sam/cs/aimux".into(),
+            },
+        ])),
+        dashboard_sessions: Some(Ok(BTreeMap::from([
+            (72612, "aimux-aimux-4bf69b728633".to_owned()),
+            (3729, "aimux-aimux-4bf69b728633".to_owned()),
+        ]))),
+        ..FakeRuntime::default()
+    };
+
+    let report = report(&mut runtime, false);
+    let check = check(&report, "duplicate-dashboards");
+
+    assert_eq!(check.findings().len(), 1);
+    assert!(
+        check.findings()[0]
+            .detail
+            .contains("in tmux session aimux-aimux-4bf69b728633"),
+        "the finding names where the duplicate is: {}",
+        check.findings()[0].detail
+    );
+}
+
+/// A session lookup that failed must not silently regroup every dashboard.
+#[test]
+fn a_failed_session_lookup_is_unavailable_not_clean() {
+    let mut runtime = FakeRuntime {
+        dashboards: Some(Ok(vec![DashboardProcess {
+            pid: 1,
+            args: "aimux __dashboard-internal-native --project-root /repo".into(),
+        }])),
+        dashboard_sessions: Some(Err("tmux list-panes failed".to_owned())),
+        ..FakeRuntime::default()
+    };
+
+    assert!(matches!(
+        check(&report(&mut runtime, false), "duplicate-dashboards").outcome,
+        CheckOutcome::Unavailable(_)
+    ));
 }
