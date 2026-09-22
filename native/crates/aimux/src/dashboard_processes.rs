@@ -20,6 +20,30 @@ pub fn dashboard_build_of(args: &str) -> Option<String> {
     (!build.is_empty()).then(|| build.to_owned())
 }
 
+/// The project a dashboard process was launched for.
+///
+/// Read from its own argv rather than from any registry, so two dashboards for
+/// one project are visible even when the daemon's view of that project is the
+/// thing that is wrong.
+pub fn dashboard_project_root_of(args: &str) -> Option<String> {
+    let mut parts = args.split_whitespace();
+    while let Some(part) = parts.next() {
+        if part == "--project-root" {
+            return parts
+                .next()
+                .map(|root| root.trim_matches('\'').trim_matches('"').to_owned())
+                .filter(|root| !root.is_empty());
+        }
+        if let Some(root) = part.strip_prefix("--project-root=") {
+            let root = root.trim_matches('\'').trim_matches('"');
+            if !root.is_empty() {
+                return Some(root.to_owned());
+            }
+        }
+    }
+    None
+}
+
 pub fn is_dashboard_process_args(args: &str) -> bool {
     DASHBOARD_ENTRYPOINTS
         .iter()

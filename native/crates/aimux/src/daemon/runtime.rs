@@ -3666,6 +3666,21 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         ))
     }
 
+    fn doctor_coherence_report(
+        &mut self,
+        project_root: &str,
+        repair: bool,
+    ) -> Result<crate::daemon::coherence_doctor::CoherenceReport, String> {
+        let mut runtime = crate::daemon::coherence_doctor::SystemCoherenceDoctorRuntime::new(
+            self.resolver.clone(),
+        );
+        Ok(crate::daemon::coherence_doctor::build_coherence_report(
+            &mut runtime,
+            std::path::Path::new(project_root),
+            repair,
+        ))
+    }
+
     fn repair_tmux_runtime(
         &mut self,
         project_root: &str,

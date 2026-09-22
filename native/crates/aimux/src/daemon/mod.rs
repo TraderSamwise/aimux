@@ -1,4 +1,5 @@
 pub mod access;
+pub mod coherence_doctor;
 pub mod core_commands;
 pub mod disk_doctor;
 pub mod expose;

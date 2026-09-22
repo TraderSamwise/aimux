@@ -28,12 +28,13 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    113,
+    114,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
         daemon_projects_text => ("daemonProjectsText", "/core/daemon-projects-text"),
         daemon_status_text => ("daemonStatusText", "/core/daemon-status-text"),
+        doctor_coherence_text => ("doctorCoherenceText", "/core/doctor/coherence-text"),
         doctor_exchange_text => ("doctorExchangeText", "/core/doctor/exchange-text"),
         doctor_lifecycle_text => ("doctorLifecycleText", "/core/doctor/lifecycle-text"),
         doctor_tmux_text => ("doctorTmuxText", "/core/doctor/tmux-text"),

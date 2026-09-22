@@ -264,6 +264,7 @@ const LOCAL_AUTH_ROUTES: &[&str] = &[
 ];
 
 const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
+    crate::core_command_contract::CORE_API_ROUTES.doctor_coherence_text,
     crate::core_command_contract::CORE_API_ROUTES.doctor_disk_text,
     crate::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
     crate::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,

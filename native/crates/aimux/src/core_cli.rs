@@ -146,6 +146,7 @@ pub enum CoreCliOperation {
     DoctorLifecycle,
     DoctorTmux,
     DoctorTasks,
+    DoctorCoherence,
     DoctorStability,
     DoctorInstalls,
     DoctorNotifications,
@@ -2225,8 +2226,8 @@ where
         ),
         (
             "doctor",
-            "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "stability" | "installs"
-            | "notifications",
+            "coherence" | "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "stability"
+            | "installs" | "notifications",
         ) => {
             let parsed = parse_core_doctor_args(&args).expect("eligible doctor must parse");
             if parsed.subcommand == "disk" {
@@ -2267,6 +2268,27 @@ where
                         path: doctor_tasks_text_path(project_root.as_deref(), parsed.json),
                         body: None,
                     },
+                    CoreCliFallback::None,
+                )
+            } else if parsed.subcommand == "coherence" {
+                let project_root = parsed
+                    .project_root
+                    .as_deref()
+                    .or(parsed.project.as_deref())
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                let mut path = doctor_project_text_path(
+                    CORE_API_ROUTES.doctor_coherence_text,
+                    &project_root,
+                    parsed.json,
+                );
+                if parsed.fix {
+                    path.push_str(if path.contains('?') { "&" } else { "?" });
+                    path.push_str("repair=1");
+                }
+                (
+                    CoreCliOperation::DoctorCoherence,
+                    CoreCliAction::TextRoute { path, body: None },
                     CoreCliFallback::None,
                 )
             } else if parsed.subcommand == "stability" {

@@ -1,6 +1,9 @@
 use crate::async_runtime::{doctor_tasks_report, render_doctor_tasks_report};
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::{render_core_dashboard_reload_lines, render_core_runtime_restart_lines};
+use crate::daemon::coherence_doctor::{
+    CoherenceReport, coherence_report_json, render_coherence_report,
+};
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, string_param, text_error,
     text_or_json_lines,
@@ -248,6 +251,14 @@ pub trait DaemonOperationsTextRuntime {
         let _ = project_root;
         Err("stability doctor is unavailable".into())
     }
+    fn doctor_coherence_report(
+        &mut self,
+        project_root: &str,
+        repair: bool,
+    ) -> Result<CoherenceReport, String> {
+        let _ = (project_root, repair);
+        Err("runtime coherence doctor is unavailable".into())
+    }
     fn repair_tmux_runtime(
         &mut self,
         project_root: &str,
@@ -316,6 +327,9 @@ pub fn route_operations_text_request(
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_stability_text {
         return Some(doctor_stability_text_route(runtime, &route_url, body));
+    }
+    if method == "GET" && pathname == CORE_API_ROUTES.doctor_coherence_text {
+        return Some(doctor_coherence_text_route(runtime, &route_url, body));
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_tmux_text {
         return Some(doctor_tmux_text_route(runtime, &route_url));
@@ -450,6 +464,26 @@ pub fn doctor_tasks_text_route(
         json!(report),
         &split_rendered_report_lines(&text),
     )
+}
+
+pub fn doctor_coherence_text_route(
+    runtime: &mut impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project_root = route_project_root_or_cwd(runtime, route_url, body);
+    let repair = bool_param(route_url, body, "repair");
+    match runtime.doctor_coherence_report(&project_root, repair) {
+        Ok(report) => {
+            let text = render_coherence_report(&report);
+            text_or_json_lines(
+                route_url,
+                coherence_report_json(&report),
+                &split_rendered_report_lines(&text),
+            )
+        }
+        Err(error) => text_error(500, format!("Error: {error}")),
+    }
 }
 
 pub fn doctor_stability_text_route(

@@ -278,7 +278,10 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
 /// The control flags come from metadata rather than the topology row, because
 /// that is where a promotion or demotion is recorded; restoring an overseer as
 /// an ordinary agent would silently change the shape of the project.
-fn restore_session(session: &Value, metadata_session: Option<&Value>) -> Value {
+/// The snapshot record for one session. Public so `aimux doctor coherence`
+/// can rebuild entries the old shrinking snapshot already threw away, using
+/// the same shape the tick loop writes rather than a second one.
+pub fn restore_session(session: &Value, metadata_session: Option<&Value>) -> Value {
     let mut restore = Map::new();
     restore.insert("id".into(), Value::String(string_field(session, "id")));
     let tool = first_non_empty(session, &["toolConfigKey", "tool", "command"]);
@@ -303,6 +306,32 @@ fn restore_session(session: &Value, metadata_session: Option<&Value>) -> Value {
         restore.insert("projectControl".into(), Value::Bool(true));
     }
     Value::Object(restore)
+}
+
+/// Re-record the snapshot so it holds every session the topology still says is
+/// restorable. The repair for a snapshot that was shrunk before the producer
+/// learned to retain: prevention does not bring back what was already lost.
+pub fn rebuild_restore_snapshot_from_topology(
+    project_state_dir: &std::path::Path,
+    topology: &Value,
+) -> Result<usize, String> {
+    let metadata = try_load_metadata_state(project_state_dir)
+        .map_err(|error| format!("metadata unavailable: {error}"))?;
+    let restorable = restorable_session_ids(topology);
+    let sessions = list_topology_session_states(topology, None)
+        .into_iter()
+        .filter(|session| restorable.contains(&string_field(session, "id")))
+        .map(|session| {
+            restore_session(
+                &session,
+                metadata.sessions.get(&string_field(&session, "id")),
+            )
+        })
+        .collect::<Vec<_>>();
+    let count = sessions.len();
+    record_last_online_agents(project_state_dir, &sessions, &restorable, &now_iso())
+        .map_err(|error| format!("record snapshot: {error}"))?;
+    Ok(count)
 }
 
 fn agent_restore_config_from(config: &Value) -> Value {
