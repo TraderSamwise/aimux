@@ -214,27 +214,15 @@ function bucketFromServerGroup(
   };
 }
 
+// Order is the project service's to decide, not a client's. This re-sorted the
+// supervisor lane by roleState.exposeOrder while the service ordered it by role
+// display order — a different field — so the two agreed only by luck. Render
+// the order the service sent.
 function supervisorLaneSessions(state: DesktopState): DesktopSession[] {
   if (Array.isArray(state.supervisorLane?.sessions)) {
-    return orderSupervisorLaneSessions(state.supervisorLane.sessions);
+    return state.supervisorLane.sessions;
   }
   return [];
-}
-
-function supervisorLaneDisplayOrder(session: DesktopSession): number {
-  return session.roleState?.exposeOrder ?? Number.POSITIVE_INFINITY;
-}
-
-function orderSupervisorLaneSessions(sessions: DesktopSession[]): DesktopSession[] {
-  return sessions
-    .map((session, index) => ({ session, index }))
-    .sort((left, right) => {
-      const order =
-        supervisorLaneDisplayOrder(left.session) - supervisorLaneDisplayOrder(right.session);
-      if (order !== 0) return order;
-      return left.index - right.index;
-    })
-    .map(({ session }) => session);
 }
 
 function supervisorLaneBucket(state: DesktopState): WorktreeBucket | null {

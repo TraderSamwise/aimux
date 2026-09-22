@@ -1399,27 +1399,10 @@ fn render_semantic_badge(semantic: Option<&Value>) -> Option<String> {
     }
 }
 
+/// The footer chips render the same agents the dashboard numbers [1]..[N], so
+/// they share its comparator rather than sorting independently.
 fn compare_teammate_sessions(left: &&Value, right: &&Value) -> std::cmp::Ordering {
-    teammate_order(left)
-        .cmp(&teammate_order(right))
-        .then_with(|| teammate_created_at(left).cmp(teammate_created_at(right)))
-        .then_with(|| {
-            string_field(left, "id")
-                .unwrap_or("")
-                .cmp(string_field(right, "id").unwrap_or(""))
-        })
-}
-
-fn teammate_order(session: &Value) -> u64 {
-    session
-        .get("team")
-        .and_then(|team| team.get("order"))
-        .and_then(Value::as_u64)
-        .unwrap_or(u64::MAX)
-}
-
-fn teammate_created_at(session: &Value) -> &str {
-    string_field(session, "createdAt").unwrap_or("\u{10ffff}")
+    crate::team_contract::compare_agent_display_order(left, right)
 }
 
 fn normalize_path(path: Option<&str>, project_root: &str) -> String {

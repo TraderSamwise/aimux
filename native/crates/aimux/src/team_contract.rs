@@ -204,6 +204,54 @@ pub fn agent_role_display_order(session: Option<&Value>) -> i64 {
     agent_role_definition(&role).display_order
 }
 
+/// The one order every agent surface renders in.
+///
+/// There were four: the dashboard sorted worktree rows by createdAt
+/// descending, the footer chips by team order then createdAt *ascending*, the
+/// supervisor lane by role display order, and the GUI re-sorted that lane again
+/// by a different field entirely. They agreed only by luck, so the dashboard
+/// read 1..5 while the chips read roughly the reverse.
+///
+/// Role order first, because the supervisor lane's overseer-before-scribe is
+/// deliberate. Then an explicit `team.order` when someone set one. Then newest
+/// first, which is what the dashboard already showed and what its visible
+/// [1]..[N] numbering is built on.
+pub fn compare_agent_display_order(left: &Value, right: &Value) -> std::cmp::Ordering {
+    agent_role_display_order(Some(left))
+        .cmp(&agent_role_display_order(Some(right)))
+        .then_with(|| agent_team_order(left).cmp(&agent_team_order(right)))
+        .then_with(|| agent_created_sort_key(right).cmp(&agent_created_sort_key(left)))
+        .then_with(|| {
+            string_field(left, "id")
+                .unwrap_or("")
+                .cmp(string_field(right, "id").unwrap_or(""))
+        })
+}
+
+fn agent_team_order(session: &Value) -> u64 {
+    session
+        .get("team")
+        .and_then(|team| team.get("order"))
+        .and_then(Value::as_u64)
+        .unwrap_or(u64::MAX)
+}
+
+/// Newest-first ordering key, falling back to the tmux window position when a
+/// timestamp cannot be parsed so ordering stays stable rather than collapsing.
+fn agent_created_sort_key(session: &Value) -> i128 {
+    if let Some(created_at) = string_field(session, "createdAt")
+        && let Some(parsed) = crate::project_service::usage::parse_recency_timestamp(created_at)
+    {
+        return parsed as i128;
+    }
+    session
+        .get("tmuxWindowIndex")
+        .or_else(|| session.get("index"))
+        .and_then(Value::as_i64)
+        .map(i128::from)
+        .unwrap_or_default()
+}
+
 pub fn agent_lane(session: Option<&Value>) -> Value {
     let Some(session) = session else {
         return json!({ "kind": "unknown", "reason": "session-unavailable" });

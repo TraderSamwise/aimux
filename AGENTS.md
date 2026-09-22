@@ -58,6 +58,39 @@ When changing dashboard or app behavior, preserve that boundary:
   thread/task/review state, topology, worktree, or graveyard state.
 - Treat `statusline.json` as derived/debug state, not a primary transport.
 
+## One Answer, Many Surfaces
+
+The same fact is rendered by the TUI dashboard, the statusline footer, the
+Expo app, and the CLI. When each surface computes that fact for itself they
+agree only by luck, and they drift silently — nothing fails, the answer is
+just different depending on where you look.
+
+This has already happened with agent ordering: the dashboard sorted by
+`createdAt` descending, the footer chips by team order then `createdAt`
+*ascending*, the supervisor lane by role display order, and the app re-sorted
+that lane again by `roleState.exposeOrder` — a different field entirely. The
+dashboard numbered agents 1..5 while the chips rendered roughly the reverse.
+
+So, for anything a user can see in more than one place — ordering, grouping,
+labels, counts, status text, truncation:
+
+- Derive it once, in the project service, and let clients render what they
+  are given. A client sorting, grouping, or relabelling server data is the
+  bug, even when its rule currently matches.
+- When a second surface needs the same fact, call the same helper. Do not
+  reimplement the rule next to the second renderer, and do not copy it.
+- Pin it with a test that compares the surfaces against each other, not one
+  test per surface. A per-surface test passes happily while the surfaces
+  disagree, which is exactly how this class survives.
+- If a surface genuinely needs to differ — the dashboard also lists offline
+  agents, the chips truncate to five — the shared helper decides the order and
+  the surface filters or truncates that result. Filtering a shared order is
+  fine; computing a different one is not.
+
+A reviewer's one-line test: "if I render this in the app and in the TUI, what
+guarantees they match?" If the answer is "both implement the same rule", it is
+already broken.
+
 ## Runtime Guardrails
 
 When adding a guard, gate, refusal path, runtime identity check, or precedence

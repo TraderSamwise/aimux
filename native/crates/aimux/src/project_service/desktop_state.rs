@@ -1034,7 +1034,10 @@ fn supervisor_lane_from_sessions(sessions: &[Value]) -> Option<Value> {
             )
         })
         .collect::<Vec<_>>();
-    sessions.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    sessions.sort_by(|left, right| {
+        crate::team_contract::compare_agent_display_order(&left.2, &right.2)
+            .then_with(|| left.1.cmp(&right.1))
+    });
     let sessions = sessions
         .into_iter()
         .map(|(_, _, session)| session)
@@ -1308,9 +1311,7 @@ fn set_indexes(items: &mut [Value]) {
 }
 
 fn sorted_dashboard_items(mut items: Vec<Value>) -> Vec<Value> {
-    items.sort_by(|left, right| {
-        dashboard_created_sort_key(right).cmp(&dashboard_created_sort_key(left))
-    });
+    items.sort_by(crate::team_contract::compare_agent_display_order);
     items
 }
 

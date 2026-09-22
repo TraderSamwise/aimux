@@ -3,6 +3,7 @@
 # target here only after checking it does not touch machine-global runtime
 # state such as Sam's home, the default daemon port, a shared tmux socket/server,
 # or a fixed filesystem path.
+agent_display_order
 agent_prompt_submit
 attachment_hosting
 attachment_hosting_url_safety
