@@ -2716,6 +2716,66 @@ fn parses_pasted_printable_bytes_as_multiple_keys() {
     );
 }
 
+#[test]
+fn agent_restore_prompt_is_active_only_while_an_offer_is_unanswered() {
+    let mut snapshot = snapshot();
+    snapshot.agent_restore_offer = Some(
+        serde_json::from_value(json!({
+            "id": "offer-1",
+            "updatedAt": "2026-09-22T03:24:09.985Z",
+            "sessionIds": ["codex-a", "codex-b"],
+            "sessions": [
+                { "id": "codex-a", "label": "codex-a", "tool": "codex" },
+                { "id": "codex-b", "label": "codex-b", "tool": "codex" }
+            ]
+        }))
+        .expect("offer"),
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    assert!(
+        controller.agent_restore_prompt_active(&snapshot),
+        "a pending restore offer must raise the prompt without the user asking"
+    );
+
+    let effect = controller.handle_key(&snapshot, DashboardKey::Printable('y'));
+    assert!(
+        matches!(
+            effect,
+            DashboardControllerEffect::Request(request)
+                if request.path == routes::agents::RESTORE_PREVIOUS
+        ),
+        "accepting the prompt must call the restore route"
+    );
+    assert!(
+        !controller.agent_restore_prompt_active(&snapshot),
+        "an answered offer must not re-prompt"
+    );
+
+    let mut declined = DashboardController::new(&snapshot);
+    let effect = declined.handle_key(&snapshot, DashboardKey::Printable('n'));
+    assert!(
+        matches!(
+            effect,
+            DashboardControllerEffect::Request(request)
+                if request.path == routes::agents::DISMISS_RESTORE_PREVIOUS
+        ),
+        "declining the prompt must dismiss the offer rather than silently drop it"
+    );
+
+    let no_offer = snapshot_without_restore_offer();
+    assert!(
+        !DashboardController::new(&no_offer).agent_restore_prompt_active(&no_offer),
+        "no offer must not raise a prompt"
+    );
+}
+
+fn snapshot_without_restore_offer() -> DesktopStateSnapshot {
+    let mut snapshot = snapshot();
+    snapshot.agent_restore_offer = None;
+    snapshot
+}
+
 fn snapshot() -> DesktopStateSnapshot {
     serde_json::from_str::<DesktopStateGoldenFixture>(GOLDEN)
         .expect("valid fixture")

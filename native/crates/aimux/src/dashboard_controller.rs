@@ -43,6 +43,7 @@ pub struct DashboardController {
     pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
+    pub agent_restore_prompt_dismissed: bool,
     pub overseer_overlay_open: bool,
     pub overseer_watch_instructions: Option<DashboardOverseerWatchInstructionsState>,
     pub work_outline_overlay: Option<DashboardWorkOutlineOverlayState>,
@@ -336,6 +337,7 @@ impl DashboardController {
             worktree_remove_confirm: None,
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
+            agent_restore_prompt_dismissed: false,
             overseer_overlay_open: false,
             overseer_watch_instructions: None,
             work_outline_overlay: None,
@@ -378,6 +380,9 @@ impl DashboardController {
         }
         if self.worktree_list_open {
             return self.handle_worktree_list_key(key);
+        }
+        if self.agent_restore_prompt_active(snapshot) {
+            return self.handle_agent_restore_prompt_key(key);
         }
         if self.worktree_cache_cleanup_confirm.is_some() {
             return self.handle_worktree_cache_cleanup_confirm_key(key);
@@ -1446,6 +1451,32 @@ impl DashboardController {
             }
             _ => DashboardControllerEffect::Ignored,
         }
+    }
+
+    /// The project service derives the offer; the dashboard only tracks whether
+    /// this session has already answered it.
+    pub fn agent_restore_prompt_active(&self, snapshot: &DesktopStateSnapshot) -> bool {
+        !self.agent_restore_prompt_dismissed && snapshot.agent_restore_offer.is_some()
+    }
+
+    fn handle_agent_restore_prompt_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        if matches!(key, DashboardKey::Enter | DashboardKey::Printable('y')) {
+            self.agent_restore_prompt_dismissed = true;
+            return DashboardControllerEffect::Request(DashboardActionRequest {
+                method: "POST",
+                path: routes::agents::RESTORE_PREVIOUS,
+                body: json!({}),
+            });
+        }
+        if matches!(key, DashboardKey::Back | DashboardKey::Printable('n')) {
+            self.agent_restore_prompt_dismissed = true;
+            return DashboardControllerEffect::Request(DashboardActionRequest {
+                method: "POST",
+                path: routes::agents::DISMISS_RESTORE_PREVIOUS,
+                body: json!({}),
+            });
+        }
+        DashboardControllerEffect::Render
     }
 
     fn handle_worktree_cache_cleanup_confirm_key(

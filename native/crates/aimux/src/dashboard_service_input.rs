@@ -5,7 +5,7 @@ use crate::dashboard_controller::{
 use crate::dashboard_create::{
     DashboardCreateIntent, DashboardCreatePlan, DashboardServiceCreateIntent, plan_dashboard_create,
 };
-use crate::dashboard_model::{DashboardSession, WorktreeGroup};
+use crate::dashboard_model::{AgentRestoreOffer, DashboardSession, WorktreeGroup};
 use crate::tui_render::theme::{Tone, keycap, keycap_hints, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use std::collections::BTreeMap;
@@ -305,6 +305,41 @@ pub fn render_worktree_cache_cleanup_confirm_overlay(
         } else {
             OverlayVariant::Blue
         },
+        icon: None,
+    })
+}
+
+pub fn render_agent_restore_confirm_overlay(
+    offer: &AgentRestoreOffer,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let total = offer.session_ids.len();
+    let mut body = vec![format!(
+        "  {}",
+        style(
+            &format!("{total} agent session(s) from the previous run can be restored."),
+            Tone::Muted,
+        )
+    )];
+    body.push(String::new());
+    for session in offer.sessions.iter().take(8) {
+        body.push(format!("  {}", style(&session.id, Tone::Muted)));
+    }
+    if total > 8 {
+        body.push(format!(
+            "  {}",
+            style(&format!("and {} more", total - 8), Tone::Muted)
+        ));
+    }
+    body.push(String::new());
+    body.push(modal_hints("[Enter/y] restore  [n/Esc] not now"));
+    render_overlay_box(&OverlayBoxSpec {
+        title: "Restore Previous Agents",
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Blue,
         icon: None,
     })
 }

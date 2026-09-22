@@ -36,7 +36,8 @@ use crate::dashboard_renderer::{
 };
 use crate::dashboard_service_input::DashboardThreadReplyState;
 use crate::dashboard_service_input::{
-    render_label_input_overlay, render_migrate_picker_overlay, render_orchestration_input_overlay,
+    render_agent_restore_confirm_overlay, render_label_input_overlay,
+    render_migrate_picker_overlay, render_orchestration_input_overlay,
     render_orchestration_route_picker_overlay, render_remote_worktree_input_overlay,
     render_service_input_overlay, render_teammate_picker_overlay, render_thread_reply_overlay,
     render_worktree_cache_cleanup_confirm_overlay, render_worktree_input_overlay,
@@ -1749,6 +1750,14 @@ fn render_dashboard_snapshot(
         return dashboard_overlay_frame(
             &frame,
             render_worktree_list_overlay(&snapshot.worktree_groups, viewport.cols, viewport.rows),
+        );
+    }
+    if controller.agent_restore_prompt_active(snapshot)
+        && let Some(offer) = snapshot.agent_restore_offer.as_ref()
+    {
+        return dashboard_overlay_frame(
+            &frame,
+            render_agent_restore_confirm_overlay(offer, viewport.cols, viewport.rows),
         );
     }
     if let Some(preview) = controller.worktree_cache_cleanup_confirm.as_ref() {
