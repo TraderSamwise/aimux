@@ -48,6 +48,7 @@ use crate::project_service::scheduler::{
 use crate::project_service::scribe_watcher_task::scribe_watcher_task;
 use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
 use crate::project_service::visual_clients::project_expose_hot_snapshot_refresh_task;
+use crate::project_service::window_reconciliation::window_reconciliation_task;
 use crate::runtime_lifecycle_methods::write_instruction_files;
 use crate::secure_permissions;
 use crate::tmux_expose::{
@@ -1765,6 +1766,7 @@ pub fn project_service_periodic_tasks_for_context(
     periodic_tasks.push(runtime_health_recorder_task());
     periodic_tasks.push(loop_watcher_task(context));
     periodic_tasks.push(scribe_watcher_task(context));
+    periodic_tasks.push(window_reconciliation_task());
     append_stability_doctor_test_wedge_task(&mut periodic_tasks);
     periodic_tasks
 }
