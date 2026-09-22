@@ -427,12 +427,12 @@ if [ "$HOST_ONLY" -eq 1 ]; then
     printf 'Skipping release asset verification by explicit request\n'
   fi
 else
-  for platform in darwin linux; do
-    for arch in arm64 x64; do
-      ensure_asset_pair "aimux-${platform}-${arch}.tar.gz"
-      ensure_asset_pair "aimux-local-${platform}-${arch}.tar.gz"
-    done
-  done
+  # Read the shipped platform set from the release build matrix rather than
+  # keeping a copy of it here.
+  while IFS=$'\t' read -r _platform _arch _variant asset_name; do
+    [ -n "$asset_name" ] || continue
+    ensure_asset_pair "$asset_name.tar.gz"
+  done < <(python3 "$ROOT_DIR/scripts/release-asset-matrix.py")
   if [ "$SKIP_ASSET_VERIFICATION" -eq 0 ]; then
     bash "$ROOT_DIR/scripts/verify-release-asset-set.sh" "$RELEASE_DIR"
   else

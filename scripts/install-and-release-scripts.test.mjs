@@ -881,18 +881,41 @@ describe("verify-release-asset-set.sh", () => {
     ]);
   }
 
+  // The shipped platform set comes from the release build matrix, the same
+  // place the verifier reads it. A separate copy here would pass while the
+  // verifier expected something else, which is how Intel expectations
+  // outlived the Intel build.
+  function releaseMatrix() {
+    const listed = runOk("python3", [join(repoRoot, "scripts/release-asset-matrix.py")]).stdout;
+    return listed
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => {
+        const [platform, arch, variant, asset] = line.split("\t");
+        return { platform, arch, variant, asset: `${asset}.tar.gz` };
+      });
+  }
+
   function writeAssetSet(root, omitted = undefined) {
-    for (const platform of ["darwin", "linux"]) {
-      for (const arch of ["arm64", "x64"]) {
-        for (const variant of ["full", "local"]) {
-          const asset =
-            variant === "local" ? `aimux-local-${platform}-${arch}.tar.gz` : `aimux-${platform}-${arch}.tar.gz`;
-          if (asset === omitted) continue;
-          writeReleaseSetArchive(root, asset, `${platform}-${arch}`, variant);
-        }
-      }
+    for (const { platform, arch, variant, asset } of releaseMatrix()) {
+      if (asset === omitted) continue;
+      writeReleaseSetArchive(root, asset, `${platform}-${arch}`, variant);
     }
   }
+
+  // A hand-rolled matrix reader that silently returns a short list would make
+  // the gate check less while still passing. Pin it against the workflow.
+  it("lists exactly the assets the release build matrix declares", () => {
+    const workflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
+    const jobStart = workflow.indexOf("\n  release-assets:");
+    expect(jobStart).toBeGreaterThan(-1);
+    const nextJob = workflow.slice(jobStart + 1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
+    const job = nextJob === -1 ? workflow.slice(jobStart) : workflow.slice(jobStart, jobStart + 1 + nextJob);
+    const declared = [...job.matchAll(/^\s+asset:\s*(\S+)\s*$/gm)].map((match) => match[1]).sort();
+
+    expect(declared.length).toBeGreaterThan(0);
+    expect(releaseMatrix().map((entry) => entry.asset.replace(/\.tar\.gz$/, "")).sort()).toEqual(declared);
+  });
 
   it("accepts a complete full and local release asset set", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-set-"));

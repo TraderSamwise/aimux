@@ -22,7 +22,7 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-for command in grep shasum tar mktemp rm sed; do
+for command in grep shasum tar mktemp rm sed python3; do
   need "$command"
 done
 
@@ -89,59 +89,63 @@ verify_archive_shape() {
   fi
 }
 
-missing=0
-for platform in darwin linux; do
-  for arch in arm64 x64; do
-    for variant in full local; do
-      if [ "$variant" = "local" ]; then
-        asset="aimux-local-${platform}-${arch}.tar.gz"
-      else
-        asset="aimux-${platform}-${arch}.tar.gz"
-      fi
-      asset_path="$RELEASE_DIR/$asset"
-      sha_path="$RELEASE_DIR/$asset.sha256"
-      provenance_path="$RELEASE_DIR/$asset.provenance.json"
-      sbom_path="$RELEASE_DIR/$asset.sbom.spdx.json"
+# The shipped platform set is the release workflow's build matrix, not a copy
+# of it kept here. A copy is what shipped Intel expectations after Intel was
+# dropped, and it failed the v0.1.59 tag with nothing actually wrong.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXPECTED_ASSETS="$TMP_DIR/expected-assets.tsv"
+if ! python3 "$SCRIPT_DIR/release-asset-matrix.py" > "$EXPECTED_ASSETS" 2>"$EXPECTED_ASSETS.err"; then
+  sed 's/^/  /' "$EXPECTED_ASSETS.err" >&2
+  fail "could not read the release build matrix"
+fi
+[ -s "$EXPECTED_ASSETS" ] || fail "release build matrix listed no assets"
 
-      if [ ! -f "$asset_path" ]; then
-        printf 'missing release asset: %s\n' "$asset_path" >&2
-        missing=1
-      elif [ ! -r "$asset_path" ]; then
-        printf 'release asset is not readable: %s\n' "$asset_path" >&2
-        missing=1
-      fi
-      if [ ! -f "$sha_path" ]; then
-        printf 'missing release checksum file: %s\n' "$sha_path" >&2
-        missing=1
-      elif [ ! -r "$sha_path" ]; then
-        printf 'release checksum file is not readable: %s\n' "$sha_path" >&2
-        missing=1
-      elif ! grep -F " $asset" "$sha_path" >/dev/null 2>&1; then
-        printf 'release sha file does not name its asset: %s\n' "$sha_path" >&2
-        missing=1
-      elif [ -f "$asset_path" ] && ! verify_checksum "$asset" "$sha_path"; then
-        missing=1
-      fi
-      if [ -f "$asset_path" ] && ! verify_archive_shape "$asset_path" "${platform}-${arch}" "$variant"; then
-        missing=1
-      fi
-      if [ ! -f "$provenance_path" ]; then
-        printf 'missing release provenance file: %s\n' "$provenance_path" >&2
-        missing=1
-      elif [ ! -r "$provenance_path" ]; then
-        printf 'release provenance file is not readable: %s\n' "$provenance_path" >&2
-        missing=1
-      fi
-      if [ ! -f "$sbom_path" ]; then
-        printf 'missing release SBOM file: %s\n' "$sbom_path" >&2
-        missing=1
-      elif [ ! -r "$sbom_path" ]; then
-        printf 'release SBOM file is not readable: %s\n' "$sbom_path" >&2
-        missing=1
-      fi
-    done
-  done
-done
+missing=0
+while IFS=$'\t' read -r platform arch variant asset_name; do
+  [ -n "$asset_name" ] || continue
+  asset="$asset_name.tar.gz"
+  asset_path="$RELEASE_DIR/$asset"
+  sha_path="$RELEASE_DIR/$asset.sha256"
+  provenance_path="$RELEASE_DIR/$asset.provenance.json"
+  sbom_path="$RELEASE_DIR/$asset.sbom.spdx.json"
+
+  if [ ! -f "$asset_path" ]; then
+    printf 'missing release asset: %s\n' "$asset_path" >&2
+    missing=1
+  elif [ ! -r "$asset_path" ]; then
+    printf 'release asset is not readable: %s\n' "$asset_path" >&2
+    missing=1
+  fi
+  if [ ! -f "$sha_path" ]; then
+    printf 'missing release checksum file: %s\n' "$sha_path" >&2
+    missing=1
+  elif [ ! -r "$sha_path" ]; then
+    printf 'release checksum file is not readable: %s\n' "$sha_path" >&2
+    missing=1
+  elif ! grep -F " $asset" "$sha_path" >/dev/null 2>&1; then
+    printf 'release sha file does not name its asset: %s\n' "$sha_path" >&2
+    missing=1
+  elif [ -f "$asset_path" ] && ! verify_checksum "$asset" "$sha_path"; then
+    missing=1
+  fi
+  if [ -f "$asset_path" ] && ! verify_archive_shape "$asset_path" "${platform}-${arch}" "$variant"; then
+    missing=1
+  fi
+  if [ ! -f "$provenance_path" ]; then
+    printf 'missing release provenance file: %s\n' "$provenance_path" >&2
+    missing=1
+  elif [ ! -r "$provenance_path" ]; then
+    printf 'release provenance file is not readable: %s\n' "$provenance_path" >&2
+    missing=1
+  fi
+  if [ ! -f "$sbom_path" ]; then
+    printf 'missing release SBOM file: %s\n' "$sbom_path" >&2
+    missing=1
+  elif [ ! -r "$sbom_path" ]; then
+    printf 'release SBOM file is not readable: %s\n' "$sbom_path" >&2
+    missing=1
+  fi
+done < "$EXPECTED_ASSETS"
 
 if [ "$missing" -ne 0 ]; then
   exit 1
