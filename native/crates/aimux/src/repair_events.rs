@@ -17,6 +17,10 @@ pub const STATUS_STARTED: &str = "started";
 pub const STATUS_REPAIRED: &str = "repaired";
 pub const STATUS_SKIPPED: &str = "skipped";
 pub const STATUS_FAILED: &str = "failed";
+/// The machine cannot see this project's root at all. Reported, never counted
+/// as a failure: a registration for a deleted checkout is stale state, not a
+/// broken restart.
+pub const STATUS_UNREACHABLE: &str = "unreachable";
 
 pub fn record_repair_event_for_project(
     resolver: &PathResolver,

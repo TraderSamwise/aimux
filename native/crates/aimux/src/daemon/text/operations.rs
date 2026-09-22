@@ -1076,7 +1076,12 @@ fn step_status(value: &Value) -> String {
     let Some(error) = value.get("error").and_then(Value::as_str) else {
         return status.to_owned();
     };
-    format!("{status} ({error})")
+    // A step that knows how to be fixed says so here, where the operator is
+    // already reading the failure.
+    match value.get("hint").and_then(Value::as_str) {
+        Some(hint) => format!("{status} ({error}) — {hint}"),
+        None => format!("{status} ({error})"),
+    }
 }
 
 fn dashboard_status(value: &Value) -> String {

@@ -135,7 +135,8 @@ use crate::remote::remote_login::{self, LoginAction, LoginFlowWaiter};
 use crate::repair_events::{
     ACTION_CONTROL_PLANE_RESTART, ACTION_DASHBOARD_RELOAD, ACTION_PROJECT_SERVICE_ENSURE,
     ACTION_VALIDATION_ORPHAN_CLEANUP, STATUS_FAILED, STATUS_REPAIRED, STATUS_SKIPPED,
-    STATUS_STARTED, record_repair_event_for_project, record_repair_event_from_env,
+    STATUS_STARTED, STATUS_UNREACHABLE, record_repair_event_for_project,
+    record_repair_event_from_env,
 };
 use crate::request_actor::{RemoteActorRole, parse_remote_actor};
 use crate::runtime_coherence::{
@@ -1853,14 +1854,29 @@ impl RealDaemonRuntime {
         } else {
             json!({ "status": "skipped" })
         };
-        let (service, service_error) =
-            match <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root) {
-                Ok(state) => (json!({ "status": "ensured", "state": state }), None),
-                Err(error) => (
-                    json!({ "status": "failed", "error": error.clone() }),
-                    Some(error),
-                ),
-            };
+        // A project whose root this machine cannot reach is not a restart
+        // failure, it is a registration the machine has outgrown. Counting it
+        // as a failure made every `scripts/install.sh` run end in an error for
+        // one long-deleted temp checkout.
+        let unreachable_root = project_root_is_unreachable(project_root);
+        let (service, service_error) = match <Self as DaemonCoreCommandRuntime>::ensure_project(
+            self,
+            project_root,
+        ) {
+            Ok(state) => (json!({ "status": "ensured", "state": state }), None),
+            Err(error) if unreachable_root => (
+                json!({
+                    "status": STATUS_UNREACHABLE,
+                    "error": error.clone(),
+                    "hint": format!("root is gone; forget it with `aimux projects remove {project_root}`"),
+                }),
+                Some(error),
+            ),
+            Err(error) => (
+                json!({ "status": "failed", "error": error.clone() }),
+                Some(error),
+            ),
+        };
         let dashboard = if let Some(error) = service_error {
             json!({
                 "status": "skipped",
@@ -1908,6 +1924,9 @@ impl RealDaemonRuntime {
             "control-plane-restart",
             if failed {
                 STATUS_FAILED
+            } else if unreachable_root {
+                // Nothing was repaired and nothing broke: there was nothing here.
+                STATUS_SKIPPED
             } else {
                 STATUS_REPAIRED
             },
@@ -4997,6 +5016,18 @@ fn restart_before_report(runtime: &impl DaemonStatusRuntime, issued_at: &str) ->
     })
 }
 
+/// Whether the machine currently cannot see this project root at all.
+///
+/// Distinct from every other materialization refusal: a non-checkout path or a
+/// cargo-test harness root is a real problem to report, while a root that is
+/// simply gone is a stale registration.
+fn project_root_is_unreachable(project_root: &str) -> bool {
+    matches!(
+        crate::paths::project_root_status(std::path::Path::new(project_root.trim())),
+        crate::paths::ProjectRootStatus::Unreachable
+    )
+}
+
 fn restart_summary(projects: &[Value], orphan_cleanup: &Value) -> Value {
     let services_ensured = projects
         .iter()
@@ -7197,6 +7228,47 @@ mod tests {
         assert_eq!(launcher.calls(), vec![project]);
         assert_eq!(launcher.terminations(), vec![(91_026, false)]);
         assert_eq!(health.calls(), vec![91_126]);
+        fixture.cleanup();
+    }
+
+    /// A registration whose root is gone made every `scripts/install.sh` run
+    /// end in "post-install restart failed". Nothing is broken there — the
+    /// project is — so it is reported and named, not counted as a failure.
+    #[test]
+    fn control_plane_restart_reports_an_unreachable_project_without_failing() {
+        assert!(
+            !Path::new("/other-repo-gone").exists(),
+            "/other-repo-gone must remain a nonexistent fixture path for this regression"
+        );
+        let fixture = restart_service_fixture("restart-unreachable-project");
+        let launcher = Arc::new(RestartTestLauncher::new(91_128));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let result = runtime.restart_control_plane_project_with(
+            "/other-repo-gone",
+            |_project| -> Result<RestartDashboardTarget, String> {
+                panic!("dashboard reload must not run for a root that is gone")
+            },
+        );
+        let summary = restart_summary(std::slice::from_ref(&result), &json!({}));
+        let text = render_runtime_restart_result(&json!({
+            "daemon": { "current": { "pid": 9003 } },
+            "projects": [result.clone()],
+            "summary": summary.clone(),
+        }));
+
+        assert_eq!(result["service"]["status"], json!("unreachable"));
+        assert_eq!(
+            summary["failures"],
+            json!(0),
+            "a root that is gone is not a restart failure"
+        );
+        assert!(
+            text.contains("aimux projects remove /other-repo-gone"),
+            "the operator is told how to forget it: {text}"
+        );
+        assert!(launcher.calls().is_empty());
         fixture.cleanup();
     }
 
