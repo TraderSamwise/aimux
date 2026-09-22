@@ -204,13 +204,32 @@ pub fn set_supervisor_role_with_options(
                 entry.insert("lane".into(), json!({ "kind": "supervisor" }));
             } else {
                 entry.insert("role".into(), Value::String("coder".to_owned()));
-                entry.insert(
-                    "lane".into(),
-                    json!({
-                        "kind": "worktree",
-                        "worktreePath": options.worktree_path.as_deref().unwrap_or_default()
-                    }),
-                );
+                // A worktree lane with no path names no plane. Prefer the
+                // session's own checkout, and store nothing rather than a
+                // lane that would strand the agent outside every plane.
+                let demoted_worktree_path = options
+                    .worktree_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                    .or_else(|| {
+                        updated_session
+                            .and_then(|session| session.get("worktreePath"))
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|path| !path.is_empty())
+                    });
+                match demoted_worktree_path {
+                    Some(worktree_path) => {
+                        entry.insert(
+                            "lane".into(),
+                            json!({ "kind": "worktree", "worktreePath": worktree_path }),
+                        );
+                    }
+                    None => {
+                        entry.remove("lane");
+                    }
+                }
                 entry.remove("watching");
             }
             sync_migration_fields(entry, updated_session);
@@ -314,6 +333,59 @@ impl WatchBindingError {
             Self::Registry(error) | Self::Metadata(error) => json!({ "error": error }),
         }
     }
+}
+
+/// Move an agent into a plane.
+///
+/// The plane is membership, not role: any agent can sit in the supervisor
+/// plane, and one that does keeps its working directory where it is. Passing
+/// `None` clears the stored plane and returns the agent to the derived one.
+pub fn set_agent_plane(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    lane: Option<&Value>,
+    now: &str,
+) -> Result<(), String> {
+    let project_state_dir = project_state_dir.as_ref();
+    // The registry is the durable record, but the surfaces that group by plane
+    // read the session metadata, so the plane has to land in both -- the same
+    // pair the promote/demote path writes.
+    let stored_lane = lane.cloned();
+    update_session_metadata_at(project_state_dir, session_id, now, move |current| {
+        let mut current = match current {
+            Value::Object(map) => map,
+            _ => Map::new(),
+        };
+        match stored_lane {
+            Some(lane) => {
+                current.insert("lane".into(), lane);
+            }
+            None => {
+                current.remove("lane");
+            }
+        }
+        Value::Object(current)
+    })?;
+    mutate_agent_role_registry(project_state_dir, |registry| {
+        let sessions = object_field_mut(registry, "sessions");
+        let entry = object_field_mut(
+            sessions
+                .entry(session_id.to_owned())
+                .or_insert_with(|| Value::Object(Map::new())),
+            "",
+        );
+        match lane {
+            Some(lane) => {
+                entry.insert("lane".into(), lane.clone());
+            }
+            None => {
+                entry.remove("lane");
+            }
+        }
+        entry.insert("updatedAt".into(), Value::String(now.to_owned()));
+        Ok(true)
+    })
+    .map(|_| ())
 }
 
 pub fn bind_watch(

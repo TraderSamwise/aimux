@@ -837,11 +837,12 @@ fn session_switchable_entry(
         "team",
         "worktreePath",
         "label",
+        "lane",
     ] {
         insert_value(&mut metadata, key, session.get(key).cloned());
     }
     if let Some(stored) = metadata_sessions.get(id) {
-        for key in ["overseer", "scribe", "projectControl"] {
+        for key in ["overseer", "scribe", "projectControl", "lane"] {
             insert_value(&mut metadata, key, stored.get(key).cloned());
         }
         if let Some(derived) = stored.get("derived") {

@@ -355,7 +355,7 @@ fn scope_items_build_local_and_global_requests_without_collapsing_failures_to_em
 }
 
 #[test]
-fn overseer_lookup_uses_first_supervisor_lane_instead_of_overseer_boolean() {
+fn overseer_lookup_finds_the_overseer_role_not_the_first_supervisor_plane_item() {
     let state_dir = temp_dir("overseer");
     let mut fake = FakeHttp::with_responses([json!({
         "ok": true,
@@ -397,7 +397,9 @@ fn overseer_lookup_uses_first_supervisor_lane_instead_of_overseer_boolean() {
     let item =
         load_overseer_expose_item_with(&context(), &state_dir, &deps, &mut fake).expect("lookup");
 
-    assert_eq!(item.expect("supervisor")["id"], "reviewer");
+    // A reviewer sitting in the supervisor plane is not the overseer. The
+    // plane is membership; the overseer key jumps to the role.
+    assert_eq!(item.expect("overseer")["id"], "overseer");
     assert!(fake.requests[0].0.contains("scope=all"));
     assert!(fake.requests[0].0.contains("expose=1"));
     assert!(!fake.requests[0].0.contains("includeOverseer"));
@@ -806,7 +808,7 @@ fn runner_moves_selection_with_n_before_closing() {
 }
 
 #[test]
-fn runner_shift_o_and_zero_select_the_same_first_supervisor() {
+fn runner_zero_selects_the_first_supervisor_plane_tile_and_shift_o_selects_the_overseer() {
     let zero_state_dir = temp_dir("runner-supervisor-hotkeys-zero");
     let shift_o_state_dir = temp_dir("runner-supervisor-hotkeys-shift-o");
     let items = vec![
@@ -876,7 +878,11 @@ fn runner_shift_o_and_zero_select_the_same_first_supervisor() {
         fs::read_to_string(&zero_selection_file).unwrap_or_else(|_| "<missing>".into()),
         fs::read_to_string(&shift_o_selection_file).unwrap_or_else(|_| "<missing>".into()),
     ];
-    assert_eq!(selections, ["@9\n", "@9\n"]);
+    // `0` is positional -- the first tile in the supervisor plane, here the
+    // reviewer. Shift+O is the overseer ROLE. They coincide only when the
+    // overseer happens to be first, and conflating them let any agent moved
+    // into the plane hijack the overseer key.
+    assert_eq!(selections, ["@9\n", "@2\n"]);
     assert!(shift_o_client.requests[1].0.contains("expose=1"));
     assert!(!shift_o_client.requests[1].0.contains("includeOverseer"));
     cleanup(zero_state_dir);

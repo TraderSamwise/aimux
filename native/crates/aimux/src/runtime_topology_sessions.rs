@@ -450,6 +450,9 @@ fn session_to_topology_session(session: &Value, node_id: &str, now: &str) -> Val
         "worktreePath",
         "label",
         "headline",
+        // The plane is assignable and cannot be recomputed from role or
+        // worktree, so a save that drops it silently moves the agent.
+        "lane",
         "graveyardReason",
         "team",
         "graveyardedAt",

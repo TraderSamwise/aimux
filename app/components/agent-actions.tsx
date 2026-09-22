@@ -243,9 +243,12 @@ export function AgentActions({
 
 export type OverseerRowAction = "promote" | "demote";
 
+// Promotion is about ROLE, not which plane an agent is shown in. Suppressing
+// it for anything in the supervisor plane meant an ordinary agent moved there
+// could never be promoted, and the plane is membership rather than authority.
 export function overseerActionForSession(session: DesktopSession): OverseerRowAction | null {
   if (session.overseer === true) return "demote";
-  if (session.projectControl === true || session.lane?.kind === "supervisor") return null;
+  if (session.projectControl === true) return null;
   if (session.scribe === true) return null;
   return "promote";
 }

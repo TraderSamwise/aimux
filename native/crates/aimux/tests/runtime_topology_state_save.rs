@@ -122,6 +122,45 @@ fn state_save_reconciles_sessions_with_removed_session_ids_without_tmux_polling(
     );
 }
 
+/// The plane is assignable and cannot be recomputed from role or worktree, so
+/// a topology save that drops it silently moves the agent. The whitelist in
+/// `session_to_topology_session` omitted it, which is the erasure this pins.
+#[test]
+fn topology_save_keeps_an_assigned_plane() {
+    let temp = TempDir::new("aimux-runtime-topology-plane");
+    let project_root = temp.path().join("repo");
+    fs::create_dir_all(&project_root).expect("project root");
+    let mut topology = aimux::runtime_topology::empty_runtime_topology();
+
+    upsert_topology_session(
+        &mut topology,
+        &json!({
+            "id": "moved-agent",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": [],
+            "lifecycle": "running",
+            "worktreePath": project_root.to_string_lossy(),
+            "lane": { "kind": "supervisor" },
+            "createdAt": NOW,
+        }),
+        "running",
+        &project_root.to_string_lossy(),
+        NOW,
+    );
+
+    let saved = list_topology_session_states(&topology, None)
+        .into_iter()
+        .find(|session| session.get("id").and_then(Value::as_str) == Some("moved-agent"))
+        .expect("session survives the save");
+    assert_eq!(
+        saved.get("lane"),
+        Some(&json!({ "kind": "supervisor" })),
+        "the assigned plane must survive a topology save"
+    );
+}
+
 #[test]
 fn runtime_event_state_save_reconciles_removed_session_ids() {
     let temp = TempDir::new("aimux-runtime-topology-state-save-event");

@@ -15,10 +15,7 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_worktree_states, read_runtime_topology,
     runtime_topology_path,
 };
-use crate::team_contract::{
-    agent_lane, agent_role, agent_role_display_order, agent_role_state,
-    is_project_control_session as team_is_project_control_session,
-};
+use crate::team_contract::{agent_lane, agent_role, agent_role_display_order, agent_role_state};
 use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
@@ -839,6 +836,9 @@ fn dashboard_session(
     for key in [
         "createdAt",
         "headline",
+        // The plane is stored on the agent; without carrying it here the role
+        // probe below re-derives it and the dashboard groups by the role flag.
+        "lane",
         "restoreState",
         "restoreBlockedReason",
         "freshRelaunchAllowed",
@@ -904,6 +904,7 @@ fn dashboard_session(
         for key in [
             "loop",
             "loopLastAction",
+            "lane",
             "overseer",
             "scribe",
             "projectControl",
@@ -1025,7 +1026,7 @@ fn supervisor_lane_from_sessions(sessions: &[Value]) -> Option<Value> {
     let mut sessions = sessions
         .iter()
         .enumerate()
-        .filter(|(_, session)| team_is_project_control_session(Some(session)))
+        .filter(|(_, session)| session_is_in_supervisor_plane(session))
         .map(|(index, session)| {
             (
                 agent_role_display_order(Some(session)),
@@ -1278,7 +1279,7 @@ fn worktree_group(
             .sessions
             .iter()
             .filter(|session| {
-                !is_project_control_session(session)
+                !session_is_in_supervisor_plane(session)
                     && item_matches_worktree_group(session, path_key, main)
             })
             .cloned()
@@ -1622,8 +1623,14 @@ fn dashboard_session_visibility_allows(session: &Value) -> bool {
     })
 }
 
-fn is_project_control_session(session: &Value) -> bool {
-    team_is_project_control_session(Some(session))
+/// Which lane a session is SHOWN in. Membership is the plane, not the
+/// project-control role flag: an ordinary agent can be moved into the
+/// supervisor plane and an overseer can be moved out of it.
+fn session_is_in_supervisor_plane(session: &Value) -> bool {
+    agent_lane(Some(session))
+        .get("kind")
+        .and_then(Value::as_str)
+        == Some("supervisor")
 }
 
 fn main_checkout_branch(project_root: &str, worktrees: Option<&Value>) -> String {
@@ -1815,8 +1822,19 @@ fn worktree_lookup_by_identity(worktrees: &[Value]) -> BTreeMap<String, Value> {
     lookup
 }
 
+/// Which worktree group an item belongs to is its PLANE, and the plane falls
+/// back to the working directory only when nothing assigned one. Reading
+/// `worktreePath` directly made a stored worktree plane inert -- an agent
+/// could be assigned to a worktree group and still render in the one its
+/// checkout happened to be in.
 fn item_matches_worktree_group(item: &Value, path_key: &str, main: bool) -> bool {
-    let Some(path) = string_field(item, "worktreePath") else {
+    let lane = agent_lane(Some(item));
+    let lane_path = lane
+        .get("worktreePath")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
+    let Some(path) = lane_path.or_else(|| string_field(item, "worktreePath")) else {
         return main;
     };
     worktree_path_identity(path) == path_key

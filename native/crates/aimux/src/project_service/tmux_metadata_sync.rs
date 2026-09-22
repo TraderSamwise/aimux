@@ -189,6 +189,16 @@ pub fn build_tmux_window_metadata(
     for key in ["worktreePath", "label", "headline"] {
         insert_optional_value(&mut out, key, session.get(key).cloned());
     }
+    // Without this a tmux->metadata resync erases the stored plane on every
+    // tick, and the agent silently falls back to its derived one.
+    insert_optional_value(
+        &mut out,
+        "lane",
+        session
+            .get("lane")
+            .cloned()
+            .or_else(|| stored_session.and_then(|stored| stored.get("lane").cloned())),
+    );
     if let Some(role) = project_control_display_role(Some(&classifier_probe)) {
         out.insert("role".into(), Value::String(role.to_owned()));
     }

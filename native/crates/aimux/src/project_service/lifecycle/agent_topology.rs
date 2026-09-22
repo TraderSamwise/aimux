@@ -87,6 +87,9 @@ pub(super) fn agent_window_metadata(
         "headline",
         "createdAt",
         "role",
+        // The plane is assignable and independent of role and worktree, so it
+        // has to travel with the session rather than be recomputed from them.
+        "lane",
         "overseer",
         "scribe",
         "projectControl",

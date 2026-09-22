@@ -63,6 +63,7 @@ export const PROJECT_API_ROUTES = {
     overseer: "/agents/overseer",
     scribe: "/agents/scribe",
     watch: "/agents/watch",
+    plane: "/agents/plane",
     teammates: "/agents/teammates",
     createTeammate: "/agents/teammates/create",
     createTeammateTask: "/agents/teammates/tasks",

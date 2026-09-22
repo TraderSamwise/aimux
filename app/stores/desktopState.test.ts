@@ -146,7 +146,11 @@ describe("desktop state resource lifecycle", () => {
     ]);
   });
 
-  it("keeps configured project-control roles in the supervisor lane", () => {
+  // The server emits `lane` on every session, and the plane is what decides
+  // which lane a session renders in. Falling back to projectControl here meant
+  // an agent moved out of the supervisor plane was hidden from its worktree
+  // group as well, leaving it in no lane at all.
+  it("keeps supervisor-plane sessions in the supervisor lane", () => {
     const groups = groupByWorktree(
       desktopState({
         sessions: [
@@ -155,6 +159,7 @@ describe("desktop state resource lifecycle", () => {
             status: "running",
             toolConfigKey: "codex",
             projectControl: true,
+            lane: { kind: "supervisor" },
             role: "qa",
             team: { role: "qa" },
           },
@@ -173,6 +178,7 @@ describe("desktop state resource lifecycle", () => {
               status: "running",
               toolConfigKey: "codex",
               projectControl: true,
+              lane: { kind: "supervisor" },
               role: "qa",
               team: { role: "qa" },
             },

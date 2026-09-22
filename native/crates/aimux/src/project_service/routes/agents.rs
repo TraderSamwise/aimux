@@ -27,5 +27,6 @@ pub const ROUTES: &[Spec] = &[
     Spec::exact(Method::Post, routes::agents::OVERSEER, Group::Agents),
     Spec::exact(Method::Post, routes::agents::SCRIBE, Group::Agents),
     Spec::exact(Method::Post, routes::agents::WATCH, Group::Agents),
+    Spec::exact(Method::Post, routes::agents::PLANE, Group::Agents),
     Spec::exact(Method::Post, routes::work_outline::UPDATE, Group::Agents),
 ];

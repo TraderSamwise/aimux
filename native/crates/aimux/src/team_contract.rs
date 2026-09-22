@@ -204,6 +204,57 @@ pub fn agent_role_display_order(session: Option<&Value>) -> i64 {
     agent_role_definition(&role).display_order
 }
 
+/// The one place an agent sits, everywhere: its tmux window position.
+///
+/// Not role, not team, not status, not how recently it printed something. The
+/// tmux window order is the order Sam already navigates with the prefix keys
+/// and already sees in his own tmux session, so making it canonical means the
+/// dashboard, the footer chips, Exposé, the GUI and `prefix n`/`p` cannot
+/// disagree with what tmux shows -- and moving a window moves the agent
+/// everywhere at once.
+///
+/// An agent with no live window has no tmux position, so it sorts after every
+/// agent that does, by `createdAt` and then `id`. Both are immutable, which is
+/// the whole requirement: a key that can change under you moves the agent
+/// while you are looking at it. `lastUsedAt`, attention rank and arrival index
+/// all do; these do not.
+///
+/// A surface may FILTER, PARTITION, TRUNCATE or INDEX this order -- the
+/// dashboard splits online from offline, the chips take the first few, Exposé
+/// groups by worktree -- but no surface computes a different one.
+pub fn compare_agent_canonical_order(left: &Value, right: &Value) -> std::cmp::Ordering {
+    agent_canonical_sort_key(left)
+        .cmp(&agent_canonical_sort_key(right))
+        .then_with(|| {
+            string_field(left, "id")
+                .unwrap_or_default()
+                .cmp(string_field(right, "id").unwrap_or_default())
+        })
+}
+
+/// `(0, window_index, 0)` for an agent holding a tmux window, so window order
+/// decides. `(1, 0, created_at)` for one without, so windowless agents follow
+/// in creation order instead of being compared on a window index they do not
+/// have.
+fn agent_canonical_sort_key(session: &Value) -> (u8, i64, u128) {
+    if let Some(window_index) = session
+        .get("tmuxWindowIndex")
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            session
+                .get("tmuxTarget")
+                .and_then(|target| target.get("windowIndex"))
+                .and_then(Value::as_i64)
+        })
+    {
+        return (0, window_index, 0);
+    }
+    let created_at = string_field(session, "createdAt")
+        .and_then(crate::project_service::usage::parse_recency_timestamp)
+        .unwrap_or(u128::MAX);
+    (1, 0, created_at)
+}
+
 /// The one order every agent surface renders in.
 ///
 /// There were four: the dashboard sorted worktree rows by createdAt
@@ -252,16 +303,49 @@ fn agent_created_sort_key(session: &Value) -> i128 {
         .unwrap_or_default()
 }
 
+/// An agent's plane: which group it is shown in, not what role it plays.
+///
+/// A stored lane wins. The plane is membership and it is assignable -- any
+/// agent can be moved into the supervisor plane, and supervisor-plane agents
+/// keep their working directory in the main checkout while not appearing
+/// there. Deriving it from the project-control role flag made plane and role
+/// the same field, so the only way into the plane was to change an agent's
+/// role and the plane could not hold an arbitrary agent.
+///
+/// Derivation remains the fallback for agents stored before the plane existed.
 pub fn agent_lane(session: Option<&Value>) -> Value {
     let Some(session) = session else {
         return json!({ "kind": "unknown", "reason": "session-unavailable" });
     };
+    if let Some(lane) = stored_agent_lane(session) {
+        return lane;
+    }
     if is_project_control_session(Some(session)) {
         return json!({ "kind": "supervisor" });
     }
     match string_field(session, "worktreePath") {
         Some(worktree_path) => json!({ "kind": "worktree", "worktreePath": worktree_path }),
         None => json!({ "kind": "worktree" }),
+    }
+}
+
+/// A stored lane only counts when it names a plane that exists. A worktree
+/// lane with no path is what the demotion path writes when it has no worktree
+/// to hand, and honouring that would move the agent into a plane with no
+/// identity instead of back to its checkout.
+fn stored_agent_lane(session: &Value) -> Option<Value> {
+    let lane = session.get("lane")?.as_object()?;
+    match lane.get("kind").and_then(Value::as_str)?.trim() {
+        "supervisor" => Some(json!({ "kind": "supervisor" })),
+        "worktree" => {
+            let worktree_path = lane
+                .get("worktreePath")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|path| !path.is_empty())?;
+            Some(json!({ "kind": "worktree", "worktreePath": worktree_path }))
+        }
+        _ => None,
     }
 }
 
@@ -446,6 +530,65 @@ mod tests {
         assert!(!is_overseer_session(Some(&session)));
         assert!(!is_project_control_session(Some(&session)));
         assert_eq!(project_control_display_role(Some(&session)), None);
+    }
+
+    #[test]
+    fn a_stored_plane_beats_the_role_flag_in_both_directions() {
+        // The plane is membership, not role. An ordinary agent must be able to
+        // sit in the supervisor plane, and an overseer must be able to sit in
+        // a worktree -- neither was expressible while the plane was derived
+        // from the project-control flag.
+        let coder_in_supervisor = json!({
+            "id": "coder",
+            "worktreePath": "/repo",
+            "lane": { "kind": "supervisor" }
+        });
+        assert_eq!(
+            agent_lane(Some(&coder_in_supervisor)),
+            json!({ "kind": "supervisor" })
+        );
+
+        let overseer_in_worktree = json!({
+            "id": "boss",
+            "overseer": true,
+            "worktreePath": "/repo",
+            "lane": { "kind": "worktree", "worktreePath": "/repo/.aimux/worktrees/feature" }
+        });
+        assert_eq!(
+            agent_lane(Some(&overseer_in_worktree)),
+            json!({ "kind": "worktree", "worktreePath": "/repo/.aimux/worktrees/feature" })
+        );
+        // Moving planes must not change what the agent IS.
+        assert!(is_overseer_session(Some(&overseer_in_worktree)));
+    }
+
+    #[test]
+    fn a_plane_that_names_nothing_falls_back_to_the_derived_one() {
+        // The demotion path used to store an empty worktree path. Honouring it
+        // would put the agent in a plane with no identity.
+        let empty = json!({
+            "id": "coder",
+            "worktreePath": "/repo",
+            "lane": { "kind": "worktree", "worktreePath": "  " }
+        });
+        assert_eq!(
+            agent_lane(Some(&empty)),
+            json!({ "kind": "worktree", "worktreePath": "/repo" })
+        );
+
+        let unknown = json!({
+            "id": "boss",
+            "overseer": true,
+            "worktreePath": "/repo",
+            "lane": { "kind": "nonsense" }
+        });
+        assert_eq!(agent_lane(Some(&unknown)), json!({ "kind": "supervisor" }));
+
+        let absent = json!({ "id": "coder", "worktreePath": "/repo" });
+        assert_eq!(
+            agent_lane(Some(&absent)),
+            json!({ "kind": "worktree", "worktreePath": "/repo" })
+        );
     }
 
     #[test]

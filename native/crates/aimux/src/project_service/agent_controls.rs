@@ -3,7 +3,9 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use crate::daemon_state::{MetadataState, metadata_state_path, mutate_metadata_state};
+use crate::daemon_state::{
+    MetadataState, load_metadata_state, metadata_state_path, mutate_metadata_state,
+};
 use crate::loop_watcher::{
     LoopAlertPauseProvenance, load_loop_watcher_state, loop_pause_key_from_loop_metadata,
     loop_watcher_state_path, save_loop_watcher_state,
@@ -52,6 +54,7 @@ pub fn route_agent_control_request(
         routes::agents::OVERSEER => Some(route_overseer(context, body)),
         routes::agents::SCRIBE => Some(route_scribe(context, body)),
         routes::agents::WATCH => Some(route_watch(context, body)),
+        routes::agents::PLANE => Some(route_plane(context, body)),
         _ => None,
     }
 }
@@ -555,6 +558,81 @@ fn route_scribe(
     body: &Value,
 ) -> ProjectServiceDispatchResponse {
     route_single_project_flag(context, body, "scribe")
+}
+
+/// Move an agent between planes. The plane is membership, independent of the
+/// agent's role and of where its working directory is, so this neither
+/// promotes nor relocates anything -- it only changes which group the agent
+/// is shown in.
+fn route_plane(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let lane = match body.get("lane") {
+        None | Some(Value::Null) => None,
+        Some(lane) => match normalize_requested_plane(lane) {
+            Some(lane) => Some(lane),
+            None => {
+                return json_error(
+                    400,
+                    "lane must be {\"kind\":\"supervisor\"} or {\"kind\":\"worktree\",\"worktreePath\":\"...\"}",
+                );
+            }
+        },
+    };
+    // Refuse an unknown session rather than writing a registry entry for an
+    // agent that does not exist and answering 200.
+    if !load_metadata_state(context.project_state_dir())
+        .sessions
+        .contains_key(&session_id)
+    {
+        return json_error(404, format!("unknown session {session_id}"));
+    }
+    let now = now_iso();
+    let transition = LifecycleTransitionInput::new("agent.plane", "agent")
+        .with_target_id(Some(session_id.clone()));
+    let lane_for_write = lane.clone();
+    let session_id_for_write = session_id.clone();
+    let state_dir = context.project_state_dir();
+    match context.lifecycle_mutations.enqueue(Some(transition), || {
+        crate::project_service::agent_roles::set_agent_plane(
+            state_dir,
+            &session_id_for_write,
+            lane_for_write.as_ref(),
+            &now,
+        )
+    }) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return json_error(500, error),
+        Err(error) => return json_error(500, error.message()),
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({ "ok": true, "sessionId": session_id, "lane": lane }),
+    )
+}
+
+/// Reject a lane that names no plane. A worktree lane with no path would put
+/// the agent in a group with no identity, which reads as "missing" on every
+/// surface rather than as an error here.
+fn normalize_requested_plane(lane: &Value) -> Option<Value> {
+    let lane = lane.as_object()?;
+    match lane.get("kind").and_then(Value::as_str)?.trim() {
+        "supervisor" => Some(json!({ "kind": "supervisor" })),
+        "worktree" => {
+            let worktree_path = lane
+                .get("worktreePath")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|path| !path.is_empty())?;
+            Some(json!({ "kind": "worktree", "worktreePath": worktree_path }))
+        }
+        _ => None,
+    }
 }
 
 fn route_single_project_flag(

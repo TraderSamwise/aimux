@@ -1522,7 +1522,26 @@ pub fn load_overseer_expose_item_with(
     append_focus_context_query(&mut query, context);
     let url = url_with_query(&endpoint, routes::controls::SWITCHABLE_AGENTS, query);
     let items = request_expose_items(&url, client)?;
-    Ok(first_supervisor_expose_item(&items, items.len()).cloned())
+    Ok(first_overseer_expose_item(&items).cloned())
+}
+
+/// The overseer is a ROLE. Resolving it as "the first item in the supervisor
+/// plane" let any agent moved into that plane hijack the overseer jump --
+/// the plane is membership, not authority.
+fn expose_item_declares_overseer_role(item: &Value) -> bool {
+    item.get("roleState")
+        .and_then(|role_state| role_state.get("role"))
+        .or_else(|| item.get("role"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        == Some("overseer")
+        || item.get("overseer").and_then(Value::as_bool) == Some(true)
+}
+
+fn first_overseer_expose_item(items: &[Value]) -> Option<&Value> {
+    items
+        .iter()
+        .find(|item| expose_item_declares_overseer_role(item))
 }
 
 pub fn focus_expose_item_with(

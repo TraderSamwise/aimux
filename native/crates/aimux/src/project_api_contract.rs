@@ -66,6 +66,7 @@ pub mod routes {
         pub const OVERSEER: &str = "/agents/overseer";
         pub const SCRIBE: &str = "/agents/scribe";
         pub const WATCH: &str = "/agents/watch";
+        pub const PLANE: &str = "/agents/plane";
         pub const TEAMMATES: &str = "/agents/teammates";
         pub const CREATE_TEAMMATE: &str = "/agents/teammates/create";
         pub const CREATE_TEAMMATE_TASK: &str = "/agents/teammates/tasks";
@@ -344,6 +345,7 @@ pub fn project_api_views_for_mutation_route(
         | agents::OVERSEER
         | agents::SCRIBE
         | agents::WATCH
+        | agents::PLANE
         | live_pane::INTERRUPT
         | agents::CREATE_TEAMMATE
         | agents::STOP_TEAMMATE
@@ -450,6 +452,7 @@ pub fn collect_project_api_routes() -> Vec<&'static str> {
         agents::OVERSEER,
         agents::SCRIBE,
         agents::WATCH,
+        agents::PLANE,
         agents::TEAMMATES,
         agents::CREATE_TEAMMATE,
         agents::CREATE_TEAMMATE_TASK,

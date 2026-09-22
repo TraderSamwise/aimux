@@ -183,15 +183,12 @@ function isDashboardHiddenSession(session: DesktopSession, hasSupervisorLane: bo
   return isSupervisorLaneSession(session);
 }
 
+// Which lane a session is SHOWN in is its plane, not its role. Falling back to
+// projectControl meant an overseer moved out of the supervisor plane was
+// hidden from the supervisor lane by the server and from its worktree group by
+// this check, so it rendered in no lane at all.
 export function isSupervisorLaneSession(session: DesktopSession): boolean {
-  if (session.lane?.kind === "supervisor") return true;
-  return isDesktopProjectControlSession(session);
-}
-
-function isDesktopProjectControlSession(session: DesktopSession): boolean {
-  if (session.projectControl === true) return true;
-  if (session.projectControl === false) return false;
-  return false;
+  return session.lane?.kind === "supervisor";
 }
 
 function bucketFromServerGroup(

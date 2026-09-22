@@ -674,13 +674,18 @@ impl TmuxControl {
         }
         let items = payload.get("items")?.as_array()?;
         for item in items {
-            if item
+            // Jump to the OVERSEER, which is a role. Keying this on the
+            // supervisor plane made any agent moved into that plane hijack the
+            // overseer key -- the plane is membership, not authority.
+            let declares_overseer_role = item
                 .get("roleState")
-                .and_then(|role_state| role_state.get("lane"))
-                .and_then(|lane| lane.get("kind"))
+                .and_then(|role_state| role_state.get("role"))
+                .or_else(|| item.get("role"))
                 .and_then(Value::as_str)
-                != Some("supervisor")
-            {
+                .map(str::trim)
+                == Some("overseer")
+                || item.get("overseer").and_then(Value::as_bool) == Some(true);
+            if !declares_overseer_role {
                 continue;
             }
             let Some(target) = item.get("target").and_then(Value::as_object) else {
