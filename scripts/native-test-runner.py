@@ -490,10 +490,22 @@ def report_failures(results: list[TestResult]) -> None:
 
 
 def main() -> int:
-    apply_default_agent_cargo_target_dir()
+    # The classification check compiles nothing: it globs the tests directory
+    # and compares two text files. That is why the fast lane can run it, and
+    # why an unclassified target no longer has to wait for a CI cycle to be
+    # noticed.
+    classification_only = "--check-classification" in sys.argv[1:]
+    if not classification_only:
+        apply_default_agent_cargo_target_dir()
     parallel_targets = set(read_list(PARALLEL_TARGETS))
     serial_targets = read_serial(SERIAL_TARGETS)
     validate_classification(parallel_targets, set(serial_targets))
+    if classification_only:
+        print(
+            f"native test classification ok: "
+            f"{len(parallel_targets)} parallel, {len(serial_targets)} serial"
+        )
+        return 0
 
     with native_test_slot("native:test"):
         return run_native_tests(parallel_targets, serial_targets)

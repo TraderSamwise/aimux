@@ -14,6 +14,7 @@ context_compactor
 core_text
 daemon_access
 daemon_auth
+daemon_coherence_doctor
 daemon_collaboration
 daemon_disk_doctor
 daemon_host_agent
