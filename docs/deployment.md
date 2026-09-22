@@ -319,6 +319,11 @@ release-day check:
 
 ```bash
 brew update
+brew tap TraderSamwise/aimux
+# Current Homebrew refuses third-party formulas from untrusted taps, including
+# the companion aimux-local formula the tap metadata references. README.md
+# documents this for users; the check has to do it too or it tests nothing.
+brew trust TraderSamwise/aimux
 brew fetch aimux
 brew fetch aimux-local
 brew install aimux
