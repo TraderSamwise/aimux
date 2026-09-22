@@ -28,8 +28,64 @@ use super::usage::{MarkLastUsedOptions, load_last_used_state, mark_last_used};
 const LIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle"];
 const LIVE_SERVICE_STATUSES: &[&str] = &["starting", "running"];
 
+/// Asks tmux which windows this project's managed session owns. Returns an
+/// error rather than `false` when tmux cannot be reached: refusing to focus is
+/// correct, but silently reporting "not ours" would hide a broken runtime.
+/// Async twin of `project_owns_window` for the async control routes, so the
+/// tmux query never blocks inside a task.
+async fn project_owns_window_async(project_root: &Path, window_id: &str) -> Result<bool, String> {
+    let session_name = crate::tmux::project_session(project_root, "aimux").session_name;
+    let mut command: AsyncCommand = tmux_command_from_env();
+    command.args(crate::tmux::list_windows_argv(&session_name));
+    let output = command
+        .output_timeout_async(Duration::from_secs(5))
+        .await
+        .map_err(|error| format!("could not list windows for {session_name}: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(format!(
+            "could not list windows for {session_name}: {}",
+            if stderr.is_empty() {
+                "tmux failed".to_owned()
+            } else {
+                stderr
+            }
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(window_ids_from_list_windows(&text).any(|id| id == window_id))
+}
+
+/// `list-windows` lines start with the window id field emitted by
+/// `list_windows_argv`; only the id is needed to decide ownership.
+fn window_ids_from_list_windows(text: &str) -> impl Iterator<Item = &str> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| line.split_whitespace().find(|part| part.starts_with('@')))
+}
+
+fn project_owns_window(project_root: &Path, window_id: &str) -> Result<bool, String> {
+    let session_name = crate::tmux::project_session(project_root, "aimux").session_name;
+    let mut tmux = crate::tmux::TmuxRuntimeManager::new();
+    let windows = tmux
+        .list_windows(&session_name)
+        .map_err(|error| format!("could not list windows for {session_name}: {error}"))?;
+    Ok(windows.into_iter().any(|window| window.id == window_id))
+}
+
 pub trait ProjectControlRuntime {
     fn focus_target(&mut self, target: &Value, client_tty: Option<&str>) -> Result<(), String>;
+
+    /// Whether `window_id` currently lives in this project's managed tmux
+    /// session. tmux reassigns window ids from scratch when its server
+    /// restarts, so a persisted id can come back owned by a different
+    /// project. A failure to ask tmux is an error, never "not ours".
+    fn window_belongs_to_project(
+        &mut self,
+        project_root: &Path,
+        window_id: &str,
+    ) -> Result<bool, String>;
 }
 
 pub struct SystemProjectControlRuntime;
@@ -45,6 +101,14 @@ impl ProjectControlRuntime for SystemProjectControlRuntime {
         };
         run_tmux_argv(argv, format!("failed to focus window {window_id}"))
     }
+
+    fn window_belongs_to_project(
+        &mut self,
+        project_root: &Path,
+        window_id: &str,
+    ) -> Result<bool, String> {
+        project_owns_window(project_root, window_id)
+    }
 }
 
 pub trait AsyncProjectControlRuntime {
@@ -53,6 +117,16 @@ pub trait AsyncProjectControlRuntime {
         target: &'a Value,
         client_tty: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+    /// See `ProjectControlRuntime::window_belongs_to_project`. Deliberately has
+    /// no default: a default that reaches real tmux would silently make every
+    /// test double talk to the developer's machine. Async so the tmux query
+    /// does not block inside the task.
+    fn window_belongs_to_project<'a>(
+        &'a mut self,
+        project_root: &'a Path,
+        window_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, String>> + Send + 'a>>;
 }
 
 pub struct SystemAsyncProjectControlRuntime;
@@ -64,6 +138,14 @@ impl AsyncProjectControlRuntime for SystemAsyncProjectControlRuntime {
         client_tty: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(focus_target_async(target, client_tty))
+    }
+
+    fn window_belongs_to_project<'a>(
+        &'a mut self,
+        project_root: &'a Path,
+        window_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, String>> + Send + 'a>> {
+        Box::pin(project_owns_window_async(project_root, window_id))
     }
 }
 
@@ -402,6 +484,22 @@ fn route_focus_window<R: ProjectControlRuntime>(
     let Some(item) = model.find_window(context, window_id) else {
         return json_response(404, control_error_body(&model, "window not found"));
     };
+    match runtime.window_belongs_to_project(context.project_root(), window_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            return json_response(
+                409,
+                json!({
+                    "ok": false,
+                    "error": format!(
+                        "window {window_id} is no longer this project's window; the recorded id is stale"
+                    ),
+                    "staleWindowId": window_id,
+                }),
+            );
+        }
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    }
     open_control_item(
         context.project_state_dir(),
         runtime,
@@ -426,6 +524,25 @@ async fn route_focus_window_async<R: AsyncProjectControlRuntime>(
     let Some(item) = model.find_window(context, window_id) else {
         return json_response(404, control_error_body(&model, "window not found"));
     };
+    match runtime
+        .window_belongs_to_project(context.project_root(), window_id)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return json_response(
+                409,
+                json!({
+                    "ok": false,
+                    "error": format!(
+                        "window {window_id} is no longer this project's window; the recorded id is stale"
+                    ),
+                    "staleWindowId": window_id,
+                }),
+            );
+        }
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    }
     open_control_item_async(
         context.project_state_dir(),
         runtime,

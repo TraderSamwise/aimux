@@ -21,15 +21,32 @@ mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Default)]
 struct FakeControlRuntime {
     focused: RefCell<Vec<Value>>,
+    ownership: Result<bool, String>,
+}
+
+impl Default for FakeControlRuntime {
+    fn default() -> Self {
+        Self {
+            focused: RefCell::new(Vec::new()),
+            ownership: Ok(true),
+        }
+    }
 }
 
 impl ProjectControlRuntime for FakeControlRuntime {
     fn focus_target(&mut self, target: &Value, _client_tty: Option<&str>) -> Result<(), String> {
         self.focused.borrow_mut().push(target.clone());
         Ok(())
+    }
+
+    fn window_belongs_to_project(
+        &mut self,
+        _project_root: &std::path::Path,
+        _window_id: &str,
+    ) -> Result<bool, String> {
+        self.ownership.clone()
     }
 }
 
@@ -47,6 +64,15 @@ impl AsyncProjectControlRuntime for FakeAsyncControlRuntime {
         self.focused.borrow_mut().push(target.clone());
         Box::pin(async { Ok(()) })
     }
+
+    fn window_belongs_to_project<'a>(
+        &'a mut self,
+        _project_root: &'a std::path::Path,
+        _window_id: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>
+    {
+        Box::pin(async { Ok(true) })
+    }
 }
 
 struct PendingAsyncControlRuntime {
@@ -61,6 +87,15 @@ impl AsyncProjectControlRuntime for PendingAsyncControlRuntime {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         self.focus_started.store(true, Ordering::SeqCst);
         Box::pin(pending())
+    }
+
+    fn window_belongs_to_project<'a>(
+        &'a mut self,
+        _project_root: &'a std::path::Path,
+        _window_id: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>
+    {
+        Box::pin(async { Ok(true) })
     }
 }
 
@@ -140,6 +175,55 @@ fn open_notification_target_reports_live_target_and_offline_services() {
     assert_eq!(offline.status, 409);
     assert_eq!(offline.body["error"], "service is offline");
     assert_eq!(offline.body["itemId"], "svc-dead");
+    cleanup(project);
+}
+
+#[test]
+fn focus_window_refuses_a_window_id_another_project_now_owns() {
+    let project = temp_project("focus-window-stale-id");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    let context = fixture_context(&project, &state_dir);
+
+    // tmux reassigns window ids when its server restarts, so a persisted id can
+    // come back owned by a different project's session.
+    let mut runtime = FakeControlRuntime {
+        ownership: Ok(false),
+        ..FakeControlRuntime::default()
+    };
+    let response = route_control_request_with_runtime(
+        &context,
+        "POST",
+        routes::controls::FOCUS_WINDOW,
+        Some(&json!({ "windowId": "@1", "focus": true })),
+        &mut runtime,
+    )
+    .expect("control route");
+    assert_eq!(
+        response.status, 409,
+        "a stale window id must be refused, not focused into another project"
+    );
+    assert_eq!(
+        runtime.focused.borrow().len(),
+        0,
+        "nothing may be focused when the window is not ours"
+    );
+
+    // Not being able to ask tmux is an error, never a quiet "not ours".
+    let mut unreachable = FakeControlRuntime {
+        ownership: Err("tmux unavailable".into()),
+        ..FakeControlRuntime::default()
+    };
+    let response = route_control_request_with_runtime(
+        &context,
+        "POST",
+        routes::controls::FOCUS_WINDOW,
+        Some(&json!({ "windowId": "@1", "focus": true })),
+        &mut unreachable,
+    )
+    .expect("control route");
+    assert_eq!(response.status, 500);
+    assert_eq!(unreachable.focused.borrow().len(), 0);
     cleanup(project);
 }
 
