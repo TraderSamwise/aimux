@@ -3253,10 +3253,18 @@ impl ScriptedHttpServer {
     }
 }
 
+/// Read one request, or say plainly that it never arrived.
+///
+/// The deadline is generous because a loaded CI runner is the case this has to
+/// survive; an incomplete read is a panic naming what did arrive, never a
+/// truncated string handed to an assertion that then fails somewhere else.
+const SCRIPTED_REQUEST_DEADLINE: Duration = Duration::from_secs(10);
+
 fn read_http_request(stream: &mut TcpStream) -> String {
     stream
-        .set_read_timeout(Some(Duration::from_millis(20)))
+        .set_read_timeout(Some(Duration::from_millis(250)))
         .expect("set test request timeout");
+    let started = std::time::Instant::now();
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 1024];
     loop {
@@ -3264,7 +3272,10 @@ fn read_http_request(stream: &mut TcpStream) -> String {
             Ok(0) => break,
             Ok(count) => buffer.extend_from_slice(&chunk[..count]),
             Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
-                break;
+                if started.elapsed() >= SCRIPTED_REQUEST_DEADLINE {
+                    break;
+                }
+                continue;
             }
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
             Err(error) => panic!("read request: {error}"),
@@ -3273,7 +3284,12 @@ fn read_http_request(stream: &mut TcpStream) -> String {
             break;
         }
     }
-    String::from_utf8_lossy(&buffer).into_owned()
+    let request = String::from_utf8_lossy(&buffer).into_owned();
+    assert!(
+        request_is_complete(&buffer),
+        "scripted server never received a complete request within {SCRIPTED_REQUEST_DEADLINE:?}; got {request:?}"
+    );
+    request
 }
 
 fn request_http(
@@ -3357,20 +3373,59 @@ fn transient_http_client_error(error: &std::io::Error) -> bool {
         || error.raw_os_error() == Some(libc::EAGAIN)
 }
 
+/// A request with no `content-length` is complete once its headers are in.
+///
+/// Requiring the header made every GET unterminatable, so the read loop could
+/// only ever end by timing out — and a timeout returned whatever had arrived so
+/// far, including nothing. That is how a green suite turned red on a loaded CI
+/// runner with `left: Some(""), right: Some("GET")`.
 fn request_is_complete(buffer: &[u8]) -> bool {
     let Some(header_end) = find_header_end(buffer) else {
         return false;
     };
     let headers = String::from_utf8_lossy(&buffer[..header_end]);
-    let Some(content_length) = headers.lines().find_map(|line| {
+    let content_length = headers.lines().find_map(|line| {
         let (name, value) = line.split_once(':')?;
         name.eq_ignore_ascii_case("content-length")
             .then(|| value.trim().parse::<usize>().ok())
             .flatten()
-    }) else {
-        return false;
-    };
-    buffer.len() >= header_end + 4 + content_length
+    });
+    match content_length {
+        Some(content_length) => buffer.len() >= header_end + 4 + content_length,
+        None => true,
+    }
+}
+
+/// The defect that made the scripted server timing-dependent: a GET carries no
+/// `content-length`, so requiring that header meant no GET was ever "complete"
+/// and the read loop could only end by timing out. Under CI load the timeout
+/// won the race and the test asserted against an empty string.
+#[test]
+fn a_get_request_is_complete_once_its_headers_arrive() {
+    let get = b"GET /agents HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+
+    assert!(
+        request_is_complete(get),
+        "a GET must not depend on a read timeout to be recognised as complete"
+    );
+    assert!(
+        !request_is_complete(b"GET /agents HTTP/1.1\r\nHost: 127.0.0.1\r\n"),
+        "headers that have not finished arriving are not a complete request"
+    );
+}
+
+/// A body-carrying request still waits for the whole body.
+#[test]
+fn a_post_request_is_incomplete_until_its_body_arrives() {
+    let headers = b"POST /x HTTP/1.1\r\ncontent-length: 9\r\n\r\n";
+
+    assert!(!request_is_complete(headers));
+    assert!(!request_is_complete(
+        b"POST /x HTTP/1.1\r\ncontent-length: 9\r\n\r\nshort"
+    ));
+    assert!(request_is_complete(
+        b"POST /x HTTP/1.1\r\ncontent-length: 9\r\n\r\nnine char"
+    ));
 }
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
