@@ -11,6 +11,13 @@ on:
     tags:
       - "v*"
 
+# One CI run per ref. A tag push lands the branch and the tag together, which
+# fired two identical runs, and every superseded push kept running to
+# completion while a newer commit was already the answer.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TARGET_DIR: /tmp/aimux-cargo-target-ci
