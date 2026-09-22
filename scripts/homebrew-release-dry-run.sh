@@ -498,11 +498,9 @@ if [ -n "$BOTTLE_DIR" ]; then
 fi
 export TAG VERSION
 export DARWIN_ARM64="$(sha_for_or_placeholder aimux-darwin-arm64.tar.gz "$HOST_FULL_ASSET")"
-export DARWIN_X64="$(sha_for_or_placeholder aimux-darwin-x64.tar.gz "$HOST_FULL_ASSET")"
 export LINUX_ARM64="$(sha_for_or_placeholder aimux-linux-arm64.tar.gz "$HOST_FULL_ASSET")"
 export LINUX_X64="$(sha_for_or_placeholder aimux-linux-x64.tar.gz "$HOST_FULL_ASSET")"
 export LOCAL_DARWIN_ARM64="$(sha_for_or_placeholder aimux-local-darwin-arm64.tar.gz "$HOST_LOCAL_ASSET")"
-export LOCAL_DARWIN_X64="$(sha_for_or_placeholder aimux-local-darwin-x64.tar.gz "$HOST_LOCAL_ASSET")"
 export LOCAL_LINUX_ARM64="$(sha_for_or_placeholder aimux-local-linux-arm64.tar.gz "$HOST_LOCAL_ASSET")"
 export LOCAL_LINUX_X64="$(sha_for_or_placeholder aimux-local-linux-x64.tar.gz "$HOST_LOCAL_ASSET")"
 

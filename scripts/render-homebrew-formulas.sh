@@ -13,8 +13,8 @@ Renders Formula/aimux.rb and Formula/aimux-local.rb from release metadata.
 
 Required environment:
   TAG, VERSION
-  DARWIN_ARM64, DARWIN_X64, LINUX_ARM64, LINUX_X64
-  LOCAL_DARWIN_ARM64, LOCAL_DARWIN_X64, LOCAL_LINUX_ARM64, LOCAL_LINUX_X64
+  DARWIN_ARM64, LINUX_ARM64, LINUX_X64
+  LOCAL_DARWIN_ARM64, LOCAL_LINUX_ARM64, LOCAL_LINUX_X64
 
 Optional environment:
   AIMUX_HOMEBREW_FORMULA_DIR  Output directory, default tap/Formula
@@ -48,8 +48,8 @@ need_env() {
 
 for name in \
   TAG VERSION \
-  DARWIN_ARM64 DARWIN_X64 LINUX_ARM64 LINUX_X64 \
-  LOCAL_DARWIN_ARM64 LOCAL_DARWIN_X64 LOCAL_LINUX_ARM64 LOCAL_LINUX_X64
+  DARWIN_ARM64 LINUX_ARM64 LINUX_X64 \
+  LOCAL_DARWIN_ARM64 LOCAL_LINUX_ARM64 LOCAL_LINUX_X64
 do
   need_env "$name"
 done
@@ -145,10 +145,6 @@ ${AIMUX_BOTTLE_BLOCK}
       url "${BASE_URL}/aimux-darwin-arm64.tar.gz"
       sha256 "${DARWIN_ARM64}"
     end
-    on_intel do
-      url "${BASE_URL}/aimux-darwin-x64.tar.gz"
-      sha256 "${DARWIN_X64}"
-    end
   end
 
   on_linux do
@@ -187,10 +183,6 @@ ${AIMUX_LOCAL_BOTTLE_BLOCK}
     on_arm do
       url "${BASE_URL}/aimux-local-darwin-arm64.tar.gz"
       sha256 "${LOCAL_DARWIN_ARM64}"
-    end
-    on_intel do
-      url "${BASE_URL}/aimux-local-darwin-x64.tar.gz"
-      sha256 "${LOCAL_DARWIN_X64}"
     end
   end
 

@@ -17,8 +17,8 @@ formula with `brew install --build-bottle`, then running `brew bottle`.
 Required environment is the same release metadata used by
 scripts/render-homebrew-formulas.sh:
   TAG, VERSION
-  DARWIN_ARM64, DARWIN_X64, LINUX_ARM64, LINUX_X64
-  LOCAL_DARWIN_ARM64, LOCAL_DARWIN_X64, LOCAL_LINUX_ARM64, LOCAL_LINUX_X64
+  DARWIN_ARM64, LINUX_ARM64, LINUX_X64
+  LOCAL_DARWIN_ARM64, LOCAL_LINUX_ARM64, LOCAL_LINUX_X64
 
 Optional environment:
   AIMUX_HOMEBREW_BASE_URL          Source asset URL prefix

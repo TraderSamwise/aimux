@@ -2485,9 +2485,12 @@ describe("release workflow", () => {
     const tapJob = workflow.slice(workflow.indexOf("  update-homebrew-tap:"));
     const linuxHomebrewJob = workflow.slice(workflow.indexOf("  linux-homebrew-installed-command:"));
     expect(npmJob).toContain("needs: verify-release-assets");
-    expect(assetJob).toContain("asset: aimux-darwin-x64");
-    expect(assetJob).toContain("asset: aimux-local-darwin-x64");
-    expect(assetJob).toContain("runner: macos-15-intel");
+    // Intel Mac assets were dropped: the sole consumer is on Apple Silicon and
+    // macos-15-intel was ~70% of each release's macOS minutes.
+    expect(assetJob).toContain("asset: aimux-darwin-arm64");
+    expect(assetJob).toContain("asset: aimux-local-darwin-arm64");
+    expect(assetJob).not.toContain("macos-15-intel");
+    expect(workflow).not.toContain("darwin-x64");
     expect(workflow).toContain("  homebrew-bottles:");
     expect(workflow).toContain("scripts/build-homebrew-bottle.sh");
     expect(workflow).toContain("homebrew-bottles/*.bottle.tar.gz");

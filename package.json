@@ -16,7 +16,6 @@
     "scripts/tmux-open-hyperlink.sh",
     "scripts/tmux-statusline.sh",
     "native/darwin-arm64",
-    "native/darwin-x64",
     "LICENSE",
     "README.md"
   ],

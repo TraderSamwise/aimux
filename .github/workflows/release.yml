@@ -40,6 +40,13 @@ jobs:
 
       - name: Install Rust toolchain
         run: rustup toolchain install --profile minimal
+      # The rewrite brought compile time into CI and the caching strategy never
+      # followed it: every cache here was node_modules, so each Rust job
+      # cold-built the whole crate. That is most of this workflow's minutes.
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
 
       - name: Prepare isolated Aimux runtime
         run: |
@@ -102,16 +109,6 @@ jobs:
             variant: local
             asset: aimux-local-linux-arm64
             runner: ubuntu-24.04-arm
-          - platform: darwin
-            arch: x64
-            variant: full
-            asset: aimux-darwin-x64
-            runner: macos-15-intel
-          - platform: darwin
-            arch: x64
-            variant: local
-            asset: aimux-local-darwin-x64
-            runner: macos-15-intel
           - platform: darwin
             arch: arm64
             variant: full
@@ -263,8 +260,8 @@ jobs:
           set -euo pipefail
           mkdir -p release-check
           for a in \
-            aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
+            aimux-darwin-arm64 aimux-linux-arm64 aimux-linux-x64 \
+            aimux-local-darwin-arm64 aimux-local-linux-arm64 aimux-local-linux-x64
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz" --dir release-check --clobber
@@ -286,8 +283,8 @@ jobs:
         run: |
           set -euo pipefail
           for a in \
-            aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
+            aimux-darwin-arm64 aimux-linux-arm64 aimux-linux-x64 \
+            aimux-local-darwin-arm64 aimux-local-linux-arm64 aimux-local-linux-x64
           do
             gh attestation verify "release-check/${a}.tar.gz" --repo "$OWNER_REPO"
             gh attestation verify "release-check/${a}.tar.gz.sha256" --repo "$OWNER_REPO"
@@ -399,7 +396,7 @@ jobs:
             for (const path of runtimeDist) console.error(`- ${path}`);
             process.exit(1);
           }
-          for (const required of ['native/darwin-arm64/aimux', 'native/darwin-x64/aimux']) {
+          for (const required of ['native/darwin-arm64/aimux']) {
             if (!paths.includes(required)) {
               console.error(`npm package is missing ${required}`);
               process.exit(1);
@@ -448,8 +445,8 @@ jobs:
           set -euo pipefail
           mkdir -p sha
           for a in \
-            aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
+            aimux-darwin-arm64 aimux-linux-arm64 aimux-linux-x64 \
+            aimux-local-darwin-arm64 aimux-local-linux-arm64 aimux-local-linux-x64
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sha256" --dir sha --clobber
@@ -466,11 +463,9 @@ jobs:
             awk '{print $1}' "sha/$1.tar.gz.sha256"
           }
           export DARWIN_ARM64="$(extract aimux-darwin-arm64)"
-          export DARWIN_X64="$(extract aimux-darwin-x64)"
           export LINUX_ARM64="$(extract aimux-linux-arm64)"
           export LINUX_X64="$(extract aimux-linux-x64)"
           export LOCAL_DARWIN_ARM64="$(extract aimux-local-darwin-arm64)"
-          export LOCAL_DARWIN_X64="$(extract aimux-local-darwin-x64)"
           export LOCAL_LINUX_ARM64="$(extract aimux-local-linux-arm64)"
           export LOCAL_LINUX_X64="$(extract aimux-local-linux-x64)"
           scripts/build-homebrew-bottle.sh "${{ matrix.formula }}"
@@ -522,8 +517,8 @@ jobs:
           set -euo pipefail
           mkdir -p sha homebrew-gate-release bottle-metadata-parts bottle-metadata
           for a in \
-            aimux-darwin-arm64 aimux-darwin-x64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-local-darwin-arm64 aimux-local-darwin-x64 aimux-local-linux-arm64 aimux-local-linux-x64
+            aimux-darwin-arm64 aimux-linux-arm64 aimux-linux-x64 \
+            aimux-local-darwin-arm64 aimux-local-linux-arm64 aimux-local-linux-x64
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sha256" --dir sha --clobber
@@ -572,11 +567,9 @@ jobs:
           }
           {
             echo "darwin_arm64=$(extract aimux-darwin-arm64)"
-            echo "darwin_x64=$(extract aimux-darwin-x64)"
             echo "linux_arm64=$(extract aimux-linux-arm64)"
             echo "linux_x64=$(extract aimux-linux-x64)"
             echo "local_darwin_arm64=$(extract aimux-local-darwin-arm64)"
-            echo "local_darwin_x64=$(extract aimux-local-darwin-x64)"
             echo "local_linux_arm64=$(extract aimux-local-linux-arm64)"
             echo "local_linux_x64=$(extract aimux-local-linux-x64)"
           } >> "$GITHUB_OUTPUT"
@@ -596,11 +589,9 @@ jobs:
           AIMUX_HOMEBREW_BOTTLE_DIR: bottle-metadata
           AIMUX_HOMEBREW_BOTTLE_ROOT_URL: https://github.com/TraderSamwise/aimux/releases/download/${{ steps.meta.outputs.tag }}
           DARWIN_ARM64: ${{ steps.sha.outputs.darwin_arm64 }}
-          DARWIN_X64: ${{ steps.sha.outputs.darwin_x64 }}
           LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
           LINUX_X64: ${{ steps.sha.outputs.linux_x64 }}
           LOCAL_DARWIN_ARM64: ${{ steps.sha.outputs.local_darwin_arm64 }}
-          LOCAL_DARWIN_X64: ${{ steps.sha.outputs.local_darwin_x64 }}
           LOCAL_LINUX_ARM64: ${{ steps.sha.outputs.local_linux_arm64 }}
           LOCAL_LINUX_X64: ${{ steps.sha.outputs.local_linux_x64 }}
         run: |

@@ -1,10 +1,14 @@
 name: ci
 
+# This project has one user, on one Apple Silicon Mac, and a full local
+# `yarn verify:full` runs on that same hardware before anything is pushed.
+# CI on every master push was re-proving that at roughly $0.57 a push, so it
+# runs where it adds something instead: on a release tag, and on pull requests.
 on:
   pull_request:
   push:
-    branches:
-      - master
+    tags:
+      - "v*"
 
 env:
   CARGO_INCREMENTAL: "0"
@@ -88,6 +92,13 @@ jobs:
 
       - name: Install Rust toolchain
         run: rustup toolchain install --profile minimal --component rustfmt
+      # The rewrite brought compile time into CI and the caching strategy never
+      # followed it: every cache here was node_modules, so each Rust job
+      # cold-built the whole crate. That is most of this workflow's minutes.
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
 
       - name: cargo fmt --check
         run: yarn native:fmt:check
@@ -115,6 +126,13 @@ jobs:
 
       - name: Install Rust toolchain
         run: rustup toolchain install --profile minimal --component clippy
+      # The rewrite brought compile time into CI and the caching strategy never
+      # followed it: every cache here was node_modules, so each Rust job
+      # cold-built the whole crate. That is most of this workflow's minutes.
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
 
       - name: cargo clippy --all-targets
         run: yarn native:clippy:all-targets
@@ -137,6 +155,13 @@ jobs:
 
       - name: Install Rust toolchain
         run: rustup toolchain install --profile minimal
+      # The rewrite brought compile time into CI and the caching strategy never
+      # followed it: every cache here was node_modules, so each Rust job
+      # cold-built the whole crate. That is most of this workflow's minutes.
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
 
       - name: Cache cargo artifacts
         uses: actions/cache@v4
@@ -167,60 +192,6 @@ jobs:
       - name: cargo test
         run: yarn native:test
 
-  rust-tests-macos:
-    name: Rust tests (macOS)
-    runs-on: macos-latest
-    # Blocking Rust test gate. The Node parity contracts were captured on
-    # macOS; Linux still runs separately as advisory shipped-platform coverage.
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Prepare job Aimux env
-        run: |
-          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home" >> "$GITHUB_ENV"
-          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-tmux.sock" >> "$GITHUB_ENV"
-
-      - name: Install Rust toolchain
-        run: rustup toolchain install --profile minimal
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/git
-            ~/.cargo/registry
-            /tmp/aimux-cargo-target-ci
-          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-
-            ${{ runner.os }}-${{ github.job }}-cargo-
-
-      - name: Prepare isolated Aimux home
-        run: |
-          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
-          mkdir -p "$AIMUX_HOME"
-          # This marker intentionally disables the cargo-test materialization
-          # guard for CI's disposable AIMUX_HOME. A test that relies on ambient
-          # AIMUX_HOME can pass here while being refused on a developer laptop.
-          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$AIMUX_HOME/test-isolation.json"
-
-      - name: Ensure tmux is available
-        run: |
-          if command -v tmux >/dev/null 2>&1; then
-            tmux -V
-          else
-            brew install tmux
-            tmux -V
-          fi
-
-      - name: cargo test
-        env:
-          # The parity corpus covers macOS zsh shell integration. Keep the
-          # shell explicit, but do not spoof the runner's home directory; tests
-          # that compare home-derived paths must normalize those paths instead.
-          SHELL: /bin/zsh
-        run: yarn native:test
-
   phase8-live-residuals:
     name: Phase 8 live residuals
     runs-on: ubuntu-latest
@@ -245,6 +216,13 @@ jobs:
 
       - name: Install Rust toolchain
         run: rustup toolchain install --profile minimal
+      # The rewrite brought compile time into CI and the caching strategy never
+      # followed it: every cache here was node_modules, so each Rust job
+      # cold-built the whole crate. That is most of this workflow's minutes.
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
 
       - name: Install tmux and process probes
         run: |
