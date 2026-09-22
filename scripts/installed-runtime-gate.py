@@ -238,15 +238,13 @@ def write_config(scope: Any) -> None:
             """\
             #!/bin/sh
             root="$(cd "$(dirname "$0")/.." && pwd)"
-            count_file="$root/transcript-count"
-            count=0
-            if [ -f "$count_file" ]; then
-              count="$(cat "$count_file" 2>/dev/null || printf 0)"
-            fi
-            next=$((count + 1))
-            printf '%s\\n' "$next" > "$count_file"
-            fixture="mixed"
-            if [ "$count" -gt 0 ] && [ ! -f "$root/transcript-no-genuine" ]; then
+            # mkdir is atomic: read-then-write on a counter file let both
+            # agents read 0 under load and claim the same fixture.
+            if mkdir "$root/transcript-claim" 2>/dev/null; then
+              fixture="mixed"
+            elif [ -f "$root/transcript-no-genuine" ]; then
+              fixture="mixed"
+            else
               fixture="genuine"
             fi
             if [ "$fixture" = "genuine" ]; then
@@ -618,8 +616,18 @@ def check_transcript_projection(phase8: Any, aimux_bin: Path, mutation: str | No
             (scope.root / "transcript-no-genuine").write_text("1\n", encoding="utf-8")
         genuine_session = spawn_session(scope, "claude")
         endpoint = project_endpoint(phase8, scope)
-        wait_until("chrome transcript output", 10, 0.25, lambda: "What did Sam ask us to prove?" in read_session(scope, chrome_session))
-        wait_until("genuine transcript output", 10, 0.25, lambda: "Press up to edit queued messages" in read_session(scope, genuine_session))
+        sessions = (chrome_session, genuine_session)
+        # Whichever agent process starts first claims the chrome fixture, and on
+        # a loaded machine that is not the spawn order. Wait for both, then name
+        # them by what they actually rendered.
+        wait_until(
+            "both transcript outputs",
+            20,
+            0.25,
+            lambda: all("Press up to edit queued messages" in read_session(scope, session) for session in sessions),
+        )
+        if "What did Sam ask us to prove?" not in read_session(scope, chrome_session):
+            chrome_session, genuine_session = genuine_session, chrome_session
         chrome_payload = agent_output(endpoint, chrome_session)
         genuine_payload = agent_output(endpoint, genuine_session)
         chrome_user = "\n".join(message_texts(chrome_payload, "user"))
