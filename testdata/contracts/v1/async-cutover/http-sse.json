@@ -231,6 +231,11 @@
                 "name": "transcript-reconciler",
                 "intervalMs": "<interval-ms-or-null>",
                 "hot": false
+              },
+              {
+                "name": "window-reconciliation",
+                "intervalMs": "<interval-ms-or-null>",
+                "hot": false
               }
             ]
           }
@@ -581,6 +586,11 @@
                 },
                 {
                   "name": "transcript-reconciler",
+                  "intervalMs": "<interval-ms-or-null>",
+                  "hot": false
+                },
+                {
+                  "name": "window-reconciliation",
                   "intervalMs": "<interval-ms-or-null>",
                   "hot": false
                 }

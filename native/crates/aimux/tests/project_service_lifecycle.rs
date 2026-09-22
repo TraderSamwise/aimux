@@ -2603,10 +2603,13 @@ fn service_lifecycle_status_surfaces_in_gui_read_models() {
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
     move_fixture_service_to_project_root(&state_dir, &project);
+    // Resume creates the window in this project's own tmux session, not the
+    // fixture's "aimux", and liveness is keyed on the window's session.
+    let resumed_session = aimux::tmux::project_session(&project, "aimux").session_name;
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
         .with_live_windows(LiveWindowIndex::from_pairs([
-            ("@service", "aimux"),
-            ("@11", "aimux"),
+            ("@service".to_owned(), "aimux".to_owned()),
+            ("@11".to_owned(), resumed_session),
         ]));
     let mut runtime = FakeLifecycleRuntime::default();
 

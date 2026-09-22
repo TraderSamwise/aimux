@@ -725,7 +725,7 @@ fn native_daemon_expose_focus_resolves_global_item_and_delegates_tmux_focus() {
     )
     .expect("write topology");
     let mut fake = FakeExposeFocusRuntime {
-        live_window_ids: LiveWindowIndex::from_pairs([("@7", "aimux-repo")]),
+        live_window_ids: LiveWindowIndex::from_pairs([("@7", "aimux-focus")]),
         clients: vec![TmuxClientInfo {
             tty: "/dev/ttys123".into(),
             session_name: "client-session".into(),
