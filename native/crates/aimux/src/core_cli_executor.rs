@@ -429,13 +429,15 @@ impl CoreCliRuntime for RealCoreCliRuntime {
     }
 
     fn runtime_migration_audit(&self, project_root: &str) -> Result<String, String> {
-        let report = build_runtime_migration_report(project_root, None);
+        let mut resolver = crate::paths::PathResolver::from_env();
+        let report = build_runtime_migration_report(&mut resolver, project_root, None);
         render_runtime_migration_report(&report).map_err(|error| error.to_string())
     }
 
     fn runtime_migration_import(&self, project_root: &str) -> Result<String, String> {
-        let result =
-            import_runtime_migration(project_root, None).map_err(|error| error.to_string())?;
+        let mut resolver = crate::paths::PathResolver::from_env();
+        let result = import_runtime_migration(&mut resolver, project_root, None)
+            .map_err(|error| error.to_string())?;
         render_runtime_migration_import_result(&result).map_err(|error| error.to_string())
     }
 

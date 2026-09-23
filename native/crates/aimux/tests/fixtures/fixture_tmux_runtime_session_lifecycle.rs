@@ -23,7 +23,7 @@ fn fixture_tmux_runtime_session_lifecycle_matches_typescript_contract() {
 
     let mut failures = Vec::new();
     for case in cases {
-        let actual = with_contract_env(|| run_case(case));
+        let actual = run_case(case);
         if actual != case["output"] {
             failures.push(json!({
                 "id": case["id"],
@@ -40,33 +40,6 @@ fn fixture_tmux_runtime_session_lifecycle_matches_typescript_contract() {
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
-}
-
-fn with_contract_env(run: impl FnOnce() -> Value) -> Value {
-    let previous_home = std::env::var("AIMUX_HOME").ok();
-    let previous_host = std::env::var("AIMUX_DAEMON_HOST").ok();
-    let previous_port = std::env::var("AIMUX_DAEMON_PORT").ok();
-    unsafe {
-        std::env::set_var("AIMUX_HOME", "/tmp/aimux-contract-home");
-        std::env::set_var("AIMUX_DAEMON_HOST", "");
-        std::env::set_var("AIMUX_DAEMON_PORT", "54321");
-    }
-    let output = run();
-    unsafe {
-        match previous_home {
-            Some(value) => std::env::set_var("AIMUX_HOME", value),
-            None => std::env::remove_var("AIMUX_HOME"),
-        }
-        match previous_host {
-            Some(value) => std::env::set_var("AIMUX_DAEMON_HOST", value),
-            None => std::env::remove_var("AIMUX_DAEMON_HOST"),
-        }
-        match previous_port {
-            Some(value) => std::env::set_var("AIMUX_DAEMON_PORT", value),
-            None => std::env::remove_var("AIMUX_DAEMON_PORT"),
-        }
-    }
-    output
 }
 
 #[derive(Debug, Default)]
@@ -240,6 +213,10 @@ fn lifecycle_config() -> TmuxRuntimeConfig {
             args: vec!["<repo>/scripts/tmux-statusline.sh".to_owned()],
         },
         runtime_owner_id: r#"{"home":"<aimux-home>","port":"54321"}"#.to_owned(),
+        // Stated, not inherited. This used to come from a process-wide
+        // AIMUX_HOME set while ~25 sibling fixtures ran in parallel threads of
+        // the same test binary, which is a data race they all shared.
+        control_plane_args: "--aimux-home '<aimux-home>' --daemon-port '54321'".to_owned(),
     }
 }
 
@@ -271,8 +248,7 @@ fn normalize(value: Value) -> Value {
 
 fn normalize_text(text: &str) -> String {
     let mut output = String::new();
-    let home_normalized = text.replace("/tmp/aimux-contract-home", "<aimux-home>");
-    let mut rest = home_normalized.as_str();
+    let mut rest = text;
     while let Some(index) = rest.find("/aimux-tmux-") {
         let before = &rest[..index];
         let path_start = before

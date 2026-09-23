@@ -1,0 +1,30 @@
+{
+  "$comment": "Places that mutate a runtime-identity variable process-wide. Entries are scoped to one function, never a whole file. Every entry needs a reason. A test that only needs its own home should state it through an explicit seam instead: PathResolver::new, TmuxRuntimeConfig.control_plane_args, or the child process's own env.",
+  "entries": [
+    {
+      "file": "native/crates/aimux/src/launcher_env.rs",
+      "function": "prepare_stable_process_env",
+      "reason": "Production startup. It runs in main before Aimux creates worker threads, which is the one point where a process-wide export has no reader to race."
+    },
+    {
+      "file": "native/crates/aimux/src/core_cli_executor.rs",
+      "function": "set",
+      "reason": "AimuxHomeEnvGuard, holding TEST_ENV_LOCK for the guard's lifetime. The loop self-report replay path resolves its home inside the call under test, so there is no seam to state it through yet."
+    },
+    {
+      "file": "native/crates/aimux/src/core_cli_executor.rs",
+      "function": "drop",
+      "reason": "The restore half of AimuxHomeEnvGuard, under the same held lock."
+    },
+    {
+      "file": "native/crates/aimux/tests/support/mod.rs",
+      "function": "set_process_env",
+      "reason": "The isolated-runtime harness. It starts real daemon and project-service child processes that read their home from the environment, and holds ENV_LOCK from setup until drop."
+    },
+    {
+      "file": "native/crates/aimux/tests/support/mod.rs",
+      "function": "drop",
+      "reason": "The restore half of the isolated-runtime harness, under the same held lock."
+    }
+  ]
+}

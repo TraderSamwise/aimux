@@ -61,22 +61,22 @@ pub fn build_runtime_exchange_from_legacy_snapshot(input: &Value) -> Value {
 }
 
 pub fn build_runtime_migration_report(
+    resolver: &mut PathResolver,
     cwd: impl AsRef<Path>,
     now: Option<&str>,
 ) -> RuntimeMigrationReport {
     let generated_at = now.map(str::to_owned).unwrap_or_else(now_iso);
-    let mut resolver = PathResolver::from_env();
     let paths = resolver.read_only_project_paths_for(cwd);
     build_runtime_migration_report_for_paths(paths, generated_at)
 }
 
 pub fn import_runtime_migration(
+    resolver: &mut PathResolver,
     cwd: impl AsRef<Path>,
     now: Option<&str>,
 ) -> Result<RuntimeMigrationImportResult> {
     let generated_at = now.map(str::to_owned).unwrap_or_else(now_iso);
     ensure_project_paths(cwd.as_ref())?;
-    let mut resolver = PathResolver::from_env();
     let paths = resolver.read_only_project_paths_for(cwd);
     let report = build_runtime_migration_report_for_paths(paths.clone(), generated_at.clone());
     let errors = report

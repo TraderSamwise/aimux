@@ -247,6 +247,9 @@ pub struct TmuxRuntimeConfig {
     pub control_script_command: String,
     pub statusline_command: TmuxCommandSpec,
     pub runtime_owner_id: String,
+    /// Which control plane the bound keys talk to. Resolved once where the
+    /// config is built, never re-read from process env while binding keys.
+    pub control_plane_args: String,
 }
 
 impl TmuxRuntimeManager {
@@ -1374,7 +1377,7 @@ impl TmuxRuntimeManager {
         self.bind_control_command("prefix", "p", true, &control_command("prev", ""))?;
         self.bind_control_command("prefix", "s", false, &control_command("menu", ""))?;
         self.bind_control_command("prefix", "u", false, &control_command("attention", ""))?;
-        let control_plane_args = control_plane_args();
+        let control_plane_args = config.control_plane_args.clone();
         self.bind_control_command(
             "prefix",
             "g",
@@ -3413,6 +3416,7 @@ fn default_runtime_config(project_root: &Path, project_root_text: &str) -> TmuxR
             args: vec!["__tmux-statusline-internal".to_owned()],
         },
         runtime_owner_id: runtime_owner_id(&mut resolver),
+        control_plane_args: control_plane_args(),
     }
 }
 
@@ -3834,6 +3838,7 @@ mod tests {
                         args: vec!["__tmux-statusline-internal".to_owned()],
                     },
                     runtime_owner_id: "test-owner".to_owned(),
+                    control_plane_args: String::new(),
                 },
             )
             .expect("configure managed session");

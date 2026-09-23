@@ -1847,6 +1847,7 @@ fn test_runtime_config() -> TmuxRuntimeConfig {
             args: vec!["scripts/tmux-statusline.sh".to_owned()],
         },
         runtime_owner_id: r#"{"home":"/aimux","port":"43190"}"#.to_owned(),
+        control_plane_args: "--aimux-home '/aimux' --daemon-port '43190'".to_owned(),
     }
 }
 

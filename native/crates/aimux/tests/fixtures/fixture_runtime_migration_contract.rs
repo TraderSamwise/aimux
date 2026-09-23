@@ -1,3 +1,4 @@
+use aimux::paths::PathResolver;
 use aimux::project_service::runtime_exchange::{
     empty_runtime_exchange, read_runtime_exchange, runtime_exchange_path, write_runtime_exchange,
 };
@@ -7,12 +8,8 @@ use aimux::runtime_migration::{
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{
-    Mutex,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const NOW: &str = "2026-05-26T00:00:00.000Z";
 const RUNTIME_MIGRATION: &str =
@@ -47,7 +44,6 @@ fn fixture_runtime_migration_matches_typescript() {
 }
 
 fn run_runtime_migration_case(input: &Value) -> Value {
-    let _lock = ENV_LOCK.lock().expect("env lock");
     let fixture = RuntimeMigrationFixture::new(input["scenario"].as_str().unwrap_or_default());
     let output = match input["scenario"].as_str().unwrap_or_default() {
         "global-history-report" => scenario_global_history_report(&fixture),
@@ -64,7 +60,6 @@ struct RuntimeMigrationFixture {
     root: PathBuf,
     repo: PathBuf,
     home: PathBuf,
-    previous_home: Option<String>,
 }
 
 impl RuntimeMigrationFixture {
@@ -79,20 +74,21 @@ impl RuntimeMigrationFixture {
         let home = root.join("home");
         fs::create_dir_all(repo.join(".git")).expect("create repo");
         fs::create_dir_all(&home).expect("create home");
-        let previous_home = std::env::var("AIMUX_HOME").ok();
-        unsafe {
-            std::env::set_var("AIMUX_HOME", &home);
-        }
-        Self {
-            root,
-            repo,
-            home,
-            previous_home,
-        }
+        Self { root, repo, home }
+    }
+
+    // The home is stated here rather than exported into the process. Twenty
+    // sibling fixture modules share this test binary and run in parallel.
+    fn resolver(&self) -> PathResolver {
+        PathResolver::new(
+            &self.repo,
+            &self.home,
+            Some(self.home.to_string_lossy().into_owned()),
+        )
     }
 
     fn project_state_dir(&self) -> PathBuf {
-        build_runtime_migration_report(&self.repo, Some(NOW))
+        build_runtime_migration_report(&mut self.resolver(), &self.repo, Some(NOW))
             .project
             .project_state_dir
             .into()
@@ -101,15 +97,6 @@ impl RuntimeMigrationFixture {
 
 impl Drop for RuntimeMigrationFixture {
     fn drop(&mut self) {
-        if let Some(previous_home) = &self.previous_home {
-            unsafe {
-                std::env::set_var("AIMUX_HOME", previous_home);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("AIMUX_HOME");
-            }
-        }
         let _ = fs::remove_dir_all(&self.root);
     }
 }
@@ -120,15 +107,15 @@ fn scenario_global_history_report(fixture: &RuntimeMigrationFixture) -> Value {
     fs::write(project_state_dir.join("history/codex-1.jsonl"), "{}\n").expect("write history");
     json!({
         "localHistoryExists": fixture.repo.join(".aimux/history/codex-1.jsonl").exists(),
-        "report": build_runtime_migration_report(&fixture.repo, Some(NOW)),
+        "report": build_runtime_migration_report(&mut fixture.resolver(), &fixture.repo, Some(NOW)),
     })
 }
 
 fn scenario_corrupt_legacy_thread(fixture: &RuntimeMigrationFixture) -> Value {
     fs::create_dir_all(fixture.repo.join(".aimux/threads")).expect("create threads");
     fs::write(fixture.repo.join(".aimux/threads/thread-1.json"), "{bad").expect("write bad");
-    let report = build_runtime_migration_report(&fixture.repo, Some(NOW));
-    let import_error = import_runtime_migration(&fixture.repo, Some(NOW))
+    let report = build_runtime_migration_report(&mut fixture.resolver(), &fixture.repo, Some(NOW));
+    let import_error = import_runtime_migration(&mut fixture.resolver(), &fixture.repo, Some(NOW))
         .err()
         .map(|error| error.to_string());
     json!({ "report": report, "importError": import_error })
@@ -147,7 +134,8 @@ fn scenario_import_and_rollback(fixture: &RuntimeMigrationFixture) -> Value {
     write_task(&fixture.repo);
     fs::write(project_state_dir.join("history/codex-1.jsonl"), "{}\n").expect("write history");
 
-    let result = import_runtime_migration(&fixture.repo, Some(NOW)).expect("import");
+    let result = import_runtime_migration(&mut fixture.resolver(), &fixture.repo, Some(NOW))
+        .expect("import");
     let manifest_path =
         project_state_dir.join("migration-backups/2026-05-26T00-00-00-000Z/manifest.json");
     let before_rollback = json!({
@@ -178,7 +166,8 @@ fn scenario_rollback_no_backup(fixture: &RuntimeMigrationFixture) -> Value {
     let exchange_path = runtime_exchange_path(&project_state_dir);
     fs::create_dir_all(fixture.repo.join(".aimux/threads")).expect("create threads");
     write_thread(&fixture.repo, "thread-1", "Task");
-    let result = import_runtime_migration(&fixture.repo, Some(NOW)).expect("import");
+    let result = import_runtime_migration(&mut fixture.resolver(), &fixture.repo, Some(NOW))
+        .expect("import");
     let manifest_path =
         project_state_dir.join("migration-backups/2026-05-26T00-00-00-000Z/manifest.json");
     let exchange_exists_before_rollback = exchange_path.exists();
@@ -211,8 +200,8 @@ fn scenario_blocked_existing_exchange(fixture: &RuntimeMigrationFixture) -> Valu
     ]);
     write_runtime_exchange(runtime_exchange_path(&project_state_dir), &exchange)
         .expect("write exchange");
-    let report = build_runtime_migration_report(&fixture.repo, Some(NOW));
-    let import_error = import_runtime_migration(&fixture.repo, Some(NOW))
+    let report = build_runtime_migration_report(&mut fixture.resolver(), &fixture.repo, Some(NOW));
+    let import_error = import_runtime_migration(&mut fixture.resolver(), &fixture.repo, Some(NOW))
         .err()
         .map(|error| error.to_string());
     json!({ "report": report, "importError": import_error })
@@ -264,7 +253,7 @@ fn import_result_value(result: &aimux::runtime_migration::RuntimeMigrationImport
 }
 
 fn normalize_value(value: Value, fixture: &RuntimeMigrationFixture) -> Value {
-    let report = build_runtime_migration_report(&fixture.repo, Some(NOW));
+    let report = build_runtime_migration_report(&mut fixture.resolver(), &fixture.repo, Some(NOW));
     let project_id = report.project.project_id;
     normalize_value_with_paths(value, fixture, &project_id)
 }

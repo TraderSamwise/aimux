@@ -1,3 +1,4 @@
+use aimux::paths::PathResolver;
 use aimux::project_service::runtime_exchange::{
     empty_runtime_exchange, read_runtime_exchange, runtime_exchange_path, write_runtime_exchange,
 };
@@ -8,14 +9,11 @@ use aimux::runtime_migration::{
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct Fixture {
     root: PathBuf,
     repo: PathBuf,
-    previous_home: Option<String>,
+    home: PathBuf,
 }
 
 impl Fixture {
@@ -29,19 +27,21 @@ impl Fixture {
         let home = root.join("home");
         fs::create_dir_all(repo.join(".git")).unwrap();
         fs::create_dir_all(&home).unwrap();
-        let previous_home = std::env::var("AIMUX_HOME").ok();
-        unsafe {
-            std::env::set_var("AIMUX_HOME", &home);
-        }
-        Self {
-            root,
-            repo,
-            previous_home,
-        }
+        Self { root, repo, home }
+    }
+
+    // The home is stated here rather than exported into the process, so these
+    // cases cannot race a sibling test that reads the ambient AIMUX_HOME.
+    fn resolver(&self) -> PathResolver {
+        PathResolver::new(
+            &self.repo,
+            &self.home,
+            Some(self.home.to_string_lossy().into_owned()),
+        )
     }
 
     fn project_state_dir(&self) -> PathBuf {
-        build_runtime_migration_report(&self.repo, Some(NOW))
+        build_runtime_migration_report(&mut self.resolver(), &self.repo, Some(NOW))
             .project
             .project_state_dir
             .into()
@@ -50,15 +50,6 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        if let Some(previous_home) = &self.previous_home {
-            unsafe {
-                std::env::set_var("AIMUX_HOME", previous_home);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("AIMUX_HOME");
-            }
-        }
         let _ = fs::remove_dir_all(&self.root);
     }
 }
@@ -67,12 +58,11 @@ const NOW: &str = "2026-05-26T00:00:00.000Z";
 
 #[test]
 fn reports_corrupt_legacy_files_and_blocks_import() {
-    let _lock = ENV_LOCK.lock().unwrap();
     let fixture = Fixture::new("corrupt");
     fs::create_dir_all(fixture.repo.join(".aimux/threads")).unwrap();
     fs::write(fixture.repo.join(".aimux/threads/thread-1.json"), "{bad").unwrap();
 
-    let report = build_runtime_migration_report(&fixture.repo, Some(NOW));
+    let report = build_runtime_migration_report(&mut fixture.resolver(), &fixture.repo, Some(NOW));
 
     assert_eq!(report.status, RuntimeMigrationStatus::Blocked);
     assert!(report.diagnostics.iter().any(|diagnostic| {
@@ -80,7 +70,7 @@ fn reports_corrupt_legacy_files_and_blocks_import() {
             && diagnostic.kind == RuntimeMigrationSourceKind::LegacyThread
     }));
     assert!(
-        import_runtime_migration(&fixture.repo, Some(NOW))
+        import_runtime_migration(&mut fixture.resolver(), &fixture.repo, Some(NOW))
             .unwrap_err()
             .to_string()
             .contains("blocked")
@@ -89,7 +79,6 @@ fn reports_corrupt_legacy_files_and_blocks_import() {
 
 #[test]
 fn imports_legacy_exchange_refs_and_writes_rollback_manifest() {
-    let _lock = ENV_LOCK.lock().unwrap();
     let fixture = Fixture::new("import");
     let project_state_dir = fixture.project_state_dir();
     let exchange_path = runtime_exchange_path(&project_state_dir);
@@ -133,7 +122,8 @@ fn imports_legacy_exchange_refs_and_writes_rollback_manifest() {
     .unwrap();
     fs::write(project_state_dir.join("history/codex-1.jsonl"), "{}\n").unwrap();
 
-    let result = import_runtime_migration(&fixture.repo, Some(NOW)).unwrap();
+    let result =
+        import_runtime_migration(&mut fixture.resolver(), &fixture.repo, Some(NOW)).unwrap();
     let manifest_path =
         project_state_dir.join("migration-backups/2026-05-26T00-00-00-000Z/manifest.json");
 
@@ -169,7 +159,6 @@ fn imports_legacy_exchange_refs_and_writes_rollback_manifest() {
 
 #[test]
 fn rollback_removes_imported_runtime_exchange_when_no_backup_existed() {
-    let _lock = ENV_LOCK.lock().unwrap();
     let fixture = Fixture::new("rollback-no-backup");
     let project_state_dir = fixture.project_state_dir();
     let exchange_path = runtime_exchange_path(&project_state_dir);
@@ -191,7 +180,7 @@ fn rollback_removes_imported_runtime_exchange_when_no_backup_existed() {
     )
     .unwrap();
 
-    import_runtime_migration(&fixture.repo, Some(NOW)).unwrap();
+    import_runtime_migration(&mut fixture.resolver(), &fixture.repo, Some(NOW)).unwrap();
     let manifest_path =
         project_state_dir.join("migration-backups/2026-05-26T00-00-00-000Z/manifest.json");
 
@@ -202,7 +191,6 @@ fn rollback_removes_imported_runtime_exchange_when_no_backup_existed() {
 
 #[test]
 fn blocks_import_when_authoritative_runtime_exchange_already_has_records() {
-    let _lock = ENV_LOCK.lock().unwrap();
     let fixture = Fixture::new("blocked-authoritative");
     let project_state_dir = fixture.project_state_dir();
     fs::create_dir_all(fixture.repo.join(".aimux/threads")).unwrap();
@@ -238,7 +226,7 @@ fn blocks_import_when_authoritative_runtime_exchange_already_has_records() {
     ]);
     write_runtime_exchange(runtime_exchange_path(&project_state_dir), &exchange).unwrap();
 
-    let report = build_runtime_migration_report(&fixture.repo, Some(NOW));
+    let report = build_runtime_migration_report(&mut fixture.resolver(), &fixture.repo, Some(NOW));
 
     assert_eq!(report.status, RuntimeMigrationStatus::Blocked);
     assert!(report.diagnostics.iter().any(|diagnostic| {
@@ -246,7 +234,7 @@ fn blocks_import_when_authoritative_runtime_exchange_already_has_records() {
             && diagnostic.kind == RuntimeMigrationSourceKind::RuntimeExchange
     }));
     assert!(
-        import_runtime_migration(&fixture.repo, Some(NOW))
+        import_runtime_migration(&mut fixture.resolver(), &fixture.repo, Some(NOW))
             .unwrap_err()
             .to_string()
             .contains("blocked")
@@ -255,13 +243,12 @@ fn blocks_import_when_authoritative_runtime_exchange_already_has_records() {
 
 #[test]
 fn does_not_copy_legacy_global_agent_dirs_during_report() {
-    let _lock = ENV_LOCK.lock().unwrap();
     let fixture = Fixture::new("readonly-report");
     let project_state_dir = fixture.project_state_dir();
     fs::create_dir_all(project_state_dir.join("history")).unwrap();
     fs::write(project_state_dir.join("history/codex-1.jsonl"), "{}\n").unwrap();
 
-    let report = build_runtime_migration_report(&fixture.repo, Some(NOW));
+    let report = build_runtime_migration_report(&mut fixture.resolver(), &fixture.repo, Some(NOW));
 
     assert_eq!(report.status, RuntimeMigrationStatus::NeedsImport);
     assert!(!fixture.repo.join(".aimux/history/codex-1.jsonl").exists());
