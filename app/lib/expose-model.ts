@@ -54,6 +54,8 @@ export interface ExposeSourceItem {
   chatPreview?: ExposeChatPreview | { messages?: AgentTranscriptMessage[] };
   roleState?: AgentRoleState;
   shouldShowInExpose?: boolean;
+  // Mirrors the wire only. Nothing in the app reads it: the service decides
+  // the order and sends it as the array order.
   exposeOrder?: number;
   exposeContext?: {
     worktree?: string;
@@ -85,7 +87,6 @@ export interface ExposeTile {
   tool: string;
   role?: string;
   shouldShowInExpose: boolean;
-  exposeOrder: number | null;
   supervisorScoped: boolean;
   hotkeyLabel: string;
   kind: "agent" | "service";
@@ -265,23 +266,6 @@ function agentDisplayLabel(
   return `${base} (${role})`;
 }
 
-function orderedExposeTiles(tiles: ExposeTile[]): ExposeTile[] {
-  return tiles
-    .map((tile, index) => ({ tile, index }))
-    .sort((left, right) => {
-      if (left.tile.supervisorScoped !== right.tile.supervisorScoped) {
-        return left.tile.supervisorScoped ? -1 : 1;
-      }
-      if (left.tile.supervisorScoped && right.tile.supervisorScoped) {
-        const leftOrder = left.tile.exposeOrder ?? Number.POSITIVE_INFINITY;
-        const rightOrder = right.tile.exposeOrder ?? Number.POSITIVE_INFINITY;
-        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-      }
-      return left.index - right.index;
-    })
-    .map(({ tile }) => tile);
-}
-
 export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
   const tiles: ExposeTile[] = [];
   for (const source of sources) {
@@ -327,7 +311,6 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         tool,
         role: metadata.role,
         shouldShowInExpose: declaredShouldShow,
-        exposeOrder: item.exposeOrder ?? item.roleState?.exposeOrder ?? null,
         supervisorScoped,
         hotkeyLabel: "",
         kind,
@@ -352,7 +335,11 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
       });
     });
   }
-  return withExposeHotkeys(orderedExposeTiles(tiles));
+  // The service already ordered these: supervisors first, then each group in
+  // tmux window order. Re-sorting here by `exposeOrder` was a client deciding
+  // the order from a field the service publishes rather than rendering the
+  // sequence it was handed, which is how the GUI and the TUI drifted apart.
+  return withExposeHotkeys(tiles);
 }
 
 function withExposeHotkeys(tiles: ExposeTile[]): ExposeTile[] {

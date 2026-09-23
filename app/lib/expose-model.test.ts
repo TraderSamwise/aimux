@@ -166,7 +166,6 @@ describe("expose model", () => {
     expect(tiles[0]).toMatchObject({
       role: "overseer",
       shouldShowInExpose: true,
-      exposeOrder: 0,
       semanticTitle: "supervisor",
       contextSubtitle: "Supervisor Lane",
       sectionLabel: "supervisor",
@@ -289,7 +288,9 @@ describe("expose model", () => {
     expect(scribe).toMatchObject({ semanticTitle: "main", displayLabel: "claude (scribe)" });
   });
 
-  it("sorts visible supervisors by Exposé order before worktrees and keeps worktree hotkeys on 1-9", () => {
+  // The service sends supervisors first, then each group in tmux window order.
+  // The client renders that sequence and numbers it; it does not re-derive it.
+  it("renders the order the service sent and keeps worktree hotkeys on 1-9", () => {
     const worktreeItems = Array.from({ length: 10 }, (_, index) =>
       item(`${index + 1}`, `worktree-${index + 1}`, index),
     );
@@ -297,14 +298,12 @@ describe("expose model", () => {
       {
         project,
         items: [
-          worktreeItems[0]!,
+          supervisorItem("0", "overseer", 0),
           {
             ...supervisorItem("99", "reviewer", 1),
             exposeStatus: { kind: "ready", label: "Ready" },
           },
-          ...worktreeItems.slice(1, 4),
-          supervisorItem("0", "overseer", 0),
-          ...worktreeItems.slice(4),
+          ...worktreeItems,
         ],
       },
     ]);
@@ -332,13 +331,13 @@ describe("expose model", () => {
     const first = buildExposeTiles([
       {
         project,
-        items: [item("1", "main", 0), item("2", "e2e", 1), supervisorItem("0", "overseer", 0)],
+        items: [supervisorItem("0", "overseer", 0), item("1", "main", 0), item("2", "e2e", 1)],
       },
     ]);
     const refresh = buildExposeTiles([
       {
         project,
-        items: [item("2", "e2e", 1), supervisorItem("0", "overseer", 0), item("1", "main", 0)],
+        items: [supervisorItem("0", "overseer", 0), item("2", "e2e", 1), item("1", "main", 0)],
       },
     ]);
 
