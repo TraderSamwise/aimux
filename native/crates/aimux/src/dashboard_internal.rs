@@ -38,8 +38,9 @@ use crate::dashboard_service_input::DashboardThreadReplyState;
 use crate::dashboard_service_input::{
     render_agent_restore_confirm_overlay, render_label_input_overlay,
     render_migrate_picker_overlay, render_orchestration_input_overlay,
-    render_orchestration_route_picker_overlay, render_remote_worktree_input_overlay,
-    render_service_input_overlay, render_teammate_picker_overlay, render_thread_reply_overlay,
+    render_orchestration_route_picker_overlay, render_plane_picker_overlay,
+    render_remote_worktree_input_overlay, render_service_input_overlay,
+    render_teammate_picker_overlay, render_thread_reply_overlay,
     render_worktree_cache_cleanup_confirm_overlay, render_worktree_input_overlay,
     render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
 };
@@ -1727,6 +1728,14 @@ fn render_dashboard_snapshot(
         return dashboard_overlay_frame(
             &frame,
             render_migrate_picker_overlay(migrate_picker, viewport.cols, viewport.rows),
+        );
+    }
+    // Mirrors the key-intercept order in dashboard_controller::handle_key: the
+    // overlay that eats the keys has to be the overlay on screen.
+    if let Some(plane_picker) = controller.plane_picker.as_ref() {
+        return dashboard_overlay_frame(
+            &frame,
+            render_plane_picker_overlay(plane_picker, viewport.cols, viewport.rows),
         );
     }
     if let Some(label_input) = controller.label_input.as_ref() {

@@ -478,6 +478,11 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
         });
         if selected_session.is_some() {
             hints.push(FooterHint {
+                key: "M",
+                label: "plane",
+                tone: None,
+            });
+            hints.push(FooterHint {
                 key: "r",
                 label: "name",
                 tone: None,
@@ -651,6 +656,12 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
             });
         }
         if selected_session.is_some() {
+            // Moving between planes needs no worktree, so it is offered here too.
+            hints.push(FooterHint {
+                key: "M",
+                label: "plane",
+                tone: None,
+            });
             hints.push(FooterHint {
                 key: "r",
                 label: "name",
@@ -1134,6 +1145,7 @@ fn row_state_label(value: &str) -> &str {
         "migrating" => "Migrating",
         "switching" => "Switching",
         "renaming" => "Renaming",
+        "moving" => "Moving",
         other => other,
     }
 }
@@ -1531,6 +1543,7 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
         Tone::Attention,
     );
     append_count(&mut parts, &counts, "renaming", "renaming", Tone::Attention);
+    append_count(&mut parts, &counts, "moving", "moving", Tone::Attention);
     parts
 }
 

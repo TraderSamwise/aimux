@@ -2215,6 +2215,68 @@ fn migrate_key_opens_picker_and_digit_dispatches_selected_session_migrate() {
     assert!(controller.migrate_picker.is_none());
 }
 
+/// A plane is independent of where the agent's working directory is, so every
+/// plane is offered to every agent -- including worktrees it does not live in.
+#[test]
+fn plane_key_opens_picker_and_selection_dispatches_a_plane_move() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('M')),
+        DashboardControllerEffect::Render
+    );
+    let picker = controller.plane_picker.as_ref().expect("plane picker open");
+    assert_eq!(picker.session_id, "claude-0");
+    assert_eq!(
+        picker
+            .targets
+            .iter()
+            .map(|target| target.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["supervisor", "default (by role)", "(main)", "feature-a"]
+    );
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('1'))
+    else {
+        panic!("expected a plane request");
+    };
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, routes::agents::PLANE);
+    assert_eq!(
+        request.body,
+        json!({ "sessionId": "claude-0", "lane": { "kind": "supervisor" } })
+    );
+    assert!(controller.plane_picker.is_none());
+}
+
+/// Clearing sends null, which is how an agent goes back to the plane its role
+/// implies rather than one somebody pinned it to. It sits second so that a
+/// project with more than nine worktrees cannot push it out of digit reach.
+#[test]
+fn plane_picker_clear_entry_stays_reachable_by_digit() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+    controller.handle_key(&snapshot, DashboardKey::Printable('M'));
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('2'))
+    else {
+        panic!("expected a plane request");
+    };
+    assert_eq!(
+        request.body,
+        json!({ "sessionId": "claude-0", "lane": serde_json::Value::Null })
+    );
+}
+
 #[test]
 fn migrate_key_from_worktree_root_falls_back_to_active_session() {
     let snapshot = snapshot();

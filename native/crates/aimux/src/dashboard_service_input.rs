@@ -1,6 +1,6 @@
 use crate::dashboard_controller::{
     DashboardLabelInputState, DashboardMigratePickerState, DashboardOrchestrationInputState,
-    DashboardOrchestrationMode, DashboardOrchestrationRoutePickerState,
+    DashboardOrchestrationMode, DashboardOrchestrationRoutePickerState, DashboardPlanePickerState,
 };
 use crate::dashboard_create::{
     DashboardCreateIntent, DashboardCreatePlan, DashboardServiceCreateIntent, plan_dashboard_create,
@@ -222,6 +222,49 @@ pub fn render_migrate_picker_overlay(
     body.push(modal_hints("[Esc] cancel"));
     render_overlay_box(&OverlayBoxSpec {
         title: &format!("Migrate \"{}\" to", state.session_id),
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Blue,
+        icon: None,
+    })
+}
+
+/// Marks the plane the agent is shown in right now. The payload carries the
+/// EFFECTIVE plane -- derived when nothing is stored -- so there is no way to
+/// tell "put here explicitly" from "landed here by role", and the default entry
+/// is offered as an action rather than claimed as current.
+pub fn render_plane_picker_overlay(
+    state: &DashboardPlanePickerState,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let mut body = state
+        .targets
+        .iter()
+        .enumerate()
+        .map(|(index, target)| {
+            let marker = if target
+                .lane
+                .as_ref()
+                .is_some_and(|lane| Some(lane) == state.current_lane.as_ref())
+            {
+                format!(" {}", style("(current)", Tone::Muted))
+            } else {
+                String::new()
+            };
+            format!(
+                "  {} {}{}",
+                keycap(&(index + 1).to_string(), None),
+                style(&target.label, Tone::Strong),
+                marker
+            )
+        })
+        .collect::<Vec<_>>();
+    body.push(String::new());
+    body.push(modal_hints("[Esc] cancel"));
+    render_overlay_box(&OverlayBoxSpec {
+        title: &format!("Show \"{}\" in", state.session_id),
         body: &body,
         cols,
         rows,

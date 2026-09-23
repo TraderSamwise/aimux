@@ -275,7 +275,16 @@ fn build_dashboard_footer_hints<'a>(
                 label: "migrate",
                 danger: false,
             });
-            if selected_session.is_some() {
+        }
+        if selected_session.is_some() {
+            // Moving between planes needs no worktree: the supervisor plane and
+            // the derived default are always there to move to.
+            hints.push(FooterHint {
+                key: "M",
+                label: "plane",
+                danger: false,
+            });
+            if has_worktrees {
                 hints.push(FooterHint {
                     key: "r",
                     label: "name",

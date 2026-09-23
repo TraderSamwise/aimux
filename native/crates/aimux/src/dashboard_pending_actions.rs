@@ -390,6 +390,7 @@ fn can_synthesize_session(kind: &str) -> bool {
             | "graveyarding"
             | "resurrecting"
             | "renaming"
+            | "moving"
     )
 }
 
@@ -403,7 +404,7 @@ fn session_settled(kind: &str, id: &str, sessions: &[DashboardSession], age_ms: 
         "creating" | "forking" | "migrating" | "switching" => {
             session.is_some_and(|session| session.status == SessionStatus::Running)
         }
-        "renaming" => session.is_some(),
+        "renaming" | "moving" => session.is_some(),
         "starting" => session.is_some_and(|session| {
             session.status == SessionStatus::Running || age_ms >= STARTING_SETTLE_AGE_MS
         }),
@@ -499,6 +500,7 @@ pub fn pending_action_for_request(
         }
         routes::agents::SPAWN => (PendingTarget::Session, id("sessionId")?, "creating"),
         routes::agents::MIGRATE => (PendingTarget::Session, id("sessionId")?, "migrating"),
+        routes::agents::PLANE => (PendingTarget::Session, id("sessionId")?, "moving"),
         routes::agents::RENAME => (PendingTarget::Session, id("sessionId")?, "renaming"),
         routes::agents::FORK => (PendingTarget::Session, id("sessionId")?, "forking"),
         routes::agents::SWITCH_TOOL => (PendingTarget::Session, id("sessionId")?, "switching"),

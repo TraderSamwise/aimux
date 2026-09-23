@@ -48,6 +48,7 @@ pub struct DashboardController {
     pub overseer_watch_instructions: Option<DashboardOverseerWatchInstructionsState>,
     pub work_outline_overlay: Option<DashboardWorkOutlineOverlayState>,
     pub migrate_picker: Option<DashboardMigratePickerState>,
+    pub plane_picker: Option<DashboardPlanePickerState>,
     pub label_input: Option<DashboardLabelInputState>,
     pub preview_source: String,
     pub teammate_picker: Option<DashboardTeammatePickerState>,
@@ -109,6 +110,7 @@ enum DashboardInputOverlay {
     OverseerWatchInstructions,
     WorkOutline,
     MigratePicker,
+    PlanePicker,
     LabelInput,
     TeammatePicker,
     OrchestrationRoutePicker,
@@ -342,6 +344,7 @@ impl DashboardController {
             overseer_watch_instructions: None,
             work_outline_overlay: None,
             migrate_picker: None,
+            plane_picker: None,
             label_input: None,
             preview_source: "output".into(),
             teammate_picker: None,
@@ -398,6 +401,9 @@ impl DashboardController {
         }
         if self.migrate_picker.is_some() {
             return self.handle_migrate_picker_key(key);
+        }
+        if self.plane_picker.is_some() {
+            return self.handle_plane_picker_key(key);
         }
         if self.label_input.is_some() {
             return self.handle_label_input_key(key);
@@ -502,6 +508,7 @@ impl DashboardController {
             DashboardKey::Printable('Y') => self.set_selected_overseer(snapshot),
             DashboardKey::Printable('R') => self.reply_to_selected_waiting_thread(snapshot),
             DashboardKey::Printable('m') => self.open_migrate_picker(snapshot),
+            DashboardKey::Printable('M') => self.open_plane_picker(snapshot),
             DashboardKey::Printable('r') => self.open_label_input(snapshot),
             DashboardKey::Printable('e') => self.open_teammate_picker(snapshot),
             DashboardKey::NextAttention => self.activate_next_attention_entry(snapshot),
@@ -781,6 +788,7 @@ impl DashboardController {
         self.overseer_watch_instructions = None;
         self.work_outline_overlay = None;
         self.migrate_picker = None;
+        self.plane_picker = None;
         self.label_input = None;
         self.teammate_picker = None;
         self.orchestration_route_picker = None;
@@ -838,6 +846,8 @@ impl DashboardController {
             DashboardInputOverlay::WorkOutline
         } else if self.migrate_picker.is_some() {
             DashboardInputOverlay::MigratePicker
+        } else if self.plane_picker.is_some() {
+            DashboardInputOverlay::PlanePicker
         } else if self.label_input.is_some() {
             DashboardInputOverlay::LabelInput
         } else if self.teammate_picker.is_some() {
@@ -1781,6 +1791,52 @@ impl DashboardController {
         DashboardControllerEffect::Render
     }
 
+    fn open_plane_picker(&mut self, snapshot: &DesktopStateSnapshot) -> DashboardControllerEffect {
+        let Some(session) = self
+            .selected_session_for_tool_action(snapshot)
+            .or_else(|| active_or_first_visible_session(snapshot))
+        else {
+            self.footer_message = Some("Select an agent to move between planes".into());
+            return DashboardControllerEffect::Render;
+        };
+        self.plane_picker = Some(DashboardPlanePickerState {
+            session_id: session.id.clone(),
+            current_lane: session.lane.clone(),
+            targets: plane_picker_targets(snapshot),
+        });
+        DashboardControllerEffect::Render
+    }
+
+    fn handle_plane_picker_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        let Some(state) = self.plane_picker.take() else {
+            return DashboardControllerEffect::Ignored;
+        };
+        if matches!(key, DashboardKey::Back) {
+            return DashboardControllerEffect::Render;
+        }
+        let (DashboardKey::Digit(digit) | DashboardKey::Printable(digit)) = key else {
+            return DashboardControllerEffect::Render;
+        };
+        let Some(index) = digit
+            .to_digit(10)
+            .filter(|digit| *digit > 0)
+            .map(|digit| digit as usize - 1)
+        else {
+            return DashboardControllerEffect::Render;
+        };
+        let Some(target) = state.targets.get(index) else {
+            return DashboardControllerEffect::Render;
+        };
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::PLANE,
+            body: json!({
+                "sessionId": state.session_id,
+                "lane": target.lane.clone().unwrap_or(Value::Null),
+            }),
+        })
+    }
+
     fn handle_migrate_picker_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
         let Some(state) = self.migrate_picker.take() else {
             return DashboardControllerEffect::Ignored;
@@ -2676,6 +2732,21 @@ pub struct DashboardWorkOutlineOverlayState {
     pub offset: usize,
 }
 
+/// Where the selected agent can be shown. `lane: None` clears the stored plane
+/// so the derived one takes over again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardPlanePickerState {
+    pub session_id: String,
+    pub current_lane: Option<Value>,
+    pub targets: Vec<DashboardPlaneTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardPlaneTarget {
+    pub label: String,
+    pub lane: Option<Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardMigratePickerState {
     pub session_id: String,
@@ -2960,6 +3031,31 @@ fn active_or_first_visible_session(snapshot: &DesktopStateSnapshot) -> Option<&D
         .copied()
         .find(|session| session.active)
         .or_else(|| ordered.into_iter().next())
+}
+
+/// The supervisor plane, every worktree plane, then the derived default. The
+/// plane an agent sits in is not tied to where its working directory is, so
+/// every worktree is offered to every agent.
+fn plane_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardPlaneTarget> {
+    // Selection is by digit, so the two planes that always exist come first:
+    // past nine worktrees, a trailing clear entry would be unreachable.
+    let mut targets = vec![
+        DashboardPlaneTarget {
+            label: "supervisor".into(),
+            lane: Some(json!({ "kind": "supervisor" })),
+        },
+        DashboardPlaneTarget {
+            label: "default (by role)".into(),
+            lane: None,
+        },
+    ];
+    for target in migrate_picker_targets(snapshot) {
+        targets.push(DashboardPlaneTarget {
+            label: target.name,
+            lane: Some(json!({ "kind": "worktree", "worktreePath": target.path })),
+        });
+    }
+    targets
 }
 
 fn migrate_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardMigrateTarget> {
