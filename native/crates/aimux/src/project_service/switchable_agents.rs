@@ -1115,34 +1115,42 @@ fn current_window_is_project_control(
     })
 }
 
+/// Services render after agents -- a partition, not an ordering -- and window
+/// position decides within each. The teammate branch used to lead with
+/// `team.order`, a roster position someone assigned, which is the one thing
+/// here that could move an agent independently of its window.
 fn compare_switchable_windows(
     left: &ManagedWindowEntry,
     right: &ManagedWindowEntry,
     teammate_parent_session_id: Option<&str>,
 ) -> std::cmp::Ordering {
-    if teammate_parent_session_id.is_some() {
-        let left_order = team_number_field(&left.metadata, "order").unwrap_or(f64::INFINITY);
-        let right_order = team_number_field(&right.metadata, "order").unwrap_or(f64::INFINITY);
-        if left_order != right_order {
-            return left_order.total_cmp(&right_order);
+    if teammate_parent_session_id.is_none() {
+        let kind_rank = |entry: &ManagedWindowEntry| {
+            i32::from(string_field(&entry.metadata, "kind") == Some("service"))
+        };
+        let rank = kind_rank(left).cmp(&kind_rank(right));
+        if rank != std::cmp::Ordering::Equal {
+            return rank;
         }
-        return target_number_field(&left.target, "windowIndex")
-            .cmp(&target_number_field(&right.target, "windowIndex"));
     }
-    let left_kind_rank = if string_field(&left.metadata, "kind") == Some("service") {
-        1
-    } else {
-        0
-    };
-    let right_kind_rank = if string_field(&right.metadata, "kind") == Some("service") {
-        1
-    } else {
-        0
-    };
-    left_kind_rank.cmp(&right_kind_rank).then_with(|| {
-        target_number_field(&left.target, "windowIndex")
-            .cmp(&target_number_field(&right.target, "windowIndex"))
-    })
+    crate::team_contract::compare_agent_canonical_order(
+        &switchable_order_probe(left),
+        &switchable_order_probe(right),
+    )
+}
+
+/// The comparator reads one JSON value; a managed entry keeps its window on
+/// the target and its identity on the metadata.
+fn switchable_order_probe(entry: &ManagedWindowEntry) -> Value {
+    let mut probe = Map::new();
+    probe.insert("target".into(), entry.target.clone());
+    for key in ["id", "sessionId", "createdAt"] {
+        if let Some(value) = entry.metadata.get(key) {
+            let key = if key == "sessionId" { "id" } else { key };
+            probe.entry(key.to_owned()).or_insert_with(|| value.clone());
+        }
+    }
+    Value::Object(probe)
 }
 
 fn order_managed_entries_by_display_order<'a>(
@@ -1398,15 +1406,6 @@ fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-}
-
-fn team_number_field(value: &Value, key: &str) -> Option<f64> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite())
 }
 
 fn target_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

@@ -1314,7 +1314,6 @@ fn shifted_v_toggles_scribe_preview_only_when_live_scribe_exists() {
         parent_session_id: String::new(),
         role: Some("scribe".into()),
         label: None,
-        order: None,
         extra: Default::default(),
     });
     snapshot.sessions.push(scribe);
@@ -2327,13 +2326,13 @@ fn teammate_picker_opens_for_selected_parent_and_activates_sorted_teammate() {
         parent_session_id: "claude-0".into(),
         role: Some("reviewer".into()),
         label: None,
-        order: Some(1),
         extra: Default::default(),
     });
+    first.tmux_window_index = Some(1);
     let mut second = first.clone();
     second.id = "second".into();
     second.tmux_window_id = Some("@second".into());
-    second.team.as_mut().unwrap().order = Some(2);
+    second.tmux_window_index = Some(2);
     snapshot.teammates = vec![second, first];
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Sessions;
@@ -2886,7 +2885,6 @@ fn scribe_session(
         parent_session_id: String::new(),
         role: Some("scribe".into()),
         label: None,
-        order: None,
         extra: Default::default(),
     });
     scribe
@@ -2906,7 +2904,6 @@ fn overseer_session(
         parent_session_id: String::new(),
         role: Some("overseer".into()),
         label: None,
-        order: None,
         extra: Default::default(),
     });
     overseer

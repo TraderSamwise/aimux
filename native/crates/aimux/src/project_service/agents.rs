@@ -718,7 +718,7 @@ pub fn select_direct_teammates(sessions: &[Value], parent_session_id: &str) -> V
         }
     }
     let mut selected = by_id.into_values().collect::<Vec<_>>();
-    selected.sort_by(compare_teammate_sessions);
+    selected.sort_by(crate::team_contract::compare_agent_canonical_order);
     selected
 }
 
@@ -899,25 +899,6 @@ fn is_teammate_session(session: &Value) -> bool {
     team_string_field(session, "parentSessionId").is_some()
 }
 
-fn compare_teammate_sessions(left: &Value, right: &Value) -> std::cmp::Ordering {
-    let left_order = team_number_field(left, "order").unwrap_or(f64::INFINITY);
-    let right_order = team_number_field(right, "order").unwrap_or(f64::INFINITY);
-    if left_order != right_order {
-        return left_order.total_cmp(&right_order);
-    }
-    let left_created = string_field(left, "createdAt").filter(|value| !value.is_empty());
-    let right_created = string_field(right, "createdAt").filter(|value| !value.is_empty());
-    match (left_created, right_created) {
-        (Some(left), Some(right)) if left != right => return left.cmp(right),
-        (Some(_), None) => return std::cmp::Ordering::Less,
-        (None, Some(_)) => return std::cmp::Ordering::Greater,
-        _ => {}
-    }
-    string_field(left, "id")
-        .unwrap_or("")
-        .cmp(string_field(right, "id").unwrap_or(""))
-}
-
 fn should_relaunch_fresh_session(
     session: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
@@ -991,15 +972,6 @@ fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-}
-
-fn team_number_field(value: &Value, key: &str) -> Option<f64> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite())
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {

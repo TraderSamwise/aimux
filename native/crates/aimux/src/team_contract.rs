@@ -65,7 +65,7 @@ pub fn select_orphan_teammate_ids(sessions: &[Value], known_parent_ids: &[String
         by_id.insert(id.to_owned(), session.clone());
     }
     let mut sessions = by_id.into_values().collect::<Vec<_>>();
-    sessions.sort_by(compare_teammate_sessions);
+    sessions.sort_by(compare_agent_canonical_order);
     sessions
         .into_iter()
         .filter_map(|session| session.get("id").and_then(Value::as_str).map(str::to_owned))
@@ -411,47 +411,6 @@ fn string_field<'a>(session: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-}
-
-fn compare_teammate_sessions(left: &Value, right: &Value) -> std::cmp::Ordering {
-    let left_order = team_order(left);
-    let right_order = team_order(right);
-    left_order
-        .total_cmp(&right_order)
-        .then_with(|| created_at_key(left).cmp(&created_at_key(right)))
-        .then_with(|| session_id(left).cmp(&session_id(right)))
-}
-
-fn team_order(session: &Value) -> f64 {
-    session
-        .get("team")
-        .and_then(|team| team.get("order"))
-        .and_then(Value::as_f64)
-        .unwrap_or(f64::INFINITY)
-}
-
-fn created_at_key(session: &Value) -> String {
-    session
-        .get("createdAt")
-        .and_then(Value::as_str)
-        .filter(|value| looks_like_iso_timestamp(value))
-        .unwrap_or("9999-99-99T99:99:99.999Z")
-        .to_owned()
-}
-
-fn session_id(session: &Value) -> String {
-    session
-        .get("id")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
-}
-
-fn looks_like_iso_timestamp(value: &str) -> bool {
-    value.len() >= "2026-05-01T00:00:00.000Z".len()
-        && value.as_bytes().get(4) == Some(&b'-')
-        && value.as_bytes().get(7) == Some(&b'-')
-        && value.as_bytes().get(10) == Some(&b'T')
 }
 
 #[cfg(test)]

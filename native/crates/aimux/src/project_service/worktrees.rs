@@ -446,7 +446,7 @@ fn select_orphan_teammates(teammates: &[Value], known_parent_ids: &BTreeSet<Stri
         }
     }
     let mut selected = by_id.into_values().collect::<Vec<_>>();
-    selected.sort_by(compare_teammate_sessions);
+    selected.sort_by(crate::team_contract::compare_agent_canonical_order);
     selected
 }
 
@@ -556,27 +556,6 @@ fn is_teammate_session(session: &Value) -> bool {
     team_string_field(session, "parentSessionId").is_some()
 }
 
-fn compare_teammate_sessions(left: &Value, right: &Value) -> std::cmp::Ordering {
-    let left_order = team_number_field(left, "order").unwrap_or(f64::INFINITY);
-    let right_order = team_number_field(right, "order").unwrap_or(f64::INFINITY);
-    if left_order != right_order {
-        return left_order.total_cmp(&right_order);
-    }
-    compare_timestamp_asc(
-        string_field(left, "createdAt"),
-        string_field(right, "createdAt"),
-    )
-    .then_with(|| {
-        string_field(left, "id")
-            .unwrap_or("")
-            .cmp(string_field(right, "id").unwrap_or(""))
-    })
-}
-
-fn compare_timestamp_asc(left: Option<&str>, right: Option<&str>) -> std::cmp::Ordering {
-    timestamp_sort_value(left).cmp(timestamp_sort_value(right))
-}
-
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
@@ -589,15 +568,6 @@ fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-}
-
-fn team_number_field(value: &Value, key: &str) -> Option<f64> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite())
 }
 
 fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {

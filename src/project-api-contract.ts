@@ -1616,7 +1616,6 @@ export interface CreateTeammateInput {
   open?: boolean;
   extraArgs?: string[];
   initialTask?: TeammateTaskBody;
-  order?: number;
 }
 
 export interface CreateTeammateResponse extends ProjectLifecycleTransitionResponse {

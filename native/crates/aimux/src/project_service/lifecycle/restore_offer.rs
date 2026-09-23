@@ -203,9 +203,6 @@ fn normalize_agent_restore_team(value: Option<&Value>) -> Option<Value> {
     if let Some(label) = trimmed_string(record.get("label")) {
         team.insert("label".into(), Value::String(label));
     }
-    if let Some(order) = record.get("order").and_then(Value::as_f64) {
-        team.insert("order".into(), json!(order));
-    }
     Some(Value::Object(team))
 }
 

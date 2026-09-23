@@ -443,8 +443,9 @@ pub struct SessionTeamMetadata {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub order: Option<usize>,
+    // `order` used to live here: a roster position that outranked every other
+    // ordering key. Nothing orders by it now, so it is no longer a field --
+    // `extra` still carries it off the wire for records written before this.
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
 }

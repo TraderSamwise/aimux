@@ -2342,25 +2342,26 @@ fn team_parent_id(team: &Value) -> Option<&str> {
     team.get("parentSessionId").and_then(Value::as_str)
 }
 
-fn team_order(item: &NavItem) -> i64 {
-    let Some(value) = item.team.get("order") else {
-        return i64::MAX;
-    };
-    if value.as_bool().is_some() {
-        return i64::MAX;
-    }
-    value_as_i64(value).unwrap_or(i64::MAX)
-}
-
+/// Teammates cycle in the same order everything else renders in, through the
+/// same comparator. `team.order` used to lead, so a roster position someone
+/// assigned could put n/p out of step with the screen.
 fn sort_teammates(items: &mut [NavItem]) {
-    items.sort_by_key(|item| {
-        (
-            team_order(item),
-            item.window_index,
-            item.created_at.clone(),
-            item.session_id.clone(),
+    items.sort_by(|left, right| {
+        crate::team_contract::compare_agent_canonical_order(
+            &nav_item_order_probe(left),
+            &nav_item_order_probe(right),
         )
     });
+}
+
+fn nav_item_order_probe(item: &NavItem) -> Value {
+    let mut probe = Map::new();
+    probe.insert("id".into(), Value::String(item.session_id.clone()));
+    probe.insert("tmuxWindowIndex".into(), Value::from(item.window_index));
+    if !item.created_at.is_empty() {
+        probe.insert("createdAt".into(), Value::String(item.created_at.clone()));
+    }
+    Value::Object(probe)
 }
 
 fn attention_rank(item: &NavItem) -> (i64, i64, i64) {

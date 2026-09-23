@@ -91,9 +91,6 @@ pub(super) fn route_agent_create_teammate(
     if let Some(label) = trimmed_string(body.get("label")) {
         object_insert_mut(&mut team, "label", Value::String(label));
     }
-    if let Some(order) = body.get("order").and_then(Value::as_f64) {
-        object_insert_mut(&mut team, "order", json!(order));
-    }
     let result = match launch_agent_session(
         context,
         runtime,

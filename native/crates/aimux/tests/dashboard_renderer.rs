@@ -121,7 +121,6 @@ fn matches_node_dashboard_full_frame_with_project_controls_and_scribe_preview() 
         parent_session_id: String::new(),
         role: Some("overseer".into()),
         label: Some("Project Overseer".into()),
-        order: Some(0),
         extra: Default::default(),
     });
 
@@ -136,7 +135,6 @@ fn matches_node_dashboard_full_frame_with_project_controls_and_scribe_preview() 
         parent_session_id: String::new(),
         role: Some("scribe".into()),
         label: Some("Project Scribe".into()),
-        order: Some(1),
         extra: Default::default(),
     });
 

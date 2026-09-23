@@ -16,7 +16,6 @@ pub struct SessionTeam {
     pub parent_session_id: String,
     pub role: Option<String>,
     pub label: Option<String>,
-    pub order: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -42,7 +41,6 @@ pub fn team_from_value(value: Option<&Value>) -> Option<SessionTeam> {
             .to_owned(),
         role: trimmed_string(value.get("role")),
         label: trimmed_string(value.get("label")),
-        order: value.get("order").and_then(Value::as_i64),
     })
 }
 

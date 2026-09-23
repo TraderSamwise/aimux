@@ -1327,7 +1327,9 @@ fn teammate_create_launches_agent_with_team_metadata_and_extra_args() {
     assert_eq!(metadata["team"]["parentSessionId"], "codex-live");
     assert_eq!(metadata["team"]["role"], "reviewer");
     assert_eq!(metadata["team"]["label"], "Review lane");
-    assert_eq!(metadata["team"]["order"], 2.0);
+    // `team.order` was a roster position that outranked every other ordering
+    // key. Nothing orders by it, so the spawn route no longer records it.
+    assert_eq!(metadata["team"]["order"], Value::Null);
     let topology = read_topology(&state_dir);
     let session = session(&topology, "mock-reviewer");
     assert_eq!(session["team"]["parentSessionId"], "codex-live");

@@ -35,7 +35,7 @@
         ],
         "knownParentIds": ["primary"]
       },
-      "output": ["ordered-orphan", "orphan"],
+      "output": ["orphan", "ordered-orphan"],
       "inputSha256": "29e2e5c177caa1d1929436580740e315fd331dfc8b09a94325224c7701240dc0"
     },
     {
