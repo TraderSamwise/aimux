@@ -383,7 +383,7 @@ fn dead_current_window_can_anchor_next_prev_without_being_listed() {
 }
 
 #[test]
-fn display_order_can_override_window_order_after_filtering() {
+fn nothing_can_override_window_order_after_filtering() {
     let entries = vec![
         agent_entry("@1", 1, "claude-a", "claude", "/repo", None, true),
         agent_entry("@2", 2, "codex-b", "codex", "/repo", None, true),
@@ -391,7 +391,6 @@ fn display_order_can_override_window_order_after_filtering() {
     ];
     let options = SwitchableListOptions {
         scope: AgentListScope::All,
-        display_order_ids: vec!["codex-b".into(), "claude-a".into()],
         ..SwitchableListOptions::default()
     };
 
@@ -403,11 +402,14 @@ fn display_order_can_override_window_order_after_filtering() {
         &json!({}),
     );
 
+    // The switcher used to accept an id list derived from the dashboard's
+    // flattened worktree groups and re-rank itself by it, so n/p walked
+    // grouped order while every other surface walked window order.
     assert_eq!(
         ids(&items),
         vec![
-            "codex-b".to_owned(),
             "claude-a".to_owned(),
+            "codex-b".to_owned(),
             "shell-1".to_owned()
         ]
     );

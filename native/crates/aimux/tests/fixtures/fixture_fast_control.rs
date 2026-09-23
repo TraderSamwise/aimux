@@ -156,17 +156,6 @@ fn options_from_value(value: &Value) -> SwitchableListOptions {
             .get("rawLabels")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        display_order_ids: value
-            .get("displayOrderIds")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default(),
     }
 }
 

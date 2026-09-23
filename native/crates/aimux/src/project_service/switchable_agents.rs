@@ -65,7 +65,6 @@ pub struct SwitchableListOptions {
     pub scope: AgentListScope,
     pub use_expose_role_visibility: bool,
     pub raw_labels: bool,
-    pub display_order_ids: Vec<String>,
 }
 
 impl Default for SwitchableListOptions {
@@ -74,7 +73,6 @@ impl Default for SwitchableListOptions {
             scope: AgentListScope::Worktree,
             use_expose_role_visibility: false,
             raw_labels: false,
-            display_order_ids: Vec::new(),
         }
     }
 }
@@ -157,7 +155,6 @@ pub fn route_switchable_agent_request_with_runtime(
             .get("labelFormat")
             .is_some_and(|value| value == "raw"),
         use_expose_role_visibility: false,
-        display_order_ids: dashboard_display_order_ids(context.desktop_state.as_ref()),
     };
     let expose = params.get("expose").is_some_and(|value| value == "1");
     let mut options = options;
@@ -312,7 +309,6 @@ pub async fn route_switchable_agent_request_async(
             .get("labelFormat")
             .is_some_and(|value| value == "raw"),
         use_expose_role_visibility: false,
-        display_order_ids: dashboard_display_order_ids(context.desktop_state.as_ref()),
     };
     let expose = params.get("expose").is_some_and(|value| value == "1");
     let mut options = options;
@@ -717,8 +713,7 @@ fn build_switchable_agent_items(
     });
     let mut managed = entries
         .iter()
-        .enumerate()
-        .filter(|(_, entry)| {
+        .filter(|entry| {
             let metadata = metadata_with_stored_control_flags(&entry.metadata, metadata_sessions);
             visibility_rule.allows(AgentVisibilityInput {
                 status: None,
@@ -732,12 +727,12 @@ fn build_switchable_agent_items(
             })
         })
         .collect::<Vec<_>>();
-    managed.sort_by(|(_, left), (_, right)| {
+    managed.sort_by(|left, right| {
         compare_switchable_windows(left, right, teammate_parent_session_id.as_deref())
     });
-    order_managed_entries_by_display_order(managed, &options.display_order_ids)
+    managed
         .into_iter()
-        .map(|(_, entry)| managed_window_item(entry, metadata_sessions, context, last_used))
+        .map(|entry| managed_window_item(entry, metadata_sessions, context, last_used))
         .collect()
 }
 
@@ -1149,33 +1144,6 @@ fn switchable_order_probe(entry: &ManagedWindowEntry) -> Value {
     Value::Object(probe)
 }
 
-fn order_managed_entries_by_display_order<'a>(
-    entries: Vec<(usize, &'a ManagedWindowEntry)>,
-    display_order_ids: &[String],
-) -> Vec<(usize, &'a ManagedWindowEntry)> {
-    if display_order_ids.is_empty() {
-        return entries;
-    }
-    let rank_by_id = display_order_ids
-        .iter()
-        .enumerate()
-        .map(|(index, id)| (id.as_str(), index))
-        .collect::<BTreeMap<_, _>>();
-    let mut sorted = entries;
-    sorted.sort_by(|(left_fallback, left), (right_fallback, right)| {
-        let left_rank = string_field(&left.metadata, "sessionId")
-            .and_then(|id| rank_by_id.get(id).copied())
-            .unwrap_or(usize::MAX);
-        let right_rank = string_field(&right.metadata, "sessionId")
-            .and_then(|id| rank_by_id.get(id).copied())
-            .unwrap_or(usize::MAX);
-        left_rank
-            .cmp(&right_rank)
-            .then_with(|| left_fallback.cmp(right_fallback))
-    });
-    sorted
-}
-
 /// Whether the window you are in belongs to the supervisor plane.
 ///
 /// This gates "n/p does nothing from here", so it has to agree with the filter
@@ -1302,33 +1270,6 @@ fn format_relative_recency(value: &str) -> Option<String> {
         return Some(format!("{months}mo ago"));
     }
     Some(format!("{}y ago", days / 365))
-}
-
-fn dashboard_display_order_ids(desktop_state: Option<&Value>) -> Vec<String> {
-    let mut ids = Vec::new();
-    let Some(state) = desktop_state else {
-        return ids;
-    };
-    for group_key in ["worktreeGroups", "groups"] {
-        let Some(groups) = state.get(group_key).and_then(Value::as_array) else {
-            continue;
-        };
-        for group in groups {
-            for list_key in ["agents", "sessions", "services"] {
-                if let Some(items) = group.get(list_key).and_then(Value::as_array) {
-                    ids.extend(items.iter().filter_map(item_id));
-                }
-            }
-        }
-    }
-    ids
-}
-
-fn item_id(value: &Value) -> Option<String> {
-    value
-        .as_str()
-        .map(str::to_owned)
-        .or_else(|| string_field(value, "id").map(str::to_owned))
 }
 
 fn clean_path_string(path: &str) -> String {

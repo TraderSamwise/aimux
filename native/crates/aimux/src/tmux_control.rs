@@ -1321,7 +1321,7 @@ impl TmuxControl {
                 is_same_or_child_path(&self.options.current_path, &item.worktree_path)
             });
         }
-        items.sort_by_key(|item| (if item.kind == "agent" { 0 } else { 1 }, item.window_index));
+        sort_agents_before_services(&mut items);
         if items.is_empty() {
             if self.options.action == "team" {
                 self.team_log("no metadata candidates in current worktree");
@@ -1352,13 +1352,7 @@ impl TmuxControl {
                         .map(str::is_empty)
                         .unwrap_or(true)
             });
-            items.sort_by_key(|item| {
-                if item.kind == "agent" {
-                    (0, item.window_index)
-                } else {
-                    (1, item.window_index)
-                }
-            });
+            sort_agents_before_services(&mut items);
         }
         if items.is_empty() {
             return TargetResolution::Failed;
@@ -2344,6 +2338,22 @@ fn is_supervisor_plane_meta(meta: &Value, team: &Value) -> bool {
 
 fn team_parent_id(team: &Value) -> Option<&str> {
     team.get("parentSessionId").and_then(Value::as_str)
+}
+
+/// Agents come before services -- a partition, not an order -- and inside each
+/// the one comparator decides. Written inline as `(kind, window_index)` this
+/// was a second implementation of the rule that happened to agree.
+fn sort_agents_before_services(items: &mut [NavItem]) {
+    items.sort_by(|left, right| {
+        let left_service = u8::from(left.kind != "agent");
+        let right_service = u8::from(right.kind != "agent");
+        left_service.cmp(&right_service).then_with(|| {
+            crate::team_contract::compare_agent_canonical_order(
+                &nav_item_order_probe(left),
+                &nav_item_order_probe(right),
+            )
+        })
+    });
 }
 
 /// Teammates cycle in the same order everything else renders in, through the

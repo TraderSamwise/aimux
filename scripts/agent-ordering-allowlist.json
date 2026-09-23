@@ -1,0 +1,150 @@
+{
+  "$comment": "Sorts that key on an agent-ordering field but are not an agent list, plus the named alternate modes a user asks for. Entries are scoped to one function, never a whole file: the files that build agent lists all also contain a legitimate worktree-group or alternate-mode sort, and exempting the file would wave through the next agent sort added beside it. Every entry needs a reason. Agents rendered next to each other belong to compare_agent_canonical_order instead.",
+  "entries": [
+    {
+      "file": "native/crates/aimux/src/daemon/jobs.rs",
+      "function": "resolve_job_address",
+      "reason": "Jobs, not agents. A job queue is ordered by when it was created."
+    },
+    {
+      "file": "native/crates/aimux/src/jobs/store.rs",
+      "function": "list",
+      "reason": "Jobs, not agents."
+    },
+    {
+      "file": "native/crates/aimux/src/jobs/store.rs",
+      "function": "maintenance_records",
+      "reason": "Jobs, not agents."
+    },
+    {
+      "file": "native/crates/aimux/src/inbox_cleanup.rs",
+      "function": "build_inbox_cleanup_plan",
+      "reason": "Inbox entries, not agents; cleanup walks them oldest first."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/attachments.rs",
+      "function": "hydrate_session_attachments",
+      "reason": "Attachments on one session, not a list of agents."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/coordination_worklist.rs",
+      "function": "build_coordination_model",
+      "reason": "Tasks and handoffs, not agents."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/coordination_worklist.rs",
+      "function": "build_coordination_thread_entries",
+      "reason": "Threads, not agents."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/coordination_worklist.rs",
+      "function": "build_model_item",
+      "reason": "Worklist entries, not agents."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/coordination_worklist.rs",
+      "function": "notification_records",
+      "reason": "Notifications, not agents; recency is the feature."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/notifications.rs",
+      "function": "notification_records",
+      "reason": "Notifications, not agents; recency is the feature."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/exchange_retention.rs",
+      "function": "sorted_by_updated_at_desc",
+      "reason": "Exchange records, not agents; retention prunes oldest first."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/project_observability.rs",
+      "function": "build_project_observability",
+      "reason": "Observability samples, not agents."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_model.rs",
+      "function": "sort_worktree_groups_value",
+      "reason": "Worktree groups, not the agents inside them. Plane order is ours to pick and is not tmux's."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_navigation.rs",
+      "function": "dashboard_navigation_groups",
+      "reason": "Worktree groups, not the agents inside them."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/desktop_state.rs",
+      "function": "build_worktree_groups_with_branch_probe",
+      "reason": "Worktree groups, not the agents inside them."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/desktop_state.rs",
+      "function": "sort_worktrees",
+      "reason": "Worktrees themselves: main checkout first, then newest."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/expose_ordering.rs",
+      "function": "dashboard_worktree_order_paths",
+      "reason": "The order of the worktree groups, not the agents inside them."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/worktrees.rs",
+      "function": "collect_attached_agents",
+      "reason": "Graveyard and resurrect picker. These agents are offline and have no tmux window, and 'which did I use last' is how you find the one to bring back."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/worktrees.rs",
+      "function": "collect_attached_services",
+      "reason": "Services in the graveyard picker, ordered most recently used."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/worktrees.rs",
+      "function": "group_standalone_agents_by_worktree",
+      "reason": "Graveyard picker again: offline agents with no window, most recently used first."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/worktrees.rs",
+      "function": "sort_agents",
+      "reason": "Graveyard picker again: offline agents with no window, most recently used first."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/worktrees.rs",
+      "function": "sort_worktrees",
+      "reason": "Worktrees themselves in the graveyard view, not the agents inside them."
+    },
+    {
+      "file": "native/crates/aimux/src/project_service/usage.rs",
+      "function": "sort_recent_ids",
+      "reason": "The recents list itself. Its whole content is most-recently-used order."
+    },
+    {
+      "file": "native/crates/aimux/src/tmux_expose.rs",
+      "function": "order_items",
+      "reason": "Expos\u00e9's 'r' mode, which the user asks for by pressing r. It takes the canonical list as input and reorders it on purpose."
+    },
+    {
+      "file": "native/crates/aimux/src/tmux_control.rs",
+      "function": "resolve_local_target",
+      "reason": "The attention jump, which the user asks for by pressing u. It picks one agent by urgency rather than listing them."
+    },
+    {
+      "file": "native/crates/aimux/src/runtime_coherence.rs",
+      "function": "list_dashboard_reports",
+      "reason": "Doctor output about tmux windows themselves, not a list of agents to move between."
+    },
+    {
+      "file": "relay/src/security.ts",
+      "function": "normalizeSecurityState",
+      "reason": "Audit records, not agents."
+    },
+    {
+      "file": "relay/src/sharing.ts",
+      "function": "normalizeShare",
+      "reason": "Share grants, not agents."
+    },
+    {
+      "file": "app/lib/for-you-feed.ts",
+      "function": "buildForYouFeed",
+      "reason": "The attention feed: security events, notifications and pending agent cards in one list, unread first then newest. It is a feed, not a roster of agents."
+    }
+  ]
+}

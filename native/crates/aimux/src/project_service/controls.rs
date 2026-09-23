@@ -656,7 +656,6 @@ fn route_switch_agent<R: ProjectControlRuntime>(
         scope: AgentListScope::Worktree,
         use_expose_role_visibility: false,
         raw_labels: true,
-        display_order_ids: Vec::new(),
     };
     let resolved = match direction {
         SwitchDirection::Next => resolve_next_agent(
@@ -711,7 +710,6 @@ async fn route_switch_agent_async<R: AsyncProjectControlRuntime>(
         scope: AgentListScope::Worktree,
         use_expose_role_visibility: false,
         raw_labels: true,
-        display_order_ids: Vec::new(),
     };
     let resolved = match direction {
         SwitchDirection::Next => resolve_next_agent(

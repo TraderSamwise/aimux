@@ -121,11 +121,15 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
     assert_eq!(state["tasks"], json!({ "pending": 1, "assigned": 3 }));
 
     let sessions = state["sessions"].as_array().unwrap();
+    // Window order, not topology order: codex-live holds window 1 and boss
+    // window 3, and codex-cold is offline so it falls back to createdAt and
+    // lands last. `index` is a position in that order, which is what the TUI
+    // numbers agents from.
     assert_eq!(
         ids(sessions),
         vec![
-            "boss".to_owned(),
             "codex-live".to_owned(),
+            "boss".to_owned(),
             "codex-cold".to_owned(),
         ]
     );
@@ -137,7 +141,7 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
                 session["index"].as_i64().unwrap()
             ))
             .collect::<Vec<_>>(),
-        vec![("boss", 0), ("codex-live", 1), ("codex-cold", 2)]
+        vec![("codex-live", 0), ("boss", 1), ("codex-cold", 2)]
     );
     let live = find(sessions, "codex-live");
     assert_eq!(live["status"], "running");
@@ -839,11 +843,12 @@ fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
     .unwrap();
 
     assert_eq!(preview.status, 200);
+    // Captured in the order the sessions are listed, which is window order.
     assert_eq!(
         runtime.calls,
         vec![
             (
-                "@3".to_owned(),
+                "@1".to_owned(),
                 CapturePaneOptions {
                     start_line: Some(-40),
                     end_line: None,
@@ -851,7 +856,7 @@ fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
                 },
             ),
             (
-                "@1".to_owned(),
+                "@3".to_owned(),
                 CapturePaneOptions {
                     start_line: Some(-40),
                     end_line: None,

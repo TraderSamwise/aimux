@@ -408,6 +408,12 @@ pub fn build_desktop_state_with_live_window_projection(
             sessions.push(dashboard_session);
         }
     }
+    // The groups and the lane were ordered; this flat array was left in raw
+    // topology order, and set_indexes numbers agents from it. A client reading
+    // `sessions` -- older payloads, and the TUI snapshot -- saw a different
+    // order from the one every other surface renders.
+    sessions.sort_by(crate::team_contract::compare_agent_canonical_order);
+    teammates.sort_by(crate::team_contract::compare_agent_canonical_order);
     set_indexes(&mut sessions);
     set_indexes(&mut teammates);
     let supervisor_lane = supervisor_lane_from_sessions(&sessions);
@@ -501,6 +507,12 @@ async fn build_desktop_state_with_live_window_projection_async(
             sessions.push(dashboard_session);
         }
     }
+    // The groups and the lane were ordered; this flat array was left in raw
+    // topology order, and set_indexes numbers agents from it. A client reading
+    // `sessions` -- older payloads, and the TUI snapshot -- saw a different
+    // order from the one every other surface renders.
+    sessions.sort_by(crate::team_contract::compare_agent_canonical_order);
+    teammates.sort_by(crate::team_contract::compare_agent_canonical_order);
     set_indexes(&mut sessions);
     set_indexes(&mut teammates);
     let supervisor_lane = supervisor_lane_from_sessions(&sessions);
