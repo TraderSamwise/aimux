@@ -47,7 +47,7 @@ fn replacement_failure_reports_child_output_before_timeout() {
         if joined == "display-message -p -t @1 #{window_active}" {
             return Ok("1".to_owned());
         }
-        if joined.starts_with("new-window -d -P -t aimux-mobile-abc ") {
+        if joined.starts_with("new-window -d -a -P -t aimux-mobile-abc:{end} ") {
             return Ok("@2\t2\taimux-reload-1-rust".to_owned());
         }
         if joined == "show-window-options -v -t @2 @ready" {
@@ -116,7 +116,7 @@ fn replacement_timeout_reports_pane_output_when_wrapper_keeps_window_alive() {
         if joined == "display-message -p -t @1 #{window_active}" {
             return Ok("1".to_owned());
         }
-        if joined.starts_with("new-window -d -P -t aimux-mobile-abc ") {
+        if joined.starts_with("new-window -d -a -P -t aimux-mobile-abc:{end} ") {
             return Ok("@2\t2\taimux-reload-1-rust".to_owned());
         }
         if joined == "capture-pane -p -J -t @2 -S -80" {
@@ -173,7 +173,7 @@ fn replacement_timeout_without_pane_output_stays_a_timeout() {
         if joined == "display-message -p -t @1 #{window_active}" {
             return Ok("1".to_owned());
         }
-        if joined.starts_with("new-window -d -P -t aimux-mobile-abc ") {
+        if joined.starts_with("new-window -d -a -P -t aimux-mobile-abc:{end} ") {
             return Ok("@2\t2\taimux-reload-1-rust".to_owned());
         }
         Ok(String::new())
@@ -223,7 +223,7 @@ fn replacement_timeout_reports_last_observed_readiness_value() {
         if joined == "display-message -p -t @1 #{window_active}" {
             return Ok("0".to_owned());
         }
-        if joined.starts_with("new-window -d -P -t aimux-mobile-abc ") {
+        if joined.starts_with("new-window -d -a -P -t aimux-mobile-abc:{end} ") {
             return Ok("@2\t2\taimux-reload-1-rust".to_owned());
         }
         if joined == "show-window-options -v -t @2 @ready" {
@@ -280,7 +280,7 @@ fn run_case(case: &Value) -> Value {
         if joined == "display-message -p -t @1 #{window_active}" {
             return Ok(if was_active { "1" } else { "0" }.to_owned());
         }
-        if joined.starts_with("new-window -d -P -t aimux-mobile-abc ") {
+        if joined.starts_with("new-window -d -a -P -t aimux-mobile-abc:{end} ") {
             return Ok("@2\t2\taimux-reload-1-rust".to_owned());
         }
         if joined == "show-window-options -v -t @2 @ready" {

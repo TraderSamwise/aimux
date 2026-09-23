@@ -22,7 +22,9 @@ use crate::debug_logging::log_lifecycle_always;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
-use crate::team_contract::{is_project_control_session, session_with_stored_control_flags};
+use crate::team_contract::{
+    compare_agent_canonical_order, is_project_control_session, session_with_stored_control_flags,
+};
 
 use super::agents::{
     session_is_backed_by_live_window, try_cached_live_window_ids_for_session_projection_async,
@@ -172,8 +174,12 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                     ));
                 }
             };
-            let candidate_sessions =
+            let mut candidate_sessions =
                 list_topology_session_states(&topology, Some(ONLINE_SESSION_STATUSES));
+            // The restore replays this array in order, creating one window per
+            // entry, so the array is the order tmux hands back after a restart.
+            // Recorded in topology order it walked every agent somewhere new.
+            candidate_sessions.sort_by(compare_agent_canonical_order);
             // Topology status is durable, not live: a session whose window died
             // with the service still reads `running` until something reconciles it.
             // But when topology has no session that even claims to be online, tmux

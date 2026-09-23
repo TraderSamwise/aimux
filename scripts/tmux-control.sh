@@ -800,7 +800,9 @@ ensure_linked_window() {
   [ -n "$target_session" ] || return 1
   linked_index=$(run_tmux list-windows -t "$target_session" -F '#{window_index}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$target_window_id" '$2 == window_id { print $1; exit }')
   if [ -z "$linked_index" ]; then
-    run_tmux link-window -d -s "$target_window_id" -t "$target_session" >/dev/null 2>&1 || return 1
+    # Link at the end, never into the hole a killed window left: window index
+    # is the canonical agent order. Mirrors ensure_linked_window in tmux.rs.
+    run_tmux link-window -d -a -s "$target_window_id" -t "$target_session:{end}" >/dev/null 2>&1 || return 1
     linked_index=$(run_tmux list-windows -t "$target_session" -F '#{window_index}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$target_window_id" '$2 == window_id { print $1; exit }')
   fi
   [ -n "$linked_index" ] || return 1

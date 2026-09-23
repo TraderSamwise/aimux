@@ -418,6 +418,24 @@ impl TestProject {
         read_runtime_topology(runtime_topology_path(&self.state_dir)).expect("topology readable");
     }
 
+    /// Move an agent's tmux window without touching the topology's session
+    /// order, which is what a window swap or a restart looks like from here.
+    fn set_window_index(&self, session_id: &str, window_index: u64) {
+        let mut topology =
+            read_runtime_topology(runtime_topology_path(&self.state_dir)).expect("read topology");
+        let Some(bindings) = topology.get_mut("bindings").and_then(Value::as_array_mut) else {
+            panic!("bindings array");
+        };
+        let Some(Value::Object(binding)) = bindings.iter_mut().find(|binding| {
+            binding.get("id").and_then(Value::as_str) == Some(&format!("tmux:{session_id}"))
+        }) else {
+            panic!("binding for {session_id} exists");
+        };
+        binding.insert("tmuxWindowIndex".into(), Value::from(window_index));
+        write_runtime_topology(runtime_topology_path(&self.state_dir), &topology)
+            .expect("write topology");
+    }
+
     fn mark_overseer(&self, session_id: &str) {
         let mut topology =
             read_runtime_topology(runtime_topology_path(&self.state_dir)).expect("read topology");
@@ -724,4 +742,26 @@ fn agents_no_run_can_see_are_still_offered_back() {
         project.offer().is_some(),
         "agents that died with the previous run are what the offer exists for"
     );
+}
+
+/// The restore replays the snapshot array in order, creating one window per
+/// entry, so the array has to hold tmux window order — not whatever order the
+/// topology happens to list its sessions in. Otherwise every restart walks the
+/// agents somewhere new.
+#[test]
+fn the_snapshot_records_agents_in_tmux_window_order() {
+    let project = TestProject::new("snapshot-window-order");
+    project.run_task();
+    let first = project.snapshot().expect("snapshot recorded");
+    assert_eq!(session_ids(&first), vec!["claude-one", "codex-two"]);
+
+    // claude-one moves behind codex-two in tmux. The topology array does not move.
+    project.set_window_index("claude-one", 5);
+    project.run_task();
+    let second = project.snapshot().expect("snapshot recorded");
+    assert_eq!(session_ids(&second), vec!["codex-two", "claude-one"]);
+    // Same agents, so the same generation: the prompt gate and the ack key on
+    // this id, and reordering must not mint a new one.
+    assert_eq!(second["id"], first["id"]);
+    assert_eq!(second["createdAt"], first["createdAt"]);
 }

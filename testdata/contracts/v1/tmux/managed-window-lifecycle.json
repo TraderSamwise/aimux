@@ -222,9 +222,10 @@
           {
             "args": [
               "new-window",
+              "-a",
               "-P",
               "-t",
-              "aimux-mobile-abc",
+              "aimux-mobile-abc:{end}",
               "-c",
               "/repo/mobile",
               "-n",
@@ -248,20 +249,21 @@
       "input": {
         "name": "reports sanitized create window failures",
         "errors": [
-          "new-window -P -t aimux-proj -c /repo -n claude -F #{window_id}\t#{window_index}\t#{window_name} env -i OPENAI_API_KEY=sk-real claude"
+          "new-window -a -P -t aimux-proj:{end} -c /repo -n claude -F #{window_id}\t#{window_index}\t#{window_name} env -i OPENAI_API_KEY=sk-real claude"
         ],
         "errorMessage": "Command failed: tmux new-window env -i OPENAI_API_KEY=sk-real SECRET_TOKEN=abc"
       },
       "output": {
-        "thrown": "tmux failed to create window \"claude\" in session aimux-proj (131-byte command)",
+        "thrown": "tmux failed to create window \"claude\" in session aimux-proj (140-byte command)",
         "result": null,
         "execCalls": [
           {
             "args": [
               "new-window",
+              "-a",
               "-P",
               "-t",
-              "aimux-proj",
+              "aimux-proj:{end}",
               "-c",
               "/repo",
               "-n",

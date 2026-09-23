@@ -378,9 +378,10 @@ fn creates_window_with_cwd_and_parses_created_target() {
         vec![
             "new-window",
             "-d",
+            "-a",
             "-P",
             "-t",
-            "aimux-mobile-abc",
+            "aimux-mobile-abc:{end}",
             "-c",
             "/repo/mobile",
             "-n",
@@ -774,9 +775,10 @@ fn async_named_runtime_wrappers_use_the_same_tmux_commands() {
                 == &vec![
                     "new-window".to_owned(),
                     "-d".to_owned(),
+                    "-a".to_owned(),
                     "-P".to_owned(),
                     "-t".to_owned(),
-                    "aimux-mobile-abc".to_owned(),
+                    "aimux-mobile-abc:{end}".to_owned(),
                     "-c".to_owned(),
                     "/repo/mobile".to_owned(),
                     "-n".to_owned(),
@@ -1122,7 +1124,7 @@ fn client_session_default_statusline_uses_native_internal_reader() {
                 }
                 return Ok(String::new());
             }
-            if joined == "link-window -d -s @9 -t aimux-mobile-abc-client-deadbeef" {
+            if joined == "link-window -d -a -s @9 -t aimux-mobile-abc-client-deadbeef:{end}" {
                 *client_linked_for_exec.borrow_mut() = true;
             }
             Ok(String::new())

@@ -3985,7 +3985,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@codex", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@codex", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@codex", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -4324,7 +4324,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@shell", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@shell", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@shell", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -4506,7 +4506,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@shell", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@shell", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@shell", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:7"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -5500,7 +5500,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@codex", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@codex", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@codex", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -5705,7 +5705,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@codex", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-11111111", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@codex", "-t", "aimux-proj-client-11111111"],
+              ["link-window", "-d", "-a", "-s", "@codex", "-t", "aimux-proj-client-11111111:{end}"],
               ["list-windows", "-t", "aimux-proj-client-11111111", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/right", "-t", "aimux-proj-client-11111111:2"],
               ["refresh-client", "-t", "/dev/right", "-S"]
@@ -5910,7 +5910,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@codex", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@codex", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@codex", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -6089,7 +6089,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@codex", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@codex", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@codex", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -6270,7 +6270,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@codex", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@codex", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@codex", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -6454,7 +6454,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@claude", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@claude", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@claude", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:1"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -7035,7 +7035,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@main-shell", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@main-shell", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@main-shell", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -7400,7 +7400,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@reviewer", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@reviewer", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@reviewer", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -7616,7 +7616,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@coder", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@coder", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@coder", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -7819,7 +7819,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@reviewer", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@reviewer", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@reviewer", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -8010,7 +8010,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@reviewer", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@reviewer", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@reviewer", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -8186,7 +8186,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@shell", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@shell", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@shell", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -8365,7 +8365,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@shell", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@shell", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@shell", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -8545,7 +8545,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@shell", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@shell", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@shell", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -9066,7 +9066,7 @@
               ["list-clients", "-F", "#{client_tty}|#{session_name}|#{window_id}"],
               ["display-message", "-p", "-t", "@parent", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@parent", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@parent", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]
@@ -9716,7 +9716,7 @@
               ],
               ["display-message", "-p", "-t", "@codex", "#{pane_dead}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
-              ["link-window", "-d", "-s", "@codex", "-t", "aimux-proj-client-1234abcd"],
+              ["link-window", "-d", "-a", "-s", "@codex", "-t", "aimux-proj-client-1234abcd:{end}"],
               ["list-windows", "-t", "aimux-proj-client-1234abcd", "-F", "#{window_index}|#{window_id}"],
               ["switch-client", "-c", "/dev/live", "-t", "aimux-proj-client-1234abcd:2"],
               ["refresh-client", "-t", "/dev/live", "-S"]

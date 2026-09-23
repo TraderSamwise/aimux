@@ -1593,9 +1593,16 @@ def save_state():
     with open(state_path, "w", encoding="utf-8") as handle:
         json.dump(state, handle, indent=2)
 
+def target_session_name(target):
+    # Only the append form `-t <session>:{end}` names a session. An explicit
+    # `-t <session>:<index>` stays verbatim so a wrong index still fails here.
+    if target and target.endswith(":{end}"):
+        return target[: -len(":{end}")]
+    return target
+
 def link_window():
     source = arg_after("-s")
-    target_session = arg_after("-t")
+    target_session = target_session_name(arg_after("-t"))
     source_window = None
     for windows in state.get("windows", {}).values():
         for window in windows or []:
@@ -1630,7 +1637,7 @@ def switch_client():
     save_state()
 
 def new_window():
-    session_name = arg_after("-t")
+    session_name = target_session_name(arg_after("-t"))
     windows = state.get("windows", {}).get(session_name)
     if windows is None:
         fail()

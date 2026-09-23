@@ -90,7 +90,8 @@ fn run_case(case: &Value) -> Value {
                 call["args"]
                     .as_array()
                     .map(|args| {
-                        args_to_joined(args) == format!("link-window -d -s {window_id} -t {CLIENT}")
+                        args_to_joined(args)
+                            == format!("link-window -d -a -s {window_id} -t {CLIENT}:{{end}}")
                     })
                     .unwrap_or(false)
             });
@@ -162,7 +163,7 @@ fn run_case(case: &Value) -> Value {
             if joined == format!("display-message -p -t {window_id} #{{pane_in_mode}}") {
                 return Ok(target_pane_in_mode.clone());
             }
-            if joined == format!("link-window -d -s {window_id} -t {CLIENT}")
+            if joined == format!("link-window -d -a -s {window_id} -t {CLIENT}:{{end}}")
                 && let Some(error) = &link_error
             {
                 return Err(error.clone());

@@ -77,11 +77,14 @@ fn run_case(case: &Value) -> Value {
                 }
                 return Ok(String::new());
             }
-            if joined.starts_with("link-window -d -s @3 -t aimux-mobile-abc-client-") {
-                if let Some(session_name) = args.get(5) {
-                    linked_sessions_for_exec
-                        .borrow_mut()
-                        .insert(session_name.clone());
+            if joined.starts_with("link-window -d -a -s @3 -t aimux-mobile-abc-client-") {
+                // `-t <session>:{end}` appends; the session is the part before it.
+                if let Some(target) = args.get(6) {
+                    linked_sessions_for_exec.borrow_mut().insert(
+                        target
+                            .split_once(':')
+                            .map_or(target.clone(), |(session, _)| session.to_owned()),
+                    );
                 }
                 return Ok(String::new());
             }

@@ -1562,13 +1562,17 @@ impl TmuxControl {
         if let Some(index) = find(self) {
             return Some(index);
         }
+        // Link at the end, never into the hole a killed window left: window
+        // index is the canonical agent order in the client session too.
+        let append_target = format!("{target_session}:{{end}}");
         if !self.tmux_success(&[
             "link-window",
             "-d",
+            "-a",
             "-s",
             target_window_id,
             "-t",
-            &target_session,
+            &append_target,
         ]) {
             return None;
         }

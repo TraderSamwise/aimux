@@ -54,7 +54,7 @@
             "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
           },
           { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
-          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["link-window", "-d", "-a", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c:{end}"] },
           {
             "args": [
               "swap-window",
@@ -212,7 +212,7 @@
             "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
           },
           { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
-          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["link-window", "-d", "-a", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c:{end}"] },
           { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "on"] }
         ],
         "interactiveCalls": []
@@ -244,7 +244,7 @@
             "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
           },
           { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
-          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["link-window", "-d", "-a", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c:{end}"] },
           {
             "args": [
               "swap-window",
@@ -303,7 +303,7 @@
             "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
           },
           { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
-          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["link-window", "-d", "-a", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c:{end}"] },
           { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "on"] }
         ],
         "interactiveCalls": []
@@ -354,7 +354,7 @@
             "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
           },
           { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
-          { "args": ["link-window", "-d", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["link-window", "-d", "-a", "-s", "@10", "-t", "aimux-mobile-abc-client-268eff9c:{end}"] },
           {
             "args": [
               "swap-window",
@@ -413,7 +413,7 @@
           {
             "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
           },
-          { "args": ["link-window", "-d", "-s", "@3", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["link-window", "-d", "-a", "-s", "@3", "-t", "aimux-mobile-abc-client-268eff9c:{end}"] },
           { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-return-session", "other-client"] }
         ],
         "interactiveCalls": [
@@ -456,7 +456,7 @@
             "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "@aimux-runtime-build", "<runtime-build>"]
           },
           { "args": ["set-option", "-t", "aimux-mobile-abc-client-268eff9c", "renumber-windows", "off"] },
-          { "args": ["link-window", "-d", "-s", "@121", "-t", "aimux-mobile-abc-client-268eff9c"] },
+          { "args": ["link-window", "-d", "-a", "-s", "@121", "-t", "aimux-mobile-abc-client-268eff9c:{end}"] },
           {
             "args": [
               "swap-window",

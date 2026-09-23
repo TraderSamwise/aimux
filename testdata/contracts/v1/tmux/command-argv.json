@@ -39,7 +39,7 @@
       "name": "new detached agent window",
       "operation": "newWindow",
       "input": { "sessionName": "aimux-mobile-abc", "name": "codex", "cwd": "/repo/mobile", "command": "codex", "args": ["--full-auto"], "detached": true },
-      "expected": ["new-window", "-d", "-P", "-t", "aimux-mobile-abc", "-c", "/repo/mobile", "-n", "codex", "-F", "#{window_id}\t#{window_index}\t#{window_name}", "codex", "--full-auto"]
+      "expected": ["new-window", "-d", "-a", "-P", "-t", "aimux-mobile-abc:{end}", "-c", "/repo/mobile", "-n", "codex", "-F", "#{window_id}\t#{window_index}\t#{window_name}", "codex", "--full-auto"]
     },
     {
       "name": "captureTarget end line",

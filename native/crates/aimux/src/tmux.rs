@@ -2271,13 +2271,18 @@ impl TmuxRuntimeManager {
                 );
             }
         }
-        let destination = if occupying_dashboard.is_some() || window_index.is_none() {
-            client_session_name.to_owned()
+        // No slot asked for, or the slot is held by a dashboard that the move
+        // below displaces: link at the end, never into a hole.
+        let link_argv = if occupying_dashboard.is_some() || window_index.is_none() {
+            link_window_append_argv(&target.window_id, client_session_name)
         } else {
-            format!(
-                "{}:{}",
-                client_session_name,
-                window_index.unwrap_or_default()
+            link_window_argv(
+                &target.window_id,
+                &format!(
+                    "{}:{}",
+                    client_session_name,
+                    window_index.unwrap_or_default()
+                ),
             )
         };
         let result = (|| {
@@ -2286,7 +2291,7 @@ impl TmuxRuntimeManager {
             }
             let linked_in_this_call = existing.is_none();
             if existing.is_none() {
-                self.exec_owned(link_window_argv(&target.window_id, &destination), None)?;
+                self.exec_owned(link_argv.clone(), None)?;
             }
             let linked = self
                 .get_target_by_window_id(client_session_name, &target.window_id)
@@ -2826,10 +2831,15 @@ pub fn new_window_argv(
     if detached {
         argv.push("-d".to_owned());
     }
+    // Append after the highest-numbered window rather than letting tmux fill the
+    // lowest free index. Window index is the canonical agent order, so a plain
+    // `-t <session>` dropped a returning agent into whatever hole a killed
+    // window left, mid-list.
     argv.extend([
+        "-a".to_owned(),
         "-P".to_owned(),
         "-t".to_owned(),
-        session_name.to_owned(),
+        format!("{session_name}:{{end}}"),
         "-c".to_owned(),
         cwd.to_owned(),
         "-n".to_owned(),
@@ -3118,6 +3128,21 @@ pub fn list_windows_argv(session_name: &str) -> Vec<String> {
 
 pub fn refresh_status_argv() -> Vec<String> {
     vec!["refresh-client".to_owned(), "-S".to_owned()]
+}
+
+/// Link at the end of the destination session rather than into the lowest free
+/// index. Window index is the canonical agent order, so a bare session target
+/// dropped a linked window into whatever hole a killed window left, mid-list.
+pub fn link_window_append_argv(window_id: &str, session_name: &str) -> Vec<String> {
+    vec![
+        "link-window".to_owned(),
+        "-d".to_owned(),
+        "-a".to_owned(),
+        "-s".to_owned(),
+        window_id.to_owned(),
+        "-t".to_owned(),
+        format!("{session_name}:{{end}}"),
+    ]
 }
 
 pub fn link_window_argv(window_id: &str, destination: &str) -> Vec<String> {

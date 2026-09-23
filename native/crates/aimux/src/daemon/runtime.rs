@@ -7529,7 +7529,7 @@ mod tests {
         assert!(
             calls
                 .iter()
-                .any(|call| call == &format!("link-window -d -s @1 -t {client}")),
+                .any(|call| call == &format!("link-window -d -a -s @1 -t {client}:{{end}}")),
             "{calls:?}"
         );
         assert!(
@@ -8043,7 +8043,7 @@ mod tests {
         assert!(
             calls
                 .iter()
-                .any(|call| call == &format!("link-window -d -s @1 -t {client}"))
+                .any(|call| call == &format!("link-window -d -a -s @1 -t {client}:{{end}}"))
         );
         assert!(
             calls

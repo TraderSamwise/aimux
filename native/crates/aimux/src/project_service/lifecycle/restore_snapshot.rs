@@ -483,12 +483,20 @@ fn acknowledged_snapshot_id(project_state_dir: &Path) -> Option<String> {
     )
 }
 
+/// Which agents the snapshot holds, not what order they were listed in. The
+/// ids decide whether the generation is the same one, and reordering the same
+/// set is exactly what canonical ordering does on every window move — a
+/// pairwise compare minted a new id there and dropped the pending offer.
 fn same_restore_session_ids(left: &[Value], right: &[Value]) -> bool {
     left.len() == right.len()
         && left
             .iter()
-            .zip(right)
-            .all(|(left, right)| string_field(left, "id") == string_field(right, "id"))
+            .map(|session| string_field(session, "id"))
+            .collect::<BTreeSet<_>>()
+            == right
+                .iter()
+                .map(|session| string_field(session, "id"))
+                .collect::<BTreeSet<_>>()
 }
 
 fn same_restore_sessions(left: &[Value], right: &[Value]) -> bool {

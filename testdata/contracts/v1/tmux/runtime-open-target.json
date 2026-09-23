@@ -36,7 +36,7 @@
             "-F",
             "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
           ],
-          ["link-window", "-d", "-s", "@3", "-t", "aimux-mobile-abc-client-268eff9c"],
+          ["link-window", "-d", "-a", "-s", "@3", "-t", "aimux-mobile-abc-client-268eff9c:{end}"],
           [
             "list-windows",
             "-t",
@@ -79,7 +79,7 @@
             "-F",
             "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
           ],
-          ["link-window", "-d", "-s", "@3", "-t", "aimux-mobile-abc-client-23ac4d70"],
+          ["link-window", "-d", "-a", "-s", "@3", "-t", "aimux-mobile-abc-client-23ac4d70:{end}"],
           [
             "list-windows",
             "-t",

@@ -118,7 +118,7 @@ fn run_case(case: &Value) -> Value {
         if joined.starts_with("show-window-options -v -t @3 @aimux-meta") {
             return Ok(window_metadata.clone());
         }
-        if joined.starts_with("new-window -P ") {
+        if joined.starts_with("new-window -a -P ") {
             return Ok(new_window_raw.clone());
         }
         Ok(String::new())
