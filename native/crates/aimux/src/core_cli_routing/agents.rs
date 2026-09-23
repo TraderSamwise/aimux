@@ -1,6 +1,6 @@
 use super::args::{
     CoreAgentIdentityArgs, CoreAgentInputArgs, CoreAgentListArgs, CoreAgentMigrateArgs,
-    CoreAgentPsArgs, CoreAgentRenameArgs,
+    CoreAgentPlaneArgs, CoreAgentPlaneTarget, CoreAgentPsArgs, CoreAgentRenameArgs,
 };
 use super::common::{parse_project_json_flags, required_value};
 
@@ -162,6 +162,101 @@ pub fn parse_core_agent_rename_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAge
     Some(CoreAgentRenameArgs {
         session_id: session_id?,
         label: label?,
+        project,
+        json,
+    })
+}
+
+/// `--worktree-plane`, not `--worktree`: `migrate` already uses `--worktree` to
+/// move an agent's checkout, and a plane is deliberately independent of where
+/// the working directory is.
+pub fn parse_core_agent_plane_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentPlaneArgs> {
+    if args.first().map(AsRef::as_ref) != Some("plane") {
+        return None;
+    }
+    let mut session_id = None;
+    let mut plane: Option<CoreAgentPlaneTarget> = None;
+    let mut project = None;
+    let mut json = false;
+    let mut index = 1;
+    let set_plane = |plane: &mut Option<CoreAgentPlaneTarget>, target| {
+        // Naming two planes is a contradiction, not a last-one-wins.
+        if plane.is_some() {
+            return None;
+        }
+        *plane = Some(target);
+        Some(())
+    };
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--supervisor" {
+            set_plane(&mut plane, CoreAgentPlaneTarget::Supervisor)?;
+            index += 1;
+            continue;
+        }
+        if arg == "--clear" {
+            set_plane(&mut plane, CoreAgentPlaneTarget::Clear)?;
+            index += 1;
+            continue;
+        }
+        if arg == "--worktree-plane" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            set_plane(
+                &mut plane,
+                CoreAgentPlaneTarget::Worktree {
+                    worktree_path: value.to_owned(),
+                },
+            )?;
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--worktree-plane=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            set_plane(
+                &mut plane,
+                CoreAgentPlaneTarget::Worktree {
+                    worktree_path: value.to_owned(),
+                },
+            )?;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || session_id.is_some() {
+            return None;
+        }
+        session_id = Some(arg.to_owned());
+        index += 1;
+    }
+    Some(CoreAgentPlaneArgs {
+        session_id: session_id?,
+        plane: plane?,
         project,
         json,
     })

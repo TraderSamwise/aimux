@@ -5,7 +5,7 @@ use aimux::loop_watcher::{load_loop_watcher_state, loop_watcher_state_path};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_roles::load_agent_role_registry;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::PathBuf;
@@ -413,6 +413,127 @@ fn loop_and_control_routes_validate_required_fields() {
 
     let wrong_method = route_project_service_request(&context, "GET", routes::agents::SCRIBE, None);
     assert_eq!(wrong_method.status, 405);
+    cleanup(project);
+}
+
+/// A plane is where an agent is SHOWN. A worktree path nobody has a worktree at
+/// is a group that renders nowhere, so the agent would vanish and the call
+/// would still answer 200.
+#[test]
+fn plane_route_refuses_a_worktree_nobody_has() {
+    let project = temp_project("plane-unknown-worktree");
+    let state_dir = project.join("state");
+    seed_metadata(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::PLANE,
+        Some(&json!({
+            "sessionId": "boss-1",
+            "lane": { "kind": "worktree", "worktreePath": "/repo/typo" }
+        })),
+    );
+
+    assert_eq!(response.status, 400);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("/repo/typo"),
+        "the refusal has to name the path: {}",
+        response.body
+    );
+    let state = load_metadata_state(&state_dir);
+    assert!(
+        state.sessions["boss-1"].get("lane").is_none(),
+        "a refused move must not write a plane"
+    );
+    cleanup(project);
+}
+
+/// An unreadable topology is not an empty one. Answering "no worktree at that
+/// path" would be a claim about the project we have no grounds for, and would
+/// refuse every worktree plane for as long as the file stayed broken.
+#[test]
+fn plane_route_reports_an_unreadable_topology_instead_of_denying_the_worktree() {
+    let project = temp_project("plane-unreadable-topology");
+    let state_dir = project.join("state");
+    seed_metadata(&state_dir);
+    std::fs::write(
+        state_dir.join("runtime-topology.yaml"),
+        ": not : valid : yaml :",
+    )
+    .expect("write broken topology");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::PLANE,
+        Some(&json!({
+            "sessionId": "boss-1",
+            "lane": { "kind": "worktree", "worktreePath": "/repo/feature" }
+        })),
+    );
+
+    assert_eq!(response.status, 500, "{}", response.body);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("worktrees"),
+        "the failure has to say it could not read them: {}",
+        response.body
+    );
+    cleanup(project);
+}
+
+/// The main checkout is a plane agents legitimately sit in, and the one they
+/// return to, so it has to pass the same check.
+#[test]
+fn plane_route_accepts_the_main_checkout_and_the_supervisor_plane() {
+    let project = temp_project("plane-known-targets");
+    let state_dir = project.join("state");
+    seed_metadata(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let project_root = project.to_string_lossy().into_owned();
+
+    let supervisor = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::PLANE,
+        Some(&json!({ "sessionId": "boss-1", "lane": { "kind": "supervisor" } })),
+    );
+    assert_eq!(supervisor.status, 200);
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(
+        state.sessions["boss-1"]["lane"],
+        json!({ "kind": "supervisor" })
+    );
+
+    let main_checkout = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::PLANE,
+        Some(&json!({
+            "sessionId": "boss-1",
+            "lane": { "kind": "worktree", "worktreePath": project_root }
+        })),
+    );
+    assert_eq!(main_checkout.status, 200, "{}", main_checkout.body);
+
+    // Clearing drops the stored plane so the derived one takes over again.
+    let cleared = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::PLANE,
+        Some(&json!({ "sessionId": "boss-1", "lane": Value::Null })),
+    );
+    assert_eq!(cleared.status, 200);
+    let state = load_metadata_state(&state_dir);
+    assert!(state.sessions["boss-1"].get("lane").is_none());
     cleanup(project);
 }
 

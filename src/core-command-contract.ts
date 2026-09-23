@@ -25,6 +25,7 @@ export const CORE_API_ROUTES = {
   jobsNotify: "/jobs/notify",
   agentInputText: "/core/agents/input-text",
   agentMigrateText: "/core/agents/migrate-text",
+  agentPlaneText: "/core/agents/plane-text",
   agentPsText: "/core/agents/ps-text",
   agentRenameText: "/core/agents/rename-text",
   attachmentPublishText: "/core/attachment/publish-text",

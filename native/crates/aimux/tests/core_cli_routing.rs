@@ -1,27 +1,28 @@
 use aimux::core_cli_routing::{
-    CoreAgentIdentityArgs, CoreAgentInputArgs, CoreAgentListArgs, CoreAgentPsArgs,
-    CoreCollaborationArgs, CoreDaemonRestartArgs, CoreDoctorArgs, CoreGraveyardArgs,
-    CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs, CoreLogsArgs,
-    CoreLogsSubcommand, CoreMetadataArgs, CoreNotificationArgs, CoreProjectEnsureArgs,
-    CoreRepairArgs, CoreRestartArgs, CoreTaskArgs, CoreThreadArgs, CoreWorktreeArgs,
-    core_command_args, has_core_global_logging_args, is_core_cli_command,
+    CoreAgentIdentityArgs, CoreAgentInputArgs, CoreAgentListArgs, CoreAgentPlaneTarget,
+    CoreAgentPsArgs, CoreCollaborationArgs, CoreDaemonRestartArgs, CoreDoctorArgs,
+    CoreGraveyardArgs, CoreHostAgentReadArgs, CoreHostAgentStreamArgs, CoreHostRestartArgs,
+    CoreLogsArgs, CoreLogsSubcommand, CoreMetadataArgs, CoreNotificationArgs,
+    CoreProjectEnsureArgs, CoreRepairArgs, CoreRestartArgs, CoreTaskArgs, CoreThreadArgs,
+    CoreWorktreeArgs, core_command_args, has_core_global_logging_args, is_core_cli_command,
     is_core_project_ensure_command, is_valid_core_project_ensure_args,
     parse_core_agent_identity_args, parse_core_agent_input_args, parse_core_agent_list_args,
-    parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
-    parse_core_attachment_publish_args, parse_core_collaboration_args,
-    parse_core_collaboration_args_result, parse_core_daemon_restart_args,
-    parse_core_dashboard_reload_args, parse_core_dashboard_reload_args_result,
-    parse_core_doctor_args, parse_core_graveyard_args, parse_core_host_agent_read_args,
-    parse_core_host_agent_stream_args, parse_core_host_restart_args, parse_core_host_topology_args,
-    parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
-    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_notification_args,
-    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
-    parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_repair_args,
-    parse_core_restart_args, parse_core_runtime_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_service_status_args,
-    parse_core_task_args, parse_core_task_args_result, parse_core_team_args,
-    parse_core_thread_args, parse_core_thread_args_result, parse_core_worktree_args,
+    parse_core_agent_migrate_args, parse_core_agent_plane_args, parse_core_agent_ps_args,
+    parse_core_agent_rename_args, parse_core_attachment_publish_args,
+    parse_core_collaboration_args, parse_core_collaboration_args_result,
+    parse_core_daemon_restart_args, parse_core_dashboard_reload_args,
+    parse_core_dashboard_reload_args_result, parse_core_doctor_args, parse_core_graveyard_args,
+    parse_core_host_agent_read_args, parse_core_host_agent_stream_args,
+    parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
+    parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
+    parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
+    parse_core_notification_args, parse_core_outline_args, parse_core_overseer_clear_args,
+    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_project_stop_args,
+    parse_core_repair_args, parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_scribe_clear_args, parse_core_scribe_start_args, parse_core_service_create_args,
+    parse_core_service_status_args, parse_core_task_args, parse_core_task_args_result,
+    parse_core_team_args, parse_core_thread_args, parse_core_thread_args_result,
+    parse_core_worktree_args,
 };
 
 #[test]
@@ -472,6 +473,63 @@ fn agent_rename_and_migrate_parsers_match_required_options() {
     assert_eq!(migrate.worktree, "feature");
     assert_eq!(migrate.project.as_deref(), Some("/repo"));
     assert!(!migrate.json);
+
+    let supervisor = parse_core_agent_plane_args(&["plane", "claude-1", "--supervisor"])
+        .expect("supervisor plane args");
+    assert_eq!(supervisor.session_id, "claude-1");
+    assert_eq!(supervisor.plane, CoreAgentPlaneTarget::Supervisor);
+
+    let worktree = parse_core_agent_plane_args(&[
+        "plane",
+        "claude-1",
+        "--worktree-plane",
+        "feature",
+        "--project",
+        "/repo",
+        "--json",
+    ])
+    .expect("worktree plane args");
+    assert_eq!(
+        worktree.plane,
+        CoreAgentPlaneTarget::Worktree {
+            worktree_path: "feature".into()
+        }
+    );
+    assert_eq!(worktree.project.as_deref(), Some("/repo"));
+    assert!(worktree.json);
+
+    let cleared =
+        parse_core_agent_plane_args(&["plane", "claude-1", "--clear"]).expect("clear plane args");
+    assert_eq!(cleared.plane, CoreAgentPlaneTarget::Clear);
+
+    // Naming no plane, or two, is a contradiction rather than a default.
+    assert!(parse_core_agent_plane_args(&["plane", "claude-1"]).is_none());
+    assert!(
+        parse_core_agent_plane_args(&["plane", "claude-1", "--supervisor", "--clear"]).is_none()
+    );
+    assert!(
+        parse_core_agent_plane_args(&[
+            "plane",
+            "claude-1",
+            "--supervisor",
+            "--worktree-plane",
+            "feature"
+        ])
+        .is_none()
+    );
+    assert!(parse_core_agent_plane_args(&["plane", "--supervisor"]).is_none());
+    assert!(
+        parse_core_agent_plane_args(&["plane", "claude-1", "--worktree-plane", "-x"]).is_none()
+    );
+    // migrate moves the checkout; plane moves where the agent is shown. The
+    // flags stay distinct so neither reads as the other.
+    assert!(parse_core_agent_plane_args(&["plane", "claude-1", "--worktree", "feature"]).is_none());
+
+    // The verb is owned by core routing even when its flags are wrong, so a bad
+    // invocation reaches the "invalid plane arguments" error instead of falling
+    // through to the generic unsupported-command path.
+    assert!(is_core_cli_command(&["plane", "claude-1", "--supervisor"]));
+    assert!(is_core_cli_command(&["plane", "claude-1"]));
 
     assert!(parse_core_agent_rename_args(&["rename", "claude-1"]).is_none());
     assert!(parse_core_agent_migrate_args(&["migrate", "claude-1"]).is_none());

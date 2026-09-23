@@ -118,6 +118,7 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "message"
             | "metadata"
             | "migrate"
+            | "plane"
             | "migration"
             | "notifications"
             | "notify"

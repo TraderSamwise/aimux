@@ -60,6 +60,27 @@ pub struct CoreAgentRenameArgs {
     pub json: bool,
 }
 
+/// Which plane to put the agent in. `Clear` drops the stored plane and lets it
+/// fall back to the derived one, which is how an agent returns to being placed
+/// by its role.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum CoreAgentPlaneTarget {
+    Supervisor,
+    Worktree { worktree_path: String },
+    Clear,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreAgentPlaneArgs {
+    pub session_id: String,
+    pub plane: CoreAgentPlaneTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub json: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoreAgentMigrateArgs {

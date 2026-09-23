@@ -788,6 +788,20 @@ pub fn render_core_agent_migrate_lines(payload: &Value) -> Vec<String> {
         js_string(field(payload, "worktreePath"))
     )]
 }
+pub fn render_core_agent_plane_lines(payload: &Value) -> Vec<String> {
+    let plane = match payload.get("lane") {
+        None | Some(Value::Null) => "its default plane".to_owned(),
+        Some(lane) => match lane.get("kind").and_then(Value::as_str) {
+            Some("supervisor") => "supervisor".to_owned(),
+            Some("worktree") => js_string(lane.get("worktreePath")),
+            _ => js_string(Some(lane)),
+        },
+    };
+    vec![format!(
+        "plane {} -> {plane}",
+        js_string(field(payload, "sessionId"))
+    )]
+}
 pub fn render_core_loop_add_lines(payload: &Value) -> Vec<String> {
     vec![format!(
         "loop on {}{}",

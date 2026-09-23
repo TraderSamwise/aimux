@@ -1,13 +1,13 @@
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::{
     render_core_agent_input_lines, render_core_agent_list_lines, render_core_agent_migrate_lines,
-    render_core_agent_ps_lines, render_core_agent_rename_lines, render_core_lifecycle_fork_lines,
-    render_core_lifecycle_kill_lines, render_core_lifecycle_spawn_lines,
-    render_core_lifecycle_stop_lines, render_core_loop_add_lines, render_core_loop_block_lines,
-    render_core_loop_done_lines, render_core_loop_list_lines, render_core_loop_pause_lines,
-    render_core_loop_remove_lines, render_core_loop_unpause_lines,
-    render_core_overseer_status_lines, render_core_scribe_status_lines,
-    render_core_service_remove_lines,
+    render_core_agent_plane_lines, render_core_agent_ps_lines, render_core_agent_rename_lines,
+    render_core_lifecycle_fork_lines, render_core_lifecycle_kill_lines,
+    render_core_lifecycle_spawn_lines, render_core_lifecycle_stop_lines,
+    render_core_loop_add_lines, render_core_loop_block_lines, render_core_loop_done_lines,
+    render_core_loop_list_lines, render_core_loop_pause_lines, render_core_loop_remove_lines,
+    render_core_loop_unpause_lines, render_core_overseer_status_lines,
+    render_core_scribe_status_lines, render_core_service_remove_lines,
 };
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, required_param, string_param, text_error,
@@ -177,6 +177,9 @@ pub fn route_agent_text_request(
     }
     if method == "POST" && pathname == CORE_API_ROUTES.agent_migrate_text {
         return Some(agent_migrate_text_route(runtime, &route_url, body));
+    }
+    if method == "POST" && pathname == CORE_API_ROUTES.agent_plane_text {
+        return Some(agent_plane_text_route(runtime, &route_url, body));
     }
     if method == "POST" && pathname == CORE_API_ROUTES.loop_add_text {
         return Some(loop_text_route(
@@ -842,6 +845,74 @@ pub fn agent_migrate_text_route(
         route_url,
         payload.clone(),
         &render_core_agent_migrate_lines(&payload),
+    )
+}
+
+/// Move an agent between planes. A worktree plane's path is resolved against
+/// the project the same way `migrate` resolves one, so `--worktree-plane
+/// feature` means this project's feature worktree rather than a path relative
+/// to wherever the command was run.
+pub fn agent_plane_text_route(
+    runtime: &mut impl DaemonAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let session_id = match required_param(route_url, body, "sessionId") {
+        Ok(session_id) => session_id,
+        Err(response) => return response,
+    };
+    let project_root = runtime.resolve_project_root(&project);
+    let requested_lane = body.and_then(|body| body.get("lane")).cloned();
+    let lane = match requested_lane {
+        Some(Value::Object(lane))
+            if lane.get("kind").and_then(Value::as_str) == Some("worktree") =>
+        {
+            // Resolving an empty path against the project root would invent a
+            // move to the main checkout out of a lane the project service would
+            // have rejected. Hand the bad lane through and let it be refused.
+            match lane
+                .get("worktreePath")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+            {
+                Some(worktree_path) => json!({
+                    "kind": "worktree",
+                    "worktreePath": resolve_project_relative_path(&project_root, worktree_path),
+                }),
+                None => Value::Object(lane),
+            }
+        }
+        Some(lane) => lane,
+        None => Value::Null,
+    };
+    let (json, project_root) = match unwrap_project_result(runtime.post_project_service_json(
+        &project_root,
+        project_routes::agents::PLANE,
+        json!({ "sessionId": session_id, "lane": lane }),
+        ProjectServicePostOptions::ensure_if_unreachable(),
+    )) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    let returned_session_id = match required_project_service_string(&json, "plane", "sessionId") {
+        Ok(session_id) => session_id,
+        Err(response) => return response,
+    };
+    let payload = json!({
+        "ok": true,
+        "projectRoot": project_root,
+        "sessionId": returned_session_id,
+        "lane": json.get("lane").cloned().unwrap_or(Value::Null),
+    });
+    text_or_json_lines(
+        route_url,
+        payload.clone(),
+        &render_core_agent_plane_lines(&payload),
     )
 }
 

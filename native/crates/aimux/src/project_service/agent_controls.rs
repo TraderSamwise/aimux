@@ -584,6 +584,31 @@ fn route_plane(
             }
         },
     };
+    // A plane is where an agent is SHOWN. A path nobody has a worktree at is a
+    // group that renders nowhere, so the agent would simply vanish and the call
+    // would answer 200. Name the bad path instead.
+    if let Some(worktree_path) = lane
+        .as_ref()
+        .filter(|lane| lane.get("kind").and_then(Value::as_str) == Some("worktree"))
+        .and_then(|lane| lane.get("worktreePath"))
+        .and_then(Value::as_str)
+    {
+        match project_has_worktree_at(context, worktree_path) {
+            Ok(true) => {}
+            Ok(false) => {
+                return json_error(
+                    400,
+                    format!("no worktree at {worktree_path} in this project"),
+                );
+            }
+            Err(error) => {
+                return json_error(
+                    500,
+                    format!("could not read this project's worktrees: {error}"),
+                );
+            }
+        }
+    }
     // Refuse an unknown session rather than writing a registry entry for an
     // agent that does not exist and answering 200.
     if !load_metadata_state(context.project_state_dir())
@@ -614,6 +639,40 @@ fn route_plane(
         200,
         json!({ "ok": true, "sessionId": session_id, "lane": lane }),
     )
+}
+
+/// The main checkout counts: agents live there, and it is the plane they go
+/// back to. Anything else has to be a worktree the topology actually knows.
+///
+/// An unreadable topology is not an empty one. Collapsing the error would
+/// answer "no worktree at that path" -- a claim about the project we have no
+/// grounds for -- and refuse every worktree plane for as long as it lasted.
+fn project_has_worktree_at(
+    context: &ProjectServiceRequestContext,
+    worktree_path: &str,
+) -> Result<bool, String> {
+    let wanted = worktree_path_identity(worktree_path);
+    if wanted == worktree_path_identity(&context.project_root().to_string_lossy()) {
+        return Ok(true);
+    }
+    let topology = crate::runtime_topology::read_runtime_topology(runtime_topology_path(
+        context.project_state_dir(),
+    ))?;
+    Ok(
+        crate::runtime_topology::list_topology_worktree_states(&topology, None)
+            .iter()
+            .filter_map(|worktree| worktree.get("path").and_then(Value::as_str))
+            .any(|path| worktree_path_identity(path) == wanted),
+    )
+}
+
+/// Topology paths come from git as realpaths, while a path typed on the command
+/// line is only resolved lexically. On macOS that is the difference between
+/// `/tmp/x` and `/private/tmp/x`, which would refuse a worktree that exists.
+fn worktree_path_identity(path: &str) -> String {
+    std::fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| path.trim_end_matches('/').to_owned())
 }
 
 /// Reject a lane that names no plane. A worktree lane with no path would put

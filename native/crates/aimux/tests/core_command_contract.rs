@@ -29,6 +29,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("agentInputText", "/core/agents/input-text"),
         ("agentListText", "/core/agents/list-text"),
         ("agentMigrateText", "/core/agents/migrate-text"),
+        ("agentPlaneText", "/core/agents/plane-text"),
         ("agentPsText", "/core/agents/ps-text"),
         ("agentRenameText", "/core/agents/rename-text"),
         ("attachmentPublishText", "/core/attachment/publish-text"),

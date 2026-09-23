@@ -1,22 +1,22 @@
 use crate::core_cli_routing::{
-    CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreLogsArgs, CoreLogsSubcommand,
-    core_command_args, is_core_cli_command, parse_core_agent_identity_args,
+    CoreAgentPlaneTarget, CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreLogsArgs,
+    CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_identity_args,
     parse_core_agent_input_args, parse_core_agent_list_args, parse_core_agent_migrate_args,
-    parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_attach_args,
-    parse_core_attachment_publish_args, parse_core_collaboration_args_result,
-    parse_core_daemon_restart_args, parse_core_doctor_args, parse_core_graveyard_args,
-    parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
-    parse_core_host_project_stop_args, parse_core_host_restart_args, parse_core_host_topology_args,
-    parse_core_job_args, parse_core_job_run_args, parse_core_lifecycle_fork_args,
-    parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
-    parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
-    parse_core_migration_args, parse_core_notification_args, parse_core_notification_test_args,
-    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
-    parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_projects_remove_args,
-    parse_core_repair_args, parse_core_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_service_status_args,
-    parse_core_task_args_result, parse_core_team_args, parse_core_thread_args_result,
-    parse_core_worktree_args,
+    parse_core_agent_plane_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
+    parse_core_attach_args, parse_core_attachment_publish_args,
+    parse_core_collaboration_args_result, parse_core_daemon_restart_args, parse_core_doctor_args,
+    parse_core_graveyard_args, parse_core_host_agent_read_args_result,
+    parse_core_host_agent_stream_args_result, parse_core_host_project_stop_args,
+    parse_core_host_restart_args, parse_core_host_topology_args, parse_core_job_args,
+    parse_core_job_run_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
+    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
+    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_migration_args,
+    parse_core_notification_args, parse_core_notification_test_args, parse_core_outline_args,
+    parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
+    parse_core_project_stop_args, parse_core_projects_remove_args, parse_core_repair_args,
+    parse_core_restart_args, parse_core_scribe_clear_args, parse_core_scribe_start_args,
+    parse_core_service_create_args, parse_core_service_status_args, parse_core_task_args_result,
+    parse_core_team_args, parse_core_thread_args_result, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::native_cli_dispatch::{
@@ -63,6 +63,7 @@ pub enum CoreCliOperation {
     Compact,
     AgentRename,
     AgentMigrate,
+    AgentPlane,
     AgentPs,
     LifecycleSpawn,
     ServiceCreate,
@@ -566,6 +567,40 @@ where
                         "project": project_root,
                         "sessionId": parsed.session_id,
                         "label": parsed.label,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("plane", _) => {
+            let parsed = parse_core_agent_plane_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid plane arguments".into(),
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            // Null clears the stored plane; the route reads absent and null the
+            // same way, and the agent falls back to its derived plane.
+            let lane = match &parsed.plane {
+                CoreAgentPlaneTarget::Supervisor => json!({ "kind": "supervisor" }),
+                CoreAgentPlaneTarget::Worktree { worktree_path } => {
+                    json!({ "kind": "worktree", "worktreePath": worktree_path })
+                }
+                CoreAgentPlaneTarget::Clear => Value::Null,
+            };
+            (
+                CoreCliOperation::AgentPlane,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.agent_plane_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "sessionId": parsed.session_id,
+                        "lane": lane,
                     })),
                 },
                 CoreCliFallback::None,

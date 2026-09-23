@@ -13,8 +13,8 @@ mod worktrees;
 
 pub use agents::{
     parse_core_agent_identity_args, parse_core_agent_input_args, parse_core_agent_list_args,
-    parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
-    parse_core_host_project_stop_args, parse_core_project_stop_args,
+    parse_core_agent_migrate_args, parse_core_agent_plane_args, parse_core_agent_ps_args,
+    parse_core_agent_rename_args, parse_core_host_project_stop_args, parse_core_project_stop_args,
 };
 pub use args::*;
 pub use collaboration::{parse_core_collaboration_args, parse_core_collaboration_args_result};
@@ -785,6 +785,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("input"), _) => true,
         (Some("rename"), _) => true,
         (Some("migrate"), _) => true,
+        (Some("plane"), _) => true,
         (Some("migration"), Some("audit" | "import" | "rollback")) => {
             parse_core_migration_args(args).is_some()
         }

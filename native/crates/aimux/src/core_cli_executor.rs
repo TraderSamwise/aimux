@@ -611,6 +611,7 @@ fn daemon_text_route_method(path: &str, body: Option<&Value>) -> DaemonHttpMetho
 const POST_TEXT_ROUTES: &[&str] = &[
     CORE_API_ROUTES.agent_input_text,
     CORE_API_ROUTES.agent_migrate_text,
+    CORE_API_ROUTES.agent_plane_text,
     CORE_API_ROUTES.agent_rename_text,
     CORE_API_ROUTES.attachment_publish_text,
     CORE_API_ROUTES.dashboard_reload_text,

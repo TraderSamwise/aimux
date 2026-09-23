@@ -1980,6 +1980,38 @@ fn agent_rename_and_migrate_plan_native_text_routes() {
         }
     );
 
+    let supervisor =
+        classify_core_cli(&["plane", "claude-1", "--supervisor"], &context(true, true))
+            .expect("supervisor plane plan");
+    assert_eq!(supervisor.operation, CoreCliOperation::AgentPlane);
+    assert_eq!(
+        supervisor.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/plane-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "lane": { "kind": "supervisor" },
+            })),
+        }
+    );
+
+    // Clearing sends an explicit null: the route reads absent and null the same
+    // way, and the agent falls back to the plane its role implies.
+    let cleared = classify_core_cli(&["plane", "claude-1", "--clear"], &context(true, true))
+        .expect("clear plane plan");
+    assert_eq!(
+        cleared.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/plane-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "lane": Value::Null,
+            })),
+        }
+    );
+
     let migrate = classify_core_cli(
         &["migrate", "claude-1", "--worktree", "feature"],
         &context(true, true),

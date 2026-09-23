@@ -283,6 +283,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.agent_input_text,
     crate::core_command_contract::CORE_API_ROUTES.agent_list_text,
     crate::core_command_contract::CORE_API_ROUTES.agent_migrate_text,
+    crate::core_command_contract::CORE_API_ROUTES.agent_plane_text,
     crate::core_command_contract::CORE_API_ROUTES.agent_ps_text,
     crate::core_command_contract::CORE_API_ROUTES.agent_rename_text,
     crate::core_command_contract::CORE_API_ROUTES.attachment_publish_text,
