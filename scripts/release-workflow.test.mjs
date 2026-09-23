@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const workflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+const release = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+const ci = readFileSync(resolve(repoRoot, ".github/workflows/ci.yml"), "utf8");
 const scripts = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).scripts;
 
-// Top-level `  <name>:` blocks of the workflow, keyed by job id.
-function jobs() {
+// Top-level `  <name>:` blocks of a workflow, keyed by job id.
+function jobs(workflow) {
   const found = new Map();
   let current = null;
   for (const line of workflow.split("\n")) {
@@ -33,7 +34,7 @@ function yarnCalls(text) {
     .filter((call) => call !== "install");
 }
 
-// Flatten the readiness chain to the leaves that actually do work, so a split
+// Flatten the readiness chain to the leaves that actually do work, so a move
 // that silently drops one of them is caught here rather than in a release.
 function readinessLeaves(call, seen = new Set()) {
   if (seen.has(call)) return [];
@@ -45,43 +46,33 @@ function readinessLeaves(call, seen = new Set()) {
   return children.flatMap((child) => readinessLeaves(child, seen));
 }
 
-describe("release workflow readiness gate", () => {
-  const allJobs = jobs();
-  const readinessJobs = [...allJobs].filter(([name]) => name.startsWith("readiness"));
+const releaseJobs = jobs(release);
+const ciJobs = jobs(ci);
 
-  it("splits readiness across parallel jobs rather than one serial job", () => {
-    expect(readinessJobs.length).toBeGreaterThan(1);
-    expect(allJobs.has("readiness")).toBe(false);
-  });
-
-  it("runs every step of release:readiness somewhere in the readiness jobs", () => {
+describe("release readiness runs on master, not on the tag", () => {
+  it("runs every step of release:readiness somewhere in ci", () => {
     const ran = new Set(
-      readinessJobs.flatMap(([, body]) =>
-        [...body.matchAll(/- run:\s*(.+)/g)].flatMap(([, step]) => yarnCalls(step)),
+      [...ciJobs.values()].flatMap((body) =>
+        [...body.matchAll(/(?:- run:|run:)\s*(.+)/g)].flatMap(([, step]) => yarnCalls(step)),
       ),
     );
     const covered = new Set([...ran].flatMap((call) => readinessLeaves(call)));
     const leaves = readinessLeaves("release:readiness");
     expect(leaves.length).toBeGreaterThan(5);
     for (const leaf of leaves) {
-      expect(covered.has(leaf), `no readiness job runs ${leaf}`).toBe(true);
+      expect(covered.has(leaf), `no ci job runs ${leaf}`).toBe(true);
     }
   });
 
-  it("gates the asset matrix on every readiness job", () => {
-    const assets = allJobs.get("release-assets");
-    expect(assets, "missing release-assets job").toBeTruthy();
-    const needs = assets.slice(0, assets.indexOf("runs-on:"));
-    for (const [name] of readinessJobs) {
-      expect(needs, `release-assets does not need ${name}`).toContain(`- ${name}`);
-    }
-    expect(workflow.slice(workflow.indexOf("  release-assets:"))).not.toContain(
-      "yarn release:readiness",
-    );
+  it("does not re-run the readiness gates on the tag", () => {
+    expect([...releaseJobs.keys()].filter((name) => name.startsWith("readiness"))).toEqual([]);
+    expect(release).not.toContain("yarn release:readiness");
+    expect(release).not.toContain("yarn verify:fast");
+    expect(release).not.toContain("yarn installed:gate");
   });
 
-  it("gives each readiness job its own isolated Aimux runtime and tmux", () => {
-    for (const [name, body] of readinessJobs) {
+  it("gives each ci job that starts a runtime its own Aimux home and tmux", () => {
+    for (const [name, body] of ciJobs) {
       if (!body.includes("Prepare isolated Aimux runtime")) continue;
       expect(body, `${name} shares an AIMUX_HOME`).toContain(
         "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}",
@@ -95,18 +86,17 @@ describe("release workflow readiness gate", () => {
 
   // These three ran serially in one job and were the readiness phase's whole
   // critical path. Keep them apart, and keep each one's tmux with it.
-  it("runs each installed runtime gate in its own job, with tmux", () => {
+  it("runs each installed runtime gate in its own ci job", () => {
     const gates = {
-      "readiness-idle-spawn": "yarn audit:idle-process-spawn",
-      "readiness-installed-gate": "yarn installed:gate",
-      "readiness-installed-local-gate": "yarn installed:local-gate",
+      "idle-spawn": "yarn audit:idle-process-spawn",
+      "installed-gate": "yarn installed:gate",
+      "installed-local-gate": "yarn installed:local-gate",
     };
     for (const [name, step] of Object.entries(gates)) {
-      const job = allJobs.get(name);
+      const job = ciJobs.get(name);
       expect(job, `missing ${name} job`).toBeTruthy();
       expect(job, `${name} does not run ${step}`).toContain(step);
       expect(job, `${name} does not ensure tmux`).toContain("Ensure tmux is available");
-      expect(job).toContain("apt-get install -y tmux");
       for (const [other, otherStep] of Object.entries(gates)) {
         if (other === name) continue;
         expect(job, `${name} also runs ${otherStep}`).not.toContain(otherStep);
@@ -114,3 +104,51 @@ describe("release workflow readiness gate", () => {
     }
   });
 });
+
+describe("nothing a user can reach is published before ci is green", () => {
+  it("asks ci about this exact commit", () => {
+    const guard = releaseJobs.get("require-ci-green");
+    expect(guard, "missing require-ci-green job").toBeTruthy();
+    expect(guard).toContain("scripts/require-ci-green.mjs");
+    expect(guard).toContain("--sha \"${{ github.sha }}\"");
+  });
+
+  // The matrix used to create the GitHub Release itself, six times over, which
+  // is how v0.1.59 put every asset in front of users from a run that failed.
+  it("builds assets without publishing them", () => {
+    const build = releaseJobs.get("release-assets");
+    expect(build, "missing release-assets job").toBeTruthy();
+    expect(build).toContain("actions/upload-artifact");
+    expect(build, "release-assets still creates the GitHub Release").not.toContain(
+      "softprops/action-gh-release",
+    );
+  });
+
+  it("gates every publishing job on the guard", () => {
+    const publish = releaseJobs.get("publish-release-assets");
+    expect(publish, "missing publish-release-assets job").toBeTruthy();
+    expect(publish).toContain("softprops/action-gh-release");
+    expect(publish).toContain("- require-ci-green");
+
+    // Everything else reaches users through this job, so it is the only place
+    // the guard has to be named -- but it does have to still be reachable.
+    for (const name of ["verify-release-assets", "publish-npm", "update-homebrew-tap"]) {
+      const job = releaseJobs.get(name);
+      expect(job, `missing ${name} job`).toBeTruthy();
+      expect(dependsOn(name, "require-ci-green"), `${name} is not gated on the guard`).toBe(true);
+    }
+  });
+});
+
+function dependsOn(jobName, ancestor, seen = new Set()) {
+  if (seen.has(jobName)) return false;
+  seen.add(jobName);
+  const body = releaseJobs.get(jobName);
+  if (!body) return false;
+  const header = body.slice(0, body.indexOf("steps:"));
+  const needs = [...header.matchAll(/^\s+-\s+([a-z][a-z0-9-]*)\s*$/gm)].map(([, name]) => name);
+  const inline = /needs:\s*([a-z][a-z0-9-]*)\s*$/m.exec(header);
+  if (inline) needs.push(inline[1]);
+  if (needs.includes(ancestor)) return true;
+  return needs.some((name) => dependsOn(name, ancestor, seen));
+}

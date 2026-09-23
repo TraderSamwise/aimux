@@ -21,12 +21,13 @@ concurrency:
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TARGET_DIR: /tmp/aimux-cargo-target-ci
-  AIMUX_DAEMON_PORT: "47390"
 
 jobs:
   js-tests:
     name: JavaScript tests (root/relay)
     runs-on: ubuntu-latest
+    env:
+      AIMUX_DAEMON_PORT: "47390"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,6 +68,8 @@ jobs:
   app-js-tests:
     name: JavaScript tests (app)
     runs-on: ubuntu-latest
+    env:
+      AIMUX_DAEMON_PORT: "47390"
     steps:
       - uses: actions/checkout@v4
 
@@ -86,12 +89,17 @@ jobs:
       - name: Install dependencies
         run: yarn --cwd app install --frozen-lockfile
 
+      - name: yarn --cwd app lint
+        run: yarn --cwd app lint --max-warnings=0
+
       - name: yarn --cwd app test
         run: yarn --cwd app test
 
   rust-format:
     name: Rust format
     runs-on: ubuntu-latest
+    env:
+      AIMUX_DAEMON_PORT: "47390"
     steps:
       - uses: actions/checkout@v4
 
@@ -114,6 +122,8 @@ jobs:
   rust-clippy:
     name: Rust clippy all targets
     runs-on: ubuntu-latest
+    env:
+      AIMUX_DAEMON_PORT: "47390"
     steps:
       - uses: actions/checkout@v4
 
@@ -153,6 +163,8 @@ jobs:
     # pretending a helper exists. cargo test uses --no-fail-fast so a red
     # library target cannot hide the integration binaries that carry most
     # fixture and contract coverage.
+    env:
+      AIMUX_DAEMON_PORT: "47390"
     steps:
       - uses: actions/checkout@v4
 
@@ -205,6 +217,8 @@ jobs:
     runs-on: macos-latest
     # Blocking Rust test gate. The Node parity contracts were captured on
     # macOS; Linux still runs separately as advisory shipped-platform coverage.
+    env:
+      AIMUX_DAEMON_PORT: "47390"
     steps:
       - uses: actions/checkout@v4
 
@@ -260,9 +274,196 @@ jobs:
           SHELL: /bin/zsh
         run: yarn native:test
 
+  # These four used to run only on the release tag, so a master push could
+  # be green while the thing that actually gates a release was never asked.
+  # The tag lane now trusts this run for the commit it points at.
+  static-checks:
+    name: Static checks and source audits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
+
+      - run: corepack enable
+
+      - run: yarn install --frozen-lockfile
+
+      - run: yarn --cwd app install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Prepare isolated Aimux runtime
+        run: |
+          set -euo pipefail
+          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
+          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
+          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
+          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
+
+      - name: Ensure tmux is available
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          tmux -V
+
+      - run: yarn verify:fast
+
+  idle-spawn:
+    name: Idle process spawn rate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
+
+      - run: corepack enable
+
+      - run: yarn install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Prepare isolated Aimux runtime
+        run: |
+          set -euo pipefail
+          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
+          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
+          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
+          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
+
+      - name: Ensure tmux is available
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          tmux -V
+
+      - run: yarn audit:idle-process-spawn
+
+  installed-gate:
+    name: Installed runtime gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
+
+      - run: corepack enable
+
+      - run: yarn install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Prepare isolated Aimux runtime
+        run: |
+          set -euo pipefail
+          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
+          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
+          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
+          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
+
+      - name: Ensure tmux is available
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          tmux -V
+
+      - run: yarn installed:gate
+
+  installed-local-gate:
+    name: Installed local-only runtime gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
+
+      - run: corepack enable
+
+      - run: yarn install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Prepare isolated Aimux runtime
+        run: |
+          set -euo pipefail
+          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
+          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
+          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
+          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
+
+      - name: Ensure tmux is available
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          tmux -V
+
+      - run: yarn installed:local-gate
+
   phase8-live-residuals:
     name: Phase 8 live residuals
     runs-on: ubuntu-latest
+    env:
+      AIMUX_DAEMON_PORT: "47390"
     steps:
       - uses: actions/checkout@v4
 

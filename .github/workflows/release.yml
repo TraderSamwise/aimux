@@ -18,276 +18,36 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  # `release:readiness` used to run all of this serially in one job that every
-  # other job waited on: 32 minutes on a 60-minute critical path. The four
-  # halves are independent, so they run as four jobs and the build waits for
-  # the slowest rather than the sum. Nothing is dropped — `release-assets`
-  # still needs all four.
-  readiness-static:
-    name: Readiness / static checks
+  # The source-property gates used to run here, serially in front of every
+  # build, and then ran again on the master push that carried the same commit.
+  # They live in ci.yml now; this job is what makes that safe. It refuses to
+  # publish a tag whose commit ci.yml has not concluded successfully, which is
+  # the drift that shipped v0.1.36 and v0.1.37 from a locally-green tree.
+  require-ci-green:
+    name: Require a green ci run for this commit
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: yarn
-          cache-dependency-path: |
-            yarn.lock
-            app/yarn.lock
 
-      - run: corepack enable
-
-      - run: yarn install --frozen-lockfile
-
-      - run: yarn --cwd app install --frozen-lockfile
-
-      - name: Install Rust toolchain
-        run: rustup toolchain install --profile minimal
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-
-      - name: Prepare isolated Aimux runtime
+      - name: Wait for ci to conclude on ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
-          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
-          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
-          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
+          node scripts/require-ci-green.mjs \
+            --repo "${{ github.repository }}" \
+            --sha "${{ github.sha }}"
 
-      - name: Ensure tmux is available
-        run: |
-          set -euo pipefail
-          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
-          sudo apt-get update
-          sudo apt-get install -y tmux
-          tmux -V
-
-      - run: yarn verify:fast
-
-  readiness-native-tests:
-    name: Readiness / Rust tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: yarn
-          cache-dependency-path: |
-            yarn.lock
-            app/yarn.lock
-
-      - run: corepack enable
-
-      - run: yarn install --frozen-lockfile
-
-      - name: Install Rust toolchain
-        run: rustup toolchain install --profile minimal
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-
-      - name: Prepare isolated Aimux runtime
-        run: |
-          set -euo pipefail
-          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
-          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
-          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
-          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
-
-      - name: Ensure tmux is available
-        run: |
-          set -euo pipefail
-          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
-          sudo apt-get update
-          sudo apt-get install -y tmux
-          tmux -V
-
-      - run: yarn native:test
-
-  readiness-js-tests:
-    name: Readiness / JS and app tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: yarn
-          cache-dependency-path: |
-            yarn.lock
-            app/yarn.lock
-
-      - run: corepack enable
-
-      - run: yarn install --frozen-lockfile
-
-      - run: yarn --cwd app install --frozen-lockfile
-
-      - run: yarn test
-
-      - run: yarn --cwd app lint --max-warnings=0
-
-      - run: yarn --cwd app test
-
-  # The three installed-runtime gates have no dependency on each other and
-  # were the slowest job by a wide margin when run serially. Splitting them
-  # changes nothing about what is proved, only what it costs in wall clock.
-  readiness-idle-spawn:
-    name: Readiness / idle process spawn rate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: yarn
-          cache-dependency-path: |
-            yarn.lock
-            app/yarn.lock
-
-      - run: corepack enable
-
-      - run: yarn install --frozen-lockfile
-
-      - name: Install Rust toolchain
-        run: rustup toolchain install --profile minimal
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-
-      - name: Prepare isolated Aimux runtime
-        run: |
-          set -euo pipefail
-          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
-          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
-          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
-          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
-
-      - name: Ensure tmux is available
-        run: |
-          set -euo pipefail
-          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
-          sudo apt-get update
-          sudo apt-get install -y tmux
-          tmux -V
-
-      - run: yarn audit:idle-process-spawn
-
-  readiness-installed-gate:
-    name: Readiness / installed runtime gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: yarn
-          cache-dependency-path: |
-            yarn.lock
-            app/yarn.lock
-
-      - run: corepack enable
-
-      - run: yarn install --frozen-lockfile
-
-      - name: Install Rust toolchain
-        run: rustup toolchain install --profile minimal
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-
-      - name: Prepare isolated Aimux runtime
-        run: |
-          set -euo pipefail
-          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
-          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
-          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
-          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
-
-      - name: Ensure tmux is available
-        run: |
-          set -euo pipefail
-          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
-          sudo apt-get update
-          sudo apt-get install -y tmux
-          tmux -V
-
-      - run: yarn installed:gate
-
-  readiness-installed-local-gate:
-    name: Readiness / installed local-only runtime gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: yarn
-          cache-dependency-path: |
-            yarn.lock
-            app/yarn.lock
-
-      - run: corepack enable
-
-      - run: yarn install --frozen-lockfile
-
-      - name: Install Rust toolchain
-        run: rustup toolchain install --profile minimal
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-
-      - name: Prepare isolated Aimux runtime
-        run: |
-          set -euo pipefail
-          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
-          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
-          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
-          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
-
-      - name: Ensure tmux is available
-        run: |
-          set -euo pipefail
-          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
-          sudo apt-get update
-          sudo apt-get install -y tmux
-          tmux -V
-
-      - run: yarn installed:local-gate
-
+  # Builds start immediately and run beside the ci wait. An asset that nobody
+  # publishes costs ten minutes of free runner; making the wait serial in front
+  # of it would cost those ten minutes on every release.
   release-assets:
     name: Build release assets
-    needs:
-      - readiness-static
-      - readiness-native-tests
-      - readiness-js-tests
-      - readiness-idle-spawn
-      - readiness-installed-gate
-      - readiness-installed-local-gate
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -429,29 +189,51 @@ jobs:
             exit 1
           fi
 
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v2
+      # Built here, published in publish-release-assets. Six matrix jobs each
+      # creating the GitHub Release is what let v0.1.59 put every asset in front
+      # of users from a run that then failed; nothing a user can reach is
+      # created until require-ci-green has concluded.
+      - name: Hand the built asset to the publish job
+        uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
-          files: |
+          name: release-asset-${{ matrix.asset }}
+          path: |
             release/${{ matrix.asset }}.tar.gz
             release/${{ matrix.asset }}.tar.gz.sha256
             release/${{ matrix.asset }}.tar.gz.provenance.json
             release/${{ matrix.asset }}.tar.gz.sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release-assets:
+    name: Publish release assets
+    needs:
+      - release-assets
+      - require-ci-green
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect built assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-asset-*
+          merge-multiple: true
+          path: release
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release/*
 
       - name: Attest release asset provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: |
-            release/${{ matrix.asset }}.tar.gz
-            release/${{ matrix.asset }}.tar.gz.sha256
-            release/${{ matrix.asset }}.tar.gz.provenance.json
-            release/${{ matrix.asset }}.tar.gz.sbom.spdx.json
+          subject-path: release/*
 
   verify-release-assets:
     name: Verify complete release asset set
     runs-on: ubuntu-latest
-    needs: release-assets
+    needs: publish-release-assets
     steps:
       - uses: actions/checkout@v4
 
