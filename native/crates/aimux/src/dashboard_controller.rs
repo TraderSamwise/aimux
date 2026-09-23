@@ -3036,7 +3036,7 @@ fn active_or_first_visible_session(snapshot: &DesktopStateSnapshot) -> Option<&D
 /// The supervisor plane, every worktree plane, then the derived default. The
 /// plane an agent sits in is not tied to where its working directory is, so
 /// every worktree is offered to every agent.
-fn plane_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardPlaneTarget> {
+pub fn plane_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardPlaneTarget> {
     // Selection is by digit, so the two planes that always exist come first:
     // past nine worktrees, a trailing clear entry would be unreachable.
     let mut targets = vec![

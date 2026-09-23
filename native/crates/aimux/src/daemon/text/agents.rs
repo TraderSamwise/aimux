@@ -1219,6 +1219,18 @@ mod tests {
     #[derive(Default)]
     struct FakeAgentRuntime {
         post_calls: Vec<PostCall>,
+        forwarded_bodies: Vec<Value>,
+    }
+
+    impl FakeAgentRuntime {
+        /// What the project service was actually handed, which is the only
+        /// thing this route decides.
+        fn forwarded_lane(&self) -> Value {
+            self.forwarded_bodies
+                .last()
+                .and_then(|body| body.get("lane").cloned())
+                .unwrap_or(Value::Null)
+        }
     }
 
     impl DaemonAgentTextRuntime for FakeAgentRuntime {
@@ -1245,6 +1257,7 @@ mod tests {
                 route_path: route_path.to_owned(),
                 options,
             });
+            self.forwarded_bodies.push(body.clone());
             assert_eq!(project, "/repo");
             let response = match route_path {
                 project_routes::services::CREATE => {
@@ -1279,6 +1292,12 @@ mod tests {
                         "worktreePath": body.get("worktreePath").cloned().unwrap_or(Value::Null),
                     })
                 }
+                project_routes::agents::PLANE => {
+                    json!({
+                        "sessionId": body.get("sessionId").cloned().unwrap_or(Value::Null),
+                        "lane": body.get("lane").cloned().unwrap_or(Value::Null),
+                    })
+                }
                 project_routes::agents::LOOP => {
                     json!({
                         "sessionId": body.get("sessionId").cloned().unwrap_or(Value::Null),
@@ -1295,6 +1314,78 @@ mod tests {
             };
             ProjectServiceJsonResult::ok("/repo", response)
         }
+    }
+
+    /// `--worktree-plane feature` names a worktree of the project, not a path
+    /// relative to wherever the command was typed. This is the only place that
+    /// translation happens, so it is the only place it can be wrong.
+    #[test]
+    fn agent_plane_text_resolves_a_worktree_plane_against_the_project() {
+        let mut runtime = FakeAgentRuntime::default();
+        let route_url = DaemonRouteUrl::parse("/core/agents/plane-text?json=1");
+
+        let response = agent_plane_text_route(
+            &mut runtime,
+            &route_url,
+            Some(&json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "lane": { "kind": "worktree", "worktreePath": "feature" },
+            })),
+        );
+
+        assert_eq!(response.status, 200, "{:?}", response.body);
+        assert_eq!(
+            runtime.forwarded_lane(),
+            json!({ "kind": "worktree", "worktreePath": "/repo/feature" })
+        );
+    }
+
+    /// A supervisor lane names no path, and clearing names nothing at all.
+    /// Neither may acquire one on the way through.
+    #[test]
+    fn agent_plane_text_forwards_supervisor_and_clear_untouched() {
+        for lane in [json!({ "kind": "supervisor" }), Value::Null] {
+            let mut runtime = FakeAgentRuntime::default();
+            let route_url = DaemonRouteUrl::parse("/core/agents/plane-text?json=1");
+
+            let response = agent_plane_text_route(
+                &mut runtime,
+                &route_url,
+                Some(&json!({
+                    "project": "/repo",
+                    "sessionId": "claude-1",
+                    "lane": lane.clone(),
+                })),
+            );
+
+            assert_eq!(response.status, 200, "{:?}", response.body);
+            assert_eq!(runtime.forwarded_lane(), lane);
+        }
+    }
+
+    /// Resolving an empty path against the project root would invent a move to
+    /// the main checkout out of a lane the project service rejects.
+    #[test]
+    fn agent_plane_text_does_not_invent_a_path_for_an_empty_worktree_plane() {
+        let mut runtime = FakeAgentRuntime::default();
+        let route_url = DaemonRouteUrl::parse("/core/agents/plane-text?json=1");
+
+        let _ = agent_plane_text_route(
+            &mut runtime,
+            &route_url,
+            Some(&json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "lane": { "kind": "worktree", "worktreePath": "  " },
+            })),
+        );
+
+        assert_eq!(
+            runtime.forwarded_lane(),
+            json!({ "kind": "worktree", "worktreePath": "  " }),
+            "the bad lane is handed on to be refused, not repaired"
+        );
     }
 
     #[test]

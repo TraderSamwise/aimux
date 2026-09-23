@@ -5,6 +5,7 @@
 # or a fixed filesystem path.
 agent_canonical_order
 agent_order_across_surfaces
+agent_plane_across_surfaces
 agent_prompt_submit
 attachment_hosting
 attachment_hosting_url_safety
