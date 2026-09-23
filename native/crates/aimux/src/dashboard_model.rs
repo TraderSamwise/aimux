@@ -69,6 +69,10 @@ pub struct DashboardSession {
     pub task_description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// Which plane the agent belongs to, which is what decides the lane it is
+    /// shown in. Role decides authority, not membership.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lane: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -161,10 +165,13 @@ pub struct DashboardSession {
     pub extra: BTreeMap<String, Value>,
 }
 
-pub fn is_dashboard_project_control_session(session: &DashboardSession) -> bool {
-    crate::team_contract::is_project_control_session(Some(&dashboard_session_classifier_probe(
-        session,
-    )))
+/// Membership of the supervisor lane is the agent's plane, not its authority.
+/// Keyed on the project-control role flag, an agent moved into the plane still
+/// rendered in its worktree group, and an overseer moved out of it vanished.
+pub fn is_dashboard_supervisor_plane_session(session: &DashboardSession) -> bool {
+    crate::project_service::session_visibility::session_is_in_supervisor_plane(
+        &dashboard_session_classifier_probe(session),
+    )
 }
 
 pub fn is_dashboard_overseer_session(session: &DashboardSession) -> bool {
@@ -173,12 +180,6 @@ pub fn is_dashboard_overseer_session(session: &DashboardSession) -> bool {
 
 pub fn is_dashboard_scribe_session(session: &DashboardSession) -> bool {
     crate::team_contract::is_scribe_session(Some(&dashboard_session_classifier_probe(session)))
-}
-
-pub fn dashboard_session_role_display_order(session: &DashboardSession) -> i64 {
-    crate::team_contract::agent_role_display_order(Some(&dashboard_session_classifier_probe(
-        session,
-    )))
 }
 
 fn dashboard_session_classifier_probe(session: &DashboardSession) -> Value {
@@ -206,6 +207,9 @@ fn dashboard_session_classifier_probe(session: &DashboardSession) -> Value {
     }
     if let Some(project_control) = session.project_control {
         probe.insert("projectControl".into(), Value::Bool(project_control));
+    }
+    if let Some(lane) = session.lane.clone() {
+        probe.insert("lane".into(), lane);
     }
     Value::Object(probe)
 }
@@ -663,7 +667,7 @@ pub fn filter_dashboard_visible_model(
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
-    is_dashboard_project_control_session(session)
+    is_dashboard_supervisor_plane_session(session)
 }
 
 pub fn run_dashboard_worktree_groups_contract_case(api: &str, input: &Value) -> Value {

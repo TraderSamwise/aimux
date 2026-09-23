@@ -11,10 +11,10 @@ function session(input: Partial<DesktopSession> & Pick<DesktopSession, "id">): D
 }
 
 describe("desktop state model", () => {
-  // The service already ordered this lane. The client re-sorted it by
-  // roleState.exposeOrder — a different field than the service used — so the
-  // two agreed only by luck. The input below is deliberately not in
-  // exposeOrder: re-introducing a client sort flips it and fails here.
+  // The service already ordered this lane. The client re-sorted it by a field
+  // the service did not order by, so the two agreed only by luck. The input
+  // below is deliberately not in role order: a client sort flips it and fails
+  // here.
   it("renders the supervisor lane in the order the project service sent", () => {
     const state: DesktopState = {
       ok: true,
@@ -33,7 +33,6 @@ describe("desktop state model", () => {
               lane: { kind: "supervisor" },
               projectControl: true,
               shouldShowInExpose: false,
-              exposeOrder: 1000,
             },
             projectControl: true,
           }),
@@ -47,7 +46,6 @@ describe("desktop state model", () => {
               lane: { kind: "supervisor" },
               projectControl: true,
               shouldShowInExpose: true,
-              exposeOrder: 0,
             },
             projectControl: true,
           }),

@@ -5,7 +5,7 @@ use crate::dashboard_create::{DashboardCreateBlocked, DashboardCreatePlan};
 use crate::dashboard_launch_options::DashboardLaunchOptionsState;
 use crate::dashboard_model::{
     DashboardSession, DesktopStateSnapshot, SessionStatus, is_dashboard_overseer_session,
-    is_dashboard_project_control_session, is_dashboard_scribe_session,
+    is_dashboard_scribe_session, is_dashboard_supervisor_plane_session,
 };
 use crate::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationGroupKind, DashboardNavigationOutcome,
@@ -2983,7 +2983,7 @@ fn migrate_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardMigra
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
-    is_dashboard_project_control_session(session)
+    is_dashboard_supervisor_plane_session(session)
 }
 
 fn live_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {

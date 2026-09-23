@@ -231,19 +231,18 @@ fn sorts_recent_output_by_timestamp_rank_then_original_order() {
 }
 
 #[test]
-fn role_expose_order_places_declared_supervisor_before_worktree_agents() {
+fn the_supervisor_plane_is_hoisted_ahead_of_every_worktree() {
     let mut overseer = item("overseer", None, None, Some("/repo"), None, None);
     overseer.role = "overseer".into();
+    overseer.lane = json!({ "kind": "supervisor" });
     overseer.role_state = json!({
         "status": "resolved",
         "role": "overseer",
         "lane": { "kind": "supervisor" },
         "projectControl": true,
-        "shouldShowInExpose": true,
-        "exposeOrder": 0
+        "shouldShowInExpose": true
     });
     overseer.should_show_in_expose = true;
-    overseer.expose_order = 0;
 
     let ordered = order_expose_items(
         &[
@@ -341,11 +340,9 @@ fn item(
             "role": "coder",
             "lane": { "kind": "worktree", "worktreePath": worktree_path.unwrap_or("/repo") },
             "projectControl": false,
-            "shouldShowInExpose": true,
-            "exposeOrder": 1000
+            "shouldShowInExpose": true
         }),
         should_show_in_expose: true,
-        expose_order: 1000,
         overseer: false,
         scribe: false,
         alive: true,

@@ -408,8 +408,7 @@
                   "role": "overseer",
                   "lane": { "kind": "supervisor" },
                   "projectControl": true,
-                  "shouldShowInExpose": true,
-                  "exposeOrder": 0
+                  "shouldShowInExpose": true
                 }
               }
             ]

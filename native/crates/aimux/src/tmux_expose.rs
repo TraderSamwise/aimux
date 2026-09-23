@@ -2043,42 +2043,14 @@ fn order_items(
     order_items_by_supervisor_priority(ordered)
 }
 
+/// Hoist the plane, leave everything inside it alone. Ordering the supervisor
+/// block by role display order made the plane "wherever the overseer is"; the
+/// service already sorted every item by its tmux window.
 fn order_items_by_supervisor_priority(items: Vec<Value>) -> Vec<Value> {
-    let mut keyed = items
+    let (supervisor, rest): (Vec<_>, Vec<_>) = items
         .into_iter()
-        .enumerate()
-        .map(|(index, item)| {
-            let supervisor_scoped = is_supervisor_scoped_expose_item(&item);
-            (
-                if supervisor_scoped { 0 } else { 1 },
-                if supervisor_scoped {
-                    item_expose_order(&item)
-                } else {
-                    0
-                },
-                index,
-                item,
-            )
-        })
-        .collect::<Vec<_>>();
-    keyed.sort_by(|left, right| {
-        left.0
-            .cmp(&right.0)
-            .then_with(|| left.1.cmp(&right.1))
-            .then_with(|| left.2.cmp(&right.2))
-    });
-    keyed.into_iter().map(|(_, _, _, item)| item).collect()
-}
-
-fn item_expose_order(item: &Value) -> i64 {
-    item.get("exposeOrder")
-        .and_then(Value::as_i64)
-        .or_else(|| {
-            item.get("roleState")
-                .and_then(|state| state.get("exposeOrder"))
-                .and_then(Value::as_i64)
-        })
-        .unwrap_or(1000)
+        .partition(is_supervisor_scoped_expose_item);
+    supervisor.into_iter().chain(rest).collect()
 }
 
 fn assign_value_worktree_tones(items: &[Value], project_root: &Path) -> BTreeMap<String, i64> {
@@ -2782,7 +2754,6 @@ mod tests {
                 "lane": { "kind": lane_kind },
                 "projectControl": lane_kind == "supervisor",
                 "shouldShowInExpose": true,
-                "exposeOrder": if lane_kind == "supervisor" { 0 } else { 100 },
                 "showRoleSuffix": lane_kind == "supervisor"
             },
             "exposeContext": {
@@ -2953,11 +2924,9 @@ mod tests {
     }
 
     #[test]
-    fn expose_order_places_supervisor_in_first_tile_and_preserves_worktree_order() {
-        let mut worker_one = expose_item("worker-1", "worktree");
-        worker_one["exposeOrder"] = json!(-10);
+    fn the_supervisor_plane_is_hoisted_and_worktree_order_is_untouched() {
         let items = vec![
-            worker_one,
+            expose_item("worker-1", "worktree"),
             expose_item("worker-2", "worktree"),
             expose_item("overseer", "supervisor"),
             expose_item("worker-3", "worktree"),

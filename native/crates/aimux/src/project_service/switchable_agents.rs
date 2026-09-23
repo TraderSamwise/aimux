@@ -11,9 +11,8 @@ use crate::runtime_topology::{
     list_topology_service_states, read_runtime_topology, runtime_topology_path,
 };
 use crate::team_contract::{
-    agent_expose_order, agent_lane, agent_role, agent_role_state, agent_should_show_in_expose,
-    is_overseer_session, is_scribe_session, project_control_display_role,
-    session_with_stored_control_flags,
+    agent_lane, agent_role, agent_role_state, agent_should_show_in_expose, is_overseer_session,
+    is_scribe_session, project_control_display_role, session_with_stored_control_flags,
 };
 use crate::tmux::TmuxTarget;
 
@@ -102,7 +101,6 @@ pub struct SwitchableAgentItem {
     pub lane: Value,
     pub role_state: Value,
     pub should_show_in_expose: bool,
-    pub expose_order: i64,
     pub overseer: bool,
     pub scribe: bool,
     pub alive: bool,
@@ -665,7 +663,6 @@ pub fn serialize_fast_control_item(item: &SwitchableAgentItem) -> Value {
         "shouldShowInExpose".into(),
         Value::Bool(item.should_show_in_expose),
     );
-    serialized.insert("exposeOrder".into(), Value::from(item.expose_order));
     insert_optional_string(&mut serialized, "projectId", item.project_id.as_deref());
     insert_optional_string(&mut serialized, "projectRoot", item.project_root.as_deref());
     insert_optional_string(&mut serialized, "projectName", item.project_name.as_deref());
@@ -771,7 +768,6 @@ pub fn managed_window_item(
         lane: agent_lane(Some(&classification_metadata)),
         role_state: agent_role_state(Some(&classification_metadata)),
         should_show_in_expose: agent_should_show_in_expose(Some(&classification_metadata)),
-        expose_order: agent_expose_order(Some(&classification_metadata)),
         overseer: is_overseer_session(Some(&classification_metadata)),
         scribe: is_scribe_session(Some(&classification_metadata)),
         alive: entry.alive,

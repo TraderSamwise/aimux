@@ -42,17 +42,11 @@ function item(id: string, worktree: string, tone: number, kind = "working"): Exp
   };
 }
 
-function supervisorItem(
-  id: string,
-  role: string,
-  exposeOrder: number,
-  shouldShowInExpose = true,
-): ExposeSourceItem {
+function supervisorItem(id: string, role: string, shouldShowInExpose = true): ExposeSourceItem {
   return {
     ...item(id, "main", 0),
     label: `Project ${role}`,
     shouldShowInExpose,
-    exposeOrder,
     metadata: {
       ...item(id, "main", 0).metadata,
       sessionId: `claude-${role}`,
@@ -66,7 +60,6 @@ function supervisorItem(
       lane: { kind: "supervisor" },
       projectControl: true,
       shouldShowInExpose,
-      exposeOrder,
       showRoleSuffix: role !== "coder",
     },
   };
@@ -158,7 +151,7 @@ describe("expose model", () => {
     const tiles = buildExposeTiles([
       {
         project,
-        items: [supervisorItem("0", "overseer", 0), supervisorItem("1", "scribe", 1000, false)],
+        items: [supervisorItem("0", "overseer"), supervisorItem("1", "scribe", false)],
       },
     ]);
 
@@ -172,11 +165,29 @@ describe("expose model", () => {
     });
   });
 
+  // The service reads the plane from the item AND from roleState; reading only
+  // roleState here meant an item the service hoisted rendered in a worktree.
+  it("reads the plane from the item when roleState carries no lane", () => {
+    const supervisor = supervisorItem("0", "overseer");
+    const tiles = buildExposeTiles([
+      {
+        project,
+        items: [
+          { ...supervisor, lane: { kind: "supervisor" }, roleState: undefined },
+          item("1", "main", 0),
+        ],
+      },
+    ]);
+
+    expect(tiles.map((tile) => tile.supervisorScoped)).toEqual([true, false]);
+    expect(tiles.map((tile) => tile.sectionLabel)).toEqual(["supervisor", "main"]);
+  });
+
   it("describes mixed supervisor and worktree Exposé sets without calling the supervisor a worktree", () => {
     const tiles = buildExposeTiles([
       {
         project,
-        items: [supervisorItem("0", "overseer", 0), item("1", "main", 0)],
+        items: [supervisorItem("0", "overseer"), item("1", "main", 0)],
       },
     ]);
 
@@ -201,10 +212,10 @@ describe("expose model", () => {
         project,
         items: [
           {
-            ...supervisorItem("0", "overseer", 0),
+            ...supervisorItem("0", "overseer"),
             label: "claude(overseer)",
             metadata: {
-              ...supervisorItem("0", "overseer", 0).metadata,
+              ...supervisorItem("0", "overseer").metadata,
               role: "overseer",
               command: "claude",
               toolConfigKey: "claude",
@@ -243,7 +254,6 @@ describe("expose model", () => {
               lane: { kind: "worktree", worktreePath: "/repo/main" },
               projectControl: false,
               shouldShowInExpose: true,
-              exposeOrder: 1000,
               showRoleSuffix: false,
             },
           },
@@ -261,7 +271,6 @@ describe("expose model", () => {
               lane: { kind: "worktree", worktreePath: "/repo/main" },
               projectControl: false,
               shouldShowInExpose: true,
-              exposeOrder: 0,
               showRoleSuffix: true,
             },
           },
@@ -275,7 +284,6 @@ describe("expose model", () => {
               lane: { kind: "worktree", worktreePath: "/repo/main" },
               projectControl: false,
               shouldShowInExpose: true,
-              exposeOrder: 1000,
               showRoleSuffix: true,
             },
           },
@@ -298,9 +306,9 @@ describe("expose model", () => {
       {
         project,
         items: [
-          supervisorItem("0", "overseer", 0),
+          supervisorItem("0", "overseer"),
           {
-            ...supervisorItem("99", "reviewer", 1),
+            ...supervisorItem("99", "reviewer"),
             exposeStatus: { kind: "ready", label: "Ready" },
           },
           ...worktreeItems,
@@ -324,20 +332,26 @@ describe("expose model", () => {
       })),
       { sessionId: "session-10", supervisorScoped: false, hotkeyLabel: "" },
     ]);
-    expect(filterExposeTiles(tiles, "ready").map((tile) => tile.hotkeyLabel)).toEqual(["0"]);
+    // A digit is a position in the one ordered list, not in whatever a filter
+    // left behind. The only "ready" tile is the second supervisor, which has no
+    // hotkey in the full list, so it has none here either.
+    expect(filterExposeTiles(tiles, "ready").map((tile) => tile.sessionId)).toEqual([
+      "claude-reviewer",
+    ]);
+    expect(filterExposeTiles(tiles, "ready").map((tile) => tile.hotkeyLabel)).toEqual([""]);
   });
 
   it("keeps the supervisor role label stable across Exposé refresh order changes", () => {
     const first = buildExposeTiles([
       {
         project,
-        items: [supervisorItem("0", "overseer", 0), item("1", "main", 0), item("2", "e2e", 1)],
+        items: [supervisorItem("0", "overseer"), item("1", "main", 0), item("2", "e2e", 1)],
       },
     ]);
     const refresh = buildExposeTiles([
       {
         project,
-        items: [supervisorItem("0", "overseer", 0), item("2", "e2e", 1), item("1", "main", 0)],
+        items: [supervisorItem("0", "overseer"), item("2", "e2e", 1), item("1", "main", 0)],
       },
     ]);
 

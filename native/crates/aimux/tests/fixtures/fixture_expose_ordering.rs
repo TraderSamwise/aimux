@@ -156,17 +156,12 @@ fn item(value: &Value) -> SwitchableAgentItem {
                 "lane": value.get("lane").cloned().unwrap_or_else(|| json!({ "kind": "worktree" })),
                 "projectControl": value.get("projectControl").and_then(Value::as_bool).unwrap_or(false),
                 "shouldShowInExpose": value.get("shouldShowInExpose").and_then(Value::as_bool).unwrap_or(false),
-                "exposeOrder": value.get("exposeOrder").and_then(Value::as_i64).unwrap_or(1000)
             })
         }),
         should_show_in_expose: value
             .get("shouldShowInExpose")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        expose_order: value
-            .get("exposeOrder")
-            .and_then(Value::as_i64)
-            .unwrap_or(1000),
         overseer: value["overseer"].as_bool().unwrap_or_default(),
         scribe: value["scribe"].as_bool().unwrap_or_default(),
         alive: value["alive"].as_bool().unwrap_or_default(),

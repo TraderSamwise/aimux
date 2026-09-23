@@ -8,6 +8,7 @@ import { toChatMessages } from "@/lib/transcript-view";
 import { worktreeTone } from "@/lib/worktree-tone";
 import { cropExposePreviewFooter } from "../../src/expose-preview-crop";
 import type {
+  AgentLane,
   AgentRoleState,
   ExposeChatPreview,
   ExposePreviewSnapshot,
@@ -53,10 +54,8 @@ export interface ExposeSourceItem {
   previewCapture?: PreviewCaptureMarker;
   chatPreview?: ExposeChatPreview | { messages?: AgentTranscriptMessage[] };
   roleState?: AgentRoleState;
+  lane?: AgentLane;
   shouldShowInExpose?: boolean;
-  // Mirrors the wire only. Nothing in the app reads it: the service decides
-  // the order and sends it as the array order.
-  exposeOrder?: number;
   exposeContext?: {
     worktree?: string;
     project?: string;
@@ -195,13 +194,20 @@ function trimBlankPreviewEdges(lines: readonly AnsiSpan[][]): AnsiSpan[][] {
   return lines.slice(start, end);
 }
 
+// The plane rides on the item and, for payloads built role-state first, on
+// roleState. The service reads both; reading only one here made an item the
+// service hoisted render unhoisted.
+function isSupervisorPlaneItem(item: ExposeSourceItem): boolean {
+  return item.lane?.kind === "supervisor" || item.roleState?.lane?.kind === "supervisor";
+}
+
 function toneFor(
   item: ExposeSourceItem,
   projectRoot: string,
   worktreeName: string,
   projectName: string,
 ): string {
-  if (item.roleState?.lane?.kind === "supervisor") {
+  if (isSupervisorPlaneItem(item)) {
     return worktreeTone({
       name: worktreeName,
       projectRoot,
@@ -217,7 +223,7 @@ function toneFor(
 }
 
 function laneLabelFor(item: ExposeSourceItem, rawWorktreeName: string): string {
-  return item.roleState?.lane?.kind === "supervisor" ? "supervisor" : rawWorktreeName;
+  return isSupervisorPlaneItem(item) ? "supervisor" : rawWorktreeName;
 }
 
 function exposeMixedSupervisorLabel(supervisorCount: number, baseLabel: string): string {
@@ -280,7 +286,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
       const projectName = context.project || item.projectName || source.project.name;
       const projectRoot = item.projectRoot || source.project.path;
       const rawWorktreeName = context.worktree || "main";
-      const supervisorScoped = item.roleState?.lane?.kind === "supervisor";
+      const supervisorScoped = isSupervisorPlaneItem(item);
       const worktreeName = laneLabelFor(item, rawWorktreeName);
       const semanticTitle = context.project ? `${projectName} / ${worktreeName}` : worktreeName;
       const statusKind = normalizeStatusKind(item.exposeStatus?.kind);
@@ -362,25 +368,22 @@ function withExposeHotkeys(tiles: ExposeTile[]): ExposeTile[] {
   return next;
 }
 
+// A hotkey is a position in the one ordered list, so it is assigned before any
+// filter and never again. Renumbering each filtered subset made the same digit
+// reach a different agent depending on which filter happened to be on.
 export function filterExposeTiles(tiles: ExposeTile[], filter: ExposeFilter): ExposeTile[] {
   if (filter === "all") return tiles;
   if (filter === "attention")
-    return withExposeHotkeys(
-      tiles.filter(
-        (tile) =>
-          tile.statusKind === "needs" ||
-          tile.statusKind === "blocked" ||
-          tile.statusKind === "error",
-      ),
+    return tiles.filter(
+      (tile) =>
+        tile.statusKind === "needs" || tile.statusKind === "blocked" || tile.statusKind === "error",
     );
   if (filter === "ready")
-    return withExposeHotkeys(
-      tiles.filter(
-        (tile) =>
-          tile.statusKind === "ready" || tile.statusKind === "idle" || tile.statusKind === "done",
-      ),
+    return tiles.filter(
+      (tile) =>
+        tile.statusKind === "ready" || tile.statusKind === "idle" || tile.statusKind === "done",
     );
-  return withExposeHotkeys(tiles.filter((tile) => tile.statusKind === filter));
+  return tiles.filter((tile) => tile.statusKind === filter);
 }
 
 export function groupExposeTiles(tiles: ExposeTile[]): ExposeSection[] {

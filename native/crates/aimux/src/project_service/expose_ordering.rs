@@ -33,10 +33,10 @@ pub fn order_expose_items(
     options: &ExposeOrderingOptions,
 ) -> Vec<SwitchableAgentItem> {
     if options.sort_mode_recent_output {
-        return order_expose_items_by_role_priority(order_expose_items_by_recent_output(items));
+        return partition_supervisor_plane_first(order_expose_items_by_recent_output(items));
     }
     if sublabel == ExposeSublabel::None {
-        return order_expose_items_by_role_priority(items.to_vec());
+        return partition_supervisor_plane_first(items.to_vec());
     }
     if sublabel == ExposeSublabel::Worktree {
         let groups = group_items_by_worktree(items, project_root, options);
@@ -45,7 +45,7 @@ pub fn order_expose_items(
         } else {
             groups.into_iter().flat_map(|group| group.items).collect()
         };
-        return order_expose_items_by_role_priority(ordered);
+        return partition_supervisor_plane_first(ordered);
     }
     let project_groups = group_items_by_project(items);
     if project_groups.len() < 2 {
@@ -62,7 +62,7 @@ pub fn order_expose_items(
                 .flat_map(|group| group.items)
                 .collect()
         };
-        return order_expose_items_by_role_priority(ordered);
+        return partition_supervisor_plane_first(ordered);
     }
     let ordered = project_groups
         .into_iter()
@@ -81,19 +81,27 @@ pub fn order_expose_items(
             }
         })
         .collect();
-    order_expose_items_by_role_priority(ordered)
+    partition_supervisor_plane_first(ordered)
 }
 
-fn order_expose_items_by_role_priority(
-    items: Vec<SwitchableAgentItem>,
-) -> Vec<SwitchableAgentItem> {
-    let mut keyed = items
+/// Planes are ours to order; what sits inside one is not. This sorted the
+/// whole list by role display order, so the supervisor plane was "wherever the
+/// overseer is" and an agent moved into it kept its worktree position. A
+/// partition hoists the plane and leaves every item where the canonical
+/// comparator already put it.
+fn partition_supervisor_plane_first(items: Vec<SwitchableAgentItem>) -> Vec<SwitchableAgentItem> {
+    let (supervisor, rest): (Vec<_>, Vec<_>) =
+        items.into_iter().partition(item_is_in_supervisor_plane);
+    supervisor.into_iter().chain(rest).collect()
+}
+
+fn item_is_in_supervisor_plane(item: &SwitchableAgentItem) -> bool {
+    // The plane rides on the item and, for payloads built role-state first, on
+    // `roleState.lane`. Reading only one of the two dropped half the plane.
+    [item.role_state.get("lane"), Some(&item.lane)]
         .into_iter()
-        .enumerate()
-        .map(|(index, item)| (item.expose_order, index, item))
-        .collect::<Vec<_>>();
-    keyed.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-    keyed.into_iter().map(|(_, _, item)| item).collect()
+        .flatten()
+        .any(|lane| lane.get("kind").and_then(Value::as_str) == Some("supervisor"))
 }
 
 pub fn order_expose_items_by_recent_output(

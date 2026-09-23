@@ -1,7 +1,7 @@
 use crate::atomic_write::write_json_atomic;
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
-    DashboardSession, DesktopStateSnapshot, is_dashboard_project_control_session,
+    DashboardSession, DesktopStateSnapshot, is_dashboard_supervisor_plane_session,
 };
 use crate::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationGroupKind, DashboardNavigationState,
@@ -496,7 +496,7 @@ fn remove_object_key(value: &mut Value, key: &str) {
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
-    is_dashboard_project_control_session(session)
+    is_dashboard_supervisor_plane_session(session)
 }
 
 fn current_tmux_session() -> Option<String> {

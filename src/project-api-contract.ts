@@ -414,7 +414,6 @@ export type AgentRoleState =
       lane: Exclude<AgentLane, { kind: "unknown" }>;
       projectControl: boolean;
       shouldShowInExpose?: boolean;
-      exposeOrder?: number;
       showRoleSuffix?: boolean;
       supervisorRole?: AgentSupervisorRole;
     }
@@ -428,7 +427,6 @@ export type AgentRoleState =
       effectiveRole: AgentRole;
       effectiveLane: AgentLane;
       shouldShowInExpose?: boolean;
-      exposeOrder?: number;
       showRoleSuffix?: boolean;
       runtimeWorkingDirectory?: string;
     }
@@ -440,7 +438,6 @@ export type AgentRoleState =
       lane?: AgentLane;
       projectControl?: boolean;
       shouldShowInExpose?: boolean;
-      exposeOrder?: number;
       showRoleSuffix?: boolean;
     };
 
@@ -1704,7 +1701,6 @@ export interface SwitchableAgentItem extends Record<string, unknown> {
   overseer?: boolean;
   scribe?: boolean;
   shouldShowInExpose?: boolean;
-  exposeOrder?: number;
 }
 
 export interface SwitchableAgentsResponse extends ProjectApiOk {

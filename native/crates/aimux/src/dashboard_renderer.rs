@@ -3,8 +3,8 @@ mod footer;
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
     DashboardService, DashboardSession, DesktopStateSnapshot, ServiceStatus, SessionStatus,
-    is_dashboard_overseer_session, is_dashboard_project_control_session,
-    is_dashboard_scribe_session,
+    is_dashboard_overseer_session, is_dashboard_scribe_session,
+    is_dashboard_supervisor_plane_session,
 };
 use crate::dashboard_navigation::{
     DASHBOARD_QUICK_JUMP_LIMIT, DashboardNavigationGroup, DashboardNavigationGroupKind,
@@ -2418,7 +2418,7 @@ fn has_live_scribe(input: &DashboardRenderInput<'_>) -> bool {
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
-    is_dashboard_project_control_session(session)
+    is_dashboard_supervisor_plane_session(session)
 }
 
 fn is_scribe_session(session: &DashboardSession) -> bool {

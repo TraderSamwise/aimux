@@ -297,11 +297,9 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000,
                 "showRoleSuffix": false
               },
-              "shouldShowInExpose": true,
-              "exposeOrder": 1000
+              "shouldShowInExpose": true
             },
             {
               "target": {
@@ -349,11 +347,9 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000,
                 "showRoleSuffix": false
               },
-              "shouldShowInExpose": true,
-              "exposeOrder": 1000
+              "shouldShowInExpose": true
             }
           ]
         },
@@ -408,11 +404,9 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000,
                 "showRoleSuffix": false
               },
-              "shouldShowInExpose": true,
-              "exposeOrder": 1000
+              "shouldShowInExpose": true
             },
             {
               "target": {
@@ -460,11 +454,9 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000,
                 "showRoleSuffix": false
               },
-              "shouldShowInExpose": true,
-              "exposeOrder": 1000
+              "shouldShowInExpose": true
             }
           ]
         },
@@ -519,11 +511,9 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000,
                 "showRoleSuffix": false
               },
-              "shouldShowInExpose": true,
-              "exposeOrder": 1000
+              "shouldShowInExpose": true
             },
             {
               "target": {
@@ -571,11 +561,9 @@
                 },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000,
                 "showRoleSuffix": false
               },
-              "shouldShowInExpose": true,
-              "exposeOrder": 1000
+              "shouldShowInExpose": true
             }
           ]
         },

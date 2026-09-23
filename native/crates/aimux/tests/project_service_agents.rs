@@ -84,7 +84,6 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
             "lane": { "kind": "supervisor" },
             "projectControl": true,
             "shouldShowInExpose": true,
-            "exposeOrder": 0,
             "showRoleSuffix": true
         })
     );

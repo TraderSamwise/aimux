@@ -1,6 +1,6 @@
 use crate::dashboard_model::{
     DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
-    WorktreeGroup, dashboard_session_role_display_order, is_dashboard_project_control_session,
+    WorktreeGroup, is_dashboard_supervisor_plane_session,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -364,7 +364,7 @@ fn entry_at(
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
-    is_dashboard_project_control_session(session)
+    is_dashboard_supervisor_plane_session(session)
 }
 
 pub fn dashboard_navigation_groups<'a>(
@@ -590,19 +590,11 @@ fn supervisor_sessions(snapshot: &DesktopStateSnapshot) -> Vec<&DashboardSession
             sessions.push(session);
         }
     }
-    let mut keyed = sessions
-        .into_iter()
-        .enumerate()
-        .map(|(index, session)| {
-            (
-                dashboard_session_role_display_order(session),
-                index,
-                session,
-            )
-        })
-        .collect::<Vec<_>>();
-    keyed.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-    keyed.into_iter().map(|(_, _, session)| session).collect()
+    // The supervisor lane is a plane, not a ranking. Ordering it by role
+    // display order put the overseer first here while Exposé and the chips
+    // rendered the same agents in window order.
+    sort_sessions_by_created(&mut sessions);
+    sessions
 }
 
 struct NavigationWorktreeInput<'a> {

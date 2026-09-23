@@ -467,11 +467,9 @@ fn serialization_and_status_chips_match_fast_control_shapes() {
                 "lane": { "kind": "worktree", "worktreePath": "/repo" },
                 "projectControl": false,
                 "shouldShowInExpose": true,
-                "exposeOrder": 1000,
                 "showRoleSuffix": false
             },
-            "shouldShowInExpose": true,
-            "exposeOrder": 1000
+            "shouldShowInExpose": true
         })
     );
     assert_eq!(
@@ -785,7 +783,7 @@ fn route_switchable_agents_expose_liveness_policy_excludes_offline_sessions() {
 }
 
 #[test]
-fn route_switchable_agents_expose_uses_role_visibility_and_orders_overseer_first() {
+fn route_switchable_agents_expose_uses_role_visibility_and_hoists_the_supervisor_plane() {
     let project = temp_project("route-switchable-expose-role-visibility");
     let state_dir = project.join("state");
     create_dir_all(&state_dir).unwrap();
@@ -864,7 +862,8 @@ fn route_switchable_agents_expose_uses_role_visibility_and_orders_overseer_first
     assert_eq!(items[0]["role"], "overseer");
     assert_eq!(items[0]["shouldShowInExpose"], true);
     assert_eq!(items[0]["roleState"]["shouldShowInExpose"], true);
-    assert_eq!(items[0]["exposeOrder"], 0);
+    // Position in the array is the order; there is no order field to assert.
+    assert_eq!(items[0]["lane"]["kind"], "supervisor");
     assert!(items.iter().all(|item| item["id"] != "scribe"));
     cleanup(project);
 }

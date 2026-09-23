@@ -370,8 +370,7 @@ fn overseer_lookup_finds_the_overseer_role_not_the_first_supervisor_plane_item()
                     "role": "reviewer",
                     "lane": { "kind": "supervisor" },
                     "projectControl": true,
-                    "shouldShowInExpose": true,
-                    "exposeOrder": 0
+                    "shouldShowInExpose": true
                 }
             },
             {
@@ -383,8 +382,7 @@ fn overseer_lookup_finds_the_overseer_role_not_the_first_supervisor_plane_item()
                     "role": "overseer",
                     "lane": { "kind": "supervisor" },
                     "projectControl": true,
-                    "shouldShowInExpose": true,
-                    "exposeOrder": 1
+                    "shouldShowInExpose": true
                 }
             }
         ]
@@ -1767,8 +1765,7 @@ fn runner_keeps_supervisor_present_across_repeated_refreshes() {
     options.current_window = Some("codex".into());
     options.current_window_id = Some("@1".into());
     options.expose_config.initial_scope = Some(ExposeScope::Project);
-    let mut overseer = supervisor_hot_item("@0", "overseer", true);
-    overseer["roleState"]["exposeOrder"] = json!(0);
+    let overseer = supervisor_hot_item("@0", "overseer", true);
     let worker_one = hot_item("@1", "worker one preview\n");
     let worker_two = hot_item("@2", "worker two preview\n");
     let mut client = FakeHttp::with_responses([
@@ -1940,8 +1937,7 @@ fn supervisor_hot_item(window_id: &str, role: &str, overseer: bool) -> Value {
         "role": role,
         "lane": { "kind": "supervisor" },
         "projectControl": true,
-        "shouldShowInExpose": true,
-        "exposeOrder": if overseer { 1 } else { 0 }
+        "shouldShowInExpose": true
     });
     item["metadata"]["sessionId"] = json!(format!("session-{role}"));
     item["metadata"]["role"] = json!(role);
