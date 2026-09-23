@@ -93,12 +93,24 @@ describe("release workflow readiness gate", () => {
     }
   });
 
-  it("provisions tmux for the installed runtime gates", () => {
-    const installed = allJobs.get("readiness-installed-gates");
-    expect(installed, "missing readiness-installed-gates job").toBeTruthy();
-    expect(installed).toContain("Ensure tmux is available");
-    expect(installed).toContain("apt-get install -y tmux");
-    expect(installed).toContain("yarn installed:gate");
-    expect(installed).toContain("yarn installed:local-gate");
+  // These three ran serially in one job and were the readiness phase's whole
+  // critical path. Keep them apart, and keep each one's tmux with it.
+  it("runs each installed runtime gate in its own job, with tmux", () => {
+    const gates = {
+      "readiness-idle-spawn": "yarn audit:idle-process-spawn",
+      "readiness-installed-gate": "yarn installed:gate",
+      "readiness-installed-local-gate": "yarn installed:local-gate",
+    };
+    for (const [name, step] of Object.entries(gates)) {
+      const job = allJobs.get(name);
+      expect(job, `missing ${name} job`).toBeTruthy();
+      expect(job, `${name} does not run ${step}`).toContain(step);
+      expect(job, `${name} does not ensure tmux`).toContain("Ensure tmux is available");
+      expect(job).toContain("apt-get install -y tmux");
+      for (const [other, otherStep] of Object.entries(gates)) {
+        if (other === name) continue;
+        expect(job, `${name} also runs ${otherStep}`).not.toContain(otherStep);
+      }
+    }
   });
 });

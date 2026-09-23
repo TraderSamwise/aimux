@@ -141,8 +141,11 @@ jobs:
 
       - run: yarn --cwd app test
 
-  readiness-installed-gates:
-    name: Readiness / installed runtime gates
+  # The three installed-runtime gates have no dependency on each other and
+  # were the slowest job by a wide margin when run serially. Splitting them
+  # changes nothing about what is proved, only what it costs in wall clock.
+  readiness-idle-spawn:
+    name: Readiness / idle process spawn rate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -186,7 +189,93 @@ jobs:
 
       - run: yarn audit:idle-process-spawn
 
+  readiness-installed-gate:
+    name: Readiness / installed runtime gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
+
+      - run: corepack enable
+
+      - run: yarn install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Prepare isolated Aimux runtime
+        run: |
+          set -euo pipefail
+          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
+          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
+          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
+          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
+
+      - name: Ensure tmux is available
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          tmux -V
+
       - run: yarn installed:gate
+
+  readiness-installed-local-gate:
+    name: Readiness / installed local-only runtime gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
+
+      - run: corepack enable
+
+      - run: yarn install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Prepare isolated Aimux runtime
+        run: |
+          set -euo pipefail
+          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home-${{ github.job }}" >> "$GITHUB_ENV"
+          echo "AIMUX_TEST_HARNESS=github-actions" >> "$GITHUB_ENV"
+          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-${{ github.job }}-tmux.sock" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/aimux-home-${{ github.job }}"
+          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$RUNNER_TEMP/aimux-home-${{ github.job }}/test-isolation.json"
+
+      - name: Ensure tmux is available
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null 2>&1 && { tmux -V; exit 0; }
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          tmux -V
 
       - run: yarn installed:local-gate
 
@@ -196,7 +285,9 @@ jobs:
       - readiness-static
       - readiness-native-tests
       - readiness-js-tests
-      - readiness-installed-gates
+      - readiness-idle-spawn
+      - readiness-installed-gate
+      - readiness-installed-local-gate
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
