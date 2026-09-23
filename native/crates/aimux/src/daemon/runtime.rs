@@ -3555,8 +3555,13 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         };
         let expected_project_service = self.project_service_info();
         let mut resolver = self.resolver.clone();
+        let aimux_home = self
+            .resolver
+            .global_aimux_dir()
+            .to_string_lossy()
+            .into_owned();
         let daemon_process_inventory =
-            daemon_process_inventory_report(&process_list, Some(self.info.pid));
+            daemon_process_inventory_report(&process_list, Some(self.info.pid), Some(&aimux_home));
         let mut report = build_runtime_coherence_report_with_resolver(
             RuntimeCoherenceInput {
                 generated_at: generated_at.clone(),
@@ -5625,7 +5630,7 @@ mod tests {
             },
         ];
 
-        let report = daemon_process_inventory_report(&processes, Some(101));
+        let report = daemon_process_inventory_report(&processes, Some(101), None);
         let text = render_daemon_process_inventory_for_doctor(&json!({
             "daemonProcessInventory": report.clone(),
         }));
@@ -5651,7 +5656,7 @@ mod tests {
             args: "/Users/sam/.aimux/native/current/bin/aimux daemon run".into(),
         }];
 
-        let report = daemon_process_inventory_report(&processes, Some(101));
+        let report = daemon_process_inventory_report(&processes, Some(101), None);
 
         assert_eq!(report["total"], json!(1));
         assert_eq!(report["unexpectedCount"], json!(0));

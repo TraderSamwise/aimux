@@ -141,14 +141,25 @@ pub fn read_process_args(pid: i32) -> Option<String> {
 }
 
 pub fn read_process_args_with_env(pid: i32) -> Option<String> {
+    try_read_process_args_with_env(pid).ok().flatten()
+}
+
+/// The same read, with a failed `ps` kept as an error rather than an absence.
+/// One spawn site: everything that needs a process environment comes through
+/// here, so the subprocess gate can still count them.
+pub fn try_read_process_args_with_env(pid: i32) -> Result<Option<String>, String> {
     let output = AsyncCommand::new("ps")
         .args(["eww", "-p", &pid.to_string(), "-o", "command="])
         .output()
-        .ok()?;
+        .map_err(|error| format!("failed to run ps environment inventory: {error}"))?;
+    // A process that exited between listing it and inspecting it is gone, not
+    // an inventory failure.
     if !output.status.success() {
-        return None;
+        return Ok(None);
     }
-    read_process_args_from_ps_output(&String::from_utf8_lossy(&output.stdout))
+    Ok(read_process_args_from_ps_output(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 pub fn read_process_args_from_ps_output(stdout: &str) -> Option<String> {
@@ -342,6 +353,25 @@ pub fn is_aimux_daemon_process(pid: i32) -> bool {
 
 pub fn is_native_aimux_daemon_process(pid: i32) -> bool {
     read_process_args(pid).is_some_and(|args| is_native_aimux_daemon_process_args(&args))
+}
+
+/// The `AIMUX_HOME` a running process was started with, which is the only thing
+/// that says whether it belongs to this control plane. Two aimux daemons under
+/// different homes are separate installations that know nothing about each
+/// other, so counting them together reported a developer's own daemon as a leak
+/// inside every isolated test home on the machine.
+///
+/// `Ok(None)` means the process is gone, or declared no home. An unreadable
+/// environment is an error and never an absent one: "not ours" and "could not
+/// ask" have to take different paths at the call site.
+pub fn try_read_process_aimux_home(pid: i32) -> Result<Option<String>, String> {
+    if pid <= 0 {
+        return Ok(None);
+    }
+    Ok(
+        try_read_process_args_with_env(pid)?
+            .and_then(|args| process_env_value(&args, "AIMUX_HOME")),
+    )
 }
 
 pub fn is_aimux_daemon_process_args(args: &str) -> bool {

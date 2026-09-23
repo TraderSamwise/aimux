@@ -1,4 +1,8 @@
-use aimux::daemon::process_inventory::write_daemon_process_health_snapshot;
+use aimux::atomic_write::write_json_atomic;
+use aimux::daemon::process_inventory::{
+    daemon_process_health_path, daemon_process_health_snapshot,
+    write_daemon_process_health_snapshot,
+};
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::dashboard_model::{DashboardOperationFailure, DesktopStateSnapshot};
 use aimux::process_inspector::ProcessArgsEntry;
@@ -517,10 +521,11 @@ fn route_desktop_state_reports_persisted_operation_failures() {
 fn route_desktop_state_reports_unexpected_daemon_process_warning() {
     let (project, state_dir) = write_desktop_state_fixtures("daemon-process-warning");
     let isolation = support::TestIsolation::new("desktop-state-daemon-process-warning");
+    // The snapshot is the input; whose home pid 202 really has is the process
+    // inventory's question, answered in its own tests. Passing no expected home
+    // keeps this one about the route surfacing what the file says.
     let resolver = aimux::paths::PathResolver::from_env();
-    write_daemon_process_health_snapshot(
-        &resolver,
-        101,
+    let snapshot = daemon_process_health_snapshot(
         Ok(vec![
             ProcessArgsEntry {
                 pid: 101,
@@ -531,9 +536,12 @@ fn route_desktop_state_reports_unexpected_daemon_process_warning() {
                 args: "/tmp/aimux-cargo-target-codex/debug/aimux daemon run".into(),
             },
         ]),
+        Some(101),
+        None,
         "2026-09-21T00:00:00Z".into(),
-    )
-    .expect("write daemon health snapshot");
+    );
+    write_json_atomic(daemon_process_health_path(&resolver), &snapshot)
+        .expect("write daemon health snapshot");
     let context = isolation.project_context(&project, &state_dir);
 
     let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
