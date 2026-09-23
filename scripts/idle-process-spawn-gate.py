@@ -5,6 +5,15 @@ The observable is intentionally outside Aimux. Linux exposes total process
 creation in /proc/stat's "processes" field. macOS does not expose an equivalent
 counter cheaply, so the fallback samples PID allocation with two short helper
 processes; that is the same observable family as the incident probe.
+
+The verdict is attribution by process identity: spawns under this scope's own
+daemon and project-service process roots, counted from an isolated-PATH exec log
+and a sampler restricted to that subtree. The whole-machine rate is a second,
+weaker question -- did anything escape that attribution -- and answering it means
+subtracting two whole-machine rates, which only means something while the host is
+quiet. A busy host makes that cross-check unavailable and says so; it does not
+make the attribution wrong, and it must not stop a release from being verified on
+a machine that is doing other work.
 """
 
 from __future__ import annotations
@@ -630,6 +639,73 @@ def _print_top_spawners(top: list[tuple[str, int]]) -> None:
         print(f"  {count:4d}  {label}")
 
 
+@dataclass(frozen=True)
+class Verdict:
+    exit_code: int
+    message: str
+    stream: str = "stdout"
+
+
+def decide_verdict(
+    *,
+    budget_per_sec: float,
+    max_baseline_rate: float,
+    baseline_rate: float,
+    incremental_rate: float,
+    aimux_spawn_rate: float,
+    root_pids: set[int],
+    aimux_top_spawners: list[tuple[str, int]],
+    system_top_spawners: list[tuple[str, int]],
+) -> Verdict:
+    """Turn the two measurements into an outcome.
+
+    The verdict is attribution by process identity: spawns under this scope's
+    own process roots. The whole-machine delta is a second, weaker question --
+    did anything escape that attribution -- and it is only answerable while the
+    host is quiet, because it is the difference of two whole-machine rates.
+    """
+    if aimux_spawn_rate > budget_per_sec:
+        heaviest = aimux_top_spawners[0][0] if aimux_top_spawners else "<unknown>"
+        return Verdict(
+            FAIL_EXIT,
+            "FAIL: idle aimux process-spawn budget exceeded: "
+            f"aimux-subtree {aimux_spawn_rate:.2f}/s > {budget_per_sec:.2f}/s; "
+            f"heaviest aimux-subtree spawner={heaviest}",
+            "stderr",
+        )
+    if not root_pids:
+        return Verdict(
+            COULD_NOT_MEASURE_EXIT,
+            "COULD_NOT_MEASURE: could not identify the isolated aimux daemon/project-service "
+            "process roots, so subtree attribution is unavailable",
+            "stderr",
+        )
+    if baseline_rate > max_baseline_rate:
+        return Verdict(
+            PASS_EXIT,
+            "PASS: idle aimux process-spawn budget is within limit "
+            f"(aimux-subtree {aimux_spawn_rate:.2f}/s <= {budget_per_sec:.2f}/s); "
+            "unattributed-excess cross-check UNAVAILABLE: host baseline "
+            f"{baseline_rate:.2f}/s > {max_baseline_rate:.2f}/s",
+        )
+    if incremental_rate > budget_per_sec:
+        heaviest = system_top_spawners[0][0] if system_top_spawners else "<unknown>"
+        return Verdict(
+            COULD_NOT_MEASURE_EXIT,
+            "COULD_NOT_MEASURE: whole-machine process creation rose above budget "
+            "but the excess was not attributable to the isolated aimux subtree: "
+            f"incremental {incremental_rate:.2f}/s > {budget_per_sec:.2f}/s; "
+            f"heaviest system spawner={heaviest}; aimux-subtree {aimux_spawn_rate:.2f}/s",
+            "stderr",
+        )
+    return Verdict(
+        PASS_EXIT,
+        "PASS: idle aimux process-spawn budget is within limit "
+        f"(aimux-subtree {aimux_spawn_rate:.2f}/s <= {budget_per_sec:.2f}/s); "
+        f"unattributed-excess cross-check clean: incremental {incremental_rate:.2f}/s",
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=_repo_root_from_script())
@@ -640,7 +716,7 @@ def parse_args() -> argparse.Namespace:
         "--max-baseline-rate",
         type=float,
         default=DEFAULT_MAX_BASELINE_RATE_PER_SEC,
-        help="Return could-not-measure when host process creation is above this rate.",
+        help="Above this host rate the whole-machine cross-check is reported unavailable; the aimux-subtree verdict still stands.",
     )
     parser.add_argument("--duration", type=float, default=DEFAULT_DURATION_SECONDS)
     parser.add_argument("--baseline-duration", type=float, default=DEFAULT_BASELINE_SECONDS)
@@ -690,7 +766,10 @@ def main() -> int:
         print(f"aimux binary: {aimux_bin}")
         print(f"scope: AIMUX_HOME={aimux_home} daemon_port={daemon_port}")
         print(f"budget: incremental <= {args.budget_per_sec:.2f} processes/sec")
-        print(f"measurement noise ceiling: baseline <= {args.max_baseline_rate:.2f} processes/sec")
+        print(
+            "unattributed-excess cross-check needs baseline <= "
+            f"{args.max_baseline_rate:.2f} processes/sec"
+        )
 
         if "host-load" in args.mutation:
             host_load = _start_host_load_mutation(root)
@@ -739,42 +818,18 @@ def main() -> int:
         print("system spawners observed during active sample:")
         _print_top_spawners(system_top_spawners)
 
-        if aimux_spawn_rate > args.budget_per_sec:
-            heaviest = aimux_top_spawners[0][0] if aimux_top_spawners else "<unknown>"
-            print(
-                "FAIL: idle aimux process-spawn budget exceeded: "
-                f"aimux-subtree {aimux_spawn_rate:.2f}/s > {args.budget_per_sec:.2f}/s; "
-                f"heaviest aimux-subtree spawner={heaviest}",
-                file=sys.stderr,
-            )
-            return FAIL_EXIT
-        if not root_pids:
-            print(
-                "COULD_NOT_MEASURE: could not identify the isolated aimux daemon/project-service "
-                "process roots, so subtree attribution is unavailable",
-                file=sys.stderr,
-            )
-            return COULD_NOT_MEASURE_EXIT
-        if baseline.rate > args.max_baseline_rate:
-            print(
-                "COULD_NOT_MEASURE: host baseline process creation is too noisy to "
-                f"attribute whole-machine PID deltas safely: {baseline.rate:.2f}/s > "
-                f"{args.max_baseline_rate:.2f}/s; aimux-subtree {aimux_spawn_rate:.2f}/s",
-                file=sys.stderr,
-            )
-            return COULD_NOT_MEASURE_EXIT
-        if incremental_rate > args.budget_per_sec:
-            heaviest = system_top_spawners[0][0] if system_top_spawners else "<unknown>"
-            print(
-                "COULD_NOT_MEASURE: whole-machine process creation rose above budget "
-                f"but the excess was not attributable to the isolated aimux subtree: "
-                f"incremental {incremental_rate:.2f}/s > {args.budget_per_sec:.2f}/s; "
-                f"heaviest system spawner={heaviest}; aimux-subtree {aimux_spawn_rate:.2f}/s",
-                file=sys.stderr,
-            )
-            return COULD_NOT_MEASURE_EXIT
-        print("PASS: idle aimux process-spawn budget is within limit")
-        return PASS_EXIT
+        verdict = decide_verdict(
+            budget_per_sec=args.budget_per_sec,
+            max_baseline_rate=args.max_baseline_rate,
+            baseline_rate=baseline.rate,
+            incremental_rate=incremental_rate,
+            aimux_spawn_rate=aimux_spawn_rate,
+            root_pids=root_pids,
+            aimux_top_spawners=aimux_top_spawners,
+            system_top_spawners=system_top_spawners,
+        )
+        print(verdict.message, file=sys.stderr if verdict.stream == "stderr" else sys.stdout)
+        return verdict.exit_code
     finally:
         _terminate(aimux_request_storm)
         _terminate(host_load)
