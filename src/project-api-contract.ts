@@ -1460,6 +1460,17 @@ export interface AgentOverseerInput extends AgentSessionInput {
   releaseBindings?: boolean;
 }
 
+export interface AgentPlaneInput extends AgentSessionInput {
+  /// Null clears the stored plane, after which it is derived from the role.
+  /// An unknown lane names no plane and the route rejects it.
+  lane: Exclude<AgentLane, { kind: "unknown" }> | null;
+}
+
+export interface AgentPlaneResponse extends ProjectApiOk {
+  sessionId: string;
+  lane: Exclude<AgentLane, { kind: "unknown" }> | null;
+}
+
 export type AgentRoleMutationRefusalReason =
   | "unsupported-role"
   | "target-worktree-required"

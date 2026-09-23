@@ -17,6 +17,7 @@ vi.mock("@/lib/api", () => ({
   killAgent: vi.fn(),
   resumeAgent: vi.fn(),
   setAgentOverseer: vi.fn(),
+  setAgentPlane: vi.fn(),
   stopAgent: vi.fn(),
 }));
 vi.mock("@/stores/desktopState", () => ({ kickDesktopStateRefreshAtom: {} }));
@@ -28,11 +29,49 @@ vi.mock("@/stores/lifecycleTransitions", () => ({
 vi.mock("@/stores/projectViews", () => ({ kickProjectApiViewRefreshAtom: {} }));
 
 import type { DesktopSession } from "@/lib/desktop-state";
-import { overseerActionForSession } from "@/components/agent-actions";
+import { overseerActionForSession, planeActionForSession } from "@/components/agent-actions";
 
 function session(input: Partial<DesktopSession> = {}): DesktopSession {
   return { id: "agent-1", status: "running", ...input };
 }
+
+describe("plane row action", () => {
+  it("offers to move an ordinary agent into the supervisor plane", () => {
+    expect(planeActionForSession(session())).toEqual({ kind: "join" });
+  });
+
+  // Clearing the stored plane only falls back to the derived one, and for an
+  // agent in the plane by role that is the same plane -- so leaving has to name
+  // the worktree to move to.
+  it("names the worktree to leave to rather than clearing the plane", () => {
+    expect(
+      planeActionForSession(
+        session({ lane: { kind: "supervisor" }, worktreePath: "/repo/feature" }),
+        "/repo",
+      ),
+    ).toEqual({ kind: "leave", worktreePath: "/repo/feature" });
+
+    expect(planeActionForSession(session({ lane: { kind: "supervisor" } }), "/repo")).toEqual({
+      kind: "leave",
+      worktreePath: "/repo",
+    });
+  });
+
+  // The payload carries the effective plane, so an agent held there by its role
+  // is indistinguishable from one put there. With nowhere to move it to, saying
+  // so beats a button that appears to work and does nothing.
+  it("says an agent is held by its role when there is no worktree to leave to", () => {
+    expect(planeActionForSession(session({ lane: { kind: "supervisor" } }))).toEqual({
+      kind: "held-by-role",
+    });
+  });
+
+  it("reads the plane, not the role", () => {
+    expect(planeActionForSession(session({ overseer: true, projectControl: true }))).toEqual({
+      kind: "join",
+    });
+  });
+});
 
 describe("overseer row actions", () => {
   it("promotes ordinary agents and demotes explicit overseers", () => {

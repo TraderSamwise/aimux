@@ -429,8 +429,10 @@ export function WorktreeCard({
   onPickService,
   onKillSession,
   identityTone,
+  mainCheckoutPath,
 }: {
   bucket: WorktreeBucket;
+  mainCheckoutPath?: string | null;
   projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
@@ -496,7 +498,7 @@ export function WorktreeCard({
               projectPath={projectPath}
               endpoint={endpoint}
               token={token}
-              mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
+              mainCheckoutPath={mainCheckoutPath}
               onKilled={onKillSession}
               onPress={() => onPickSession(session.id)}
             />
@@ -597,7 +599,14 @@ export function WorktreeList({
     );
   }
 
+  // The main checkout bucket carries the project root. Rows used to be handed
+  // `bucket.isMainCheckout ? session.worktreePath : undefined`, which is not a
+  // main checkout path at all: every supervisor-lane row saw undefined, so an
+  // agent with no worktree of its own could be moved into the plane and never
+  // moved back out from the dashboard, while the chat header offered it.
+  const mainCheckoutPath = groups.find((bucket) => bucket.isMainCheckout)?.path ?? null;
   const cardProps = {
+    mainCheckoutPath,
     projectPath,
     endpoint,
     token,

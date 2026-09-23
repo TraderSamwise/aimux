@@ -18,7 +18,8 @@ vi.mock("jotai", () => ({
 }));
 
 vi.mock("@/components/agent-actions", () => ({
-  AgentActions: () => React.createElement("AgentActions"),
+  AgentActions: (props: { mainCheckoutPath?: string | null }) =>
+    React.createElement("AgentActions", { mainCheckoutPath: props.mainCheckoutPath ?? null }),
 }));
 
 vi.mock("@/components/agent-create-panel", () => ({
@@ -228,6 +229,46 @@ describe("WorktreeCard", () => {
     expect(text).toContain("notes");
     expect(text).toContain("overseer");
     expect(text).toContain("scribe");
+  });
+});
+
+// A supervisor-lane agent can only be moved back out of the plane if the row
+// knows the project root. Rows used to be handed
+// `bucket.isMainCheckout ? session.worktreePath : undefined`, which is never a
+// main checkout path for the supervisor lane, so joining was a one-way trip
+// from the dashboard while the chat header offered to undo it.
+describe("supervisor lane plane action", () => {
+  it("hands the agent row the project root, not a per-session stand-in", () => {
+    const tree = renderNode(
+      React.createElement(WorktreeCard, {
+        bucket: {
+          key: "__supervisor_lane__",
+          name: "Supervisor Lane",
+          branch: "",
+          path: null,
+          isMainCheckout: false,
+          isSupervisorLane: true,
+          sessions: [session({ id: "boss", label: "control" })],
+          services: [],
+        },
+        identityTone: "#d787d7",
+        mainCheckoutPath: "/repo",
+        compact: false,
+        selectedSessionId: null,
+        onPickSession: vi.fn(),
+        onPickService: vi.fn(),
+        onKillSession: vi.fn(),
+        projectPath: "/repo",
+        endpoint: null,
+        token: null,
+      }),
+    );
+
+    const actions = findNodes(tree, (node) => node.type === "AgentActions");
+    expect(actions).not.toHaveLength(0);
+    for (const node of actions) {
+      expect(node.props.mainCheckoutPath).toBe("/repo");
+    }
   });
 });
 

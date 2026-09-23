@@ -23,6 +23,8 @@ import {
   type AgentLoopInput,
   type AgentLoopResponse,
   type AgentOverseerInput,
+  type AgentPlaneInput,
+  type AgentPlaneResponse,
   type AgentOverseerResponse,
   type AgentScribeInput,
   type AgentScribeResponse,
@@ -833,6 +835,14 @@ export async function setAgentOverseer(
   opts?: ApiOpts,
 ): Promise<AgentOverseerResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.overseer, opts, input);
+}
+
+export async function setAgentPlane(
+  endpoint: ServiceEndpoint,
+  input: AgentPlaneInput,
+  opts?: ApiOpts,
+): Promise<AgentPlaneResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.plane, opts, input);
 }
 
 export async function setAgentScribe(

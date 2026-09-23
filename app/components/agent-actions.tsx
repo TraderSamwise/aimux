@@ -1,15 +1,31 @@
 import React, { useState } from "react";
 import { View } from "react-native";
 import { useSetAtom } from "jotai";
-import { GitFork, Play, Radar, ShieldOff, Square, Trash2 } from "lucide-react-native";
+import {
+  GitFork,
+  Layers,
+  LogOut,
+  Play,
+  Radar,
+  ShieldOff,
+  Square,
+  Trash2,
+} from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { forkAgent, killAgent, resumeAgent, setAgentOverseer, stopAgent } from "@/lib/api";
+import {
+  forkAgent,
+  killAgent,
+  resumeAgent,
+  setAgentOverseer,
+  setAgentPlane,
+  stopAgent,
+} from "@/lib/api";
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import { agentCompactIdentity } from "@/lib/agent-display";
 import { canResumeSession } from "@/lib/agent-lifecycle";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
-import type { DesktopSession } from "@/lib/desktop-state";
+import { type DesktopSession, isSupervisorLaneSession } from "@/lib/desktop-state";
 import { isTransientRequestError } from "@/lib/request-errors";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
@@ -70,6 +86,7 @@ export function AgentActions({
       ? session.worktreePath
       : undefined;
   const overseerAction = overseerActionForSession(session);
+  const planeAction = planeActionForSession(session, mainCheckoutPath);
 
   function runAction(
     fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
@@ -218,6 +235,33 @@ export function AgentActions({
           />
         ) : null}
         <ActionButton
+          icon={planeAction.kind === "leave" ? LogOut : Layers}
+          iconSize={iconSize}
+          sizeClass={sizeClass}
+          onPress={runAction(async () => {
+            await setAgentPlane(
+              endpoint,
+              {
+                sessionId: session.id,
+                lane:
+                  planeAction.kind === "leave"
+                    ? { kind: "worktree", worktreePath: planeAction.worktreePath }
+                    : { kind: "supervisor" },
+              },
+              { token },
+            );
+            return {};
+          })}
+          disabled={!canAct || planeAction.kind === "held-by-role"}
+          label={
+            planeAction.kind === "leave"
+              ? `Move ${displayName} out of the supervisor plane`
+              : planeAction.kind === "join"
+                ? `Move ${displayName} into the supervisor plane`
+                : `${displayName} is in the supervisor plane because of its role`
+          }
+        />
+        <ActionButton
           icon={Trash2}
           iconSize={iconSize}
           sizeClass={sizeClass}
@@ -251,6 +295,25 @@ export function overseerActionForSession(session: DesktopSession): OverseerRowAc
   if (session.projectControl === true) return null;
   if (session.scribe === true) return null;
   return "promote";
+}
+
+export type PlaneRowAction =
+  | { kind: "join" }
+  | { kind: "leave"; worktreePath: string }
+  | { kind: "held-by-role" };
+
+// Plane is membership; role is authority. Leaving has to name the worktree to
+// move to, because clearing the stored plane only falls back to the derived
+// one -- and for an overseer or scribe that IS supervisor, so a clear would
+// look like a button that does nothing.
+export function planeActionForSession(
+  session: DesktopSession,
+  mainCheckoutPath?: string | null,
+): PlaneRowAction {
+  if (!isSupervisorLaneSession(session)) return { kind: "join" };
+  const worktreePath = session.worktreePath || mainCheckoutPath;
+  if (!worktreePath) return { kind: "held-by-role" };
+  return { kind: "leave", worktreePath };
 }
 
 const FALLBACK_FORK_TOOLS = new Set(["claude", "codex", "aider"]);
