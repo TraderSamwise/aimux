@@ -168,6 +168,7 @@ pub fn route_runtime_metadata_request(
                         json!({
                             "ok": true,
                             "notificationsRead": result.notifications_read,
+                            "notificationThreadsRead": result.notification_threads_read,
                             "attentionCleared": result.attention_cleared,
                         }),
                     ),
