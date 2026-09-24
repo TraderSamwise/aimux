@@ -48,9 +48,11 @@ pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-r
 /// bakes the configuring binary's path into status-format, so without a bump an
 /// already-running session keeps executing an old build against new artifacts.
 /// 3: the bottom line moved to per-client fitting -- new argv, new artifact.
-/// 4: the statusline command moved to the stable shim, so this is the last bump
-///    a change to statusline rendering alone should ever need.
-pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "4";
+/// 4: the statusline command moved to the stable shim -- but the doctor's
+///    repair still wrote a versioned path, so sessions were re-pinned to one.
+/// 5: both writers agree on the shim. With the path no longer versioned, a
+///    change to statusline rendering alone should never need a bump again.
+pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "5";
 pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
 pub const AIMUX_TMUX_BIN_ENV: &str = "AIMUX_TMUX_BIN";
 pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-tool}}";
