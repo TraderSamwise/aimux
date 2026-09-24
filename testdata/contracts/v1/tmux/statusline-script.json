@@ -279,7 +279,7 @@
       "inputSha256": "5e0a9ffde2372edcd66007b4b22cf9d3859819c1c087fe15075479144657b12b",
       "output": {
         "status": 0,
-        "stdout": "#[fg=brightblack]‹3#[default]  ·  agent-4  ·  agent-5  ·  agent-6  ·  #[fg=brightblack]4›#[default]\n",
+        "stdout": "#[fg=colour245]‹3#[default]  ·  agent-4  ·  agent-5  ·  agent-6  ·  #[fg=colour245]4›#[default]\n",
         "stderr": "",
         "files": {
           "tmux-statusline/bottom-@2.json": "{\"chips\":[\"agent-1\",\"agent-2\",\"agent-3\",\"agent-4\",\"agent-5\",\"agent-6\",\"agent-7\",\"agent-8\",\"agent-9\",\"agent-10\"],\"activeChip\":4,\"detail\":\"\"}\n",
@@ -316,7 +316,7 @@
       "inputSha256": "7ee4beb340a6caf7064b46c8efa2f86a88306f5055505640eb19a1c7b1ec471a",
       "output": {
         "status": 0,
-        "stdout": "#[fg=brightblack]‹4#[default]  ·  agent-5  ·  agent-6  ·  agent-7  ·  #[fg=brightblack]3›#[default]\n",
+        "stdout": "#[fg=colour245]‹4#[default]  ·  agent-5  ·  agent-6  ·  agent-7  ·  #[fg=colour245]3›#[default]\n",
         "stderr": "",
         "files": {
           "tmux-statusline/bottom-@2.json": "{\"chips\":[\"agent-1\",\"agent-2\",\"agent-3\",\"agent-4\",\"agent-5\",\"agent-6\",\"agent-7\",\"agent-8\",\"agent-9\",\"agent-10\"],\"activeChip\":6,\"detail\":\"\"}\n",

@@ -797,17 +797,19 @@ pub fn compose_bottom_line(
     };
 
     let mut segments = Vec::new();
+    // Mid grey, not brightblack: the footer sits on colour236, where
+    // brightblack is close enough to the background to read as an artefact.
     if window.hidden_left > 0 {
         segments.push(tmux_style(
             &format!("\u{2039}{}", window.hidden_left),
-            "brightblack",
+            "colour245",
         ));
     }
     segments.extend(parts.chips[window.offset..window.end()].iter().cloned());
     if window.hidden_right > 0 {
         segments.push(tmux_style(
             &format!("{}\u{203a}", window.hidden_right),
-            "brightblack",
+            "colour245",
         ));
     }
     let chip_text = segments.join(CHIP_SEPARATOR);
