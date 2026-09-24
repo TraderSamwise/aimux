@@ -43,7 +43,12 @@ pub const TMUX_DASHBOARD_READY_OPTION: &str = "@aimux-dashboard-ready";
 pub const TMUX_DASHBOARD_BUILD_OPTION: &str = "@aimux-dashboard-build";
 pub const TMUX_RUNTIME_CONTRACT_OPTION: &str = "@aimux-runtime-contract";
 pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-required";
-pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "2";
+/// Bump whenever a live session would have to be reconfigured to keep working:
+/// the statusline argv, the artifacts it reads, the key bindings. A session
+/// bakes the configuring binary's path into status-format, so without a bump an
+/// already-running session keeps executing an old build against new artifacts.
+/// 3: the bottom line moved to per-client fitting -- new argv, new artifact.
+pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "3";
 pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
 pub const AIMUX_TMUX_BIN_ENV: &str = "AIMUX_TMUX_BIN";
 pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-tool}}";
