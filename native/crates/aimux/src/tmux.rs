@@ -3764,7 +3764,7 @@ fn executable_file_exists(path: &Path) -> bool {
 /// a pinned path means an installed build does not reach a running session at
 /// all -- which is how a colour change, and before it a whole blank footer,
 /// failed to appear after installing.
-fn statusline_executable() -> String {
+pub fn statusline_executable() -> String {
     let shim = crate::cli_launcher::get_aimux_stable_shim_path();
     let usable = !shim.is_empty() && Path::new(&shim).exists();
     statusline_executable_from(shim, usable, persistent_aimux_executable)

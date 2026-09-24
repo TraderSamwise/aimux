@@ -1743,8 +1743,15 @@ fn native_tmux_control_command() -> String {
     native_aimux_internal_command("__tmux-control-internal")
 }
 
+/// The same resolution the runtime uses. The doctor's repair is the other
+/// writer of status-format -- install.sh goes through it -- so resolving the
+/// binary separately here is how a session kept a versioned path after the
+/// runtime had moved to the stable shim.
 fn native_tmux_statusline_command() -> String {
-    native_aimux_internal_command("__tmux-statusline-internal")
+    format!(
+        "{} __tmux-statusline-internal",
+        shell_quote(&crate::tmux::statusline_executable())
+    )
 }
 
 fn native_tmux_open_hyperlink_command() -> String {

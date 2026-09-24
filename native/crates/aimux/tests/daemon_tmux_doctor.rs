@@ -1071,6 +1071,13 @@ fn repairs_managed_sessions_dashboard_and_agent_window_policy() {
     assert!(!repaired_commands.contains(AIMUX_STALE_MODIFIED_ENTER_COMMAND));
     assert!(!repaired_commands.contains("tmux-control.sh"));
     assert!(!repaired_commands.contains("tmux-statusline.sh"));
+    // The repair is the second writer of status-format -- install.sh goes
+    // through it -- so it has to resolve the statusline binary the same way the
+    // runtime does, or an install leaves a session on a versioned path.
+    assert!(
+        repaired_commands.contains(&aimux::tmux::statusline_executable()),
+        "repair must write the same statusline binary the runtime does: {repaired_commands}"
+    );
     assert!(!repaired_commands.contains("tmux-open-hyperlink.sh"));
     assert!(runner.calls.iter().any(|(_, args)| args
         == &[
