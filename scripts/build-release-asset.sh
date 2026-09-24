@@ -199,7 +199,7 @@ if [ "$PACKAGE_PROFILE" = "full" ]; then
 fi
 mkdir -p "$PKG_DIR/scripts"
 cp scripts/cargo-sweep-stale-targets.sh scripts/install-cargo-sweep-schedule.sh \
-  scripts/tmux-control.sh scripts/tmux-open-hyperlink.sh scripts/tmux-statusline.sh \
+  scripts/tmux-control.sh scripts/tmux-open-hyperlink.sh \
   "$PKG_DIR/scripts/"
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 printf '%s\n' "$PACKAGE_PROFILE" > "$PKG_DIR/PACKAGE_PROFILE"
