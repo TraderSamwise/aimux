@@ -215,7 +215,10 @@ impl TmuxControl {
             "menu" => self.show_local_switcher(),
             "expose" => self.show_local_expose(),
             "meta" => self.show_local_meta(),
-            "active" => true,
+            "active" => {
+                self.mark_focused_session_viewed();
+                true
+            }
             "next" | "prev" | "attention" | "window" => match self.resolve_local_target() {
                 TargetResolution::Target(window_id) => {
                     self.live_client = None;
@@ -1104,6 +1107,67 @@ impl TmuxControl {
     /// its no-op gate. Left on the role flag it would have disagreed with
     /// both: an agent moved into the plane got n/p-noop but worktree-scoped
     /// Exposé.
+    /// tmux fires `pane-focus-in` for this action on every focus change, which
+    /// is the only signal that catches every way of reaching an agent: the
+    /// prefix keys, a digit, Exposé, the switcher, and the mouse. The dashboard
+    /// already marks its selected row seen; without this, an agent you sat in
+    /// for an hour kept its unread count because the dashboard never pointed at
+    /// it.
+    fn mark_focused_session_viewed(&mut self) {
+        let Some(session_id) = self.current_window_session_id() else {
+            return;
+        };
+        if let Err(error) = self.post_mark_seen(&session_id) {
+            self.debug_log_line(&format!(
+                "mark-seen failed session={session_id} error={error}"
+            ));
+        }
+    }
+
+    fn current_window_session_id(&mut self) -> Option<String> {
+        let window_id = self.options.current_window_id.trim().to_owned();
+        if window_id.is_empty() {
+            return None;
+        }
+        let raw =
+            self.tmux_output(&["show-window-options", "-v", "-t", &window_id, "@aimux-meta"])?;
+        session_id_from_window_meta(&raw)
+    }
+
+    /// Through the project service, like every other client: it owns the
+    /// notification store, and what counts as "viewed" is configurable there.
+    fn post_mark_seen(&self, session_id: &str) -> Result<(), String> {
+        let endpoint = crate::daemon_state::resolve_project_service_endpoint(
+            crate::daemon_state::load_metadata_endpoint(&self.options.project_state_dir).as_ref(),
+        )
+        .ok_or_else(|| "project service endpoint is unavailable".to_owned())?;
+        let body = serde_json::to_string(&serde_json::json!({ "session": session_id }))
+            .map_err(|error| error.to_string())?;
+        let response = crate::core_command_transport::execute_loopback_json_request(
+            &crate::core_command_transport::DaemonJsonRequest {
+                url: format!(
+                    "http://{}:{}{}",
+                    endpoint.host,
+                    endpoint.port,
+                    crate::project_api_contract::routes::runtime::MARK_SEEN
+                ),
+                method: crate::core_command_transport::DaemonHttpMethod::Post,
+                headers: std::collections::BTreeMap::from([
+                    ("accept".into(), "application/json".into()),
+                    ("content-type".into(), "application/json".into()),
+                    ("content-length".into(), body.len().to_string()),
+                ]),
+                body: Some(body),
+                timeout_ms: None,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        if !(200..300).contains(&response.status) {
+            return Err(format!("mark-seen returned {}", response.status));
+        }
+        Ok(())
+    }
+
     fn current_window_in_supervisor_plane(&mut self) -> Option<bool> {
         let window_id = self.options.current_window_id.trim().to_owned();
         if window_id.is_empty() {
@@ -2323,6 +2387,17 @@ fn value_as_i64(value: &Value) -> Option<i64> {
 
 /// Whether a window belongs to the supervisor plane.
 ///
+/// A window aimux did not create has no `@aimux-meta`, and a dashboard window
+/// has one without a session id. Neither is an agent, so neither is viewable.
+fn session_id_from_window_meta(raw: &str) -> Option<String> {
+    serde_json::from_str::<Value>(raw)
+        .ok()?
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|session_id| !session_id.is_empty())
+}
+
 /// `@aimux-meta` carries the stored plane, so n/p can share the one rule
 /// rather than keep its own role-flag copy. Both uses flip together: who is in
 /// the cycle, and whether n/p does anything from the window you are in. Keyed
@@ -2506,4 +2581,23 @@ fn expose_popup_command(context: &Path, socket: &Path) -> String {
         shell_quote(&context.to_string_lossy()),
         shell_quote(&socket.to_string_lossy())
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_window_carrying_an_agent_is_viewable() {
+        assert_eq!(
+            session_id_from_window_meta(r#"{"sessionId":"claude-abc123","tool":"claude"}"#),
+            Some("claude-abc123".to_owned())
+        );
+        // The dashboard window has meta but no agent behind it.
+        assert_eq!(session_id_from_window_meta(r#"{"tool":"dashboard"}"#), None);
+        assert_eq!(session_id_from_window_meta(r#"{"sessionId":""}"#), None);
+        // A window aimux did not create: tmux prints nothing for the option.
+        assert_eq!(session_id_from_window_meta(""), None);
+        assert_eq!(session_id_from_window_meta("not json"), None);
+    }
 }
