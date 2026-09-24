@@ -101,12 +101,24 @@ fn statusline_refresh_writes_snapshot_and_tmux_artifacts() {
     assert!(agent_top.contains("@master"));
     assert!(agent_top.contains("PR #7"));
     assert!(agent_top.contains(":3000"));
+    // The per-window bottom line ships as parts, not a finished string: only the
+    // client knows how wide it is, so only the client can fit them.
     let bottom =
-        read_to_string(state_dir.join("tmux-statusline").join("bottom-@1.txt")).expect("bottom");
-    assert!(bottom.contains("#[fg=black,bg=yellow] codex"));
-    assert!(bottom.contains("yarn dev"));
-    assert!(bottom.contains("team: reviewer idle"));
-    assert!(bottom.contains("#[fg=green]plugin ok#[default]"));
+        read_to_string(state_dir.join("tmux-statusline").join("bottom-@1.json")).expect("bottom");
+    let bottom: Value = serde_json::from_str(&bottom).expect("bottom parts json");
+    let chips = bottom["chips"]
+        .as_array()
+        .expect("chips")
+        .iter()
+        .filter_map(|chip| chip.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(chips.contains("#[fg=black,bg=yellow] codex"));
+    assert!(chips.contains("yarn dev"));
+    assert_eq!(bottom["activeChip"], 0);
+    let detail = bottom["detail"].as_str().expect("detail");
+    assert!(detail.contains("team: reviewer idle"));
+    assert!(detail.contains("#[fg=green]plugin ok#[default]"));
     let dashboard_bottom = read_to_string(
         state_dir
             .join("tmux-statusline")
@@ -543,5 +555,73 @@ fn footer_chips_render_in_tmux_window_order() {
             ],
         }),
         &["11 unread", "77 unread"],
+    );
+}
+
+/// Every agent reaches the footer. How many are *shown* is the client's
+/// decision, made against its own width, and a hidden one is marked.
+///
+/// The footer capped at five for six months. Sam's sixth agent was simply
+/// absent, with nothing saying so, and no test covered it: the cap sat in
+/// resolve_scoped_sessions, which every fixture exercised with five agents or
+/// fewer.
+#[test]
+fn footer_chips_are_not_capped_at_five() {
+    fn agent(window_index: i64) -> Value {
+        json!({
+            "id": format!("claude-{window_index}"),
+            "kind": "agent",
+            "tool": "claude",
+            "toolConfigKey": "claude",
+            "status": "running",
+            "createdAt": format!("2026-09-24T0{window_index}:00:00.000Z"),
+            "tmuxWindowId": format!("@{window_index}"),
+            "tmuxWindowIndex": window_index,
+            "worktreePath": "/repo",
+            "semantic": {
+                "presentation": { "compactHint": format!("{window_index}00 unread") },
+            },
+        })
+    }
+
+    let snapshot = json!({
+        "sessions": (1..=8).map(agent).collect::<Vec<_>>(),
+        "teammates": [],
+    });
+
+    let wide = aimux::project_service::statusline::render_tmux_statusline_contract(&json!({
+        "data": snapshot,
+        "projectRoot": "/repo",
+        "line": "bottom",
+        "options": { "currentPath": "/repo", "currentWindowId": "@6", "width": 400 },
+    }));
+    let wide = wide["text"].as_str().expect("statusline text");
+    for index in 1..=8 {
+        assert!(
+            wide.contains(&format!("{index}00 unread")),
+            "agent {index} is missing from a footer with room for it: {wide}"
+        );
+    }
+    assert!(
+        !wide.contains('\u{203a}'),
+        "nothing is hidden at this width"
+    );
+
+    // Narrow enough that they cannot all fit: the active one is still shown,
+    // and the ones that are not say so rather than vanishing.
+    let narrow = aimux::project_service::statusline::render_tmux_statusline_contract(&json!({
+        "data": snapshot,
+        "projectRoot": "/repo",
+        "line": "bottom",
+        "options": { "currentPath": "/repo", "currentWindowId": "@6", "width": 80 },
+    }));
+    let narrow = narrow["text"].as_str().expect("statusline text");
+    assert!(
+        narrow.contains("600 unread"),
+        "the window you are in must be visible: {narrow}"
+    );
+    assert!(
+        narrow.contains('\u{2039}') || narrow.contains('\u{203a}'),
+        "hidden chips must be marked: {narrow}"
     );
 }

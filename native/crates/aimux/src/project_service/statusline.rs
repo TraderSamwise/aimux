@@ -1135,10 +1135,11 @@ fn resolve_scoped_sessions<'a>(
     agents.sort_by(|left, right| crate::team_contract::compare_agent_canonical_order(left, right));
     services
         .sort_by(|left, right| crate::team_contract::compare_agent_canonical_order(left, right));
+    // Every agent, in order. How many are shown is the client's decision, made
+    // against its own width, and a hidden one is marked rather than dropped.
     agents
         .into_iter()
         .chain(services)
-        .take(5)
         .map(|session| {
             let is_current = options
                 .current_window_id
@@ -1182,7 +1183,6 @@ fn resolve_focused_teammate_group<'a>(
         .filter(|session| is_live_footer_session(session))
         .collect::<Vec<_>>();
     teammates.sort_by(compare_teammate_sessions);
-    teammates.truncate(5);
     teammates
 }
 
@@ -1212,7 +1212,6 @@ fn resolve_current_teammates<'a>(
         .filter(|session| is_live_footer_session(session))
         .collect::<Vec<_>>();
     teammates.sort_by(compare_teammate_sessions);
-    teammates.truncate(5);
     teammates
 }
 
