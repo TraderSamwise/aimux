@@ -70,8 +70,6 @@
             }
           ],
           "statusline": {
-            "scriptPath": "<REPO>/scripts/tmux-statusline.sh",
-            "scriptExists": true,
             "projectStateDir": "/Users/sam/.aimux/projects/mobile-078d0ecd20ec",
             "statuslineJsonExists": false,
             "tmuxStatuslineDirExists": false,
@@ -79,7 +77,7 @@
             "bottomDashboardClientExists": false,
             "sessionFormat": "#(top)",
             "windowFormat": "#(bottom)",
-            "helperPreview": null,
+            "helperPreview": "claude 7 new",
             "helperError": null
           }
         },
@@ -88,6 +86,7 @@
           ["display-message", "-p", "#{client_session}"],
           ["display-message", "-p", "#{window_id}"],
           ["display-message", "-p", "#{window_name}"],
+          ["display-message", "-p", "#{client_width}"],
           ["has-session", "-t", "aimux-mobile-abc"],
           ["show-options", "-v", "-t", "aimux-mobile-abc", "prefix"],
           ["show-options", "-v", "-t", "aimux-mobile-abc", "prefix2"],
@@ -109,7 +108,19 @@
           ],
           ["show-window-options", "-v", "-t", "@3", "allow-passthrough"],
           ["show-window-options", "-v", "-t", "@3", "aggressive-resize"],
-          ["-V"],
+          [
+            "__tmux-statusline-internal",
+            "--line",
+            "bottom",
+            "--project-state-dir",
+            "/Users/sam/.aimux/projects/mobile-078d0ecd20ec",
+            "--current-session",
+            "aimux-mobile-abc",
+            "--current-window",
+            "codex",
+            "--current-window-id",
+            "@3"
+          ],
           ["show-options", "-v", "-t", "aimux-mobile-abc", "status-format[0]"],
           ["show-options", "-v", "-t", "aimux-mobile-abc", "status-format[1]"]
         ]
@@ -128,7 +139,7 @@
         "sessionName": "aimux-mobile-abc"
       },
       "output": {
-        "text": "Tmux Doctor\n  TERM: xterm-ghostty\n  TERM_PROGRAM: ghostty\n  inside tmux: yes\n  tmux available: yes\n  tmux version: tmux 3.5a\n  current client session: aimux-mobile-abc\n  managed session: aimux-mobile-abc\n  managed session exists: yes\n  managed session options:\n    prefix: C-a (expected C-a) [ok]\n    prefix2: C-b (expected C-b) [ok]\n    mouse: on (expected on) [ok]\n    window-size: latest (expected latest) [ok]\n    history-limit: 20000 (expected 20000) [ok]\n    extended-keys: always (expected always) [ok]\n    extended-keys-format: csi-u (expected csi-u) [ok]\n  managed terminal features:\n    xterm*:ccolour: present [ok]\n    xterm*:cstyle: present [ok]\n    xterm*:RGB: present [ok]\n    xterm*:extkeys: present [ok]\n    xterm*:hyperlinks: present [ok]\n  active window: @3 (codex)\n    @aimux-tool: codex\n    allow-passthrough: on (expected on) [ok]\n    aggressive-resize: on (expected on) [ok]\n  managed windows:\n    @3 codex tool=codex allow-passthrough=on aggressive-resize=on\n  statusline:\n    script: <REPO>/scripts/tmux-statusline.sh\n    script exists: yes\n    project state dir: /Users/sam/.aimux/projects/mobile-078d0ecd20ec\n    statusline.json: no\n    tmux-statusline dir: no\n    bottom-dashboard.txt: no\n    bottom-dashboard-<client>.txt: no\n    status-format[0]: #(top)\n    status-format[1]: #(bottom)\n    helper preview: (empty)\n    helper error: (none)"
+        "text": "Tmux Doctor\n  TERM: xterm-ghostty\n  TERM_PROGRAM: ghostty\n  inside tmux: yes\n  tmux available: yes\n  tmux version: tmux 3.5a\n  current client session: aimux-mobile-abc\n  managed session: aimux-mobile-abc\n  managed session exists: yes\n  managed session options:\n    prefix: C-a (expected C-a) [ok]\n    prefix2: C-b (expected C-b) [ok]\n    mouse: on (expected on) [ok]\n    window-size: latest (expected latest) [ok]\n    history-limit: 20000 (expected 20000) [ok]\n    extended-keys: always (expected always) [ok]\n    extended-keys-format: csi-u (expected csi-u) [ok]\n  managed terminal features:\n    xterm*:ccolour: present [ok]\n    xterm*:cstyle: present [ok]\n    xterm*:RGB: present [ok]\n    xterm*:extkeys: present [ok]\n    xterm*:hyperlinks: present [ok]\n  active window: @3 (codex)\n    @aimux-tool: codex\n    allow-passthrough: on (expected on) [ok]\n    aggressive-resize: on (expected on) [ok]\n  managed windows:\n    @3 codex tool=codex allow-passthrough=on aggressive-resize=on\n  statusline:\n    project state dir: /Users/sam/.aimux/projects/mobile-078d0ecd20ec\n    statusline.json: no\n    tmux-statusline dir: no\n    bottom-dashboard.txt: no\n    bottom-dashboard-<client>.txt: no\n    status-format[0]: #(top)\n    status-format[1]: #(bottom)\n    helper preview: claude 7 new\n    helper error: (none)"
       },
       "inputSha256": "6f5901b5b606d6bdc445f26388b01b8b7c8dc05edd509925d5d896bbc97974ef"
     },
@@ -173,8 +184,6 @@
           "activeWindow": null,
           "managedWindows": [],
           "statusline": {
-            "scriptPath": "<REPO>/scripts/tmux-statusline.sh",
-            "scriptExists": true,
             "projectStateDir": "/Users/sam/.aimux/projects/repo-1ea44548ccdb",
             "statuslineJsonExists": false,
             "tmuxStatuslineDirExists": false,
@@ -182,7 +191,7 @@
             "bottomDashboardClientExists": false,
             "sessionFormat": "#(top)",
             "windowFormat": "#(bottom)",
-            "helperPreview": null,
+            "helperPreview": "claude 7 new",
             "helperError": null
           }
         },
@@ -204,7 +213,19 @@
             "-F",
             "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
           ],
-          ["-V"],
+          [
+            "__tmux-statusline-internal",
+            "--line",
+            "bottom",
+            "--project-state-dir",
+            "/Users/sam/.aimux/projects/repo-1ea44548ccdb",
+            "--current-session",
+            "",
+            "--current-window",
+            "",
+            "--current-window-id",
+            ""
+          ],
           ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "status-format[0]"],
           ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "status-format[1]"]
         ]

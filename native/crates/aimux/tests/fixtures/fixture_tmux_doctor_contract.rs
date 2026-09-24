@@ -269,6 +269,10 @@ fn mobile_tmux_response(args: &[String]) -> Result<String, String> {
             ),
         ]
         .join("\n")),
+        // The doctor previews the footer by running the same command tmux runs.
+        _ if joined.starts_with("__tmux-statusline-internal --line bottom ") => {
+            Ok("claude 7 new".to_owned())
+        }
         _ => Err(format!("Unhandled tmux call: {joined}")),
     }
 }
@@ -303,6 +307,9 @@ fn symlink_tmux_response(args: &[String], session_name: &str) -> Result<String, 
     if joined.starts_with(&format!("list-windows -t {session_name} -F ")) {
         return Ok(String::new());
     }
+    if joined.starts_with("__tmux-statusline-internal --line bottom ") {
+        return Ok("claude 7 new".to_owned());
+    }
     Err(format!("Unhandled tmux call: {joined}"))
 }
 
@@ -311,7 +318,7 @@ fn doctor_input(input: &Value, project_root: PathBuf) -> TmuxDoctorInput {
     TmuxDoctorInput {
         project_root,
         aimux_home: PathBuf::from("/Users/sam/.aimux"),
-        statusline_script_path: repo_root().join("scripts/tmux-statusline.sh"),
+        statusline_executable: PathBuf::from(env!("CARGO_BIN_EXE_aimux")),
         session_prefix: "aimux".to_owned(),
         session_name: input
             .get("sessionName")

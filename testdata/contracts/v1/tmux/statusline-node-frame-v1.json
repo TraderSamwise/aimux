@@ -1393,8 +1393,8 @@
       },
       "output": {
         "top": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[ran…",
-        "bottom": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new",
-        "frame": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[ran…\n#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new"
+        "bottom": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new  ·  #[fg=brightblack]1›#[default]",
+        "frame": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[ran…\n#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new  ·  #[fg=brightblack]1›#[default]"
       },
       "inputSha256": "f2d8b0c5c1541490f09881a30e97d2b8534bf27d181a2dd915dbaf676c126a76"
     },

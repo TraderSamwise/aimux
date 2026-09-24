@@ -36,7 +36,7 @@ const DEFAULT_DASHBOARD_REPAIR_READY_TIMEOUT_MS: u64 = 20_000;
 pub struct TmuxDoctorInput {
     pub project_root: PathBuf,
     pub aimux_home: PathBuf,
-    pub statusline_script_path: PathBuf,
+    pub statusline_executable: PathBuf,
     pub session_prefix: String,
     pub session_name: Option<String>,
     pub window_id: Option<String>,
@@ -53,7 +53,7 @@ pub struct TmuxRepairInput {
     pub dashboard_command: Option<TmuxCommandSpec>,
     pub dashboard_build_stamp: Option<String>,
     pub dashboard_ready_timeout_ms: u64,
-    pub statusline_script_path: PathBuf,
+    pub statusline_executable: PathBuf,
     pub tmux_control_script_path: PathBuf,
     pub tmux_env: Option<String>,
     pub open: bool,
@@ -175,8 +175,6 @@ pub struct TmuxDoctorManagedWindow {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TmuxDoctorStatusline {
-    pub script_path: String,
-    pub script_exists: bool,
     pub project_state_dir: String,
     pub statusline_json_exists: bool,
     pub tmux_statusline_dir_exists: bool,
@@ -236,7 +234,7 @@ pub fn system_tmux_doctor_report(
     let input = TmuxDoctorInput {
         project_root: PathBuf::from(project_root),
         aimux_home: resolver.global_aimux_dir(),
-        statusline_script_path: resolve_statusline_script_path(),
+        statusline_executable: resolve_statusline_executable(),
         session_prefix,
         session_name: session_name.map(str::to_owned),
         window_id: window_id.map(str::to_owned),
@@ -287,7 +285,7 @@ pub fn system_tmux_repair_result(
         dashboard_build_stamp: Some(dashboard_spec.dashboard_build_stamp),
         dashboard_command: Some(dashboard_spec.dashboard_command),
         dashboard_ready_timeout_ms: DEFAULT_DASHBOARD_REPAIR_READY_TIMEOUT_MS,
-        statusline_script_path: resolve_statusline_script_path(),
+        statusline_executable: resolve_statusline_executable(),
         tmux_control_script_path: resolve_tmux_control_script_path(),
         tmux_env: nonempty_env("TMUX"),
         open,
@@ -1001,9 +999,9 @@ fn control_plane_args() -> String {
 
 fn statusline_command(_input: &TmuxRepairInput, line: &str, project_state_dir: &str) -> String {
     format!(
-        "{} --line {line} --project-state-dir {} --current-session '#{{session_name}}' --current-window '#{{window_name}}' --current-window-id '#{{window_id}}'",
+        "{} {}",
         native_tmux_statusline_command(),
-        shell_quote(project_state_dir)
+        crate::tmux::statusline_format_args(line, project_state_dir)
     )
 }
 
@@ -1258,6 +1256,15 @@ pub fn build_tmux_doctor_report(
     } else {
         None
     };
+    // The bottom line is fitted to the client, so previewing it needs the
+    // client's width the same way tmux supplies it.
+    let client_width = if available && inside_tmux {
+        tmux_value(runner, &["display-message", "-p", "#{client_width}"])
+            .and_then(|value| value.trim().parse::<i64>().ok())
+            .filter(|width| *width > 0)
+    } else {
+        None
+    };
     let session_exists = available
         && run_command(
             runner,
@@ -1289,11 +1296,12 @@ pub fn build_tmux_doctor_report(
         .map(|session| tmux_statusline_dir.join(format!("bottom-dashboard-{session}.txt")));
     let (helper_preview, helper_error) = preview_statusline_helper(
         runner,
-        &input.statusline_script_path,
+        &input.statusline_executable,
         &project_state_dir,
         current_client_session.as_deref(),
         current_window_name.as_deref(),
         current_window_id.as_deref(),
+        client_width,
     );
     let session_format = session_exists
         .then(|| session_option(runner, &resolved_session_name, "status-format[0]"))
@@ -1324,8 +1332,6 @@ pub fn build_tmux_doctor_report(
         active_window,
         managed_windows,
         statusline: TmuxDoctorStatusline {
-            script_path: path_text(&input.statusline_script_path),
-            script_exists: input.statusline_script_path.is_file(),
             project_state_dir: path_text(&project_state_dir),
             statusline_json_exists: project_state_dir.join("statusline.json").exists(),
             tmux_statusline_dir_exists: tmux_statusline_dir.exists(),
@@ -1432,8 +1438,6 @@ pub fn render_tmux_doctor_report(report: &TmuxDoctorReport) -> String {
     let statusline = &report.statusline;
     lines.extend([
         "  statusline:".to_owned(),
-        format!("    script: {}", statusline.script_path),
-        format!("    script exists: {}", yes_no(statusline.script_exists)),
         format!("    project state dir: {}", statusline.project_state_dir),
         format!(
             "    statusline.json: {}",
@@ -1618,22 +1622,28 @@ fn managed_window_reports(
         .collect()
 }
 
+/// Previews the line the way tmux asks for it: the same binary tmux runs, with
+/// a width, because the bottom line is fitted to the client.
 fn preview_statusline_helper(
     runner: &mut impl TmuxDoctorCommandRunner,
-    script_path: &Path,
+    executable: &Path,
     project_state_dir: &Path,
     current_session: Option<&str>,
     current_window: Option<&str>,
     current_window_id: Option<&str>,
+    client_width: Option<i64>,
 ) -> (Option<String>, Option<String>) {
-    if !script_path.is_file() {
+    if !executable.is_file() {
         return (
             None,
-            Some(format!("missing script: {}", script_path.to_string_lossy())),
+            Some(format!(
+                "missing statusline command: {}",
+                executable.to_string_lossy()
+            )),
         );
     }
-    let args = vec![
-        path_text(script_path),
+    let mut args = vec![
+        "__tmux-statusline-internal".to_owned(),
         "--line".to_owned(),
         "bottom".to_owned(),
         "--project-state-dir".to_owned(),
@@ -1645,7 +1655,11 @@ fn preview_statusline_helper(
         "--current-window-id".to_owned(),
         current_window_id.unwrap_or("").to_owned(),
     ];
-    match run_command_owned(runner, "sh", &args) {
+    if let Some(width) = client_width {
+        args.push("--width".to_owned());
+        args.push(width.to_string());
+    }
+    match run_command_owned(runner, &path_text(executable), &args) {
         Ok(output) => (nonempty(output), None),
         Err(error) => (None, Some(error)),
     }
@@ -1706,13 +1720,10 @@ fn nonempty_env(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|value| !value.is_empty())
 }
 
-fn resolve_statusline_script_path() -> PathBuf {
-    let candidate = std::env::var_os("AIMUX_ROOT")
-        .filter(|root| !root.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
-        .join("scripts/tmux-statusline.sh");
-    fs::canonicalize(&candidate).unwrap_or(candidate)
+/// The binary tmux runs for the statusline, which since the shell twin was
+/// deleted is this one.
+fn resolve_statusline_executable() -> PathBuf {
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("aimux"))
 }
 
 fn resolve_tmux_control_script_path() -> PathBuf {

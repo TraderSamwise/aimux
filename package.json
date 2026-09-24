@@ -14,7 +14,6 @@
     "scripts/cargo-sweep-stale-targets.sh",
     "scripts/install-cargo-sweep-schedule.sh",
     "scripts/tmux-open-hyperlink.sh",
-    "scripts/tmux-statusline.sh",
     "native/darwin-arm64",
     "LICENSE",
     "README.md"

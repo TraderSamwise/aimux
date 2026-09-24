@@ -1,3 +1,4 @@
+use crate::project_service::statusline::{BottomLineParts, compose_bottom_line};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,11 @@ pub struct TmuxStatuslineOptions {
     pub current_session: String,
     pub current_window: String,
     pub current_window_id: String,
+    /// The client's width, from tmux's own `#{client_width}`, and the client it
+    /// belongs to. Two clients can be attached at different sizes and looking at
+    /// different windows, so the footer is fitted per client, not per window.
+    pub width: Option<i64>,
+    pub client_id: String,
 }
 
 pub fn parse_tmux_statusline_args(args: &[String]) -> TmuxStatuslineOptions {
@@ -34,6 +40,17 @@ pub fn parse_tmux_statusline_args(args: &[String]) -> TmuxStatuslineOptions {
             }
             "--current-window-id" => {
                 options.current_window_id = args.get(index + 1).cloned().unwrap_or_default();
+                index += 2;
+            }
+            "--width" => {
+                options.width = args
+                    .get(index + 1)
+                    .and_then(|value| value.trim().parse::<i64>().ok())
+                    .filter(|width| *width > 0);
+                index += 2;
+            }
+            "--client-id" => {
+                options.client_id = args.get(index + 1).cloned().unwrap_or_default();
                 index += 2;
             }
             _ => index += 1,
@@ -124,12 +141,7 @@ impl TmuxStatuslineRunner {
             return Ok(());
         }
 
-        if !self.options.current_window_id.is_empty()
-            && self.cat_if_exists(
-                &format!("bottom-{}.txt", self.options.current_window_id),
-                output,
-            )?
-        {
+        if !self.options.current_window_id.is_empty() && self.render_window_bottom(output)? {
             return Ok(());
         }
         writeln!(output)?;
@@ -140,6 +152,83 @@ impl TmuxStatuslineRunner {
             self.options.current_session
         ));
         Ok(())
+    }
+
+    /// Fit the precomputed chips to this client's width, scrolling so the chip
+    /// for the window it is showing stays visible, and remember where the window
+    /// landed so the next render can shift by one rather than recentre.
+    fn render_window_bottom(&mut self, output: &mut impl Write) -> std::io::Result<bool> {
+        let Some(status_dir) = self.status_dir.clone() else {
+            return Ok(false);
+        };
+        let path = status_dir.join(format!("bottom-{}.json", self.options.current_window_id));
+        if !path.is_file() {
+            return Ok(false);
+        }
+        let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&fs::read(&path)?) else {
+            self.log_error(&format!("unreadable bottom parts at {}", path.display()));
+            return Ok(false);
+        };
+        let parts = BottomLineParts {
+            chips: parsed["chips"]
+                .as_array()
+                .map(|chips| {
+                    chips
+                        .iter()
+                        .filter_map(|chip| chip.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            active_chip: parsed["activeChip"].as_u64().map(|index| index as usize),
+            detail: parsed["detail"].as_str().unwrap_or_default().to_owned(),
+            composed: None,
+        };
+        let max_width = self
+            .options
+            .width
+            .map(|width| width.saturating_sub(2).max(24))
+            .unwrap_or(i64::MAX);
+        let previous_offset = self.read_chip_offset();
+        let (line, offset) = compose_bottom_line(&parts, max_width, previous_offset);
+        self.write_chip_offset(previous_offset, offset);
+        writeln!(output, "{line}")?;
+        Ok(true)
+    }
+
+    fn chip_offset_path(&self) -> Option<PathBuf> {
+        let client = self.options.client_id.trim();
+        if client.is_empty() {
+            return None;
+        }
+        let sanitized = client
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+            .collect::<String>();
+        Some(
+            self.status_dir
+                .as_ref()?
+                .join(format!("chip-offset-{sanitized}.txt")),
+        )
+    }
+
+    fn read_chip_offset(&self) -> usize {
+        self.chip_offset_path()
+            .and_then(|path| fs::read_to_string(path).ok())
+            .and_then(|text| text.trim().parse::<usize>().ok())
+            .unwrap_or(0)
+    }
+
+    /// Only on a change. tmux redraws the status line about once a second per
+    /// client, and a write per redraw per client is exactly the kind of idle
+    /// churn this repo measures.
+    fn write_chip_offset(&self, previous: usize, next: usize) {
+        if previous == next {
+            return;
+        }
+        let Some(path) = self.chip_offset_path() else {
+            return;
+        };
+        let _ = fs::write(path, format!("{next}\n"));
     }
 
     fn cat_if_exists(&self, name: &str, output: &mut impl Write) -> std::io::Result<bool> {

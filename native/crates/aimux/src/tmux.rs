@@ -1464,12 +1464,12 @@ impl TmuxRuntimeManager {
                 .join(" ")
         );
         let top = format!(
-            "{status_prefix} --line top --project-state-dir {} --current-session '#{{session_name}}' --current-window '#{{window_name}}' --current-window-id '#{{window_id}}'",
-            shell_quote(&config.project_state_dir)
+            "{status_prefix} {}",
+            statusline_format_args("top", &config.project_state_dir)
         );
         let bottom = format!(
-            "{status_prefix} --line bottom --project-state-dir {} --current-session '#{{session_name}}' --current-window '#{{window_name}}' --current-window-id '#{{window_id}}'",
-            shell_quote(&config.project_state_dir)
+            "{status_prefix} {}",
+            statusline_format_args("bottom", &config.project_state_dir)
         );
         self.set_session_option(session_name, "status-left", "")?;
         self.set_session_option(session_name, "status-right", "")?;
@@ -3418,6 +3418,25 @@ fn default_runtime_config(project_root: &Path, project_root_text: &str) -> TmuxR
         runtime_owner_id: runtime_owner_id(&mut resolver),
         control_plane_args: control_plane_args(),
     }
+}
+
+/// The arguments every statusline invocation carries, built in one place so the
+/// runtime and the doctor's repair cannot write different formats and then
+/// disagree about whether the session is coherent.
+///
+/// The bottom line is fitted to the client rather than the window, so it also
+/// carries the client's own width and identity: two clients can be attached at
+/// different sizes and looking at different windows, and tmux re-expands these
+/// on every status redraw, a resize included.
+pub fn statusline_format_args(line: &str, project_state_dir: &str) -> String {
+    let common = format!(
+        "--line {line} --project-state-dir {} --current-session '#{{session_name}}' --current-window '#{{window_name}}' --current-window-id '#{{window_id}}'",
+        shell_quote(project_state_dir)
+    );
+    if line == "bottom" {
+        return format!("{common} --width '#{{client_width}}' --client-id '#{{client_tty}}'");
+    }
+    common
 }
 
 fn repo_script_path(name: &str) -> String {

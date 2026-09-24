@@ -415,7 +415,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[0]",
-              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+              "#[bg=colour236,fg=colour255,bold] #(<aimux> '__tmux-statusline-internal' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
             ]
           },
           {
@@ -424,7 +424,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[1]",
-              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+              "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
@@ -834,7 +834,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[0]",
-              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+              "#[bg=colour236,fg=colour255,bold] #(<aimux> '__tmux-statusline-internal' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
             ]
           },
           {
@@ -843,7 +843,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[1]",
-              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+              "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] },
@@ -1208,7 +1208,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[0]",
-              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+              "#[bg=colour236,fg=colour255,bold] #(<aimux> '__tmux-statusline-internal' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
             ]
           },
           {
@@ -1217,7 +1217,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[1]",
-              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+              "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
@@ -1612,7 +1612,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[0]",
-              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+              "#[bg=colour236,fg=colour255,bold] #(<aimux> '__tmux-statusline-internal' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
             ]
           },
           {
@@ -1621,7 +1621,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[1]",
-              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+              "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
@@ -2082,7 +2082,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[0]",
-              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+              "#[bg=colour236,fg=colour255,bold] #(<aimux> '__tmux-statusline-internal' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
             ]
           },
           {
@@ -2091,7 +2091,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[1]",
-              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+              "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
@@ -2527,7 +2527,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[0]",
-              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+              "#[bg=colour236,fg=colour255,bold] #(<aimux> '__tmux-statusline-internal' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
             ]
           },
           {
@@ -2536,7 +2536,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[1]",
-              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+              "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
@@ -2950,7 +2950,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[0]",
-              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+              "#[bg=colour236,fg=colour255,bold] #(<aimux> '__tmux-statusline-internal' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
             ]
           },
           {
@@ -2959,7 +2959,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[1]",
-              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+              "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }
@@ -3452,7 +3452,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[0]",
-              "#[bg=colour236,fg=colour255,bold] #(sh '<repo>/scripts/tmux-statusline.sh' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
+              "#[bg=colour236,fg=colour255,bold] #(<aimux> '__tmux-statusline-internal' --line top --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}')#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}"
             ]
           },
           {
@@ -3461,7 +3461,7 @@
               "-t",
               "aimux-mobile-078d0ecd20ec",
               "status-format[1]",
-              "#[bg=colour236,fg=colour252] #(sh '<repo>/scripts/tmux-statusline.sh' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}') #[default]"
+              "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "2"] }

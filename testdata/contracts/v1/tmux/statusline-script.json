@@ -1,17 +1,17 @@
 {
   "version": 1,
   "generatedAt": "2026-09-07T00:00:00.000Z",
-  "source": "src/tmux/statusline-script.test.ts",
-  "sources": ["src/tmux/statusline-script.test.ts", "scripts/tmux-statusline.sh"],
-  "subject": "scripts/tmux-statusline.sh",
-  "caseCount": 10,
-  "description": "tmux statusline cache-file lookup and silent-failure behavior captured by running the shipped shell script.",
+  "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+  "sources": ["native/crates/aimux/src/tmux_statusline_script.rs"],
+  "subject": "aimux __tmux-statusline-internal",
+  "caseCount": 12,
+  "description": "tmux statusline cache-file lookup, per-client chip fitting, and silent-failure behaviour, captured by running the shipped native command. The shell twin scripts/tmux-statusline.sh was deleted when the bottom line began fitting itself to each client.",
   "cases": [
     {
       "id": "tmux-statusline-script-001",
       "name": "stays quiet before line parsing can configure logging",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
         "name": "stays quiet before line parsing can configure logging",
         "args": ["--project-state-dir", "<state>"],
@@ -23,8 +23,8 @@
     {
       "id": "tmux-statusline-script-002",
       "name": "stays quiet before project state dir configures logging",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
         "name": "stays quiet before project state dir configures logging",
         "args": ["--line", "bottom"],
@@ -36,8 +36,8 @@
     {
       "id": "tmux-statusline-script-003",
       "name": "top prefers current window status file",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
         "name": "top prefers current window status file",
         "args": ["--line", "top", "--project-state-dir", "<state>", "--current-window-id", "@1"],
@@ -60,8 +60,8 @@
     {
       "id": "tmux-statusline-script-004",
       "name": "top falls back to dashboard status file",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
         "name": "top falls back to dashboard status file",
         "args": ["--line", "top", "--project-state-dir", "<state>", "--current-window-id", "@missing"],
@@ -78,8 +78,8 @@
     {
       "id": "tmux-statusline-script-005",
       "name": "top logs missing status file",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
         "name": "top logs missing status file",
         "args": [
@@ -109,8 +109,8 @@
     {
       "id": "tmux-statusline-script-006",
       "name": "dashboard bottom prefers client-session status file",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
         "name": "dashboard bottom prefers client-session status file",
         "args": [
@@ -142,8 +142,8 @@
     {
       "id": "tmux-statusline-script-007",
       "name": "dashboard bottom falls back to dashboard status file",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
         "name": "dashboard bottom falls back to dashboard status file",
         "args": [
@@ -168,11 +168,11 @@
     },
     {
       "id": "tmux-statusline-script-008",
-      "name": "window bottom reads current window status file",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "name": "window bottom fits the precomputed chips to the client",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
-        "name": "window bottom reads current window status file",
+        "name": "window bottom fits the precomputed chips to the client",
         "args": [
           "--line",
           "bottom",
@@ -181,23 +181,31 @@
           "--current-window",
           "codex",
           "--current-window-id",
-          "@2"
+          "@2",
+          "--width",
+          "80",
+          "--client-id",
+          "/dev/ttys004"
         ],
-        "files": { "tmux-statusline/bottom-@2.txt": "bottom-window\n" }
+        "files": {
+          "tmux-statusline/bottom-@2.json": "{\"chips\":[\"alpha\",\"beta\",\"gamma\"],\"activeChip\":1,\"detail\":\"idle\"}\n"
+        }
       },
       "output": {
         "status": 0,
-        "stdout": "bottom-window\n",
+        "stdout": "alpha  ·  beta  ·  gamma  |  idle\n",
         "stderr": "",
-        "files": { "tmux-statusline/bottom-@2.txt": "bottom-window\n" }
+        "files": {
+          "tmux-statusline/bottom-@2.json": "{\"chips\":[\"alpha\",\"beta\",\"gamma\"],\"activeChip\":1,\"detail\":\"idle\"}\n"
+        }
       },
-      "inputSha256": "806cd3adfb58339806e501b3b34d506b439351e9a190216309ce7ff465135bac"
+      "inputSha256": "568afbf0dd28b9546ec4fa7725ee549e2d9df3d0d025fd37c7173eb431275e2b"
     },
     {
       "id": "tmux-statusline-script-009",
       "name": "window bottom logs missing status file",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
         "name": "window bottom logs missing status file",
         "args": [
@@ -227,8 +235,8 @@
     {
       "id": "tmux-statusline-script-010",
       "name": "unsupported line logs after project state dir is known",
-      "source": "src/tmux/statusline-script.test.ts",
-      "api": "scripts/tmux-statusline.sh",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
       "input": {
         "name": "unsupported line logs after project state dir is known",
         "args": ["--line", "middle", "--project-state-dir", "<state>"],
@@ -241,6 +249,80 @@
         "files": { "logs/tmux-statusline.log": "<timestamp> unsupported line=middle\n" }
       },
       "inputSha256": "f7c092a496a0b50ecb45e76263fced7f6f70d1cb4ec899354dfe3b13a3a06a4f"
+    },
+    {
+      "id": "tmux-statusline-script-011",
+      "name": "window bottom marks how many chips are hidden on each side",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
+      "input": {
+        "name": "window bottom marks how many chips are hidden on each side",
+        "args": [
+          "--line",
+          "bottom",
+          "--project-state-dir",
+          "<state>",
+          "--current-window",
+          "codex",
+          "--current-window-id",
+          "@2",
+          "--width",
+          "60",
+          "--client-id",
+          "/dev/ttys004"
+        ],
+        "files": {
+          "tmux-statusline/bottom-@2.json": "{\"chips\":[\"agent-1\",\"agent-2\",\"agent-3\",\"agent-4\",\"agent-5\",\"agent-6\",\"agent-7\",\"agent-8\",\"agent-9\",\"agent-10\"],\"activeChip\":4,\"detail\":\"\"}\n",
+          "tmux-statusline/chip-offset--dev-ttys004.txt": "3\n"
+        }
+      },
+      "inputSha256": "5e0a9ffde2372edcd66007b4b22cf9d3859819c1c087fe15075479144657b12b",
+      "output": {
+        "status": 0,
+        "stdout": "#[fg=brightblack]‹3#[default]  ·  agent-4  ·  agent-5  ·  agent-6  ·  #[fg=brightblack]4›#[default]\n",
+        "stderr": "",
+        "files": {
+          "tmux-statusline/bottom-@2.json": "{\"chips\":[\"agent-1\",\"agent-2\",\"agent-3\",\"agent-4\",\"agent-5\",\"agent-6\",\"agent-7\",\"agent-8\",\"agent-9\",\"agent-10\"],\"activeChip\":4,\"detail\":\"\"}\n",
+          "tmux-statusline/chip-offset--dev-ttys004.txt": "3\n"
+        }
+      }
+    },
+    {
+      "id": "tmux-statusline-script-012",
+      "name": "window bottom shifts one chip when the active one leaves the right edge",
+      "source": "native/crates/aimux/src/tmux_statusline_script.rs",
+      "api": "aimux __tmux-statusline-internal",
+      "input": {
+        "name": "window bottom shifts one chip when the active one leaves the right edge",
+        "args": [
+          "--line",
+          "bottom",
+          "--project-state-dir",
+          "<state>",
+          "--current-window",
+          "codex",
+          "--current-window-id",
+          "@2",
+          "--width",
+          "60",
+          "--client-id",
+          "/dev/ttys004"
+        ],
+        "files": {
+          "tmux-statusline/bottom-@2.json": "{\"chips\":[\"agent-1\",\"agent-2\",\"agent-3\",\"agent-4\",\"agent-5\",\"agent-6\",\"agent-7\",\"agent-8\",\"agent-9\",\"agent-10\"],\"activeChip\":6,\"detail\":\"\"}\n",
+          "tmux-statusline/chip-offset--dev-ttys004.txt": "3\n"
+        }
+      },
+      "inputSha256": "7ee4beb340a6caf7064b46c8efa2f86a88306f5055505640eb19a1c7b1ec471a",
+      "output": {
+        "status": 0,
+        "stdout": "#[fg=brightblack]‹4#[default]  ·  agent-5  ·  agent-6  ·  agent-7  ·  #[fg=brightblack]3›#[default]\n",
+        "stderr": "",
+        "files": {
+          "tmux-statusline/bottom-@2.json": "{\"chips\":[\"agent-1\",\"agent-2\",\"agent-3\",\"agent-4\",\"agent-5\",\"agent-6\",\"agent-7\",\"agent-8\",\"agent-9\",\"agent-10\"],\"activeChip\":6,\"detail\":\"\"}\n",
+          "tmux-statusline/chip-offset--dev-ttys004.txt": "4\n"
+        }
+      }
     }
   ]
 }

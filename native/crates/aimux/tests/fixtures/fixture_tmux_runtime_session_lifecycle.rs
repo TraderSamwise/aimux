@@ -209,8 +209,8 @@ fn lifecycle_config() -> TmuxRuntimeConfig {
         control_script_command: "sh '<repo>/scripts/tmux-control.sh'".to_owned(),
         statusline_command: TmuxCommandSpec {
             cwd: "<repo>".to_owned(),
-            command: "sh".to_owned(),
-            args: vec!["<repo>/scripts/tmux-statusline.sh".to_owned()],
+            command: "<aimux>".to_owned(),
+            args: vec!["__tmux-statusline-internal".to_owned()],
         },
         runtime_owner_id: r#"{"home":"<aimux-home>","port":"54321"}"#.to_owned(),
         // Stated, not inherited. This used to come from a process-wide

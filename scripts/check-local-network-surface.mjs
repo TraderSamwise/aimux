@@ -150,9 +150,9 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   {
     path: "native/crates/aimux/src/daemon/tmux_doctor.rs",
     marker: "native_tmux_statusline_command(),",
-    command: "scripts/tmux-statusline.sh",
-    argv: "literal helper path plus statusline render args",
-    input: "fixed installed helper script",
+    command: "the installed aimux binary",
+    argv: "literal __tmux-statusline-internal plus statusline render args",
+    input: "fixed installed native command",
   },
   {
     path: "native/crates/aimux/src/daemon_state.rs",
@@ -516,20 +516,6 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     command: "xdg-open",
     argv: "URL argument",
     input: "URL extracted from project metadata or selected terminal text",
-  },
-  {
-    path: "scripts/tmux-statusline.sh",
-    marker: 'mkdir -p "$log_dir"',
-    command: "mkdir",
-    argv: "literal -p <project-state>/logs",
-    input: "project-state path from tmux command spec",
-  },
-  {
-    path: "scripts/tmux-statusline.sh",
-    marker: 'cat "$file"',
-    command: "cat",
-    argv: "statusline render file",
-    input: "project-state statusline path only",
   },
 ];
 

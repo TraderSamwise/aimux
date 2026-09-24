@@ -142,6 +142,7 @@ fn builds_native_compatibility_report_for_active_managed_session() {
         current_client,
     );
     runner.respond("tmux", &["display-message", "-p", "#{window_id}"], "@3");
+    runner.respond("tmux", &["display-message", "-p", "#{client_width}"], "120");
     runner.respond(
         "tmux",
         &["display-message", "-p", "#{window_name}"],
@@ -217,10 +218,12 @@ fn builds_native_compatibility_report_for_active_managed_session() {
     }
     let script = fixture.script.to_string_lossy().into_owned();
     let state_dir = project_state_dir.to_string_lossy().into_owned();
+    // The doctor previews the footer with the same command tmux runs, and the
+    // bottom line is fitted to the client, so it carries a width too.
     runner.respond(
-        "sh",
+        &script,
         &[
-            &script,
+            "__tmux-statusline-internal",
             "--line",
             "bottom",
             "--project-state-dir",
@@ -231,6 +234,8 @@ fn builds_native_compatibility_report_for_active_managed_session() {
             "codex",
             "--current-window-id",
             "@3",
+            "--width",
+            "120",
         ],
         "bottom preview\n",
     );
@@ -240,7 +245,7 @@ fn builds_native_compatibility_report_for_active_managed_session() {
         &TmuxDoctorInput {
             project_root,
             aimux_home: fixture.aimux_home.clone(),
-            statusline_script_path: fixture.script.clone(),
+            statusline_executable: fixture.script.clone(),
             session_prefix: "aimux".into(),
             session_name: Some(session_name.into()),
             window_id: None,
@@ -303,7 +308,7 @@ fn canonicalizes_default_session_and_reports_unavailable_tmux_without_fallback()
         &TmuxDoctorInput {
             project_root: alias_root,
             aimux_home: fixture.aimux_home.clone(),
-            statusline_script_path: fixture.script.clone(),
+            statusline_executable: fixture.script.clone(),
             session_prefix: "aimux".into(),
             session_name: None,
             window_id: Some("@9".into()),
@@ -321,7 +326,10 @@ fn canonicalizes_default_session_and_reports_unavailable_tmux_without_fallback()
     assert_eq!(value["activeWindow"], Value::Null);
     assert_eq!(
         value["statusline"]["helperError"],
-        format!("missing script: {}", fixture.script.to_string_lossy())
+        format!(
+            "missing statusline command: {}",
+            fixture.script.to_string_lossy()
+        )
     );
     assert_eq!(runner.calls.len(), 1);
     let text = render_tmux_doctor_report(&report);
@@ -414,7 +422,7 @@ fn repair_creates_dashboard_window_when_host_session_exists_without_dashboard() 
             }),
             dashboard_build_stamp: Some("dashboard-ready".into()),
             dashboard_ready_timeout_ms: 50,
-            statusline_script_path: fixture.script.clone(),
+            statusline_executable: fixture.script.clone(),
             tmux_control_script_path: control_script,
             tmux_env: None,
             open: false,
@@ -575,7 +583,7 @@ fn repair_reclaims_stale_tail_dashboard_placeholder_and_waits_for_ready() {
             }),
             dashboard_build_stamp: Some("dashboard-ready".into()),
             dashboard_ready_timeout_ms: 50,
-            statusline_script_path: fixture.script.clone(),
+            statusline_executable: fixture.script.clone(),
             tmux_control_script_path: control_script,
             tmux_env: None,
             open: false,
@@ -724,7 +732,7 @@ fn repair_reports_stale_tail_dashboard_placeholder_that_never_becomes_ready() {
             }),
             dashboard_build_stamp: Some("dashboard-ready".into()),
             dashboard_ready_timeout_ms: 0,
-            statusline_script_path: fixture.script.clone(),
+            statusline_executable: fixture.script.clone(),
             tmux_control_script_path: control_script,
             tmux_env: None,
             open: false,
@@ -862,7 +870,7 @@ fn repair_reports_replacement_dashboard_child_crash_instead_of_readiness_timeout
             }),
             dashboard_build_stamp: Some("dashboard-ready".into()),
             dashboard_ready_timeout_ms: 50,
-            statusline_script_path: fixture.script.clone(),
+            statusline_executable: fixture.script.clone(),
             tmux_control_script_path: control_script,
             tmux_env: None,
             open: false,
@@ -987,7 +995,7 @@ fn repairs_managed_sessions_dashboard_and_agent_window_policy() {
             }),
             dashboard_build_stamp: Some("dashboard-ready".into()),
             dashboard_ready_timeout_ms: 50,
-            statusline_script_path: fixture.script.clone(),
+            statusline_executable: fixture.script.clone(),
             tmux_control_script_path: control_script,
             tmux_env: None,
             open: false,
@@ -1171,7 +1179,7 @@ fn repair_preserves_user_modified_enter_bindings() {
             }),
             dashboard_build_stamp: Some("dashboard-ready".into()),
             dashboard_ready_timeout_ms: 50,
-            statusline_script_path: fixture.script.clone(),
+            statusline_executable: fixture.script.clone(),
             tmux_control_script_path: control_script,
             tmux_env: None,
             open: false,

@@ -9,15 +9,15 @@ const TMUX_STATUSLINE_SCRIPT: &str =
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn fixture_tmux_statusline_script_native_matches_shell_contract() {
+fn fixture_tmux_statusline_script_matches_contract() {
     let contract: Value =
         serde_json::from_str(TMUX_STATUSLINE_SCRIPT).expect("valid statusline script fixture");
     let cases = contract["cases"].as_array().expect("statusline cases");
-    assert_eq!(cases.len(), 10, "unexpected statusline script case count");
+    assert_eq!(cases.len(), 12, "unexpected statusline script case count");
 
     let mut failures = Vec::new();
     for case in cases {
-        let actual = run_case(case, StatuslineRunner::Native);
+        let actual = run_case(case);
         if actual != case["output"] {
             failures.push(json!({
                 "id": case["id"],
@@ -30,46 +30,13 @@ fn fixture_tmux_statusline_script_native_matches_shell_contract() {
 
     assert!(
         failures.is_empty(),
-        "{} tmux-statusline-script parity failures:\n{}",
+        "{} tmux-statusline-script failures:\n{}",
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
 }
 
-#[test]
-fn fixture_tmux_statusline_script_shell_still_matches_contract() {
-    let contract: Value =
-        serde_json::from_str(TMUX_STATUSLINE_SCRIPT).expect("valid statusline script fixture");
-    let cases = contract["cases"].as_array().expect("statusline cases");
-
-    let mut failures = Vec::new();
-    for case in cases {
-        let actual = run_case(case, StatuslineRunner::Shell);
-        if actual != case["output"] {
-            failures.push(json!({
-                "id": case["id"],
-                "name": case["name"],
-                "expected": case["output"],
-                "actual": actual,
-            }));
-        }
-    }
-
-    assert!(
-        failures.is_empty(),
-        "{} tmux-statusline shell fixture drift failures:\n{}",
-        failures.len(),
-        serde_json::to_string_pretty(&failures).expect("serialize failures")
-    );
-}
-
-#[derive(Clone, Copy)]
-enum StatuslineRunner {
-    Native,
-    Shell,
-}
-
-fn run_case(case: &Value, runner: StatuslineRunner) -> Value {
+fn run_case(case: &Value) -> Value {
     let state_dir = temp_root();
     write_input_files(&state_dir, &case["input"]["files"]);
     let args = case["input"]["args"]
@@ -78,18 +45,11 @@ fn run_case(case: &Value, runner: StatuslineRunner) -> Value {
         .iter()
         .map(|arg| denormalize(arg.as_str().expect("arg"), &state_dir))
         .collect::<Vec<_>>();
-    let output = match runner {
-        StatuslineRunner::Native => Command::new(env!("CARGO_BIN_EXE_aimux"))
-            .arg("__tmux-statusline-internal")
-            .args(&args)
-            .output()
-            .expect("run native statusline"),
-        StatuslineRunner::Shell => Command::new("sh")
-            .arg(repo_root().join("scripts/tmux-statusline.sh"))
-            .args(&args)
-            .output()
-            .expect("run shell statusline"),
-    };
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .arg("__tmux-statusline-internal")
+        .args(&args)
+        .output()
+        .expect("run native statusline");
     let snapshot = json!({
         "status": output.status.code().unwrap_or(-1),
         "stdout": normalize_text(&String::from_utf8_lossy(&output.stdout)),
@@ -182,11 +142,4 @@ fn temp_root() -> PathBuf {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("create temp root");
     path
-}
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .expect("repo root")
 }

@@ -460,13 +460,33 @@ fn write_precomputed_tmux_statusline_files(
             &format!("top-{window_id}.txt"),
             &render_tmux_statusline(snapshot, project_root, "top", options),
         )?;
-        write_statusline_text(
+        write_statusline_parts(
             &status_dir,
-            &format!("bottom-{window_id}.txt"),
-            &render_tmux_statusline(snapshot, project_root, "bottom", options),
+            &format!("bottom-{window_id}.json"),
+            &bottom_line_parts(snapshot, project_root, options),
         )?;
     }
     Ok(())
+}
+
+fn write_statusline_parts(
+    status_dir: &Path,
+    name: &str,
+    parts: &BottomLineParts,
+) -> Result<(), String> {
+    let body = json!({
+        "chips": parts.chips,
+        "activeChip": parts.active_chip,
+        "detail": parts.detail,
+    });
+    write_text_atomic_fast(
+        status_dir.join(name),
+        format!(
+            "{}\n",
+            serde_json::to_string(&body).map_err(|error| error.to_string())?
+        ),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn write_statusline_text(status_dir: &Path, name: &str, content: &str) -> Result<(), String> {
@@ -563,11 +583,11 @@ fn project_statusline_metadata(
 }
 
 #[derive(Clone, Copy, Default)]
-struct RenderOptions<'a> {
-    current_window: Option<&'a str>,
-    current_window_id: Option<&'a str>,
-    current_path: Option<&'a str>,
-    width: Option<i64>,
+pub struct RenderOptions<'a> {
+    pub current_window: Option<&'a str>,
+    pub current_window_id: Option<&'a str>,
+    pub current_path: Option<&'a str>,
+    pub width: Option<i64>,
 }
 
 pub fn render_tmux_statusline_contract(input: &Value) -> Value {
@@ -627,7 +647,38 @@ fn render_top_line(snapshot: &Value, project_root: &str, options: RenderOptions<
     }
 }
 
+/// The bottom line before it is fitted to a width: the chips in order, which
+/// one is the window you are in, and the detail that follows them. The service
+/// precomputes this per window; the client fits it, because only the client
+/// knows how wide it is.
+#[derive(Debug, Default, Clone)]
+pub struct BottomLineParts {
+    pub chips: Vec<String>,
+    pub active_chip: Option<usize>,
+    pub detail: String,
+    /// The dashboard's bottom line is screen names, not agents, so it is handed
+    /// over already composed and never scrolls.
+    pub composed: Option<String>,
+}
+
 fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptions<'_>) -> String {
+    let max_width = options
+        .width
+        .map(|width| width.saturating_sub(2).max(24))
+        .unwrap_or(i64::MAX);
+    compose_bottom_line(
+        &bottom_line_parts(snapshot, project_root, options),
+        max_width,
+        0,
+    )
+    .0
+}
+
+pub fn bottom_line_parts(
+    snapshot: &Value,
+    project_root: &str,
+    options: RenderOptions<'_>,
+) -> BottomLineParts {
     let max_width = options
         .width
         .map(|width| width.saturating_sub(2).max(24))
@@ -636,12 +687,17 @@ fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptio
         .current_window
         .is_some_and(|window| window.starts_with("dashboard"))
     {
-        return choose_statusline_segments(
-            render_dashboard_screens(string_field(snapshot, "dashboardScreen")),
-            "  \u{00b7}  ",
-            max_width,
-        )
-        .join("  \u{00b7}  ");
+        return BottomLineParts {
+            composed: Some(
+                choose_statusline_segments(
+                    render_dashboard_screens(string_field(snapshot, "dashboardScreen")),
+                    CHIP_SEPARATOR,
+                    max_width,
+                )
+                .join(CHIP_SEPARATOR),
+            ),
+            ..BottomLineParts::default()
+        };
     }
     let focused_teammate = resolve_focused_teammate(snapshot, project_root, options);
     let focused_overseer = focused_teammate
@@ -652,6 +708,7 @@ fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptio
         .then(|| resolve_focused_control_session(snapshot, project_root, options, "scribe"))
         .flatten();
 
+    let mut active_chip = None;
     let chips = if let Some(overseer) = focused_overseer {
         vec![render_control_session_segment(overseer, "overseer")]
     } else if let Some(scribe) = focused_scribe {
@@ -659,18 +716,26 @@ fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptio
     } else if focused_teammate.is_some() {
         resolve_focused_teammate_group(snapshot, project_root, options)
             .into_iter()
-            .map(|session| {
-                render_teammate_chip(
-                    session,
-                    string_field(session, "id")
-                        == focused_teammate.and_then(|session| string_field(session, "id")),
-                )
+            .enumerate()
+            .map(|(index, session)| {
+                let is_current = string_field(session, "id")
+                    == focused_teammate.and_then(|session| string_field(session, "id"));
+                if is_current {
+                    active_chip = Some(index);
+                }
+                render_teammate_chip(session, is_current)
             })
             .collect::<Vec<_>>()
     } else {
         resolve_scoped_sessions(snapshot, project_root, options)
             .into_iter()
-            .map(|(session, is_current)| render_session_chip(session, is_current))
+            .enumerate()
+            .map(|(index, (session, is_current))| {
+                if is_current {
+                    active_chip = Some(index);
+                }
+                render_session_chip(session, is_current)
+            })
             .collect::<Vec<_>>()
     };
 
@@ -689,22 +754,74 @@ fn render_bottom_line(snapshot: &Value, project_root: &str, options: RenderOptio
         "bottom",
         options,
     ));
-    let chosen_chips = choose_statusline_segments(chips, "  \u{00b7}  ", max_width);
-    let chip_text = chosen_chips.join("  \u{00b7}  ");
-    let detail = detail_parts.join("  \u{00b7}  ");
-    if detail.is_empty() {
+    BottomLineParts {
+        chips,
+        active_chip,
+        detail: detail_parts.join(CHIP_SEPARATOR),
+        composed: None,
+    }
+}
+
+pub const CHIP_SEPARATOR: &str = "  \u{00b7}  ";
+
+/// Fit the chips to `max_width`, scrolling so the active one stays visible, and
+/// return the line with the offset the caller should remember.
+pub fn compose_bottom_line(
+    parts: &BottomLineParts,
+    max_width: i64,
+    previous_offset: usize,
+) -> (String, usize) {
+    if let Some(composed) = &parts.composed {
+        return (composed.clone(), 0);
+    }
+    let separator_width = visible_segment_length(CHIP_SEPARATOR);
+    let widths = parts
+        .chips
+        .iter()
+        .map(|chip| visible_segment_length(chip))
+        .collect::<Vec<_>>();
+    // Chips get the whole line. The detail is context and gives way entirely
+    // rather than costing a chip, which is what the narrow-width case has
+    // always done.
+    let window = crate::statusline_chip_window::select_chip_window(
+        &widths,
+        parts.active_chip,
+        previous_offset,
+        max_width,
+        separator_width,
+    );
+    let detail_width = if parts.detail.is_empty() {
+        0
+    } else {
+        visible_segment_length(&parts.detail) + visible_segment_length("  |  ")
+    };
+
+    let mut segments = Vec::new();
+    if window.hidden_left > 0 {
+        segments.push(tmux_style(
+            &format!("\u{2039}{}", window.hidden_left),
+            "brightblack",
+        ));
+    }
+    segments.extend(parts.chips[window.offset..window.end()].iter().cloned());
+    if window.hidden_right > 0 {
+        segments.push(tmux_style(
+            &format!("{}\u{203a}", window.hidden_right),
+            "brightblack",
+        ));
+    }
+    let chip_text = segments.join(CHIP_SEPARATOR);
+
+    let line = if parts.detail.is_empty() {
         chip_text
     } else if chip_text.is_empty() {
-        detail
-    } else if visible_segment_length(&chip_text)
-        + visible_segment_length("  |  ")
-        + visible_segment_length(&detail)
-        <= max_width
-    {
-        format!("{chip_text}  |  {detail}")
+        parts.detail.clone()
+    } else if visible_segment_length(&chip_text) + detail_width <= max_width {
+        format!("{chip_text}  |  {}", parts.detail)
     } else {
         chip_text
-    }
+    };
+    (line, window.offset)
 }
 
 fn choose_statusline_segments(

@@ -92,7 +92,12 @@ check_release_provenance_gate() {
   require_contains "$workflow" "gh attestation verify" "artifact attestation verification step"
   require_contains "$workflow" 'release/${{ matrix.asset }}.tar.gz.provenance.json' "provenance asset upload"
   require_contains "$workflow" 'release/${{ matrix.asset }}.tar.gz.sbom.spdx.json' "SBOM asset upload"
-  require_job_needs "verify-release-assets" "release-assets"
+  # Nothing a user can reach is created before ci has passed on this commit:
+  # the matrix builds, publish-release-assets creates the GitHub Release, and
+  # it is the one job gated on the guard.
+  require_job_needs "publish-release-assets" "release-assets"
+  require_job_needs "publish-release-assets" "require-ci-green"
+  require_job_needs "verify-release-assets" "publish-release-assets"
   require_job_needs "publish-npm" "verify-release-assets"
   require_job_needs "update-homebrew-tap" "verify-release-assets"
 }
