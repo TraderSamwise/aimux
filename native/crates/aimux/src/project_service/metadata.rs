@@ -163,15 +163,30 @@ pub fn route_runtime_metadata_request(
             let session = string_field(body, "session");
             Some(
                 match mark_session_viewed(context.project_root(), &project_state_dir, &session) {
-                    Ok(result) => json_response(
-                        200,
-                        json!({
-                            "ok": true,
-                            "notificationsRead": result.notifications_read,
-                            "notificationThreadsRead": result.notification_threads_read,
-                            "attentionCleared": result.attention_cleared,
-                        }),
-                    ),
+                    Ok(result) => {
+                        // The chips and rows read a precomputed snapshot that is
+                        // refreshed on agent events. An idle agent produces none,
+                        // so without this the count stays on screen after it has
+                        // already been cleared in the exchange.
+                        if result.notifications_read > 0 || result.notification_threads_read > 0 {
+                            let _ = crate::project_service::statusline::refresh_project_statusline(
+                                context,
+                                crate::project_service::statusline::StatuslineRefreshInput {
+                                    session_id: Some(session.clone()),
+                                    force: false,
+                                },
+                            );
+                        }
+                        json_response(
+                            200,
+                            json!({
+                                "ok": true,
+                                "notificationsRead": result.notifications_read,
+                                "notificationThreadsRead": result.notification_threads_read,
+                                "attentionCleared": result.attention_cleared,
+                            }),
+                        )
+                    }
                     Err(error) => json_response(500, json!({ "ok": false, "error": error })),
                 },
             )
