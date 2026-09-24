@@ -626,7 +626,9 @@ fn configure_managed_session(
             "set-hook".to_owned(),
             "-t".to_owned(),
             session_name.to_owned(),
-            "pane-focus-in".to_owned(),
+            // Matches the runtime: focus-events is off, so pane-focus-in never
+            // fires. session-window-changed fires on every window change.
+            "session-window-changed".to_owned(),
             format!(
                 "run-shell -b {}",
                 shell_quote(&control_command(input, "active", ""))

@@ -52,7 +52,10 @@ pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-r
 ///    repair still wrote a versioned path, so sessions were re-pinned to one.
 /// 5: both writers agree on the shim. With the path no longer versioned, a
 ///    change to statusline rendering alone should never need a bump again.
-pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "5";
+/// 6: the window-change hook moved off pane-focus-in, which never fired
+///    because focus-events is off. Hooks live on the session, so a live one
+///    keeps the dead hook until it is reconfigured.
+pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "6";
 pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
 pub const AIMUX_TMUX_BIN_ENV: &str = "AIMUX_TMUX_BIN";
 pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-tool}}";
@@ -1288,7 +1291,10 @@ impl TmuxRuntimeManager {
                 "set-hook".to_owned(),
                 "-t".to_owned(),
                 session_name.to_owned(),
-                "pane-focus-in".to_owned(),
+                // Not pane-focus-in: focus-events is deliberately off, so that
+                // hook never fires. session-window-changed fires whenever the
+                // active window changes, by any route.
+                "session-window-changed".to_owned(),
                 format!(
                     "run-shell -b {}",
                     shell_quote(&control_command("active", ""))

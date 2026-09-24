@@ -876,7 +876,7 @@ fn ensure_project_session_creates_and_configures_missing_session() {
         ]));
     assert!(calls.iter().any(|(args, _)| {
         args.first().map(String::as_str) == Some("set-hook")
-            && args.get(3).map(String::as_str) == Some("pane-focus-in")
+            && args.get(3).map(String::as_str) == Some("session-window-changed")
             && args.get(4).is_some_and(|value| {
                 value.contains("tmux-control.sh")
                     && value.contains(" active ")

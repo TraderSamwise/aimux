@@ -1107,8 +1107,8 @@ impl TmuxControl {
     /// its no-op gate. Left on the role flag it would have disagreed with
     /// both: an agent moved into the plane got n/p-noop but worktree-scoped
     /// Exposé.
-    /// tmux fires `pane-focus-in` for this action on every focus change, which
-    /// is the only signal that catches every way of reaching an agent: the
+    /// tmux fires `session-window-changed` for this action whenever the active
+    /// window changes, which catches every way of reaching an agent: the
     /// prefix keys, a digit, Exposé, the switcher, and the mouse. The dashboard
     /// already marks its selected row seen; without this, an agent you sat in
     /// for an hour kept its unread count because the dashboard never pointed at
