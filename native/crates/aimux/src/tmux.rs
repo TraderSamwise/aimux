@@ -48,7 +48,9 @@ pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-r
 /// bakes the configuring binary's path into status-format, so without a bump an
 /// already-running session keeps executing an old build against new artifacts.
 /// 3: the bottom line moved to per-client fitting -- new argv, new artifact.
-pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "3";
+/// 4: the statusline command moved to the stable shim, so this is the last bump
+///    a change to statusline rendering alone should ever need.
+pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "4";
 pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
 pub const AIMUX_TMUX_BIN_ENV: &str = "AIMUX_TMUX_BIN";
 pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-tool}}";
@@ -3417,7 +3419,7 @@ fn default_runtime_config(project_root: &Path, project_root_text: &str) -> TmuxR
         control_script_command: persistent_aimux_control_script_command_from(&executable),
         statusline_command: TmuxCommandSpec {
             cwd: project_root_text.to_owned(),
-            command: executable,
+            command: statusline_executable(),
             args: vec!["__tmux-statusline-internal".to_owned()],
         },
         runtime_owner_id: runtime_owner_id(&mut resolver),
@@ -3756,6 +3758,26 @@ fn executable_file_exists(path: &Path) -> bool {
     }
 }
 
+/// The statusline runs fresh on every status redraw, so it takes the stable
+/// shim rather than the versioned path of whichever build configured the
+/// session. A session is only ever reconfigured on a runtime-contract bump, so
+/// a pinned path means an installed build does not reach a running session at
+/// all -- which is how a colour change, and before it a whole blank footer,
+/// failed to appear after installing.
+fn statusline_executable() -> String {
+    let shim = crate::cli_launcher::get_aimux_stable_shim_path();
+    let usable = !shim.is_empty() && Path::new(&shim).exists();
+    statusline_executable_from(shim, usable, persistent_aimux_executable)
+}
+
+fn statusline_executable_from(
+    shim: String,
+    shim_is_usable: bool,
+    fallback: impl FnOnce() -> String,
+) -> String {
+    if shim_is_usable { shim } else { fallback() }
+}
+
 fn persistent_aimux_executable() -> String {
     let current_exe = std::env::current_exe()
         .ok()
@@ -3834,6 +3856,23 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::rc::Rc;
+
+    #[test]
+    fn the_statusline_runs_the_stable_shim_so_an_install_reaches_live_sessions() {
+        // A session is only reconfigured on a runtime-contract bump, so a
+        // versioned path here means an installed build never reaches a session
+        // that is already running.
+        assert_eq!(
+            statusline_executable_from("/home/sam/.local/bin/aimux".to_owned(), true, || {
+                panic!("the shim was usable and should have been taken")
+            }),
+            "/home/sam/.local/bin/aimux"
+        );
+        assert_eq!(
+            statusline_executable_from(String::new(), false, || "/versioned/aimux".to_owned()),
+            "/versioned/aimux"
+        );
+    }
 
     #[test]
     fn configure_managed_session_never_writes_cargo_test_harness_binary() {
