@@ -1628,8 +1628,30 @@ fn input_live_pane_route(
             "sessionId": session_id,
             "accepted": true,
             "turnSemantics": agent_input_turn_semantics(),
+            "loopWatch": agent_loop_watch(context, &session_id),
         }),
     )
+}
+
+/// Whether a managed loop is watching this agent. Dispatching work to an agent
+/// that is not in the loop is how "the agent finished" became silent: the loop
+/// check is what raises that alert, so without it the work just stops.
+fn agent_loop_watch(context: &ProjectServiceRequestContext, session_id: &str) -> Value {
+    // A metadata read that failed is not an agent outside the loop, and saying
+    // so would be the same silent-downgrade this warning exists to catch.
+    let Ok(metadata) = crate::project_service::agent_controls::load_metadata_state_strict(
+        &context.project_state_dir(),
+    ) else {
+        return json!({ "known": false });
+    };
+    let watched = metadata
+        .sessions
+        .get(session_id)
+        .and_then(|session| session.get("loop"))
+        .and_then(|loop_meta| loop_meta.get("active"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    json!({ "known": true, "watched": watched })
 }
 
 fn agent_input_turn_semantics() -> Value {
@@ -1979,6 +2001,7 @@ async fn input_live_pane_route_async(
             "sessionId": session_id,
             "accepted": true,
             "turnSemantics": agent_input_turn_semantics(),
+            "loopWatch": agent_loop_watch(context, &session_id),
         }),
     )
 }

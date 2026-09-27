@@ -3650,7 +3650,10 @@ fn live_pane_resize_interrupt_and_input_send_tmux_commands() {
                 "consumesTurn": true,
                 "preservesInFlightWork": false,
                 "message": "aimux input submits text as the agent's next user turn; it is not side-channel context"
-            }
+            },
+            // Work dispatched to an agent no loop is watching finishes silently,
+            // because the loop check is what raises the completion alert.
+            "loopWatch": { "known": true, "watched": false }
         })
     );
     assert_eq!(

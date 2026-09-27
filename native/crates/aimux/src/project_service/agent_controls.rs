@@ -974,7 +974,9 @@ fn metadata_unavailable_error(error: impl Into<String>) -> ProjectServiceDispatc
     )
 }
 
-fn load_metadata_state_strict(project_state_dir: &Path) -> Result<MetadataState, String> {
+pub(crate) fn load_metadata_state_strict(
+    project_state_dir: &Path,
+) -> Result<MetadataState, String> {
     let path = metadata_state_path(project_state_dir);
     let text = fs::read_to_string(&path)
         .map_err(|error| format!("read metadata state {}: {error}", path.display()))?;

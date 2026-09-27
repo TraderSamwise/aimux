@@ -415,3 +415,61 @@ fn project_lists_report_the_fact_their_wording_claims() {
         ]
     );
 }
+
+/// An overseer removed five agents from the loop when they ran out of work, then
+/// dispatched new work without re-adding them. They finished silently, because
+/// the loop check is what raises the completion alert, and Sam only found out by
+/// asking. `aimux input` says so now, at the moment it is one command to fix.
+#[test]
+fn agent_input_says_when_nothing_is_watching_the_agent() {
+    use aimux::core_text::render_core_agent_input_lines;
+    use serde_json::json;
+
+    let unwatched = json!({
+        "sessionId": "codex-8zdqjx",
+        "turnSemantics": { "consumesTurn": false },
+        "loopWatch": { "known": true, "watched": false },
+    });
+    assert_eq!(
+        render_core_agent_input_lines(&unwatched),
+        vec![
+            "delivered to codex-8zdqjx",
+            "loop: not watched, so nothing will report when this finishes — aimux loop add codex-8zdqjx",
+        ]
+    );
+
+    let watched = json!({
+        "sessionId": "codex-foehav",
+        "turnSemantics": { "consumesTurn": false },
+        "loopWatch": { "known": true, "watched": true },
+    });
+    assert_eq!(
+        render_core_agent_input_lines(&watched),
+        vec!["delivered to codex-foehav"],
+        "a watched agent needs no warning"
+    );
+
+    let unknown = json!({
+        "sessionId": "codex-foehav",
+        "turnSemantics": { "consumesTurn": false },
+        "loopWatch": { "known": false },
+    });
+    assert_eq!(
+        render_core_agent_input_lines(&unknown),
+        vec![
+            "delivered to codex-foehav",
+            "loop: could not be read, so no completion alert is guaranteed",
+        ],
+        "a metadata read that failed is not an agent known to be watched"
+    );
+
+    let older_service = json!({
+        "sessionId": "codex-foehav",
+        "turnSemantics": { "consumesTurn": false },
+    });
+    assert_eq!(
+        render_core_agent_input_lines(&older_service),
+        vec!["delivered to codex-foehav"],
+        "a project service predating the field must not grow a warning line"
+    );
+}

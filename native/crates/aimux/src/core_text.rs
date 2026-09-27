@@ -799,7 +799,25 @@ pub fn render_core_agent_input_lines(payload: &Value) -> Vec<String> {
                 .to_owned(),
         );
     }
+    lines.extend(loop_watch_line(payload));
     lines
+}
+
+/// Work dispatched to an agent nobody is watching finishes silently, because the
+/// loop check is what raises the completion alert. Say so at dispatch, when it
+/// is still one command to fix.
+fn loop_watch_line(payload: &Value) -> Option<String> {
+    let watch = payload.get("loopWatch")?;
+    if watch.get("known").and_then(Value::as_bool) != Some(true) {
+        return Some("loop: could not be read, so no completion alert is guaranteed".to_owned());
+    }
+    if watch.get("watched").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    Some(format!(
+        "loop: not watched, so nothing will report when this finishes — aimux loop add {}",
+        js_string(field(payload, "sessionId"))
+    ))
 }
 pub fn render_core_agent_rename_lines(payload: &Value) -> Vec<String> {
     vec![
