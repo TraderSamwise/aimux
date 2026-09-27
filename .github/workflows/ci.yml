@@ -3,13 +3,14 @@ name: ci
 # Actions is free on this public repo, so CI is free parallel compute. It runs
 # on every push precisely so the full suite does NOT have to run serially on a
 # laptop before pushing: `yarn verify` locally, everything else here.
+# Not on tags. `release:patch` pushes master and the tag together, so a tag
+# trigger runs this same commit a second time for nothing -- 13 minutes a tag, at
+# three tags a day.
 on:
   pull_request:
   push:
     branches:
       - master
-    tags:
-      - "v*"
 
 # One CI run per ref. A tag push lands the branch and the tag together, which
 # fired two identical runs, and every superseded push kept running to

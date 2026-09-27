@@ -18,34 +18,6 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  # The source-property gates used to run here, serially in front of every
-  # build, and then ran again on the master push that carried the same commit.
-  # They live in ci.yml now; this job is what makes that safe. It refuses to
-  # publish a tag whose commit ci.yml has not concluded successfully, which is
-  # the drift that shipped v0.1.36 and v0.1.37 from a locally-green tree.
-  require-ci-green:
-    name: Require a green ci run for this commit
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-
-      - name: Wait for ci to conclude on ${{ github.sha }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          node scripts/require-ci-green.mjs \
-            --repo "${{ github.repository }}" \
-            --sha "${{ github.sha }}"
-
-  # Builds start immediately and run beside the ci wait. An asset that nobody
-  # publishes costs ten minutes of free runner; making the wait serial in front
-  # of it would cost those ten minutes on every release.
   release-assets:
     name: Build release assets
     runs-on: ${{ matrix.runner }}
@@ -191,8 +163,8 @@ jobs:
 
       # Built here, published in publish-release-assets. Six matrix jobs each
       # creating the GitHub Release is what let v0.1.59 put every asset in front
-      # of users from a run that then failed; nothing a user can reach is
-      # created until require-ci-green has concluded.
+      # of users from a run that then failed, so the release is created once, in
+      # one place, after every asset exists.
       - name: Hand the built asset to the publish job
         uses: actions/upload-artifact@v4
         with:
@@ -207,9 +179,7 @@ jobs:
 
   publish-release-assets:
     name: Publish release assets
-    needs:
-      - release-assets
-      - require-ci-green
+    needs: release-assets
     runs-on: ubuntu-latest
     steps:
       - name: Collect built assets

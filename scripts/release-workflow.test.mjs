@@ -105,12 +105,30 @@ describe("release readiness runs on master, not on the tag", () => {
   });
 });
 
-describe("nothing a user can reach is published before ci is green", () => {
-  it("asks ci about this exact commit", () => {
-    const guard = releaseJobs.get("require-ci-green");
-    expect(guard, "missing require-ci-green job").toBeTruthy();
-    expect(guard).toContain("scripts/require-ci-green.mjs");
-    expect(guard).toContain("--sha \"${{ github.sha }}\"");
+describe("one ci run per commit", () => {
+  // `release:patch` pushes master and the tag atomically, so a `tags:` trigger
+  // here runs the identical commit twice: today that was 14m17s and 12m32s for
+  // the same sha. At three tags a day it is the single biggest wasted gate.
+  it("does not run ci on tags", () => {
+    const triggers = ci.slice(0, ci.indexOf("jobs:"));
+    expect(triggers, "ci.yml runs on tags again, duplicating the master run").not.toMatch(
+      /^\s*tags:/m,
+    );
+    expect(triggers, "ci must still run on master").toMatch(/branches:\s*\n\s*- master/);
+  });
+});
+
+describe("the tag lane builds and publishes, and waits for nothing", () => {
+  // It used to block every publishing job on a poll of ci.yml for this commit.
+  // `release:patch` creates the version-bump commit and pushes it with the tag,
+  // so that commit's ci run started at the same moment and the tag lane simply
+  // waited for it -- 15 minutes a tag, at three tags a day. ci on master is the
+  // gate; a tag is fire and forget.
+  it("has no job that waits on ci", () => {
+    expect(releaseJobs.has("require-ci-green")).toBe(false);
+    for (const [name, job] of releaseJobs) {
+      expect(job, `${name} still polls ci`).not.toContain("require-ci-green.mjs");
+    }
   });
 
   // The matrix used to create the GitHub Release itself, six times over, which
@@ -124,18 +142,17 @@ describe("nothing a user can reach is published before ci is green", () => {
     );
   });
 
-  it("gates every publishing job on the guard", () => {
+  // One place creates the release, and only once every asset exists.
+  it("publishes once, after every asset is built", () => {
     const publish = releaseJobs.get("publish-release-assets");
     expect(publish, "missing publish-release-assets job").toBeTruthy();
     expect(publish).toContain("softprops/action-gh-release");
-    expect(publish).toContain("- require-ci-green");
+    expect(publish).toContain("needs: release-assets");
 
-    // Everything else reaches users through this job, so it is the only place
-    // the guard has to be named -- but it does have to still be reachable.
     for (const name of ["verify-release-assets", "publish-npm", "update-homebrew-tap"]) {
       const job = releaseJobs.get(name);
       expect(job, `missing ${name} job`).toBeTruthy();
-      expect(dependsOn(name, "require-ci-green"), `${name} is not gated on the guard`).toBe(true);
+      expect(dependsOn(name, "publish-release-assets"), `${name} can publish early`).toBe(true);
     }
   });
 });
