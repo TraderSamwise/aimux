@@ -8,6 +8,7 @@ agent_name_across_surfaces
 agent_order_across_surfaces
 agent_plane_across_surfaces
 agent_prompt_submit
+agent_unread_across_surfaces
 attachment_hosting
 attachment_hosting_url_safety
 backend_session_ids

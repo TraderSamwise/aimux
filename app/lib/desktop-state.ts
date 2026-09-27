@@ -67,6 +67,10 @@ export interface DesktopSession {
   recencyLabel?: string;
   semantic?: DesktopSessionSemanticState;
   unseenCount?: number;
+  // Notification-tagged exchange threads still listing this agent in
+  // `unreadBy` -- the number the footer chip renders as "N unread". Derived by
+  // the project service; never recomputed here.
+  notificationUnreadCount?: number;
   previewLine?: string;
   pendingAction?: string;
   pendingStartedAt?: string;

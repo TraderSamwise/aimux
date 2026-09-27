@@ -1634,6 +1634,33 @@ export async function listThreads(
   return callProjectJson<ThreadSummaryResponse[]>(endpoint, "GET", path, opts);
 }
 
+export interface SessionMarkSeenInput {
+  session: string;
+}
+
+export interface SessionMarkSeenResponse {
+  ok: boolean;
+  notificationsRead?: number;
+  notificationThreadsRead?: number;
+  attentionCleared?: boolean;
+}
+
+// The same route the tmux window-change hook calls, so entering an agent
+// clears the count identically from the app and from the terminal.
+export async function markSessionSeen(
+  endpoint: ServiceEndpoint,
+  input: SessionMarkSeenInput,
+  opts?: ApiOpts,
+): Promise<SessionMarkSeenResponse> {
+  return callProjectJson<SessionMarkSeenResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.runtime.markSeen,
+    opts,
+    input,
+  );
+}
+
 export async function markThreadSeen(
   endpoint: ServiceEndpoint,
   input: ThreadMarkSeenInput,

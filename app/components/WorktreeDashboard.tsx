@@ -112,6 +112,20 @@ function StatusCell({ state }: { state: AgentState }) {
   );
 }
 
+// The count the footer chip renders as "N unread", from the same derived field.
+// Rendering it here rather than recomputing it is what keeps the two surfaces
+// showing one number.
+function UnreadBadge({ count }: { count?: number }) {
+  if (!count || count < 1) return null;
+  return (
+    <View className="rounded-full bg-[#e0b341] px-1.5 py-[1px]">
+      <Text className="font-mono text-[10px] font-bold text-[#1a1c22]">
+        {count > 99 ? "99+" : String(count)}
+      </Text>
+    </View>
+  );
+}
+
 function IndexBadge({ digit }: { digit: number }) {
   return <Text className="w-7 shrink-0 font-mono text-[12px] text-[#7c7e88]">{`[${digit}]`}</Text>;
 }
@@ -218,6 +232,7 @@ export function AgentRow({
         >
           {shortName}
         </Text>
+        <UnreadBadge count={session.notificationUnreadCount} />
       </View>
       {compact ? null : <TrailingHint text={fullHint} />}
     </>

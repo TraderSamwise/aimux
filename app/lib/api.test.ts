@@ -67,6 +67,7 @@ import {
   reopenTask,
   requestReviewChanges,
   refreshStatusline,
+  markSessionSeen,
   renameAgent,
   respondToInteraction,
   resurrectTeammate,
@@ -873,6 +874,7 @@ describe("api relay routing", () => {
     await resumeAgent(endpoint, "agent-1");
     await killAgent(endpoint, "agent-1");
     await renameAgent(endpoint, { sessionId: "agent-1", label: "reviewer" });
+    await markSessionSeen(endpoint, { session: "agent-1" });
     await migrateAgent(endpoint, { sessionId: "agent-1", worktreePath: "/repo/b" });
     await setAgentLoop(endpoint, { sessionId: "agent-1", active: true, goal: "ship" });
     await setAgentOverseer(endpoint, { sessionId: "agent-1", active: false });
@@ -941,6 +943,11 @@ describe("api relay routing", () => {
         method: "POST",
         path: "/proxy/127.0.0.1/43210/agents/rename",
         payload: { sessionId: "agent-1", label: "reviewer" },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/mark-seen",
+        payload: { session: "agent-1" },
       },
       {
         method: "POST",

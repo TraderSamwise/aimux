@@ -80,6 +80,7 @@ import {
   leaveShare,
   listShares,
   markNotificationsRead,
+  markSessionSeen,
   removeShareParticipant,
   revokeShareInvite,
   interruptLivePane,
@@ -89,6 +90,7 @@ import {
   type ShareParticipant,
   type SharedSessionSummary,
 } from "@/lib/api";
+import { sessionViewedMark } from "@/lib/session-viewed";
 import {
   attachmentsFromClipboardData,
   clipboardDataHasFile,
@@ -638,6 +640,7 @@ export default function ChatScreen() {
   const nativeChatInterruptRef = useRef<() => void>(() => {});
   const routeNotificationLocalReadKeyRef = useRef<string | null>(null);
   const routeNotificationServerReadKeyRef = useRef<string | null>(null);
+  const sessionViewedMarkKeyRef = useRef<string | null>(null);
   const sendOperationIdRef = useRef(0);
   const interruptInFlightRef = useRef(false);
   const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
@@ -773,6 +776,35 @@ export default function ChatScreen() {
       }
     });
   }, [markNotificationsReadLocal, routeNotificationId, serviceEndpoint, stateProjectPath, token]);
+
+  // Entering an agent, or switching back to one, is reading it. The terminal
+  // does this from the tmux window-change hook; this is the same route, so the
+  // count clears identically from either surface.
+  useFocusEffect(
+    useCallback(() => {
+      const mark = sessionViewedMark({
+        sessionId,
+        endpoint: serviceEndpoint ?? null,
+        token,
+        sharedView: isSharedSessionView,
+      });
+      if (!mark || !serviceEndpoint) return;
+      if (sessionViewedMarkKeyRef.current === mark.key) return;
+      sessionViewedMarkKeyRef.current = mark.key;
+      void markSessionSeen(
+        serviceEndpoint,
+        { session: mark.sessionId },
+        { token: token ?? undefined },
+      ).catch((error: unknown) => {
+        // Let the next focus retry, and say why this one did not land rather
+        // than leaving a count on screen with no explanation.
+        if (sessionViewedMarkKeyRef.current === mark.key) {
+          sessionViewedMarkKeyRef.current = null;
+        }
+        console.warn(`mark seen failed for ${mark.sessionId}:`, error);
+      });
+    }, [isSharedSessionView, serviceEndpoint, sessionId, token]),
+  );
 
   useEffect(() => {
     let cancelled = false;
