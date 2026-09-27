@@ -325,6 +325,10 @@ jobs:
 
       - run: yarn verify:fast
 
+      # Two `cargo build --release` passes, so it belongs on free parallel
+      # compute rather than in front of every local change.
+      - run: yarn native:local-boundary
+
   idle-spawn:
     name: Idle process spawn rate
     runs-on: ubuntu-latest
