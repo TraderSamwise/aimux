@@ -500,13 +500,19 @@ pub(super) fn route_agent_rename(
         .and_then(|session| live_window_id_for_session(topology.as_ref().unwrap(), &session));
     if let Err(error) =
         update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+            let label_value = label.clone().map(Value::String).unwrap_or(Value::Null);
+            // The node carries a label too, and a topology read falls back to
+            // it when the session has none. Leaving it behind means clearing a
+            // label resurrects the name from before the rename.
+            let topology = map_topology_array(topology, "nodes", |mut current| {
+                if string_field(&current, "logicalId") == session_id {
+                    object_insert_mut(&mut current, "label", label_value.clone());
+                }
+                current
+            });
             map_topology_array(topology, "sessions", |mut current| {
                 if string_field(&current, "id") == session_id {
-                    object_insert_mut(
-                        &mut current,
-                        "label",
-                        label.clone().map(Value::String).unwrap_or(Value::Null),
-                    );
+                    object_insert_mut(&mut current, "label", label_value.clone());
                     object_insert_mut(&mut current, "updatedAt", Value::String(now_iso()));
                 }
                 current
@@ -515,13 +521,25 @@ pub(super) fn route_agent_rename(
     {
         return json_error(500, error);
     }
-    if let (Some(window_id), Some(label)) = (window_id, label.as_deref()) {
-        let _ = runtime.rename_window(&window_id, label);
+    let mut window_rename_error = None;
+    if let (Some(window_id), Some(label)) = (window_id, label.as_deref())
+        && let Err(error) = runtime.rename_window(&window_id, label)
+    {
+        // The label is already stored, so every surface reading the topology
+        // shows the new name. Only the tmux window title is behind, and saying
+        // so is the difference between a stale title and an invisible failure.
+        window_rename_error = Some(error);
     }
     let mut result = Map::new();
     result.insert("sessionId".into(), Value::String(session_id.clone()));
     if let Some(label) = label {
         result.insert("label".into(), Value::String(label));
+    }
+    if let Some(error) = window_rename_error {
+        result.insert(
+            "warning".into(),
+            Value::String(format!("tmux window title was not renamed: {error}")),
+        );
     }
     lifecycle_response(
         Value::Object(result),

@@ -42,6 +42,7 @@ struct FakeLifecycleRuntime {
     kill_window_result: Option<Result<(), String>>,
     existing_windows: Vec<String>,
     renamed: Vec<(String, String)>,
+    rename_window_error: Option<String>,
     codex_backend_ids_by_cwd: BTreeMap<String, Result<BTreeSet<String>, String>>,
     main_repo: Option<String>,
     worktrees_created: Vec<FakeCreateWorktree>,
@@ -240,6 +241,9 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
 
     fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String> {
         self.renamed.push((window_id.to_owned(), name.to_owned()));
+        if let Some(error) = self.rename_window_error.clone() {
+            return Err(error);
+        }
         Ok(())
     }
 }
@@ -689,6 +693,91 @@ fn agent_rename_updates_metadata_topology_and_live_window_name() {
     );
     let topology = read_topology(&state_dir);
     assert_eq!(session(&topology, "codex-live")["label"], "Review lane");
+    cleanup(project);
+}
+
+#[test]
+fn agent_rename_reports_a_failed_tmux_window_rename() {
+    let project = temp_project("agent-rename-window-error");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        rename_window_error: Some("no such window @agent".into()),
+        ..FakeLifecycleRuntime::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RENAME,
+        Some(&json!({ "sessionId": "codex-live", "label": "Review lane" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["label"], "Review lane");
+    let warning = response.body["warning"]
+        .as_str()
+        .expect("a failed window rename is reported, not swallowed");
+    assert!(
+        warning.contains("no such window @agent"),
+        "the warning names the tmux failure: {warning}"
+    );
+    let topology = read_topology(&state_dir);
+    assert_eq!(session(&topology, "codex-live")["label"], "Review lane");
+    cleanup(project);
+}
+
+#[test]
+fn the_node_label_moves_with_the_session_label_on_every_rename() {
+    let project = temp_project("agent-rename-clear");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    fn node_label(state_dir: &PathBuf) -> Value {
+        read_topology(state_dir)["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|node| node["logicalId"] == "codex-live")
+            .expect("the renamed agent has a node")
+            .get("label")
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
+
+    let rename = |runtime: &mut FakeLifecycleRuntime, body: Value| {
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::RENAME,
+            Some(&body),
+            runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 200);
+    };
+
+    rename(
+        &mut runtime,
+        json!({ "sessionId": "codex-live", "label": "Review lane" }),
+    );
+    assert_eq!(
+        node_label(&state_dir),
+        json!("Review lane"),
+        "a topology read falls back to the node label, so it has to carry the new name too"
+    );
+
+    rename(&mut runtime, json!({ "sessionId": "codex-live" }));
+    assert_eq!(
+        node_label(&state_dir),
+        Value::Null,
+        "clearing the name must not leave the pre-rename name to fall back to"
+    );
     cleanup(project);
 }
 
