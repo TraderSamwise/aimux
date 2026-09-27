@@ -233,7 +233,10 @@ struct DaemonProjectReadSnapshot {
 /// so exec'ing there would hold that mutex across a subprocess and stall every
 /// other route behind a wedged tmux.
 pub const DASHBOARD_SESSIONS_ALIVE_TASK_NAME: &str = "daemon-dashboard-liveness";
-pub const DASHBOARD_SESSIONS_ALIVE_INTERVAL_MS: i64 = 5 * 1_000;
+/// Matched to the app's own project poll (10s) rather than made faster: a
+/// tighter cadence would raise the idle exec rate of a daemon nobody is watching
+/// without any client seeing the answer sooner.
+pub const DASHBOARD_SESSIONS_ALIVE_INTERVAL_MS: i64 = 10 * 1_000;
 const DASHBOARD_SESSIONS_ALIVE_TIMEOUT: Duration = Duration::from_millis(1_500);
 
 type DashboardSessionsAlive = Result<BTreeMap<String, bool>, String>;
