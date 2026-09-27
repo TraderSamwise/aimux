@@ -409,6 +409,44 @@ fn state_save_removes_binding_when_session_goes_offline() {
     );
 }
 
+/// Offlining an agent moved its dashboard row immediately -- the binding is
+/// dropped on lifecycle alone -- while the status dot waited about a second for
+/// the status poll to catch up. One transition, two clocks, and it reads as a
+/// glitch. Lifecycle is already authoritative for the binding, so status
+/// follows it rather than keeping a value that is stale by definition.
+#[test]
+fn an_offlined_session_reports_offline_before_its_status_poll_catches_up() {
+    let temp = TempDir::new("aimux-offline-status-agrees");
+    let project_root = temp.path().join("repo");
+    let project_state_dir = temp.path().join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&project_state_dir).expect("project state");
+
+    let sessions = vec![json!({
+        "id": "just-offlined",
+        "tool": "claude",
+        "toolConfigKey": "claude",
+        "command": "claude",
+        "args": [],
+        // What the offline command leaves behind for the moment before the
+        // status poll runs.
+        "lifecycle": "offline",
+        "status": "running",
+        "createdAt": NOW,
+    })];
+
+    let topology = reconcile_runtime_topology_sessions_on_state_save_at(
+        &project_root,
+        &project_state_dir,
+        &sessions,
+        &[],
+        LATER,
+    )
+    .expect("reconcile state-save sessions");
+
+    assert_eq!(status(&topology, "just-offlined"), Some("offline"));
+}
+
 fn status(topology: &Value, session_id: &str) -> Option<&'static str> {
     session_state(topology, session_id).and_then(|session| match session["status"].as_str() {
         Some("running") => Some("running"),

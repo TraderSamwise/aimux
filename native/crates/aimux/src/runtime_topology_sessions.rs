@@ -423,13 +423,15 @@ fn upsert_node(topology: &mut Value, session: &Value, rig_id: &str, now: &str) -
 
 fn session_to_topology_session(session: &Value, node_id: &str, now: &str) -> Value {
     let lifecycle = string_field(session, "lifecycle");
-    let status = string_field(session, "status").unwrap_or_else(|| {
-        if lifecycle.as_deref() == Some("offline") {
-            "offline".into()
-        } else {
-            "running".into()
-        }
-    });
+    // Lifecycle wins over a status that has not caught up yet. The binding is
+    // already dropped on lifecycle alone, so leaving status saying "running"
+    // meant one transition moved the dashboard row immediately and the status
+    // dot about a second later, which reads as a glitch.
+    let status = if lifecycle.as_deref() == Some("offline") {
+        "offline".to_owned()
+    } else {
+        string_field(session, "status").unwrap_or_else(|| "running".into())
+    };
     let mut row = Map::new();
     insert_optional(&mut row, "id", string_field(session, "id"));
     row.insert("nodeId".into(), Value::String(node_id.into()));
