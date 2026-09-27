@@ -112,4 +112,17 @@ describe("AgentChatScreen composer render contract", () => {
     expect(terminalSource).toContain("chatCommandForKeyboardChange");
     expect(terminalSource).toContain("keyboardVisible");
   });
+
+  // `scrollToEnd` targets `contentHeight - viewportHeight` and knows nothing
+  // about the keyboard's contentInset, so it lands short by exactly the inset and
+  // the live prompt stays behind the keyboard. The pane has to track the inset
+  // and scroll to the offset that really shows the last line.
+  it("scrolls the terminal past the keyboard inset rather than to the plain end", () => {
+    const terminalSource = componentSource(agentChatScreenSource(), "AgentTerminalOutputPane");
+
+    expect(terminalSource).toContain("onContentInsetChange={handleTerminalContentInsetChange}");
+    expect(terminalSource).toContain("chatScrollTargetForEnd(terminalGeometryRef.current)");
+    expect(terminalSource).toContain("scrollRef.current?.scrollTo({ animated: command.animated");
+    expect(terminalSource).toContain("bottomInset: terminalGeometryRef.current.bottomInset");
+  });
 });

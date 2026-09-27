@@ -5,6 +5,12 @@ export type ChatScrollMetrics = {
   contentHeight: number;
   offsetY: number;
   viewportHeight: number;
+  // The keyboard-driven bottom contentInset. It extends the scrollable range
+  // past the content, so the end of the content is only reachable at
+  // `contentHeight - viewportHeight + bottomInset`. Leaving it out is what left
+  // the newest terminal output sitting behind the keyboard: the pane believed
+  // it was at the end while the live prompt was still below the fold.
+  bottomInset?: number;
 };
 
 export type ChatScrollPolicy = {
@@ -35,9 +41,18 @@ export function createChatScrollChromeState(): ChatScrollChromeState {
   return { lastOffsetY: null, visible: true };
 }
 
+// The offset that actually puts the last line against the bottom of the
+// viewport. `scrollToEnd` does not know about the keyboard inset, so a pane that
+// wants the newest line visible has to scroll here instead.
+export function chatScrollTargetForEnd(metrics: ChatScrollMetrics): number {
+  return Math.max(
+    0,
+    metrics.contentHeight - metrics.viewportHeight + Math.max(0, metrics.bottomInset ?? 0),
+  );
+}
+
 export function chatDistanceFromEnd(metrics: ChatScrollMetrics): number {
-  const scrollableHeight = Math.max(0, metrics.contentHeight - metrics.viewportHeight);
-  return Math.max(0, scrollableHeight - Math.max(0, metrics.offsetY));
+  return Math.max(0, chatScrollTargetForEnd(metrics) - Math.max(0, metrics.offsetY));
 }
 
 export function isChatPinnedToEnd(

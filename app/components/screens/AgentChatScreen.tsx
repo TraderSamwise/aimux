@@ -124,6 +124,7 @@ import {
   chatCommandForNavigationFocus,
   chatChromeAfterUserScroll,
   chatPolicyAfterNavigationFocus,
+  chatScrollTargetForEnd,
   chatPolicyAfterUserScroll,
   createChatScrollChromeState,
   createChatScrollPolicy,
@@ -214,7 +215,7 @@ const CHAT_DIVIDER_APPROX_CHAR_WIDTH = Platform.OS === "web" ? 9.6 : 12.4;
 const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
 const MIN_CHAT_DIVIDER_WIDTH = 16;
 const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
-type ChatScrollHandle = Pick<ScrollView, "scrollToEnd">;
+type ChatScrollHandle = Pick<ScrollView, "scrollTo" | "scrollToEnd">;
 type ChatSessionViewportHandle = {
   showNewest: () => void;
 };
@@ -2841,6 +2842,16 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   const terminalScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
   const terminalScrollFrameRef = useRef<number | null>(null);
   const terminalInitialLayoutKeyRef = useRef<string | null>(null);
+  // `scrollToEnd` targets `contentHeight - viewportHeight` and knows nothing
+  // about the keyboard's contentInset, so with the keyboard up it lands short by
+  // exactly the inset and the newest output stays behind it. Track the geometry
+  // and scroll to the offset that really shows the last line.
+  const terminalGeometryRef = useRef<ChatScrollMetrics>({
+    bottomInset: 0,
+    contentHeight: 0,
+    offsetY: 0,
+    viewportHeight: 0,
+  });
   const extraContentPadding = useSharedValue(bottomContentInset);
   const visibleLines = visibleOutput.sessionKey === sessionKey ? visibleOutput.lines : liveLines;
   const visibleOutputText =
@@ -2876,7 +2887,12 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
         ) {
           return;
         }
-        scrollRef.current?.scrollToEnd({ animated: command.animated });
+        const target = chatScrollTargetForEnd(terminalGeometryRef.current);
+        if (target > 0) {
+          scrollRef.current?.scrollTo({ animated: command.animated, y: target });
+        } else {
+          scrollRef.current?.scrollToEnd({ animated: command.animated });
+        }
       });
     },
     [cancelPendingTerminalScroll],
@@ -2904,7 +2920,11 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   }, [liveOutput, visibleOutput]);
 
   const handleTerminalLayout = useCallback(
-    (_event: LayoutChangeEvent) => {
+    (event: LayoutChangeEvent) => {
+      terminalGeometryRef.current = {
+        ...terminalGeometryRef.current,
+        viewportHeight: event.nativeEvent.layout.height,
+      };
       if (terminalInitialLayoutKeyRef.current !== sessionKey) {
         terminalInitialLayoutKeyRef.current = sessionKey;
         executeTerminalScrollCommand(chatCommandForInitialLayout());
@@ -2916,19 +2936,31 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   );
 
   const handleTerminalContentSizeChange = useCallback(
-    (_contentWidth: number, _contentHeight: number) => {
+    (_contentWidth: number, contentHeight: number) => {
+      terminalGeometryRef.current = { ...terminalGeometryRef.current, contentHeight };
       executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
     },
     [executeTerminalScrollCommand],
   );
 
+  // Android does not report the keyboard-driven inset in the scroll event, so
+  // the library hands it over here instead.
+  const handleTerminalContentInsetChange = useCallback((insets: { bottom: number }) => {
+    terminalGeometryRef.current = {
+      ...terminalGeometryRef.current,
+      bottomInset: insets.bottom,
+    };
+  }, []);
+
   const handleTerminalScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const metrics: ChatScrollMetrics = {
+        bottomInset: terminalGeometryRef.current.bottomInset,
         contentHeight: event.nativeEvent.contentSize.height,
         offsetY: event.nativeEvent.contentOffset.y,
         viewportHeight: event.nativeEvent.layoutMeasurement.height,
       };
+      terminalGeometryRef.current = metrics;
       const previousIntent = terminalScrollPolicyRef.current.intent;
       const nextScroll = terminalScrollStateAfterUserScroll({
         chrome: terminalScrollChromeRef.current,
@@ -2999,6 +3031,7 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
         keyboardDismissMode="interactive"
         keyboardLiftBehavior="whenAtEnd"
         keyboardShouldPersistTaps="handled"
+        onContentInsetChange={handleTerminalContentInsetChange}
         onContentSizeChange={handleTerminalContentSizeChange}
         onLayout={handleTerminalLayout}
         onScroll={handleTerminalScroll}

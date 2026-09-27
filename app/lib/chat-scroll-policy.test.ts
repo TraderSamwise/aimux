@@ -8,6 +8,7 @@ import {
   chatCommandForKeyboardChange,
   chatCommandForNavigationFocus,
   chatDistanceFromEnd,
+  chatScrollTargetForEnd,
   chatPolicyAfterNavigationFocus,
   chatPolicyAfterUserScroll,
   chatScrollDirection,
@@ -154,5 +155,36 @@ describe("chat scroll policy", () => {
         },
       ),
     ).toEqual({ lastOffsetY: 1200, visible: true });
+  });
+});
+
+// The keyboard adds a bottom contentInset, which extends the scrollable range
+// past the content. Scrolling to `contentHeight - viewportHeight` then lands
+// short by exactly the inset, which is why the newest terminal output sat behind
+// the keyboard while the pane believed it was pinned to the end.
+describe("the end of the content with a keyboard inset", () => {
+  const geometry = { contentHeight: 1000, offsetY: 0, viewportHeight: 300 };
+
+  it("targets past the content by the inset", () => {
+    expect(chatScrollTargetForEnd({ ...geometry, bottomInset: 280 })).toBe(980);
+  });
+
+  it("targets the plain end with no inset", () => {
+    expect(chatScrollTargetForEnd(geometry)).toBe(700);
+    expect(chatScrollTargetForEnd({ ...geometry, bottomInset: 0 })).toBe(700);
+  });
+
+  it("never targets a negative offset when the content is shorter than the viewport", () => {
+    expect(chatScrollTargetForEnd({ contentHeight: 100, offsetY: 0, viewportHeight: 300 })).toBe(0);
+  });
+
+  it("does not call the pre-keyboard end position pinned once the inset exists", () => {
+    const atOldEnd = { ...geometry, bottomInset: 280, offsetY: 700 };
+    expect(chatDistanceFromEnd(atOldEnd)).toBe(280);
+    expect(isChatPinnedToEnd(atOldEnd)).toBe(false);
+  });
+
+  it("calls the inset-aware end position pinned", () => {
+    expect(isChatPinnedToEnd({ ...geometry, bottomInset: 280, offsetY: 980 })).toBe(true);
   });
 });
