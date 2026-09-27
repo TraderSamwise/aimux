@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { DaemonProject } from "@/lib/api";
-import { filterProjectPickerProjects } from "@/lib/project-picker";
+import {
+  filterProjectPickerProjects,
+  isProjectOnline,
+  projectOnlineState,
+} from "@/lib/project-picker";
 
 function project(
   input: Partial<DaemonProject> & Pick<DaemonProject, "id" | "name">,
@@ -16,54 +20,79 @@ function project(
   };
 }
 
+// Sam's rule: a project is online when a tmux dashboard is running on it. This
+// used to read `serviceAlive`, the project-service process, which is a different
+// fact that only happened to agree.
+describe("isProjectOnline", () => {
+  it("follows the dashboard, not the project service", () => {
+    expect(isProjectOnline(project({ id: "a", name: "a", dashboardAlive: true }))).toBe(true);
+    expect(
+      isProjectOnline(project({ id: "b", name: "b", serviceAlive: true, dashboardAlive: false })),
+    ).toBe(false);
+    expect(
+      isProjectOnline(project({ id: "c", name: "c", serviceAlive: false, dashboardAlive: true })),
+    ).toBe(true);
+  });
+
+  it("does not call unknown liveness online", () => {
+    expect(isProjectOnline(project({ id: "d", name: "d", serviceAlive: true }))).toBe(false);
+  });
+});
+
 describe("filterProjectPickerProjects", () => {
-  it("excludes projects with no live service in active mode", () => {
+  it("hides only the projects with no dashboard in active mode", () => {
     const projects = [
-      project({ id: "active", name: "active", onlineAgentCount: 2, serviceAlive: true }),
-      project({ id: "empty", name: "empty", onlineAgentCount: 0, serviceAlive: true }),
+      project({ id: "open", name: "open", dashboardAlive: true }),
+      project({ id: "closed", name: "closed", dashboardAlive: false }),
       project({
-        id: "offline-with-stale-count",
-        name: "offline-with-stale-count",
-        onlineAgentCount: 1,
-        serviceAlive: false,
-        serviceEndpoint: null,
+        id: "service-only",
+        name: "service-only",
+        serviceAlive: true,
+        dashboardAlive: false,
       }),
-      project({ id: "offline", name: "offline", serviceAlive: false, serviceEndpoint: null }),
     ];
 
     expect(
       filterProjectPickerProjects(projects, { showAll: false }).map((entry) => entry.id),
-    ).toEqual(["active", "empty"]);
+    ).toEqual(["open"]);
   });
 
-  it("includes projects with no live service in all mode", () => {
+  // A daemon that could not ask tmux, or one predating the field, reports unknown
+  // for every project. Hiding those would empty the picker and read as "you have
+  // no projects" -- the failure this whole change exists to stop.
+  it("keeps projects whose liveness is unknown", () => {
+    const unknown = [
+      project({ id: "unknown-a", name: "unknown-a" }),
+      project({ id: "unknown-b", name: "unknown-b", serviceAlive: false }),
+    ];
+
+    expect(
+      filterProjectPickerProjects(unknown, { showAll: false }).map((entry) => entry.id),
+    ).toEqual(["unknown-a", "unknown-b"]);
+  });
+
+  it("includes everything in all mode", () => {
     const projects = [
-      project({ id: "active", name: "active", onlineAgentCount: 1 }),
-      project({ id: "offline", name: "offline", serviceAlive: false, serviceEndpoint: null }),
+      project({ id: "open", name: "open", dashboardAlive: true }),
+      project({ id: "closed", name: "closed", dashboardAlive: false }),
     ];
 
     expect(
       filterProjectPickerProjects(projects, { showAll: true }).map((entry) => entry.id),
-    ).toEqual(["active", "offline"]);
+    ).toEqual(["open", "closed"]);
   });
+});
 
-  it("does not treat absent relay liveness as active", () => {
-    const relayProjectWithoutLiveness = {
-      id: "relay-cold",
-      name: "relay-cold",
-      path: "/repo/relay-cold",
-      dashboardSessionName: "aimux-relay-cold",
-      service: null,
-      serviceEndpoint: null,
-    } as DaemonProject;
-
-    expect(filterProjectPickerProjects([relayProjectWithoutLiveness], { showAll: false })).toEqual(
-      [],
+// The row renders this, and folding unknown into offline is how a failed tmux
+// sample would tell Sam every project is dead while the filter kept it visible.
+describe("projectOnlineState", () => {
+  it("keeps unknown apart from offline", () => {
+    expect(projectOnlineState(project({ id: "a", name: "a", dashboardAlive: true }))).toBe(
+      "online",
     );
-    expect(
-      filterProjectPickerProjects([relayProjectWithoutLiveness], { showAll: true }).map(
-        (entry) => entry.id,
-      ),
-    ).toEqual(["relay-cold"]);
+    expect(projectOnlineState(project({ id: "b", name: "b", dashboardAlive: false }))).toBe(
+      "offline",
+    );
+    expect(projectOnlineState(project({ id: "c", name: "c", serviceAlive: true }))).toBe("unknown");
   });
 });

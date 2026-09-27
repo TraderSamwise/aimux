@@ -276,14 +276,19 @@ pub fn render_core_runtime_restart_lines(payload: &Value) -> Vec<String> {
     ]
 }
 
-fn render_project_lines(projects: &[Value], live: &str, idle: &str) -> Vec<String> {
+fn render_project_lines(
+    projects: &[Value],
+    liveness_field: &str,
+    live: &str,
+    idle: &str,
+) -> Vec<String> {
     projects
         .iter()
         .map(|project| {
             format!(
                 "{}  {}  {}",
                 js_string(field(project, "name")),
-                if field(project, "serviceAlive").and_then(Value::as_bool) == Some(true) {
+                if field(project, liveness_field).and_then(Value::as_bool) == Some(true) {
                     live
                 } else {
                     idle
@@ -297,6 +302,7 @@ fn render_project_lines(projects: &[Value], live: &str, idle: &str) -> Vec<Strin
 pub fn render_core_daemon_projects_lines(projects: &Value) -> Vec<String> {
     render_project_lines(
         projects.as_array().map(Vec::as_slice).unwrap_or_default(),
+        "serviceAlive",
         "service",
         "idle",
     )
@@ -306,7 +312,7 @@ pub fn render_core_projects_list_lines(projects: &Value) -> Vec<String> {
     if projects.is_empty() {
         vec!["No aimux projects found.".into()]
     } else {
-        render_project_lines(projects, "live", "idle")
+        render_project_lines(projects, "dashboardAlive", "live", "idle")
     }
 }
 

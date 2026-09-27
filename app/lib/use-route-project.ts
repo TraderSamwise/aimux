@@ -85,6 +85,9 @@ function projectFromActiveShare(activeShare: ActiveSharedSession): DaemonProject
     dashboardSessionName: `shared:${activeShare.shareId}`,
     service: null,
     serviceAlive: true,
+    // A shared session is reachable and has no local dashboard to sample, so it
+    // must not read as offline in the picker.
+    dashboardAlive: true,
     serviceEndpoint: activeShare.serviceEndpoint,
   };
 }

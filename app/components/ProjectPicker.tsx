@@ -3,7 +3,7 @@ import { Pressable, View } from "react-native";
 
 import { Text } from "@/components/ui/text";
 import type { DaemonProject } from "@/lib/api";
-import { filterProjectPickerProjects } from "@/lib/project-picker";
+import { filterProjectPickerProjects, projectOnlineState } from "@/lib/project-picker";
 import { cn } from "@/lib/utils";
 
 export function ProjectPicker({
@@ -74,9 +74,12 @@ export function ProjectPicker({
       ) : (
         visibleProjects.map((project) => {
           const isSelected = project.path === selectedPath;
-          const onlineAgentCount = project.onlineAgentCount;
-          const isOnline =
-            onlineAgentCount === undefined ? project.serviceAlive : onlineAgentCount > 0;
+          // The dot and the label had separate rules -- one on the agent count
+          // falling back to the project service, the other on the service alone --
+          // so they could disagree with each other and with the filter beside
+          // them. All three ask the same helper now.
+          const onlineState = projectOnlineState(project);
+          const onlineAgentCount = onlineState === "online" ? project.onlineAgentCount : undefined;
           return (
             <Pressable
               key={project.path}
@@ -90,7 +93,11 @@ export function ProjectPicker({
                 <View
                   className={cn(
                     "h-[7px] w-[7px] rounded-full",
-                    isOnline ? "bg-[#4ade80]" : "bg-[#5b5d66]",
+                    onlineState === "online"
+                      ? "bg-[#4ade80]"
+                      : onlineState === "offline"
+                        ? "bg-[#5b5d66]"
+                        : "border border-[#787a83]",
                   )}
                 />
                 <Text
@@ -103,13 +110,13 @@ export function ProjectPicker({
                 <Text
                   className={cn(
                     "font-mono text-[11px]",
-                    isOnline ? "text-[#4ade80]" : "text-[#787a83]",
+                    onlineState === "online" ? "text-[#4ade80]" : "text-[#787a83]",
                   )}
                 >
                   {onlineAgentCount === undefined
-                    ? isOnline
-                      ? "online"
-                      : "offline"
+                    ? onlineState === "unknown"
+                      ? "liveness unknown"
+                      : onlineState
                     : `${onlineAgentCount} online`}
                 </Text>
               </View>

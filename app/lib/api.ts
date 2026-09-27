@@ -404,13 +404,20 @@ export interface DaemonProject {
   dashboardSessionName: string;
   service: unknown | null;
   serviceAlive: boolean;
+  // Whether a tmux dashboard is running on this project -- what "online" means.
+  // `undefined` is a third answer: the daemon could not ask tmux, or predates the
+  // field. Rendering unknown as offline would call a whole fleet dead.
+  dashboardAlive?: boolean;
   serviceEndpoint: ServiceEndpoint | null;
   onlineAgentCount?: number;
 }
 
-type RawDaemonProject = Partial<Omit<DaemonProject, "onlineAgentCount" | "serviceAlive">> & {
+type RawDaemonProject = Partial<
+  Omit<DaemonProject, "onlineAgentCount" | "serviceAlive" | "dashboardAlive">
+> & {
   onlineAgentCount?: unknown;
   serviceAlive?: unknown;
+  dashboardAlive?: unknown;
 };
 
 function stringField(value: unknown): string {
@@ -428,6 +435,12 @@ function normalizeServiceEndpoint(value: unknown): ServiceEndpoint | null {
   return { host: endpoint.host, port: endpoint.port };
 }
 
+// Only a real boolean is an answer. A JSON null, or an older daemon that omits
+// the field, stays undefined so callers can tell unknown from offline.
+function normalizeDashboardAlive(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function normalizeOnlineAgentCount(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
@@ -441,6 +454,7 @@ function normalizeDaemonProject(project: RawDaemonProject): DaemonProject {
     dashboardSessionName: stringField(project.dashboardSessionName),
     service: project.service ?? null,
     serviceAlive: project.serviceAlive === true,
+    dashboardAlive: normalizeDashboardAlive(project.dashboardAlive),
     serviceEndpoint: normalizeServiceEndpoint(project.serviceEndpoint),
     onlineAgentCount: normalizeOnlineAgentCount(project.onlineAgentCount),
   };

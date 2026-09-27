@@ -376,3 +376,36 @@ fn renders_threads_tasks_messages_and_review_follow_up_order() {
         vec!["task t-1", "follow-up t-2", "thread th-1"]
     );
 }
+
+/// `aimux projects` says live when a dashboard is running on the project, which
+/// is Sam's definition of online. It used to read `serviceAlive` -- the
+/// project-service process -- which is a different fact that only happens to
+/// agree. `aimux daemon projects` says "service" and keeps reporting the service.
+#[test]
+fn project_lists_report_the_fact_their_wording_claims() {
+    use aimux::core_text::{render_core_daemon_projects_lines, render_core_projects_list_lines};
+
+    let projects = json!([
+        { "name": "dashboard-open", "path": "/a", "serviceAlive": false, "dashboardAlive": true },
+        { "name": "service-only", "path": "/b", "serviceAlive": true, "dashboardAlive": false },
+        { "name": "unknown", "path": "/c", "serviceAlive": true, "dashboardAlive": null },
+    ]);
+
+    assert_eq!(
+        render_core_projects_list_lines(&projects),
+        vec![
+            "dashboard-open  live  /a",
+            "service-only  idle  /b",
+            // Never sampled is not a running dashboard.
+            "unknown  idle  /c",
+        ]
+    );
+    assert_eq!(
+        render_core_daemon_projects_lines(&projects),
+        vec![
+            "dashboard-open  idle  /a",
+            "service-only  service  /b",
+            "unknown  service  /c",
+        ]
+    );
+}

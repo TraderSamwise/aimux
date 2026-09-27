@@ -80,7 +80,9 @@ fn runtime() -> FakeStatusRuntime {
         dashboard_session_name: "aimux-repo-id".into(),
         service: Some(json!({ "projectId": "repo-id", "projectRoot": "/repo", "pid": 9123 })),
         service_alive: true,
-        dashboard_alive: None,
+        // `aimux projects` says live when a dashboard is running, which is Sam's
+        // definition of online, so the fixture has to carry one.
+        dashboard_alive: Some(true),
         service_endpoint: Some(json!({ "host": "127.0.0.1", "port": 44191, "pid": 9123 })),
         online_agent_count: None,
     };
@@ -243,7 +245,7 @@ fn project_lists_keep_registered_projects_visible() {
     .expect("daemon projects route");
     assert_eq!(
         text_body(daemon_projects),
-        "{\n  \"projects\": [\n    {\n      \"id\": \"repo-id\",\n      \"name\": \"repo\",\n      \"path\": \"/repo\",\n      \"lastSeen\": \"2026-03-28T00:00:00.000Z\",\n      \"dashboardSessionName\": \"aimux-repo-id\",\n      \"service\": {\n        \"projectId\": \"repo-id\",\n        \"projectRoot\": \"/repo\",\n        \"pid\": 9123\n      },\n      \"serviceAlive\": true,\n      \"dashboardAlive\": null,\n      \"serviceEndpoint\": {\n        \"host\": \"127.0.0.1\",\n        \"port\": 44191,\n        \"pid\": 9123\n      }\n    }\n  ]\n}\n"
+        "{\n  \"projects\": [\n    {\n      \"id\": \"repo-id\",\n      \"name\": \"repo\",\n      \"path\": \"/repo\",\n      \"lastSeen\": \"2026-03-28T00:00:00.000Z\",\n      \"dashboardSessionName\": \"aimux-repo-id\",\n      \"service\": {\n        \"projectId\": \"repo-id\",\n        \"projectRoot\": \"/repo\",\n        \"pid\": 9123\n      },\n      \"serviceAlive\": true,\n      \"dashboardAlive\": true,\n      \"serviceEndpoint\": {\n        \"host\": \"127.0.0.1\",\n        \"port\": 44191,\n        \"pid\": 9123\n      }\n    }\n  ]\n}\n"
     );
 }
 

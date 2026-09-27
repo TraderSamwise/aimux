@@ -2295,9 +2295,6 @@ pub fn handle_daemon_runtime_request_with_mutex(
                         }),
                     );
                 }
-                // This route publishes dashboardAlive, so it pays the tmux read.
-                // Taken before the snapshot so the exec never happens while the
-                // daemon mutex is held.
                 let dashboard_sessions_alive = read_dashboard_sessions_alive();
                 let read = match read_projects_for_route_from_snapshot(
                     &daemon_project_read_snapshot(runtime),
@@ -3024,6 +3021,10 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
     }
 
     fn try_list_projects_for_route(&self) -> Result<Vec<ProjectsRouteProject>, String> {
+        // Reading the periodic sample execs nothing, so every route can carry
+        // dashboard liveness -- including the text renderers behind
+        // `aimux projects`, which would otherwise call every project idle.
+        let dashboard_sessions_alive = read_dashboard_sessions_alive();
         read_projects_for_route_from_snapshot(
             &DaemonProjectReadSnapshot {
                 resolver: self.resolver.clone(),
@@ -3031,7 +3032,7 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
                     &self.project_service_process_verifier,
                 ),
             },
-            None,
+            Some(&dashboard_sessions_alive),
         )
         .map(|read| read.projects)
     }
@@ -3044,20 +3045,7 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
     fn try_list_projects_with_online_agent_counts_for_route(
         &mut self,
     ) -> Result<Vec<ProjectsRouteProject>, String> {
-        // The other publisher of `/projects`. It pays the tmux read for the same
-        // reason the fast path does; `try_list_projects_for_route` stays exec-free
-        // because route context calls it on every request.
-        let dashboard_sessions_alive = read_dashboard_sessions_alive();
-        let mut projects = read_projects_for_route_from_snapshot(
-            &DaemonProjectReadSnapshot {
-                resolver: self.resolver.clone(),
-                project_service_process_verifier: Arc::clone(
-                    &self.project_service_process_verifier,
-                ),
-            },
-            Some(&dashboard_sessions_alive),
-        )
-        .map(|read| read.projects)?;
+        let mut projects = self.try_list_projects_for_route()?;
         for project in &mut projects {
             project.online_agent_count = self.read_project_online_agent_count(project);
         }

@@ -99,41 +99,41 @@ function renderPickerText(projects: DaemonProject[], showAllProjects: boolean): 
 }
 
 describe("ProjectPicker", () => {
-  it("hides dead-service projects with unknown agent counts under Active and shows them under All", () => {
+  it("hides projects with no dashboard under Active and shows them under All", () => {
     const projects = [
-      project({ id: "aimux", name: "aimux", serviceAlive: true, onlineAgentCount: undefined }),
-      project({ id: "glyde", name: "glyde", serviceAlive: true, onlineAgentCount: undefined }),
+      project({ id: "aimux", name: "aimux", dashboardAlive: true, onlineAgentCount: undefined }),
+      project({ id: "glyde", name: "glyde", dashboardAlive: true, onlineAgentCount: undefined }),
       project({
         id: "scratch-live",
         name: "scratch-live",
-        serviceAlive: true,
+        dashboardAlive: true,
         onlineAgentCount: undefined,
       }),
       project({
         id: "glyde-backend",
         name: "glyde-backend",
-        serviceAlive: false,
+        dashboardAlive: false,
         serviceEndpoint: null,
         onlineAgentCount: undefined,
       }),
       project({
         id: "glyde-frontend",
         name: "glyde-frontend",
-        serviceAlive: false,
+        dashboardAlive: false,
         serviceEndpoint: null,
         onlineAgentCount: undefined,
       }),
       project({
         id: "premys",
         name: "premys",
-        serviceAlive: false,
+        dashboardAlive: false,
         serviceEndpoint: null,
         onlineAgentCount: undefined,
       }),
       project({
         id: "serenity",
         name: "serenity",
-        serviceAlive: false,
+        dashboardAlive: false,
         serviceEndpoint: null,
         onlineAgentCount: undefined,
       }),
@@ -165,8 +165,8 @@ describe("ProjectPicker", () => {
     const tree = renderNode(
       ProjectPicker({
         projects: [
-          project({ id: "active", name: "active", serviceAlive: true }),
-          project({ id: "offline", name: "offline", serviceAlive: false, serviceEndpoint: null }),
+          project({ id: "active", name: "active", dashboardAlive: true }),
+          project({ id: "offline", name: "offline", dashboardAlive: false, serviceEndpoint: null }),
         ],
         selectedPath: null,
         showAllProjects: false,
@@ -197,8 +197,8 @@ describe("ProjectPicker", () => {
     const tree = renderNode(
       ProjectPicker({
         projects: [
-          project({ id: "active", name: "active", serviceAlive: true }),
-          project({ id: "offline", name: "offline", serviceAlive: false, serviceEndpoint: null }),
+          project({ id: "active", name: "active", dashboardAlive: true }),
+          project({ id: "offline", name: "offline", dashboardAlive: false, serviceEndpoint: null }),
         ],
         selectedPath: null,
         showAllProjects: false,

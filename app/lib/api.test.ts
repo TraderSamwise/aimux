@@ -170,8 +170,31 @@ describe("api relay routing", () => {
           dashboardSessionName: "aimux-active",
           service: null,
           serviceAlive: true,
+          dashboardAlive: true,
           serviceEndpoint: { host: "127.0.0.1", port: 43191, pid: 123 },
           onlineAgentCount: 1,
+        },
+        {
+          id: "dashboard-closed",
+          name: "dashboard-closed",
+          path: "/repo/dashboard-closed",
+          dashboardSessionName: "aimux-dashboard-closed",
+          service: null,
+          serviceAlive: true,
+          dashboardAlive: false,
+          serviceEndpoint: { host: "127.0.0.1", port: 43192, pid: 124 },
+        },
+        {
+          // An older daemon omits the field, and a daemon that could not ask tmux
+          // sends null. Both are unknown, never false.
+          id: "unsampled",
+          name: "unsampled",
+          path: "/repo/unsampled",
+          dashboardSessionName: "aimux-unsampled",
+          service: null,
+          serviceAlive: true,
+          dashboardAlive: null,
+          serviceEndpoint: null,
         },
         {
           id: "relay-cold",
@@ -188,7 +211,15 @@ describe("api relay routing", () => {
 
     expect(projects.map((project) => [project.id, project.serviceAlive])).toEqual([
       ["active", true],
+      ["dashboard-closed", true],
+      ["unsampled", true],
       ["relay-cold", false],
+    ]);
+    expect(projects.map((project) => [project.id, project.dashboardAlive])).toEqual([
+      ["active", true],
+      ["dashboard-closed", false],
+      ["unsampled", undefined],
+      ["relay-cold", undefined],
     ]);
     expect(projects[0]!.serviceEndpoint).toEqual({ host: "127.0.0.1", port: 43191 });
   });
