@@ -17,7 +17,10 @@ describe("installed runtime gate wiring", () => {
     expect(packageJson.scripts?.["installed:local-gate"]).toBe("python3 scripts/installed-runtime-gate.py --scenario local");
     expect(packageJson.scripts?.["release:readiness"]).toContain("scripts/run-yarn installed:gate");
     expect(packageJson.scripts?.["release:readiness"]).toContain("scripts/run-yarn installed:local-gate");
-    expect(packageJson.scripts?.verify).toBe("scripts/run-yarn verify:fast");
+    // One name for the lane an agent runs. verify:fast was an alias for it and
+    // an alias is the cheapest way to make a script list look confusing.
+    expect(packageJson.scripts?.["verify:fast"], "verify:fast folded into verify").toBeUndefined();
+    expect(packageJson.scripts?.verify).toContain("scripts/run-yarn verify:push");
   });
 
   it("documents all user-visible installed runtime checks", () => {

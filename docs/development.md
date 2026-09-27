@@ -86,11 +86,31 @@ mode.
 
 ## Verification
 
-Common checks:
+There are four lanes and they are not interchangeable. If you are unsure which
+to run, the answer is `yarn verify`.
+
+| lane | who runs it | what it is |
+| --- | --- | --- |
+| `yarn verify` | you, after every change | Typecheck, lint, fmt, clippy and the static audits. ~20s. |
+| `yarn verify:push` | the pre-push hook | Typechecks plus the commit-hook attestation. You do not run this by hand. |
+| `yarn verify:full` | CI, and the cutover install gate | `verify` plus every Rust, root JS and app JS suite. Minutes. |
+| `yarn release:readiness` | the release gate | `verify:full` plus the idle-spawn budget and the installed-runtime gates. |
+
+`release:readiness` doubles as the manifest of what CI must cover: a test
+asserts every leaf of it runs in some CI job, so adding a step there without a
+CI job fails the build.
+
+Full suites are CI's job. A Claude Code hook in this repo refuses `native:test`,
+`verify:full`, `release:readiness`, an unscoped `cargo test` and a bare
+`yarn test`, and prints the scoped command instead. Prefix with
+`AIMUX_ALLOW_FULL_SUITE=1` when the full lane is genuinely what you want.
+
+For one change, run the targets covering what you touched plus `yarn verify`:
 
 ```bash
-yarn verify       # fast lane for normal development
-yarn verify:full  # release and CI lane
+cargo test --manifest-path native/Cargo.toml -p aimux --test <the_test_you_touched>
+yarn vitest run <path/to/the.test.ts>
+yarn verify
 ```
 
 Before asking someone to verify a runtime or CLI behavior change manually,

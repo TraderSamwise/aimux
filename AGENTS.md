@@ -276,12 +276,11 @@ with other agents, so default to the cheapest command that answers the question.
 These are defaults, not prohibitions — when one of them is genuinely the right
 tool, use it.
 
-Two verification lanes exist and they are not interchangeable. `yarn verify` is
-the fast lane an agent runs after making a change: it is seconds, not minutes,
-and it is the default. `yarn verify:full` is the release and CI lane, and
-`release:readiness` calls it. Do not run the full lane after editing three
-lines, and do not reach for `cargo test` across the whole crate to check one
-module — run the scoped target for what you touched, then the fast lane.
+`yarn verify` is the one lane you run after making a change. It is seconds, not
+minutes. `verify:full` and `release:readiness` belong to CI and the release
+gate; a hook in this repo refuses them rather than letting a three-line edit
+cost five minutes. Run the scoped target for what you touched, then `yarn
+verify`. `docs/development.md` lists every lane and who runs it.
 
 - Scope by default: `cargo clippy -p aimux`, `cargo test -p aimux --test <file>`,
   `vitest run <path>`. Save whole-workspace and `--all-targets` runs for the gate
@@ -328,9 +327,14 @@ scripts/cargo-sweep-stale-targets.sh --apply
 Common checks:
 
 ```bash
-yarn verify       # fast lane for normal development
-yarn verify:full  # release and CI lane
+yarn verify       # the lane you run after a change; ~20s
 ```
+
+`verify:full` and `release:readiness` exist but belong to CI and the release
+gate. A Claude Code hook in this repo refuses them, along with `native:test`,
+an unscoped `cargo test` and a bare `yarn test`, and prints the scoped command
+instead; `AIMUX_ALLOW_FULL_SUITE=1` gets through when the full lane is genuinely
+wanted. `docs/development.md` lists what each lane is.
 
 Use `aimux doctor versions` to inspect daemon, project-service, dashboard, and
 installed build coherence.

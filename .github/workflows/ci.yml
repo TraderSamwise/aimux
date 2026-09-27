@@ -323,7 +323,7 @@ jobs:
           sudo apt-get install -y tmux
           tmux -V
 
-      - run: yarn verify:fast
+      - run: yarn verify
 
       # Two `cargo build --release` passes, so it belongs on free parallel
       # compute rather than in front of every local change.

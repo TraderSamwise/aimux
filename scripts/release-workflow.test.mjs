@@ -67,7 +67,7 @@ describe("release readiness runs on master, not on the tag", () => {
   it("does not re-run the readiness gates on the tag", () => {
     expect([...releaseJobs.keys()].filter((name) => name.startsWith("readiness"))).toEqual([]);
     expect(release).not.toContain("yarn release:readiness");
-    expect(release).not.toContain("yarn verify:fast");
+    expect(release).not.toContain("yarn verify");
     expect(release).not.toContain("yarn installed:gate");
   });
 

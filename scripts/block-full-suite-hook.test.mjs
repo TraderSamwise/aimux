@@ -36,7 +36,6 @@ describe("the full-suite lanes are refused", () => {
 describe("scoped work is left alone", () => {
   const allowed = [
     "yarn verify",
-    "yarn verify:fast",
     "cargo test --manifest-path native/Cargo.toml -p aimux --test daemon_status",
     "cargo test -p aimux --lib",
     "cargo test -p aimux daemon_status_payload",
