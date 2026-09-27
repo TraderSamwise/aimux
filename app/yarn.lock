@@ -8854,6 +8854,16 @@ slugify@^1.3.4, slugify@^1.6.6:
   resolved "https://registry.yarnpkg.com/slugify/-/slugify-1.6.9.tgz#610957dea21e56b65e3a153215ef7b265715c8e8"
   integrity sha512-vZ7rfeehZui7wQs438JXBckYLkIIdfHOXsaVEUMyS5fHo1483l1bMdo0EDSWYclY0yZKFOipDy4KHuKs6ssvdg==
 
+sonner-native@0.24.0:
+  version "0.24.0"
+  resolved "https://registry.yarnpkg.com/sonner-native/-/sonner-native-0.24.0.tgz#e24dab555c347b37b3c07910c3911bc150206953"
+  integrity sha512-E94/NyGrL3HBd0E4BZHkYEJpMfrF/on2E2b+GckHTatSSZOyCWZnDVAALGZ7NfOl0Xl/P3IHchIa6Umb9Yqf/g==
+
+sonner@^2.0.8:
+  version "2.0.8"
+  resolved "https://registry.yarnpkg.com/sonner/-/sonner-2.0.8.tgz#dbfa02bb4eb0924616800a4594e9a455a9a195ac"
+  integrity sha512-UM/ByIoFra8yzV75n1o0Puu0bw5U/9UNnDacrJNspekBewIfsQ3D6ez1nvlWpt7aTsO6rujQtifBpycwIivqlg==
+
 source-map-js@^1.2.1:
   version "1.2.1"
   resolved "https://registry.yarnpkg.com/source-map-js/-/source-map-js-1.2.1.tgz#1ce5650fddd87abc099eda37dcff024c2667ae46"

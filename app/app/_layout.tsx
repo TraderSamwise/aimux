@@ -12,6 +12,7 @@ import { sanitizeRedirect } from "@/lib/clerk-errors";
 import { singleRouteParam } from "@/lib/route-params";
 import { useAppStackScreenOptions } from "@/lib/navigation";
 import { useThemeEffect } from "@/lib/theme-effect";
+import { AppToaster } from "@/lib/toast";
 
 import "../global.css";
 
@@ -79,6 +80,7 @@ export default function RootLayout() {
                 </Stack>
               </AuthGate>
             </AuthProvider>
+            <AppToaster theme={colorScheme === "dark" ? "dark" : "light"} />
           </ThemeProvider>
         </KeyboardProvider>
       </SafeAreaProvider>

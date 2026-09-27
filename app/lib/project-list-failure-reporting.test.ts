@@ -39,9 +39,30 @@ describe("the project poll loop never reports a failure as zero projects", () =>
     );
   });
 
+  it("toasts the failure so it is visible without opening the picker", () => {
+    const loop = projectPollLoop();
+    const handler = loop.slice(loop.indexOf("} catch (err) {"));
+    expect(handler).toContain("appToast.error");
+    expect(handler, "a repeating poll must reuse one toast, not stack hundreds").toContain(
+      "toastIdForOperation",
+    );
+  });
+
   it("still tells the user when the daemon itself is offline", () => {
     const loop = projectPollLoop();
     const handler = loop.slice(loop.indexOf("isProjectHostOfflineError"));
     expect(handler).toContain("projectListUnavailable");
+  });
+});
+
+describe("no API failure in the main layout is left to the console alone", () => {
+  // Every one of these once ended in console.warn, which is where the reported
+  // bug lived: the screen showed nothing wrong while the fetch kept failing.
+  it("leaves no console.warn-only catch in the shared chat refresh", () => {
+    const start = layout.indexOf("async function refreshShares");
+    expect(start).toBeGreaterThan(-1);
+    const block = layout.slice(start, layout.indexOf("void refreshShares();", start));
+    expect(block).not.toContain("console.warn");
+    expect(block).toContain("appToast.error");
   });
 });

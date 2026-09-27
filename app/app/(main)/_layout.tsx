@@ -72,6 +72,8 @@ import {
   projectListUnavailable,
   relayUnavailableDetail,
 } from "@/lib/project-list-status";
+import { appToast } from "@/lib/toast";
+import { toastErrorMessage, toastIdForOperation } from "@/lib/toast-shared";
 import {
   kickProjectApiViewRefreshAtom,
   projectUpdateTouchesDesktopState,
@@ -336,6 +338,12 @@ export default function MainLayout() {
             setProjectListStatus(projectListUnavailable("The daemon is offline."));
           } else {
             setProjectListStatus(projectListFailed(msg));
+            // Keyed by the operation, so a poll failing every ten seconds
+            // replaces its toast instead of stacking an hour of them.
+            appToast.error("Could not load projects", {
+              id: toastIdForOperation("project-list"),
+              description: toastErrorMessage(err, msg),
+            });
           }
         }
       }
@@ -394,7 +402,10 @@ export default function MainLayout() {
         }
       } catch (err) {
         if (!cancelled && !isTransientRequestError(err)) {
-          console.warn("shared chat list refresh failed:", err);
+          appToast.error("Could not load shared chats", {
+            id: toastIdForOperation("shared-chats"),
+            description: toastErrorMessage(err, "The shared chat list could not be refreshed."),
+          });
         }
       }
     }
