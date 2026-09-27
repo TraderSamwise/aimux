@@ -261,3 +261,44 @@ fn snapshot() -> DesktopStateSnapshot {
         .expect("valid fixture")
         .runtime_full
 }
+
+/// Returning from an agent points the dashboard at that agent, wherever it
+/// sits, so the row you left is the row you come back to.
+#[test]
+fn selects_an_agent_by_id_from_any_group() {
+    let snapshot = snapshot();
+    let groups = dashboard_navigation_groups(&snapshot);
+    let (expected_group, expected_item, session_id) = groups
+        .iter()
+        .enumerate()
+        .find_map(|(group_index, group)| {
+            let item_index = group.sessions.len().checked_sub(1)?;
+            let session = group.sessions.get(item_index)?;
+            (groups.len() > 1 || item_index > 0)
+                .then(|| (group_index, item_index, session.id.clone()))
+        })
+        .expect("a session to select");
+
+    let mut state = DashboardNavigationState::new(&snapshot);
+    assert!(state.select_session(&snapshot, &session_id));
+    assert_eq!(state.level, DashboardNavLevel::Sessions);
+    assert_eq!(state.worktree_index, expected_group);
+    assert_eq!(state.item_index, expected_item);
+    match state.selected_entry(&snapshot) {
+        Some(DashboardEntryRef::Session(session)) => assert_eq!(session.id, session_id),
+        other => panic!("expected the selected session, got {other:?}"),
+    }
+}
+
+#[test]
+fn leaves_the_selection_alone_for_an_agent_that_is_not_on_screen() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    let before = (state.level, state.worktree_index, state.item_index);
+
+    assert!(!state.select_session(&snapshot, "claude-not-here"));
+    assert_eq!(
+        (state.level, state.worktree_index, state.item_index),
+        before
+    );
+}

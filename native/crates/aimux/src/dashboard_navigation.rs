@@ -114,6 +114,28 @@ impl DashboardNavigationState {
         }
     }
 
+    /// Point the selection at one agent by id, wherever it sits. Returns false
+    /// when it is not on screen, so a caller can leave the selection alone
+    /// rather than moving it somewhere arbitrary.
+    pub fn select_session(&mut self, snapshot: &DesktopStateSnapshot, session_id: &str) -> bool {
+        let groups = dashboard_navigation_groups(snapshot);
+        for (worktree_index, group) in groups.iter().enumerate() {
+            let Some(item_index) = group
+                .sessions
+                .iter()
+                .position(|session| session.id == session_id)
+            else {
+                continue;
+            };
+            self.level = DashboardNavLevel::Sessions;
+            self.worktree_index = worktree_index;
+            self.item_index = item_index;
+            self.clear_quick_jump();
+            return true;
+        }
+        false
+    }
+
     pub fn move_next(&mut self, snapshot: &DesktopStateSnapshot) -> DashboardNavigationOutcome<'_> {
         self.clear_quick_jump();
         match self.level {

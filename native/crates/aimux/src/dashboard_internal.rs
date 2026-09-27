@@ -312,6 +312,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut runtime_guard = DashboardRuntimeGuardStatus::default();
     let mut last_runtime_guard_probe = Instant::now() - DASHBOARD_RUNTIME_GUARD_INTERVAL;
     let mut render_now = true;
+    let mut pending_selection: Option<String> = None;
     let mut rendered_once = false;
     let mut viewport = DashboardViewport {
         cols: options.cols,
@@ -387,6 +388,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             continue;
         }
         if consume_dashboard_tui_visibility_wake(&mut visibility_state) {
+            // Coming back from an agent points the selection at that agent, so
+            // the row you left is the row you return to.
+            pending_selection = previous_window_session_id();
             render_now = true;
         }
         if drain_dashboard_event_stream(
@@ -776,6 +780,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             render_requested_by_input,
                             rendered_once,
                         );
+                        // After the restore, so returning from an agent wins
+                        // over whatever the last persisted selection was.
+                        if let Some(session_id) = pending_selection.take() {
+                            controller
+                                .navigation
+                                .select_session(&visible_model.snapshot, &session_id);
+                        }
                         let frame = render_dashboard_snapshot(
                             &options,
                             controller,
@@ -1343,6 +1354,25 @@ fn read_tmux_dashboard_pane_size(tmux_pane: &str) -> Option<DashboardViewport> {
     let cols = cols.trim().parse::<usize>().ok()?;
     let rows = rows.trim().parse::<usize>().ok()?;
     (cols > 0 && rows > 0).then_some(DashboardViewport { cols, rows })
+}
+
+/// The agent whose window we just came back from. tmux keeps the previously
+/// active window as the `!` target, so the dashboard can ask at the moment it
+/// becomes visible rather than anything having to push the answer to it.
+fn previous_window_session_id() -> Option<String> {
+    let mut command = tmux_command_from_env();
+    command.args(["display-message", "-p", "-t", "!", "#{@aimux-meta}"]);
+    let output = command_output_with_timeout(&mut command, Duration::from_millis(500)).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str::<Value>(raw.trim())
+        .ok()?
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|session_id| !session_id.is_empty())
 }
 
 fn current_process_tmux_pane_id() -> Option<String> {
