@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 // were running, because every failure path in the poll loop ended in an empty
 // list and a console.warn. A unit test on the helpers cannot catch that coming
 // back -- only the loop itself can.
-const layout = readFileSync(join(__dirname, "(main)", "_layout.tsx"), "utf8");
+// Lives in lib/, not app/: everything under app/ is an Expo Router route, and a
+// test file there ships vitest into the web bundle.
+const layout = readFileSync(join(__dirname, "..", "app", "(main)", "_layout.tsx"), "utf8");
 
 function projectPollLoop(): string {
   const start = layout.indexOf("Poll /projects as a discovery fallback");
