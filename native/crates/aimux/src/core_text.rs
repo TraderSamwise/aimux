@@ -509,6 +509,19 @@ pub fn render_core_lifecycle_fork_lines(payload: &Value) -> Vec<String> {
     ]
 }
 
+/// The name a person gave this agent, or nothing when the label is one a spawn
+/// generated. Same helper the chips, the dashboard row and the app ask, so a
+/// rename reads the same from the CLI as it does on every other surface.
+fn agent_chosen_name(agent: &Value) -> Option<String> {
+    let resolved = crate::agent_display::resolve_app_agent_display(
+        &crate::agent_display::AgentDisplayInput::from_value(agent),
+    );
+    resolved
+        .user_label
+        .filter(|_| !resolved.generated_label)
+        .filter(|label| !label.is_empty())
+}
+
 pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
     let agents = array(payload, "agents");
     if agents.is_empty() {
@@ -557,7 +570,10 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
             .collect::<Vec<_>>()
             .join("/");
         output.push(format!(
-            "{id}  [{tool}{}]  {status}{}{}",
+            "{id}{}  [{tool}{}]  {status}{}{}",
+            agent_chosen_name(agent)
+                .map(|name| format!("  \"{name}\""))
+                .unwrap_or_default(),
             if role.is_empty() {
                 "".into()
             } else {
@@ -708,6 +724,9 @@ fn render_agent_list_summary(agent: &Value) -> String {
         format!("canonical={}", agent_canonical_id(agent)),
         format!("aimux={}", js_string_or_undefined(field(agent, "id"))),
     ];
+    if let Some(name) = agent_chosen_name(agent) {
+        detail.push(format!("name={name}"));
+    }
     if let Some(backend_session_id) = field(agent, "backendSessionId")
         .and_then(Value::as_str)
         .filter(|backend_session_id| !backend_session_id.is_empty())

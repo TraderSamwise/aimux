@@ -95,6 +95,17 @@ fn renders_agent_and_team_details() {
         ]
     );
     assert_eq!(
+        render_core_agent_ps_lines(&json!({ "agents": [
+            { "id": "codex-1", "tool": "codex", "label": "Review lane", "status": "running" },
+            { "id": "codex-ho1ofa", "tool": "codex", "label": "codex-ho1ofa", "status": "running" },
+        ] })),
+        vec![
+            "codex-1  \"Review lane\"  [codex]  running",
+            "codex-ho1ofa  [codex]  running",
+        ],
+        "a chosen name is printed and a generated label is not presented as one"
+    );
+    assert_eq!(
         render_core_agent_list_lines(&json!({
             "projectRoot": "/repo",
             "agents": [
