@@ -164,6 +164,18 @@ pub(crate) async fn route_lifecycle_request_async_with_runtime(
     let response =
         route_lifecycle_request_unqueued_async(context, pathname, body, runtime, progress).await;
     finish_lifecycle_permit(&mut permit, started_at, response.as_ref());
+    if lifecycle_mutation_changed_surfaces(pathname, response.as_ref()) {
+        let refreshed =
+            crate::project_service::statusline::refresh_project_statusline_with_tmux_refresh_async(
+                context,
+                statusline_refresh_after_mutation(),
+                |argv| async move { runtime.refresh_tmux_status(&argv).await },
+            )
+            .await;
+        if let Err(error) = refreshed {
+            eprintln!("statusline refresh after {pathname} failed: {error}");
+        }
+    }
     response
 }
 
@@ -191,12 +203,50 @@ pub fn route_lifecycle_request_with_runtime(
     match response {
         Ok(response) => {
             finish_lifecycle_permit(&mut permit, started_at, response.as_ref());
+            if lifecycle_mutation_changed_surfaces(pathname, response.as_ref())
+                && let Err(error) =
+                    crate::project_service::statusline::refresh_project_statusline_with_tmux_refresh(
+                        context,
+                        statusline_refresh_after_mutation(),
+                        |argv| runtime.refresh_tmux_status(argv),
+                    )
+            {
+                eprintln!("statusline refresh after {pathname} failed: {error}");
+            }
             response
         }
         Err(payload) => {
             permit.fail(started_at, "lifecycle mutation panicked".into());
             std::panic::resume_unwind(payload);
         }
+    }
+}
+
+/// The chips, the dashboard rows and the app all read a snapshot the service
+/// precomputes, and until this landed only a dashboard UI-state change or a
+/// cleared unread rewrote it. So a rename, a spawn or a kill was invisible in
+/// the footer until something unrelated happened to refresh it.
+fn lifecycle_mutation_changed_surfaces(
+    pathname: &str,
+    response: Option<&ProjectServiceDispatchResponse>,
+) -> bool {
+    let Some(response) = response else {
+        return false;
+    };
+    if response.status >= 400 {
+        return false;
+    }
+    lifecycle_transition_for_route(pathname, &Value::Null).is_some()
+}
+
+/// Rewrite in place rather than clearing first: `force` deletes every
+/// precomputed file before rebuilding it, and a client reading its window in
+/// that gap renders an empty footer.
+fn statusline_refresh_after_mutation() -> crate::project_service::statusline::StatuslineRefreshInput
+{
+    crate::project_service::statusline::StatuslineRefreshInput {
+        session_id: None,
+        force: false,
     }
 }
 

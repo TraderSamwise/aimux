@@ -693,6 +693,42 @@ fn agent_rename_updates_metadata_topology_and_live_window_name() {
 }
 
 #[test]
+fn agent_rename_rewrites_the_statusline_snapshot_the_chips_read() {
+    let project = temp_project("agent-rename-chips");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RENAME,
+        Some(&json!({ "sessionId": "codex-live", "label": "Review lane" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 200);
+
+    let snapshot: Value = serde_json::from_str(
+        &std::fs::read_to_string(state_dir.join("statusline.json"))
+            .expect("the mutation rewrote the snapshot the chips render from"),
+    )
+    .unwrap();
+    let renamed = snapshot["sessions"]
+        .as_array()
+        .expect("snapshot sessions")
+        .iter()
+        .find(|session| session["id"] == "codex-live")
+        .expect("the renamed agent is in the snapshot");
+    assert_eq!(
+        renamed["label"], "Review lane",
+        "the snapshot the footer reads still shows the old name"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn record_backend_session_updates_metadata_and_topology() {
     let project = temp_project("backend-session");
     let state_dir = project.join("state");

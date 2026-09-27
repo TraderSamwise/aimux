@@ -189,11 +189,11 @@ where
     Ok(StatuslineRefreshResult { tmux_refresh_error })
 }
 
-fn refresh_tmux_status(args: &[String]) {
+pub(crate) fn refresh_tmux_status(args: &[String]) {
     let _ = tmux_command_from_env().args(args).status();
 }
 
-async fn refresh_tmux_status_async(args: &[String]) -> Result<(), String> {
+pub(crate) async fn refresh_tmux_status_async(args: &[String]) -> Result<(), String> {
     let mut command: AsyncCommand = tmux_command_from_env();
     command.args(args);
     match command

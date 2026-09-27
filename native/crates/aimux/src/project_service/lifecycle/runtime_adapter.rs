@@ -121,6 +121,11 @@ pub trait ProjectLifecycleRuntime {
     }
     fn kill_window(&mut self, window_id: &str) -> Result<(), String>;
     fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String>;
+    /// Ask attached clients to redraw. Defaults to doing nothing so a fake
+    /// runtime never reaches tmux; only the system runtime spawns it.
+    fn refresh_tmux_status(&mut self, argv: &[String]) {
+        let _ = argv;
+    }
 }
 
 pub(crate) trait AsyncProjectLifecycleRuntime {
@@ -153,6 +158,12 @@ pub(crate) trait AsyncProjectLifecycleRuntime {
     ) -> bool;
     fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String>;
     async fn kill_window(&mut self, window_id: &str) -> Result<(), String>;
+    /// Ask attached clients to redraw. Defaults to doing nothing so a fake
+    /// runtime never reaches tmux; only the system runtime spawns it.
+    async fn refresh_tmux_status(&mut self, argv: &[String]) -> Result<(), String> {
+        let _ = argv;
+        Ok(())
+    }
 }
 
 pub struct SystemProjectLifecycleRuntime;
@@ -285,6 +296,10 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
             format!("tmux rename-window failed for {window_id}"),
         )
     }
+
+    fn refresh_tmux_status(&mut self, argv: &[String]) {
+        crate::project_service::statusline::refresh_tmux_status(argv);
+    }
 }
 
 impl AsyncProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
@@ -385,6 +400,10 @@ impl AsyncProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
             None,
         )
         .await
+    }
+
+    async fn refresh_tmux_status(&mut self, argv: &[String]) -> Result<(), String> {
+        crate::project_service::statusline::refresh_tmux_status_async(argv).await
     }
 }
 
