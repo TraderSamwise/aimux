@@ -28,7 +28,7 @@ fn project(path: &str, port: u64, live: bool) -> ProjectsRouteProject {
 fn operator(project_root: &str, session_id: &str) -> RemoteActor {
     RemoteActor {
         role: RemoteActorRole::Operator,
-        role_declared: true,
+        declared_role: Some("operator".into()),
         user_id: None,
         display_name: None,
         email: None,
@@ -272,6 +272,22 @@ fn a_relay_request_with_no_actor_role_is_named_as_unidentified() {
     assert_eq!(
         decision(&unidentified).error.as_deref(),
         Some("relay request carried no actor role, so the caller could not be identified")
+    );
+
+    let unrecognized = build_daemon_route_context(
+        "GET",
+        "/projects",
+        None,
+        BTreeMap::from([
+            ("x-aimux-relay-forwarded".into(), "1".into()),
+            ("x-aimux-actor-role".into(), "superuser".into()),
+        ]),
+        &[],
+    );
+    assert_eq!(
+        decision(&unrecognized).error.as_deref(),
+        Some("relay request declared an unrecognized actor role: superuser"),
+        "an unknown role must not pass silently as a shared guest"
     );
 
     let declared_guest = build_daemon_route_context(

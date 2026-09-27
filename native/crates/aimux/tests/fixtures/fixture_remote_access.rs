@@ -152,7 +152,7 @@ fn actor_from_json(value: &Value) -> Option<RemoteActor> {
     };
     Some(RemoteActor {
         role,
-        role_declared: true,
+        declared_role: string_field(value, "role"),
         user_id: string_field(value, "userId"),
         display_name: string_field(value, "displayName"),
         email: string_field(value, "email"),

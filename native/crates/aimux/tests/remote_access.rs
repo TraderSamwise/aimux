@@ -35,7 +35,7 @@ fn grant(project_root: &str, session_id: &str) -> RemoteOperatorGrant {
 fn operator(grants: Vec<RemoteOperatorGrant>) -> RemoteActor {
     RemoteActor {
         role: RemoteActorRole::Operator,
-        role_declared: true,
+        declared_role: Some("operator".into()),
         user_id: None,
         display_name: None,
         email: None,
@@ -48,7 +48,7 @@ fn operator(grants: Vec<RemoteOperatorGrant>) -> RemoteActor {
 fn guest(session_id: &str) -> RemoteActor {
     RemoteActor {
         role: RemoteActorRole::Guest,
-        role_declared: true,
+        declared_role: Some("guest".into()),
         user_id: Some("usr_guest".into()),
         display_name: Some("Ada Guest".into()),
         email: Some("ada@example.com".into()),
@@ -111,7 +111,7 @@ fn parse_remote_actor_matches_header_rules_and_never_mints_operator() {
 fn owner_and_local_callers_are_allowed() {
     let owner = RemoteActor {
         role: RemoteActorRole::Owner,
-        role_declared: true,
+        declared_role: Some("owner".into()),
         user_id: None,
         display_name: None,
         email: None,
