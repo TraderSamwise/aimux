@@ -111,11 +111,35 @@ def main() -> int:
         "COULD_NOT_MEASURE",
     )
 
+    # A pid wrap inside a sample is ordinary on a long-uptime Mac. It makes one
+    # window unusable, and refusing outright failed a release gate.
+    wraps = {"count": 0}
+
+    def wrapping_probe(sequence=[99_644, 1_071, 1_200, 1_400]):
+        wraps["count"] += 1
+        return sequence[min(wraps["count"] - 1, len(sequence) - 1)]
+
+    meter = gate.ProcessCreationMeter()
+    meter.system = "Darwin"
+    original_probe = gate._spawn_pid_probe
+    original_sleep = gate.time.sleep
+    gate._spawn_pid_probe = wrapping_probe
+    gate.time.sleep = lambda _seconds: None
+    try:
+        measurement = meter._measure_darwin(0.0)
+    finally:
+        gate._spawn_pid_probe = original_probe
+        gate.time.sleep = original_sleep
+    if measurement.count != 200:
+        problems.append(
+            f"pid wrap re-sample: expected the window after the wrap, got {measurement.count}"
+        )
+
     for problem in problems:
         print(problem, file=sys.stderr)
     if problems:
         return 1
-    print("idle process spawn gate self-check: 6 outcomes verified")
+    print("idle process spawn gate self-check: 6 outcomes and a pid wrap verified")
     return 0
 
 

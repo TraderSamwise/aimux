@@ -43,6 +43,8 @@ DEFAULT_SETTLE_SECONDS = 2.0
 DEFAULT_SAMPLE_INTERVAL_SECONDS = 0.10
 DEFAULT_DAEMON_PORT = 37373
 DEFAULT_MAX_BASELINE_RATE_PER_SEC = 50.0
+# A wrap makes one window unusable, not the machine unmeasurable.
+DARWIN_PID_WRAP_RETRIES = 3
 PASS_EXIT = 0
 FAIL_EXIT = 1
 COULD_NOT_MEASURE_EXIT = 2
@@ -101,17 +103,30 @@ class ProcessCreationMeter:
         return Measurement(max(0, end - start), elapsed, "/proc/stat processes")
 
     def _measure_darwin(self, seconds: float) -> Measurement:
-        start_pid = _spawn_pid_probe()
-        start_time = time.monotonic()
-        time.sleep(seconds)
-        end_pid = _spawn_pid_probe()
-        elapsed = time.monotonic() - start_time
-        delta = end_pid - start_pid
-        if delta < 0:
-            raise RuntimeError(
-                f"macOS PID allocation wrapped or moved backwards: {start_pid} -> {end_pid}"
+        """PID allocation delta, re-sampled across a wraparound.
+
+        macOS recycles pids from the top back to the low hundreds, and on a
+        machine that has been up a while that happens often enough to land
+        inside a sample. The delta is then meaningless -- not an error, just an
+        unusable window -- so take another one. Refusing outright turned an
+        ordinary wrap into a failed release gate.
+        """
+        for attempt in range(DARWIN_PID_WRAP_RETRIES):
+            start_pid = _spawn_pid_probe()
+            start_time = time.monotonic()
+            time.sleep(seconds)
+            end_pid = _spawn_pid_probe()
+            elapsed = time.monotonic() - start_time
+            delta = end_pid - start_pid
+            if delta >= 0:
+                return Measurement(delta, elapsed, "PID allocation delta")
+            print(
+                f"pid allocation wrapped mid-sample ({start_pid} -> {end_pid}); "
+                f"re-sampling ({attempt + 1}/{DARWIN_PID_WRAP_RETRIES})"
             )
-        return Measurement(delta, elapsed, "PID allocation delta")
+        raise RuntimeError(
+            "macOS PID allocation wrapped on every sample; cannot measure a spawn rate"
+        )
 
 
 class ProcessSampler:
