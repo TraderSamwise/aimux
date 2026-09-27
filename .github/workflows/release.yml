@@ -340,19 +340,31 @@ jobs:
           for command in gh mkdir tar gzip rm mv; do need "$command"; done
           TMP_DIR="$(mktemp -d)"
           trap 'rm -rf "$TMP_DIR"' EXIT
-          for arch in arm64 x64; do
+          # The darwin arches the matrix actually builds. This loop still said
+          # `arm64 x64` after Intel was dropped, so `gh release download` found no
+          # asset for the second one and the npm publish failed on v0.1.61 with
+          # every asset already published.
+          staged=0
+          while IFS=$'\t' read -r platform arch variant asset; do
+            [ "$platform" = darwin ] || continue
+            [ "$variant" = full ] || continue
             gh release download "$TAG" --repo "$OWNER_REPO" \
-              --pattern "aimux-darwin-${arch}.tar.gz" --dir "$TMP_DIR" --clobber
+              --pattern "${asset}.tar.gz" --dir "$TMP_DIR" --clobber
             EXTRACT_DIR="$TMP_DIR/extract-${arch}"
             mkdir -p "$EXTRACT_DIR"
-            tar -xzf "$TMP_DIR/aimux-darwin-${arch}.tar.gz" -C "$EXTRACT_DIR" \
+            tar -xzf "$TMP_DIR/${asset}.tar.gz" -C "$EXTRACT_DIR" \
               "aimux/native/darwin-${arch}/aimux" \
               aimux/native/darwin/aimux-notifier.app
             rm -rf "native/darwin-${arch}"
             mkdir -p "native/darwin-${arch}"
             mv "$EXTRACT_DIR/aimux/native/darwin-${arch}/aimux" "native/darwin-${arch}/"
             mv "$EXTRACT_DIR/aimux/native/darwin/aimux-notifier.app" "native/darwin-${arch}/"
-          done
+            staged=$((staged + 1))
+          done < <(python3 scripts/release-asset-matrix.py)
+          if [ "$staged" -eq 0 ]; then
+            echo "the build matrix lists no darwin full asset to stage for npm" >&2
+            exit 1
+          fi
 
       - name: Verify npm package has no source maps
         run: |

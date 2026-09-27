@@ -325,6 +325,17 @@ case "$1" in
       fi
       exit 1
     fi
+    transitive="\${AIMUX_FAKE_BREW_TRANSITIVE_NO_BOTTLE:-}"
+    if [ -n "$transitive" ] && [ "$short" = "$transitive" ] && [ "$build_from_source" -eq 1 ]; then
+      touch "$state/installed/$short"
+      exit 0
+    fi
+    if [ -n "$transitive" ] && [ "$short" != "$transitive" ] \\
+      && [ ! -f "$state/installed/$transitive" ]; then
+      printf 'Error: %s: no bottle available!\\n' "$transitive" >&2
+      printf '  brew install --build-from-source %s\\n' "$transitive" >&2
+      exit 1
+    fi
     if [ "$short" = "aimux" ] || [ "$short" = "aimux-local" ]; then
       if [ "$short" = "aimux-local" ] && [ -f "$state/installed/aimux" ]; then
         printf 'conflict: aimux-local conflicts with aimux\\n' >&2
@@ -914,7 +925,11 @@ describe("verify-release-asset-set.sh", () => {
     const declared = [...job.matchAll(/^\s+asset:\s*(\S+)\s*$/gm)].map((match) => match[1]).sort();
 
     expect(declared.length).toBeGreaterThan(0);
-    expect(releaseMatrix().map((entry) => entry.asset.replace(/\.tar\.gz$/, "")).sort()).toEqual(declared);
+    expect(
+      releaseMatrix()
+        .map((entry) => entry.asset.replace(/\.tar\.gz$/, ""))
+        .sort(),
+    ).toEqual(declared);
   });
 
   it("accepts a complete full and local release asset set", () => {
@@ -1214,9 +1229,7 @@ describe("verify-release-asset-set.sh", () => {
 
       const brewLines = readFileSync(join(root, "brew.log"), "utf8").trim().split("\n");
       const indexOfLine = (line) => brewLines.findIndex((entry) => entry === line);
-      expect(indexOfLine("tap tradersamwise/aimux")).toBeLessThan(
-        indexOfLine("trust tradersamwise/aimux"),
-      );
+      expect(indexOfLine("tap tradersamwise/aimux")).toBeLessThan(indexOfLine("trust tradersamwise/aimux"));
       expect(indexOfLine("trust tradersamwise/aimux")).toBeLessThan(
         indexOfLine("install --formula tradersamwise/aimux/aimux-local"),
       );
@@ -1340,6 +1353,60 @@ describe("verify-release-asset-set.sh", () => {
       const log = readFileSync(brewLog, "utf8");
       expect(log).toContain("install --formula tmux");
       expect(log).toContain("install --formula --build-from-source tmux");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // v0.1.61's tap gate died on `utf8proc: no bottle available!` -- a formula
+  // aimux does not declare, so dependency prep never saw it. The old retry read
+  // that line as "aimux has no bottle" and rebuilt aimux from source, which hit
+  // the same wall twice with every asset already published.
+  it("builds an undeclared formula the log names before retrying the install", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-homebrew-live-gate-"));
+    try {
+      writeHomebrewGateAssets(root);
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeLiveFakeBrew(bin);
+      const brewLog = join(root, "brew.log");
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        AIMUX_FAKE_BREW_TRANSITIVE_NO_BOTTLE: "utf8proc",
+        AIMUX_FAKE_BREW_LOG: brewLog,
+        AIMUX_FAKE_BREW_PREFIX: join(root, "prefix"),
+        AIMUX_FAKE_BREW_STATE: join(root, "state"),
+        AIMUX_FAKE_BREW_TAP_REPO: join(root, "tap-repo"),
+      };
+
+      const result = run(
+        "bash",
+        [
+          join(repoRoot, "scripts/homebrew-release-dry-run.sh"),
+          "--release-dir",
+          root,
+          "--staging-dir",
+          join(root, "stage"),
+          "--host-only",
+          "--live-install",
+          "--skip-asset-verification",
+          "--skip-bad-sha-proof",
+          "--skip-doctor-proof",
+        ],
+        { env },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Homebrew dependency utf8proc of ");
+      expect(result.stdout).toContain("has no bottle available on");
+      expect(result.stdout).toContain("building it from source first");
+      expect(result.stdout).toContain("now its unbottled dependencies are built");
+      // The old retry rebuilt the formula we asked for, which could not help.
+      expect(result.stdout).not.toContain("retrying with --build-from-source");
+      expect(result.stdout).toContain("Homebrew full installed command proof passed");
+      const log = readFileSync(brewLog, "utf8");
+      expect(log).toContain("install --formula --build-from-source utf8proc");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -2283,7 +2350,10 @@ esac
       const formulaDir = join(root, "Formula");
       const bottleDir = join(root, "bottles");
       mkdirSync(bottleDir, { recursive: true });
-      writeFileSync(join(bottleDir, "aimux.bottles.tsv"), "arm64_golden_gate\tany_skip_relocation\tnot-a-sha\tbad.tar.gz\tbad.tar.gz\taimux\n");
+      writeFileSync(
+        join(bottleDir, "aimux.bottles.tsv"),
+        "arm64_golden_gate\tany_skip_relocation\tnot-a-sha\tbad.tar.gz\tbad.tar.gz\taimux\n",
+      );
       writeFileSync(
         join(bottleDir, "aimux-local.bottles.tsv"),
         `arm64_golden_gate\tany_skip_relocation\t${"c".repeat(64)}\taimux-local-0.1.45.arm64_golden_gate.bottle.tar.gz\taimux-local--0.1.45.arm64_golden_gate.bottle.tar.gz\taimux-local\n`,
@@ -2522,8 +2592,13 @@ describe("release workflow", () => {
     expect(bottleJob).not.toContain("macos-15-intel");
     expect(tapJob).toContain("runs-on: macos-14");
     expect(tapJob).not.toContain("runs-on: macos-15-intel");
-    expect(tapJob).toContain("for a in aimux-darwin-arm64 aimux-local-darwin-arm64");
-    expect(tapJob).not.toContain("for a in aimux-darwin-x64 aimux-local-darwin-x64");
+    // The tap job takes the darwin assets as a FILTER of the build matrix rather
+    // than a list of its own, so a new darwin arch is picked up rather than
+    // skipped and a dropped one cannot linger. Pinning the literal list here is
+    // what kept the copy alive.
+    expect(tapJob).toContain('[ "$platform" = darwin ] || continue');
+    expect(tapJob).toContain("done < <(python3 scripts/release-asset-matrix.py)");
+    expect(tapJob).not.toMatch(/for a in aimux-/);
     expect(tapJob).toContain("- homebrew-bottles");
     expect(tapJob).toContain("AIMUX_HOMEBREW_BOTTLE_DIR: bottle-metadata");
     expect(tapJob).toContain('--pattern "*.bottles.tsv"');
@@ -2561,7 +2636,17 @@ describe("release workflow", () => {
       workflow.indexOf("- name: Stage macOS native assets for npm package"),
       workflow.indexOf("- name: Verify npm package has no source maps"),
     );
-    expect(npmStage).toContain("aimux-darwin-${arch}.tar.gz");
+    // npm ships the full darwin build only, and the arches come from the build
+    // matrix. This step interpolated `aimux-darwin-${arch}` over a hardcoded
+    // `arm64 x64`, so after Intel was dropped the download found nothing and
+    // v0.1.61's npm publish failed with every asset already published.
+    expect(npmStage).toContain('[ "$platform" = darwin ] || continue');
+    expect(npmStage).toContain('[ "$variant" = full ] || continue');
+    expect(npmStage).toContain("done < <(python3 scripts/release-asset-matrix.py)");
+    expect(npmStage).not.toMatch(/for arch in /);
     expect(npmStage).not.toContain("aimux-local");
+    // A matrix that lists no darwin full asset must say so rather than publish
+    // an npm package with no macOS binary in it.
+    expect(npmStage).toContain("the build matrix lists no darwin full asset to stage for npm");
   });
 });

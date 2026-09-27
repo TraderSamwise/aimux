@@ -13,7 +13,12 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW = join(ROOT, ".github", "workflows", "release.yml");
 const ALLOWLIST = join(ROOT, "scripts", "release-asset-name-allowlist.json");
-const ASSET_NAME = /\baimux(?:-local)?-(?:darwin|linux)-(?:arm64|x64)\b/g;
+// Literal names, and the interpolated form that slipped past the first version
+// of this audit: `aimux-darwin-${arch}` in a `for arch in arm64 x64` loop is the
+// platform set written down just as much as the literal is, and that copy failed
+// the npm publish on v0.1.61 after every asset was already published.
+const ASSET_NAME = /\baimux(?:-local)?-(?:darwin|linux)-(?:arm64|x64|\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*)/g;
+const PLATFORM_LOOP = /\bfor\s+(?:arch|platform|variant)\s+in\s+\S/;
 
 export function matrixBlockRange(lines) {
   const job = lines.findIndex((line) => line.startsWith("  release-assets:"));
@@ -35,6 +40,12 @@ export function hardcodedAssetNames(text, allowed = new Set()) {
     if (line.includes("matrix.asset")) return;
     const trimmed = line.trim();
     if (allowed.has(trimmed)) return;
+    // A comment naming the asset that broke a tag is documentation, not a copy.
+    if (trimmed.startsWith("#")) return;
+    if (PLATFORM_LOOP.test(line)) {
+      found.push({ line: index + 1, name: "platform loop", text: trimmed });
+      return;
+    }
     for (const match of line.matchAll(ASSET_NAME)) {
       found.push({ line: index + 1, name: match[0], text: trimmed });
     }
