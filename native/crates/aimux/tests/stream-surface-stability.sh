@@ -9,7 +9,7 @@ fi
 
 SESSION_ID="${AIMUX_SESSION_ID:-manual}"
 TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/aimux-cargo-target-$SESSION_ID}"
-LOG_DIR="${ASYNC_CUTOVER_STABILITY_LOG_DIR:-/tmp/aimux-async-cutover-stability-$(date +%Y%m%d-%H%M%S)-$$}"
+LOG_DIR="${STREAM_SURFACE_STABILITY_LOG_DIR:-/tmp/aimux-stream-surface-stability-$(date +%Y%m%d-%H%M%S)-$$}"
 TEST_NAME="async_cutover_http_and_sse_surface_matches_pre_conversion_fixture"
 
 mkdir -p "$LOG_DIR"
@@ -34,7 +34,7 @@ for run in $(seq 1 "$RUNS"); do
     git status --short 2>/dev/null || true
     echo
     echo "command:"
-    echo "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=$TARGET_DIR cargo test --manifest-path native/Cargo.toml -p aimux --test async_cutover_characterization $TEST_NAME -- --nocapture"
+    echo "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=$TARGET_DIR cargo test --manifest-path native/Cargo.toml -p aimux --test http_sse_surface_contract $TEST_NAME -- --nocapture"
     echo
   } >"$log"
 
@@ -46,7 +46,7 @@ for run in $(seq 1 "$RUNS"); do
     cargo test \
       --manifest-path native/Cargo.toml \
       -p aimux \
-      --test async_cutover_characterization \
+      --test http_sse_surface_contract \
       "$TEST_NAME" \
       -- --nocapture >>"$log" 2>&1
   status=$?

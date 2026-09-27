@@ -1,4 +1,9 @@
 #![cfg(unix)]
+//! The daemon and project-service HTTP/SSE surface, pinned to a recorded
+//! fixture. Written during the async cutover, which is why the fixture is
+//! labelled pre-conversion, but what it guards is current behaviour: SSE
+//! keepalive framing, concurrent-client ordering, a client disconnect leaving
+//! no side effect, and route errors staying errors. Nothing else covers those.
 
 mod support;
 
@@ -20,11 +25,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 use support::TestIsolation;
 
-const FIXTURE_PATH: &str = "../../../testdata/contracts/v1/async-cutover/http-sse.json";
-const RECORD_ENV: &str = "AIMUX_RECORD_ASYNC_CUTOVER_FIXTURES";
+const FIXTURE_PATH: &str = "../../../testdata/contracts/v1/stream-surface/http-sse.json";
+const RECORD_ENV: &str = "AIMUX_RECORD_STREAM_SURFACE_FIXTURES";
 
 #[test]
-fn async_cutover_http_and_sse_surface_matches_pre_conversion_fixture() {
+fn http_and_sse_surfaces_match_recorded_fixture() {
     let observed = observe_pre_async_surface();
     let path = fixture_path();
     if std::env::var_os(RECORD_ENV).is_some() {

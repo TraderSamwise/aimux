@@ -1,4 +1,9 @@
 #![cfg(unix)]
+//! The stream-proxy, relay and hosted streaming surface, pinned to a recorded
+//! fixture: a downstream disconnect tearing down the upstream, an operator
+//! stream closing when its principal is revoked, and half-delivered input
+//! reporting an error rather than success. Recorded during the async cutover;
+//! the behaviour is current.
 
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use aimux::daemon::jobs::DaemonJobRouteRuntime;
@@ -75,11 +80,11 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-const FIXTURE_PATH: &str = "../../../testdata/contracts/v1/async-cutover/phase3-surfaces.json";
+const FIXTURE_PATH: &str = "../../../testdata/contracts/v1/stream-surface/phase3-surfaces.json";
 const RECORD_ENV: &str = "AIMUX_RECORD_ASYNC_CUTOVER_PHASE3_FIXTURES";
 
 #[test]
-fn async_cutover_phase3_surfaces_match_pre_conversion_fixture() {
+fn stream_proxy_surfaces_match_recorded_fixture() {
     let observed = observe_phase3_surfaces();
     let path = fixture_path();
     if std::env::var_os(RECORD_ENV).is_some() {
@@ -1007,7 +1012,7 @@ impl DaemonJsonRouteRuntime for FakeRuntime {
 impl DaemonJobRouteRuntime for FakeRuntime {
     fn job_store(&self) -> JobStore {
         JobStore::new(
-            std::env::temp_dir().join(format!("aimux-async-cutover-jobs-{}", std::process::id())),
+            std::env::temp_dir().join(format!("aimux-stream-surface-jobs-{}", std::process::id())),
         )
     }
 
@@ -1046,7 +1051,7 @@ impl DaemonJobRouteRuntime for FakeRuntime {
 }
 
 #[test]
-fn fake_async_cutover_runtime_jobs_store_is_sandboxed() {
+fn fake_stream_surface_runtime_jobs_store_is_sandboxed() {
     let runtime = FakeRuntime::empty();
     assert!(runtime.job_store().root().starts_with(std::env::temp_dir()));
 }
