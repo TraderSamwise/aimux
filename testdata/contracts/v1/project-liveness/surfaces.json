@@ -1,0 +1,33 @@
+{
+  "description": "One project-liveness answer, checked against every surface that renders it. The CLI (core_text::render_core_projects_list_lines) and the app (lib/project-picker) each read this file, so a surface that changes its rule on its own fails here rather than drifting quietly.",
+  "cases": [
+    {
+      "why": "a tmux dashboard is running, which is what project online means",
+      "project": { "name": "dashboard-running", "path": "/a", "dashboardAlive": true },
+      "cliWord": "live",
+      "appState": "online",
+      "hiddenUnderActive": false
+    },
+    {
+      "why": "tmux answered and there is no dashboard",
+      "project": { "name": "no-dashboard", "path": "/b", "dashboardAlive": false },
+      "cliWord": "idle",
+      "appState": "offline",
+      "hiddenUnderActive": true
+    },
+    {
+      "why": "tmux could not be asked, which is not the same answer as no dashboard",
+      "project": { "name": "tmux-unreachable", "path": "/c", "dashboardAlive": null },
+      "cliWord": "unknown",
+      "appState": "unknown",
+      "hiddenUnderActive": false
+    },
+    {
+      "why": "a daemon predating the field must not make a whole fleet look dead",
+      "project": { "name": "older-daemon", "path": "/d" },
+      "cliWord": "unknown",
+      "appState": "unknown",
+      "hiddenUnderActive": false
+    }
+  ]
+}

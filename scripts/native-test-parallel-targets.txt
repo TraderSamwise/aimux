@@ -1,8 +1,8 @@
 # Integration test targets that are safe to execute as separate processes in
-# parallel after a single cargo --no-run build. The default is serial; add a
-# target here only after checking it does not touch machine-global runtime
-# state such as Sam's home, the default daemon port, a shared tmux socket/server,
 # or a fixed filesystem path.
+# parallel after a single cargo --no-run build. The default is serial; add a
+# state such as Sam's home, the default daemon port, a shared tmux socket/server,
+# target here only after checking it does not touch machine-global runtime
 agent_canonical_order
 agent_name_across_surfaces
 agent_order_across_surfaces
@@ -82,6 +82,7 @@ mobile_push_bridge
 plugin_tick_tasks
 process_inspector
 project_api_contract
+project_liveness_surfaces
 project_service_agent_controls
 project_service_agent_output
 project_service_attachments
