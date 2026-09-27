@@ -14,9 +14,7 @@ import { fileURLToPath } from "node:url";
 const REAL_FAILURES = new Set(["failure", "timed_out", "startup_failure", "action_required"]);
 
 export function classifyRuns(runs) {
-  const failed = runs.filter(
-    (run) => run.status === "completed" && REAL_FAILURES.has(run.conclusion),
-  );
+  const failed = runs.filter((run) => run.status === "completed" && REAL_FAILURES.has(run.conclusion));
   const succeeded = runs.filter((run) => run.conclusion === "success");
   const pending = runs.filter((run) => run.status !== "completed");
   if (failed.length > 0) return { verdict: "failed", failed, succeeded, pending };
@@ -45,13 +43,34 @@ function fetchRuns({ repo, workflow, sha }) {
 
 const sleep = (seconds) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1000);
 
+// Accepts both `--key value` and `--key=value`. It only read the `=` form when
+// this shipped, so the workflow's own space-separated invocation parsed to an
+// empty repo and the gate exited 2 on usage -- blocking the publish it exists to
+// protect, on v0.1.60.
+export function parseOptions(argv) {
+  const options = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (!argument.startsWith("--")) continue;
+    const body = argument.slice(2);
+    const equals = body.indexOf("=");
+    if (equals >= 0) {
+      options[body.slice(0, equals)] = body.slice(equals + 1);
+      continue;
+    }
+    const next = argv[index + 1];
+    if (next !== undefined && !next.startsWith("--")) {
+      options[body] = next;
+      index += 1;
+    } else {
+      options[body] = "";
+    }
+  }
+  return options;
+}
+
 function main() {
-  const options = Object.fromEntries(
-    process.argv.slice(2).map((argument) => {
-      const [key, ...rest] = argument.replace(/^--/, "").split("=");
-      return [key, rest.join("=")];
-    }),
-  );
+  const options = parseOptions(process.argv.slice(2));
   const repo = options.repo;
   const sha = options.sha;
   const workflow = options.workflow ?? "ci.yml";
