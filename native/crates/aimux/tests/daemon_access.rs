@@ -28,6 +28,7 @@ fn project(path: &str, port: u64, live: bool) -> ProjectsRouteProject {
 fn operator(project_root: &str, session_id: &str) -> RemoteActor {
     RemoteActor {
         role: RemoteActorRole::Operator,
+        role_declared: true,
         user_id: None,
         display_name: None,
         email: None,
@@ -251,5 +252,59 @@ fn hosted_operator_stream_is_bound_and_stream_only() {
     assert_eq!(
         unbound.error.as_deref(),
         Some("operator request could not be bound to a project")
+    );
+}
+
+// An approved client reaching the daemon over the relay was refused as a shared
+// guest and the GUI rendered that as "no projects". The relay is the only place
+// that knows who the caller is, so a request it did not identify must say so
+// rather than accuse the caller of being a guest.
+#[test]
+fn a_relay_request_with_no_actor_role_is_named_as_unidentified() {
+    let unidentified = build_daemon_route_context(
+        "GET",
+        "/projects",
+        None,
+        BTreeMap::from([("x-aimux-relay-forwarded".into(), "1".into())]),
+        &[],
+    );
+    assert!(!decision(&unidentified).ok);
+    assert_eq!(
+        decision(&unidentified).error.as_deref(),
+        Some("relay request carried no actor role, so the caller could not be identified")
+    );
+
+    let declared_guest = build_daemon_route_context(
+        "GET",
+        "/projects",
+        None,
+        BTreeMap::from([
+            ("x-aimux-relay-forwarded".into(), "1".into()),
+            ("x-aimux-actor-role".into(), "guest".into()),
+        ]),
+        &[],
+    );
+    assert_eq!(
+        decision(&declared_guest).error.as_deref(),
+        Some("shared guests cannot access daemon routes"),
+        "a caller that declared guest is a guest, not an unidentified one"
+    );
+}
+
+#[test]
+fn an_owner_role_over_the_relay_reaches_daemon_routes() {
+    let owner = build_daemon_route_context(
+        "GET",
+        "/projects",
+        None,
+        BTreeMap::from([
+            ("x-aimux-relay-forwarded".into(), "1".into()),
+            ("x-aimux-actor-role".into(), "owner".into()),
+        ]),
+        &[],
+    );
+    assert!(
+        decision(&owner).ok,
+        "the owner's own paired device must reach /projects over the relay"
     );
 }

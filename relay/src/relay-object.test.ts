@@ -447,9 +447,10 @@ describe("RelayObject hosted attachments", () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       requestPatch: {
+        headers: { "X-Aimux-Actor-Role": "owner" },
         body: {
           filename: "screen.png",
           mimeType: "image/png",
@@ -502,9 +503,10 @@ describe("RelayObject hosted attachments", () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       requestPatch: {
+        headers: { "X-Aimux-Actor-Role": "owner" },
         body: {
           filename: "screen.png",
           mimeType: "image/png",
@@ -1419,3 +1421,59 @@ function request(
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
 }
+
+describe("RelayObject owner identification", () => {
+  // An approved client reaching the daemon over the relay was refused as a shared
+  // guest, and the GUI rendered that refusal as "no projects detected". The relay
+  // is the only party that knows the socket belongs to the owner's own paired
+  // device, so it has to say so on the way through.
+  async function prepare(ws: WebSocket, headers?: Record<string, string>) {
+    const object = createObject(new MemoryStorage(), {} as unknown as Env);
+    return (
+      object as unknown as {
+        prepareClientRequest: (
+          ws: WebSocket,
+          request: {
+            id: string;
+            type: "request";
+            method: string;
+            path: string;
+            headers?: Record<string, string>;
+          },
+        ) => Promise<
+          | {
+              ok: true;
+              requestPatch?: { headers?: Record<string, string> };
+            }
+          | { ok: false; error: string }
+        >;
+      }
+    ).prepareClientRequest(ws, {
+      id: "req_1",
+      type: "request",
+      method: "GET",
+      path: "/projects",
+      headers,
+    });
+  }
+
+  it("stamps the owner role on a request from a paired device with no share", async () => {
+    const result = await prepare(fakeSocket(["client", "device:client_phone"]));
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.requestPatch?.headers?.["X-Aimux-Actor-Role"] : null).toBe("owner");
+  });
+
+  it("does not let a client claim its own aimux identity headers", async () => {
+    const result = await prepare(fakeSocket(["client", "device:client_phone"]), {
+      "x-aimux-actor-role": "operator",
+      "x-aimux-share-id": "share-someone-elses",
+      accept: "application/json",
+    });
+    expect(result.ok).toBe(true);
+    const headers = result.ok ? (result.requestPatch?.headers ?? {}) : {};
+    expect(headers["X-Aimux-Actor-Role"]).toBe("owner");
+    expect(headers["x-aimux-share-id"]).toBeUndefined();
+    expect(headers["x-aimux-actor-role"]).toBeUndefined();
+    expect(headers.accept).toBe("application/json");
+  });
+});

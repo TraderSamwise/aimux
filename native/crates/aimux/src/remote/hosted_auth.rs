@@ -148,6 +148,7 @@ fn bearer_token_from_header(header: &str) -> Option<String> {
 fn hosted_operator_actor(principal: &HostedPrincipal) -> RemoteActor {
     RemoteActor {
         role: RemoteActorRole::Operator,
+        role_declared: true,
         user_id: None,
         display_name: Some(principal.label.clone()),
         email: None,

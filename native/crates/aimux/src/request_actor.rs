@@ -36,6 +36,9 @@ pub struct RemoteOperatorPrincipal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteActor {
     pub role: RemoteActorRole,
+    /// Whether the caller actually declared a role, as opposed to being defaulted
+    /// to the least-trusted one. A refusal must be able to say which happened.
+    pub role_declared: bool,
     pub user_id: Option<String>,
     pub display_name: Option<String>,
     pub email: Option<String>,
@@ -83,6 +86,7 @@ pub fn parse_remote_actor(headers: &BTreeMap<String, String>) -> Option<RemoteAc
     let Some(role_text) = role_text else {
         return has_relay_actor_headers(headers).then_some(RemoteActor {
             role: RemoteActorRole::Guest,
+            role_declared: false,
             user_id: None,
             display_name: None,
             email: None,
@@ -98,6 +102,7 @@ pub fn parse_remote_actor(headers: &BTreeMap<String, String>) -> Option<RemoteAc
     };
     Some(RemoteActor {
         role,
+        role_declared: true,
         user_id: header_value(headers, "x-aimux-actor-user-id")
             .map(str::to_owned)
             .or_else(|| json_actor.as_ref().and_then(|actor| actor.user_id.clone())),
@@ -196,6 +201,15 @@ fn assert_guest_allowed(
         return RemoteAccessDecision::allow();
     }
     let Some(proxy) = parse_proxy_target(pathname) else {
+        // An actor with no share context is not a shared guest -- it is a caller
+        // the relay never identified, and saying "shared guest" sent a whole
+        // debugging session after the sharing code.
+        if !actor.role_declared {
+            return RemoteAccessDecision::deny(
+                403,
+                "relay request carried no actor role, so the caller could not be identified",
+            );
+        }
         return RemoteAccessDecision::deny(403, "shared guests cannot access daemon routes");
     };
     let sub_path = proxy.sub_path;

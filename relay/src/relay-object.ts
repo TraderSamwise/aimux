@@ -1005,7 +1005,21 @@ export class RelayObject extends DurableObject<Env> {
     if (!shareId) {
       const bodyPatch = await this.hostedAttachmentPatchForClientRequest(request, undefined);
       if (!bodyPatch.ok) return bodyPatch;
-      return bodyPatch.body === undefined ? { ok: true } : { ok: true, requestPatch: { body: bodyPatch.body } };
+      // A socket with no share tag is the owner's own paired device, verified at
+      // connect by device approval and proof. The relay knew that and never said
+      // so, and a daemon route with no actor role refuses the caller as a shared
+      // guest -- which is why an approved client saw zero projects. Stamp it
+      // here, and strip what the client claimed, exactly as the share path does.
+      return {
+        ok: true,
+        requestPatch: {
+          headers: {
+            ...stripTrustedAimuxHeaders(request.headers),
+            "X-Aimux-Actor-Role": "owner",
+          },
+          ...(bodyPatch.body !== undefined ? { body: bodyPatch.body } : {}),
+        },
+      };
     }
     const userId = tagValue(tags, "user:");
     if (!userId) return { ok: false, status: 401, error: "Missing shared user context" };
