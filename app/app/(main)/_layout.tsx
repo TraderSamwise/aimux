@@ -60,12 +60,14 @@ import {
 import {
   explicitProjectSelectionAtom,
   projectsAtom,
+  projectListStatusAtom,
   reconcileProjectsAtom,
   rememberProjectViewPath,
   selectedProjectEndpointAtom,
   selectedProjectPathAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
+import { projectListFailed, projectListUnavailable } from "@/lib/project-list-status";
 import {
   kickProjectApiViewRefreshAtom,
   projectUpdateTouchesDesktopState,
@@ -99,6 +101,7 @@ const PROJECT_SCOPED_PATH_PREFIXES = [
 
 export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
+  const setProjectListStatus = useSetAtom(projectListStatusAtom);
   const projects = useAtomValue(projectsAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const explicitProjectSelection = useAtomValue(explicitProjectSelectionAtom);
@@ -310,7 +313,7 @@ export default function MainLayout() {
       }
       if (!relayReadyForRequests) {
         if (relayUrl && isRelayUnavailableForProjectDiscovery(relayStatus)) {
-          reconcileProjects([]);
+          setProjectListStatus(projectListUnavailable(`Relay is ${relayStatus}.`));
         }
         timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
         return;
@@ -320,13 +323,15 @@ export default function MainLayout() {
         const projects = await listProjects({ token });
         if (!cancelled) reconcileProjects(projects);
       } catch (err) {
-        // Failed fetches report inline per-operation; no global UI per task description.
+        // A fetch that failed is not a list of zero projects. Every non-transient
+        // outcome has to reach the UI as itself.
         if (!cancelled && !isTransientRequestError(err)) {
           const msg = getErrorMessage(err);
           if (isProjectHostOfflineError(msg)) {
             reconcileProjects([]);
+            setProjectListStatus(projectListUnavailable("The daemon is offline."));
           } else {
-            console.warn("project list refresh failed:", err);
+            setProjectListStatus(projectListFailed(msg));
           }
         }
       }
@@ -347,6 +352,7 @@ export default function MainLayout() {
     relayReadyForRequests,
     relayStatus,
     relayUrl,
+    setProjectListStatus,
     store,
   ]);
 

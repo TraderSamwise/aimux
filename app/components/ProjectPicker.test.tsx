@@ -12,6 +12,12 @@ vi.mock("@/components/ui/text", () => ({
 
 import type { DaemonProject } from "@/lib/api";
 import { ProjectPicker } from "@/components/ProjectPicker";
+import {
+  PROJECT_LIST_LOADING,
+  projectListFailed,
+  projectListUnavailable,
+  type ProjectListStatus,
+} from "@/lib/project-list-status";
 
 interface HostNode {
   type: unknown;
@@ -86,10 +92,15 @@ function findNodes(root: HostNode[], predicate: (node: HostNode) => boolean): Ho
   return matches;
 }
 
-function renderPickerText(projects: DaemonProject[], showAllProjects: boolean): string {
+function renderPickerText(
+  projects: DaemonProject[],
+  showAllProjects: boolean,
+  status?: ProjectListStatus,
+): string {
   return collectText(
     ProjectPicker({
       projects,
+      status,
       selectedPath: null,
       showAllProjects,
       onShowAllProjectsChange: vi.fn(),
@@ -210,5 +221,46 @@ describe("ProjectPicker", () => {
     const text = collectHostText(tree);
     expect(text).toContain("active");
     expect(text).not.toContain("offline");
+  });
+});
+
+describe("an empty picker says why it is empty", () => {
+  // Sam had five dashboards running and the GUI said "No projects detected".
+  // The list was empty because the fetch never landed, and nothing on screen
+  // said so.
+  it("does not claim there are no projects when the daemon is unreachable", () => {
+    const text = renderPickerText([], false, projectListUnavailable("Relay is connecting."));
+    expect(text).toContain("Cannot reach the daemon");
+    expect(text).toContain("Relay is connecting.");
+    expect(text).not.toContain("No projects detected");
+  });
+
+  it("shows the error when the request failed", () => {
+    const text = renderPickerText([], false, projectListFailed("HTTP 502 from /projects"));
+    expect(text).toContain("Could not load projects");
+    expect(text).toContain("HTTP 502 from /projects");
+    expect(text).not.toContain("No projects detected");
+  });
+
+  it("distinguishes a list that has not loaded yet", () => {
+    expect(renderPickerText([], false, PROJECT_LIST_LOADING)).toContain("Loading projects");
+  });
+
+  it("still says no projects when the daemon genuinely reported none", () => {
+    expect(renderPickerText([], false)).toContain("No projects detected");
+  });
+});
+
+describe("a list that is on screen but not refreshing is marked stale", () => {
+  const projects = [project({ id: "aimux", name: "aimux", dashboardAlive: true })];
+
+  it("warns when the refresh is failing", () => {
+    const text = renderPickerText(projects, false, projectListFailed("socket hang up"));
+    expect(text).toContain("Not refreshing: socket hang up");
+    expect(text).toContain("aimux");
+  });
+
+  it("stays quiet when the list is current", () => {
+    expect(renderPickerText(projects, false)).not.toContain("Not refreshing");
   });
 });

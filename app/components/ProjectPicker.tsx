@@ -4,16 +4,24 @@ import { Pressable, View } from "react-native";
 import { Text } from "@/components/ui/text";
 import type { DaemonProject } from "@/lib/api";
 import { filterProjectPickerProjects, projectOnlineState } from "@/lib/project-picker";
+import {
+  PROJECT_LIST_OK,
+  projectListEmptyMessage,
+  projectListStaleMessage,
+  type ProjectListStatus,
+} from "@/lib/project-list-status";
 import { cn } from "@/lib/utils";
 
 export function ProjectPicker({
   projects,
+  status = PROJECT_LIST_OK,
   selectedPath,
   showAllProjects,
   onShowAllProjectsChange,
   onSelect,
 }: {
   projects: DaemonProject[];
+  status?: ProjectListStatus;
   selectedPath: string | null;
   showAllProjects: boolean;
   onShowAllProjectsChange: (showAll: boolean) => void;
@@ -21,6 +29,8 @@ export function ProjectPicker({
 }) {
   const visibleProjects = filterProjectPickerProjects(projects, { showAll: showAllProjects });
   const hiddenCount = Math.max(0, projects.length - visibleProjects.length);
+  const emptyMessage = projectListEmptyMessage(status);
+  const staleMessage = projects.length > 0 ? projectListStaleMessage(status) : null;
 
   return (
     <View className="pt-4 pb-2">
@@ -58,9 +68,19 @@ export function ProjectPicker({
           </View>
         ) : null}
       </View>
+      {staleMessage ? (
+        <View className="px-3.5 pb-2">
+          <Text className="text-[12px] text-[#c9a227]">{staleMessage}</Text>
+        </View>
+      ) : null}
       {projects.length === 0 ? (
         <View className="px-3.5 py-3">
-          <Text className="text-[13px] text-[#787a83]">No projects detected</Text>
+          <Text className="text-[13px] text-[#787a83]">
+            {emptyMessage ? emptyMessage.title : "No projects detected"}
+          </Text>
+          {emptyMessage?.detail ? (
+            <Text className="mt-1 text-[12px] text-[#5b5d66]">{emptyMessage.detail}</Text>
+          ) : null}
         </View>
       ) : visibleProjects.length === 0 ? (
         <View className="px-3.5 py-3">

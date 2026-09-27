@@ -4,6 +4,11 @@ import type { DaemonProject } from "@/lib/api";
 import type { DesktopSession } from "@/lib/desktop-state";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
+import {
+  PROJECT_LIST_LOADING,
+  PROJECT_LIST_OK,
+  type ProjectListStatus,
+} from "@/lib/project-list-status";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { desktopStateFamily } from "@/stores/desktopState";
 
@@ -21,6 +26,10 @@ export const selectedProjectPathAtom = atomWithStorage<string | null>(
 export const explicitProjectSelectionAtom = atom<{ path: string; expiresAt: number } | null>(null);
 
 export const selectedSessionIdAtom = atom<string | null>(null);
+
+// Why the list looks the way it does. A failed or unavailable fetch must not
+// reach the UI as an empty array.
+export const projectListStatusAtom = atom<ProjectListStatus>(PROJECT_LIST_LOADING);
 export const lastSyncAtAtom = atom<number | null>(null);
 
 const projectViewPathByProjectPath = new Map<string, string>();
@@ -55,6 +64,7 @@ export const selectedSessionAtom = atom<DesktopSession | null>((get) => {
 // Otherwise falls back to the first sorted project and clears stale session
 // selection.
 export const reconcileProjectsAtom = atom(null, (get, set, incoming: DaemonProject[]) => {
+  set(projectListStatusAtom, PROJECT_LIST_OK);
   const previousProjects = get(projectsAtom);
   const sorted = reconcileProjectList(previousProjects, incoming);
   let nextPath = get(selectedProjectPathAtom);

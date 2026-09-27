@@ -48,6 +48,7 @@ import {
 } from "@/stores/desktopState";
 import type { DaemonProject } from "@/lib/api";
 import {
+  projectListStatusAtom,
   projectsAtom,
   selectedProjectAtom,
   selectedProjectEndpointAtom,
@@ -343,6 +344,7 @@ function SidebarPrimaryNav({
 export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boolean }) {
   const { width } = useWindowDimensions();
   const projects = useAtomValue(projectsAtom);
+  const projectListStatus = useAtomValue(projectListStatusAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -540,6 +542,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
           <ScrollView className="flex-1">
             <ProjectPicker
               projects={projects}
+              status={projectListStatus}
               selectedPath={effectiveProjectPath}
               showAllProjects={showAllPickerProjects}
               onShowAllProjectsChange={setShowAllPickerProjects}
