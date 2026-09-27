@@ -38,6 +38,7 @@ fn projects_route_keeps_registered_projects_when_services_are_dead() {
         &actor_states_by_id,
         &endpoints_by_id,
         |service| service["status"] == "running",
+        |_session| Some(false),
     );
 
     assert_eq!(result.len(), 2);
@@ -60,6 +61,7 @@ fn projects_route_prefers_actor_state_over_persisted_service_state() {
         &actor_states_by_id,
         &endpoints_by_id,
         |service| service["status"] == "running",
+        |_session| Some(false),
     );
 
     assert!(result[0].service_alive);
@@ -79,6 +81,7 @@ fn projects_route_treats_null_actor_state_as_absent_like_typescript_nullish_coal
         &actor_states_by_id,
         &endpoints_by_id,
         |service| service["status"] == "running",
+        |_session| Some(false),
     );
 
     assert!(result[0].service_alive);
@@ -146,4 +149,77 @@ fn matches_javascript_truthiness_for_pending_action() {
             Some(0)
         );
     }
+}
+
+/// The three answers have to stay three answers. A client that renders "tmux
+/// could not be asked" the same as "no dashboard" calls a whole fleet offline on
+/// one failed query, which is the reason this field is an Option.
+#[test]
+fn dashboard_liveness_keeps_unknown_apart_from_absent() {
+    let projects = vec![desktop_project("proj-a"), desktop_project("proj-b")];
+    let empty = HashMap::new();
+
+    let known = build_projects_route_projects(
+        &projects,
+        &empty,
+        &empty,
+        &empty,
+        |_service| false,
+        |session| Some(session == "aimux-proj-a"),
+    );
+    assert_eq!(known[0].dashboard_alive, Some(true));
+    assert_eq!(known[1].dashboard_alive, Some(false));
+
+    let unknown = build_projects_route_projects(
+        &projects,
+        &empty,
+        &empty,
+        &empty,
+        |_service| false,
+        |_session| None,
+    );
+    assert_eq!(unknown[0].dashboard_alive, None);
+    assert_eq!(unknown[1].dashboard_alive, None);
+}
+
+/// Dashboard liveness is independent of the project service: Sam's definition of
+/// online is a running dashboard, and a live service with no dashboard must not
+/// read as online.
+#[test]
+fn dashboard_liveness_does_not_follow_service_liveness() {
+    let projects = vec![desktop_project("proj-a")];
+    let empty = HashMap::new();
+    let built = build_projects_route_projects(
+        &projects,
+        &empty,
+        &empty,
+        &empty,
+        |_service| true,
+        |_session| Some(false),
+    );
+    assert_eq!(built[0].dashboard_alive, Some(false));
+}
+
+#[test]
+fn dashboard_session_liveness_reads_one_listing_for_the_whole_server() {
+    use aimux::tmux::parse_dashboard_session_liveness;
+
+    let alive = parse_dashboard_session_liveness(concat!(
+        "aimux-a\tdashboard\t0\n",
+        "aimux-a\tclaude\t0\n",
+        "aimux-b\tdashboard\t1\n",
+        "aimux-c\tclaude\t0\n",
+        "aimux-d\tdashboard-2\t1\n",
+        "aimux-d\tdashboard\t0\n",
+        "aimux-e\tdashboard\n",
+    ));
+    assert_eq!(alive.get("aimux-a"), Some(&true));
+    // A dashboard window whose pane died is false, not absent.
+    assert_eq!(alive.get("aimux-b"), Some(&false));
+    // No dashboard window at all is absent, which the caller reads as offline.
+    assert_eq!(alive.get("aimux-c"), None);
+    // One live dashboard is enough even beside a dead one.
+    assert_eq!(alive.get("aimux-d"), Some(&true));
+    // A row missing its pane_dead field must not promote a project to online.
+    assert_eq!(alive.get("aimux-e"), None);
 }

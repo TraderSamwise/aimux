@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "current sync Rust binary before async cutover",
-  "recorded_from_commit": "64ea1125",
+  "recorded_from_commit": "cd51e584",
   "normalization": [
     "temporary roots, project ids, pids, ports, timestamps and build stamps are replaced with stable placeholders",
     "HTTP status lines, header order, content type, connection mode, JSON error shapes and SSE frame ordering/framing are compared literally after that normalization",
@@ -110,6 +110,7 @@
                 "restartCount": 0
               },
               "serviceAlive": true,
+              "dashboardAlive": false,
               "serviceEndpoint": {
                 "host": "127.0.0.1",
                 "port": "<project-port>",
@@ -664,6 +665,7 @@
                     "restartCount": 0
                   },
                   "serviceAlive": true,
+                  "dashboardAlive": false,
                   "serviceEndpoint": {
                     "host": "127.0.0.1",
                     "port": "<project-port>",
@@ -702,6 +704,7 @@
                     "restartCount": 0
                   },
                   "serviceAlive": true,
+                  "dashboardAlive": false,
                   "serviceEndpoint": {
                     "host": "127.0.0.1",
                     "port": "<project-port>",
@@ -740,6 +743,7 @@
                     "restartCount": 0
                   },
                   "serviceAlive": true,
+                  "dashboardAlive": false,
                   "serviceEndpoint": {
                     "host": "127.0.0.1",
                     "port": "<project-port>",
@@ -778,6 +782,7 @@
                     "restartCount": 0
                   },
                   "serviceAlive": true,
+                  "dashboardAlive": false,
                   "serviceEndpoint": {
                     "host": "127.0.0.1",
                     "port": "<project-port>",
@@ -816,6 +821,7 @@
                     "restartCount": 0
                   },
                   "serviceAlive": true,
+                  "dashboardAlive": false,
                   "serviceEndpoint": {
                     "host": "127.0.0.1",
                     "port": "<project-port>",
@@ -854,6 +860,7 @@
                     "restartCount": 0
                   },
                   "serviceAlive": true,
+                  "dashboardAlive": false,
                   "serviceEndpoint": {
                     "host": "127.0.0.1",
                     "port": "<project-port>",
@@ -892,6 +899,7 @@
                     "restartCount": 0
                   },
                   "serviceAlive": true,
+                  "dashboardAlive": false,
                   "serviceEndpoint": {
                     "host": "127.0.0.1",
                     "port": "<project-port>",
@@ -930,6 +938,7 @@
                     "restartCount": 0
                   },
                   "serviceAlive": true,
+                  "dashboardAlive": false,
                   "serviceEndpoint": {
                     "host": "127.0.0.1",
                     "port": "<project-port>",

@@ -43,6 +43,7 @@ impl Default for FakeCoreRuntime {
                     json!({ "projectId": "repo-id", "projectRoot": "/repo", "pid": 9123 }),
                 ),
                 service_alive: true,
+                dashboard_alive: None,
                 service_endpoint: Some(json!({ "host": "127.0.0.1", "port": 44191, "pid": 9123 })),
                 online_agent_count: None,
             }],
@@ -314,6 +315,9 @@ fn dispatches_ping_status_and_project_list_without_project_wake() {
             "dashboardSessionName": "aimux-repo-id",
             "service": { "projectId": "repo-id", "projectRoot": "/repo", "pid": 9123 },
             "serviceAlive": true,
+            // The fake runtime never asks tmux, so liveness is unknown rather
+            // than false -- the distinction this field exists to keep.
+            "dashboardAlive": Value::Null,
             "serviceEndpoint": { "host": "127.0.0.1", "port": 44191, "pid": 9123 }
         })
     );

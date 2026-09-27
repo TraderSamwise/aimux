@@ -1195,6 +1195,7 @@ fn hosted_project(path: &str, port: u64, live: bool) -> ProjectsRouteProject {
         dashboard_session_name: "aimux-test".into(),
         service: None,
         service_alive: live,
+        dashboard_alive: None,
         service_endpoint: Some(json!({ "host": "127.0.0.1", "port": port })),
         online_agent_count: None,
     }

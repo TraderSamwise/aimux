@@ -21,6 +21,7 @@ fn candidate(
         dashboard_session_name: "aimux-test".to_owned(),
         service: None,
         service_alive,
+        dashboard_alive: None,
         service_endpoint: port.map(|port| json!({ "host": host, "port": port })),
         online_agent_count: None,
     }

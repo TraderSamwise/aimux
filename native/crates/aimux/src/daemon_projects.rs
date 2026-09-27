@@ -15,6 +15,11 @@ pub struct ProjectsRouteProject {
     pub dashboard_session_name: String,
     pub service: Option<Value>,
     pub service_alive: bool,
+    /// Whether this project has a live tmux dashboard. `None` means tmux could
+    /// not be asked, which is not the same answer as "no dashboard" -- a client
+    /// that renders unknown as offline would call a whole fleet dead on one
+    /// failed query. Always serialized so a client can tell the three apart.
+    pub dashboard_alive: Option<bool>,
     pub service_endpoint: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub online_agent_count: Option<usize>,
@@ -26,6 +31,7 @@ pub fn build_projects_route_projects(
     actor_states_by_id: &HashMap<String, Value>,
     service_endpoints_by_id: &HashMap<String, Value>,
     is_project_service_live: impl Fn(&Value) -> bool,
+    dashboard_alive_for_session: impl Fn(&str) -> Option<bool>,
 ) -> Vec<ProjectsRouteProject> {
     projects
         .iter()
@@ -51,6 +57,7 @@ pub fn build_projects_route_projects(
                     None
                 },
                 service_alive,
+                dashboard_alive: dashboard_alive_for_session(&project.dashboard_session_name),
                 service_endpoint: service_endpoints_by_id.get(&project.id).cloned(),
                 online_agent_count: None,
             }

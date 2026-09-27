@@ -122,6 +122,7 @@ fn candidates_from(value: &Value) -> Vec<ProjectsRouteProject> {
                 dashboard_session_name: "aimux-test".to_owned(),
                 service: None,
                 service_alive: candidate["serviceAlive"].as_bool().unwrap_or(false),
+                dashboard_alive: None,
                 service_endpoint: endpoint,
                 online_agent_count: None,
             }

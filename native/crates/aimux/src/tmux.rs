@@ -615,6 +615,29 @@ impl TmuxRuntimeManager {
         Ok(parse_live_window_index(&raw))
     }
 
+    /// Whether each tmux session currently has a live dashboard window, in one
+    /// exec for the whole server. A failed query stays an error: an empty map
+    /// would say every project's dashboard is gone.
+    pub fn try_dashboard_sessions_alive(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<BTreeMap<String, bool>, String> {
+        // Bounded: this runs on a request path, and an unbounded wait on a wedged
+        // tmux server would hold up the caller indefinitely.
+        let options = Some(TmuxExecOptions {
+            timeout: Some(timeout),
+            ..TmuxExecOptions::default()
+        });
+        let raw = match self.exec_owned(list_dashboard_session_liveness_argv(), options) {
+            Ok(raw) => raw,
+            Err(error) if tmux_list_sessions_failed_because_no_server(&error) => {
+                return Ok(BTreeMap::new());
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(parse_dashboard_session_liveness(&raw))
+    }
+
     /// Each live pane's process id and the tmux session it belongs to.
     ///
     /// The session a process runs in is not in its own argv, so this is how a
@@ -3111,6 +3134,52 @@ pub fn list_sessions_argv() -> Vec<String> {
         "-F".to_owned(),
         "#{session_name}\t#{session_created}\t#{session_last_attached}\t#{session_activity}\t#{session_attached}".to_owned(),
     ]
+}
+
+pub const DASHBOARD_SESSION_LIVENESS_FORMAT: &str = "#{session_name}\t#{window_name}\t#{pane_dead}";
+
+/// Every session's windows in one exec. Probing each project's dashboard on its
+/// own would be one tmux process per project per poll, which is the churn the
+/// subprocess budget exists to stop.
+pub fn list_dashboard_session_liveness_argv() -> Vec<String> {
+    vec![
+        "list-windows".to_owned(),
+        "-a".to_owned(),
+        "-F".to_owned(),
+        DASHBOARD_SESSION_LIVENESS_FORMAT.to_owned(),
+    ]
+}
+
+/// Which sessions have a dashboard window whose pane is not dead. A session with
+/// a dashboard window that has died maps to `false` rather than being absent, so
+/// a caller can tell "the dashboard exited" from "this session has none".
+pub fn parse_dashboard_session_liveness(raw: &str) -> BTreeMap<String, bool> {
+    let mut alive_by_session: BTreeMap<String, bool> = BTreeMap::new();
+    for line in raw.lines() {
+        let mut parts = line.trim_end_matches('\r').split('\t');
+        let Some(session) = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Some(window_name) = parts.next().map(str::trim) else {
+            continue;
+        };
+        if !is_dashboard_window_name(window_name) {
+            continue;
+        }
+        // A line without its pane_dead field is dropped rather than assumed
+        // alive: a half-parsed row must not promote a project to online.
+        let Some(pane_dead) = parts.next().map(str::trim) else {
+            continue;
+        };
+        let alive = pane_dead != "1";
+        let entry = alive_by_session.entry(session.to_owned()).or_insert(false);
+        *entry = *entry || alive;
+    }
+    alive_by_session
 }
 
 pub fn list_all_windows_argv() -> Vec<String> {

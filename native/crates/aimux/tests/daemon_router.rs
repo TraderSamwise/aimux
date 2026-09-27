@@ -79,6 +79,7 @@ impl FakeRouterRuntime {
             dashboard_session_name: "aimux-repo".into(),
             service: Some(json!({ "projectRoot": "/repo", "pid": 9100 })),
             service_alive: true,
+            dashboard_alive: None,
             service_endpoint: None,
             online_agent_count: None,
         }

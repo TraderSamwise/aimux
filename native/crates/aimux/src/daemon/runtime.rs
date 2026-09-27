@@ -227,6 +227,101 @@ struct DaemonProjectReadSnapshot {
     project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
 }
 
+/// Dashboard liveness costs one tmux exec, so no request path takes it. The
+/// shared periodic tick samples it and every route reads the sample: the relay
+/// `/projects` handler can only be reached with the daemon mutex already held,
+/// so exec'ing there would hold that mutex across a subprocess and stall every
+/// other route behind a wedged tmux.
+pub const DASHBOARD_SESSIONS_ALIVE_TASK_NAME: &str = "daemon-dashboard-liveness";
+pub const DASHBOARD_SESSIONS_ALIVE_INTERVAL_MS: i64 = 5 * 1_000;
+const DASHBOARD_SESSIONS_ALIVE_TIMEOUT: Duration = Duration::from_millis(1_500);
+
+type DashboardSessionsAlive = Result<BTreeMap<String, bool>, String>;
+
+static DASHBOARD_SESSIONS_ALIVE_SAMPLE: Mutex<Option<DashboardSessionsAlive>> = Mutex::new(None);
+
+/// Read the latest sample. Never execs. Before the first tick there is no sample
+/// and every project reports unknown, which clients must not render as offline.
+fn read_dashboard_sessions_alive() -> DashboardSessionsAlive {
+    match DASHBOARD_SESSIONS_ALIVE_SAMPLE.lock() {
+        Ok(sample) => sample
+            .clone()
+            .unwrap_or_else(|| Err("dashboard liveness has not been sampled yet".to_owned())),
+        Err(_) => Err("dashboard liveness sample lock poisoned".to_owned()),
+    }
+}
+
+/// Sample tmux once for the whole server and store it. Called from the periodic
+/// task, never from a request.
+pub fn sample_dashboard_sessions_alive() -> DashboardSessionsAlive {
+    // Resolved before touching the manager, because `tmux_command_from_env`
+    // panics when tmux is not on PATH.
+    let fresh = match crate::tmux::try_tmux_command_from_env() {
+        Ok(_) => {
+            TmuxRuntimeManager::new().try_dashboard_sessions_alive(DASHBOARD_SESSIONS_ALIVE_TIMEOUT)
+        }
+        Err(error) => Err(error),
+    };
+    if let Ok(mut sample) = DASHBOARD_SESSIONS_ALIVE_SAMPLE.lock() {
+        *sample = Some(fresh.clone());
+    }
+    fresh
+}
+
+pub struct DaemonDashboardLivenessTask;
+
+impl DaemonPeriodicTask for DaemonDashboardLivenessTask {
+    fn name(&self) -> &str {
+        DASHBOARD_SESSIONS_ALIVE_TASK_NAME
+    }
+
+    fn interval_ms(&self) -> i64 {
+        DASHBOARD_SESSIONS_ALIVE_INTERVAL_MS
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(10)
+    }
+
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
+    fn run<'a>(&'a mut self, _context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            crate::async_runtime::spawn_blocking_named(
+                crate::async_runtime::scoped_task_name(
+                    DASHBOARD_SESSIONS_ALIVE_TASK_NAME,
+                    "list-windows",
+                    "daemon",
+                ),
+                || {
+                    // The error is stored for clients to see as unknown, so a
+                    // failed sample is not a failed task.
+                    let _ = sample_dashboard_sessions_alive();
+                },
+            )
+            .await
+            .map_err(|error| format!("dashboard liveness task did not finish: {error}"))
+        })
+    }
+}
+
+fn dashboard_alive_lookup(
+    dashboard_sessions_alive: &DashboardSessionsAlive,
+) -> impl Fn(&str) -> Option<bool> + '_ {
+    move |session_name| match dashboard_sessions_alive {
+        // A dashboard in one of the project's attached-client sessions is still a
+        // dashboard on that project, so both count.
+        Ok(alive_by_session) => Some(alive_by_session.iter().any(|(session, alive)| {
+            *alive
+                && (session == session_name
+                    || crate::tmux::is_tmux_client_session_for_host(session, session_name))
+        })),
+        Err(_) => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ProjectOnlineAgentCountCacheEntry {
     count: Option<usize>,
@@ -1963,6 +2058,7 @@ struct ProjectsRouteRead {
 
 fn read_projects_for_route_from_snapshot(
     snapshot: &DaemonProjectReadSnapshot,
+    dashboard_sessions_alive: Option<&DashboardSessionsAlive>,
 ) -> Result<ProjectsRouteRead, String> {
     validate_project_registry_for_route(&snapshot.resolver)?;
     let entries = snapshot
@@ -1998,6 +2094,9 @@ fn read_projects_for_route_from_snapshot(
                             .project_service_process_verifier
                             .is_live_native_project_service(&service)
                 })
+        },
+        |session_name| {
+            dashboard_sessions_alive.and_then(|alive| dashboard_alive_lookup(alive)(session_name))
         },
     );
     Ok(ProjectsRouteRead {
@@ -2193,8 +2292,13 @@ pub fn handle_daemon_runtime_request_with_mutex(
                         }),
                     );
                 }
+                // This route publishes dashboardAlive, so it pays the tmux read.
+                // Taken before the snapshot so the exec never happens while the
+                // daemon mutex is held.
+                let dashboard_sessions_alive = read_dashboard_sessions_alive();
                 let read = match read_projects_for_route_from_snapshot(
                     &daemon_project_read_snapshot(runtime),
+                    Some(&dashboard_sessions_alive),
                 ) {
                     Ok(read) => read,
                     Err(error) => {
@@ -2659,6 +2763,7 @@ pub fn daemon_periodic_tasks(
                 global_expose_hot_snapshots,
             )),
             Box::new(DaemonProcessHealthTask),
+            Box::new(DaemonDashboardLivenessTask),
             Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
             Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
             Box::new(crate::daemon::jobs::DaemonJobCallbacksTask),
@@ -2672,6 +2777,7 @@ pub fn daemon_periodic_tasks(
                 global_expose_hot_snapshots,
             )),
             Box::new(DaemonProcessHealthTask),
+            Box::new(DaemonDashboardLivenessTask),
             Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
             Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
             Box::new(crate::daemon::jobs::DaemonJobCallbacksTask),
@@ -2915,10 +3021,15 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
     }
 
     fn try_list_projects_for_route(&self) -> Result<Vec<ProjectsRouteProject>, String> {
-        read_projects_for_route_from_snapshot(&DaemonProjectReadSnapshot {
-            resolver: self.resolver.clone(),
-            project_service_process_verifier: Arc::clone(&self.project_service_process_verifier),
-        })
+        read_projects_for_route_from_snapshot(
+            &DaemonProjectReadSnapshot {
+                resolver: self.resolver.clone(),
+                project_service_process_verifier: Arc::clone(
+                    &self.project_service_process_verifier,
+                ),
+            },
+            None,
+        )
         .map(|read| read.projects)
     }
 
@@ -2930,7 +3041,20 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
     fn try_list_projects_with_online_agent_counts_for_route(
         &mut self,
     ) -> Result<Vec<ProjectsRouteProject>, String> {
-        let mut projects = self.try_list_projects_for_route()?;
+        // The other publisher of `/projects`. It pays the tmux read for the same
+        // reason the fast path does; `try_list_projects_for_route` stays exec-free
+        // because route context calls it on every request.
+        let dashboard_sessions_alive = read_dashboard_sessions_alive();
+        let mut projects = read_projects_for_route_from_snapshot(
+            &DaemonProjectReadSnapshot {
+                resolver: self.resolver.clone(),
+                project_service_process_verifier: Arc::clone(
+                    &self.project_service_process_verifier,
+                ),
+            },
+            Some(&dashboard_sessions_alive),
+        )
+        .map(|read| read.projects)?;
         for project in &mut projects {
             project.online_agent_count = self.read_project_online_agent_count(project);
         }
@@ -3536,10 +3660,15 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
 
     fn doctor_versions_report(&mut self) -> Result<(Value, String), String> {
         let generated_at = now_iso();
-        let project_read = read_projects_for_route_from_snapshot(&DaemonProjectReadSnapshot {
-            resolver: self.resolver.clone(),
-            project_service_process_verifier: Arc::clone(&self.project_service_process_verifier),
-        })?;
+        let project_read = read_projects_for_route_from_snapshot(
+            &DaemonProjectReadSnapshot {
+                resolver: self.resolver.clone(),
+                project_service_process_verifier: Arc::clone(
+                    &self.project_service_process_verifier,
+                ),
+            },
+            None,
+        )?;
         let project_read_errors = project_read.read_errors;
         let projects = project_read.projects;
         let service_alive = projects
@@ -5568,6 +5697,81 @@ fn stability_doctor_project_root(project_root: &str) -> String {
         .unwrap_or_else(|_| PathBuf::from(project_root))
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(test)]
+mod dashboard_alive_lookup_tests {
+    use super::*;
+
+    /// No request path may exec tmux for this. The relay `/projects` handler can
+    /// only be reached with the daemon mutex already held, so an exec there would
+    /// hold that mutex across a subprocess; the periodic task owns the sampling
+    /// and every route reads the sample.
+    #[test]
+    fn reading_the_sample_never_execs_tmux() {
+        let before = crate::tmux_exec_metrics::get_tmux_exec_metrics().sync.count;
+        let _ = read_dashboard_sessions_alive();
+        let _ = read_dashboard_sessions_alive();
+        let after = crate::tmux_exec_metrics::get_tmux_exec_metrics().sync.count;
+        assert_eq!(
+            after, before,
+            "reading the dashboard liveness sample must not run tmux"
+        );
+    }
+
+    /// With no sample yet, every project is unknown -- not offline. A cold daemon
+    /// reporting the whole fleet dead is the failure this keeps out.
+    #[test]
+    fn an_unsampled_daemon_reports_unknown_not_offline() {
+        if let Ok(mut sample) = DASHBOARD_SESSIONS_ALIVE_SAMPLE.lock() {
+            *sample = None;
+        }
+        let read = read_dashboard_sessions_alive();
+        assert!(read.is_err(), "no sample yet is an error, not an empty map");
+        assert_eq!(dashboard_alive_lookup(&read)("aimux-anything"), None);
+    }
+
+    /// A tmux query that failed must reach the client as "unknown", never as
+    /// "every dashboard is dead" -- one bad query would otherwise report the
+    /// whole fleet offline.
+    #[test]
+    fn a_failed_tmux_query_is_unknown_not_dead() {
+        let failed: Result<BTreeMap<String, bool>, String> = Err("tmux exec failed".into());
+        let lookup = dashboard_alive_lookup(&failed);
+        assert_eq!(lookup("aimux-anything"), None);
+    }
+
+    #[test]
+    fn a_session_missing_from_a_good_listing_has_no_dashboard() {
+        let listed: Result<BTreeMap<String, bool>, String> =
+            Ok(BTreeMap::from([("aimux-live".to_owned(), true)]));
+        let lookup = dashboard_alive_lookup(&listed);
+        assert_eq!(lookup("aimux-live"), Some(true));
+        assert_eq!(lookup("aimux-absent"), Some(false));
+    }
+
+    /// Sam attaches through client sessions named `<project-session>-client-<id>`.
+    /// A dashboard living only there is still a dashboard on that project, and
+    /// reporting the project offline because the host session's own window is
+    /// gone would be wrong.
+    #[test]
+    fn a_dashboard_in_an_attached_client_session_counts_for_the_project() {
+        let listed: Result<BTreeMap<String, bool>, String> = Ok(BTreeMap::from([(
+            "aimux-sblr-6598b9d2a113-client-9db1de4f".to_owned(),
+            true,
+        )]));
+        let lookup = dashboard_alive_lookup(&listed);
+        assert_eq!(lookup("aimux-sblr-6598b9d2a113"), Some(true));
+        // Another project's client session must not count for this one.
+        assert_eq!(lookup("aimux-thegrand-6791e23675ca"), Some(false));
+    }
+
+    #[test]
+    fn a_dead_dashboard_window_reads_as_offline_not_unknown() {
+        let listed: Result<BTreeMap<String, bool>, String> =
+            Ok(BTreeMap::from([("aimux-dead".to_owned(), false)]));
+        assert_eq!(dashboard_alive_lookup(&listed)("aimux-dead"), Some(false));
+    }
 }
 
 #[cfg(test)]

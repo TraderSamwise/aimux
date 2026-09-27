@@ -9,8 +9,9 @@ use aimux::daemon::jobs::{
 use aimux::daemon::process_inventory::DAEMON_PROCESS_HEALTH_TASK_NAME;
 use aimux::daemon::routing::DaemonRouteUrl;
 use aimux::daemon::runtime::{
-    DAEMON_DISK_MAINTENANCE_TASK_NAME, DaemonDiskMaintenanceTask, DiskMaintenanceOptions,
-    daemon_periodic_tasks, try_run_daemon_disk_maintenance_once,
+    DAEMON_DISK_MAINTENANCE_TASK_NAME, DASHBOARD_SESSIONS_ALIVE_TASK_NAME,
+    DaemonDiskMaintenanceTask, DiskMaintenanceOptions, daemon_periodic_tasks,
+    try_run_daemon_disk_maintenance_once,
 };
 use aimux::daemon::scheduler::{
     DaemonPeriodicScheduler, DaemonPeriodicTask, DaemonSchedulerContext, DaemonSchedulerHandle,
@@ -50,6 +51,7 @@ fn daemon_periodic_task_list_registers_every_migrated_task() {
             HOSTED_PRUNE_TASK_NAME,
             HOSTED_OUTBOX_DRAIN_TASK_NAME,
             DAEMON_PROCESS_HEALTH_TASK_NAME,
+            DASHBOARD_SESSIONS_ALIVE_TASK_NAME,
             DAEMON_JOBS_PRUNE_TASK_NAME,
             DAEMON_JOBS_RECONCILE_TASK_NAME,
             DAEMON_JOB_CALLBACKS_TASK_NAME,
@@ -416,6 +418,7 @@ fn active_expose_coordinator(missing_state_dir: bool) -> GlobalExposeHotSnapshot
             dashboard_session_name: "aimux-project-1".to_owned(),
             service: Some(Value::Object(Default::default())),
             service_alive: true,
+            dashboard_alive: None,
             service_endpoint: None,
             online_agent_count: None,
         }]
