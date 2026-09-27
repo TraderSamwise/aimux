@@ -13,13 +13,22 @@ describe("the full-suite lanes are refused", () => {
     "cargo test --manifest-path native/Cargo.toml -p aimux",
     "yarn test",
     "cd native && cargo test -p aimux",
+    "CARGO_INCREMENTAL=0 cargo test -p aimux",
+    // A redirect is not a test-name filter. Agents write these on every command,
+    // so reading `2>&1` as scoping is a hole through the whole guard.
+    "cargo test -p aimux 2>&1 | tail -20",
+    "cargo test -p aimux --help 2>&1",
+    "cargo test -p aimux > /tmp/out.log",
   ];
 
   for (const command of refused) {
     it(`refuses ${command}`, () => {
       const refusal = fullSuiteRefusal(command);
       expect(refusal, command).not.toBeNull();
-      expect(refusal).toContain("Instead:");
+      expect(refusal, "the refusal must show the bypass applied to what was asked").toContain(
+        `AIMUX_ALLOW_FULL_SUITE=1 ${command}`,
+      );
+      expect(refusal.split("\n"), "keep the refusal to three lines").toHaveLength(3);
     });
   }
 });
@@ -45,7 +54,24 @@ describe("scoped work is left alone", () => {
   }
 });
 
-describe("the bypass is available when Sam asks for the full lane", () => {
+describe("naming a lane is not running it", () => {
+  // The guard fired on its own commit message, which is the same class of bug as
+  // grepping for a command or documenting one.
+  const mentions = [
+    `git commit -m "Close the hole where cargo test -p aimux slipped through"`,
+    "grep -rn 'yarn native:test' docs/",
+    "echo 'run yarn verify:full in CI' >> notes.md",
+    "printf '%s\\n' 'cargo test -p aimux' > /tmp/note.txt",
+  ];
+
+  for (const command of mentions) {
+    it(`allows ${command.slice(0, 48)}`, () => {
+      expect(fullSuiteRefusal(command), command).toBeNull();
+    });
+  }
+});
+
+describe("the bypass is available when the full lane is warranted", () => {
   it("honours the prefix on the command", () => {
     expect(fullSuiteRefusal("AIMUX_ALLOW_FULL_SUITE=1 yarn native:test")).toBeNull();
   });

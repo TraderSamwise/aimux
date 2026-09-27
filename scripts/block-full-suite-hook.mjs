@@ -16,60 +16,80 @@ const SCOPED_CARGO_FLAGS = [
   "--benches",
 ];
 
+// A lane only counts at a command position. Naming one inside a commit message,
+// a grep pattern or a heredoc is talking about it, not running it.
+function commandSegments(command) {
+  return command
+    .split(/\n|;|&&|\|\||\|/)
+    .map((segment) =>
+      segment
+        .trim()
+        .replace(/^(?:\w+=\S*\s+)+/, "")
+        .replace(/^(?:time|nice|env|timeout\s+\S+)\s+/, ""),
+    )
+    .filter(Boolean);
+}
+
+function cargoTestIsUnscoped(segment) {
+  const call = /^cargo\s+test\b(.*)$/.exec(segment);
+  if (!call) return false;
+  const rest = call[1];
+  if (SCOPED_CARGO_FLAGS.some((flag) => new RegExp(`\\s${flag}(?:\\s|=|$)`).test(rest))) {
+    return false;
+  }
+  // A bare filter argument (`cargo test some_name`) is already scoped, but a
+  // redirection is not an argument -- `2>&1` must not read as a test name.
+  const args = rest
+    .replace(/\d*>>?&?\s*\S*/g, " ")
+    .replace(/\d*<\s*\S*/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (["-p", "--package", "--manifest-path", "--features", "--target"].includes(arg)) {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("-")) continue;
+    return false;
+  }
+  return true;
+}
+
 const LANES = [
   {
     id: "native-test",
-    reason: "yarn native:test runs every Rust integration test (~330s)",
-    instead:
-      "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-cargo-target-$AIMUX_SESSION_ID cargo test --manifest-path native/Cargo.toml -p aimux --test <the_test_you_touched>",
-    matches: (command) =>
-      /\byarn\s+(?:run\s+)?native:test\b/.test(command) ||
-      /\bnative-test-runner\.py\b(?![^\n;&|]*--check-classification)/.test(command),
+    costs: "yarn native:test runs every Rust integration test (~330s)",
+    instead: "cargo test --manifest-path native/Cargo.toml -p aimux --test <the_test_you_touched>",
+    matches: (segment) =>
+      /^yarn\s+(?:run\s+)?native:test\b/.test(segment) ||
+      (/^(?:python3?\s+)?\S*native-test-runner\.py\b/.test(segment) &&
+        !/--check-classification\b/.test(segment)),
   },
   {
     id: "verify-full",
-    reason: "yarn verify:full is the CI lane: the fast lane plus every Rust, node and app suite",
-    instead: "yarn verify (the 20s fast lane), then push and let CI run the rest",
-    matches: (command) => /\byarn\s+(?:run\s+)?verify:full\b/.test(command),
+    costs: "yarn verify:full is the CI lane -- the fast lane plus every Rust, node and app suite",
+    instead: "yarn verify, the same lane minus the suites CI owns",
+    matches: (segment) => /^yarn\s+(?:run\s+)?verify:full\b/.test(segment),
   },
   {
     id: "release-readiness",
-    reason: "yarn release:readiness is verify:full plus the installed-runtime gates (~820s)",
-    instead: "yarn verify, then yarn release:patch -- a tag builds and publishes without waiting on CI",
-    matches: (command) => /\byarn\s+(?:run\s+)?release:readiness\b/.test(command),
+    costs: "yarn release:readiness is verify:full plus the installed-runtime gates (~820s)",
+    instead: "yarn verify, then yarn release:patch -- a tag no longer waits on CI",
+    matches: (segment) => /^yarn\s+(?:run\s+)?release:readiness\b/.test(segment),
   },
   {
     id: "cargo-test-unscoped",
-    reason: "an unscoped cargo test builds and runs the whole crate's test surface",
-    instead:
-      "cargo test --manifest-path native/Cargo.toml -p aimux --test <the_test_you_touched>",
-    matches: (command) => {
-      const call = /\bcargo\s+test\b([^\n;&|]*)/.exec(command);
-      if (!call) return false;
-      const rest = call[1];
-      if (SCOPED_CARGO_FLAGS.some((flag) => new RegExp(`\\s${flag}(?:\\s|=|$)`).test(rest))) {
-        return false;
-      }
-      // A bare filter argument (`cargo test some_name`) is already scoped.
-      const args = rest.split(/\s+/).filter(Boolean);
-      for (let index = 0; index < args.length; index += 1) {
-        const arg = args[index];
-        if (["-p", "--package", "--manifest-path", "--features", "--target"].includes(arg)) {
-          index += 1;
-          continue;
-        }
-        if (arg.startsWith("-")) continue;
-        return false;
-      }
-      return true;
-    },
+    costs: "an unscoped cargo test builds and runs the whole crate's test surface",
+    instead: "cargo test --manifest-path native/Cargo.toml -p aimux --test <the_test_you_touched>",
+    matches: cargoTestIsUnscoped,
   },
   {
     id: "vitest-whole-suite",
-    reason: "a bare yarn test runs every vitest suite in the repo (~200s)",
-    instead: "yarn test <path/to/the.test.mjs>, or vitest run <path>",
-    matches: (command) => {
-      const call = /\byarn\s+(?:run\s+)?test\b([^\n;&|]*)/.exec(command);
+    costs: "a bare yarn test runs every vitest suite in the repo (~200s)",
+    instead: "yarn test <path/to/the.test.mjs>",
+    matches: (segment) => {
+      const call = /^yarn\s+(?:run\s+)?test\b(.*)$/.exec(segment);
       if (!call) return false;
       return call[1].split(/\s+/).filter((arg) => arg && !arg.startsWith("-")).length === 0;
     },
@@ -81,13 +101,14 @@ export const FULL_SUITE_LANE_IDS = LANES.map((lane) => lane.id);
 export function fullSuiteRefusal(command, env = {}) {
   if (typeof command !== "string" || command.trim() === "") return null;
   if (env[BYPASS_ENV] || new RegExp(`\\b${BYPASS_ENV}=`).test(command)) return null;
-  const lane = LANES.find((candidate) => candidate.matches(command));
+  const segments = commandSegments(command);
+  const lane = LANES.find((candidate) => segments.some((segment) => candidate.matches(segment)));
   if (!lane) return null;
+  const asked = command.trim().split("\n")[0];
   return [
-    `Refused: ${lane.reason}.`,
-    "Full suites are CI's job. Run the targets covering what you changed, plus yarn verify, then push.",
-    `Instead: ${lane.instead}`,
-    `If Sam asked for the full lane, prefix the command with ${BYPASS_ENV}=1.`,
+    `Refused: scope the test down. ${lane.costs}, and CI runs the full suite on every push anyway.`,
+    `Instead: ${lane.instead}, then yarn verify.`,
+    `Genuinely need the full suite? ${BYPASS_ENV}=1 ${asked.length > 120 ? `${asked.slice(0, 120)}...` : asked}`,
   ].join("\n");
 }
 
