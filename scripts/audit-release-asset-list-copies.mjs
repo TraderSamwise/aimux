@@ -11,8 +11,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const WORKFLOW = join(ROOT, ".github", "workflows", "release.yml");
 const ALLOWLIST = join(ROOT, "scripts", "release-asset-name-allowlist.json");
+// Every file that has to know what a complete release looks like. release.yml is
+// the only one with the matrix in it; the two Homebrew scripts carry the same
+// per-platform template bindings and are where the next stale copy would land.
+const SCANNED = [
+  ".github/workflows/release.yml",
+  "scripts/render-homebrew-formulas.sh",
+  "scripts/homebrew-release-dry-run.sh",
+];
 // Literal names, and the interpolated form that slipped past the first version
 // of this audit: `aimux-darwin-${arch}` in a `for arch in arm64 x64` loop is the
 // platform set written down just as much as the literal is, and that copy failed
@@ -30,9 +37,9 @@ export function matrixBlockRange(lines) {
   return { end, start: include };
 }
 
-export function hardcodedAssetNames(text, allowed = new Set()) {
+export function hardcodedAssetNames(text, allowed = new Set(), { hasMatrix = true } = {}) {
   const lines = text.split("\n");
-  const { end, start } = matrixBlockRange(lines);
+  const { end, start } = hasMatrix ? matrixBlockRange(lines) : { end: -1, start: -1 };
   const found = [];
   lines.forEach((line, index) => {
     if (index >= start && index < end) return;
@@ -58,39 +65,64 @@ export function hardcodedAssetNames(text, allowed = new Set()) {
 // is never allowed in without a reason written down beside it.
 export function allowedLines(allowlistText) {
   const parsed = JSON.parse(allowlistText);
-  if (!Array.isArray(parsed.lines)) throw new Error("allowlist has no lines array");
   if (typeof parsed.description !== "string" || parsed.description.trim().length === 0) {
     throw new Error("allowlist has no description saying why these copies stand");
   }
-  return new Set(parsed.lines);
+  if (!parsed.files || typeof parsed.files !== "object") {
+    throw new Error("allowlist has no files map");
+  }
+  // Per file, so a line allowed in the formula template is not silently allowed
+  // in the workflow as well.
+  const byFile = new Map();
+  for (const [path, lines] of Object.entries(parsed.files)) {
+    if (!Array.isArray(lines)) throw new Error(`allowlist entry for ${path} is not an array`);
+    byFile.set(path, new Set(lines));
+  }
+  return byFile;
 }
 
 function main() {
-  const allowed = allowedLines(readFileSync(ALLOWLIST, "utf8"));
-  const workflow = readFileSync(WORKFLOW, "utf8");
-  const stale = [...allowed].filter((line) => !workflow.includes(line));
-  if (stale.length > 0) {
+  const byFile = allowedLines(readFileSync(ALLOWLIST, "utf8"));
+  const unknown = [...byFile.keys()].filter((path) => !SCANNED.includes(path));
+  if (unknown.length > 0) {
     process.stderr.write(
-      "scripts/release-asset-name-allowlist.json names lines release.yml no longer has; " +
-        "remove them so the allowlist cannot hide a future copy:\n",
+      "scripts/release-asset-name-allowlist.json records files this audit does not " +
+        "scan, so those entries guarantee nothing:\n",
     );
-    for (const line of stale) process.stderr.write(`  ${line}\n`);
+    for (const path of unknown) process.stderr.write(`  ${path}\n`);
     process.exit(1);
   }
-  const found = hardcodedAssetNames(workflow, allowed);
-  if (found.length > 0) {
-    process.stderr.write(
-      "release.yml names release assets outside the build matrix; read them from " +
-        "scripts/release-asset-matrix.py instead:\n",
-    );
-    for (const entry of found) {
-      process.stderr.write(`  release.yml:${entry.line}: ${entry.text}\n`);
+
+  const problems = [];
+  let recorded = 0;
+  for (const path of SCANNED) {
+    const text = readFileSync(join(ROOT, path), "utf8");
+    const allowed = byFile.get(path) ?? new Set();
+    recorded += allowed.size;
+    for (const line of allowed) {
+      if (!text.includes(line)) {
+        problems.push(
+          `${path}: allowlisted line is gone, remove it so the allowlist cannot hide a ` + `future copy: ${line}`,
+        );
+      }
     }
+    const hasMatrix = path.endsWith("release.yml");
+    for (const entry of hardcodedAssetNames(text, allowed, { hasMatrix })) {
+      problems.push(`${path}:${entry.line}: ${entry.text}`);
+    }
+  }
+
+  if (problems.length > 0) {
+    process.stderr.write(
+      "release assets are named outside the build matrix; read them from " +
+        "scripts/release-asset-matrix.py instead, or record the binding with a reason:\n",
+    );
+    for (const problem of problems) process.stderr.write(`  ${problem}\n`);
     process.exit(1);
   }
   process.stdout.write(
-    `release asset list audit passed: ${allowed.size} recorded template binding(s), ` +
-      "no other copy of the asset set\n",
+    `release asset list audit passed: ${SCANNED.length} file(s) scanned, ` +
+      `${recorded} recorded template binding(s), no other copy of the asset set\n`,
   );
 }
 

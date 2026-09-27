@@ -1,18 +1,36 @@
 {
-  "version": 1,
-  "description": "Lines in .github/workflows/release.yml that name a single release asset to bind it to a Homebrew formula template variable. These are per-platform template bindings, not a completeness list, so they are not the v0.1.59 class this audit exists to catch. They are still copies: adding a platform to the matrix leaves them incomplete and that platform gets no bottle. Deriving the variable names from the matrix is the real fix and needs the Homebrew job rehearsed, which cannot be done outside a tag.",
-  "lines": [
-    "echo \"darwin_arm64=$(extract aimux-darwin-arm64)\"",
-    "echo \"linux_arm64=$(extract aimux-linux-arm64)\"",
-    "echo \"linux_x64=$(extract aimux-linux-x64)\"",
-    "echo \"local_darwin_arm64=$(extract aimux-local-darwin-arm64)\"",
-    "echo \"local_linux_arm64=$(extract aimux-local-linux-arm64)\"",
-    "echo \"local_linux_x64=$(extract aimux-local-linux-x64)\"",
-    "export DARWIN_ARM64=\"$(extract aimux-darwin-arm64)\"",
-    "export LINUX_ARM64=\"$(extract aimux-linux-arm64)\"",
-    "export LINUX_X64=\"$(extract aimux-linux-x64)\"",
-    "export LOCAL_DARWIN_ARM64=\"$(extract aimux-local-darwin-arm64)\"",
-    "export LOCAL_LINUX_ARM64=\"$(extract aimux-local-linux-arm64)\"",
-    "export LOCAL_LINUX_X64=\"$(extract aimux-local-linux-x64)\""
-  ]
+  "version": 2,
+  "description": "Lines that name a single release asset to bind it to a Homebrew formula template: one url or sha per platform inside the formula's on_macos/on_linux blocks, and the matching named exports that feed them. These are per-platform template bindings, not completeness lists, so they are not the v0.1.59 class this audit exists to catch. They are still copies: adding a platform to the build matrix leaves them incomplete and that platform gets no bottle. Generating the blocks from the matrix is the real fix and needs the Homebrew jobs rehearsed, which cannot be done outside a tag, so it is written down rather than quietly left.",
+  "files": {
+    ".github/workflows/release.yml": [
+      "echo \"darwin_arm64=$(extract aimux-darwin-arm64)\"",
+      "echo \"linux_arm64=$(extract aimux-linux-arm64)\"",
+      "echo \"linux_x64=$(extract aimux-linux-x64)\"",
+      "echo \"local_darwin_arm64=$(extract aimux-local-darwin-arm64)\"",
+      "echo \"local_linux_arm64=$(extract aimux-local-linux-arm64)\"",
+      "echo \"local_linux_x64=$(extract aimux-local-linux-x64)\"",
+      "export DARWIN_ARM64=\"$(extract aimux-darwin-arm64)\"",
+      "export LINUX_ARM64=\"$(extract aimux-linux-arm64)\"",
+      "export LINUX_X64=\"$(extract aimux-linux-x64)\"",
+      "export LOCAL_DARWIN_ARM64=\"$(extract aimux-local-darwin-arm64)\"",
+      "export LOCAL_LINUX_ARM64=\"$(extract aimux-local-linux-arm64)\"",
+      "export LOCAL_LINUX_X64=\"$(extract aimux-local-linux-x64)\""
+    ],
+    "scripts/render-homebrew-formulas.sh": [
+      "url \"${BASE_URL}/aimux-darwin-arm64.tar.gz\"",
+      "url \"${BASE_URL}/aimux-linux-arm64.tar.gz\"",
+      "url \"${BASE_URL}/aimux-linux-x64.tar.gz\"",
+      "url \"${BASE_URL}/aimux-local-darwin-arm64.tar.gz\"",
+      "url \"${BASE_URL}/aimux-local-linux-arm64.tar.gz\"",
+      "url \"${BASE_URL}/aimux-local-linux-x64.tar.gz\""
+    ],
+    "scripts/homebrew-release-dry-run.sh": [
+      "export DARWIN_ARM64=\"$(sha_for_or_placeholder aimux-darwin-arm64.tar.gz \"$HOST_FULL_ASSET\")\"",
+      "export LINUX_ARM64=\"$(sha_for_or_placeholder aimux-linux-arm64.tar.gz \"$HOST_FULL_ASSET\")\"",
+      "export LINUX_X64=\"$(sha_for_or_placeholder aimux-linux-x64.tar.gz \"$HOST_FULL_ASSET\")\"",
+      "export LOCAL_DARWIN_ARM64=\"$(sha_for_or_placeholder aimux-local-darwin-arm64.tar.gz \"$HOST_LOCAL_ASSET\")\"",
+      "export LOCAL_LINUX_ARM64=\"$(sha_for_or_placeholder aimux-local-linux-arm64.tar.gz \"$HOST_LOCAL_ASSET\")\"",
+      "export LOCAL_LINUX_X64=\"$(sha_for_or_placeholder aimux-local-linux-x64.tar.gz \"$HOST_LOCAL_ASSET\")\""
+    ]
+  }
 }

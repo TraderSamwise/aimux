@@ -80,12 +80,28 @@ describe("the release asset set has one copy", () => {
     expect(hardcodedAssetNames(documented)).toEqual([]);
   });
 
-  it("refuses an allowlist with no reason written down", () => {
-    expect(() => allowedLines(JSON.stringify({ lines: ["x"] }))).toThrow(/description/);
-    expect(() => allowedLines(JSON.stringify({ description: "  ", lines: [] }))).toThrow(/description/);
+  it("scans a file with no matrix in it", () => {
+    const formulaTemplate = '      url "${BASE_URL}/aimux-darwin-arm64.tar.gz"';
+    expect(hardcodedAssetNames(formulaTemplate, new Set(), { hasMatrix: false }).map((entry) => entry.name)).toEqual([
+      "aimux-darwin-arm64",
+    ]);
   });
 
-  it("reads the recorded lines", () => {
-    expect(allowedLines(JSON.stringify({ description: "why", lines: ["a", "b"] }))).toEqual(new Set(["a", "b"]));
+  it("refuses an allowlist with no reason written down", () => {
+    expect(() => allowedLines(JSON.stringify({ files: {} }))).toThrow(/description/);
+    expect(() => allowedLines(JSON.stringify({ description: "  ", files: {} }))).toThrow(/description/);
+  });
+
+  it("refuses an allowlist with no files map", () => {
+    expect(() => allowedLines(JSON.stringify({ description: "why" }))).toThrow(/files map/);
+    expect(() => allowedLines(JSON.stringify({ description: "why", files: { a: "x" } }))).toThrow(/not an array/);
+  });
+
+  // Per file, so a binding recorded for the formula template cannot silently
+  // excuse the same line appearing in the workflow.
+  it("keeps the recorded lines separate per file", () => {
+    const byFile = allowedLines(JSON.stringify({ description: "why", files: { "a.yml": ["one"], "b.sh": ["two"] } }));
+    expect(byFile.get("a.yml")).toEqual(new Set(["one"]));
+    expect(byFile.get("b.sh")).toEqual(new Set(["two"]));
   });
 });
