@@ -67,7 +67,11 @@ import {
   selectedProjectPathAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
-import { projectListFailed, projectListUnavailable } from "@/lib/project-list-status";
+import {
+  projectListFailed,
+  projectListUnavailable,
+  relayUnavailableDetail,
+} from "@/lib/project-list-status";
 import {
   kickProjectApiViewRefreshAtom,
   projectUpdateTouchesDesktopState,
@@ -313,7 +317,7 @@ export default function MainLayout() {
       }
       if (!relayReadyForRequests) {
         if (relayUrl && isRelayUnavailableForProjectDiscovery(relayStatus)) {
-          setProjectListStatus(projectListUnavailable(`Relay is ${relayStatus}.`));
+          setProjectListStatus(projectListUnavailable(relayUnavailableDetail(relayStatus)));
         }
         timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
         return;

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated as RNAnimated,
   Platform,
@@ -30,6 +30,7 @@ import { Text } from "@/components/ui/text";
 import { chatTopBarReserveHeight } from "@/lib/chat-chrome-layout";
 import { isDesktopZoomCommand, subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { resolveChromeTopInset } from "@/lib/native-safe-area";
+import { pairingPromptDeviceKey, shouldOpenPairingPrompt } from "@/lib/pairing-prompt";
 import { ResponsiveViewportProvider, useResponsiveViewportValue } from "@/lib/responsive-viewport";
 import { useRouteShare } from "@/lib/use-route-share";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
@@ -62,6 +63,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const relayStatus = useAtomValue(relayStatusAtom);
   const pendingApproval = useAtomValue(relayPendingApprovalAtom);
   const [pairingDialogOpen, setPairingDialogOpen] = useState(false);
+  const lastPromptedDeviceRef = useRef<string | null>(null);
   const [translateX] = useState(() => new RNAnimated.Value(-DRAWER_WIDTH));
   const persistentSidebarProgress = useSharedValue(usesPersistentSidebar && sidebarOpen ? 1 : 0);
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
@@ -78,6 +80,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!usesPersistentSidebar) setSidebarOpen(false);
   }, [setSidebarOpen, usesPersistentSidebar]);
+
+  // Nothing loads until this device is approved, so the prompt opens itself
+  // rather than waiting for a click on a banner above an empty app.
+  useEffect(() => {
+    if (
+      !shouldOpenPairingPrompt({
+        pending: showPairingBanner,
+        deviceId: pendingApproval?.deviceId,
+        lastPromptedDeviceId: lastPromptedDeviceRef.current,
+      })
+    ) {
+      return;
+    }
+    lastPromptedDeviceRef.current = pairingPromptDeviceKey(pendingApproval?.deviceId);
+    setPairingDialogOpen(true);
+  }, [pendingApproval?.deviceId, showPairingBanner]);
 
   useEffect(() => {
     if (!usesDrawerSidebar) return;

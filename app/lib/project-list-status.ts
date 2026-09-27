@@ -47,3 +47,26 @@ export function projectListStaleMessage(status: ProjectListStatus): string | nul
   }
   return null;
 }
+
+// Why the daemon is out of reach, in the user's terms. "Relay is device_pending"
+// is the internal name for a state whose whole point is telling someone what to
+// do about it.
+export function relayUnavailableDetail(relayStatus: string): string {
+  switch (relayStatus) {
+    case "device_pending":
+      return "This device is waiting for approval on your Mac.";
+    case "daemon_offline":
+      return "Your Mac is not running aimux, or it is offline.";
+    case "auth_failed":
+      return "This device was blocked, or its sign-in expired.";
+    case "relay_unavailable":
+      return "The relay is unreachable.";
+    case "connecting":
+    case "disconnected":
+      return "Still connecting to the relay.";
+    case "client_storage_error":
+      return "This browser could not store its device identity.";
+    default:
+      return `The relay is ${relayStatus}.`;
+  }
+}

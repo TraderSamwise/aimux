@@ -7,6 +7,7 @@ import {
   projectListFailed,
   projectListStaleMessage,
   projectListUnavailable,
+  relayUnavailableDetail,
 } from "./project-list-status";
 
 describe("an empty list only reads as empty when the answer is trustworthy", () => {
@@ -52,5 +53,33 @@ describe("a list that is on screen but not refreshing says so", () => {
   it("stays quiet while the list is good", () => {
     expect(projectListStaleMessage(PROJECT_LIST_OK)).toBeNull();
     expect(projectListStaleMessage(PROJECT_LIST_LOADING)).toBeNull();
+  });
+});
+
+describe("the daemon-unreachable detail is written for the person reading it", () => {
+  it("tells a waiting device what to do", () => {
+    expect(relayUnavailableDetail("device_pending")).toBe(
+      "This device is waiting for approval on your Mac.",
+    );
+  });
+
+  it("never leaks an internal status name for a state it knows", () => {
+    for (const status of [
+      "device_pending",
+      "daemon_offline",
+      "auth_failed",
+      "relay_unavailable",
+      "connecting",
+      "disconnected",
+      "client_storage_error",
+    ]) {
+      const detail = relayUnavailableDetail(status);
+      expect(detail, status).not.toBe(`The relay is ${status}.`);
+      expect(detail, `${status} leaked its identifier`).not.toMatch(/_/);
+    }
+  });
+
+  it("still says something for a status it does not know", () => {
+    expect(relayUnavailableDetail("wat")).toBe("The relay is wat.");
   });
 });
