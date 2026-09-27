@@ -19,7 +19,14 @@ const SCOPED_CARGO_FLAGS = [
 // A lane only counts at a command position. Naming one inside a commit message,
 // a grep pattern or a heredoc is talking about it, not running it.
 function commandSegments(command) {
+  // Only a command position counts. Quoted text is an argument and a heredoc
+  // body is data -- a grep pattern or a script being written out mentions these
+  // lanes constantly, and neither is running one.
   return command
+    .replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*?^\s*\2\s*$/gm, "<<HEREDOC")
+    .replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*$/g, "<<HEREDOC")
+    .replace(/'[^']*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
     .split(/\n|;|&&|\|\||\|/)
     .map((segment) =>
       segment

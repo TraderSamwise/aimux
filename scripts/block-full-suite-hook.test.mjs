@@ -62,6 +62,12 @@ describe("naming a lane is not running it", () => {
     "grep -rn 'yarn native:test' docs/",
     "echo 'run yarn verify:full in CI' >> notes.md",
     "printf '%s\\n' 'cargo test -p aimux' > /tmp/note.txt",
+    // A pipe inside a quoted pattern is not a command separator.
+    "grep -n 'yarn verify|yarn native:test' .github/workflows/ci.yml",
+    'grep -rn "yarn native:test" scripts/',
+    // A heredoc body is data being written, not commands being run.
+    "python3 - <<'PY'\nprint('yarn native:test')\nPY",
+    "cat > notes.md <<EOF\nrun yarn verify:full in CI\nEOF",
   ];
 
   for (const command of mentions) {
