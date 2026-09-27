@@ -1,5 +1,6 @@
 mod footer;
 
+use crate::agent_display::{AgentDisplayInput, resolve_app_agent_display};
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
     DashboardService, DashboardSession, DesktopStateSnapshot, ServiceStatus, SessionStatus,
@@ -1098,8 +1099,24 @@ fn service_row(service: &DashboardService, selected: bool, digit: Option<usize>)
     }
 }
 
+/// What this agent is called, from the helper the chips and the app already
+/// ask. Reading `label` raw here made the row disagree with both of them for
+/// any label the shared rule counts as generated -- the session id itself, or
+/// the `tool-xxxxx` shape a spawn produces. The short id after the name is
+/// this surface's own affordance, not part of the name.
+fn agent_display_name(session: &DashboardSession) -> String {
+    resolve_app_agent_display(&AgentDisplayInput {
+        id: Some(session.id.as_str()),
+        label: session.label.as_deref(),
+        command: Some(session.command.as_str()),
+        tool_config_key: session.tool_config_key.as_deref(),
+        ..AgentDisplayInput::default()
+    })
+    .short_name()
+}
+
 fn agent_identity(session: &DashboardSession) -> String {
-    let label = session.label.as_deref().unwrap_or(&session.command);
+    let label = agent_display_name(session);
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
     let suffix = if !short_id.is_empty() && short_id != label {
@@ -1107,11 +1124,11 @@ fn agent_identity(session: &DashboardSession) -> String {
     } else {
         String::new()
     };
-    format!("{}{}", style(label, Tone::Strong), suffix)
+    format!("{}{}", style(&label, Tone::Strong), suffix)
 }
 
 fn agent_identity_column_width(session: &DashboardSession, identity: &str) -> usize {
-    let label = session.label.as_deref().unwrap_or(&session.command);
+    let label = agent_display_name(session);
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
     if session.label.is_none()
