@@ -245,9 +245,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-check
-          for a in \
-            aimux-darwin-arm64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-local-darwin-arm64 aimux-local-linux-arm64 aimux-local-linux-x64
+          while IFS=$'\t' read -r _platform _arch _variant a
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz" --dir release-check --clobber
@@ -257,7 +255,7 @@ jobs:
               --pattern "${a}.tar.gz.provenance.json" --dir release-check --clobber
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sbom.spdx.json" --dir release-check --clobber
-          done
+          done < <(python3 scripts/release-asset-matrix.py)
 
       - name: Verify complete release assets
         run: bash scripts/verify-release-asset-set.sh release-check
@@ -268,15 +266,13 @@ jobs:
           OWNER_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          for a in \
-            aimux-darwin-arm64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-local-darwin-arm64 aimux-local-linux-arm64 aimux-local-linux-x64
+          while IFS=$'\t' read -r _platform _arch _variant a
           do
             gh attestation verify "release-check/${a}.tar.gz" --repo "$OWNER_REPO"
             gh attestation verify "release-check/${a}.tar.gz.sha256" --repo "$OWNER_REPO"
             gh attestation verify "release-check/${a}.tar.gz.provenance.json" --repo "$OWNER_REPO"
             gh attestation verify "release-check/${a}.tar.gz.sbom.spdx.json" --repo "$OWNER_REPO"
-          done
+          done < <(python3 scripts/release-asset-matrix.py)
 
   publish-npm:
     name: Publish to npm
@@ -430,13 +426,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p sha
-          for a in \
-            aimux-darwin-arm64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-local-darwin-arm64 aimux-local-linux-arm64 aimux-local-linux-x64
+          while IFS=$'\t' read -r _platform _arch _variant a
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sha256" --dir sha --clobber
-          done
+          done < <(python3 scripts/release-asset-matrix.py)
 
       - name: Build Homebrew bottle
         env:
@@ -502,13 +496,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p sha homebrew-gate-release bottle-metadata-parts bottle-metadata
-          for a in \
-            aimux-darwin-arm64 aimux-linux-arm64 aimux-linux-x64 \
-            aimux-local-darwin-arm64 aimux-local-linux-arm64 aimux-local-linux-x64
+          while IFS=$'\t' read -r _platform _arch _variant a
           do
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sha256" --dir sha --clobber
-          done
+          done < <(python3 scripts/release-asset-matrix.py)
           gh release download "$TAG" --repo "$OWNER_REPO" \
             --pattern "*.bottles.tsv" --dir bottle-metadata-parts --clobber
           for formula in aimux aimux-local; do
@@ -534,7 +526,10 @@ jobs:
             echo "Homebrew bottle metadata for ${formula}:"
             cat "$output"
           done
-          for a in aimux-darwin-arm64 aimux-local-darwin-arm64; do
+          # The formula's darwin bottles: a filter of the matrix, not a list of
+          # its own, so a new darwin arch is picked up rather than skipped.
+          while IFS=$'\t' read -r platform _arch _variant a; do
+            [ "$platform" = darwin ] || continue
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz" --dir homebrew-gate-release --clobber
             gh release download "$TAG" --repo "$OWNER_REPO" \
@@ -542,7 +537,7 @@ jobs:
             gh release download "$TAG" --repo "$OWNER_REPO" \
               --pattern "${a}.tar.gz.sbom.spdx.json" --dir homebrew-gate-release --clobber
             cp "sha/${a}.tar.gz.sha256" homebrew-gate-release/
-          done
+          done < <(python3 scripts/release-asset-matrix.py)
 
       - name: Extract SHA values
         id: sha

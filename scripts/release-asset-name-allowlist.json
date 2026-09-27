@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "description": "Lines in .github/workflows/release.yml that name a single release asset to bind it to a Homebrew formula template variable. These are per-platform template bindings, not a completeness list, so they are not the v0.1.59 class this audit exists to catch. They are still copies: adding a platform to the matrix leaves them incomplete and that platform gets no bottle. Deriving the variable names from the matrix is the real fix and needs the Homebrew job rehearsed, which cannot be done outside a tag.",
+  "lines": [
+    "echo \"darwin_arm64=$(extract aimux-darwin-arm64)\"",
+    "echo \"linux_arm64=$(extract aimux-linux-arm64)\"",
+    "echo \"linux_x64=$(extract aimux-linux-x64)\"",
+    "echo \"local_darwin_arm64=$(extract aimux-local-darwin-arm64)\"",
+    "echo \"local_linux_arm64=$(extract aimux-local-linux-arm64)\"",
+    "echo \"local_linux_x64=$(extract aimux-local-linux-x64)\"",
+    "export DARWIN_ARM64=\"$(extract aimux-darwin-arm64)\"",
+    "export LINUX_ARM64=\"$(extract aimux-linux-arm64)\"",
+    "export LINUX_X64=\"$(extract aimux-linux-x64)\"",
+    "export LOCAL_DARWIN_ARM64=\"$(extract aimux-local-darwin-arm64)\"",
+    "export LOCAL_LINUX_ARM64=\"$(extract aimux-local-linux-arm64)\"",
+    "export LOCAL_LINUX_X64=\"$(extract aimux-local-linux-x64)\""
+  ]
+}
