@@ -1244,6 +1244,27 @@ describe("verify-release-asset-set.sh", () => {
     }
   }, 30000);
 
+  // A fresh linuxbrew prefix routinely has no bottle for some dependency, and
+  // this path had no retry at all -- the same failure that killed v0.1.61's macOS
+  // tap gate, waiting one platform over.
+  it("builds an unbottled dependency the Linux gate's log names, then retries", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-linux-homebrew-no-bottle-"));
+    try {
+      const result = run("bash", [join(repoRoot, "scripts/linux-homebrew-installed-command-gate.sh")], {
+        env: linuxHomebrewGateEnv(root, { AIMUX_FAKE_BREW_TRANSITIVE_NO_BOTTLE: "utf8proc" }),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Homebrew dependency utf8proc of ");
+      expect(result.stdout).toContain("building it from source first");
+      expect(result.stdout).toContain("now its unbottled dependencies are built");
+      expect(result.stdout).toContain("Linux Homebrew installed-command gate passed for tradersamwise/aimux");
+      expect(readFileSync(join(root, "brew.log"), "utf8")).toContain("install --formula --build-from-source utf8proc");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
   it("names the installed-command side when the Linux Homebrew launcher is broken", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-linux-homebrew-broken-launcher-"));
     try {
@@ -1668,6 +1689,10 @@ describe("verify-release-asset-set.sh", () => {
       writeFileSync(
         join(libDir, "run-and-capture.sh"),
         readFileSync(join(repoRoot, "scripts/lib/run-and-capture.sh"), "utf8"),
+      );
+      writeFileSync(
+        join(scriptDir, "homebrew-no-bottle.sh"),
+        readFileSync(join(repoRoot, "scripts/homebrew-no-bottle.sh"), "utf8"),
       );
       chmodSync(scriptCopy, 0o755);
       const env = {

@@ -5,6 +5,10 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/homebrew-no-bottle.sh
+. "$ROOT_DIR/scripts/homebrew-no-bottle.sh"
+
 TAP="${AIMUX_HOMEBREW_TAP:-tradersamwise/aimux}"
 LOG_DIR="${AIMUX_HOMEBREW_LINUX_GATE_LOG_DIR:-}"
 if [ -z "$LOG_DIR" ]; then
@@ -94,16 +98,44 @@ prove_installed_command() {
   brew list --formula --versions "$label"
 }
 
+# A fresh linuxbrew prefix routinely has no bottle for some dependency, and
+# Homebrew names it. The macOS tap gate hit exactly this on v0.1.61; this path
+# had no retry at all, so it was the same failure waiting one platform over.
+install_formula_with_no_bottle_retry() {
+  local formula="$1"
+  local label="$2"
+  local log_path="$LOG_DIR/install-$label.log"
+  local status
+
+  set +e
+  run_bounded 600 brew install --formula "$formula" >"$log_path" 2>&1
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    printf 'Linux Homebrew formula install for %s passed\n' "$label"
+    return 0
+  fi
+  if homebrew_log_reports_no_bottle "$log_path" \
+    && homebrew_build_named_dependencies_from_source \
+      "$log_path" "$formula" "$label formula" "$(uname -m)"; then
+    printf 'Retrying %s formula install now its unbottled dependencies are built\n' "$label"
+    set +e
+    run_bounded 600 brew install --formula "$formula" >>"$log_path" 2>&1
+    status=$?
+    set -e
+  fi
+  if [ "$status" -ne 0 ]; then
+    sed 's/^/  /' "$log_path" >&2
+    fail "formula install step for $label failed (exit $status; log: $log_path)"
+  fi
+  printf 'Linux Homebrew formula install for %s passed\n' "$label"
+}
+
 install_and_prove() {
   local formula="$1"
   local label="$2"
 
-  run_logged \
-    "Linux Homebrew formula install for $label" \
-    "formula install step for $label failed" \
-    600 \
-    "$LOG_DIR/install-$label.log" \
-    brew install --formula "$formula"
+  install_formula_with_no_bottle_retry "$formula" "$label"
   prove_installed_command "$formula" "$label"
   run_logged \
     "Linux Homebrew formula uninstall for $label" \

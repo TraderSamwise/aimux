@@ -6,6 +6,8 @@ fi
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/homebrew-no-bottle.sh
+. "$ROOT_DIR/scripts/homebrew-no-bottle.sh"
 
 usage() {
   cat <<'USAGE'
@@ -100,23 +102,6 @@ dependency_problem() {
   fi
 }
 
-homebrew_log_reports_no_bottle() {
-  local log_path="$1"
-  grep -Eiq '(^|[^[:alpha:]])no bottle available([^[:alpha:]]|$)' "$log_path"
-}
-
-# Homebrew names the formula that lacks a bottle: `utf8proc: no bottle
-# available!`. That is often a dependency rather than the formula we asked for,
-# and retrying OUR formula from source then cannot help -- which is how v0.1.61
-# failed the tap gate twice on the same utf8proc line with every asset already
-# published. Read the names out instead of assuming.
-homebrew_no_bottle_formulae() {
-  local log_path="$1"
-  grep -oiE '[A-Za-z0-9@_.+-]+: no bottle available' "$log_path" \
-    | sed 's/:.*//' \
-    | sort -u
-}
-
 run_brew_formula_action() {
   local action="$1"
   local formula="$2"
@@ -133,28 +118,12 @@ run_brew_formula_action() {
   set -e
 
   if [ "$status" -ne 0 ] && homebrew_log_reports_no_bottle "$log_path"; then
-    local short="${formula##*/}"
-    local named
-    local other=0
-    while IFS= read -r named; do
-      [ -n "$named" ] || continue
-      if [ "$named" = "$short" ] || [ "$named" = "$formula" ]; then
-        continue
-      fi
-      other=1
-      printf 'Homebrew dependency %s of %s has no bottle available on %s; building it from source first\n' \
-        "$named" "$context" "$PLATFORM_ARCH"
-      set +e
-      brew install --formula --build-from-source "$named" >>"$log_path" 2>&1
-      local dep_status=$?
-      set -e
-      if [ "$dep_status" -ne 0 ]; then
-        printf 'Homebrew could not build %s from source either (exit %s)\n' "$named" "$dep_status"
-      fi
-    done <<EOF
-$(homebrew_no_bottle_formulae "$log_path")
-EOF
-    if [ "$other" -eq 1 ]; then
+    local other=1
+    if homebrew_build_named_dependencies_from_source \
+      "$log_path" "$formula" "$context" "$PLATFORM_ARCH"; then
+      other=0
+    fi
+    if [ "$other" -eq 0 ]; then
       printf 'Retrying %s now its unbottled dependencies are built\n' "$context"
       set +e
       "${command[@]}" >>"$log_path" 2>&1
