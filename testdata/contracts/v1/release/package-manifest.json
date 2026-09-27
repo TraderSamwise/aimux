@@ -20,8 +20,7 @@
           "scripts/cargo-sweep-stale-targets.sh",
           "scripts/install-cargo-sweep-schedule.sh",
           "scripts/tmux-open-hyperlink.sh",
-          "scripts/tmux-statusline.sh",
-          "native/darwin-arm64"
+              "native/darwin-arm64"
         ],
         "forbiddenFiles": ["dist", "scripts/installed-aimux-shim.sh"]
       },
@@ -34,8 +33,7 @@
           "scripts/cargo-sweep-stale-targets.sh",
           "scripts/install-cargo-sweep-schedule.sh",
           "scripts/tmux-open-hyperlink.sh",
-          "scripts/tmux-statusline.sh",
-          "native/darwin-arm64",
+              "native/darwin-arm64",
           "LICENSE",
           "README.md"
         ],
@@ -47,7 +45,6 @@
           { "entry": "scripts/cargo-sweep-stale-targets.sh", "present": true },
           { "entry": "scripts/install-cargo-sweep-schedule.sh", "present": true },
           { "entry": "scripts/tmux-open-hyperlink.sh", "present": true },
-          { "entry": "scripts/tmux-statusline.sh", "present": true },
           { "entry": "native/darwin-arm64", "present": true }
         ],
         "forbidden": [
