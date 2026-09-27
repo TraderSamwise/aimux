@@ -389,6 +389,7 @@ fn project_lists_report_the_fact_their_wording_claims() {
         { "name": "dashboard-open", "path": "/a", "serviceAlive": false, "dashboardAlive": true },
         { "name": "service-only", "path": "/b", "serviceAlive": true, "dashboardAlive": false },
         { "name": "unknown", "path": "/c", "serviceAlive": true, "dashboardAlive": null },
+        { "name": "absent-field", "path": "/d", "serviceAlive": true },
     ]);
 
     assert_eq!(
@@ -396,8 +397,12 @@ fn project_lists_report_the_fact_their_wording_claims() {
         vec![
             "dashboard-open  live  /a",
             "service-only  idle  /b",
-            // Never sampled is not a running dashboard.
-            "unknown  idle  /c",
+            // Never sampled is not a running dashboard, and it is not an idle one
+            // either -- printing a failed query as "idle" is the same collapse the
+            // app fix removed.
+            "unknown  unknown  /c",
+            // An older daemon that never shipped the field is equally unknown.
+            "absent-field  unknown  /d",
         ]
     );
     assert_eq!(
@@ -406,6 +411,7 @@ fn project_lists_report_the_fact_their_wording_claims() {
             "dashboard-open  idle  /a",
             "service-only  service  /b",
             "unknown  service  /c",
+            "absent-field  service  /d",
         ]
     );
 }

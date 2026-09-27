@@ -281,18 +281,23 @@ fn render_project_lines(
     liveness_field: &str,
     live: &str,
     idle: &str,
+    unknown: &str,
 ) -> Vec<String> {
     projects
         .iter()
         .map(|project| {
+            // Three answers, three words. A daemon that could not ask tmux, or an
+            // older one that never shipped the field, must not read as "idle" --
+            // that is a failed query printed as a fact.
+            let liveness = match field(project, liveness_field).and_then(Value::as_bool) {
+                Some(true) => live,
+                Some(false) => idle,
+                None => unknown,
+            };
             format!(
                 "{}  {}  {}",
                 js_string(field(project, "name")),
-                if field(project, liveness_field).and_then(Value::as_bool) == Some(true) {
-                    live
-                } else {
-                    idle
-                },
+                liveness,
                 js_string(field(project, "path"))
             )
         })
@@ -305,6 +310,7 @@ pub fn render_core_daemon_projects_lines(projects: &Value) -> Vec<String> {
         "serviceAlive",
         "service",
         "idle",
+        "unknown",
     )
 }
 pub fn render_core_projects_list_lines(projects: &Value) -> Vec<String> {
@@ -312,7 +318,7 @@ pub fn render_core_projects_list_lines(projects: &Value) -> Vec<String> {
     if projects.is_empty() {
         vec!["No aimux projects found.".into()]
     } else {
-        render_project_lines(projects, "dashboardAlive", "live", "idle")
+        render_project_lines(projects, "dashboardAlive", "live", "idle", "unknown")
     }
 }
 
