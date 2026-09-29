@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AgentCreatePanel } from "@/components/agent-create-panel";
@@ -49,7 +49,9 @@ import {
 // dashboard's card/dot/[n]/pill language. Palette: card #15161a · border
 // #26272d · hairline #202127 · text #edeef0 / muted #7c7e88 / faint #565862.
 const PRESS = "hover:bg-[#1f2025] active:bg-[#232733]";
-const WORKTREE_CARD_MIN_WIDTH = 540;
+// Enough that the agent name is still a name. Below this the card scrolls
+// sideways rather than crushing the one column that identifies the row.
+const WORKTREE_CARD_MIN_WIDTH = 600;
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
@@ -91,7 +93,34 @@ function deriveAgentState(session: DesktopSession): AgentState {
 
 // A fixed column. The label runs from "Offline" to "NEEDS INPUT", and letting it
 // size itself put every row's status and action buttons at a different x.
-const STATUS_COLUMN = "w-[86px] shrink-0 flex-row items-center";
+const STATUS_COLUMN = "w-[104px] shrink-0 flex-row items-center";
+
+// The relative time is a column of its own, right-aligned so "55s ago" and
+// "2w ago" end on the same pixel. Inside the name run it ended wherever the name
+// happened to stop, which is what stopped these reading as columns at all.
+const RECENCY_COLUMN = "w-[92px] shrink-0";
+
+// "output 1w ago" in a column does not need the "ago": the column is nothing but
+// elapsed time, and the four characters are the difference between a readable
+// agent name and "c.".
+function compactRecency(text?: string | null): string {
+  if (!text) return "";
+  return text.replace(/ ago$/, "").replace(/just now$/, "now");
+}
+
+function RecencyCell({ text }: { text?: string | null }) {
+  return (
+    <View className={RECENCY_COLUMN}>
+      <Text
+        className="text-right font-mono text-[12px] text-[#565862]"
+        numberOfLines={1}
+        ellipsizeMode="head"
+      >
+        {compactRecency(text)}
+      </Text>
+    </View>
+  );
+}
 
 function StatusCell({ state }: { state: AgentState }) {
   const tone = appStatusClasses(state.kind);
@@ -238,6 +267,9 @@ function AgentRowImpl({
     recency,
     previewUnavailable || session.headline || session.previewLine,
   );
+  // Compact rows keep the joined string; the full row splits the time out so it
+  // can hold a column.
+  const detailHint = previewUnavailable || session.headline || session.previewLine || undefined;
   const identity = (
     <>
       <SelectMark selected={selected} />
@@ -261,7 +293,7 @@ function AgentRowImpl({
         </Text>
         <UnreadBadge count={session.notificationUnreadCount} />
       </View>
-      {compact ? null : <TrailingHint text={fullHint} />}
+      {compact ? null : <TrailingHint text={detailHint} />}
     </>
   );
 
@@ -293,6 +325,7 @@ function AgentRowImpl({
         {identity}
       </Pressable>
       <View className="shrink-0 flex-row items-center gap-3 pl-3">
+        <RecencyCell text={recency} />
         <StatusCell state={state} />
         <AgentActions
           session={session}
@@ -473,9 +506,15 @@ export function WorktreeCard({
   identityTone,
   mainCheckoutPath,
   recencyById,
+  contentWidth,
 }: {
   bucket: WorktreeBucket;
   mainCheckoutPath?: string | null;
+  // One width for every card, measured once by the list. Without it each card's
+  // horizontal scroller sizes to its own widest row, so the same column lands at
+  // a different x in every card -- and inside a card, a row missing its optional
+  // hint loses a flex gap and sits 8px off.
+  contentWidth?: number;
   // Precomputed by the list, which owns the clock these labels advance on.
   // Absent when a card is rendered on its own, and then each row computes its
   // own -- correct, just not self-updating.
@@ -591,7 +630,14 @@ export function WorktreeCard({
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ flexGrow: 1 }}
         >
-          <View className="flex-1" style={{ minWidth: WORKTREE_CARD_MIN_WIDTH }}>
+          <View
+            className="flex-1"
+            style={
+              contentWidth
+                ? { width: Math.max(contentWidth, WORKTREE_CARD_MIN_WIDTH) }
+                : { minWidth: WORKTREE_CARD_MIN_WIDTH }
+            }
+          >
             {content}
           </View>
         </ScrollView>
@@ -632,6 +678,9 @@ function WorktreeListImpl({
   onKillSession: (sessionId: string) => void;
 }) {
   const [showEmpty, setShowEmpty] = useState(false);
+  // Measured once for the whole list and handed to every card, so one column
+  // lands at one x down the entire screen.
+  const [listWidth, setListWidth] = useState(0);
   // Before any early return: relative labels are computed from Date.now(), and
   // nothing else re-renders them now that the rows hold still.
   useRecencyClock();
@@ -675,6 +724,7 @@ function WorktreeListImpl({
   }
 
   const cardProps = {
+    contentWidth: listWidth || undefined,
     recencyById,
     mainCheckoutPath,
     projectPath,
@@ -690,6 +740,10 @@ function WorktreeListImpl({
     bucket.isSupervisorLane ? "#d787d7" : worktreeToneForBucket(bucket, projectPath);
 
   const listClassName = cn("py-3", padded && "px-4");
+  const measureList = (event: LayoutChangeEvent) => {
+    const width = Math.round(event.nativeEvent.layout.width);
+    setListWidth((current) => (current === width ? current : width));
+  };
   const content = (
     <>
       {supervisor ? (
@@ -749,7 +803,11 @@ function WorktreeListImpl({
     return <View className={listClassName}>{content}</View>;
   }
 
-  return <View className={listClassName}>{content}</View>;
+  return (
+    <View className={listClassName} onLayout={measureList}>
+      {content}
+    </View>
+  );
 }
 
 // Self-contained worktree dashboard (state handling + list). `padded` adds the
