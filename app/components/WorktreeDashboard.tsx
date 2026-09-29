@@ -89,28 +89,36 @@ function deriveAgentState(session: DesktopSession): AgentState {
   return { label: "Offline", kind: "offline", pill: false };
 }
 
+// A fixed column. The label runs from "Offline" to "NEEDS INPUT", and letting it
+// size itself put every row's status and action buttons at a different x.
+const STATUS_COLUMN = "w-[86px] shrink-0 flex-row items-center";
+
 function StatusCell({ state }: { state: AgentState }) {
   const tone = appStatusClasses(state.kind);
   if (state.pill) {
     return (
-      <View className={cn("rounded-[5px] px-2 py-0.5", tone.bg)}>
-        <Text
-          className={cn("text-[10.5px] font-bold uppercase tracking-wide", tone.text)}
-          style={{ color: tone.hex }}
-        >
-          {state.label}
-        </Text>
+      <View className={STATUS_COLUMN}>
+        <View className={cn("rounded-[5px] px-2 py-0.5", tone.bg)}>
+          <Text
+            className={cn("text-[10.5px] font-bold uppercase tracking-wide", tone.text)}
+            style={{ color: tone.hex }}
+          >
+            {state.label}
+          </Text>
+        </View>
       </View>
     );
   }
   return (
-    <Text
-      className={cn("font-mono text-[12px]", tone.text)}
-      style={{ color: tone.hex }}
-      numberOfLines={1}
-    >
-      {state.label}
-    </Text>
+    <View className={STATUS_COLUMN}>
+      <Text
+        className={cn("font-mono text-[12px]", tone.text)}
+        style={{ color: tone.hex }}
+        numberOfLines={1}
+      >
+        {state.label}
+      </Text>
+    </View>
   );
 }
 
@@ -280,7 +288,7 @@ function AgentRowImpl({
     >
       <Pressable
         onPress={onPress}
-        className="min-w-0 shrink flex-row items-center gap-2 active:opacity-70"
+        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
         {identity}
       </Pressable>

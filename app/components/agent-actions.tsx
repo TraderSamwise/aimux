@@ -48,6 +48,13 @@ const AGENT_ACTION_REFRESH_VIEWS = [
   "worktrees",
 ] as const;
 
+// An action that does not apply still owns its column. Without this the five
+// slots collapse to four or three and every row's buttons land at a different x,
+// which is what made the list look ragged.
+function ActionSlot({ sizeClass }: { sizeClass: string }) {
+  return <View className={cn("shrink-0", sizeClass)} />;
+}
+
 export function AgentActions({
   session,
   endpoint,
@@ -191,7 +198,9 @@ export function AgentActions({
             disabled
             label={`Resume unavailable for ${displayName}: ${resumeBlockedReason}`}
           />
-        ) : null}
+        ) : (
+          <ActionSlot sizeClass={sizeClass} />
+        )}
         {forkTool ? (
           <ActionButton
             icon={GitFork}
@@ -212,7 +221,9 @@ export function AgentActions({
             disabled={!canAct}
             label={`Fork ${displayName}`}
           />
-        ) : null}
+        ) : (
+          <ActionSlot sizeClass={sizeClass} />
+        )}
         {overseerAction ? (
           <ActionButton
             icon={overseerAction === "demote" ? ShieldOff : Radar}
@@ -233,7 +244,9 @@ export function AgentActions({
                 : `Promote ${displayName} to overseer`
             }
           />
-        ) : null}
+        ) : (
+          <ActionSlot sizeClass={sizeClass} />
+        )}
         <ActionButton
           icon={planeAction.kind === "leave" ? LogOut : Layers}
           iconSize={iconSize}
