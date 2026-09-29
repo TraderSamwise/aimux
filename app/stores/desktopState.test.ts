@@ -510,3 +510,84 @@ describe("a poll that changes nothing must not invalidate the view", () => {
     expect(after?.sessions[1]?.status).toBe("idle");
   });
 });
+
+// Memoisation's failure mode is a screen that stops updating, so the cases where
+// a wrongly-held reference would show as "nothing happened" are pinned here too.
+describe("changes still reach the view", () => {
+  const withSessions = (sessions: DesktopState["sessions"]): DesktopState =>
+    desktopState({
+      mainCheckoutPath: "/repo",
+      mainCheckoutInfo: { name: "repo", branch: "main" },
+      sessions,
+      worktreeGroups: [
+        {
+          name: "repo",
+          path: "/repo",
+          branch: "main",
+          status: "active",
+          sessions,
+          services: [],
+        },
+      ],
+    });
+
+  const session = (id: string, status: DesktopState["sessions"][number]["status"] = "running") => ({
+    id,
+    status,
+    toolConfigKey: "claude",
+  });
+
+  function apply(store: ReturnType<typeof createStore>, sessions: DesktopState["sessions"]) {
+    store.set(applyDesktopStateSuccessAtom, {
+      projectPath: "/repo",
+      state: withSessions(sessions),
+    });
+    return store.get(worktreeGroupsFamily("/repo"));
+  }
+
+  it("regroups when an agent changes status", () => {
+    const store = createStore();
+    const before = apply(store, [session("a"), session("b")]);
+    const after = apply(store, [session("a"), session("b", "idle")]);
+
+    expect(after).not.toBe(before);
+    const bucket = after.find((group) => group.path === "/repo");
+    expect(bucket?.sessions.find((s) => s.id === "b")?.status).toBe("idle");
+  });
+
+  it("regroups when an agent is added", () => {
+    const store = createStore();
+    const before = apply(store, [session("a")]);
+    const after = apply(store, [session("a"), session("b")]);
+
+    expect(after).not.toBe(before);
+    expect(after.find((g) => g.path === "/repo")?.sessions.map((s) => s.id)).toEqual(["a", "b"]);
+  });
+
+  it("regroups when an agent disappears", () => {
+    const store = createStore();
+    const before = apply(store, [session("a"), session("b")]);
+    const after = apply(store, [session("a")]);
+
+    expect(after).not.toBe(before);
+    expect(after.find((g) => g.path === "/repo")?.sessions.map((s) => s.id)).toEqual(["a"]);
+  });
+
+  it("regroups when agents are reordered, even though every entry is unchanged", () => {
+    const store = createStore();
+    const before = apply(store, [session("a"), session("b")]);
+    const after = apply(store, [session("b"), session("a")]);
+
+    expect(after).not.toBe(before);
+    expect(after.find((g) => g.path === "/repo")?.sessions.map((s) => s.id)).toEqual(["b", "a"]);
+  });
+
+  it("surfaces an error after a successful state without clearing the state", () => {
+    const store = createStore();
+    apply(store, [session("a")]);
+    store.set(applyDesktopStateFailureAtom, { projectPath: "/repo", error: "host offline" });
+
+    expect(store.get(desktopStateErrorFamily("/repo"))).toBe("host offline");
+    expect(store.get(desktopStateFamily("/repo"))?.sessions).toHaveLength(1);
+  });
+});
