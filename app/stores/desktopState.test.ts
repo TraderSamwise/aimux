@@ -11,6 +11,7 @@ import {
   desktopStateErrorFamily,
   desktopStateFamily,
   desktopStateResourceFamily,
+  worktreeGroupsFamily,
 } from "./desktopState";
 
 function desktopState(overrides: Partial<DesktopState> = {}): DesktopState {
@@ -437,5 +438,75 @@ describe("desktop state resource lifecycle", () => {
       stale: false,
       updatedAt: null,
     });
+  });
+});
+
+// The whole agent list used to rebuild on every poll, because the daemon rebuilds
+// the payload each time and the store kept whatever it was handed. Measured at
+// ~120ms per tick for 35 agents, three times per data change, for output that was
+// byte-identical. These pin the identity rules that stopped it.
+describe("a poll that changes nothing must not invalidate the view", () => {
+  const populated = () =>
+    desktopState({
+      mainCheckoutPath: "/repo",
+      mainCheckoutInfo: { name: "repo", branch: "main" },
+      sessions: [
+        { id: "a", status: "running", toolConfigKey: "claude" },
+        { id: "b", status: "running", toolConfigKey: "codex" },
+      ],
+      worktreeGroups: [
+        {
+          name: "repo",
+          path: "/repo",
+          branch: "main",
+          status: "active",
+          sessions: [
+            { id: "a", status: "running", toolConfigKey: "claude" },
+            { id: "b", status: "running", toolConfigKey: "codex" },
+          ],
+          services: [],
+        },
+      ],
+    });
+
+  it("keeps the previous state object when the payload is identical", () => {
+    const store = createStore();
+    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: populated() });
+    const first = store.get(desktopStateFamily("/repo"));
+
+    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: populated() });
+
+    expect(store.get(desktopStateFamily("/repo"))).toBe(first);
+  });
+
+  it("does not regroup when only a field the view never renders changed", () => {
+    const store = createStore();
+    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: populated() });
+    const groupsBefore = store.get(worktreeGroupsFamily("/repo"));
+
+    // loopAlertState is shipped by the daemon, read by nothing in the app, and
+    // changed on nearly every poll. It must not cost a single row render.
+    store.set(applyDesktopStateSuccessAtom, {
+      projectPath: "/repo",
+      state: { ...populated(), loopAlertState: { changed: Date.now() } } as DesktopState,
+    });
+
+    expect(store.get(worktreeGroupsFamily("/repo"))).toBe(groupsBefore);
+  });
+
+  it("keeps unchanged sessions identical when one session changes", () => {
+    const store = createStore();
+    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: populated() });
+    const before = store.get(desktopStateFamily("/repo"));
+
+    const next = populated();
+    next.sessions[1] = { ...next.sessions[1], status: "idle" };
+    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: next });
+    const after = store.get(desktopStateFamily("/repo"));
+
+    expect(after).not.toBe(before);
+    expect(after?.sessions[0]).toBe(before?.sessions[0]);
+    expect(after?.sessions[1]).not.toBe(before?.sessions[1]);
+    expect(after?.sessions[1]?.status).toBe("idle");
   });
 });

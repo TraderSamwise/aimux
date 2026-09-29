@@ -57,6 +57,18 @@ function useClerkAuthAdapter(): AuthState {
   };
 }
 
+// Built once. As an inline literal this was a new object on every render of a
+// provider near the root, and a changed context value re-renders every consumer
+// regardless of React.memo -- which is what kept the agent list re-rendering
+// even after its own data stopped changing.
+const LOCAL_AUTH_VALUE = {
+  isSignedIn: true,
+  isLoaded: true,
+  userId: "local",
+  signOut: noop,
+  getToken: noopToken,
+} as const;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const configurationError = getAuthConfigurationError();
   if (configurationError) {
@@ -65,17 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   if (LOCAL_MODE) {
     return (
-      <LocalAuthContext.Provider
-        value={{
-          isSignedIn: true,
-          isLoaded: true,
-          userId: "local",
-          signOut: noop,
-          getToken: noopToken,
-        }}
-      >
-        {children}
-      </LocalAuthContext.Provider>
+      <LocalAuthContext.Provider value={LOCAL_AUTH_VALUE}>{children}</LocalAuthContext.Provider>
     );
   }
 

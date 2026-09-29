@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -32,7 +32,8 @@ import { detailHrefForPath, parentViewHrefForPath } from "@/lib/view-location";
 import { worktreeToneForBucket } from "@/lib/worktree-tone";
 import {
   desktopStateErrorFamily,
-  desktopStateFamily,
+  desktopStateOperationFailuresFamily,
+  desktopStatePresentFamily,
   worktreeGroupsFamily,
 } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
@@ -178,7 +179,11 @@ function CompactRecency({ text }: { text?: string | null }) {
   );
 }
 
-export function AgentRow({
+// Memoised: selecting an agent changes one highlight, and without this all 35
+// rows re-rendered to move it -- 130ms on every tap that opens a chat.
+export const AgentRow = React.memo(AgentRowImpl);
+
+function AgentRowImpl({
   session,
   digit,
   selected,
@@ -189,7 +194,7 @@ export function AgentRow({
   token,
   mainCheckoutPath,
   onKilled,
-  onPress,
+  onPick,
 }: {
   session: DesktopSession;
   digit: number;
@@ -201,8 +206,12 @@ export function AgentRow({
   token: string | null;
   mainCheckoutPath?: string | null;
   onKilled: (sessionId: string) => void;
-  onPress: () => void;
+  // Takes the id rather than a bound closure, so the prop is stable per row.
+  onPick: (sessionId: string) => void;
 }) {
+  // Plain closure, not a hook: this row only re-renders when its props change,
+  // and the test harness renders these components as ordinary functions.
+  const onPress = () => onPick(session.id);
   const shortName = agentShortName(session);
   const state = deriveAgentState(session);
   const recency = agentRecencyText(session);
@@ -515,7 +524,7 @@ export function WorktreeCard({
               token={token}
               mainCheckoutPath={mainCheckoutPath}
               onKilled={onKillSession}
-              onPress={() => onPickSession(session.id)}
+              onPick={onPickSession}
             />
           ))}
           {bucket.services.map((service, i) => (
@@ -567,7 +576,13 @@ export function WorktreeCard({
   );
 }
 
-export function WorktreeList({
+// The 35-row list is the expensive part of this screen, so it must not rebuild
+// because something above it happened to render. Its inputs are stable now: the
+// buckets keep identity across polls that did not change them, and the handlers
+// below are stable for the life of the screen.
+export const WorktreeList = React.memo(WorktreeListImpl);
+
+function WorktreeListImpl({
   groups,
   projectPath,
   endpoint,
@@ -700,10 +715,19 @@ export function WorktreeList({
 // Self-contained worktree dashboard (state handling + list). `padded` adds the
 // horizontal page padding for full-bleed callers; embedded callers (the Project
 // screen) pass false to align with their own page padding.
-export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
+// Memoised because its only prop is a literal, while its parent re-renders on
+// every unrelated poll -- the project list, the notification feed and the task
+// summary each tick independently. Without this the whole agent list rebuilt
+// three times per data change.
+export const WorktreeDashboard = React.memo(WorktreeDashboardImpl);
+
+function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
   const { projectPath, endpoint } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
-  const desktopState = useAtomValue(desktopStateFamily(stateProjectPath));
+  // Subscribing to the whole desktop state re-rendered every row whenever any
+  // field changed, including ones this view never shows.
+  const desktopStatePresent = useAtomValue(desktopStatePresentFamily(stateProjectPath));
+  const operationFailures = useAtomValue(desktopStateOperationFailuresFamily(stateProjectPath));
   const desktopStateError = useAtomValue(desktopStateErrorFamily(stateProjectPath));
   const groups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
   const selectedSessionId = useAtomValue(selectedSessionIdAtom);
@@ -728,29 +752,50 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
     };
   }, [getToken]);
 
-  function handlePickSession(sessionId: string) {
-    blurWebActiveElement();
-    selectSession(sessionId);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, projectPath));
-  }
+  // Read through refs rather than closing over these. As dependencies they gave
+  // the handlers a new identity on every navigation and selection, which broke
+  // the list's memo and re-rendered all 35 rows on the way out of the screen --
+  // 155ms of the tap that opens a chat.
+  const latest = useRef({ pathname, projectPath, selectedSessionId });
+  useEffect(() => {
+    latest.current = { pathname, projectPath, selectedSessionId };
+  }, [pathname, projectPath, selectedSessionId]);
 
-  function handlePickService(serviceId: string) {
-    blurWebActiveElement();
-    router.push(detailHrefForPath(pathname, "service", serviceId, projectPath));
-  }
+  const handlePickSession = useCallback(
+    (sessionId: string) => {
+      blurWebActiveElement();
+      selectSession(sessionId);
+      const { pathname: at, projectPath: project } = latest.current;
+      router.push(detailHrefForPath(at, "agent", sessionId, project));
+    },
+    [router, selectSession],
+  );
 
-  function handleKillSession(sessionId: string) {
-    if (selectedSessionId !== sessionId) return;
-    selectSession(null);
-    if (pathname.includes("/agent/")) {
-      router.replace(parentViewHrefForPath(pathname, projectPath));
-    }
-  }
+  const handlePickService = useCallback(
+    (serviceId: string) => {
+      blurWebActiveElement();
+      const { pathname: at, projectPath: project } = latest.current;
+      router.push(detailHrefForPath(at, "service", serviceId, project));
+    },
+    [router],
+  );
+
+  const handleKillSession = useCallback(
+    (sessionId: string) => {
+      const { pathname: at, projectPath: project, selectedSessionId: selected } = latest.current;
+      if (selected !== sessionId) return;
+      selectSession(null);
+      if (at.includes("/agent/")) {
+        router.replace(parentViewHrefForPath(at, project));
+      }
+    },
+    [router, selectSession],
+  );
 
   const statePad = padded ? "p-6" : "py-6";
-  const operationFailureSummary = summarizeOperationFailures(desktopState?.operationFailures);
+  const operationFailureSummary = summarizeOperationFailures(operationFailures);
 
-  if (!endpoint && desktopState === null) {
+  if (!endpoint && !desktopStatePresent) {
     return (
       <View className={statePad}>
         <PageStateCard
@@ -760,7 +805,7 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
       </View>
     );
   }
-  if (endpoint && desktopState === null && desktopStateError) {
+  if (endpoint && !desktopStatePresent && desktopStateError) {
     // Pairing is the operator's next move, not an error to read: the dialog
     // carries the code and clears itself, so no wall goes up behind it.
     if (isDevicePendingApprovalError(desktopStateError)) {
@@ -780,7 +825,7 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
       </View>
     );
   }
-  if (endpoint && desktopState === null) {
+  if (endpoint && !desktopStatePresent) {
     return (
       <View className={statePad}>
         <PageStateCard title="Loading project state..." />

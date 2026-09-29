@@ -81,6 +81,16 @@ interface HostNode {
 
 type FunctionComponentNode = (props: unknown) => ReactNode;
 
+// React.memo wraps a component in an object, so an element's `type` is no longer
+// callable. Unwrap it, or a memoised component renders as nothing here while
+// rendering fine in the app.
+function componentOf(type: unknown): FunctionComponentNode | null {
+  if (typeof type === "function") return type as FunctionComponentNode;
+  const memo = type as { $$typeof?: symbol; type?: unknown } | null;
+  if (memo && memo.$$typeof === Symbol.for("react.memo")) return componentOf(memo.type);
+  return null;
+}
+
 function renderNode(node: ReactNode): HostNode[] {
   if (node === null || node === undefined || typeof node === "boolean") return [];
   if (typeof node === "string" || typeof node === "number") return [];
@@ -91,8 +101,9 @@ function renderNode(node: ReactNode): HostNode[] {
     return renderNode((node.props as { children?: ReactNode }).children);
   }
 
-  if (typeof node.type === "function") {
-    return renderNode((node.type as FunctionComponentNode)(node.props));
+  const component = componentOf(node.type);
+  if (component) {
+    return renderNode(component(node.props));
   }
 
   const props = node.props as Record<string, unknown> & { children?: ReactNode };
@@ -113,6 +124,11 @@ function collectText(node: ReactNode): string {
 
   if (node.type === React.Fragment) {
     return collectText((node.props as { children?: ReactNode }).children);
+  }
+
+  const memoised = componentOf(node.type);
+  if (memoised) {
+    return collectText(memoised(node.props));
   }
 
   if (typeof node.type === "function") {
@@ -287,7 +303,7 @@ describe("AgentRow", () => {
         projectPath: "/repo",
         endpoint: null,
         token: null,
-        onPress: vi.fn(),
+        onPick: vi.fn(),
         onKilled: vi.fn(),
       }),
     );
@@ -313,7 +329,7 @@ describe("AgentRow", () => {
         projectPath: "/repo",
         endpoint: null,
         token: null,
-        onPress: vi.fn(),
+        onPick: vi.fn(),
         onKilled: vi.fn(),
       }),
     );
