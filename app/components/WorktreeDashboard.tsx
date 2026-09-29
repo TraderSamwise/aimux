@@ -27,6 +27,7 @@ import {
   type AppStatusKind,
 } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
+import { useRecencyClock } from "@/lib/recency-clock";
 import { useRouteProject } from "@/lib/use-route-project";
 import { detailHrefForPath, parentViewHrefForPath } from "@/lib/view-location";
 import { worktreeToneForBucket } from "@/lib/worktree-tone";
@@ -166,6 +167,11 @@ function serviceRecencyText(service: DesktopService): string | null {
   return formatServiceRecency(service);
 }
 
+// Services and agents share one map; the prefix keeps their ids from colliding.
+function serviceRecencyKey(serviceId: string): string {
+  return `service:${serviceId}`;
+}
+
 function CompactRecency({ text }: { text?: string | null }) {
   if (!text) return null;
   return (
@@ -193,6 +199,7 @@ function AgentRowImpl({
   endpoint,
   token,
   mainCheckoutPath,
+  recencyText,
   onKilled,
   onPick,
 }: {
@@ -205,6 +212,9 @@ function AgentRowImpl({
   endpoint: ServiceEndpoint | null;
   token: string | null;
   mainCheckoutPath?: string | null;
+  // A string, so a clock tick re-renders this row only when its own label
+  // changed rather than every time the minute advances.
+  recencyText?: string | null;
   onKilled: (sessionId: string) => void;
   // Takes the id rather than a bound closure, so the prop is stable per row.
   onPick: (sessionId: string) => void;
@@ -214,7 +224,7 @@ function AgentRowImpl({
   const onPress = () => onPick(session.id);
   const shortName = agentShortName(session);
   const state = deriveAgentState(session);
-  const recency = agentRecencyText(session);
+  const recency = recencyText !== undefined ? recencyText : agentRecencyText(session);
   const previewUnavailable = formatPreviewCaptureUnavailable(session.previewCapture);
   const fullHint = joinHints(
     recency,
@@ -454,9 +464,14 @@ export function WorktreeCard({
   onKillSession,
   identityTone,
   mainCheckoutPath,
+  recencyById,
 }: {
   bucket: WorktreeBucket;
   mainCheckoutPath?: string | null;
+  // Precomputed by the list, which owns the clock these labels advance on.
+  // Absent when a card is rendered on its own, and then each row computes its
+  // own -- correct, just not self-updating.
+  recencyById?: Record<string, string | null>;
   projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
@@ -523,6 +538,7 @@ export function WorktreeCard({
               endpoint={endpoint}
               token={token}
               mainCheckoutPath={mainCheckoutPath}
+              recencyText={recencyById?.[session.id]}
               onKilled={onKillSession}
               onPick={onPickSession}
             />
@@ -608,6 +624,9 @@ function WorktreeListImpl({
   onKillSession: (sessionId: string) => void;
 }) {
   const [showEmpty, setShowEmpty] = useState(false);
+  // Before any early return: relative labels are computed from Date.now(), and
+  // nothing else re-renders them now that the rows hold still.
+  useRecencyClock();
 
   const shown = activeOnly
     ? groups.flatMap((bucket) => {
@@ -635,7 +654,20 @@ function WorktreeListImpl({
   // agent with no worktree of its own could be moved into the plane and never
   // moved back out from the dashboard, while the chat header offered it.
   const mainCheckoutPath = groups.find((bucket) => bucket.isMainCheckout)?.path ?? null;
+  // One ticker for the whole list. Relative labels are computed from Date.now(),
+  // so they only advance when something re-renders them -- and the rows now hold
+  // still. Computing the strings here means a minute passing re-renders only the
+  // rows whose label actually changed, not all of them.
+  const recencyById: Record<string, string | null> = {};
+  for (const bucket of shown) {
+    for (const session of bucket.sessions) recencyById[session.id] = agentRecencyText(session);
+    for (const service of bucket.services) {
+      recencyById[serviceRecencyKey(service.id)] = serviceRecencyText(service);
+    }
+  }
+
   const cardProps = {
+    recencyById,
     mainCheckoutPath,
     projectPath,
     endpoint,
