@@ -1267,11 +1267,20 @@ fn is_js_word_char(ch: char) -> bool {
 
 fn looks_like_claude_collapsed_progress_text(text: &str) -> bool {
     let lower = text.trim().to_ascii_lowercase();
-    (lower.starts_with("made ") || lower.starts_with("reading "))
-        && (lower.contains("ctrl+o") || lower.contains("to expand"))
-        || (lower.starts_with("read ")
-            && lower.contains(" file")
-            && (lower.contains("ctrl+o") || lower.contains("to expand")))
+    if !claude_collapse_hint(&lower) {
+        return false;
+    }
+    lower.starts_with("made ")
+        || lower.starts_with("reading ")
+        || (lower.starts_with("read ") && lower.contains(" file"))
+        // Claude names a new in-flight tool with every release, so match the
+        // shape -- "Searching for 2 patterns…" -- rather than the verb. The
+        // collapse hint above is what keeps assistant prose out.
+        || looks_like_activity_progress_text(text)
+}
+
+fn claude_collapse_hint(lower: &str) -> bool {
+    lower.contains("ctrl+o") || lower.contains("to expand") || lower.contains("to interrupt")
 }
 
 fn looks_like_terminal_tail_chrome_status_text(line: &str) -> bool {

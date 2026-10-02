@@ -109,6 +109,68 @@ fn keeps_claude_task_output_progress_out_of_assistant_chat_messages() {
     );
 }
 
+// Claude's TUI marks both its own prose and its tool calls with "⏺", so the
+// collapse hint is the only thing separating them. Without it a running tool
+// landed inside the assistant bubble and churned it on every poll.
+#[test]
+fn keeps_bulleted_tool_progress_out_of_assistant_chat_messages() {
+    let raw = [
+        "⏺ Fix 6 — the coverage gaps.",
+        "",
+        "⏺ Searching for 2 patterns… (ctrl+o to expand)",
+        "",
+        "⏺ Running 2 commands… (esc to interrupt)",
+    ]
+    .join("\n");
+
+    let projection = project_agent_output(&raw, Some("claude"));
+    let block_types: Vec<&str> = projection
+        .parsed
+        .get("blocks")
+        .and_then(Value::as_array)
+        .expect("blocks")
+        .iter()
+        .map(|block| block["type"].as_str().expect("block type"))
+        .collect();
+
+    assert_eq!(block_types, ["response", "status"]);
+    let status_text = projection.parsed["blocks"][1]["text"]
+        .as_str()
+        .expect("status text");
+    assert!(status_text.contains("Searching for 2 patterns"));
+    assert!(status_text.contains("Running 2 commands"));
+    let message_text: Vec<&str> = projection
+        .messages
+        .iter()
+        .map(|message| message["text"].as_str().expect("message text"))
+        .collect();
+    assert_eq!(message_text, ["Fix 6 — the coverage gaps."]);
+}
+
+// The inverse: prose that happens to open with the same shape is still chat.
+#[test]
+fn keeps_assistant_prose_shaped_like_tool_progress_in_chat_messages() {
+    let raw = [
+        "⏺ Searching for the right abstraction here… it is the atom, not the hook.",
+        "",
+        "⏺ Reading through this again, the TTL is the part that drifts.",
+    ]
+    .join("\n");
+
+    let projection = project_agent_output(&raw, Some("claude"));
+    let message_text: Vec<&str> = projection
+        .messages
+        .iter()
+        .map(|message| message["text"].as_str().expect("message text"))
+        .collect();
+    assert_eq!(
+        message_text,
+        [
+            "Searching for the right abstraction here… it is the atom, not the hook.\n\nReading through this again, the TTL is the part that drifts.",
+        ]
+    );
+}
+
 #[test]
 fn fixture_agent_output_parser_audit_matches_typescript() {
     let contract: Value =
