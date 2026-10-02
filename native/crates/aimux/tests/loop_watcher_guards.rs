@@ -995,6 +995,74 @@ fn reconciliation_uses_worklist_needs_you_not_stale_items() {
     );
 }
 
+// `task assign` sets the thread's owner and waitingOn to the assignee, but only
+// a notification row carries `sessionId`. Reading its absence as unowned made
+// the overseer's own assigned task threads come back at it as unowned work.
+#[test]
+fn an_assigned_task_thread_is_not_reported_as_unowned_work() {
+    let (boss, mut boss_meta) = looping_session("boss", "busy");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 60_000,
+            "reconciliationDwellMs": 0,
+            "reconciliationReminderTicks": 1,
+            "reconciliationCooldownMs": 0
+        }),
+    );
+    let worklist_item = |owner: &str| {
+        json!({
+            "key": "t:thread-assigned",
+            "kind": "thread",
+            "type": "task",
+            "bucket": "awake",
+            "title": "Task: wire the widget",
+            "actionable": true,
+            "thread": {
+                "thread": {
+                    "id": "thread-assigned",
+                    "status": "waiting",
+                    "owner": owner,
+                    "waitingOn": [owner]
+                },
+                "messages": [],
+                "pendingDeliveries": 1
+            }
+        })
+    };
+
+    input["coordinationWorklist"] = json!({
+        "items": [worklist_item("worker")],
+        "needsYou": [worklist_item("worker")],
+        "tail": []
+    });
+    let mut watcher = LoopWatcher::new();
+    assert!(
+        watcher.plan_sends(&input, NOW).is_empty(),
+        "a thread owned by a live agent is that agent's work, not unowned work"
+    );
+
+    // The inverse: an owner that is not in the fleet is still a real gap.
+    input["coordinationWorklist"] = json!({
+        "items": [worklist_item("ghost")],
+        "needsYou": [worklist_item("ghost")],
+        "tail": []
+    });
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].kind, LoopSendKind::Reconciliation);
+    assert!(
+        sends[0].text.contains("thread-assigned"),
+        "a thread whose owner is gone must still surface: {}",
+        sends[0].text
+    );
+}
+
 #[test]
 fn reconciliation_surfaces_worklist_object_missing_needs_you() {
     let (boss, mut boss_meta) = looping_session("boss", "busy");

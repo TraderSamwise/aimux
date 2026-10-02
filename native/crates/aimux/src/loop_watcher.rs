@@ -1720,7 +1720,7 @@ fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
         }
     }
     for item in coordination_worklist_needs_you(input) {
-        if let Some(item) = unowned_worklist_item(&item) {
+        if let Some(item) = unowned_worklist_item(&item, &live_sessions) {
             work.push(item);
         }
     }
@@ -1828,7 +1828,7 @@ fn idle_owned_task_item(task: &Value, idle_workers: &BTreeSet<String>) -> Option
     }))
 }
 
-fn unowned_worklist_item(item: &Value) -> Option<Value> {
+fn unowned_worklist_item(item: &Value, live_sessions: &BTreeSet<String>) -> Option<Value> {
     if !item
         .get("actionable")
         .and_then(Value::as_bool)
@@ -1839,6 +1839,15 @@ fn unowned_worklist_item(item: &Value) -> Option<Value> {
     if optional_str(item, "sessionId").is_some() {
         return None;
     }
+    // Only a notification row carries `sessionId`; a thread row never does, so
+    // reading absence as unowned reported every assigned task thread as
+    // unowned work. A thread states its owner on the thread itself.
+    let owner = worklist_thread_owner(item);
+    let owner_state = match owner {
+        None => "unassigned-worklist",
+        Some(owner) if !live_sessions.contains(owner) => "worklist-owner-unreachable",
+        Some(_) => return None,
+    };
     let key = optional_str(item, "key")?;
     let kind = optional_str(item, "kind").unwrap_or("worklist");
     Some(json!({
@@ -1847,9 +1856,24 @@ fn unowned_worklist_item(item: &Value) -> Option<Value> {
         "dedupeKey": format!("worklist:{key}"),
         "sortKey": format!("worklist:{key}"),
         "status": optional_str(item, "bucket").unwrap_or("actionable"),
-        "ownerState": "unassigned-worklist",
+        "ownerState": owner_state,
+        "assignedTo": owner,
         "title": optional_str(item, "title").unwrap_or("worklist item")
     }))
+}
+
+/// Who a worklist row's thread belongs to: its stated owner, else whoever it is
+/// waiting on. Both are set by `task assign` when it opens the task thread.
+fn worklist_thread_owner(item: &Value) -> Option<&str> {
+    let thread = item.get("thread")?.get("thread")?;
+    optional_str(thread, "owner").or_else(|| {
+        thread
+            .get("waitingOn")
+            .and_then(Value::as_array)
+            .and_then(|waiting| waiting.first())
+            .and_then(Value::as_str)
+            .filter(|owner| !owner.trim().is_empty())
+    })
 }
 
 fn reconciliation_signature(work: &[Value], available: &[Value]) -> String {
