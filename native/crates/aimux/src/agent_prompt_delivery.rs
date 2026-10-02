@@ -36,20 +36,39 @@ pub trait PromptSubmitRuntime {
 /// Codex collapses a long paste to `› [Pasted Content 3434 chars]`, so the text
 /// itself is never on screen — the marker stands in for it.
 pub fn pane_still_contains_prompt_draft(pane: &str, draft: &str) -> bool {
-    text_contains_prompt_draft(pane, draft)
+    text_contains_prompt_draft(pane, draft, PasteMarker::Counts)
 }
 
 pub fn composer_still_contains_prompt_draft(pane: &str, draft: &str) -> bool {
-    current_composer_text(pane).is_some_and(|composer| text_contains_prompt_draft(&composer, draft))
+    current_composer_text(pane)
+        .is_some_and(|composer| text_contains_prompt_draft(&composer, draft, PasteMarker::Counts))
 }
 
-fn text_contains_prompt_draft(text: &str, draft: &str) -> bool {
+/// The same question asked AFTER a carriage return, where the paste marker is
+/// no longer evidence: Codex keeps showing `[Pasted Content …]` once the prompt
+/// has gone, so counting it reported every long prompt as unsubmitted. The
+/// prompt's own text still counts, so a draft genuinely left sitting in the
+/// composer is still caught.
+pub fn composer_still_holds_prompt_text(pane: &str, draft: &str) -> bool {
+    current_composer_text(pane)
+        .is_some_and(|composer| text_contains_prompt_draft(&composer, draft, PasteMarker::Ignored))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PasteMarker {
+    Counts,
+    Ignored,
+}
+
+fn text_contains_prompt_draft(text: &str, draft: &str, paste_marker: PasteMarker) -> bool {
     let normalized_pane = normalize_words(text);
     let normalized_draft = normalize_words(draft);
     if normalized_draft.is_empty() {
         return false;
     }
-    if normalized_pane.contains(&normalized_draft) || normalized_pane.contains("[pasted content") {
+    if normalized_pane.contains(&normalized_draft)
+        || (paste_marker == PasteMarker::Counts && normalized_pane.contains("[pasted content"))
+    {
         return true;
     }
     normalized_draft
@@ -192,7 +211,7 @@ fn submit(runtime: &mut dyn PromptSubmitRuntime, draft: &str) -> bool {
     let pane = runtime
         .capture(DRAFT_CAPTURE_START_LINE)
         .unwrap_or_default();
-    !composer_still_contains_prompt_draft(&pane, draft)
+    !composer_still_holds_prompt_text(&pane, draft)
 }
 
 fn normalize_words(value: &str) -> String {

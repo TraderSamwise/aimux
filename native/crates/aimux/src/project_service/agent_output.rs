@@ -2,7 +2,7 @@ pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
     DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, SETTLE_BEFORE_SUBMIT_MS,
     SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS, composer_still_contains_prompt_draft,
-    prompt_draft_signature,
+    composer_still_holds_prompt_text, prompt_draft_signature,
 };
 #[cfg(test)]
 use crate::async_subprocess::AsyncCommand;
@@ -2657,7 +2657,7 @@ async fn submit_prompt_with_runtime_async(
         .capture(DRAFT_CAPTURE_START_LINE)
         .await
         .map_err(|error| format!("agent input submit verification failed after submit: {error}"))?;
-    if composer_still_contains_prompt_draft(&pane, draft) {
+    if composer_still_holds_prompt_text(&pane, draft) {
         Err(
             "agent input submit verification failed: prompt draft remained visible after submit"
                 .to_owned(),
@@ -2847,7 +2847,7 @@ fn submit_prompt_with_runtime_sync(
     let pane = runtime
         .capture(DRAFT_CAPTURE_START_LINE)
         .map_err(|error| format!("agent input submit verification failed after submit: {error}"))?;
-    if composer_still_contains_prompt_draft(&pane, draft) {
+    if composer_still_holds_prompt_text(&pane, draft) {
         Err(
             "agent input submit verification failed: prompt draft remained visible after submit"
                 .to_owned(),

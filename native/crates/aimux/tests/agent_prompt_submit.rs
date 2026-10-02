@@ -3,8 +3,9 @@
 //! by a newer submit.
 
 use aimux::agent_prompt_delivery::{
-    PromptSubmitRuntime, composer_still_contains_prompt_draft, current_composer_text,
-    pane_still_contains_prompt_draft, prompt_draft_signature, wait_for_prompt_submit,
+    PromptSubmitRuntime, composer_still_contains_prompt_draft, composer_still_holds_prompt_text,
+    current_composer_text, pane_still_contains_prompt_draft, prompt_draft_signature,
+    wait_for_prompt_submit,
 };
 
 /// Replays a scripted sequence of pane captures and records what it was sent.
@@ -202,6 +203,34 @@ fn a_codex_pasted_content_marker_counts_as_the_draft() {
         DRAFT
     ));
     assert!(!pane_still_contains_prompt_draft("› ", DRAFT));
+}
+
+// The paste marker is evidence BEFORE the carriage return and noise after it:
+// Codex keeps showing it once the prompt has gone. Counting it after submit
+// reported every long prompt as unsubmitted, which is what pushed the overseer
+// off `aimux input` and onto `task assign`, which starts no turn at all.
+#[test]
+fn a_lingering_paste_marker_does_not_read_as_an_unsubmitted_prompt() {
+    let marker_only = "› [Pasted Content 3434 chars]";
+
+    assert!(
+        composer_still_contains_prompt_draft(marker_only, DRAFT),
+        "before submit the marker is the only sign the paste landed"
+    );
+    assert!(
+        !composer_still_holds_prompt_text(marker_only, DRAFT),
+        "after submit the marker is not evidence the prompt is still sitting there"
+    );
+}
+
+#[test]
+fn a_draft_left_in_the_composer_still_fails_verification() {
+    let stuck = format!("assistant output\n› {DRAFT}");
+
+    assert!(
+        composer_still_holds_prompt_text(&stuck, DRAFT),
+        "the prompt's own text in the composer is a real unsubmitted draft"
+    );
 }
 
 #[test]
