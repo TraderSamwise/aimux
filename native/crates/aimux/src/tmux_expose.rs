@@ -184,10 +184,12 @@ struct RenderTileAtInput<'a> {
     options: &'a TmuxExposeOptions,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct RenderGridExposeState {
     sort_mode: ExposeSortMode,
     loading: bool,
+    /// Why the last key press did not do what it looked like it would.
+    message: Option<String>,
 }
 
 pub trait ExposeHttpClient {
@@ -960,6 +962,7 @@ pub fn run_tmux_expose_with_drivers(
         default_expose_scope_view(scope)
     };
     let mut sort_mode = read_expose_ui_state(&options.project_state_dir).sort_mode;
+    let mut footer_message: Option<String> = None;
     let mut items = order_items(&view, &options.project_root, sort_mode);
     let mut index = selected_or_current_index(&items, None, options.current_window_id.as_deref());
     let mut leader_pending = false;
@@ -991,7 +994,11 @@ pub fn run_tmux_expose_with_drivers(
     let mut last_input_at: Option<Instant> = None;
     let mut last_resize_check_at = Some(Instant::now());
     let mut static_size = expose_terminal_size_label(&options);
-    let mut render_state = RenderGridExposeState { sort_mode, loading };
+    let mut render_state = RenderGridExposeState {
+        sort_mode,
+        loading,
+        message: footer_message.clone(),
+    };
     let mut layout = render_grid_expose(
         output,
         &view,
@@ -999,7 +1006,7 @@ pub fn run_tmux_expose_with_drivers(
         &captures,
         index,
         &options,
-        render_state,
+        render_state.clone(),
     )
     .unwrap_or_else(|_| compute_layout(items.len() as i64, 80, 24));
     if loading {
@@ -1028,7 +1035,11 @@ pub fn run_tmux_expose_with_drivers(
             Err(_) if loading => {}
             Err(_) => {}
         }
-        render_state = RenderGridExposeState { sort_mode, loading };
+        render_state = RenderGridExposeState {
+            sort_mode,
+            loading,
+            message: footer_message.clone(),
+        };
         layout = render_grid_expose(
             output,
             &view,
@@ -1036,7 +1047,7 @@ pub fn run_tmux_expose_with_drivers(
             &captures,
             index,
             &options,
-            render_state,
+            render_state.clone(),
         )
         .unwrap_or(layout);
         static_size = expose_terminal_size_label(&options);
@@ -1121,7 +1132,11 @@ pub fn run_tmux_expose_with_drivers(
                             changed = true;
                         }
                     }
-                    render_state = RenderGridExposeState { sort_mode, loading };
+                    render_state = RenderGridExposeState {
+                        sort_mode,
+                        loading,
+                        message: footer_message.clone(),
+                    };
                     if !loading && refresh_captures(&items, &mut captures, capture) {
                         changed = true;
                     }
@@ -1134,7 +1149,7 @@ pub fn run_tmux_expose_with_drivers(
                             &captures,
                             index,
                             &options,
-                            render_state,
+                            render_state.clone(),
                         )
                         .unwrap_or(layout);
                         static_size = size_now;
@@ -1166,6 +1181,7 @@ pub fn run_tmux_expose_with_drivers(
             keys
         };
         for key in keys {
+            footer_message = None;
             if matches!(
                 key,
                 ExposeKey::Char('q') | ExposeKey::Escape | ExposeKey::Ctrl('c')
@@ -1195,7 +1211,11 @@ pub fn run_tmux_expose_with_drivers(
                 };
                 let _ =
                     write_expose_ui_state(&options.project_state_dir, ExposeUiState { sort_mode });
-                render_state = RenderGridExposeState { sort_mode, loading };
+                render_state = RenderGridExposeState {
+                    sort_mode,
+                    loading,
+                    message: footer_message.clone(),
+                };
                 items = order_items(&view, &options.project_root, sort_mode);
                 captures = seed_preview_snapshots(&items);
                 index = selected_window_id
@@ -1212,7 +1232,7 @@ pub fn run_tmux_expose_with_drivers(
                     &captures,
                     index,
                     &options,
-                    render_state,
+                    render_state.clone(),
                 )
                 .unwrap_or(layout);
                 static_size = expose_terminal_size_label(&options);
@@ -1227,7 +1247,11 @@ pub fn run_tmux_expose_with_drivers(
                 ) {
                     view = hot_view;
                     view_stale = true;
-                    render_state = RenderGridExposeState { sort_mode, loading };
+                    render_state = RenderGridExposeState {
+                        sort_mode,
+                        loading,
+                        message: footer_message.clone(),
+                    };
                     items = order_items(&view, &options.project_root, sort_mode);
                     captures = seed_preview_snapshots(&items);
                     index = index.min(items.len().saturating_sub(1));
@@ -1238,7 +1262,7 @@ pub fn run_tmux_expose_with_drivers(
                         &captures,
                         index,
                         &options,
-                        render_state,
+                        render_state.clone(),
                     )
                     .unwrap_or(layout);
                     static_size = expose_terminal_size_label(&options);
@@ -1251,7 +1275,11 @@ pub fn run_tmux_expose_with_drivers(
                 ) {
                     view = next_view;
                     view_stale = false;
-                    render_state = RenderGridExposeState { sort_mode, loading };
+                    render_state = RenderGridExposeState {
+                        sort_mode,
+                        loading,
+                        message: footer_message.clone(),
+                    };
                     write_loaded_hot_snapshot(&options, scope, &view);
                     items = order_items(&view, &options.project_root, sort_mode);
                     captures = seed_preview_snapshots(&items);
@@ -1268,7 +1296,7 @@ pub fn run_tmux_expose_with_drivers(
                         &captures,
                         index,
                         &options,
-                        render_state,
+                        render_state.clone(),
                     )
                     .unwrap_or(layout);
                     static_size = expose_terminal_size_label(&options);
@@ -1283,9 +1311,12 @@ pub fn run_tmux_expose_with_drivers(
                     client,
                 ) {
                     Ok(Some(item)) => {
-                        if focus_or_select(&options, &context, &deps, client, &item, view_stale) {
+                        let outcome =
+                            focus_or_select(&options, &context, &deps, client, &item, view_stale);
+                        if outcome.as_ref().is_ok_and(|opened| *opened) {
                             return finish_plain_expose(output, 0);
                         }
+                        footer_message = expose_open_failure_message(&item, outcome);
                         layout = render_grid_expose(
                             output,
                             &view,
@@ -1293,7 +1324,7 @@ pub fn run_tmux_expose_with_drivers(
                             &captures,
                             index,
                             &options,
-                            render_state,
+                            render_state.clone(),
                         )
                         .unwrap_or(layout);
                         static_size = expose_terminal_size_label(&options);
@@ -1306,7 +1337,7 @@ pub fn run_tmux_expose_with_drivers(
                             &captures,
                             index,
                             &options,
-                            render_state,
+                            render_state.clone(),
                         )
                         .unwrap_or(layout);
                         static_size = expose_terminal_size_label(&options);
@@ -1320,10 +1351,18 @@ pub fn run_tmux_expose_with_drivers(
                 let visible_count = (layout.visible_count.max(0) as usize).min(items.len());
                 if let Some(target) = expose_hotkey_target_index(&items, visible_count, ch) {
                     index = target;
-                    if focus_or_select(&options, &context, &deps, client, &items[index], view_stale)
-                    {
+                    let outcome = focus_or_select(
+                        &options,
+                        &context,
+                        &deps,
+                        client,
+                        &items[index],
+                        view_stale,
+                    );
+                    if outcome.as_ref().is_ok_and(|opened| *opened) {
                         return finish_plain_expose(output, 0);
                     }
+                    footer_message = expose_open_failure_message(&items[index], outcome);
                     if let Ok(next_view) = load_expose_scope_items_with(
                         scope,
                         &context,
@@ -1333,7 +1372,11 @@ pub fn run_tmux_expose_with_drivers(
                     ) {
                         view = next_view;
                         view_stale = false;
-                        render_state = RenderGridExposeState { sort_mode, loading };
+                        render_state = RenderGridExposeState {
+                            sort_mode,
+                            loading,
+                            message: footer_message.clone(),
+                        };
                         write_loaded_hot_snapshot(&options, scope, &view);
                         items = order_items(&view, &options.project_root, sort_mode);
                         captures = seed_preview_snapshots(&items);
@@ -1346,7 +1389,7 @@ pub fn run_tmux_expose_with_drivers(
                         &captures,
                         index,
                         &options,
-                        render_state,
+                        render_state.clone(),
                     )
                     .unwrap_or(layout);
                     static_size = expose_terminal_size_label(&options);
@@ -1354,10 +1397,13 @@ pub fn run_tmux_expose_with_drivers(
                 continue;
             }
             if matches!(key, ExposeKey::Enter) {
-                if let Some(item) = items.get(index)
-                    && focus_or_select(&options, &context, &deps, client, item, view_stale)
-                {
-                    return finish_plain_expose(output, 0);
+                if let Some(item) = items.get(index) {
+                    let outcome =
+                        focus_or_select(&options, &context, &deps, client, item, view_stale);
+                    if outcome.as_ref().is_ok_and(|opened| *opened) {
+                        return finish_plain_expose(output, 0);
+                    }
+                    footer_message = expose_open_failure_message(item, outcome);
                 }
                 continue;
             }
@@ -1394,7 +1440,7 @@ pub fn run_tmux_expose_with_drivers(
                     &captures,
                     index,
                     &options,
-                    render_state,
+                    render_state.clone(),
                 )
                 .unwrap_or(layout);
                 static_size = expose_terminal_size_label(&options);
@@ -1744,6 +1790,10 @@ fn expose_capture_error_preview(error: &str) -> String {
     format!("Could not read pane: {error}")
 }
 
+/// `Err` carries why the agent could not be opened. Collapsing it to `false`
+/// made a failed open indistinguishable from no open at all, which is what a
+/// number key over a slow link looked like: nothing happened, and nothing said
+/// why.
 fn focus_or_select(
     options: &TmuxExposeOptions,
     context: &FastControlContext,
@@ -1751,7 +1801,7 @@ fn focus_or_select(
     client: &mut impl ExposeHttpClient,
     item: &Value,
     view_stale: bool,
-) -> bool {
+) -> Result<bool, String> {
     if !view_stale
         && write_selected_window(
             options.selection_file.as_deref(),
@@ -1759,9 +1809,23 @@ fn focus_or_select(
             item,
         )
     {
-        return true;
+        return Ok(true);
     }
-    focus_expose_item_with(item, context, &options.project_state_dir, deps, client).unwrap_or(false)
+    focus_expose_item_with(item, context, &options.project_state_dir, deps, client)
+}
+
+/// What to show in the Exposé footer when an open did not happen.
+fn expose_open_failure_message(item: &Value, outcome: Result<bool, String>) -> Option<String> {
+    let label = item
+        .get("label")
+        .and_then(Value::as_str)
+        .filter(|label| !label.trim().is_empty())
+        .unwrap_or("that agent");
+    match outcome {
+        Ok(true) => None,
+        Ok(false) => Some(format!("Could not open {label}")),
+        Err(error) => Some(format!("Could not open {label}: {error}")),
+    }
 }
 
 fn write_loaded_hot_snapshot(
@@ -1907,12 +1971,20 @@ fn render_grid_expose(
     );
     let supervisor_hint =
         expose_supervisor_hotkey_footer_hint(items, visible_count).unwrap_or_default();
-    let help = truncate_ansi(
-        &format!(
-            "\x1b[2m{supervisor_hint}1-9 open · ↑↓←→/n/p move · Enter open · r sort · ^A d dashboard{zoom} · q/Esc close{more}{RESET}"
+    let help = match state.message.as_deref() {
+        // A failed open replaces the hint rather than sitting beside it: the
+        // hint is what the user just followed, and it did not work.
+        Some(message) => truncate_ansi(
+            &format!("\x1b[1;31m{message}{RESET}"),
+            cols.saturating_sub(2) as usize,
         ),
-        cols.saturating_sub(2) as usize,
-    );
+        None => truncate_ansi(
+            &format!(
+                "\x1b[2m{supervisor_hint}1-9 open · ↑↓←→/n/p move · Enter open · r sort · ^A d dashboard{zoom} · q/Esc close{more}{RESET}"
+            ),
+            cols.saturating_sub(2) as usize,
+        ),
+    };
     let mut rendered = "\x1b[?2026h\x1b[2J".to_owned();
     rendered.push_str(&format!("\x1b[{TITLE_ROW};{}H{title}", CONTENT_LEFT + 1));
     if visible_count == 0 {
@@ -2826,6 +2898,7 @@ mod tests {
             RenderGridExposeState {
                 sort_mode: ExposeSortMode::Default,
                 loading: false,
+                message: None,
             },
         )
         .expect("render expose grid");
@@ -2871,6 +2944,7 @@ mod tests {
             RenderGridExposeState {
                 sort_mode: ExposeSortMode::Default,
                 loading: false,
+                message: None,
             },
         )
         .expect("render expose grid");
@@ -2919,6 +2993,7 @@ mod tests {
             RenderGridExposeState {
                 sort_mode: ExposeSortMode::Default,
                 loading: false,
+                message: None,
             },
         )
         .expect("render expose grid");
@@ -3031,6 +3106,28 @@ mod tests {
             project_root: None,
             project_name: None,
         }
+    }
+
+    // "I pressed a number and nothing happened" was a failed open collapsed to
+    // false. The failure now names itself in the footer.
+    #[test]
+    fn a_failed_open_names_the_agent_and_the_reason() {
+        let item = expose_item("codex-pvvw1b", "worktree");
+
+        assert_eq!(
+            expose_open_failure_message(&item, Ok(true)),
+            None,
+            "a successful open has nothing to report"
+        );
+        assert_eq!(
+            expose_open_failure_message(&item, Ok(false)).as_deref(),
+            Some("Could not open codex-pvvw1b"),
+        );
+        assert_eq!(
+            expose_open_failure_message(&item, Err("tmux switch-client failed".into())).as_deref(),
+            Some("Could not open codex-pvvw1b: tmux switch-client failed"),
+            "the reason must survive to the footer, not be swallowed"
+        );
     }
 
     #[test]
