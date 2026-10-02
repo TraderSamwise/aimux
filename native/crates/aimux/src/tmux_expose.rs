@@ -9,6 +9,7 @@ use crate::debug_logging::{LogLevel, log_at};
 use crate::expose_socket::parse_positive_header_integer;
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
+use crate::project_service::expose_ordering::recent_output_sort_key;
 use crate::project_service::switchable_agents::agent_status_chip;
 use crate::project_service::usage::parse_recency_timestamp;
 use crate::tmux::{CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, tmux_command_from_env};
@@ -2032,13 +2033,20 @@ fn order_items(
     let items = &view.items;
     let mut ordered = items.to_vec();
     if sort_mode == ExposeSortMode::RecentOutput {
-        ordered.sort_by(|left, right| {
-            let left_timestamp = item_recency_at(left);
-            let right_timestamp = item_recency_at(right);
-            right_timestamp
-                .cmp(left_timestamp)
-                .then_with(|| item_recent_rank(left).cmp(&item_recent_rank(right)))
-        });
+        // Through the service's own key, not a text comparison of the
+        // timestamp: the grid and the service must not disagree about what
+        // "recent" means.
+        let mut keyed = ordered
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let key =
+                    recent_output_sort_key(item_recency_at(&item), item_recent_rank(&item), index);
+                (key, item)
+            })
+            .collect::<Vec<_>>();
+        keyed.sort_by_key(|(key, _)| *key);
+        ordered = keyed.into_iter().map(|(_, item)| item).collect();
     }
     order_items_by_supervisor_priority(ordered)
 }
@@ -2175,17 +2183,14 @@ fn resolve_scoped_worktree_path(project_root: &Path, current_path: Option<&str>)
     current.to_string_lossy().into_owned()
 }
 
-fn item_recency_at(item: &Value) -> &str {
+fn item_recency_at(item: &Value) -> Option<&str> {
     item.get("metadata")
         .and_then(|metadata| metadata.get("recencyAt"))
         .and_then(Value::as_str)
-        .unwrap_or("")
 }
 
-fn item_recent_rank(item: &Value) -> i64 {
-    item.get("recentRank")
-        .and_then(Value::as_i64)
-        .unwrap_or(i64::MAX)
+fn item_recent_rank(item: &Value) -> Option<i64> {
+    item.get("recentRank").and_then(Value::as_i64)
 }
 
 fn item_window_id(item: Option<&Value>) -> Option<&str> {
@@ -2949,6 +2954,83 @@ mod tests {
 
         assert_eq!(labels, vec!["overseer", "worker-1", "worker-2", "worker-3"]);
         assert_eq!(badges, vec![0, 1, 2, 3]);
+    }
+
+    // recencyAt is written by several different producers, so its text form
+    // varies. The grid and the service must still agree on "recent": a tile's
+    // number is only meaningful if the list under it is the one the service
+    // would have returned.
+    #[test]
+    fn recent_order_matches_the_service_for_mixed_timestamp_formats() {
+        let stamps = [
+            ("plain", "2026-10-02T09:00:00Z"),
+            ("millis", "2026-10-02T09:00:00.500Z"),
+            ("offset", "2026-10-02T02:30:00-07:00"),
+            ("unparsable", "not-a-timestamp"),
+        ];
+        let items = stamps
+            .iter()
+            .map(|(label, stamp)| {
+                let mut item = expose_item(label, "worktree");
+                item["metadata"]["recencyAt"] = json!(stamp);
+                item["recentRank"] = json!(0);
+                item
+            })
+            .collect::<Vec<_>>();
+        let view = ExposeScopeView {
+            scope: ExposeScope::Project,
+            items: items.clone(),
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+        };
+
+        let grid_order = order_items(&view, Path::new("/repo"), ExposeSortMode::RecentOutput)
+            .iter()
+            .map(|item| item["label"].as_str().unwrap_or("").to_owned())
+            .collect::<Vec<_>>();
+        let service_items = items
+            .iter()
+            .map(service_item_from_value)
+            .collect::<Vec<_>>();
+        let service_order =
+            crate::project_service::expose_ordering::order_expose_items_by_recent_output(
+                &service_items,
+            )
+            .iter()
+            .map(|item| item.label.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(grid_order, service_order);
+        assert_eq!(
+            grid_order,
+            vec!["offset", "millis", "plain", "unparsable"],
+            "newest first by instant -- 02:30-07:00 is 09:30Z, which text comparison would have sorted dead last -- and an unreadable timestamp is oldest rather than wherever its text falls"
+        );
+    }
+
+    fn service_item_from_value(
+        item: &Value,
+    ) -> crate::project_service::switchable_agents::SwitchableAgentItem {
+        crate::project_service::switchable_agents::SwitchableAgentItem {
+            id: item["label"].as_str().unwrap_or("").to_owned(),
+            target: item["target"].clone(),
+            metadata: item["metadata"].clone(),
+            label: item["label"].as_str().unwrap_or("").to_owned(),
+            urgency: 0,
+            activity: 0,
+            last_used_at: None,
+            recent_rank: item["recentRank"].as_i64().unwrap_or(0),
+            role: String::new(),
+            lane: item["roleState"]["lane"].clone(),
+            role_state: item["roleState"].clone(),
+            should_show_in_expose: true,
+            overseer: false,
+            scribe: false,
+            alive: true,
+            project_id: None,
+            project_root: None,
+            project_name: None,
+        }
     }
 
     #[test]

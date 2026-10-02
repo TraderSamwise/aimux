@@ -1,4 +1,5 @@
 use serde_json::{Map, Value};
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -104,6 +105,34 @@ fn item_is_in_supervisor_plane(item: &SwitchableAgentItem) -> bool {
         .any(|lane| lane.get("kind").and_then(Value::as_str) == Some("supervisor"))
 }
 
+/// Rank with no recency at all, matching the service's own missing-rank value.
+const UNRANKED: i64 = 9_007_199_254_740_991;
+
+/// The sort key for recent-output order, newest first, then the recent-jump
+/// rank, then the order the service sent. Every surface that renders this order
+/// sorts through it: `recencyAt` is written by several different producers, and
+/// comparing it as text puts "…:00.500Z" before "…:00Z" and a non-Z offset
+/// wherever its first character happens to fall.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RecentOutputKey(Reverse<i128>, i64, usize);
+
+pub fn recent_output_sort_key(
+    recency_at: Option<&str>,
+    recent_rank: Option<i64>,
+    index: usize,
+) -> RecentOutputKey {
+    RecentOutputKey(
+        Reverse(
+            recency_at
+                .and_then(parse_recency_timestamp)
+                .map(|value| value as i128)
+                .unwrap_or(i128::MIN),
+        ),
+        recent_rank.unwrap_or(UNRANKED),
+        index,
+    )
+}
+
 pub fn order_expose_items_by_recent_output(
     items: &[SwitchableAgentItem],
 ) -> Vec<SwitchableAgentItem> {
@@ -112,24 +141,16 @@ pub fn order_expose_items_by_recent_output(
         .cloned()
         .enumerate()
         .map(|(index, item)| {
-            let timestamp = item
-                .metadata
-                .get("recencyAt")
-                .and_then(Value::as_str)
-                .and_then(parse_recency_timestamp)
-                .map(|value| value as i128)
-                .unwrap_or(i128::MIN);
-            (index, timestamp, item.recent_rank, item)
+            let key = recent_output_sort_key(
+                item.metadata.get("recencyAt").and_then(Value::as_str),
+                Some(item.recent_rank),
+                index,
+            );
+            (key, item)
         })
         .collect::<Vec<_>>();
-    keyed.sort_by(|left, right| {
-        right
-            .1
-            .cmp(&left.1)
-            .then_with(|| left.2.cmp(&right.2))
-            .then_with(|| left.0.cmp(&right.0))
-    });
-    keyed.into_iter().map(|(_, _, _, item)| item).collect()
+    keyed.sort_by_key(|(key, _)| *key);
+    keyed.into_iter().map(|(_, item)| item).collect()
 }
 
 pub fn group_items_by_project(items: &[SwitchableAgentItem]) -> Vec<ExposeGroup> {

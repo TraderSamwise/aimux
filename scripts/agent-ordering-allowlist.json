@@ -117,11 +117,6 @@
       "reason": "The recents list itself. Its whole content is most-recently-used order."
     },
     {
-      "file": "native/crates/aimux/src/tmux_expose.rs",
-      "function": "order_items",
-      "reason": "Expos\u00e9's 'r' mode, which the user asks for by pressing r. It takes the canonical list as input and reorders it on purpose."
-    },
-    {
       "file": "native/crates/aimux/src/tmux_control.rs",
       "function": "resolve_local_target",
       "reason": "The attention jump, which the user asks for by pressing u. It picks one agent by urgency rather than listing them."
