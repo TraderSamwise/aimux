@@ -55,6 +55,23 @@ pub enum DashboardEntryRef<'a> {
     Service(&'a DashboardService),
 }
 
+/// The selected entry's identity, read off one snapshot so it can be found
+/// again in the next one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CarriedSelection {
+    Session(String),
+    Service(String),
+}
+
+impl CarriedSelection {
+    pub fn from_entry(entry: &DashboardEntryRef<'_>) -> Self {
+        match entry {
+            DashboardEntryRef::Session(session) => Self::Session(session.id.clone()),
+            DashboardEntryRef::Service(service) => Self::Service(service.id.clone()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardNavigationOutcome<'a> {
     Changed,
@@ -133,7 +150,57 @@ impl DashboardNavigationState {
             self.clear_quick_jump();
             return true;
         }
+        if groups.is_empty() && snapshot.worktree_groups.is_empty() {
+            let Some(item_index) = snapshot
+                .sessions
+                .iter()
+                .filter(|session| !is_project_control_session(session))
+                .position(|session| session.id == session_id)
+            else {
+                return false;
+            };
+            self.level = DashboardNavLevel::Sessions;
+            self.worktree_index = 0;
+            self.item_index = item_index;
+            self.clear_quick_jump();
+            return true;
+        }
         false
+    }
+
+    /// The service half of [`Self::select_session`]. Services sit after a
+    /// group's sessions, which is the order [`entry_at`] reads them back in.
+    pub fn select_service(&mut self, snapshot: &DesktopStateSnapshot, service_id: &str) -> bool {
+        let groups = dashboard_navigation_groups(snapshot);
+        for (worktree_index, group) in groups.iter().enumerate() {
+            let Some(offset) = group
+                .services
+                .iter()
+                .position(|service| service.id == service_id)
+            else {
+                continue;
+            };
+            self.level = DashboardNavLevel::Sessions;
+            self.worktree_index = worktree_index;
+            self.item_index = group.sessions.len() + offset;
+            self.clear_quick_jump();
+            return true;
+        }
+        false
+    }
+
+    /// Re-point the selection at whatever it was on before the snapshot
+    /// changed. Offlining or onlining an agent reorders the list, and a
+    /// selection held as an index would silently land on its neighbour.
+    pub fn follow_selection(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        carried: &CarriedSelection,
+    ) -> bool {
+        match carried {
+            CarriedSelection::Session(id) => self.select_session(snapshot, id),
+            CarriedSelection::Service(id) => self.select_service(snapshot, id),
+        }
     }
 
     pub fn move_next(&mut self, snapshot: &DesktopStateSnapshot) -> DashboardNavigationOutcome<'_> {

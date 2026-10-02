@@ -22,7 +22,7 @@ use crate::dashboard_model::{
     DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus, filter_dashboard_visible_model,
     is_dashboard_overseer_session, is_dashboard_scribe_session,
 };
-use crate::dashboard_navigation::DashboardEntryRef;
+use crate::dashboard_navigation::{CarriedSelection, DashboardEntryRef};
 use crate::dashboard_pending_actions::{
     DashboardPendingActions, PendingTarget, pending_action_for_request,
 };
@@ -745,6 +745,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             .unwrap_or(false);
                         let visible_model =
                             filter_dashboard_visible_model(&loaded.snapshot, hide_offline_agents);
+                        // Read off the outgoing snapshot, before anything can
+                        // move the indices, so the pointer can be put back on
+                        // the same agent once this one is in place.
+                        let carried_selection = carried_dashboard_selection(
+                            controller.as_ref(),
+                            latest_snapshot.as_ref(),
+                        );
                         let controller = controller.get_or_insert_with(|| {
                             let mut controller = DashboardController::new(&visible_model.snapshot);
                             if let Some(screen) = ui_state
@@ -780,6 +787,11 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             render_requested_by_input,
                             rendered_once,
                         );
+                        if let Some(carried) = carried_selection {
+                            controller
+                                .navigation
+                                .follow_selection(&visible_model.snapshot, &carried);
+                        }
                         // After the restore, so returning from an agent wins
                         // over whatever the last persisted selection was.
                         if let Some(session_id) = pending_selection.take() {
@@ -2377,6 +2389,22 @@ fn parse_desktop_state_snapshot(contents: &str) -> Result<DesktopStateSnapshot> 
 /// refresh-driven render overwrote the live controller, so releasing a held
 /// arrow key made the selection walk back up the list one refresh at a time:
 /// keypress renders skip the restore, refresh renders undid them.
+/// What the pointer is on, taken from the snapshot that is being replaced.
+/// `None` on the first frame, when a worktree row rather than an agent is
+/// selected, or when the selection no longer resolves — all cases where there
+/// is nothing to carry.
+fn carried_dashboard_selection(
+    controller: Option<&DashboardController>,
+    previous: Option<&DesktopStateSnapshot>,
+) -> Option<CarriedSelection> {
+    let (controller, previous) = controller.zip(previous)?;
+    controller
+        .navigation
+        .selected_entry(previous)
+        .as_ref()
+        .map(CarriedSelection::from_entry)
+}
+
 fn restore_dashboard_navigation_for_render(
     ui_state: Option<&DashboardUiStatePersistence>,
     controller: &mut DashboardController,
@@ -2742,6 +2770,71 @@ mod tests {
         };
         assert_eq!(selected.id, selected_id);
         fs::remove_dir_all(root).ok();
+    }
+
+    // Offlining or onlining an agent moves its row. The pointer is held as an
+    // index, so without carrying the identity across it quietly ends up on the
+    // neighbour that took the row.
+    #[test]
+    fn dashboard_pointer_follows_its_agent_across_a_reorder() {
+        let snapshot = fixture_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.navigation.level = DashboardNavLevel::Sessions;
+        controller.navigation.worktree_index = 0;
+        controller.navigation.item_index = 1;
+        let Some(DashboardEntryRef::Session(selected)) =
+            controller.navigation.selected_entry(&snapshot)
+        else {
+            panic!("expected selected session");
+        };
+        let selected_id = selected.id.clone();
+
+        let carried = carried_dashboard_selection(Some(&controller), Some(&snapshot))
+            .expect("selection to carry");
+        let mut reordered = snapshot.clone();
+        reordered.worktree_groups[0].sessions.swap(0, 1);
+        assert!(controller.navigation.follow_selection(&reordered, &carried));
+
+        assert_eq!(controller.navigation.item_index, 0);
+        let Some(DashboardEntryRef::Session(followed)) =
+            controller.navigation.selected_entry(&reordered)
+        else {
+            panic!("expected selected session");
+        };
+        assert_eq!(followed.id, selected_id);
+    }
+
+    #[test]
+    fn dashboard_pointer_stays_put_when_its_agent_is_gone() {
+        let snapshot = fixture_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.navigation.level = DashboardNavLevel::Sessions;
+        controller.navigation.worktree_index = 0;
+        controller.navigation.item_index = 1;
+        let carried = carried_dashboard_selection(Some(&controller), Some(&snapshot))
+            .expect("selection to carry");
+
+        let mut without = snapshot.clone();
+        let CarriedSelection::Session(gone) = &carried else {
+            panic!("expected a session selection");
+        };
+        for group in &mut without.worktree_groups {
+            group.sessions.retain(|session| &session.id != gone);
+        }
+
+        assert!(
+            !controller.navigation.follow_selection(&without, &carried),
+            "a missing agent must not drag the pointer somewhere arbitrary"
+        );
+        assert_eq!(controller.navigation.item_index, 1);
+    }
+
+    #[test]
+    fn dashboard_selection_carries_nothing_on_the_first_frame() {
+        let snapshot = fixture_snapshot();
+        let controller = DashboardController::new(&snapshot);
+        assert_eq!(carried_dashboard_selection(Some(&controller), None), None);
+        assert_eq!(carried_dashboard_selection(None, Some(&snapshot)), None);
     }
 
     #[test]
