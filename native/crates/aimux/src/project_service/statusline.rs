@@ -418,16 +418,22 @@ fn write_precomputed_tmux_statusline_files(
         },
     );
     write_statusline_text(&status_dir, "bottom-dashboard.txt", &dashboard_bottom)?;
-    if let Some(client_session) = client_session.filter(|value| !value.trim().is_empty()) {
-        let client_snapshot = client_dashboard_screen(project_state_dir.as_ref(), client_session)
+    // Every tmux session that shows a dashboard gets its own bar. A project has
+    // more than one dashboard -- each client session has one and so does the
+    // project session -- and they sit on different screens. Writing a bar only
+    // for the client that happened to ask left every other dashboard falling
+    // back to the shared file, whose screen is always "dashboard": the project
+    // session's window rendered Topology under a bar that said Dashboard.
+    for session in dashboard_statusline_sessions(project_state_dir.as_ref(), client_session) {
+        let session_snapshot = client_dashboard_screen(project_state_dir.as_ref(), &session)
             .map(|screen| {
                 let mut snapshot = snapshot.clone();
                 snapshot["dashboardScreen"] = Value::String(screen.to_owned());
                 snapshot
             })
             .unwrap_or_else(|| snapshot.clone());
-        let client_dashboard_bottom = render_tmux_statusline(
-            &client_snapshot,
+        let session_dashboard_bottom = render_tmux_statusline(
+            &session_snapshot,
             project_root,
             "bottom",
             RenderOptions {
@@ -438,8 +444,8 @@ fn write_precomputed_tmux_statusline_files(
         );
         write_statusline_text(
             &status_dir,
-            &format!("bottom-dashboard-{client_session}.txt"),
-            &client_dashboard_bottom,
+            &format!("bottom-dashboard-{session}.txt"),
+            &session_dashboard_bottom,
         )?;
     }
     for entry in array_field(snapshot, "sessions")
@@ -510,6 +516,41 @@ fn invalidate_tmux_statusline_artifacts(project_state_dir: impl AsRef<Path>) {
 
 fn tmux_statusline_dir(project_state_dir: impl AsRef<Path>) -> PathBuf {
     project_state_dir.as_ref().join("tmux-statusline")
+}
+
+/// Every session with a saved dashboard screen, plus the caller's own, so a bar
+/// is written for each dashboard rather than only the one that asked.
+pub(crate) fn dashboard_statusline_sessions(
+    project_state_dir: &Path,
+    client_session: Option<&str>,
+) -> Vec<String> {
+    let mut sessions = std::collections::BTreeSet::new();
+    if let Some(client_session) = client_session
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sessions.insert(client_session.to_owned());
+    }
+    if let Ok(entries) = std::fs::read_dir(project_state_dir) {
+        for entry in entries.flatten() {
+            if let Some(session) =
+                dashboard_state_file_session(&entry.file_name().to_string_lossy())
+            {
+                sessions.insert(session);
+            }
+        }
+    }
+    sessions.into_iter().collect()
+}
+
+/// `dashboard-ui-client-<session>.json` -> `<session>`. The shared
+/// `dashboard-ui.json` carries no session and is not one of these.
+fn dashboard_state_file_session(file_name: &str) -> Option<String> {
+    let session = file_name
+        .strip_prefix("dashboard-ui-client-")?
+        .strip_suffix(".json")?
+        .trim();
+    (!session.is_empty()).then(|| session.to_owned())
 }
 
 fn client_dashboard_screen(project_state_dir: &Path, client_session: &str) -> Option<&'static str> {
@@ -1707,6 +1748,53 @@ fn now_iso() -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // A project has more than one dashboard. Writing a bar only for the client
+    // that asked left the project session's dashboard on the shared file, whose
+    // screen is always "dashboard" -- so its window rendered Topology under a
+    // bar highlighting Dashboard.
+    #[test]
+    fn every_dashboard_session_gets_its_own_bar() {
+        let dir = std::env::temp_dir().join(format!(
+            "aimux-statusline-sessions-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        for name in [
+            "dashboard-ui-client-aimux-proj.json",
+            "dashboard-ui-client-aimux-proj-client-aa10.json",
+            "dashboard-ui.json",
+            "metadata.json",
+        ] {
+            std::fs::write(dir.join(name), "{}").expect("write");
+        }
+        let sessions = dashboard_statusline_sessions(&dir, Some("aimux-proj-client-bb20"));
+        assert_eq!(
+            sessions,
+            vec![
+                "aimux-proj".to_owned(),
+                "aimux-proj-client-aa10".to_owned(),
+                "aimux-proj-client-bb20".to_owned(),
+            ],
+            "the project session, every client with saved state, and the caller"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_shared_state_file_is_not_a_session() {
+        assert_eq!(dashboard_state_file_session("dashboard-ui.json"), None);
+        assert_eq!(dashboard_state_file_session("metadata.json"), None);
+        assert_eq!(
+            dashboard_state_file_session("dashboard-ui-client-.json"),
+            None
+        );
+        assert_eq!(
+            dashboard_state_file_session("dashboard-ui-client-aimux-proj.json").as_deref(),
+            Some("aimux-proj")
+        );
+    }
 
     #[test]
     fn control_plane_marks_old_or_invalid_snapshots_stale() {
