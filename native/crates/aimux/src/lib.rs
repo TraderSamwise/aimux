@@ -119,6 +119,8 @@ pub mod statusline_chip_window;
 pub mod team_contract;
 pub mod terminal_key_parser;
 pub mod tmux;
+pub mod tmux_clipboard;
+pub mod tmux_clipboard_copy;
 pub mod tmux_control;
 pub mod tmux_exec_metrics;
 pub mod tmux_expose;

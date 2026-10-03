@@ -605,13 +605,18 @@ fn configure_managed_session(
         ("window-size", MANAGED_TMUX_SESSION_OPTIONS.window_size),
         ("history-limit", MANAGED_TMUX_SESSION_OPTIONS.history_limit),
         ("set-clipboard", "external"),
-        ("copy-command", "pbcopy"),
         ("repeat-time", "300"),
         ("focus-events", MANAGED_TMUX_SESSION_OPTIONS.focus_events),
         ("bell-action", "none"),
     ] {
         set_session_option(runner, session_name, key, value)?;
     }
+    set_session_option(
+        runner,
+        session_name,
+        "copy-command",
+        &crate::tmux::default_clipboard_copy_command(),
+    )?;
     run_tmux_owned(
         runner,
         &crate::tmux::set_environment_argv(

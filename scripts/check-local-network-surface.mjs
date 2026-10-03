@@ -92,6 +92,20 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     input: "infrastructure: all native process launches flow through this audited wrapper",
   },
   {
+    path: "native/crates/aimux/src/tmux_clipboard_copy.rs",
+    marker: "Command::new(tmux)",
+    command: "tmux, resolved once to an absolute path",
+    argv: "literal: list-clients -F #{client_tty}",
+    input: "fixed: no caller or selection text reaches the argv",
+  },
+  {
+    path: "native/crates/aimux/src/tmux_clipboard_copy.rs",
+    marker: "Command::new(command.0)",
+    command: "pbcopy, wl-copy or xclip",
+    argv: "literal: chosen from a closed list by platform and display-server env",
+    input: "fixed: the selection goes on stdin, never into the command or argv",
+  },
+  {
     path: "native/crates/aimux/src/bin/aimux.rs",
     marker: 'AsyncCommand::new("tty")',
     command: "tty",

@@ -4,10 +4,9 @@ use aimux::daemon::tmux_doctor::{
 };
 use aimux::tmux::{
     AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
-    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, MOSH_CLIPBOARD_WARNING_MESSAGE,
-    TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION,
-    TMUX_RUNTIME_CONTRACT_OPTION, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, TmuxCommandSpec,
-    project_session,
+    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
+    TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
+    TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, TmuxCommandSpec, project_session,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -1065,8 +1064,11 @@ fn repairs_managed_sessions_dashboard_and_agent_window_policy() {
     assert!(repaired_commands.contains("__tmux-control-internal"));
     assert!(repaired_commands.contains("__tmux-statusline-internal"));
     assert!(repaired_commands.contains("__tmux-open-hyperlink-internal"));
-    assert!(repaired_commands.contains("__tmux-client-is-mosh-internal"));
-    assert!(repaired_commands.contains(MOSH_CLIPBOARD_WARNING_MESSAGE));
+    // The copy path is the aimux helper, not a macOS-only binary and not a
+    // warning that the copy went nowhere useful.
+    assert!(repaired_commands.contains("__tmux-clipboard-copy-internal"));
+    assert!(!repaired_commands.contains("pbcopy"));
+    assert!(!repaired_commands.contains("mosh cannot copy"));
     assert!(repaired_commands.contains(AIMUX_MODIFIED_ENTER_COMMAND));
     assert!(!repaired_commands.contains(AIMUX_STALE_MODIFIED_ENTER_COMMAND));
     assert!(!repaired_commands.contains("tmux-control.sh"));

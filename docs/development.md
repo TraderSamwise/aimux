@@ -122,13 +122,19 @@ installed build coherence.
 
 ## Remote Clipboard
 
-Aimux managed tmux sessions copy mouse selections with tmux `copy-pipe` and the
-session `copy-command`, which is `pbcopy` on macOS. When you connect to that Mac
-from another machine over mosh, the copy lands on the host Mac clipboard, not on
-the mosh client clipboard. mosh also drops tmux's empty-selector OSC 52 clipboard
-sequence, so Aimux cannot reliably turn that tmux copy action into a local client
-clipboard update over mosh. Use ssh in a terminal that permits OSC 52, or use the
-terminal's native selection, when the clipboard must land on the client machine.
+A mouse selection in an Aimux-managed tmux session lands on the clipboard of the
+machine the user is sitting at, over ssh and over mosh.
+
+tmux's own OSC 52 carries an EMPTY selector (`ESC ] 52 ; ; <base64> BEL`) and
+mosh only forwards the `c` selector, so every clipboard sequence tmux emits is
+dropped on the way to a mosh client. The host-side `copy-command` does not help
+either: on a Mac it lands on that Mac's clipboard rather than the one in front of
+the user, and a headless Linux host has no clipboard at all.
+
+So `copy-command` is `aimux __tmux-clipboard-copy-internal`, which writes
+`ESC ] 52 ; c ; <base64> BEL` to every attached client's terminal and, where the
+host actually has a clipboard, copies there too. A copy that reaches no client
+terminal is reported rather than silently dropped.
 
 ## Explicit Sandboxes
 

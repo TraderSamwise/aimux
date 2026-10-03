@@ -127,6 +127,9 @@ enum Command {
         #[arg(long)]
         pid: i32,
     },
+    /// Put a tmux copy on the clipboard of the terminal the user is sitting at.
+    #[command(name = "__tmux-clipboard-copy-internal", hide = true)]
+    TmuxClipboardCopyInternal,
     #[command(name = "__job-exec-internal", hide = true)]
     JobExecInternal { id: String },
 }
@@ -299,6 +302,17 @@ fn run() -> Result<ExitCode> {
             },
         );
     }
+    if matches!(cli.command, Command::TmuxClipboardCopyInternal) {
+        return Ok(
+            match aimux::tmux_clipboard_copy::run_tmux_clipboard_copy() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("aimux clipboard copy failed: {error}");
+                    ExitCode::from(1)
+                }
+            },
+        );
+    }
     if let Command::JobExecInternal { id } = cli.command.clone() {
         return aimux::jobs::run_job_exec(&id)
             .map_err(|error| anyhow::anyhow!("job exec failed: {error}"));
@@ -383,6 +397,9 @@ fn run() -> Result<ExitCode> {
         Command::TmuxClientIsMoshInternal { .. } => {
             unreachable!("handled before native command match")
         }
+        Command::TmuxClipboardCopyInternal => {
+            unreachable!("handled before native command match")
+        }
         Command::JobExecInternal { .. } => unreachable!("handled before native command match"),
     }?;
     Ok(ExitCode::SUCCESS)
@@ -403,6 +420,7 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, ..] if command == "__tmux-statusline-internal" => true,
         [command, ..] if command == "__tmux-open-hyperlink-internal" => true,
         [command, ..] if command == "__tmux-client-is-mosh-internal" => true,
+        [command, ..] if command == "__tmux-clipboard-copy-internal" => true,
         [command, ..] if command == "__job-exec-internal" => true,
         _ => false,
     }
