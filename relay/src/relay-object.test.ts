@@ -1833,6 +1833,51 @@ describe("RelayObject machines", () => {
     expect(mbp.send).toHaveBeenCalledTimes(1);
   });
 
+  // A project id and root exist on more than one host, so a tapped
+  // notification without this deep-links to whichever one the app resolves.
+  it("stamps a push with the machine that raised it", async () => {
+    const pushed: unknown[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      pushed.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([strix]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {},
+      pushTokens: {
+        phone: {
+          id: "phone",
+          token: "ExponentPushToken[x]",
+          platform: "ios",
+          userId: "user_owner",
+          deviceId: "phone",
+          createdAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      actions: {},
+      events: [],
+    });
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      strix,
+      JSON.stringify({
+        type: "notification_push",
+        notification: { title: "Agent needs input", projectRoot: "/repo/aimux" },
+      }),
+    );
+
+    globalThis.fetch = originalFetch;
+    expect(pushed).toHaveLength(1);
+    const messages = pushed[0] as { data: { machineId?: string; projectRoot?: string } }[];
+    expect(messages[0].data).toMatchObject({ machineId: "strix", projectRoot: "/repo/aimux" });
+  });
+
   it("tells every machine about a security event", async () => {
     const mbp = daemonSocket("mbp", "sam-mbp");
     const strix = daemonSocket("strix", "sam-strix");

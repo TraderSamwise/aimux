@@ -554,6 +554,9 @@ export class RelayObject extends DurableObject<Env> {
         sessionId: notification.sessionId,
         projectId: notification.projectId,
         projectRoot: notification.projectRoot,
+        // From the socket's own tags, not from the frame: which machine sent
+        // this is not something the sender gets to claim.
+        machineId: machineFromTags(tags).id,
         dedupeKey: notification.dedupeKey,
       });
     } catch (error) {

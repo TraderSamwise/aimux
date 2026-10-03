@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   findProjectByRef,
+  projectRefFromPayload,
   findProjectForRef,
   preferMachineBearingRef,
   uniqueProjectRefForPath,
@@ -155,5 +156,46 @@ describe("a URL that omits the machine beside a selection that knows it", () => 
       path: MBP_AIMUX.path,
     });
     expect(preferMachineBearingRef(null, null)).toBeNull();
+  });
+});
+
+describe("a ref out of a push payload", () => {
+  it("uses the machine the payload names", () => {
+    expect(projectRefFromPayload([MBP_AIMUX, STRIX_AIMUX], MBP_AIMUX.path, "strix")).toEqual({
+      machineId: "strix",
+      path: MBP_AIMUX.path,
+    });
+  });
+
+  // Sent before the relay stamped the machine. One machine with that path is
+  // still an answer.
+  it("resolves a payload with no machine when one machine has the path", () => {
+    expect(projectRefFromPayload([MBP_AIMUX], MBP_AIMUX.path, undefined)).toEqual({
+      machineId: "mbp",
+      path: MBP_AIMUX.path,
+    });
+    expect(projectRefFromPayload([MBP_AIMUX], MBP_AIMUX.path, "   ")).toEqual({
+      machineId: "mbp",
+      path: MBP_AIMUX.path,
+    });
+  });
+
+  // Tapping it would otherwise open whichever host came first in the list.
+  it("refuses a payload with no machine when two machines have the path", () => {
+    expect(projectRefFromPayload([MBP_AIMUX, STRIX_AIMUX], MBP_AIMUX.path, undefined)).toBeNull();
+  });
+
+  // A machine the app has never heard of still routes: the relay refuses it by
+  // name, which is a better answer than opening another host.
+  it("trusts a named machine it has no project for", () => {
+    expect(projectRefFromPayload([MBP_AIMUX], MBP_AIMUX.path, "mini")).toEqual({
+      machineId: "mini",
+      path: MBP_AIMUX.path,
+    });
+  });
+
+  it("resolves nothing without a path", () => {
+    expect(projectRefFromPayload([MBP_AIMUX], "", "mbp")).toBeNull();
+    expect(projectRefFromPayload([MBP_AIMUX], null, "mbp")).toBeNull();
   });
 });

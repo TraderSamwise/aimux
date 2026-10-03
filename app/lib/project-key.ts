@@ -106,3 +106,18 @@ export function preferMachineBearingRef(
   }
   return urlRef;
 }
+
+// A ref from a payload the app did not write -- a push notification. The
+// machine is used when it is there, and a bare path still resolves when one
+// machine has it, so a notification sent before the relay stamped machines
+// still opens the right project.
+export function projectRefFromPayload<T extends { machineId?: string; path: string }>(
+  projects: readonly T[],
+  path: string | null | undefined,
+  machineId: string | null | undefined,
+): ProjectRef | null {
+  if (!path) return null;
+  const named = machineId?.trim();
+  if (named) return { machineId: named, path };
+  return uniqueProjectRefForPath(projects, path);
+}
