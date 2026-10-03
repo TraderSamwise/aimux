@@ -10,20 +10,48 @@ import {
   type ProjectListStatus,
 } from "@/lib/project-list-status";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import {
+  findProjectForRef,
+  parseProjectKey,
+  projectKey,
+  projectRefOf,
+  sameProjectRef,
+  type ProjectRef,
+} from "@/lib/project-key";
 import { desktopStateFamily } from "@/stores/desktopState";
 
 // ─── Base atoms ────────────────────────────────────────────────────────────
 
 export const projectsAtom = atom<DaemonProject[]>([]);
 
-// Persisted across reloads so the user returns to the project they last had open.
-export const selectedProjectPathAtom = atomWithStorage<string | null>(
+// Persisted across reloads so the user returns to the project they last had
+// open. Holds a project key, not a path: the same checkout exists on two of
+// Sam's machines. An entry written before machines existed is a bare path,
+// which `parseProjectKey` reads as a ref with no machine.
+export const selectedProjectKeyAtom = atomWithStorage<string | null>(
   "aimux-selected-project",
   null,
   createSsrSafeJsonStorage<string | null>(),
   { getOnInit: true },
 );
-export const explicitProjectSelectionAtom = atom<{ path: string; expiresAt: number } | null>(null);
+
+export const selectedProjectRefAtom = atom(
+  // The storage atom's value is typed to include a pending read, which is not
+  // a key; an unresolved selection is no selection yet.
+  (get) => {
+    const stored = get(selectedProjectKeyAtom);
+    return typeof stored === "string" ? parseProjectKey(stored) : null;
+  },
+  (_get, set, ref: ProjectRef | null) => {
+    set(selectedProjectKeyAtom, projectKey(ref));
+  },
+);
+
+// Read-only: a selection is made through `selectProjectAtom` or
+// `selectedProjectRefAtom`, so nothing can write a path where a key belongs.
+export const selectedProjectPathAtom = atom((get) => get(selectedProjectRefAtom)?.path ?? null);
+
+export const explicitProjectSelectionAtom = atom<{ key: string; expiresAt: number } | null>(null);
 
 export const selectedSessionIdAtom = atom<string | null>(null);
 
@@ -32,14 +60,15 @@ export const selectedSessionIdAtom = atom<string | null>(null);
 export const projectListStatusAtom = atom<ProjectListStatus>(PROJECT_LIST_LOADING);
 export const lastSyncAtAtom = atom<number | null>(null);
 
-const projectViewPathByProjectPath = new Map<string, string>();
+const projectViewPathByProjectKey = new Map<string, string>();
 
 // ─── Derived atoms ─────────────────────────────────────────────────────────
 
 export const selectedProjectAtom = atom<DaemonProject | null>((get) => {
-  const path = get(selectedProjectPathAtom);
-  if (!path) return null;
-  return get(projectsAtom).find((p) => p.path === path) ?? null;
+  const ref = get(selectedProjectRefAtom);
+  if (!ref) return null;
+  const projects = get(projectsAtom);
+  return findProjectForRef(projects, ref) ?? null;
 });
 
 // Stable primitive-friendly endpoint atom. The underlying object changes
@@ -59,10 +88,9 @@ export const selectedSessionAtom = atom<DesktopSession | null>((get) => {
 
 // ─── Action atoms ──────────────────────────────────────────────────────────
 
-// Reconcile a fresh project snapshot from the daemon. Sorts by name. Honors a
-// persisted selectedProjectPath if it's still present in the incoming list.
-// Otherwise falls back to the first sorted project and clears stale session
-// selection.
+// Reconcile a fresh project snapshot from the daemon. Sorts by name. Honors
+// the persisted selection if that project is still present. Otherwise falls
+// back to the first sorted project and clears stale session selection.
 export const reconcileProjectsAtom = atom(
   null,
   (get, set, incoming: DaemonProject[], options?: { unansweredMachineIds?: readonly string[] }) => {
@@ -76,14 +104,14 @@ export const reconcileProjectsAtom = atom(
     ];
     set(projectListStatusAtom, PROJECT_LIST_OK);
     const sorted = reconcileProjectList(previousProjects, merged);
-    let nextPath = get(selectedProjectPathAtom);
+    let nextRef = get(selectedProjectRefAtom);
     let nextSession = get(selectedSessionIdAtom);
 
     if (merged.length === 0 && previousProjects.length > 0) {
       const explicitSelection = get(explicitProjectSelectionAtom);
       const preservingRecentExplicitSelection =
         explicitSelection &&
-        explicitSelection.path === nextPath &&
+        explicitSelection.key === projectKey(nextRef) &&
         explicitSelection.expiresAt > Date.now();
       if (preservingRecentExplicitSelection) {
         set(lastSyncAtAtom, Date.now());
@@ -91,18 +119,24 @@ export const reconcileProjectsAtom = atom(
       }
     }
 
-    const stillPresent = nextPath ? sorted.some((p) => p.path === nextPath) : false;
+    // A selection stored before machines existed is upgraded to a full ref
+    // here, so the next reload no longer depends on the fallback.
+    const resolved = findProjectForRef(sorted, nextRef) ?? null;
 
-    if (!nextPath && sorted.length > 0) {
-      nextPath = sorted[0].path;
-    } else if (nextPath && !stillPresent) {
-      nextPath = sorted[0]?.path ?? null;
+    if (!nextRef && sorted.length > 0) {
+      nextRef = projectRefOf(sorted[0]);
+    } else if (nextRef && !resolved) {
+      nextRef = projectRefOf(sorted[0]);
       nextSession = null;
+    } else if (resolved) {
+      nextRef = projectRefOf(resolved);
     }
-    // else: stored path is still present — keep it.
+    // else: the stored selection is still reachable — keep it.
 
     if (sorted !== previousProjects) set(projectsAtom, sorted);
-    if (nextPath !== get(selectedProjectPathAtom)) set(selectedProjectPathAtom, nextPath);
+    if (!sameProjectRef(nextRef, get(selectedProjectRefAtom))) {
+      set(selectedProjectRefAtom, nextRef);
+    }
     if (nextSession !== get(selectedSessionIdAtom)) set(selectedSessionIdAtom, nextSession);
     set(lastSyncAtAtom, Date.now());
   },
@@ -128,20 +162,25 @@ export function projectsOnMachines(
   return projects.filter((project) => project.machineId && wanted.has(project.machineId));
 }
 
-// Select a project, clearing the session selection (matches old Zustand `selectProject`).
-export const selectProjectAtom = atom(null, (_get, set, path: string | null) => {
-  if (path) set(explicitProjectSelectionAtom, { path, expiresAt: Date.now() + 1500 });
-  set(selectedProjectPathAtom, path);
+// Select a project, clearing the session selection.
+export const selectProjectAtom = atom(null, (_get, set, ref: ProjectRef | null) => {
+  const key = projectKey(ref);
+  if (key) set(explicitProjectSelectionAtom, { key, expiresAt: Date.now() + 1500 });
+  set(selectedProjectRefAtom, ref);
   set(selectedSessionIdAtom, null);
 });
 
-export function rememberProjectViewPath(projectPath: string, viewPath: string): void {
-  if (!projectPath || !viewPath) return;
-  projectViewPathByProjectPath.set(projectPath, viewPath);
+// Keyed by the pair: the view you had open on strix's checkout is not the view
+// you had open on the mbp's copy of it.
+export function rememberProjectViewPath(ref: ProjectRef | null, viewPath: string): void {
+  const key = projectKey(ref);
+  if (!key || !viewPath) return;
+  projectViewPathByProjectKey.set(key, viewPath);
 }
 
-export function rememberedProjectViewPath(projectPath: string): string | null {
-  return projectViewPathByProjectPath.get(projectPath) ?? null;
+export function rememberedProjectViewPath(ref: ProjectRef | null): string | null {
+  const key = projectKey(ref);
+  return (key && projectViewPathByProjectKey.get(key)) ?? null;
 }
 
 export function reconcileProjectList(

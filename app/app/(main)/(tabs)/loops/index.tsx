@@ -43,7 +43,7 @@ const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 export default function LoopsScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const { project, projectPath, machineId, endpoint, projectLoading } = useRouteProject();
   const projectPathKey = projectPath ?? EMPTY_PROJECT_PATH;
   const state = useAtomValue(desktopStateFamily(projectPathKey));
   const stateError = useAtomValue(desktopStateErrorFamily(projectPathKey));
@@ -149,7 +149,7 @@ export default function LoopsScreen() {
 
   function openAgent(entry: SessionEntry) {
     selectSession(entry.session.id);
-    router.push(detailHrefForPath(pathname, "agent", entry.session.id, projectPath));
+    router.push(detailHrefForPath(pathname, "agent", entry.session.id, projectPath, machineId));
   }
 
   return (

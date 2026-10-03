@@ -14,7 +14,8 @@ import {
   clearNotificationStartupIssueAtom,
   reportNotificationStartupIssueAtom,
 } from "@/stores/notificationStartup";
-import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
+import { findProjectByRef, uniqueProjectRefForPath } from "@/lib/project-key";
+import { projectsAtom, selectProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 
 if (Platform.OS !== "web") {
   Notifications.setNotificationHandler({
@@ -40,7 +41,7 @@ function stringField(data: unknown, key: string): string | undefined {
  */
 export function NativeNotificationRouter() {
   const router = useRouter();
-  const selectProject = useSetAtom(selectedProjectPathAtom);
+  const selectProject = useSetAtom(selectProjectAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const reportNotificationStartupIssue = useSetAtom(reportNotificationStartupIssueAtom);
@@ -73,7 +74,10 @@ export function NativeNotificationRouter() {
       markNotificationsReadLocal({ projectPath: projectRoot, ids: [notificationId] });
       void (async () => {
         if (!projectRoot || !notificationId) return;
-        const project = projectsRef.current.find((item) => item.path === projectRoot);
+        const project = findProjectByRef(
+          projectsRef.current,
+          uniqueProjectRefForPath(projectsRef.current, projectRoot),
+        );
         const endpoint = project ? getProjectServiceEndpoint(project) : null;
         if (!endpoint) return;
         try {
@@ -83,7 +87,11 @@ export function NativeNotificationRouter() {
           // Device-local read state is the source of truth for this tap.
         }
       })();
-      if (projectRoot) selectProject(projectRoot);
+      // The push payload names a path and no machine. One machine with that
+      // path is an answer; with two, the tap selects nothing rather than
+      // opening the wrong host.
+      const tappedRef = uniqueProjectRefForPath(projectsRef.current, projectRoot);
+      if (tappedRef) selectProject(tappedRef);
       if (sessionId) {
         selectSession(sessionId);
         router.navigate({
@@ -92,12 +100,20 @@ export function NativeNotificationRouter() {
             focusToken: Date.now().toString(36),
             notificationId,
             project: projectRoot,
+            // Absent when two machines hold this path; the chat then opens on
+            // whatever the selection already resolved to rather than guessing.
+            ...(tappedRef?.machineId ? { machine: tappedRef.machineId } : {}),
             sessionId,
           },
         });
         return;
       }
-      router.navigate(buildViewHref("/notifications", { project: projectRoot }));
+      router.navigate(
+        buildViewHref("/notifications", {
+          project: projectRoot,
+          machine: tappedRef?.machineId,
+        }),
+      );
     };
 
     let active = true;

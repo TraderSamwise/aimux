@@ -12,8 +12,8 @@ import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import { MAIN_TAB_ROUTES, navigateMainTab, type MainTabId } from "@/lib/main-tabs";
-import { projectPathFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
-import { selectedProjectPathAtom } from "@/stores/projects";
+import { projectRefFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
+import { selectedProjectRefAtom } from "@/stores/projects";
 
 const TABS = [
   { id: "project", label: "Project", Icon: FolderKanban },
@@ -30,10 +30,13 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
   const collapses = Platform.OS === "ios";
   const keyboardVisible = useKeyboardVisible(!collapses);
   const keyboardInset = useKeyboardInset();
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
-  const currentProjectPath =
-    projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
+  // Both halves from one source, so a path never travels with another host's
+  // machine.
+  const currentRef =
+    projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
+    selectedProjectRef;
 
   const barHeight = 56 + bottomInset;
   // Give the bar's height back to the keyboard as it rises, so whatever sits above
@@ -69,7 +72,7 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
                   canPreventDefault: true,
                 });
                 if (!active && !event.defaultPrevented) {
-                  navigateMainTab(navigation, tabId, currentProjectPath);
+                  navigateMainTab(navigation, tabId, currentRef?.path, currentRef?.machineId);
                 }
               }}
               className="flex-1 items-center justify-center active:bg-accent/50"

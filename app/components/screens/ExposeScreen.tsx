@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { findProjectForRef, projectRefOf } from "@/lib/project-key";
 import { Platform, ScrollView, Text as RNText, View, useWindowDimensions } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -30,8 +31,8 @@ import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
 import { appStatusClasses, appStatusColors } from "@/lib/status-tone";
 import { formatDaemonProjectReadError, formatTmuxUnavailable } from "@/lib/unavailable-state";
 import { cn } from "@/lib/utils";
-import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-location";
-import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
+import { detailHrefForPath, projectRefFromSearchOrLocation } from "@/lib/view-location";
+import { projectsAtom, selectedProjectRefAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayStatusAtom } from "@/stores/relay";
 import { exposePreviewModeAtom, type ExposePreviewMode } from "@/stores/settings";
 import { sidebarOpenAtom } from "@/stores/ui";
@@ -627,12 +628,13 @@ export default function ExposeScreen() {
   const pathname = usePathname();
   const projects = useAtomValue(projectsAtom);
   const [exposePreviewMode, setExposePreviewMode] = useAtom(exposePreviewModeAtom);
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const setSidebarOpen = useSetAtom(sidebarOpenAtom);
   const searchParams = useGlobalSearchParams<{
     project?: string | string[];
+    machine?: string | string[];
     scope?: string | string[];
     filter?: string | string[];
   }>();
@@ -645,7 +647,10 @@ export default function ExposeScreen() {
   const [loadedViewKey, setLoadedViewKey] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  const routeProjectPath = projectPathFromSearchOrLocation(searchParams.project);
+  const routeProjectRef = projectRefFromSearchOrLocation(
+    searchParams.project,
+    searchParams.machine,
+  );
   const scope = resolveScope(searchParams.scope);
   const routeFilter = resolveFilter(searchParams.filter);
   const [localFilter, setLocalFilter] = useState<{
@@ -656,8 +661,10 @@ export default function ExposeScreen() {
     value: routeFilter,
   });
   const filter = localFilter.routeFilter === routeFilter ? localFilter.value : routeFilter;
-  const currentProjectPath = routeProjectPath ?? selectedProjectPath ?? projects[0]?.path ?? null;
-  const currentProject = projects.find((project) => project.path === currentProjectPath) ?? null;
+  const currentProjectRef = routeProjectRef ?? selectedProjectRef ?? projectRefOf(projects[0]);
+  const currentProject = findProjectForRef(projects, currentProjectRef) ?? null;
+  const currentProjectPath = currentProject?.path ?? currentProjectRef?.path ?? null;
+  const currentProjectMachineId = currentProject?.machineId ?? currentProjectRef?.machineId;
   const projectForRequest = currentProject ?? projects[0] ?? null;
   const projectEndpoint = projectForRequest ? getProjectServiceEndpoint(projectForRequest) : null;
   const projectRequestId = projectForRequest?.id ?? "";
@@ -782,6 +789,7 @@ export default function ExposeScreen() {
       pathname: "/expose",
       params: {
         project: currentProjectPath ?? undefined,
+        machine: currentProjectMachineId,
         scope: nextScope === "global" ? "global" : undefined,
         filter: filter === "all" ? undefined : filter,
       },
@@ -798,10 +806,14 @@ export default function ExposeScreen() {
     if (shouldDismissSidebarOnNavigate(width)) setSidebarOpen(false);
     if (tile.kind === "agent") {
       setSelectedSession(tile.sessionId);
-      router.push(detailHrefForPath(pathname, "agent", tile.sessionId, tile.projectRoot));
+      router.push(
+        detailHrefForPath(pathname, "agent", tile.sessionId, tile.projectRoot, tile.machineId),
+      );
       return;
     }
-    router.push(detailHrefForPath(pathname, "service", tile.sessionId, tile.projectRoot));
+    router.push(
+      detailHrefForPath(pathname, "service", tile.sessionId, tile.projectRoot, tile.machineId),
+    );
   }
 
   return (

@@ -11,21 +11,24 @@ import {
   type ProjectListStatus,
 } from "@/lib/project-list-status";
 import { cn } from "@/lib/utils";
+import { projectKey, projectRefOf, sameProjectRef, type ProjectRef } from "@/lib/project-key";
 
 export function ProjectPicker({
   projects,
   status = PROJECT_LIST_OK,
-  selectedPath,
+  selectedRef,
   showAllProjects,
   onShowAllProjectsChange,
   onSelect,
 }: {
   projects: DaemonProject[];
   status?: ProjectListStatus;
-  selectedPath: string | null;
+  // The pair, not a path: the same checkout exists on two machines, and a path
+  // alone would select, and highlight, both rows.
+  selectedRef: ProjectRef | null;
   showAllProjects: boolean;
   onShowAllProjectsChange: (showAll: boolean) => void;
-  onSelect: (path: string) => void;
+  onSelect: (ref: ProjectRef) => void;
 }) {
   const visibleProjects = filterProjectPickerProjects(projects, { showAll: showAllProjects });
   const hiddenCount = Math.max(0, projects.length - visibleProjects.length);
@@ -93,7 +96,8 @@ export function ProjectPicker({
         </View>
       ) : (
         visibleProjects.map((project) => {
-          const isSelected = project.path === selectedPath;
+          const ref = projectRefOf(project);
+          const isSelected = sameProjectRef(ref, selectedRef);
           // The dot and the label had separate rules -- one on the agent count
           // falling back to the project service, the other on the service alone --
           // so they could disagree with each other and with the filter beside
@@ -102,8 +106,8 @@ export function ProjectPicker({
           const onlineAgentCount = onlineState === "online" ? project.onlineAgentCount : undefined;
           return (
             <Pressable
-              key={project.path}
-              onPress={() => onSelect(project.path)}
+              key={projectKey(ref) ?? project.path}
+              onPress={() => ref && onSelect(ref)}
               className={cn(
                 "px-4 py-3",
                 isSelected ? "bg-[#26272d]" : "hover:bg-[#232429] active:bg-[#26272d]",

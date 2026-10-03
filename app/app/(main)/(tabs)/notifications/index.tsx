@@ -269,7 +269,7 @@ export default function NotificationsScreen() {
   const pathname = usePathname();
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const { project, projectPath, machineId, endpoint, projectLoading } = useRouteProject();
   const projectPathKey = projectPath ?? EMPTY_PROJECT_PATH;
   const feed = useAtomValue(notificationFeedFamily(projectPathKey));
   const feedError = useAtomValue(notificationFeedErrorFamily(projectPathKey));
@@ -393,9 +393,9 @@ export default function NotificationsScreen() {
     }
     if (card.sessionId) {
       selectSession(card.sessionId);
-      router.push(detailHrefForPath(pathname, "agent", card.sessionId, projectPath));
+      router.push(detailHrefForPath(pathname, "agent", card.sessionId, projectPath, machineId));
     } else if (card.serviceId) {
-      router.push(detailHrefForPath(pathname, "service", card.serviceId, projectPath));
+      router.push(detailHrefForPath(pathname, "service", card.serviceId, projectPath, machineId));
     }
   }
 
@@ -435,6 +435,7 @@ export default function NotificationsScreen() {
               router.replace(
                 buildViewHref("/notifications", {
                   project: projectPath ?? undefined,
+                  machine: machineId ?? undefined,
                   lens: item.id,
                 }),
               )

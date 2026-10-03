@@ -66,7 +66,7 @@ function DocumentRow({
 export default function LibraryScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const { project, projectPath, machineId, endpoint, projectLoading } = useRouteProject();
   const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const libraryRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("library"));
   const resource = useAtomValue(libraryResourceFamily(projectPathKey));
@@ -214,7 +214,11 @@ export default function LibraryScreen() {
                 selected={document.id === selectedDocument?.id}
                 onPress={() =>
                   router.replace(
-                    buildViewHref("/library", { project: projectPath, document: document.id }),
+                    buildViewHref("/library", {
+                      project: projectPath,
+                      machine: machineId,
+                      document: document.id,
+                    }),
                   )
                 }
               />

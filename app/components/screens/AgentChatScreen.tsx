@@ -468,7 +468,7 @@ export default function ChatScreen() {
   const sessionId = singleRouteParam(params.sessionId);
   const routeShareId = singleRouteParam(params.shareId);
   const sessionKey = sessionId ?? "";
-  const { project, projectPath, endpoint: serviceEndpoint } = useRouteProject();
+  const { project, projectPath, machineId, endpoint: serviceEndpoint } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
   const desktopState = useAtomValue(desktopStateFamily(stateProjectPath));
   const worktreeGroups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
@@ -1833,7 +1833,7 @@ export default function ChatScreen() {
       router.dismissTo("/shares");
       return;
     }
-    router.dismissTo(buildMainTabHref("project", projectPath));
+    router.dismissTo(buildMainTabHref("project", projectPath, machineId));
   }
 
   function toggleSharePanel() {
@@ -2194,6 +2194,7 @@ export default function ChatScreen() {
                               params: {
                                 sessionId: session.id,
                                 ...(projectPath ? { project: projectPath } : {}),
+                                ...(machineId ? { machine: machineId } : {}),
                               },
                             });
                           }}
@@ -2298,6 +2299,7 @@ export default function ChatScreen() {
                                   params: {
                                     sessionId: session.id,
                                     ...(projectPath ? { project: projectPath } : {}),
+                                    ...(machineId ? { machine: machineId } : {}),
                                   },
                                 });
                               }}

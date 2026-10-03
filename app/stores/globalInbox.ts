@@ -5,12 +5,16 @@ import type { NotificationRecord, ThreadSummaryResponse } from "@/lib/api";
 export interface GlobalNotificationRow {
   projectName: string;
   projectPath: string;
+  // Which machine's copy of the project this row came from. Opening the row
+  // has to go back to that host, not to whichever one shares the path.
+  machineId?: string;
   notification: NotificationRecord;
 }
 
 export interface GlobalThreadRow {
   projectName: string;
   projectPath: string;
+  machineId?: string;
   thread: ThreadSummaryResponse;
 }
 

@@ -14,7 +14,7 @@ import { buildMainTabHref } from "@/lib/main-tabs";
 import { useResponsiveViewport } from "@/lib/responsive-viewport";
 import { useRouteShare } from "@/lib/use-route-share";
 import { relayConfiguredAtom } from "@/stores/relay";
-import { selectedProjectPathAtom } from "@/stores/projects";
+import { selectedProjectRefAtom } from "@/stores/projects";
 
 function TopBarRouteButton({
   href,
@@ -51,7 +51,7 @@ function TopLevelExperienceNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { topBarCompact: compact } = useResponsiveViewport();
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const activeShare = useRouteShare();
   const { userId } = useAuth();
   const active =
@@ -62,16 +62,17 @@ function TopLevelExperienceNav() {
         : pathname === "/shares" || pathname.startsWith("/shares/")
           ? "shared"
           : "projects";
-  const projectTargetPath =
+  // A share names one host and carries no machine of its own.
+  const projectTarget =
     activeShare && activeShare.ownerUserId === userId
-      ? activeShare.projectRoot
-      : selectedProjectPath;
+      ? { path: activeShare.projectRoot }
+      : selectedProjectRef;
   const options = [
     {
       id: "projects",
       label: "Projects",
       icon: FolderKanban,
-      href: buildMainTabHref("project", projectTargetPath),
+      href: buildMainTabHref("project", projectTarget?.path, projectTarget?.machineId),
     },
     { id: "shared", label: "Shared", icon: Share2, href: "/shares" as Href },
     { id: "monitor", label: "Monitor", icon: Camera, href: "/monitor" as Href },

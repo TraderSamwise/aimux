@@ -48,3 +48,24 @@ describe("main tab navigation", () => {
     });
   });
 });
+
+describe("buildMainTabHref with a machine", () => {
+  it("carries the machine beside the path", () => {
+    expect(buildMainTabHref("project", "/Users/sam/cs/aimux", "strix")).toEqual({
+      pathname: "/(main)/(tabs)/project",
+      params: { project: "/Users/sam/cs/aimux", machine: "strix" },
+    });
+  });
+
+  // Local mode and a single-machine account have one host to mean.
+  it("leaves the machine out when there is none", () => {
+    expect(buildMainTabHref("project", "/Users/sam/cs/aimux")).toEqual({
+      pathname: "/(main)/(tabs)/project",
+      params: { project: "/Users/sam/cs/aimux" },
+    });
+    expect(buildMainTabHref("project", "", "strix")).toEqual({
+      pathname: "/(main)/(tabs)/project",
+      params: {},
+    });
+  });
+});

@@ -36,7 +36,7 @@ import {
   buildViewPath,
   detailHrefForPath,
   parentViewHrefForPath,
-  projectPathFromSearchOrLocation,
+  projectRefFromSearchOrLocation,
   replaceBrowserViewPath,
   type SearchValue,
 } from "@/lib/view-location";
@@ -53,6 +53,7 @@ import {
   selectedProjectAtom,
   selectedProjectEndpointAtom,
   selectedProjectPathAtom,
+  selectedProjectRefAtom,
   selectedSessionIdAtom,
   rememberedProjectViewPath,
   selectProjectAtom,
@@ -70,6 +71,7 @@ import {
   relayUnavailableProjectCopy,
 } from "@/lib/project-connection-display";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { findProjectForRef, projectRefOf, type ProjectRef } from "@/lib/project-key";
 
 // Restyle palette (Linear-style lifted slate) — mirrors docs/mockups/project-view.html.
 //   sidebar bg #161719 · hairline #2a2b31 · press #232429 · selected #26272d
@@ -297,10 +299,13 @@ function SidebarPrimaryNav({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const activeTab = mainTabForPath(pathname);
-  const routeProjectPath =
-    projectPath ?? projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
+  const navRef =
+    projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
+    selectedProjectRef;
+  const routeProjectPath = projectPath ?? navRef?.path ?? null;
+  const routeMachineId = (projectPath ? undefined : navRef?.machineId) ?? null;
 
   return (
     <View className="p-1.5">
@@ -314,6 +319,7 @@ function SidebarPrimaryNav({
               blurWebActiveElement();
               const href = buildViewHref(MAIN_TAB_ROUTES[tabId].href, {
                 project: routeProjectPath,
+                machine: routeMachineId,
               });
               onNavigate();
               router.push(href);
@@ -361,11 +367,16 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const pathname = usePathname();
   const [sidebarMode, setSidebarMode] = useAtom(sidebarModeAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
-  const effectiveProjectPath =
-    projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
-  const effectiveProject =
-    projects.find((project) => project.path === effectiveProjectPath) ?? selectedProject;
+  // Both halves come from one source; pairing a URL path with the selected
+  // machine would name a project on neither host.
+  const effectiveProjectRef =
+    projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
+    projectRefOf(selectedProject);
+  const effectiveProjectPath = effectiveProjectRef?.path ?? null;
+  const effectiveProject = findProjectForRef(projects, effectiveProjectRef) ?? selectedProject;
   const routeProjectPath = effectiveProject?.path ?? effectiveProjectPath;
+  const pickedProjectRef = projectRefOf(effectiveProject) ?? effectiveProjectRef;
+  const routeProjectMachineId = pickedProjectRef?.machineId;
   const endpoint = effectiveProject
     ? getProjectServiceEndpoint(effectiveProject)
     : selectedProjectEndpoint;
@@ -449,36 +460,51 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     ],
   };
 
-  function handlePickProject(path: string) {
+  function handlePickProject(ref: ProjectRef) {
     blurWebActiveElement();
     if (Platform.OS === "web") {
       replaceBrowserViewPath(
-        buildViewPath(MAIN_TAB_ROUTES.project.href, { project: path }) as string,
+        buildViewPath(MAIN_TAB_ROUTES.project.href, {
+          project: ref.path,
+          machine: ref.machineId,
+        }) as string,
       );
     }
-    selectProject(path);
+    selectProject(ref);
     setShowPicker(false);
-    router.replace((rememberedProjectViewPath(path) ?? buildMainTabHref("project", path)) as Href);
+    router.replace(
+      (rememberedProjectViewPath(ref) ??
+        buildMainTabHref("project", ref.path, ref.machineId)) as Href,
+    );
   }
 
   function handlePickSession(sessionId: string, sessionProjectPath = routeProjectPath) {
     blurWebActiveElement();
     setSelectedSession(sessionId);
     if (dismissSidebarOnNavigate) setSidebarOpen(false);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, sessionProjectPath));
+    // The machine only travels with its own path. A caller that overrode the
+    // path has named some other project, and pairing it with this machine
+    // would address a project on neither host.
+    const sessionMachineId =
+      sessionProjectPath === routeProjectPath ? routeProjectMachineId : undefined;
+    router.push(
+      detailHrefForPath(pathname, "agent", sessionId, sessionProjectPath, sessionMachineId),
+    );
   }
 
   function handlePickService(serviceId: string) {
     blurWebActiveElement();
     if (dismissSidebarOnNavigate) setSidebarOpen(false);
-    router.push(detailHrefForPath(pathname, "service", serviceId, routeProjectPath));
+    router.push(
+      detailHrefForPath(pathname, "service", serviceId, routeProjectPath, routeProjectMachineId),
+    );
   }
 
   function handleKillSession(sessionId: string) {
     if (selectedSessionId !== sessionId) return;
     setSelectedSession(null);
     if (pathname.includes("/agent/")) {
-      router.replace(parentViewHrefForPath(pathname, routeProjectPath));
+      router.replace(parentViewHrefForPath(pathname, routeProjectPath, routeProjectMachineId));
     }
   }
 
@@ -543,7 +569,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
             <ProjectPicker
               projects={projects}
               status={projectListStatus}
-              selectedPath={effectiveProjectPath}
+              selectedRef={pickedProjectRef}
               showAllProjects={showAllPickerProjects}
               onShowAllProjectsChange={setShowAllPickerProjects}
               onSelect={handlePickProject}

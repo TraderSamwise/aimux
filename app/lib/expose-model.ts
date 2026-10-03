@@ -77,6 +77,9 @@ export interface ExposeTile {
   projectId: string;
   projectName: string;
   projectRoot: string;
+  // Which machine's copy. A project id and root are not unique across the
+  // fleet, so opening a tile needs this to land on the right host.
+  machineId?: string;
   serviceEndpoint: ServiceEndpoint | null;
   sessionId: string;
   windowId?: string;
@@ -304,8 +307,9 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         metadata.kind === "service" ? label : agentDisplayLabel(agentDisplay, item.roleState);
       const kind = metadata.kind === "service" ? "service" : "agent";
       tiles.push({
-        id: `${projectRoot}:${item.target?.windowId ?? item.id ?? index}`,
+        id: `${source.project.machineId ?? ""}:${projectRoot}:${item.target?.windowId ?? item.id ?? index}`,
         projectId: item.projectId || source.project.id,
+        machineId: source.project.machineId,
         projectName,
         projectRoot,
         serviceEndpoint: tileServiceEndpoint(source.project),

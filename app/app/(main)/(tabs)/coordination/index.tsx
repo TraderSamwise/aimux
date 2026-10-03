@@ -123,7 +123,7 @@ function WorklistSection({
 export default function CoordinationScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const { project, projectPath, machineId, endpoint, projectLoading } = useRouteProject();
   const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("coordination-worklist"));
   const resource = useAtomValue(coordinationWorklistResourceFamily(projectPathKey));
@@ -221,15 +221,17 @@ export default function CoordinationScreen() {
   function handlePressItem(item: CoordinationWorklistItem) {
     if (item.sessionId) {
       selectSession(item.sessionId);
-      router.push(detailHrefForPath(pathname, "agent", item.sessionId, projectPath));
+      router.push(detailHrefForPath(pathname, "agent", item.sessionId, projectPath, machineId));
       return;
     }
     const threadId = threadIdFor(item);
     if (threadId) {
-      router.push(buildViewHref("/threads", { project: projectPath, threadId }));
+      router.push(
+        buildViewHref("/threads", { project: projectPath, machine: machineId, threadId }),
+      );
       return;
     }
-    router.push(buildViewHref("/notifications", { project: projectPath }));
+    router.push(buildViewHref("/notifications", { project: projectPath, machine: machineId }));
   }
 
   return (

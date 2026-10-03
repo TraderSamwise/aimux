@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils";
 import { serviceEndpointKey } from "@/lib/daemon-url";
 
 export default function ThreadsScreen() {
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const { project, projectPath, machineId, endpoint, projectLoading } = useRouteProject();
   const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("threads"));
   const threadsResource = useAtomValue(projectThreadsResourceFamily(projectPathKey));
@@ -204,6 +204,7 @@ export default function ThreadsScreen() {
                     router.replace(
                       buildViewHref("/threads", {
                         project: projectPath,
+                        machine: machineId,
                         threadId: t.thread.id,
                       }),
                     )

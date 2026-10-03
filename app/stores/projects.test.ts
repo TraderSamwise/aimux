@@ -2,13 +2,17 @@ import { createStore } from "jotai";
 import { describe, expect, it } from "vitest";
 
 import type { DaemonProject } from "@/lib/api";
+import { projectKey } from "@/lib/project-key";
 import {
   explicitProjectSelectionAtom,
   projectsAtom,
   reconcileProjectsAtom,
   rememberedProjectViewPath,
   rememberProjectViewPath,
+  selectedProjectKeyAtom,
+  selectedProjectAtom,
   selectedProjectPathAtom,
+  selectedProjectRefAtom,
   selectedSessionIdAtom,
   selectProjectAtom,
   reconcileProjectList,
@@ -65,10 +69,10 @@ describe("project selection store", () => {
       project({ id: "tealstreet-next", name: "Tealstreet", path: "/tealstreet-next" }),
       project({ id: "thegrand", name: "The Grand", path: "/thegrand" }),
     ]);
-    store.set(selectedProjectPathAtom, "/thegrand");
+    store.set(selectedProjectRefAtom, { path: "/thegrand" });
     store.set(selectedSessionIdAtom, "claude-1");
     store.set(explicitProjectSelectionAtom, {
-      path: "/thegrand",
+      key: projectKey({ path: "/thegrand" })!,
       expiresAt: Date.now() + 1000,
     });
 
@@ -87,7 +91,7 @@ describe("project selection store", () => {
     store.set(projectsAtom, [
       project({ id: "tealstreet-next", name: "Tealstreet", path: "/tealstreet-next" }),
     ]);
-    store.set(selectedProjectPathAtom, "/tealstreet-next");
+    store.set(selectedProjectRefAtom, { path: "/tealstreet-next" });
     store.set(selectedSessionIdAtom, "claude-1");
 
     store.set(reconcileProjectsAtom, []);
@@ -101,21 +105,42 @@ describe("project selection store", () => {
     const store = createStore();
     const before = Date.now();
 
-    store.set(selectProjectAtom, "/thegrand");
+    store.set(selectProjectAtom, { path: "/thegrand" });
 
     expect(store.get(selectedProjectPathAtom)).toBe("/thegrand");
     expect(store.get(selectedSessionIdAtom)).toBeNull();
-    expect(store.get(explicitProjectSelectionAtom)).toMatchObject({ path: "/thegrand" });
+    expect(store.get(explicitProjectSelectionAtom)).toMatchObject({
+      key: projectKey({ path: "/thegrand" }),
+    });
     expect(store.get(explicitProjectSelectionAtom)?.expiresAt ?? 0).toBeGreaterThan(before);
   });
 
   it("keeps per-project view memory in process only", () => {
-    rememberProjectViewPath("/thegrand", "/agent/claude-1/chat?project=%2Fthegrand");
-    rememberProjectViewPath("/aimux", "/project?project=%2Faimux&section=queue");
+    rememberProjectViewPath({ path: "/thegrand" }, "/agent/claude-1/chat?project=%2Fthegrand");
+    rememberProjectViewPath({ path: "/aimux" }, "/project?project=%2Faimux&section=queue");
 
-    expect(rememberedProjectViewPath("/thegrand")).toBe("/agent/claude-1/chat?project=%2Fthegrand");
-    expect(rememberedProjectViewPath("/aimux")).toBe("/project?project=%2Faimux&section=queue");
-    expect(rememberedProjectViewPath("/missing")).toBeNull();
+    expect(rememberedProjectViewPath({ path: "/thegrand" })).toBe(
+      "/agent/claude-1/chat?project=%2Fthegrand",
+    );
+    expect(rememberedProjectViewPath({ path: "/aimux" })).toBe(
+      "/project?project=%2Faimux&section=queue",
+    );
+    expect(rememberedProjectViewPath({ path: "/missing" })).toBeNull();
+  });
+
+  // The same checkout on two machines is two projects. The view you had open
+  // on strix's copy is not the one you had open on the mbp's.
+  it("keeps per-project view memory apart for two machines", () => {
+    rememberProjectViewPath({ machineId: "mbp", path: "/shared-path" }, "/project?section=queue");
+    rememberProjectViewPath({ machineId: "strix", path: "/shared-path" }, "/topology");
+
+    expect(rememberedProjectViewPath({ machineId: "mbp", path: "/shared-path" })).toBe(
+      "/project?section=queue",
+    );
+    expect(rememberedProjectViewPath({ machineId: "strix", path: "/shared-path" })).toBe(
+      "/topology",
+    );
+    expect(rememberedProjectViewPath({ path: "/shared-path" })).toBeNull();
   });
 });
 
@@ -192,5 +217,91 @@ describe("a machine that both answered and was named as unanswered", () => {
     });
 
     expect(store.get(projectsAtom).map((project) => project.id)).toEqual(["aimux"]);
+  });
+});
+
+describe("selecting a project when two machines hold the same path", () => {
+  function fleet() {
+    return [
+      machineProject("aimux", "mbp", "sam-mbp"),
+      machineProject("aimux", "strix", "sam-strix"),
+    ];
+  }
+
+  // The whole reason a project is identified by a pair. Both of these have
+  // path /repo/aimux and id "aimux".
+  it("selects the one on the machine that was picked", () => {
+    const store = createStore();
+    store.set(projectsAtom, fleet());
+
+    store.set(selectProjectAtom, { machineId: "strix", path: "/repo/aimux" });
+
+    expect(store.get(selectedProjectAtom)?.machineName).toBe("sam-strix");
+    expect(store.get(selectedProjectPathAtom)).toBe("/repo/aimux");
+  });
+
+  // A stored selection that names a machine never falls back to the other
+  // machine's project of the same name.
+  it("selects nothing when the named machine is gone", () => {
+    const store = createStore();
+    store.set(projectsAtom, [machineProject("aimux", "mbp", "sam-mbp")]);
+    store.set(selectedProjectRefAtom, { machineId: "strix", path: "/repo/aimux" });
+
+    expect(store.get(selectedProjectAtom)).toBeNull();
+  });
+
+  // Written before machines existed, when there was only one. It means "that
+  // path"; with two machines, which was meant is unknowable.
+  it("honours a machineless stored selection only when one machine has the path", () => {
+    const one = createStore();
+    one.set(projectsAtom, [machineProject("aimux", "mbp", "sam-mbp")]);
+    one.set(selectedProjectRefAtom, { path: "/repo/aimux" });
+    expect(one.get(selectedProjectAtom)?.machineName).toBe("sam-mbp");
+
+    const two = createStore();
+    two.set(projectsAtom, fleet());
+    two.set(selectedProjectRefAtom, { path: "/repo/aimux" });
+    expect(two.get(selectedProjectAtom)).toBeNull();
+  });
+
+  // So the next reload does not depend on the fallback.
+  it("upgrades a machineless stored selection on the next reconcile", () => {
+    const store = createStore();
+    store.set(selectedProjectRefAtom, { path: "/repo/aimux" });
+
+    store.set(reconcileProjectsAtom, [machineProject("aimux", "mbp", "sam-mbp")]);
+
+    expect(store.get(selectedProjectRefAtom)).toEqual({ machineId: "mbp", path: "/repo/aimux" });
+  });
+
+  it("keeps a selection whose machine is still in the list", () => {
+    const store = createStore();
+    store.set(projectsAtom, fleet());
+    store.set(selectedProjectRefAtom, { machineId: "strix", path: "/repo/aimux" });
+    store.set(selectedSessionIdAtom, "claude-1");
+
+    store.set(reconcileProjectsAtom, fleet());
+
+    expect(store.get(selectedProjectRefAtom)).toEqual({ machineId: "strix", path: "/repo/aimux" });
+    expect(store.get(selectedSessionIdAtom)).toBe("claude-1");
+  });
+
+  it("moves the selection on when that machine's project is gone", () => {
+    const store = createStore();
+    store.set(projectsAtom, fleet());
+    store.set(selectedProjectRefAtom, { machineId: "strix", path: "/repo/aimux" });
+    store.set(selectedSessionIdAtom, "claude-1");
+
+    store.set(reconcileProjectsAtom, [machineProject("aimux", "mbp", "sam-mbp")]);
+
+    expect(store.get(selectedProjectRefAtom)).toEqual({ machineId: "mbp", path: "/repo/aimux" });
+    expect(store.get(selectedSessionIdAtom)).toBeNull();
+  });
+
+  // A bare path is what a build from before machines existed persisted.
+  it("reads a stored bare path as a machineless selection", () => {
+    const store = createStore();
+    store.set(selectedProjectKeyAtom, "/repo/aimux");
+    expect(store.get(selectedProjectRefAtom)).toEqual({ path: "/repo/aimux" });
   });
 });

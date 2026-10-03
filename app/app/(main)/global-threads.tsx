@@ -90,6 +90,7 @@ export default function GlobalThreadsScreen() {
           return threads.map((thread) => ({
             projectName: project.name,
             projectPath: project.path,
+            machineId: project.machineId,
             thread,
           }));
         }),
@@ -182,11 +183,16 @@ export default function GlobalThreadsScreen() {
       ) : (
         rows.map((row) => (
           <Pressable
-            key={`${row.projectPath}:${row.thread.thread.id}`}
+            key={`${row.machineId ?? ""}:${row.projectPath}:${row.thread.thread.id}`}
             onPress={() => {
-              selectProject(row.projectPath);
+              selectProject(
+                row.machineId
+                  ? { machineId: row.machineId, path: row.projectPath }
+                  : { path: row.projectPath },
+              );
               const webHref = buildViewPath("/threads", {
                 project: row.projectPath,
+                machine: row.machineId,
                 threadId: row.thread.thread.id,
               });
               if (Platform.OS === "web" && typeof window !== "undefined") {
@@ -196,6 +202,7 @@ export default function GlobalThreadsScreen() {
               router.navigate(
                 buildViewHref("/threads", {
                   project: row.projectPath,
+                  machine: row.machineId,
                   threadId: row.thread.thread.id,
                 }),
               );

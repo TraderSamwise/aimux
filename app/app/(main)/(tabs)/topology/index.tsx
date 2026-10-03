@@ -208,7 +208,7 @@ function RowsList({
 }
 
 export default function TopologyScreen() {
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const { project, projectPath, machineId, endpoint, projectLoading } = useRouteProject();
   const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const topologyRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("topology"));
   const resource = useAtomValue(topologyResourceFamily(projectPathKey));
@@ -321,11 +321,11 @@ export default function TopologyScreen() {
 
   function handlePickAgent(sessionId: string) {
     selectSession(sessionId);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, projectPath));
+    router.push(detailHrefForPath(pathname, "agent", sessionId, projectPath, machineId));
   }
 
   function handlePickService(serviceId: string) {
-    router.push(detailHrefForPath(pathname, "service", serviceId, projectPath));
+    router.push(detailHrefForPath(pathname, "service", serviceId, projectPath, machineId));
   }
 
   return (
@@ -390,7 +390,13 @@ export default function TopologyScreen() {
               options={VIEW_OPTIONS}
               value={mode}
               onChange={(nextMode) =>
-                router.replace(buildViewHref("/topology", { project: projectPath, mode: nextMode }))
+                router.replace(
+                  buildViewHref("/topology", {
+                    project: projectPath,
+                    machine: machineId,
+                    mode: nextMode,
+                  }),
+                )
               }
               className="ml-3"
             />

@@ -195,7 +195,7 @@ function ProgressSection({ model }: { model: ProjectObservabilityModel }) {
 export default function ProjectScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const { project, projectPath, machineId, endpoint, projectLoading } = useRouteProject();
   const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const projectObservabilityRefreshNonce = useAtomValue(
     projectApiViewRefreshNonceFamily("project-observability"),
@@ -351,7 +351,11 @@ export default function ProjectScreen() {
                 active={section === item.id}
                 onPress={() =>
                   router.replace(
-                    buildViewHref("/project", { project: projectPath, section: item.id }),
+                    buildViewHref("/project", {
+                      project: projectPath,
+                      machine: machineId,
+                      section: item.id,
+                    }),
                   )
                 }
               />

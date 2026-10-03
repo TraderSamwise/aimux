@@ -4,6 +4,9 @@ export type SearchValue = string | string[] | undefined;
 
 export interface AimuxViewParams {
   project?: string | null;
+  // Which machine's copy of that project. The path stays readable and
+  // shareable; the machine rides beside it rather than inside it.
+  machine?: string | null;
   mode?: string | null;
   lens?: string | null;
   section?: string | null;
@@ -29,15 +32,30 @@ export function projectPathFromSearch(value: SearchValue): string | null {
 }
 
 export function projectPathFromSearchOrLocation(value: SearchValue): string | null {
-  return projectPathFromSearch(value) ?? projectPathFromBrowserLocation();
+  return projectPathFromSearch(value) ?? searchParamFromBrowserLocation("project");
 }
 
-function projectPathFromBrowserLocation(): string | null {
+// The machine needs the same browser-location fallback as the path. Reading one
+// from the URL and the other from the router would pair a path with the wrong
+// machine.
+export function machineIdFromSearchOrLocation(value: SearchValue): string | null {
+  return cleanSearchValue(value) ?? searchParamFromBrowserLocation("machine");
+}
+
+export function projectRefFromSearchOrLocation(
+  projectValue: SearchValue,
+  machineValue: SearchValue,
+): { machineId?: string; path: string } | null {
+  const path = projectPathFromSearchOrLocation(projectValue);
+  if (!path) return null;
+  const machineId = machineIdFromSearchOrLocation(machineValue);
+  return machineId ? { machineId, path } : { path };
+}
+
+function searchParamFromBrowserLocation(name: string): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return projectPathFromSearch(
-      new URLSearchParams(window.location.search).get("project") ?? undefined,
-    );
+    return cleanSearchValue(new URLSearchParams(window.location.search).get(name) ?? undefined);
   } catch {
     return null;
   }
@@ -69,6 +87,7 @@ export function mergeViewParams(
 ): AimuxViewParams {
   return {
     project: next.project !== undefined ? next.project : projectPathFromSearch(current.project),
+    machine: next.machine !== undefined ? next.machine : cleanSearchValue(current.machine),
     mode: next.mode !== undefined ? next.mode : cleanSearchValue(current.mode),
     lens: next.lens !== undefined ? next.lens : cleanSearchValue(current.lens),
     section: next.section !== undefined ? next.section : cleanSearchValue(current.section),
@@ -82,24 +101,31 @@ export function detailHrefForPath(
   kind: "agent",
   id: string,
   projectPath?: string | null,
+  machineId?: string | null,
 ): Href;
 export function detailHrefForPath(
   pathname: string,
   kind: "service",
   id: string,
   projectPath?: string | null,
+  machineId?: string | null,
 ): Href;
 export function detailHrefForPath(
   pathname: string,
   kind: DetailRouteKind,
   id: string,
   projectPath?: string | null,
+  machineId?: string | null,
 ): Href {
   const tabPrefix = detailTabPrefix(pathname);
   const detailPath =
     kind === "agent" ? "/agent/[sessionId]/chat" : `${tabPrefix}/service/[serviceId]`;
   const routeParam = kind === "agent" ? { sessionId: id } : { serviceId: id };
-  return buildViewHrefObject(detailPath, { ...routeParam, project: projectPath });
+  return buildViewHrefObject(detailPath, {
+    ...routeParam,
+    project: projectPath,
+    machine: machineId,
+  });
 }
 
 export function detailViewPathForPath(
@@ -107,12 +133,14 @@ export function detailViewPathForPath(
   kind: DetailRouteKind,
   id: string,
   projectPath?: string | null,
+  machineId?: string | null,
 ): Href {
   const tabPrefix = detailTabPrefix(pathname);
+  const params = { project: projectPath, machine: machineId };
   if (kind === "agent") {
-    return buildViewPath(`/agent/${encodeURIComponent(id)}/chat`, { project: projectPath });
+    return buildViewPath(`/agent/${encodeURIComponent(id)}/chat`, params);
   }
-  return buildViewPath(`${tabPrefix}/service/${encodeURIComponent(id)}`, { project: projectPath });
+  return buildViewPath(`${tabPrefix}/service/${encodeURIComponent(id)}`, params);
 }
 
 function buildViewHrefObject(pathname: string, params: Record<string, string | null | undefined>) {
@@ -135,7 +163,11 @@ function detailTabPrefix(pathname: string): string {
   return "";
 }
 
-export function parentViewHrefForPath(pathname: string, projectPath?: string | null): Href {
+export function parentViewHrefForPath(
+  pathname: string,
+  projectPath?: string | null,
+  machineId?: string | null,
+): Href {
   const prefix = detailTabPrefix(pathname);
-  return buildViewHref(prefix || "/", { project: projectPath });
+  return buildViewHref(prefix || "/", { project: projectPath, machine: machineId });
 }

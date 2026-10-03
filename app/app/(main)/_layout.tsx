@@ -35,7 +35,7 @@ import {
   shouldApplySharedSessionHydrate,
 } from "@/lib/shared-sessions";
 import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
-import { projectPathFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
+import { projectRefFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
 import {
   applyDesktopStateFailureAtom,
   applyDesktopStateSuccessAtom,
@@ -64,7 +64,7 @@ import {
   reconcileProjectsAtom,
   rememberProjectViewPath,
   selectedProjectEndpointAtom,
-  selectedProjectPathAtom,
+  selectedProjectRefAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
 import {
@@ -96,6 +96,13 @@ import {
 import { addSecurityEventAtom } from "@/stores/security";
 import { PROJECT_API_EVENT_NAMES } from "../../../src/project-api-contract";
 import { serviceEndpointKey } from "@/lib/daemon-url";
+import {
+  findProjectForRef,
+  parseProjectKey,
+  preferMachineBearingRef,
+  projectKey,
+  sameProjectRef,
+} from "@/lib/project-key";
 
 const PROJECT_LIST_POLL_INTERVAL_MS = 10_000;
 const PROJECT_VIEW_FALLBACK_POLL_INTERVAL_MS = 10_000;
@@ -116,7 +123,7 @@ export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
   const setProjectListStatus = useSetAtom(projectListStatusAtom);
   const projects = useAtomValue(projectsAtom);
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const explicitProjectSelection = useAtomValue(explicitProjectSelectionAtom);
   const activeShare = useRouteShare();
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -150,16 +157,28 @@ export default function MainLayout() {
   const stackScreenOptions = useAppStackScreenOptions();
   const pathname = usePathname();
   const searchParams = useGlobalSearchParams();
-  const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project as SearchValue);
-  const effectiveProjectPath = activeShare?.projectRoot ?? urlProjectPath ?? selectedProjectPath;
+  const urlProjectRef = projectRefFromSearchOrLocation(
+    searchParams.project as SearchValue,
+    searchParams.machine as SearchValue,
+  );
+  // Both halves of the effective project come from one source, so a path is
+  // never paired with another host's machine. Memoized because it is an effect
+  // dependency and a fresh object every render would re-run them.
+  const effectiveProjectRef = activeShare
+    ? { path: activeShare.projectRoot }
+    : preferMachineBearingRef(urlProjectRef, selectedProjectRef);
+  const effectiveProjectPath = effectiveProjectRef?.path ?? null;
+  // A primitive stand-in for the ref, so an effect that depends on it does not
+  // re-run on every render just because the object is rebuilt.
+  const effectiveProjectKey = projectKey(effectiveProjectRef);
   const effectiveProject = activeShare
     ? projectFromActiveShare(activeShare)
-    : projects.find((project) => project.path === effectiveProjectPath);
+    : findProjectForRef(projects, effectiveProjectRef);
   const endpoint = activeShare
     ? activeShare.serviceEndpoint
     : effectiveProject
       ? getProjectServiceEndpoint(effectiveProject)
-      : urlProjectPath && urlProjectPath !== selectedProjectPath
+      : urlProjectRef && !sameProjectRef(urlProjectRef, selectedProjectRef)
         ? null
         : selectedProjectEndpoint;
   const relayUrl = env.AIMUX_RELAY_URL;
@@ -179,22 +198,38 @@ export default function MainLayout() {
     setLegacyActiveShareRef.current = setLegacyActiveShare;
   }, [setAcceptedShares, setLegacyActiveShare]);
 
+  // URL -> selection. Compared as refs, and only when the URL names a machine
+  // or the selection does not: a machineless URL must not downgrade a
+  // selection that knows its host, or this and the writer below trade
+  // corrections forever.
   usePrePaintEffect(() => {
-    if (activeShare || !urlProjectPath || urlProjectPath === selectedProjectPath) return;
+    if (activeShare || !urlProjectRef) return;
+    if (sameProjectRef(urlProjectRef, selectedProjectRef)) return;
+    // A machineless URL does not downgrade a selection that knows which host
+    // holds that same path; the URL writer below fills the machine back in.
+    if (
+      !urlProjectRef.machineId &&
+      selectedProjectRef?.machineId &&
+      selectedProjectRef.path === urlProjectRef.path
+    ) {
+      return;
+    }
+    const urlKey = projectKey(urlProjectRef);
+    const selectedKey = projectKey(selectedProjectRef);
     if (
       explicitProjectSelection &&
-      explicitProjectSelection.path === selectedProjectPath &&
-      explicitProjectSelection.path !== urlProjectPath &&
+      explicitProjectSelection.key === selectedKey &&
+      explicitProjectSelection.key !== urlKey &&
       explicitProjectSelection.expiresAt > Date.now()
     ) {
       return;
     }
-    if (explicitProjectSelection?.path === urlProjectPath) {
+    if (explicitProjectSelection?.key === urlKey) {
       store.set(explicitProjectSelectionAtom, null);
     }
-    store.set(selectedProjectPathAtom, urlProjectPath);
+    store.set(selectedProjectRefAtom, urlProjectRef);
     store.set(selectedSessionIdAtom, null);
-  }, [activeShare, explicitProjectSelection, selectedProjectPath, store, urlProjectPath]);
+  }, [activeShare, explicitProjectSelection, selectedProjectRef, store, urlProjectRef]);
 
   useEffect(() => {
     if (!activeShare) return;
@@ -207,8 +242,16 @@ export default function MainLayout() {
     if (!effectiveProjectPath || !isProjectScopedPath(pathname)) return;
     if (activeShare) return;
     const url = new URL(window.location.href);
-    if (url.searchParams.get("project") === effectiveProjectPath) return;
+    const effectiveMachineId = effectiveProjectRef?.machineId ?? "";
+    if (
+      url.searchParams.get("project") === effectiveProjectPath &&
+      (url.searchParams.get("machine") ?? "") === effectiveMachineId
+    ) {
+      return;
+    }
     url.searchParams.set("project", effectiveProjectPath);
+    if (effectiveMachineId) url.searchParams.set("machine", effectiveMachineId);
+    else url.searchParams.delete("machine");
     window.history.replaceState(
       window.history.state,
       "",
@@ -219,14 +262,14 @@ export default function MainLayout() {
   useEffect(() => {
     if (activeShare || !effectiveProjectPath || !isProjectScopedPath(pathname)) return;
     rememberProjectViewPath(
-      effectiveProjectPath,
+      parseProjectKey(effectiveProjectKey),
       projectViewPathForCurrentRoute(
         pathname,
         effectiveProjectPath,
         searchParams as Record<string, string | string[] | undefined>,
       ),
     );
-  }, [activeShare, effectiveProjectPath, pathname, searchParams]);
+  }, [activeShare, effectiveProjectKey, effectiveProjectPath, pathname, searchParams]);
 
   // Relay transport lifecycle: connect when a relay URL is configured, mirror
   // its status into the store, and register it with the API layer so requests
