@@ -675,6 +675,66 @@ fn agent_kill_without_live_window_is_successful_noop_not_operation_failure() {
     cleanup(project);
 }
 
+// A whole loop-check prompt once became an agent's name, so the dashboard
+// rendered a paragraph where a row belongs and tmux left a half-cut character
+// behind truncating it for the window name.
+#[test]
+fn agent_rename_refuses_a_message_where_a_name_belongs() {
+    let project = temp_project("agent-rename-prompt");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    let prompt = "The agent fleet appears idle while visible work is waiting. This includes agents outside managed loops and agents that self-exited their loops; idle and done both mean no worker appears to be making progress.";
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RENAME,
+        Some(&json!({ "sessionId": "codex-live", "label": prompt })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 400);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("short name"),
+        "{:?}",
+        response.body["error"]
+    );
+    assert!(
+        runtime.renamed.is_empty(),
+        "a refused label must not reach the tmux window name"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_rename_refuses_a_label_that_spans_lines_or_carries_escapes() {
+    let project = temp_project("agent-rename-control");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for label in ["first\nsecond", "name\u{1b}[31m"] {
+        let mut runtime = FakeLifecycleRuntime::default();
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::RENAME,
+            Some(&json!({ "sessionId": "codex-live", "label": label })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 400, "label {label:?} must be refused");
+        assert!(runtime.renamed.is_empty(), "label {label:?} reached tmux");
+    }
+    cleanup(project);
+}
+
 #[test]
 fn agent_rename_updates_metadata_topology_and_live_window_name() {
     let project = temp_project("agent-rename");

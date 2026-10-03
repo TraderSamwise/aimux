@@ -1,4 +1,5 @@
 pub mod agent_display;
+pub mod agent_label;
 pub mod agent_prompt_delivery;
 pub mod ansi_sgr_spans;
 pub mod async_runtime;

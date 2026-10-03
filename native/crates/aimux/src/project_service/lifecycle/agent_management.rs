@@ -492,6 +492,14 @@ pub(super) fn route_agent_rename(
         return json_error(400, "sessionId is required");
     };
     let label = trimmed_string(body.get("label"));
+    // A label is a short display name: it lands in a dashboard row, a tmux
+    // window name and the statusline. Something was writing a whole loop-check
+    // prompt here, which rendered as a paragraph of agent name.
+    if let Some(label) = label.as_deref()
+        && let Err(rejection) = crate::agent_label::validate_agent_label(label)
+    {
+        return json_error(400, rejection.message());
+    }
     let project_state_dir = context.project_state_dir();
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir)).ok();
     let window_id = topology
