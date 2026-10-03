@@ -1605,6 +1605,43 @@ describe("listing projects across machines", () => {
     ]);
   });
 
+  // Nothing is a valid answer. Only the machines that errored are failures.
+  it("does not treat an empty answer as a failure", async () => {
+    installFetchMock();
+    relayWithMachines(
+      [
+        { id: "mbp", name: "sam-mbp" },
+        { id: "strix", name: "sam-strix" },
+      ],
+      async (machineId) => {
+        if (machineId === "strix") throw new Error("timed out");
+        return { status: 200, body: { ok: true, projects: [] } };
+      },
+    );
+
+    const { projects, failures } = await listProjectsAcrossMachines();
+
+    expect(projects).toEqual([]);
+    expect(failures.map((failure) => failure.machineId)).toEqual(["strix"]);
+  });
+
+  it("carries the machine on a project stream route", async () => {
+    installFetchMock();
+    relayWithMachines([{ id: "strix", name: "sam-strix" }], async () => ({
+      status: 200,
+      body: { ok: true },
+    }));
+
+    expect(
+      getAgentOutputStreamRoute({ host: "127.0.0.1", port: 43210 }, "session-1", {
+        machineId: "strix",
+      }).machineId,
+    ).toBe("strix");
+    expect(
+      getAgentOutputStreamRoute({ host: "127.0.0.1", port: 43210 }, "session-1").machineId,
+    ).toBeUndefined();
+  });
+
   // No machine answered: there is no list, only an error. Returning an empty
   // one would render as "no projects".
   it("throws when every machine failed", async () => {

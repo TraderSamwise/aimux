@@ -150,7 +150,10 @@ export function reconcileProjectList(
 ): DaemonProject[] {
   const sorted = [...incoming].sort(
     (a, b) =>
-      a.name.localeCompare(b.name) || a.path.localeCompare(b.path) || a.id.localeCompare(b.id),
+      a.name.localeCompare(b.name) ||
+      a.path.localeCompare(b.path) ||
+      a.id.localeCompare(b.id) ||
+      (a.machineId ?? "").localeCompare(b.machineId ?? ""),
   );
   if (previous.length !== sorted.length) return sorted;
   for (let i = 0; i < sorted.length; i += 1) {

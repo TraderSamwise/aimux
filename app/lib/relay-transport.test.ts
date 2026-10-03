@@ -532,6 +532,45 @@ describe("RelayTransport machines", () => {
     restore();
   });
 
+  it("drops a machine entry it cannot read", async () => {
+    const { transport, sockets, restore } = await connectedTransport();
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "daemon_status",
+        online: true,
+        machines: [
+          null,
+          "mbp",
+          { name: "no id" },
+          { id: "" },
+          { id: "strix" },
+          { id: "mbp", name: 7 },
+        ],
+      }),
+    });
+    expect(transport.machines).toEqual([
+      { id: "strix", name: "strix" },
+      { id: "mbp", name: "mbp" },
+    ]);
+    restore();
+  });
+
+  it("forgets the fleet when the transport is shut down", async () => {
+    vi.useFakeTimers();
+    const { transport, sockets, restore } = await connectedTransport();
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "daemon_status",
+        online: true,
+        machines: [{ id: "mbp", name: "sam-mbp" }],
+      }),
+    });
+    transport.disconnect();
+    expect(transport.machines).toEqual([]);
+    vi.useRealTimers();
+    restore();
+  });
+
   it("names the machine on a request only when one was chosen", async () => {
     const { transport, sockets, restore } = await connectedTransport();
     sockets[0]!.onmessage?.({

@@ -166,6 +166,9 @@ export class RelayTransport {
     if (this._status === status) return;
     this._status = status;
     if (status !== "device_pending") this.setPendingApproval(null);
+    // auth_failed can arrive on a still-open socket, from a device_blocked
+    // event. Nothing else would clear the fleet in that case.
+    if (status === "auth_failed") this.setMachines([]);
     for (const listener of this.listeners) {
       listener(status);
     }
