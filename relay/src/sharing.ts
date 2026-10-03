@@ -1,3 +1,5 @@
+import { isValidMachineId } from "./machines.js";
+
 const SHARING_STATE_KEY = "sharing-state:v1";
 const INVITE_TOKEN_BYTES = 32;
 const MAX_SHARES = 200;
@@ -40,6 +42,9 @@ export interface SharedSessionRecord {
   ownerUserId: string;
   projectRoot: string;
   serviceEndpoint?: ShareServiceEndpoint;
+  // Which of the owner's machines hosts this session. Absent on shares made
+  // before machines existed; the relay then needs there to be only one.
+  machineId?: string;
   sessionId: string;
   createdAt: string;
   updatedAt: string;
@@ -78,6 +83,7 @@ export interface CreateShareInviteInput {
   owner: ShareActor;
   projectRoot: string;
   serviceEndpoint?: ShareServiceEndpoint;
+  machineId?: string;
   sessionId: string;
   email: string;
   now?: string;
@@ -193,12 +199,16 @@ export async function createShareInvite(
   const sessionId = sanitizeRequiredText(input.sessionId, 160, "sessionId");
   const projectRoot = sanitizeRequiredText(input.projectRoot, 600, "projectRoot");
   const serviceEndpoint = sanitizeServiceEndpoint(input.serviceEndpoint);
+  const machineId = sanitizeShareMachineId(input.machineId);
   const current = normalizeSharingState(state);
   const share =
     findShareForSession(current, owner.userId, sessionId) ??
-    createShare({ owner, projectRoot, serviceEndpoint, sessionId, now });
+    createShare({ owner, projectRoot, serviceEndpoint, machineId, sessionId, now });
   if (serviceEndpoint) {
     share.serviceEndpoint = serviceEndpoint;
+  }
+  if (machineId) {
+    share.machineId = machineId;
   }
 
   const token = randomBase64Url(INVITE_TOKEN_BYTES);
@@ -347,6 +357,7 @@ function createShare(input: {
   owner: ShareActor;
   projectRoot: string;
   serviceEndpoint?: ShareServiceEndpoint;
+  machineId?: string;
   sessionId: string;
   now: string;
 }): SharedSessionRecord {
@@ -362,6 +373,7 @@ function createShare(input: {
     ownerUserId: owner.userId,
     projectRoot: input.projectRoot,
     serviceEndpoint: input.serviceEndpoint,
+    machineId: input.machineId,
     sessionId: input.sessionId,
     createdAt: input.now,
     updatedAt: input.now,
@@ -369,6 +381,11 @@ function createShare(input: {
     participants: { [owner.userId]: owner },
     invites: {},
   };
+}
+
+function sanitizeShareMachineId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && isValidMachineId(trimmed) ? trimmed : undefined;
 }
 
 function normalizeShare(share: SharedSessionRecord): SharedSessionRecord {
@@ -388,6 +405,7 @@ function normalizeShare(share: SharedSessionRecord): SharedSessionRecord {
   return {
     ...share,
     serviceEndpoint,
+    machineId: sanitizeShareMachineId(share.machineId),
     version: Number.isFinite(share.version) ? share.version : 1,
     participants: share.participants ?? {},
     invites,

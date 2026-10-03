@@ -108,3 +108,35 @@ export function resolveDaemonTarget(
 // bound: a bug that mints a new machine id per connect must not grow the map
 // without end.
 export const MAX_MACHINES_PER_ROOM = 16;
+
+// A share grants one session on one host. It must not become a window onto the
+// rest of the fleet, so a guest never sees the machine list and never names a
+// machine: the share says which host, or there has to be only one.
+export function resolveSharedDaemonTarget(
+  machines: readonly MachineInfo[],
+  shareMachineId: string | undefined,
+): DaemonTargetResolution {
+  if (machines.length === 0) {
+    return { ok: false, status: 503, error: "Daemon not connected", machines: [] };
+  }
+  const bound = shareMachineId?.trim();
+  if (bound) {
+    return machines.some((machine) => machine.id === bound)
+      ? { ok: true, machineId: bound }
+      : {
+          ok: false,
+          status: 503,
+          error: "The machine hosting this shared chat is not connected",
+          machines: [],
+        };
+  }
+  if (machines.length === 1) {
+    return { ok: true, machineId: machines[0].id };
+  }
+  return {
+    ok: false,
+    status: 503,
+    error: "This shared chat is not bound to a machine",
+    machines: [],
+  };
+}

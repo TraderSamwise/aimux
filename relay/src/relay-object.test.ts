@@ -1729,6 +1729,80 @@ describe("RelayObject machines", () => {
     expect(JSON.parse(String(legacy.send.mock.calls[0]?.[0]))).toMatchObject({ path: "/projects" });
   });
 
+  // A share is one session on one host, not a window onto the fleet.
+  it("tells a shared guest nothing about which machines exist", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const owner = fakeSocket(["client", "device:client_1"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, strix, owner, guest];
+
+    await object.webSocketClose(mbp);
+
+    expect(lastSentTo(owner)).toEqual({
+      type: "daemon_status",
+      online: true,
+      machines: [{ id: "strix", name: "sam-strix" }],
+    });
+    expect(lastSentTo(guest)).toEqual({ type: "daemon_status", online: true });
+  });
+
+  it("will not let a shared guest choose which machine answers", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, strix, guest];
+    // The invite acceptance above told both machines; that is not this test.
+    mbp.send.mockClear();
+    strix.send.mockClear();
+    const sharing = await storage.get<{
+      shares: Record<string, { sessionId: string; machineId?: string }>;
+    }>("sharing-state:v1");
+    const sharedPath = `/agents/history?sessionId=${sharing!.shares[shareId].sessionId}`;
+
+    // An unbound share with two machines up is refused, and says nothing.
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: sharedPath, machineId: "strix" }),
+    );
+    expect(mbp.send).not.toHaveBeenCalled();
+    expect(strix.send).not.toHaveBeenCalled();
+    expect(lastSentTo(guest)).toEqual({
+      id: "req-1",
+      type: "response",
+      status: 503,
+      body: { ok: false, error: "This shared chat is not bound to a machine", machines: [] },
+    });
+
+    // Bound to the mbp, the guest's request goes there -- not to the machine
+    // the guest asked for.
+    sharing!.shares[shareId].machineId = "mbp";
+    await storage.put("sharing-state:v1", sharing);
+
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({ id: "req-2", type: "request", method: "GET", path: sharedPath, machineId: "strix" }),
+    );
+    expect(strix.send).not.toHaveBeenCalled();
+    expect(mbp.send).toHaveBeenCalledTimes(1);
+  });
+
   it("tells every machine about a security event", async () => {
     const mbp = daemonSocket("mbp", "sam-mbp");
     const strix = daemonSocket("strix", "sam-strix");
@@ -1746,6 +1820,23 @@ describe("RelayObject machines", () => {
     expect(response).toBeInstanceOf(RangeError);
     expect(mbp.send).toHaveBeenCalledWith(expect.stringContaining("new_client_detected"));
     expect(strix.send).toHaveBeenCalledWith(expect.stringContaining("new_client_detected"));
+  });
+
+  it("lets an unidentified daemon share the room with a named one", async () => {
+    const legacy = fakeSocket(["daemon", "user:user_owner"]);
+    const strix = daemonSocket("strix", "sam-strix");
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([legacy, strix, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "unidentified" }),
+    );
+
+    expect(legacy.send).toHaveBeenCalledTimes(1);
+    expect(strix.send).not.toHaveBeenCalled();
+    expect(lastSentTo(client)).toBeUndefined();
   });
 
   it("refuses a machine beyond the room cap rather than growing without end", async () => {

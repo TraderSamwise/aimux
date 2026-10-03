@@ -8,6 +8,7 @@ import {
   machineNameTag,
   machineTag,
   resolveDaemonTarget,
+  resolveSharedDaemonTarget,
 } from "./machines.js";
 import { createHostedAttachment } from "./attachments.js";
 import { deliverNotificationPush, deliverSecurityAlert } from "./security-delivery.js";
@@ -378,7 +379,9 @@ export class RelayObject extends DurableObject<Env> {
         });
         return;
       }
-      const target = resolveDaemonTarget(this.onlineMachines(), parsed.machineId);
+      const target = clientResult.share
+        ? resolveSharedDaemonTarget(this.onlineMachines(), clientResult.share.machineId)
+        : resolveDaemonTarget(this.onlineMachines(), parsed.machineId);
       if (!target.ok) {
         this.send(ws, {
           id: parsed.id,
@@ -447,7 +450,9 @@ export class RelayObject extends DurableObject<Env> {
       });
       return;
     }
-    const target = resolveDaemonTarget(this.onlineMachines(), message.machineId);
+    const target = clientResult.share
+      ? resolveSharedDaemonTarget(this.onlineMachines(), clientResult.share.machineId)
+      : resolveDaemonTarget(this.onlineMachines(), message.machineId);
     if (!target.ok) {
       this.send(ws, {
         id: message.id,
@@ -697,17 +702,29 @@ export class RelayObject extends DurableObject<Env> {
     return [...this.daemonSockets.keys()].sort().map((id) => ({ id, name: this.daemonMachineNames.get(id) ?? id }));
   }
 
-  private machineStatus(): RelayMessage {
+  // A guest is told whether the host it was shared from is up, and nothing
+  // about the rest of the account's machines.
+  private machineStatus(forSharedClient: boolean): RelayMessage {
     const machines = this.onlineMachines();
-    return { type: "daemon_status", online: machines.length > 0, machines };
+    return forSharedClient
+      ? { type: "daemon_status", online: machines.length > 0 }
+      : { type: "daemon_status", online: machines.length > 0, machines };
   }
 
   private sendMachineStatus(ws: WebSocket): void {
-    this.send(ws, this.machineStatus());
+    this.send(ws, this.machineStatus(isSharedClientSocket(this.ctx.getTags(ws))));
   }
 
   private broadcastMachineStatus(): void {
-    this.broadcastToClients(this.machineStatus());
+    const ownerStatus = JSON.stringify(this.machineStatus(false));
+    const sharedStatus = JSON.stringify(this.machineStatus(true));
+    for (const client of this.clientSockets) {
+      try {
+        client.send(isSharedClientSocket(this.ctx.getTags(client)) ? sharedStatus : ownerStatus);
+      } catch {
+        this.clientSockets.delete(client);
+      }
+    }
   }
 
   // A security event concerns the account, not one host, so every machine hears
@@ -1097,7 +1114,11 @@ export class RelayObject extends DurableObject<Env> {
     ws: WebSocket,
     request: Extract<RelayMessage, { type: "request" }>,
   ): Promise<
-    | { ok: true; requestPatch?: { headers?: Record<string, string>; body?: unknown } }
+    | {
+        ok: true;
+        share?: SharedSessionRecord;
+        requestPatch?: { headers?: Record<string, string>; body?: unknown };
+      }
     | { ok: false; status: number; error: string }
   > {
     const tags = this.ctx.getTags(ws);
@@ -1138,6 +1159,7 @@ export class RelayObject extends DurableObject<Env> {
     if (!bodyPatch.ok) return bodyPatch;
     return {
       ok: true,
+      share,
       requestPatch: {
         headers: {
           ...stripTrustedAimuxHeaders(request.headers),
@@ -1868,6 +1890,10 @@ function json(body: unknown, status: number): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function isSharedClientSocket(tags: readonly string[]): boolean {
+  return tags.some((tag) => tag.startsWith("share:"));
 }
 
 function isPendingRequestAttachment(value: unknown): value is PendingRequestAttachment {

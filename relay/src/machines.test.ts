@@ -5,6 +5,7 @@ import {
   machineFromConnectUrl,
   machineFromTags,
   resolveDaemonTarget,
+  resolveSharedDaemonTarget,
   sanitizeMachineName,
 } from "./machines";
 
@@ -87,6 +88,39 @@ describe("choosing which machine answers", () => {
       status: 503,
       error: "Machine strix is not connected",
       machines: [MBP],
+    });
+  });
+});
+
+describe("choosing which machine answers a shared guest", () => {
+  it("routes to the machine the share is bound to", () => {
+    expect(resolveSharedDaemonTarget([MBP, STRIX], "strix")).toEqual({ ok: true, machineId: "strix" });
+  });
+
+  it("routes to the only machine when the share names none", () => {
+    expect(resolveSharedDaemonTarget([MBP], undefined)).toEqual({ ok: true, machineId: "mbp" });
+  });
+
+  // A share grants one session on one host. Every refusal returns an empty
+  // list, because the rest of the fleet is none of a guest's business.
+  it("never tells a guest which machines exist", () => {
+    for (const resolution of [
+      resolveSharedDaemonTarget([], "strix"),
+      resolveSharedDaemonTarget([MBP], "strix"),
+      resolveSharedDaemonTarget([MBP, STRIX], undefined),
+    ]) {
+      expect(resolution.ok).toBe(false);
+      expect(resolution.ok === false && resolution.machines).toEqual([]);
+      expect(resolution.ok === false && resolution.status).toBe(503);
+    }
+  });
+
+  it("refuses rather than falling back when the host is away", () => {
+    expect(resolveSharedDaemonTarget([MBP], "strix")).toEqual({
+      ok: false,
+      status: 503,
+      error: "The machine hosting this shared chat is not connected",
+      machines: [],
     });
   });
 });
