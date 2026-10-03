@@ -1006,17 +1006,30 @@ pub(super) fn resume_agent_session(
     // Claude refuses --resume for a session it still has running in the
     // background and exits 1, so resuming one launched a process that died on
     // the spot. Attach to it instead; the conversation is alive.
+    // An agent whose backend session id was never written down is otherwise
+    // unrestorable. When Claude still has exactly one session running in this
+    // checkout, that is the conversation, so attach and write the id down.
+    let mut backend_session_id = backend_session_id;
     let background_attach = (!relaunch_fresh)
-        .then_some(backend_session_id.as_deref())
-        .flatten()
-        .and_then(|backend_session_id| {
+        .then(|| {
             let cwd =
                 trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.clone());
-            runtime
-                .claude_background_session_ids(&cwd)
-                .get(backend_session_id)
-                .and_then(|short_id| attach_args(tool_config, short_id))
-        });
+            let running = runtime.claude_background_session_ids(&cwd);
+            match backend_session_id.as_deref() {
+                Some(known) => running
+                    .get(known)
+                    .and_then(|short_id| attach_args(tool_config, short_id)),
+                None => crate::claude_background_sessions::sole_background_session(&running)
+                    .and_then(|(session_id, short_id)| {
+                        attach_args(tool_config, short_id).map(|args| (session_id.to_owned(), args))
+                    })
+                    .map(|(discovered, args)| {
+                        backend_session_id = Some(discovered);
+                        args
+                    }),
+            }
+        })
+        .flatten();
     let action_args = if let Some(attach) = background_attach {
         attach
     } else if use_backend_resume {
@@ -1091,7 +1104,9 @@ pub(super) fn resume_agent_session(
         &tool_key,
         &command,
         persist_args,
-        backend_session_id.as_deref().filter(|_| use_backend_resume),
+        // Record it whenever we know it, not only when it drove a --resume, so
+        // an id discovered from a running session is never discovered twice.
+        backend_session_id.as_deref().filter(|_| !relaunch_fresh),
     );
     if let Err(error) = runtime.set_window_metadata(&target.window_id, &metadata) {
         let _ = runtime.kill_window(&target.window_id);

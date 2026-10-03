@@ -878,6 +878,13 @@ pub fn describe_session_restorability(
     if string_field(session, "backendSessionId").is_none()
         && session.get("freshRelaunchAllowed").and_then(Value::as_bool) != Some(true)
     {
+        // A tool that can attach to a session it still has running may still
+        // find this conversation: the restore route looks for one, and says so
+        // when it cannot. Claiming "blocked" here told the strix overseer it
+        // was unrecoverable while its conversation was alive the whole time.
+        if tool_can_attach_to_a_running_session(tool_config) {
+            return None;
+        }
         return Some(blocked_restorability(
             "missing exact resumable backend session id",
         ));
@@ -918,6 +925,13 @@ fn should_relaunch_fresh_session(
         return false;
     }
     session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true)
+}
+
+fn tool_can_attach_to_a_running_session(tool_config: Option<&Value>) -> bool {
+    tool_config
+        .and_then(|config| config.get("attachArgs"))
+        .and_then(Value::as_array)
+        .is_some_and(|pattern| !pattern.is_empty())
 }
 
 fn blocked_restorability(reason: &str) -> Value {
@@ -981,6 +995,40 @@ fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The strix overseer: no recorded backend session id, and its conversation
+    // alive in a session Claude still had running. Calling that "blocked" is
+    // what told Sam it was unrecoverable.
+    #[test]
+    fn a_tool_that_can_attach_is_not_declared_unrestorable() {
+        let session =
+            json!({ "id": "claude-i22019", "status": "offline", "toolConfigKey": "claude" });
+        let mut tools = Map::new();
+        tools.insert(
+            "claude".into(),
+            json!({ "resumeArgs": ["--resume", "{sessionId}"], "attachArgs": ["attach", "{backgroundId}"] }),
+        );
+        assert_eq!(
+            describe_session_restorability(&session, &tools),
+            None,
+            "the restore route looks for the running session and reports what it finds"
+        );
+    }
+
+    #[test]
+    fn a_tool_that_cannot_attach_still_says_the_id_is_missing() {
+        let session = json!({ "id": "codex-a", "status": "offline", "toolConfigKey": "codex" });
+        let mut tools = Map::new();
+        tools.insert(
+            "codex".into(),
+            json!({ "resumeArgs": ["resume", "{sessionId}"] }),
+        );
+        let blocked = describe_session_restorability(&session, &tools).expect("blocked");
+        assert_eq!(
+            blocked.get("restoreBlockedReason").and_then(Value::as_str),
+            Some("missing exact resumable backend session id")
+        );
+    }
+
     use std::collections::BTreeMap;
 
     #[test]

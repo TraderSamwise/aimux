@@ -52,6 +52,22 @@ pub fn parse_background_sessions(payload: &str, cwd: &str) -> BackgroundSessionI
     found
 }
 
+/// The only conversation an agent with no recorded backend session id can be.
+///
+/// An agent whose id was never written down is otherwise unrestorable: that is
+/// how the strix overseer lost an 8.7MB conversation that was alive the whole
+/// time, with a `transcriptPath` pointing at a file that did not exist. When
+/// Claude still has exactly one session running in this checkout, attaching to
+/// it is not a guess. Two or more is a guess, so this refuses.
+pub fn sole_background_session(found: &BackgroundSessionIds) -> Option<(&str, &str)> {
+    let mut entries = found.iter();
+    let (session_id, short_id) = entries.next()?;
+    entries
+        .next()
+        .is_none()
+        .then_some((session_id.as_str(), short_id.as_str()))
+}
+
 fn non_empty(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
@@ -98,6 +114,38 @@ mod tests {
         let found = parse_background_sessions(PAYLOAD, "/repo");
         assert!(!found.contains_key("304bdb81-cab6-4714-adf8-1e6b61858960"));
         assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    // The strix overseer: no backendSessionId, a transcriptPath pointing at a
+    // file that did not exist, and its conversation alive in the one background
+    // session Claude had in that checkout.
+    #[test]
+    fn one_running_session_is_the_only_one_an_agent_can_be() {
+        let found = parse_background_sessions(PAYLOAD, "/repo");
+        assert_eq!(
+            sole_background_session(&found),
+            Some(("0cfac0d9-6e3f-424f-9027-3ddefd750729", "0cfac0d9"))
+        );
+    }
+
+    #[test]
+    fn two_running_sessions_are_a_guess_and_are_refused() {
+        let payload = r#"[
+            {"id":"aaa","cwd":"/repo","sessionId":"aaa-full"},
+            {"id":"bbb","cwd":"/repo","sessionId":"bbb-full"}
+        ]"#;
+        let found = parse_background_sessions(payload, "/repo");
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            sole_background_session(&found),
+            None,
+            "attaching to one of two would open the wrong conversation half the time"
+        );
+    }
+
+    #[test]
+    fn no_running_session_is_nothing_to_attach_to() {
+        assert_eq!(sole_background_session(&BackgroundSessionIds::new()), None);
     }
 
     #[test]
