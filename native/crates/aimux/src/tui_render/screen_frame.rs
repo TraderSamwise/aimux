@@ -100,8 +100,12 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
     };
 
     ScreenFrameResult {
+        // Wrapped in a synchronized update (DECSET 2026) the way Exposé already
+        // wraps its repaint: without it the terminal paints the cleared screen
+        // before the new one arrives, which is a visible blank on every
+        // keystroke in a dialog.
         frame: format!(
-            "\x1b[2J\x1b[H{}",
+            "\x1b[?2026h\x1b[2J\x1b[H{}\x1b[?2026l",
             input
                 .header
                 .iter()

@@ -183,7 +183,16 @@ fn screen_frame_scrolls_to_focused_card_and_renders_footer() {
     let plain = strip_ansi(&result.frame);
 
     assert!(result.scroll_offset > 0);
-    assert!(plain.starts_with("\x1b[2J\x1b[H"));
+    // The clear is wrapped in a synchronized update so the terminal never
+    // paints the cleared screen on its own -- that blank is the flicker.
+    assert!(
+        plain.starts_with("\x1b[?2026h\x1b[2J\x1b[H"),
+        "frame must open a synchronized update before clearing"
+    );
+    assert!(
+        plain.ends_with("\x1b[?2026l"),
+        "frame must close the synchronized update"
+    );
     assert!(plain.contains("row-10"));
     assert!(plain.contains("▼ more ▼") || plain.contains("▲ more ▲"));
     assert!(plain.contains("──"));
