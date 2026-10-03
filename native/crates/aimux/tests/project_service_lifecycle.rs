@@ -44,6 +44,7 @@ struct FakeLifecycleRuntime {
     renamed: Vec<(String, String)>,
     rename_window_error: Option<String>,
     codex_backend_ids_by_cwd: BTreeMap<String, Result<BTreeSet<String>, String>>,
+    claude_background_ids: BTreeMap<String, String>,
     main_repo: Option<String>,
     worktrees_created: Vec<FakeCreateWorktree>,
     prepared_pull_requests: Vec<FakePreparePullRequest>,
@@ -232,6 +233,13 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             .get(cwd)
             .cloned()
             .unwrap_or_else(|| Ok(BTreeSet::new()))
+    }
+
+    fn claude_background_session_ids(
+        &mut self,
+        _cwd: &str,
+    ) -> aimux::claude_background_sessions::BackgroundSessionIds {
+        self.claude_background_ids.clone()
     }
 
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
@@ -2403,6 +2411,103 @@ fn agent_resume_relaunches_declared_overseer_in_supervisor_lane() {
     let stored = &metadata_state.sessions["mock-overseer"];
     assert!(stored.get("pendingRelaunchForRole").is_none());
     assert!(stored.get("effectiveRole").is_none());
+    cleanup(project);
+}
+
+// Claude refuses --resume for a session it still has running in the background
+// and exits 1, so restoring one launched a process that died on the spot and
+// left an empty pane behind a restore that reported success. The conversation
+// is alive; it has to be attached to.
+#[test]
+fn agent_resume_attaches_a_session_still_running_in_the_background() {
+    let project = temp_project("agent-resume-attach");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-offline",
+            "nodeId": "agent:mock-offline",
+            "status": "offline",
+            "tool": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "backendSessionId": "0cfac0d9-6e3f-424f-9027-3ddefd750729",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    runtime.claude_background_ids.insert(
+        "0cfac0d9-6e3f-424f-9027-3ddefd750729".into(),
+        "0cfac0d9".into(),
+    );
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-offline" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let launched = runtime.created.first().expect("a window was created");
+    let command = launched.args.join(" ");
+    assert!(
+        command.contains("'attach' '0cfac0d9'"),
+        "must attach the live session: {command}"
+    );
+    assert!(
+        !command.contains("--resume"),
+        "--resume is what the tool refuses: {command}"
+    );
+    cleanup(project);
+}
+
+// The inverse: a session that is NOT running in the background resumes as
+// before. Attaching one of those would open nothing.
+#[test]
+fn agent_resume_still_resumes_a_session_that_is_not_backgrounded() {
+    let project = temp_project("agent-resume-not-bg");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-offline",
+            "nodeId": "agent:mock-offline",
+            "status": "offline",
+            "tool": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "backendSessionId": "0cfac0d9-6e3f-424f-9027-3ddefd750729",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-offline" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let launched = runtime.created.first().expect("a window was created");
+    let command = launched.args.join(" ");
+    assert!(
+        command.contains("'--resume' '0cfac0d9-6e3f-424f-9027-3ddefd750729'"),
+        "{command}"
+    );
+    assert!(!command.contains("'attach'"), "{command}");
     cleanup(project);
 }
 
@@ -5042,6 +5147,7 @@ fn write_project_tool_config(project: &Path) {
                     "enabled": true,
                     "wrapperEnabled": true,
                     "resumeArgs": ["--resume", "{sessionId}"],
+                    "attachArgs": ["attach", "{backgroundId}"],
                     "forkArgs": ["--fork", "{sessionId}"],
                     "resumeByBackendSessionId": true
                 },

@@ -10,6 +10,7 @@ pub mod backend_session_ids;
 pub mod backlog_metrics;
 pub mod build_info;
 pub mod builtin_metadata_watchers;
+pub mod claude_background_sessions;
 pub mod cli_attachment_contract;
 pub mod cli_launcher;
 pub mod config;

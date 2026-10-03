@@ -2,6 +2,7 @@ use crate::async_subprocess::AsyncCommand;
 use crate::backend_session_ids::{
     BackendSessionDiscoveryOptions, codex_backend_session_ids_for_cwd,
 };
+use crate::claude_background_sessions::{BackgroundSessionIds, parse_background_sessions};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
     CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, clear_history_argv,
@@ -106,6 +107,22 @@ pub trait ProjectLifecycleRuntime {
     }
     fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
         codex_backend_session_ids_for_cwd(cwd, &BackendSessionDiscoveryOptions::default())
+    }
+    /// Sessions Claude still has running in the background, which `--resume`
+    /// refuses and `attach` opens. Empty on any failure: not knowing has to
+    /// fall back to today's resume, never to attaching the wrong session.
+    fn claude_background_session_ids(&mut self, cwd: &str) -> BackgroundSessionIds {
+        let Ok(output) = std::process::Command::new("claude")
+            .args(["agents", "--json"])
+            .current_dir(cwd)
+            .output()
+        else {
+            return BackgroundSessionIds::new();
+        };
+        if !output.status.success() {
+            return BackgroundSessionIds::new();
+        }
+        parse_background_sessions(&String::from_utf8_lossy(&output.stdout), cwd)
     }
     fn wait_for_window_after_launch(&mut self, target: &TmuxTarget, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;

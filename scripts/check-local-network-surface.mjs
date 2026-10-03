@@ -92,6 +92,13 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     input: "infrastructure: all native process launches flow through this audited wrapper",
   },
   {
+    path: "native/crates/aimux/src/project_service/lifecycle/runtime_adapter.rs",
+    marker: 'std::process::Command::new("claude")',
+    command: "claude",
+    argv: "literal: agents --json",
+    input: "fixed: only the working directory varies, and it is the project or worktree path",
+  },
+  {
     path: "native/crates/aimux/src/tmux_clipboard_copy.rs",
     marker: "Command::new(tmux)",
     command: "tmux, resolved once to an absolute path",

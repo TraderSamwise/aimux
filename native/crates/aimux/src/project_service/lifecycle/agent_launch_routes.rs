@@ -1003,7 +1003,23 @@ pub(super) fn resume_agent_session(
     let relaunch_fresh = force_fresh || should_relaunch_agent_fresh(&session, derived);
     let use_backend_resume = !relaunch_fresh
         && can_resume_with_backend_session_id(tool_config, backend_session_id.as_deref());
-    let action_args = if use_backend_resume {
+    // Claude refuses --resume for a session it still has running in the
+    // background and exits 1, so resuming one launched a process that died on
+    // the spot. Attach to it instead; the conversation is alive.
+    let background_attach = (!relaunch_fresh)
+        .then_some(backend_session_id.as_deref())
+        .flatten()
+        .and_then(|backend_session_id| {
+            let cwd =
+                trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.clone());
+            runtime
+                .claude_background_session_ids(&cwd)
+                .get(backend_session_id)
+                .and_then(|short_id| attach_args(tool_config, short_id))
+        });
+    let action_args = if let Some(attach) = background_attach {
+        attach
+    } else if use_backend_resume {
         resume_args(
             tool_config,
             backend_session_id.as_deref().unwrap_or_default(),

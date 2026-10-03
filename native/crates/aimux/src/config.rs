@@ -123,6 +123,7 @@ pub fn default_config() -> Value {
                 "preambleFlag": ["--append-system-prompt"],
                 "sessionIdFlag": ["--session-id", "{sessionId}"],
                 "resumeArgs": ["--resume", "{sessionId}"],
+                "attachArgs": ["attach", "{backgroundId}"],
                 "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
                 "resumeByBackendSessionId": true,
                 "resumeFallback": ["--continue"],

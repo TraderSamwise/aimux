@@ -102,6 +102,25 @@ pub(super) fn resume_args(tool_config: &Value, backend_session_id: &str) -> Vec<
         .collect()
 }
 
+/// How to reopen a session Claude still has running in the background.
+///
+/// `--resume` REFUSES one of those: it prints "run `claude attach <id>`" and
+/// exits 1, so resuming it launched a process that died on the spot and left an
+/// empty pane behind a restore that reported success. The conversation is not
+/// gone; it has to be attached to instead.
+pub(super) fn attach_args(tool_config: &Value, background_short_id: &str) -> Option<Vec<String>> {
+    let pattern = string_array_field(tool_config.get("attachArgs"));
+    if pattern.is_empty() {
+        return None;
+    }
+    Some(
+        pattern
+            .into_iter()
+            .map(|arg| arg.replace("{backgroundId}", background_short_id))
+            .collect(),
+    )
+}
+
 pub(super) fn compose_tool_launch(
     tool_config: &Value,
     action_args: &[String],
