@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Platform } from "react-native";
 import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
@@ -161,13 +161,18 @@ export default function MainLayout() {
   const stackScreenOptions = useAppStackScreenOptions();
   const pathname = usePathname();
   const searchParams = useGlobalSearchParams();
-  const urlProjectRef = projectRefFromSearchOrLocation(
-    searchParams.project as SearchValue,
-    searchParams.machine as SearchValue,
+  // Rebuilt from a key string so its identity is stable across renders: this
+  // is an effect dependency, and a fresh object every render would re-run the
+  // URL-to-selection effect on every paint.
+  const urlProjectKey = projectKey(
+    projectRefFromSearchOrLocation(
+      searchParams.project as SearchValue,
+      searchParams.machine as SearchValue,
+    ),
   );
+  const urlProjectRef = useMemo(() => parseProjectKey(urlProjectKey), [urlProjectKey]);
   // Both halves of the effective project come from one source, so a path is
-  // never paired with another host's machine. Memoized because it is an effect
-  // dependency and a fresh object every render would re-run them.
+  // never paired with another host's machine.
   const effectiveProjectRef = activeShare
     ? { path: activeShare.projectRoot }
     : preferMachineBearingRef(urlProjectRef, selectedProjectRef);
