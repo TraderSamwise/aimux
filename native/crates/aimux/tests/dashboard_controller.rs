@@ -1,8 +1,8 @@
 use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, DashboardMoveDirection,
     DashboardMovedEntryKind, DashboardOrchestrationMode, DashboardOrchestrationTarget,
-    DashboardSubscreenAction, orchestration_targets_from_resource, parse_dashboard_key,
-    parse_dashboard_keys,
+    DashboardScreen, DashboardSubscreenAction, orchestration_targets_from_resource,
+    parse_dashboard_key, parse_dashboard_keys,
 };
 use aimux::dashboard_model::{
     DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
@@ -3024,4 +3024,27 @@ fn submit_orchestration_text(
         panic!("expected orchestration request");
     };
     request
+}
+
+// Under load the project service misses the dashboard's 2s budget routinely.
+// Throwing the rows away turned a slow answer into "Loading topology…" over an
+// empty screen, which is what Sam kept photographing.
+#[test]
+fn a_failed_refresh_keeps_the_screen_it_already_drew() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.screen = DashboardScreen::Topology;
+    let loaded = json!({ "topology": { "rows": [{ "kind": "worktree" }] } });
+    controller.remember_subscreen_resource(&loaded);
+    assert_eq!(controller.cached_subscreen_resource(), Some(&loaded));
+
+    controller.screen = DashboardScreen::Library;
+    assert_eq!(
+        controller.cached_subscreen_resource(),
+        None,
+        "another screen's rows under this screen's heading would be a different lie"
+    );
+
+    controller.screen = DashboardScreen::Topology;
+    assert_eq!(controller.cached_subscreen_resource(), Some(&loaded));
 }

@@ -37,6 +37,9 @@ pub struct DashboardController {
     pub subscreen_index: usize,
     pub subscreen_item_count: usize,
     pub subscreen_actions: Vec<DashboardSubscreenAction>,
+    /// The last resource a subscreen rendered successfully, so a failed refresh
+    /// shows stale data and says so instead of blanking to "Loading…".
+    subscreen_resource_cache: Option<(DashboardScreen, Value)>,
     pub graveyard_worktree_delete_confirm: Option<String>,
     pub worktree_input: Option<String>,
     pub remote_worktree_input: Option<String>,
@@ -331,6 +334,7 @@ impl DashboardController {
             details_sidebar_visible: true,
             hide_offline_agents: false,
             subscreen_index: 0,
+            subscreen_resource_cache: None,
             subscreen_item_count: 0,
             subscreen_actions: Vec::new(),
             graveyard_worktree_delete_confirm: None,
@@ -1461,6 +1465,19 @@ impl DashboardController {
             }
             _ => DashboardControllerEffect::Ignored,
         }
+    }
+
+    pub fn remember_subscreen_resource(&mut self, resource: &Value) {
+        self.subscreen_resource_cache = Some((self.screen, resource.clone()));
+    }
+
+    /// Only this screen's own last good data — another screen's rows rendered
+    /// under this screen's heading would be a different lie.
+    pub fn cached_subscreen_resource(&self) -> Option<&Value> {
+        self.subscreen_resource_cache
+            .as_ref()
+            .filter(|(screen, _)| *screen == self.screen)
+            .map(|(_, resource)| resource)
     }
 
     /// The project service derives the offer; the dashboard only tracks whether

@@ -1907,6 +1907,21 @@ fn dashboard_runtime_version() -> String {
     read_aimux_runtime_version()
 }
 
+/// What to render when the refresh failed: the last good data for this screen,
+/// said to be stale, or nothing at all when there is no last good data.
+fn stale_subscreen_resource(
+    controller: &DashboardController,
+    error: &str,
+) -> (Option<serde_json::Value>, Option<String>) {
+    match controller.cached_subscreen_resource() {
+        Some(resource) => (
+            Some(resource.clone()),
+            Some(format!("{error} — showing the last data that loaded")),
+        ),
+        None => (None, Some(error.to_owned())),
+    }
+}
+
 fn render_dashboard_subscreen_snapshot(
     viewport: DashboardViewport,
     controller: &mut DashboardController,
@@ -1915,13 +1930,19 @@ fn render_dashboard_subscreen_snapshot(
     pending_actions: &mut DashboardPendingActions,
     pending_now_ms: i64,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
+    // A refresh that fails keeps the screen it already drew. Under load the
+    // project service misses the 2s budget routinely, and throwing the rows
+    // away turned a slow answer into "Loading topology…" over an empty screen.
     let (mut resource, error) = match dashboard_screen_resource_path(controller.screen) {
         Some(path) => match endpoint {
             Some(endpoint) => match fetch_dashboard_resource(endpoint, path) {
-                Ok(resource) => (Some(resource), None),
-                Err(error) => (None, Some(error.to_string())),
+                Ok(resource) => {
+                    controller.remember_subscreen_resource(&resource);
+                    (Some(resource), None)
+                }
+                Err(error) => stale_subscreen_resource(controller, &error.to_string()),
             },
-            None => (None, Some("Project-service endpoint unavailable".into())),
+            None => stale_subscreen_resource(controller, "Project-service endpoint unavailable"),
         },
         None => (None, None),
     };
