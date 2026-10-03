@@ -23,8 +23,8 @@ use crate::tui_render::text::{
 };
 use crate::tui_render::theme::{
     CardSpec, ChipTone, Column, FooterHint, KeyTone, StatusKind, Tone, card, chip,
-    cols as grid_cols, footer_hints, keycap_hint, pill, render_footer_hints, status_dot, style,
-    visible_width,
+    cols as grid_cols, footer_hints, keycap_hint, pad_visible, pill, render_footer_hints,
+    status_dot, style, visible_width,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -1151,6 +1151,8 @@ fn row_state_label(value: &str) -> &str {
         "blocked" => "Blocked",
         "error" => "Error",
         "idle" => "Idle",
+        "running" => "Running",
+        "exited" => "Exited",
         "offline" => "Offline",
         "starting" => "Starting",
         "stopping" => "Stopping",
@@ -3036,6 +3038,43 @@ fn render_library_content(resource: Option<&Value>, selected_index: usize) -> Ve
     lines
 }
 
+/// `codex (i5qr9c)` — the dashboard's shape, so the same agent reads the same
+/// way on both screens. Without the id every agent row was the same sentence.
+fn topology_row_identity(row: &Value, label: &str) -> String {
+    let name = truncate_plain(label, 20);
+    let Some(session_id) = string_at(row, &["sessionId"]) else {
+        return style(&name, Tone::Strong);
+    };
+    let short_id = string_at(row, &["tool"])
+        .and_then(|tool| session_id.strip_prefix(&format!("{tool}-")))
+        .unwrap_or(session_id);
+    if short_id.is_empty() || short_id == name {
+        return style(&name, Tone::Strong);
+    }
+    format!(
+        "{} {}",
+        style(&name, Tone::Strong),
+        style(&format!("({short_id})"), Tone::Muted)
+    )
+}
+
+fn topology_row_state(row: &Value) -> String {
+    match string_at(row, &["status"]) {
+        Some(status) if !status.is_empty() => style(row_state_label(status), Tone::Muted),
+        _ => String::new(),
+    }
+}
+
+fn topology_row_task(row: &Value) -> String {
+    match string_at(row, &["task"]) {
+        Some(task) if !task.is_empty() => format!(
+            "  {}",
+            style(&format!("→ {}", truncate_plain(task, 44)), Tone::Muted)
+        ),
+        _ => String::new(),
+    }
+}
+
 fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> Vec<String> {
     let Some(topology) = resource.map(|resource| resource.get("topology").unwrap_or(resource))
     else {
@@ -3103,7 +3142,7 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
             ));
         } else {
             lines.push(format!(
-                "{} {indent}{} {} {}{}{}",
+                "{} {indent}{} {} {}{}{}{}{}",
                 if selected {
                     style("▸", Tone::Accent)
                 } else {
@@ -3111,8 +3150,10 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
                 },
                 topology_dot(health),
                 chip(kind, ChipTone::Muted),
-                truncate_plain(label, 28),
+                pad_visible(&topology_row_identity(row, label), 26),
+                pad_visible(&topology_row_state(row), 10),
                 detail,
+                topology_row_task(row),
                 trailing_mark(selected)
             ));
         }

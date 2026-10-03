@@ -2207,3 +2207,85 @@ fn renders_control_plane_daemon_process_warning_banner() {
     );
     assert!(plain.contains("Aimux found 1 unexpected daemon"), "{plain}");
 }
+
+// Every agent row used to read "agent codex (coder)" — the same sentence for
+// twenty agents, with no way to tell which was which or what any was doing.
+#[test]
+fn a_topology_agent_row_says_which_agent_and_what_it_is_doing() {
+    let resource = json!({
+        "topology": {
+            "projectName": "repo",
+            "health": "active",
+            "counts": { "worktrees": 1, "agents": 2, "services": 0 },
+            "rows": [
+                {
+                    "kind": "worktree",
+                    "label": "pine-gates",
+                    "detail": "pine-gates",
+                    "health": "active",
+                    "status": "active",
+                    "depth": 0,
+                    "worktreePath": "/repo/pine-gates"
+                },
+                {
+                    "kind": "agent",
+                    "label": "codex",
+                    "detail": "coder",
+                    "health": "active",
+                    "status": "running",
+                    "depth": 1,
+                    "sessionId": "codex-i5qr9c",
+                    "tool": "codex",
+                    "task": "Write functional tests pinning documented Pine behaviour",
+                    "worktreePath": "/repo/pine-gates"
+                },
+                {
+                    "kind": "agent",
+                    "label": "codex",
+                    "detail": "coder",
+                    "health": "idle",
+                    "status": "offline",
+                    "depth": 1,
+                    "sessionId": "codex-115868",
+                    "tool": "codex",
+                    "worktreePath": "/repo/pine-gates"
+                }
+            ]
+        }
+    });
+
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Topology,
+        resource: Some(&resource),
+        error: None,
+        selected_index: 0,
+        cols: 160,
+        rows: 24,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        runtime_label: Some("tmux"),
+        version: Some("0.1.65"),
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("(i5qr9c)"), "{plain}");
+    assert!(
+        plain.contains("(115868)"),
+        "the two agents are told apart\n{plain}"
+    );
+    assert!(
+        plain.contains("→ Write functional tests pinning documented"),
+        "the row says what the agent is doing\n{plain}"
+    );
+    let running = plain
+        .lines()
+        .find(|line| line.contains("(i5qr9c)"))
+        .expect("the running agent's row");
+    assert!(running.contains("Running"), "{running}");
+    let offline = plain
+        .lines()
+        .find(|line| line.contains("(115868)"))
+        .expect("the offline agent's row");
+    assert!(offline.contains("Offline"), "{offline}");
+}

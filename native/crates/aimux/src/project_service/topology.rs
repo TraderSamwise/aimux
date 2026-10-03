@@ -135,6 +135,20 @@ pub fn build_project_topology(project_name: &str, worktrees: Vec<Value>) -> Valu
             row.insert("health".into(), Value::String(health.into()));
             insert_optional_string(&mut row, "status", string_field(session, "status"));
             insert_optional_string(&mut row, "sessionId", string_field(session, "id"));
+            insert_optional_string(&mut row, "tool", string_field(session, "command"));
+            // What the agent is actually doing. Without it a topology row says
+            // only "agent codex (coder)", which is the same sentence for every
+            // agent in the project.
+            insert_optional_string(
+                &mut row,
+                "task",
+                session
+                    .get("task")
+                    .and_then(|task| task.get("description"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|description| !description.is_empty()),
+            );
             insert_optional_string(&mut row, "worktreePath", string_field(worktree, "path"));
             child_rows.push(Value::Object(row));
         }
