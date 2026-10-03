@@ -36,6 +36,7 @@ use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, save_metadata_state,
 };
 use aimux::jobs::{JobCancelReport, JobRecord, JobSpec, JobStatus, JobStore, JobStoreError};
+use aimux::machine_identity::MachineIdentity;
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::AgentInputWindowActivity;
@@ -291,7 +292,7 @@ fn relay_project_events_subscription_case() -> CharacterizationCase {
     let bridge = Arc::new(FakeRelayBridge {
         recorder: Arc::clone(&recorder),
     });
-    let runner = RelayRunner::new("wss://relay.aimux.app", "tok", bridge);
+    let runner = RelayRunner::new("wss://relay.aimux.app", "tok", surface_machine(), bridge);
     let subscribe = json!({
         "type": "project_events_subscribe",
         "id": "sub-1",
@@ -2061,4 +2062,13 @@ fn git_head_short() -> String {
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
         .filter(|head| !head.is_empty())
         .unwrap_or_else(|| "unknown".into())
+}
+
+/// A fixed machine identity so the recorded handshake URL is deterministic.
+fn surface_machine() -> MachineIdentity {
+    MachineIdentity {
+        version: 1,
+        id: "testmachine01".to_owned(),
+        name: "test-host".to_owned(),
+    }
 }

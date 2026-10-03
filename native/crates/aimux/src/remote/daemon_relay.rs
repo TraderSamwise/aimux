@@ -24,6 +24,7 @@ use tokio::time::Instant;
 use crate::async_runtime::{spawn_blocking_named, task_name};
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
+use crate::machine_identity::MachineIdentity;
 use crate::remote::relay_client::{project_event_frame, split_sse_frames};
 use crate::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem,
@@ -470,7 +471,7 @@ pub struct RelaySupervisor {
 impl RelaySupervisor {
     /// Node skipped a reconnect unless forced, or unless the existing client
     /// had already given up — otherwise every status poll would restart it.
-    pub fn connect(&self, relay_url: &str, token: &str, force: bool) {
+    pub fn connect(&self, relay_url: &str, token: &str, machine: MachineIdentity, force: bool) {
         if relay_url.is_empty() || token.is_empty() {
             return;
         }
@@ -493,7 +494,7 @@ impl RelaySupervisor {
         }
 
         let bridge = Arc::new(LoopbackRelayBridge::default());
-        let runner = RelayRunner::new(relay_url, token, bridge);
+        let runner = RelayRunner::new(relay_url, token, machine, bridge);
         let handle = runner.handle();
         if let Ok(mut current) = self.current.lock() {
             *current = Some((Arc::clone(&runner), handle.clone()));

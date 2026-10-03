@@ -5,6 +5,7 @@
 //! It lives here rather than in `src/` so nothing can mistake it for the
 //! implementation.
 
+use aimux::machine_identity::MachineIdentity;
 use aimux::remote::daemon_relay::resolve_project_event_stream;
 use aimux::remote::relay_client::{RelayStatus, project_event_frame, project_events_error_frame};
 use aimux::remote::relay_runner::{
@@ -82,6 +83,7 @@ fn auth_close_case(input: &Value) -> Value {
     let runner = RelayRunner::new(
         RELAY_URL,
         "tok",
+        fixture_machine(),
         Arc::new(FakeBridge {
             recorder: Arc::clone(&recorder),
         }),
@@ -107,6 +109,7 @@ fn security_event_case(input: &Value) -> Value {
     let runner = RelayRunner::new(
         RELAY_URL,
         "tok",
+        fixture_machine(),
         Arc::new(FakeBridge {
             recorder: Arc::clone(&recorder),
         }),
@@ -335,4 +338,13 @@ fn run_relay(
     aimux::async_runtime::block_on_named("fixture:relay-client", async {
         runner.run_with_sleep(connector, &mut sleep).await;
     });
+}
+
+/// A fixed machine identity so the recorded handshake URL is deterministic.
+fn fixture_machine() -> MachineIdentity {
+    MachineIdentity {
+        version: 1,
+        id: "testmachine01".to_owned(),
+        name: "test-host".to_owned(),
+    }
 }

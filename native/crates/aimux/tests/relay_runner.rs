@@ -1,6 +1,7 @@
 //! The connection loop, driven by a fake socket and a fake daemon.
 
 use aimux::backlog_metrics::BacklogMetricStatus;
+use aimux::machine_identity::MachineIdentity;
 use aimux::remote::relay_client::RelayStatus;
 use aimux::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
@@ -208,7 +209,7 @@ fn harness_with_options(
         subscribe_pending,
     });
     Harness {
-        runner: RelayRunner::new("wss://relay.example/", "tok", bridge),
+        runner: RelayRunner::new("wss://relay.example/", "tok", test_machine(), bridge),
         connector: FakeConnector {
             scripts,
             attempts: Arc::clone(&attempts),
@@ -637,4 +638,13 @@ fn a_failed_subscription_acknowledges_nothing() {
             .all(|frame| frame["type"] != "project_events_subscribed"),
         "acknowledged a subscription that never started: {frames:?}"
     );
+}
+
+/// A fixed machine identity so the recorded handshake URL is deterministic.
+fn test_machine() -> MachineIdentity {
+    MachineIdentity {
+        version: 1,
+        id: "testmachine01".to_owned(),
+        name: "test-host".to_owned(),
+    }
 }

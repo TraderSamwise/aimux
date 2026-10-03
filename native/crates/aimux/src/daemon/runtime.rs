@@ -606,7 +606,34 @@ impl RealDaemonRuntime {
             env_url.as_deref(),
             env_token.as_deref(),
         ) {
-            self.relay.connect(&url, &token, force);
+            self.relay
+                .connect(&url, &token, self.machine_identity(), force);
+        }
+    }
+
+    /// Which machine the relay should route to. A home directory we cannot read
+    /// must not become a machine-less connect -- that is the eviction bug the
+    /// identity exists to stop -- so the failure is logged with its cause and a
+    /// distinct in-memory identity is used until the next restart.
+    #[cfg(feature = "remote-control")]
+    fn machine_identity(&self) -> crate::machine_identity::MachineIdentity {
+        match crate::machine_identity::load_or_create(&self.resolver) {
+            Ok(identity) => identity,
+            Err(error) => {
+                let identity = crate::machine_identity::MachineIdentity::ephemeral(
+                    crate::machine_identity::os_hostname().as_deref(),
+                );
+                log_lifecycle_always(
+                    "relay could not persist machine identity; using an ephemeral id",
+                    "daemon",
+                    Some(json!({
+                        "path": self.resolver.machine_identity_path().display().to_string(),
+                        "error": error.to_string(),
+                        "machineId": identity.id,
+                    })),
+                );
+                identity
+            }
         }
     }
 
