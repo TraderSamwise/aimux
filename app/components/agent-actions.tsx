@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { View } from "react-native";
 import { useSetAtom } from "jotai";
 import {
@@ -59,7 +60,7 @@ export function AgentActions({
   session,
   endpoint,
   token,
-  projectPath,
+  projectStateKey,
   compact = false,
   mainCheckoutPath,
   onKilled,
@@ -67,7 +68,7 @@ export function AgentActions({
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   compact?: boolean;
   mainCheckoutPath?: string | null;
   onKilled?: () => void;
@@ -106,7 +107,7 @@ export function AgentActions({
       const localTransition = opts?.localTransition?.();
       if (localTransition) {
         recordTransition({
-          projectPath,
+          projectStateKey,
           transition: localTransition,
           label: session.label || session.id,
           tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
@@ -116,7 +117,7 @@ export function AgentActions({
       try {
         const response = await fn();
         recordTransition({
-          projectPath,
+          projectStateKey,
           transition: response.transition,
           label: session.label || session.id,
           tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
@@ -130,7 +131,7 @@ export function AgentActions({
       } catch (e) {
         if (localTransition) {
           recordTransition({
-            projectPath,
+            projectStateKey,
             transition: failLocalProjectLifecycleTransition(localTransition),
             label: session.label || session.id,
             tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),

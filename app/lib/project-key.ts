@@ -121,3 +121,23 @@ export function projectRefFromPayload<T extends { machineId?: string; path: stri
   if (named) return { machineId: named, path };
   return uniqueProjectRefForPath(projects, path);
 }
+
+declare const projectStateKeyBrand: unique symbol;
+
+// The key a project-scoped atom family is indexed by.
+//
+// Branded on purpose. These families used to take a bare path, so two
+// machines' copies of one checkout shared one atom -- the agent list, the
+// topology, the notification read marks. A branded key means a call site that
+// still passes a path is a compile error rather than state quietly bleeding
+// between two hosts.
+export type ProjectStateKey = string & { readonly [projectStateKeyBrand]: true };
+
+// What a family is keyed by when no project is selected. A family needs some
+// key, and this is a name for "none" rather than an empty string that a real
+// path could also produce.
+export const NO_PROJECT_STATE_KEY = "\u0000__aimux_no_project__" as ProjectStateKey;
+
+export function projectStateKey(ref: ProjectRef | null | undefined): ProjectStateKey {
+  return (projectKey(ref) ?? NO_PROJECT_STATE_KEY) as ProjectStateKey;
+}

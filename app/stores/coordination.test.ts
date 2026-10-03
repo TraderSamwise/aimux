@@ -1,4 +1,5 @@
 import { createStore } from "jotai";
+import { projectStateKey } from "@/lib/project-key";
 import { describe, expect, it } from "vitest";
 
 import type { CoordinationWorklistItem } from "@/lib/api";
@@ -40,17 +41,17 @@ function worklist(overrides: Partial<CoordinationWorklistValue> = {}): Coordinat
 describe("coordination worklist resource lifecycle", () => {
   it("marks an in-flight refresh stale when a previous worklist exists", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = worklist();
 
     store.set(applyCoordinationWorklistSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       worklist: current,
       updatedAt: 10,
     });
-    store.set(beginCoordinationWorklistRefreshAtom, projectPath);
+    store.set(beginCoordinationWorklistRefreshAtom, stateKey);
 
-    expect(store.get(coordinationWorklistResourceFamily(projectPath))).toEqual({
+    expect(store.get(coordinationWorklistResourceFamily(stateKey))).toEqual({
       value: current,
       error: null,
       pending: true,
@@ -61,22 +62,22 @@ describe("coordination worklist resource lifecycle", () => {
 
   it("keeps the last good worklist after a refresh failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = worklist();
 
     store.set(applyCoordinationWorklistSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       worklist: current,
       updatedAt: 10,
     });
     store.set(applyCoordinationWorklistFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
 
-    expect(store.get(coordinationWorklistFamily(projectPath))).toBe(current);
-    expect(store.get(coordinationWorklistErrorFamily(projectPath))).toBe("service unavailable");
-    expect(store.get(coordinationWorklistResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(coordinationWorklistFamily(stateKey))).toBe(current);
+    expect(store.get(coordinationWorklistErrorFamily(stateKey))).toBe("service unavailable");
+    expect(store.get(coordinationWorklistResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: "service unavailable",
       pending: false,
@@ -86,26 +87,26 @@ describe("coordination worklist resource lifecycle", () => {
 
   it("clears stale/error metadata after the worklist recovers", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = worklist();
     const recovered = worklist({ items: [item("notice-2")] });
 
     store.set(applyCoordinationWorklistSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       worklist: current,
       updatedAt: 10,
     });
     store.set(applyCoordinationWorklistFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
     store.set(applyCoordinationWorklistSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       worklist: recovered,
       updatedAt: 20,
     });
 
-    expect(store.get(coordinationWorklistResourceFamily(projectPath))).toEqual({
+    expect(store.get(coordinationWorklistResourceFamily(stateKey))).toEqual({
       value: recovered,
       error: null,
       pending: false,
@@ -116,16 +117,16 @@ describe("coordination worklist resource lifecycle", () => {
 
   it("clears the resource when the project service endpoint disappears", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
     store.set(applyCoordinationWorklistSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       worklist: worklist(),
       updatedAt: 10,
     });
-    store.set(clearCoordinationWorklistResourceAtom, projectPath);
+    store.set(clearCoordinationWorklistResourceAtom, stateKey);
 
-    expect(store.get(coordinationWorklistResourceFamily(projectPath))).toEqual({
+    expect(store.get(coordinationWorklistResourceFamily(stateKey))).toEqual({
       value: null,
       error: null,
       pending: false,
@@ -137,15 +138,31 @@ describe("coordination worklist resource lifecycle", () => {
   it("rejects in-flight worklist results from an old endpoint generation", () => {
     expect(
       isCurrentCoordinationWorklistRequest(
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43190", generation: 1 },
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43190",
+          generation: 1,
+        },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
       ),
     ).toBe(false);
 
     expect(
       isCurrentCoordinationWorklistRequest(
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
       ),
     ).toBe(true);
   });

@@ -71,7 +71,13 @@ import {
   relayUnavailableProjectCopy,
 } from "@/lib/project-connection-display";
 import { relayConfiguredAtom, relayMachinesAtom, relayStatusAtom } from "@/stores/relay";
-import { findProjectForRef, projectRefOf, type ProjectRef } from "@/lib/project-key";
+import {
+  findProjectForRef,
+  projectRefOf,
+  projectStateKey,
+  type ProjectRef,
+  type ProjectStateKey,
+} from "@/lib/project-key";
 
 // Restyle palette (Linear-style lifted slate) — mirrors docs/mockups/project-view.html.
 //   sidebar bg #161719 · hairline #2a2b31 · press #232429 · selected #26272d
@@ -81,7 +87,6 @@ const SIDEBAR_WIDTH = 320;
 const PROJECT_PICKER_EDGE_SWIPE_WIDTH = 28;
 const PROJECT_PICKER_EDGE_SWIPE_DISTANCE = 56;
 const PROJECT_PICKER_EDGE_SWIPE_MAX_VERTICAL_DRIFT = 36;
-const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 type SidebarMode = "dashboard" | "views";
 
@@ -152,6 +157,7 @@ function SidebarStateCard({
 
 function WorktreeTree({
   projectPath,
+  projectStateKey: projectStateKeyProp,
   endpoint,
   token,
   desktopState,
@@ -162,6 +168,7 @@ function WorktreeTree({
   onKillSession,
 }: {
   projectPath: string;
+  projectStateKey: ProjectStateKey;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   desktopState: DesktopState | null;
@@ -171,7 +178,7 @@ function WorktreeTree({
   onPickService: (serviceId: string) => void;
   onKillSession: (sessionId: string) => void;
 }) {
-  const groups = useAtomValue(worktreeGroupsFamily(projectPath));
+  const groups = useAtomValue(worktreeGroupsFamily(projectStateKeyProp));
   const operationFailureSummary = summarizeOperationFailures(desktopState?.operationFailures);
 
   if (!endpoint && desktopState === null) {
@@ -226,6 +233,7 @@ function WorktreeTree({
       <WorktreeList
         groups={groups}
         projectPath={projectPath}
+        projectStateKey={projectStateKeyProp}
         endpoint={endpoint}
         token={token}
         padded={false}
@@ -419,10 +427,9 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     }
   }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
-  const desktopState = useAtomValue(desktopStateFamily(routeProjectPath ?? EMPTY_PROJECT_PATH));
-  const desktopStateError = useAtomValue(
-    desktopStateErrorFamily(routeProjectPath ?? EMPTY_PROJECT_PATH),
-  );
+  const routeProjectStateKey = projectStateKey(pickedProjectRef);
+  const desktopState = useAtomValue(desktopStateFamily(routeProjectStateKey));
+  const desktopStateError = useAtomValue(desktopStateErrorFamily(routeProjectStateKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const routeRelayUnavailable =
@@ -630,6 +637,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                     ) : (
                       <WorktreeTree
                         projectPath={effectiveProject.path}
+                        projectStateKey={routeProjectStateKey}
                         endpoint={endpoint}
                         token={token}
                         desktopState={desktopState}
@@ -644,6 +652,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                 ) : (
                   <WorktreeTree
                     projectPath={effectiveProject.path}
+                    projectStateKey={routeProjectStateKey}
                     endpoint={endpoint}
                     token={token}
                     desktopState={desktopState}

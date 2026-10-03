@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { atomFamily } from "jotai/utils";
 import type {
   GraveyardEntryResponse,
@@ -48,55 +49,55 @@ export interface ProjectResource<T> {
 }
 
 export interface ProjectResourceRequestScope {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   endpointKey: string | null;
   generation: number;
 }
 
 export interface ApplyProjectObservabilitySuccessInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   requestKey: string;
   observability: ProjectObservabilityValue;
   updatedAt?: number;
 }
 
 export interface ApplyProjectResourceFailureInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   requestKey: string;
   error: string;
 }
 
 export interface ApplyProjectResourceActionFailureInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   error: string;
 }
 
 export interface BeginProjectResourceRefreshInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   requestKey: string;
 }
 
 export interface SettleProjectResourceRefreshInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   requestKey: string;
 }
 
 export interface ApplyProjectTasksSuccessInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   requestKey: string;
   tasks: ProjectTasksValue;
   updatedAt?: number;
 }
 
 export interface ApplyProjectThreadsSuccessInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   requestKey: string;
   threads: ProjectThreadsValue;
   updatedAt?: number;
 }
 
 export interface ApplyProjectGraveyardSuccessInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   requestKey: string;
   graveyard: ProjectGraveyardValue;
   updatedAt?: number;
@@ -179,19 +180,19 @@ const emptyResource = <T>(): ProjectResource<T> => ({
   updatedAt: null,
 });
 
-export const projectObservabilityResourceFamily = atomFamily((_projectPath: string) =>
+export const projectObservabilityResourceFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<ProjectResource<ProjectObservabilityValue>>(emptyResource<ProjectObservabilityValue>()),
 );
 
-export const projectTasksResourceFamily = atomFamily((_projectPath: string) =>
+export const projectTasksResourceFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<ProjectResource<ProjectTasksValue>>(emptyResource<ProjectTasksValue>()),
 );
 
-export const projectThreadsResourceFamily = atomFamily((_projectPath: string) =>
+export const projectThreadsResourceFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<ProjectResource<ProjectThreadsValue>>(emptyResource<ProjectThreadsValue>()),
 );
 
-export const projectGraveyardResourceFamily = atomFamily((_projectPath: string) =>
+export const projectGraveyardResourceFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<ProjectResource<ProjectGraveyardValue>>(emptyResource<ProjectGraveyardValue>()),
 );
 
@@ -199,35 +200,40 @@ export const projectPlanResourceFamily = atomFamily((_planKey: string) =>
   atom<ProjectResource<ProjectPlanValue>>(emptyResource<ProjectPlanValue>()),
 );
 
-export const projectObservabilityFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(projectObservabilityResourceFamily(projectPath)).value),
+export const projectObservabilityFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(projectObservabilityResourceFamily(projectStateKey)).value),
 );
 
-export const projectTasksFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(projectTasksResourceFamily(projectPath)).value),
+export const projectTasksFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(projectTasksResourceFamily(projectStateKey)).value),
 );
 
-export const projectThreadsFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(projectThreadsResourceFamily(projectPath)).value),
+export const projectThreadsFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(projectThreadsResourceFamily(projectStateKey)).value),
 );
 
-export const projectGraveyardFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(projectGraveyardResourceFamily(projectPath)).value),
+export const projectGraveyardFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(projectGraveyardResourceFamily(projectStateKey)).value),
 );
 
 export const projectPlanFamily = atomFamily((planKey: string) =>
   atom((get) => get(projectPlanResourceFamily(planKey)).value),
 );
 
-export function projectPlanResourceKey(projectPath: string, sessionId: string): string {
-  return `${projectPath}\u0000${sessionId}`;
+// A plan belongs to a session inside a project, so it is keyed by both. The
+// result is itself a project-scoped key: the plan families are indexed by it.
+export function projectPlanResourceKey(
+  projectStateKey: ProjectStateKey,
+  sessionId: string,
+): ProjectStateKey {
+  return `${projectStateKey}\u0000${sessionId}` as ProjectStateKey;
 }
 
 export const beginProjectObservabilityRefreshAtom = atom(
   null,
-  (get, set, { projectPath, requestKey }: BeginProjectResourceRefreshInput) => {
-    const current = get(projectObservabilityResourceFamily(projectPath));
-    set(projectObservabilityResourceFamily(projectPath), {
+  (get, set, { projectStateKey, requestKey }: BeginProjectResourceRefreshInput) => {
+    const current = get(projectObservabilityResourceFamily(projectStateKey));
+    set(projectObservabilityResourceFamily(projectStateKey), {
       ...current,
       error: null,
       pending: true,
@@ -239,9 +245,9 @@ export const beginProjectObservabilityRefreshAtom = atom(
 
 export const beginProjectTasksRefreshAtom = atom(
   null,
-  (get, set, { projectPath, requestKey }: BeginProjectResourceRefreshInput) => {
-    const current = get(projectTasksResourceFamily(projectPath));
-    set(projectTasksResourceFamily(projectPath), {
+  (get, set, { projectStateKey, requestKey }: BeginProjectResourceRefreshInput) => {
+    const current = get(projectTasksResourceFamily(projectStateKey));
+    set(projectTasksResourceFamily(projectStateKey), {
       ...current,
       error: null,
       pending: true,
@@ -253,9 +259,9 @@ export const beginProjectTasksRefreshAtom = atom(
 
 export const beginProjectThreadsRefreshAtom = atom(
   null,
-  (get, set, { projectPath, requestKey }: BeginProjectResourceRefreshInput) => {
-    const current = get(projectThreadsResourceFamily(projectPath));
-    set(projectThreadsResourceFamily(projectPath), {
+  (get, set, { projectStateKey, requestKey }: BeginProjectResourceRefreshInput) => {
+    const current = get(projectThreadsResourceFamily(projectStateKey));
+    set(projectThreadsResourceFamily(projectStateKey), {
       ...current,
       error: null,
       pending: true,
@@ -267,9 +273,9 @@ export const beginProjectThreadsRefreshAtom = atom(
 
 export const beginProjectGraveyardRefreshAtom = atom(
   null,
-  (get, set, { projectPath, requestKey }: BeginProjectResourceRefreshInput) => {
-    const current = get(projectGraveyardResourceFamily(projectPath));
-    set(projectGraveyardResourceFamily(projectPath), {
+  (get, set, { projectStateKey, requestKey }: BeginProjectResourceRefreshInput) => {
+    const current = get(projectGraveyardResourceFamily(projectStateKey));
+    set(projectGraveyardResourceFamily(projectStateKey), {
       ...current,
       error: null,
       pending: true,
@@ -298,11 +304,16 @@ export const applyProjectObservabilitySuccessAtom = atom(
   (
     get,
     set,
-    { projectPath, requestKey, observability, updatedAt }: ApplyProjectObservabilitySuccessInput,
+    {
+      projectStateKey,
+      requestKey,
+      observability,
+      updatedAt,
+    }: ApplyProjectObservabilitySuccessInput,
   ) => {
-    const current = get(projectObservabilityResourceFamily(projectPath));
+    const current = get(projectObservabilityResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectObservabilityResourceFamily(projectPath), {
+    set(projectObservabilityResourceFamily(projectStateKey), {
       value: observability,
       error: null,
       pending: false,
@@ -315,10 +326,10 @@ export const applyProjectObservabilitySuccessAtom = atom(
 
 export const applyProjectTasksSuccessAtom = atom(
   null,
-  (get, set, { projectPath, requestKey, tasks, updatedAt }: ApplyProjectTasksSuccessInput) => {
-    const current = get(projectTasksResourceFamily(projectPath));
+  (get, set, { projectStateKey, requestKey, tasks, updatedAt }: ApplyProjectTasksSuccessInput) => {
+    const current = get(projectTasksResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectTasksResourceFamily(projectPath), {
+    set(projectTasksResourceFamily(projectStateKey), {
       value: tasks,
       error: null,
       pending: false,
@@ -331,10 +342,14 @@ export const applyProjectTasksSuccessAtom = atom(
 
 export const applyProjectThreadsSuccessAtom = atom(
   null,
-  (get, set, { projectPath, requestKey, threads, updatedAt }: ApplyProjectThreadsSuccessInput) => {
-    const current = get(projectThreadsResourceFamily(projectPath));
+  (
+    get,
+    set,
+    { projectStateKey, requestKey, threads, updatedAt }: ApplyProjectThreadsSuccessInput,
+  ) => {
+    const current = get(projectThreadsResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectThreadsResourceFamily(projectPath), {
+    set(projectThreadsResourceFamily(projectStateKey), {
       value: threads,
       error: null,
       pending: false,
@@ -350,11 +365,11 @@ export const applyProjectGraveyardSuccessAtom = atom(
   (
     get,
     set,
-    { projectPath, requestKey, graveyard, updatedAt }: ApplyProjectGraveyardSuccessInput,
+    { projectStateKey, requestKey, graveyard, updatedAt }: ApplyProjectGraveyardSuccessInput,
   ) => {
-    const current = get(projectGraveyardResourceFamily(projectPath));
+    const current = get(projectGraveyardResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectGraveyardResourceFamily(projectPath), {
+    set(projectGraveyardResourceFamily(projectStateKey), {
       value: graveyard,
       error: null,
       pending: false,
@@ -392,10 +407,10 @@ export const applyProjectPlanSuccessAtom = atom(
 
 export const applyProjectObservabilityFailureAtom = atom(
   null,
-  (get, set, { projectPath, requestKey, error }: ApplyProjectResourceFailureInput) => {
-    const current = get(projectObservabilityResourceFamily(projectPath));
+  (get, set, { projectStateKey, requestKey, error }: ApplyProjectResourceFailureInput) => {
+    const current = get(projectObservabilityResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectObservabilityResourceFamily(projectPath), {
+    set(projectObservabilityResourceFamily(projectStateKey), {
       ...current,
       error,
       pending: false,
@@ -407,10 +422,10 @@ export const applyProjectObservabilityFailureAtom = atom(
 
 export const applyProjectTasksFailureAtom = atom(
   null,
-  (get, set, { projectPath, requestKey, error }: ApplyProjectResourceFailureInput) => {
-    const current = get(projectTasksResourceFamily(projectPath));
+  (get, set, { projectStateKey, requestKey, error }: ApplyProjectResourceFailureInput) => {
+    const current = get(projectTasksResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectTasksResourceFamily(projectPath), {
+    set(projectTasksResourceFamily(projectStateKey), {
       ...current,
       error,
       pending: false,
@@ -422,10 +437,10 @@ export const applyProjectTasksFailureAtom = atom(
 
 export const applyProjectThreadsFailureAtom = atom(
   null,
-  (get, set, { projectPath, requestKey, error }: ApplyProjectResourceFailureInput) => {
-    const current = get(projectThreadsResourceFamily(projectPath));
+  (get, set, { projectStateKey, requestKey, error }: ApplyProjectResourceFailureInput) => {
+    const current = get(projectThreadsResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectThreadsResourceFamily(projectPath), {
+    set(projectThreadsResourceFamily(projectStateKey), {
       ...current,
       error,
       pending: false,
@@ -437,10 +452,10 @@ export const applyProjectThreadsFailureAtom = atom(
 
 export const applyProjectGraveyardFailureAtom = atom(
   null,
-  (get, set, { projectPath, requestKey, error }: ApplyProjectResourceFailureInput) => {
-    const current = get(projectGraveyardResourceFamily(projectPath));
+  (get, set, { projectStateKey, requestKey, error }: ApplyProjectResourceFailureInput) => {
+    const current = get(projectGraveyardResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectGraveyardResourceFamily(projectPath), {
+    set(projectGraveyardResourceFamily(projectStateKey), {
       ...current,
       error,
       pending: false,
@@ -467,9 +482,9 @@ export const applyProjectPlanFailureAtom = atom(
 
 export const applyProjectGraveyardActionFailureAtom = atom(
   null,
-  (get, set, { projectPath, error }: ApplyProjectResourceActionFailureInput) => {
-    const current = get(projectGraveyardResourceFamily(projectPath));
-    set(projectGraveyardResourceFamily(projectPath), {
+  (get, set, { projectStateKey, error }: ApplyProjectResourceActionFailureInput) => {
+    const current = get(projectGraveyardResourceFamily(projectStateKey));
+    set(projectGraveyardResourceFamily(projectStateKey), {
       ...current,
       error,
       stale: current.value !== null,
@@ -560,22 +575,31 @@ export const applyProjectPlanSaveSuccessAtom = atom(
 
 export const clearProjectObservabilityResourceAtom = atom(
   null,
-  (_get, set, projectPath: string) => {
-    set(projectObservabilityResourceFamily(projectPath), emptyResource());
+  (_get, set, projectStateKey: ProjectStateKey) => {
+    set(projectObservabilityResourceFamily(projectStateKey), emptyResource());
   },
 );
 
-export const clearProjectTasksResourceAtom = atom(null, (_get, set, projectPath: string) => {
-  set(projectTasksResourceFamily(projectPath), emptyResource());
-});
+export const clearProjectTasksResourceAtom = atom(
+  null,
+  (_get, set, projectStateKey: ProjectStateKey) => {
+    set(projectTasksResourceFamily(projectStateKey), emptyResource());
+  },
+);
 
-export const clearProjectThreadsResourceAtom = atom(null, (_get, set, projectPath: string) => {
-  set(projectThreadsResourceFamily(projectPath), emptyResource());
-});
+export const clearProjectThreadsResourceAtom = atom(
+  null,
+  (_get, set, projectStateKey: ProjectStateKey) => {
+    set(projectThreadsResourceFamily(projectStateKey), emptyResource());
+  },
+);
 
-export const clearProjectGraveyardResourceAtom = atom(null, (_get, set, projectPath: string) => {
-  set(projectGraveyardResourceFamily(projectPath), emptyResource());
-});
+export const clearProjectGraveyardResourceAtom = atom(
+  null,
+  (_get, set, projectStateKey: ProjectStateKey) => {
+    set(projectGraveyardResourceFamily(projectStateKey), emptyResource());
+  },
+);
 
 export const clearProjectPlanResourceAtom = atom(null, (_get, set, planKey: string) => {
   set(projectPlanResourceFamily(planKey), emptyResource());
@@ -583,8 +607,8 @@ export const clearProjectPlanResourceAtom = atom(null, (_get, set, planKey: stri
 
 export const removeProjectGraveyardAgentAtom = atom(
   null,
-  (_get, set, { projectPath, id }: { projectPath: string; id: string }) => {
-    set(projectGraveyardResourceFamily(projectPath), (current) =>
+  (_get, set, { projectStateKey, id }: { projectStateKey: ProjectStateKey; id: string }) => {
+    set(projectGraveyardResourceFamily(projectStateKey), (current) =>
       current.value
         ? {
             ...current,
@@ -601,8 +625,8 @@ export const removeProjectGraveyardAgentAtom = atom(
 
 export const removeProjectGraveyardWorktreeAtom = atom(
   null,
-  (_get, set, { projectPath, path }: { projectPath: string; path: string }) => {
-    set(projectGraveyardResourceFamily(projectPath), (current) =>
+  (_get, set, { projectStateKey, path }: { projectStateKey: ProjectStateKey; path: string }) => {
+    set(projectGraveyardResourceFamily(projectStateKey), (current) =>
       current.value
         ? {
             ...current,
@@ -619,10 +643,10 @@ export const removeProjectGraveyardWorktreeAtom = atom(
 
 export const settleProjectObservabilityRefreshAtom = atom(
   null,
-  (get, set, { projectPath, requestKey }: SettleProjectResourceRefreshInput) => {
-    const current = get(projectObservabilityResourceFamily(projectPath));
+  (get, set, { projectStateKey, requestKey }: SettleProjectResourceRefreshInput) => {
+    const current = get(projectObservabilityResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectObservabilityResourceFamily(projectPath), {
+    set(projectObservabilityResourceFamily(projectStateKey), {
       ...current,
       pending: false,
       pendingRequestKey: null,
@@ -633,10 +657,10 @@ export const settleProjectObservabilityRefreshAtom = atom(
 
 export const settleProjectTasksRefreshAtom = atom(
   null,
-  (get, set, { projectPath, requestKey }: SettleProjectResourceRefreshInput) => {
-    const current = get(projectTasksResourceFamily(projectPath));
+  (get, set, { projectStateKey, requestKey }: SettleProjectResourceRefreshInput) => {
+    const current = get(projectTasksResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectTasksResourceFamily(projectPath), {
+    set(projectTasksResourceFamily(projectStateKey), {
       ...current,
       pending: false,
       pendingRequestKey: null,
@@ -647,10 +671,10 @@ export const settleProjectTasksRefreshAtom = atom(
 
 export const settleProjectThreadsRefreshAtom = atom(
   null,
-  (get, set, { projectPath, requestKey }: SettleProjectResourceRefreshInput) => {
-    const current = get(projectThreadsResourceFamily(projectPath));
+  (get, set, { projectStateKey, requestKey }: SettleProjectResourceRefreshInput) => {
+    const current = get(projectThreadsResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectThreadsResourceFamily(projectPath), {
+    set(projectThreadsResourceFamily(projectStateKey), {
       ...current,
       pending: false,
       pendingRequestKey: null,
@@ -661,10 +685,10 @@ export const settleProjectThreadsRefreshAtom = atom(
 
 export const settleProjectGraveyardRefreshAtom = atom(
   null,
-  (get, set, { projectPath, requestKey }: SettleProjectResourceRefreshInput) => {
-    const current = get(projectGraveyardResourceFamily(projectPath));
+  (get, set, { projectStateKey, requestKey }: SettleProjectResourceRefreshInput) => {
+    const current = get(projectGraveyardResourceFamily(projectStateKey));
     if (current.pendingRequestKey !== requestKey) return;
-    set(projectGraveyardResourceFamily(projectPath), {
+    set(projectGraveyardResourceFamily(projectStateKey), {
       ...current,
       pending: false,
       pendingRequestKey: null,
@@ -692,7 +716,7 @@ export function isCurrentProjectResourceRequest(
   current: ProjectResourceRequestScope,
 ): boolean {
   return (
-    request.projectPath === current.projectPath &&
+    request.projectStateKey === current.projectStateKey &&
     request.endpointKey === current.endpointKey &&
     request.generation === current.generation
   );
@@ -702,5 +726,5 @@ export function projectResourceRequestKey(
   request: ProjectResourceRequestScope,
   sequence = ++projectResourceRequestSequence,
 ): string {
-  return `${request.projectPath}\u0000${request.endpointKey ?? ""}\u0000${request.generation}\u0000${projectResourceRequestScope}\u0000${sequence}`;
+  return `${request.projectStateKey}\u0000${request.endpointKey ?? ""}\u0000${request.generation}\u0000${projectResourceRequestScope}\u0000${sequence}`;
 }

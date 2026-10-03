@@ -104,6 +104,7 @@ import {
   parseProjectKey,
   preferMachineBearingRef,
   projectKey,
+  projectStateKey,
   sameProjectRef,
 } from "@/lib/project-key";
 
@@ -174,6 +175,7 @@ export default function MainLayout() {
   // A primitive stand-in for the ref, so an effect that depends on it does not
   // re-run on every render just because the object is rebuilt.
   const effectiveProjectKey = projectKey(effectiveProjectRef);
+  const effectiveProjectStateKey = projectStateKey(effectiveProjectRef);
   const effectiveProject = activeShare
     ? projectFromActiveShare(activeShare)
     : findProjectForRef(projects, effectiveProjectRef);
@@ -372,7 +374,7 @@ export default function MainLayout() {
       if (cancelled) return;
       if (activeShare) {
         applyDesktopStateSuccess({
-          projectPath: activeShare.projectRoot,
+          projectStateKey: projectStateKey({ path: activeShare.projectRoot }),
           state: desktopStateFromActiveShare(activeShare),
         });
         timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
@@ -506,7 +508,7 @@ export default function MainLayout() {
     if (!effectiveProjectPath) return;
     if (!relayReadyForRequests) return;
     if (!endpoint) {
-      clearDesktopStateResource(effectiveProjectPath);
+      clearDesktopStateResource(effectiveProjectStateKey);
       return;
     }
     let cancelled = false;
@@ -518,16 +520,16 @@ export default function MainLayout() {
       activeController?.abort();
       const controller = new AbortController();
       activeController = controller;
-      beginDesktopStateRefresh(effectiveProjectPath!);
+      beginDesktopStateRefresh(effectiveProjectStateKey);
       try {
         const token = await getTokenRef.current();
         const state = await getDesktopState(endpoint!, { token, signal: controller.signal });
         if (cancelled) return;
-        applyDesktopStateSuccess({ projectPath: effectiveProjectPath!, state });
+        applyDesktopStateSuccess({ projectStateKey: effectiveProjectStateKey, state });
       } catch (err) {
         if (!cancelled && !controller.signal.aborted && !isTransientRequestError(err)) {
           const msg = getErrorMessage(err);
-          applyDesktopStateFailure({ projectPath: effectiveProjectPath!, error: msg });
+          applyDesktopStateFailure({ projectStateKey: effectiveProjectStateKey, error: msg });
           if (!isProjectHostOfflineError(msg)) {
             console.warn("desktop-state fetch failed:", err);
           }
@@ -565,7 +567,7 @@ export default function MainLayout() {
     if (!effectiveProjectPath) return;
     if (!relayReadyForRequests) return;
     if (!endpoint) {
-      clearNotificationFeedResource(effectiveProjectPath);
+      clearNotificationFeedResource(effectiveProjectStateKey);
       return;
     }
     let cancelled = false;
@@ -577,13 +579,13 @@ export default function MainLayout() {
       activeController?.abort();
       const controller = new AbortController();
       activeController = controller;
-      beginNotificationFeedRefresh(effectiveProjectPath!);
+      beginNotificationFeedRefresh(effectiveProjectStateKey);
       try {
         const token = await getTokenRef.current();
         const feed = await listNotifications(endpoint!, { token, signal: controller.signal });
         if (cancelled) return;
         applyNotificationFeedSuccess({
-          projectPath: effectiveProjectPath!,
+          projectStateKey: effectiveProjectStateKey,
           feed: {
             notifications: feed.notifications,
             unreadCount: feed.unreadCount,
@@ -593,7 +595,7 @@ export default function MainLayout() {
       } catch (err) {
         if (!cancelled && !controller.signal.aborted && !isTransientRequestError(err)) {
           const msg = getErrorMessage(err);
-          applyNotificationFeedFailure({ projectPath: effectiveProjectPath!, error: msg });
+          applyNotificationFeedFailure({ projectStateKey: effectiveProjectStateKey, error: msg });
           if (!isProjectHostOfflineError(msg)) {
             console.warn("notification fetch failed:", err);
           }
@@ -629,7 +631,7 @@ export default function MainLayout() {
     if (!effectiveProjectPath) return;
     if (!activeShare && !relayReadyForRequests) return;
     if (!endpoint) return;
-    const projectPath = effectiveProjectPath;
+    const projectStateKeyForStream = effectiveProjectStateKey;
     let cancelled = false;
     let handle: { stop: () => void } | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -675,12 +677,15 @@ export default function MainLayout() {
             }
             if (event.type !== "alert") return;
             if (event.notificationId) {
-              markNotificationRecordsObserved({ projectPath, ids: [event.notificationId] });
+              markNotificationRecordsObserved({
+                projectStateKey: projectStateKeyForStream,
+                ids: [event.notificationId],
+              });
             }
             kickNotificationFeedRefresh();
             const notification = evaluateAlertEvent(event, notificationSettings, {
               projectName: effectiveProject?.name,
-              projectPath,
+              projectPath: effectiveProjectPath ?? undefined,
             });
             if (
               notification &&

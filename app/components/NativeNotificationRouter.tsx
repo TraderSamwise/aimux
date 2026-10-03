@@ -14,7 +14,7 @@ import {
   clearNotificationStartupIssueAtom,
   reportNotificationStartupIssueAtom,
 } from "@/stores/notificationStartup";
-import { findProjectForRef, projectRefFromPayload } from "@/lib/project-key";
+import { findProjectForRef, projectRefFromPayload, projectStateKey } from "@/lib/project-key";
 import { projectsAtom, selectProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 
 if (Platform.OS !== "web") {
@@ -75,7 +75,12 @@ export function NativeNotificationRouter() {
       const sessionId = stringField(data, "sessionId");
       const notificationId = stringField(data, "notificationId");
       if (!projectRoot && !sessionId) return;
-      markNotificationsReadLocal({ projectPath: projectRoot, ids: [notificationId] });
+      markNotificationsReadLocal({
+        projectStateKey: projectStateKey(
+          projectRefFromPayload(projectsRef.current, projectRoot, payloadMachineId),
+        ),
+        ids: [notificationId],
+      });
       void (async () => {
         if (!projectRoot || !notificationId) return;
         const project = findProjectForRef(

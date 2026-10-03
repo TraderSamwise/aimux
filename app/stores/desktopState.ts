@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { atomFamily } from "jotai/utils";
 import { groupByWorktree, type DesktopState, type WorktreeBucket } from "@/lib/desktop-state";
 import { reuseUnchangedEntries } from "@/lib/structural-reuse";
@@ -18,13 +19,13 @@ export interface DesktopStateResource {
 }
 
 export interface ApplyDesktopStateSuccessInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   state: DesktopState;
   updatedAt?: number;
 }
 
 export interface ApplyDesktopStateFailureInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   error: string;
 }
 
@@ -37,20 +38,20 @@ const emptyDesktopStateResource = (): DesktopStateResource => ({
 });
 
 // Keyed by project path. Holds the critical /desktop-state resource lifecycle.
-export const desktopStateResourceFamily = atomFamily((_projectPath: string) =>
+export const desktopStateResourceFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<DesktopStateResource>(emptyDesktopStateResource()),
 );
 
-export const desktopStateFamily = atomFamily((projectPath: string) =>
+export const desktopStateFamily = atomFamily((projectStateKey: ProjectStateKey) =>
   atom(
     (get) =>
       applyProjectLifecycleTransitionsToDesktopState(
-        get(desktopStateResourceFamily(projectPath)).value,
-        get(projectLifecycleTransitionsFamily(projectPath)),
+        get(desktopStateResourceFamily(projectStateKey)).value,
+        get(projectLifecycleTransitionsFamily(projectStateKey)),
       ),
     (get, set, value: DesktopState | null) => {
-      const current = get(desktopStateResourceFamily(projectPath));
-      set(desktopStateResourceFamily(projectPath), {
+      const current = get(desktopStateResourceFamily(projectStateKey));
+      set(desktopStateResourceFamily(projectStateKey), {
         ...current,
         value,
         error: value ? null : current.error,
@@ -62,12 +63,12 @@ export const desktopStateFamily = atomFamily((projectPath: string) =>
   ),
 );
 
-export const desktopStateErrorFamily = atomFamily((projectPath: string) =>
+export const desktopStateErrorFamily = atomFamily((projectStateKey: ProjectStateKey) =>
   atom(
-    (get) => get(desktopStateResourceFamily(projectPath)).error,
+    (get) => get(desktopStateResourceFamily(projectStateKey)).error,
     (get, set, error: string | null) => {
-      const current = get(desktopStateResourceFamily(projectPath));
-      set(desktopStateResourceFamily(projectPath), {
+      const current = get(desktopStateResourceFamily(projectStateKey));
+      set(desktopStateResourceFamily(projectStateKey), {
         ...current,
         error,
       });
@@ -81,15 +82,18 @@ export const kickDesktopStateRefreshAtom = atom(null, (get, set) => {
   set(desktopStateRefreshNonceAtom, get(desktopStateRefreshNonceAtom) + 1);
 });
 
-export const beginDesktopStateRefreshAtom = atom(null, (get, set, projectPath: string) => {
-  const current = get(desktopStateResourceFamily(projectPath));
-  set(desktopStateResourceFamily(projectPath), {
-    ...current,
-    error: null,
-    pending: true,
-    stale: current.value !== null,
-  });
-});
+export const beginDesktopStateRefreshAtom = atom(
+  null,
+  (get, set, projectStateKey: ProjectStateKey) => {
+    const current = get(desktopStateResourceFamily(projectStateKey));
+    set(desktopStateResourceFamily(projectStateKey), {
+      ...current,
+      error: null,
+      pending: true,
+      stale: current.value !== null,
+    });
+  },
+);
 
 // A poll that returns the same state is not new data. Storing a fresh object
 // anyway rebuilds every worktree bucket and session below it, so no row can
@@ -141,29 +145,29 @@ function mergeDesktopState(previous: DesktopState | null, next: DesktopState): D
 
 export const applyDesktopStateSuccessAtom = atom(
   null,
-  (get, set, { projectPath, state, updatedAt }: ApplyDesktopStateSuccessInput) => {
-    const current = get(desktopStateResourceFamily(projectPath));
+  (get, set, { projectStateKey, state, updatedAt }: ApplyDesktopStateSuccessInput) => {
+    const current = get(desktopStateResourceFamily(projectStateKey));
     // Keep the previous object when nothing changed. updatedAt still advances,
     // so "when did we last hear from the host" stays honest.
     const value = sameDesktopState(current.value, state)
       ? current.value!
       : mergeDesktopState(current.value, state);
-    set(desktopStateResourceFamily(projectPath), {
+    set(desktopStateResourceFamily(projectStateKey), {
       value,
       error: null,
       pending: false,
       stale: false,
       updatedAt: updatedAt ?? Date.now(),
     });
-    set(settleProjectLifecycleTransitionsAtom, { projectPath, state });
+    set(settleProjectLifecycleTransitionsAtom, { projectStateKey, state });
   },
 );
 
 export const applyDesktopStateFailureAtom = atom(
   null,
-  (get, set, { projectPath, error }: ApplyDesktopStateFailureInput) => {
-    const current = get(desktopStateResourceFamily(projectPath));
-    set(desktopStateResourceFamily(projectPath), {
+  (get, set, { projectStateKey, error }: ApplyDesktopStateFailureInput) => {
+    const current = get(desktopStateResourceFamily(projectStateKey));
+    set(desktopStateResourceFamily(projectStateKey), {
       ...current,
       error,
       pending: false,
@@ -172,10 +176,13 @@ export const applyDesktopStateFailureAtom = atom(
   },
 );
 
-export const clearDesktopStateResourceAtom = atom(null, (_get, set, projectPath: string) => {
-  set(desktopStateResourceFamily(projectPath), emptyDesktopStateResource());
-  set(clearProjectLifecycleTransitionsAtom, projectPath);
-});
+export const clearDesktopStateResourceAtom = atom(
+  null,
+  (_get, set, projectStateKey: ProjectStateKey) => {
+    set(desktopStateResourceFamily(projectStateKey), emptyDesktopStateResource());
+    set(clearProjectLifecycleTransitionsAtom, projectStateKey);
+  },
+);
 
 // Derived: the worktree-grouped hierarchy for a project.
 // groupByWorktree reads only these fields. Deriving the buckets from the whole
@@ -222,11 +229,11 @@ function sameGroupingInput(a: GroupingInput, b: GroupingInput): boolean {
   return GROUPING_FIELDS.every((field) => a[field] === b[field]);
 }
 
-export const worktreeGroupsFamily = atomFamily((projectPath: string) => {
+export const worktreeGroupsFamily = atomFamily((projectStateKey: ProjectStateKey) => {
   let lastInput: GroupingInput | null = null;
   let lastGroups: WorktreeBucket[] = [];
   return atom<WorktreeBucket[]>((get) => {
-    const state = get(desktopStateFamily(projectPath));
+    const state = get(desktopStateFamily(projectStateKey));
     if (!state) {
       lastInput = null;
       lastGroups = [];
@@ -242,10 +249,10 @@ export const worktreeGroupsFamily = atomFamily((projectPath: string) => {
 
 // The dashboard needs these two facts but must not subscribe to the whole state
 // object to get them.
-export const desktopStatePresentFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(desktopStateFamily(projectPath)) !== null),
+export const desktopStatePresentFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(desktopStateFamily(projectStateKey)) !== null),
 );
 
-export const desktopStateOperationFailuresFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(desktopStateFamily(projectPath))?.operationFailures),
+export const desktopStateOperationFailuresFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(desktopStateFamily(projectStateKey))?.operationFailures),
 );

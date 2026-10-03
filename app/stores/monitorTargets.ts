@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import { projectRefOf, projectStateKey } from "@/lib/project-key";
 import {
   monitorSessionTargetsForProject,
   monitorSharedTargets,
@@ -12,7 +13,10 @@ import { projectsAtom } from "@/stores/projects";
 export const monitorTargetsAtom = atom<MonitorTarget[]>((get) => {
   const projects = get(projectsAtom);
   const projectTargets = projects.flatMap((project) =>
-    monitorSessionTargetsForProject(project, get(desktopStateFamily(project.path))),
+    monitorSessionTargetsForProject(
+      project,
+      get(desktopStateFamily(projectStateKey(projectRefOf(project)))),
+    ),
   );
   return [...projectTargets, ...monitorSharedTargets(get(acceptedSharedSessionsAtom))];
 });

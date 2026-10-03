@@ -12,6 +12,7 @@ import {
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import {
   findProjectForRef,
+  projectStateKey,
   parseProjectKey,
   projectKey,
   projectRefOf,
@@ -83,7 +84,11 @@ export const selectedSessionAtom = atom<DesktopSession | null>((get) => {
   const project = get(selectedProjectAtom);
   const sessionId = get(selectedSessionIdAtom);
   if (!project || !sessionId) return null;
-  return get(desktopStateFamily(project.path))?.sessions.find((s) => s.id === sessionId) ?? null;
+  return (
+    get(desktopStateFamily(projectStateKey(projectRefOf(project))))?.sessions.find(
+      (session) => session.id === sessionId,
+    ) ?? null
+  );
 });
 
 // ─── Action atoms ──────────────────────────────────────────────────────────

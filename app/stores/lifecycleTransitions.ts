@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { atomFamily } from "jotai/utils";
 import type {
   ProjectLifecycleTransition,
@@ -23,12 +24,12 @@ export interface RecordProjectLifecycleTransitionInput extends Omit<
   AppLifecycleTransitionRecord,
   "transition"
 > {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   transition?: ProjectLifecycleTransition;
 }
 
 export interface SettleProjectLifecycleTransitionsInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   state: DesktopState;
 }
 
@@ -41,7 +42,7 @@ export interface LocalProjectLifecycleTransitionInput {
 
 const PROJECTABLE_PHASES = new Set(["queued", "started", "settling", "succeeded"]);
 
-export const projectLifecycleTransitionsFamily = atomFamily((_projectPath: string) =>
+export const projectLifecycleTransitionsFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<AppLifecycleTransitionRecord[]>([]),
 );
 
@@ -49,13 +50,13 @@ export const recordProjectLifecycleTransitionAtom = atom(
   null,
   (get, set, input: RecordProjectLifecycleTransitionInput) => {
     const transition = input.transition;
-    const current = get(projectLifecycleTransitionsFamily(input.projectPath));
+    const current = get(projectLifecycleTransitionsFamily(input.projectStateKey));
     if (!transition) return;
     const withoutCurrent = current.filter(
       (item) => item.transition.operationId !== transition.operationId,
     );
     if (transition.phase === "failed") {
-      set(projectLifecycleTransitionsFamily(input.projectPath), withoutCurrent);
+      set(projectLifecycleTransitionsFamily(input.projectStateKey), withoutCurrent);
       return;
     }
     if (!PROJECTABLE_PHASES.has(transition.phase)) return;
@@ -66,22 +67,26 @@ export const recordProjectLifecycleTransitionAtom = atom(
       worktreeName: input.worktreeName,
       worktreePath: input.worktreePath ?? transition.targetPath,
     };
-    set(projectLifecycleTransitionsFamily(input.projectPath), [...withoutCurrent, record]);
+    set(projectLifecycleTransitionsFamily(input.projectStateKey), [...withoutCurrent, record]);
   },
 );
 
 export const settleProjectLifecycleTransitionsAtom = atom(
   null,
-  (get, set, { projectPath, state }: SettleProjectLifecycleTransitionsInput) => {
-    const current = get(projectLifecycleTransitionsFamily(projectPath));
+  (get, set, { projectStateKey, state }: SettleProjectLifecycleTransitionsInput) => {
+    const current = get(projectLifecycleTransitionsFamily(projectStateKey));
     const next = current.filter((record) => !isTransitionSettled(record, state));
-    if (next.length !== current.length) set(projectLifecycleTransitionsFamily(projectPath), next);
+    if (next.length !== current.length)
+      set(projectLifecycleTransitionsFamily(projectStateKey), next);
   },
 );
 
-export const clearProjectLifecycleTransitionsAtom = atom(null, (_get, set, projectPath: string) => {
-  set(projectLifecycleTransitionsFamily(projectPath), []);
-});
+export const clearProjectLifecycleTransitionsAtom = atom(
+  null,
+  (_get, set, projectStateKey: ProjectStateKey) => {
+    set(projectLifecycleTransitionsFamily(projectStateKey), []);
+  },
+);
 
 export function localProjectLifecycleTransition({
   operation,

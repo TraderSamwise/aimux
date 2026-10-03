@@ -1,4 +1,5 @@
 import { createStore } from "jotai";
+import { projectStateKey } from "@/lib/project-key";
 import { describe, expect, it } from "vitest";
 
 import type { NotificationRecord } from "@/lib/api";
@@ -46,17 +47,17 @@ function feed(overrides: Partial<ProjectNotificationFeed> = {}): ProjectNotifica
 describe("notification feed resource lifecycle", () => {
   it("marks an in-flight refresh stale when a previous feed exists", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = feed();
 
     store.set(applyNotificationFeedSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       feed: current,
       updatedAt: 10,
     });
-    store.set(beginNotificationFeedRefreshAtom, projectPath);
+    store.set(beginNotificationFeedRefreshAtom, stateKey);
 
-    expect(store.get(notificationFeedResourceFamily(projectPath))).toEqual({
+    expect(store.get(notificationFeedResourceFamily(stateKey))).toEqual({
       value: current,
       error: null,
       pending: true,
@@ -67,21 +68,21 @@ describe("notification feed resource lifecycle", () => {
 
   it("clears stale refresh errors when retrying with a previous feed", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = feed();
 
     store.set(applyNotificationFeedSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       feed: current,
       updatedAt: 10,
     });
     store.set(applyNotificationFeedFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "request timed out after 10000ms",
     });
-    store.set(beginNotificationFeedRefreshAtom, projectPath);
+    store.set(beginNotificationFeedRefreshAtom, stateKey);
 
-    expect(store.get(notificationFeedResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(notificationFeedResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: null,
       pending: true,
@@ -91,22 +92,22 @@ describe("notification feed resource lifecycle", () => {
 
   it("keeps the last good feed after a refresh failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = feed();
 
     store.set(applyNotificationFeedSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       feed: current,
       updatedAt: 10,
     });
     store.set(applyNotificationFeedFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
 
-    expect(store.get(notificationFeedFamily(projectPath))).toBe(current);
-    expect(store.get(notificationFeedErrorFamily(projectPath))).toBe("service unavailable");
-    expect(store.get(notificationFeedResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(notificationFeedFamily(stateKey))).toBe(current);
+    expect(store.get(notificationFeedErrorFamily(stateKey))).toBe("service unavailable");
+    expect(store.get(notificationFeedResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: "service unavailable",
       pending: false,
@@ -116,7 +117,7 @@ describe("notification feed resource lifecycle", () => {
 
   it("clears stale/error metadata after the feed recovers", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = feed();
     const recovered = feed({
       notifications: [notification("notice-2")],
@@ -124,21 +125,21 @@ describe("notification feed resource lifecycle", () => {
     });
 
     store.set(applyNotificationFeedSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       feed: current,
       updatedAt: 10,
     });
     store.set(applyNotificationFeedFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
     store.set(applyNotificationFeedSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       feed: recovered,
       updatedAt: 20,
     });
 
-    expect(store.get(notificationFeedResourceFamily(projectPath))).toEqual({
+    expect(store.get(notificationFeedResourceFamily(stateKey))).toEqual({
       value: recovered,
       error: null,
       pending: false,
@@ -149,16 +150,16 @@ describe("notification feed resource lifecycle", () => {
 
   it("clears the resource when the project service endpoint disappears", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
     store.set(applyNotificationFeedSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       feed: feed(),
       updatedAt: 10,
     });
-    store.set(clearNotificationFeedResourceAtom, projectPath);
+    store.set(clearNotificationFeedResourceAtom, stateKey);
 
-    expect(store.get(notificationFeedResourceFamily(projectPath))).toEqual({
+    expect(store.get(notificationFeedResourceFamily(stateKey))).toEqual({
       value: null,
       error: null,
       pending: false,
@@ -169,35 +170,43 @@ describe("notification feed resource lifecycle", () => {
 
   it("derives unread count from the resource value", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
     store.set(applyNotificationFeedSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       feed: feed({ unreadCount: 3 }),
       updatedAt: 10,
     });
 
-    expect(store.get(notificationUnreadCountFamily(projectPath))).toBe(3);
+    expect(store.get(notificationUnreadCountFamily(stateKey))).toBe(3);
   });
 });
 
 describe("local notification read state", () => {
-  it("keys reads by project path and notification id", () => {
-    expect(notificationLocalReadKey("/repo", "notice-1")).toBe("/repo\u0000notice-1");
+  // Keyed by the project STATE key, which carries the machine: the same
+  // notification id on two hosts is two notifications.
+  it("keys reads by the project state key and the notification id", () => {
+    const mbp = projectStateKey({ machineId: "mbp", path: "/repo" });
+    const strix = projectStateKey({ machineId: "strix", path: "/repo" });
+    expect(notificationLocalReadKey(mbp, "notice-1")).toBe(`${mbp}\u0000notice-1`);
+    expect(notificationLocalReadKey(mbp, "notice-1")).not.toBe(
+      notificationLocalReadKey(strix, "notice-1"),
+    );
     expect(notificationLocalReadKey(" ", "notice-1")).toBeNull();
-    expect(notificationLocalReadKey("/repo", "")).toBeNull();
+    expect(notificationLocalReadKey(mbp, "")).toBeNull();
   });
 
   it("treats locally read notifications as read on the same device", () => {
     const readState = {
       readAtByKey: {
-        [notificationLocalReadKey("/repo", "notice-1")!]: "2026-01-01T00:05:00.000Z",
+        [notificationLocalReadKey(projectStateKey({ path: "/repo" }), "notice-1")!]:
+          "2026-01-01T00:05:00.000Z",
       },
     };
 
     expect(
       notificationEffectiveUnread({
-        projectPath: "/repo",
+        projectStateKey: projectStateKey({ path: "/repo" }),
         notification: notification("notice-1"),
         readState,
         nowMs: Date.parse("2026-01-01T00:10:00.000Z"),
@@ -205,7 +214,7 @@ describe("local notification read state", () => {
     ).toBe(false);
     expect(
       notificationEffectiveUnread({
-        projectPath: "/other",
+        projectStateKey: projectStateKey({ path: "/other" }),
         notification: notification("notice-1"),
         readState,
         nowMs: Date.parse("2026-01-01T00:10:00.000Z"),
@@ -219,7 +228,7 @@ describe("local notification read state", () => {
 
     expect(
       notificationEffectiveUnread({
-        projectPath: "/repo",
+        projectStateKey: projectStateKey({ path: "/repo" }),
         notification: record,
         readState: { readAtByKey: {} },
         nowMs,
@@ -231,7 +240,8 @@ describe("local notification read state", () => {
     const record = notification("notice-1");
     const readState = {
       readAtByKey: {
-        [notificationLocalReadKey("/repo", "notice-1")!]: "2026-01-01T00:05:00.000Z",
+        [notificationLocalReadKey(projectStateKey({ path: "/repo" }), "notice-1")!]:
+          "2026-01-01T00:05:00.000Z",
       },
     };
 
@@ -245,13 +255,14 @@ describe("local notification read state", () => {
     const store = createStore();
 
     store.set(markNotificationRecordsReadLocalAtom, {
-      projectPath: "/repo",
+      projectStateKey: projectStateKey({ path: "/repo" }),
       ids: ["notice-1", undefined],
       readAt: "2026-01-01T00:05:00.000Z",
     });
 
     expect(store.get(notificationLocalReadStateAtom).readAtByKey).toMatchObject({
-      [notificationLocalReadKey("/repo", "notice-1")!]: "2026-01-01T00:05:00.000Z",
+      [notificationLocalReadKey(projectStateKey({ path: "/repo" }), "notice-1")!]:
+        "2026-01-01T00:05:00.000Z",
     });
   });
 });

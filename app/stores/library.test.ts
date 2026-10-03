@@ -1,4 +1,5 @@
 import { createStore } from "jotai";
+import { projectStateKey } from "@/lib/project-key";
 import { describe, expect, it } from "vitest";
 
 import type { LibraryDocument } from "@/lib/api";
@@ -37,17 +38,17 @@ function library(overrides: Partial<LibraryValue> = {}): LibraryValue {
 describe("library resource lifecycle", () => {
   it("marks an in-flight refresh stale when a previous library exists", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = library();
 
     store.set(applyLibrarySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       library: current,
       updatedAt: 10,
     });
-    store.set(beginLibraryRefreshAtom, projectPath);
+    store.set(beginLibraryRefreshAtom, stateKey);
 
-    expect(store.get(libraryResourceFamily(projectPath))).toEqual({
+    expect(store.get(libraryResourceFamily(stateKey))).toEqual({
       value: current,
       error: null,
       pending: true,
@@ -58,22 +59,22 @@ describe("library resource lifecycle", () => {
 
   it("keeps the last good library after a refresh failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = library();
 
     store.set(applyLibrarySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       library: current,
       updatedAt: 10,
     });
     store.set(applyLibraryFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
 
-    expect(store.get(libraryFamily(projectPath))).toBe(current);
-    expect(store.get(libraryErrorFamily(projectPath))).toBe("service unavailable");
-    expect(store.get(libraryResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(libraryFamily(stateKey))).toBe(current);
+    expect(store.get(libraryErrorFamily(stateKey))).toBe("service unavailable");
+    expect(store.get(libraryResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: "service unavailable",
       pending: false,
@@ -83,26 +84,26 @@ describe("library resource lifecycle", () => {
 
   it("clears stale/error metadata after the library recovers", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = library();
     const recovered = library({ documents: [document("doc-2")] });
 
     store.set(applyLibrarySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       library: current,
       updatedAt: 10,
     });
     store.set(applyLibraryFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
     store.set(applyLibrarySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       library: recovered,
       updatedAt: 20,
     });
 
-    expect(store.get(libraryResourceFamily(projectPath))).toEqual({
+    expect(store.get(libraryResourceFamily(stateKey))).toEqual({
       value: recovered,
       error: null,
       pending: false,
@@ -113,16 +114,16 @@ describe("library resource lifecycle", () => {
 
   it("clears the resource when the project service endpoint disappears", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
     store.set(applyLibrarySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       library: library(),
       updatedAt: 10,
     });
-    store.set(clearLibraryResourceAtom, projectPath);
+    store.set(clearLibraryResourceAtom, stateKey);
 
-    expect(store.get(libraryResourceFamily(projectPath))).toEqual({
+    expect(store.get(libraryResourceFamily(stateKey))).toEqual({
       value: null,
       error: null,
       pending: false,
@@ -134,15 +135,31 @@ describe("library resource lifecycle", () => {
   it("rejects in-flight library results from an old endpoint generation", () => {
     expect(
       isCurrentLibraryRequest(
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43190", generation: 1 },
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43190",
+          generation: 1,
+        },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
       ),
     ).toBe(false);
 
     expect(
       isCurrentLibraryRequest(
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
       ),
     ).toBe(true);
   });

@@ -30,22 +30,22 @@ export const refreshProjectObservabilityResourceAtom = atom(
     set,
     { endpoint, getToken, isCurrentRequest, request }: RefreshProjectApiResourceInput,
   ) => {
-    const projectPath = request.scope.projectPath;
+    const projectStateKey = request.scope.projectStateKey;
     const requestKey = request.requestKey;
     if (!endpoint) {
-      set(clearProjectObservabilityResourceAtom, projectPath);
+      set(clearProjectObservabilityResourceAtom, projectStateKey);
       return;
     }
-    set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey });
+    set(beginProjectObservabilityRefreshAtom, { projectStateKey, requestKey });
     try {
       const token = await getToken();
       const response = await getProjectObservability(endpoint, { token });
       if (!isCurrentRequest(request)) {
-        set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey });
+        set(settleProjectObservabilityRefreshAtom, { projectStateKey, requestKey });
         return;
       }
       set(applyProjectObservabilitySuccessAtom, {
-        projectPath,
+        projectStateKey,
         requestKey,
         observability: {
           project: response.project,
@@ -54,14 +54,14 @@ export const refreshProjectObservabilityResourceAtom = atom(
       });
     } catch (err) {
       if (!isCurrentRequest(request)) {
-        set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey });
+        set(settleProjectObservabilityRefreshAtom, { projectStateKey, requestKey });
         return;
       }
       if (isTransientRequestError(err)) {
-        set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey });
+        set(settleProjectObservabilityRefreshAtom, { projectStateKey, requestKey });
       } else {
         set(applyProjectObservabilityFailureAtom, {
-          projectPath,
+          projectStateKey,
           requestKey,
           error: getErrorMessage(err),
         });
@@ -77,22 +77,22 @@ export const refreshProjectTasksResourceAtom = atom(
     set,
     { endpoint, getToken, isCurrentRequest, request }: RefreshProjectApiResourceInput,
   ) => {
-    const projectPath = request.scope.projectPath;
+    const projectStateKey = request.scope.projectStateKey;
     const requestKey = request.requestKey;
     if (!endpoint) {
-      set(clearProjectTasksResourceAtom, projectPath);
+      set(clearProjectTasksResourceAtom, projectStateKey);
       return;
     }
-    set(beginProjectTasksRefreshAtom, { projectPath, requestKey });
+    set(beginProjectTasksRefreshAtom, { projectStateKey, requestKey });
     try {
       const token = await getToken();
       const response = await listTasks(endpoint, undefined, { token });
       if (!isCurrentRequest(request)) {
-        set(settleProjectTasksRefreshAtom, { projectPath, requestKey });
+        set(settleProjectTasksRefreshAtom, { projectStateKey, requestKey });
         return;
       }
       set(applyProjectTasksSuccessAtom, {
-        projectPath,
+        projectStateKey,
         requestKey,
         tasks: {
           tasks: response.tasks,
@@ -101,14 +101,14 @@ export const refreshProjectTasksResourceAtom = atom(
       });
     } catch (err) {
       if (!isCurrentRequest(request)) {
-        set(settleProjectTasksRefreshAtom, { projectPath, requestKey });
+        set(settleProjectTasksRefreshAtom, { projectStateKey, requestKey });
         return;
       }
       if (isTransientRequestError(err)) {
-        set(settleProjectTasksRefreshAtom, { projectPath, requestKey });
+        set(settleProjectTasksRefreshAtom, { projectStateKey, requestKey });
       } else {
         set(applyProjectTasksFailureAtom, {
-          projectPath,
+          projectStateKey,
           requestKey,
           error: getErrorMessage(err),
         });

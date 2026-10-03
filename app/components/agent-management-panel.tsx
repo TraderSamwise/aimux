@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useSetAtom } from "jotai";
 import { GitBranch, Pencil, Radar, Repeat2 } from "lucide-react-native";
@@ -26,13 +27,13 @@ export function AgentManagementPanel({
   session,
   endpoint,
   token,
-  projectPath,
+  projectStateKey,
   groups,
 }: {
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   groups: WorktreeBucket[];
 }) {
   const [label, setLabel] = useState(session.label || "");
@@ -102,7 +103,7 @@ export function AgentManagementPanel({
     return runAction(action, async () => {
       if (next.localTransition) {
         recordTransition({
-          projectPath,
+          projectStateKey,
           transition: next.localTransition,
           label: next.label ?? session.label ?? session.id,
           tool: session.toolConfigKey,
@@ -112,7 +113,7 @@ export function AgentManagementPanel({
       try {
         const response = await fn();
         recordTransition({
-          projectPath,
+          projectStateKey,
           transition: response.transition,
           label: next.label ?? session.label ?? session.id,
           tool: session.toolConfigKey,
@@ -121,7 +122,7 @@ export function AgentManagementPanel({
       } catch (e) {
         if (next.localTransition) {
           recordTransition({
-            projectPath,
+            projectStateKey,
             transition: failLocalProjectLifecycleTransition(next.localTransition),
             label: next.label ?? session.label ?? session.id,
             tool: session.toolConfigKey,

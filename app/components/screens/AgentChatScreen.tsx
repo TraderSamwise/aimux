@@ -24,6 +24,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
+import { projectStateKey } from "@/lib/project-key";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import { useColorScheme } from "nativewind";
@@ -468,10 +469,18 @@ export default function ChatScreen() {
   const sessionId = singleRouteParam(params.sessionId);
   const routeShareId = singleRouteParam(params.shareId);
   const sessionKey = sessionId ?? "";
-  const { project, projectPath, machineId, endpoint: serviceEndpoint } = useRouteProject();
+  const {
+    project,
+    projectPath,
+    machineId,
+    projectRef,
+    endpoint: serviceEndpoint,
+  } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
-  const desktopState = useAtomValue(desktopStateFamily(stateProjectPath));
-  const worktreeGroups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
+  // Keyed by the pair: two machines' copies of one checkout are two projects.
+  const stateProjectKey = projectStateKey(projectRef);
+  const desktopState = useAtomValue(desktopStateFamily(stateProjectKey));
+  const worktreeGroups = useAtomValue(worktreeGroupsFamily(stateProjectKey));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const markOutputInterrupted = useSetAtom(markOutputInterruptedAtom);
   const clearLocalInterruptHold = useSetAtom(clearLocalInterruptHoldAtom);
@@ -692,9 +701,9 @@ export default function ChatScreen() {
         sessionId,
       ].join(":");
     }
-    if (stateProjectPath) return ["project", stateProjectPath, sessionId].join(":");
+    if (stateProjectKey) return ["project", stateProjectKey, sessionId].join(":");
     return ["session", sessionId].join(":");
-  }, [activeShareForRoute, sessionId, stateProjectPath]);
+  }, [activeShareForRoute, sessionId, stateProjectKey]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session starts from the shallow live capture window
@@ -756,12 +765,12 @@ export default function ChatScreen() {
   }, [sessionId, selectSession]);
 
   useEffect(() => {
-    if (!routeNotificationId || !stateProjectPath) return;
-    const readKey = `${stateProjectPath}\u0000${routeNotificationId}`;
+    if (!routeNotificationId || !projectPath) return;
+    const readKey = `${stateProjectKey}\u0000${routeNotificationId}`;
 
     if (routeNotificationLocalReadKeyRef.current !== readKey) {
       routeNotificationLocalReadKeyRef.current = readKey;
-      markNotificationsReadLocal({ projectPath: stateProjectPath, ids: [routeNotificationId] });
+      markNotificationsReadLocal({ projectStateKey: stateProjectKey, ids: [routeNotificationId] });
     }
     if (!serviceEndpoint) return;
     const serverReadKey = `${readKey}\u0000${token ?? ""}`;
@@ -776,7 +785,14 @@ export default function ChatScreen() {
         routeNotificationServerReadKeyRef.current = null;
       }
     });
-  }, [markNotificationsReadLocal, routeNotificationId, serviceEndpoint, stateProjectPath, token]);
+  }, [
+    markNotificationsReadLocal,
+    projectPath,
+    routeNotificationId,
+    serviceEndpoint,
+    stateProjectKey,
+    token,
+  ]);
 
   // Entering an agent, or switching back to one, is reading it. The terminal
   // does this from the tmux window-change hook; this is the same route, so the
@@ -2153,7 +2169,7 @@ export default function ChatScreen() {
                           <View className="mr-2">
                             <AgentActions
                               session={session}
-                              projectPath={stateProjectPath}
+                              projectStateKey={stateProjectKey}
                               endpoint={serviceEndpoint}
                               token={token}
                               compact
@@ -2258,7 +2274,7 @@ export default function ChatScreen() {
                               <View className="mr-2">
                                 <AgentActions
                                   session={session}
-                                  projectPath={stateProjectPath}
+                                  projectStateKey={stateProjectKey}
                                   endpoint={serviceEndpoint}
                                   token={token}
                                   compact
@@ -2336,7 +2352,7 @@ export default function ChatScreen() {
                     <View className="border-b border-border bg-card px-4 py-3">
                       <AgentActions
                         session={session}
-                        projectPath={stateProjectPath}
+                        projectStateKey={stateProjectKey}
                         endpoint={serviceEndpoint}
                         token={token}
                         compact
@@ -2350,7 +2366,7 @@ export default function ChatScreen() {
                     session={session}
                     endpoint={serviceEndpoint}
                     token={token}
-                    projectPath={stateProjectPath}
+                    projectStateKey={stateProjectKey}
                     groups={worktreeGroups}
                   />
                   {canManageTeammates ? (
@@ -2359,7 +2375,7 @@ export default function ChatScreen() {
                       session={session}
                       endpoint={serviceEndpoint}
                       token={token}
-                      projectPath={stateProjectPath}
+                      projectStateKey={stateProjectKey}
                     />
                   ) : null}
                 </ScrollView>

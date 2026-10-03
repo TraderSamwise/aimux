@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -48,8 +49,6 @@ import {
   securityEventsAtom,
   securityUnreadCountAtom,
 } from "@/stores/security";
-
-const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 
 const LENSES: Array<{ id: ForYouKind | "all"; label: string }> = [
   { id: "all", label: "All" },
@@ -269,11 +268,12 @@ export default function NotificationsScreen() {
   const pathname = usePathname();
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, machineId, endpoint, projectLoading } = useRouteProject();
-  const projectPathKey = projectPath ?? EMPTY_PROJECT_PATH;
-  const feed = useAtomValue(notificationFeedFamily(projectPathKey));
-  const feedError = useAtomValue(notificationFeedErrorFamily(projectPathKey));
-  const desktopState = useAtomValue(desktopStateFamily(projectPathKey));
+  const { project, projectPath, machineId, projectRef, endpoint, projectLoading } =
+    useRouteProject();
+  const projectKeyForState = projectStateKey(projectRef);
+  const feed = useAtomValue(notificationFeedFamily(projectKeyForState));
+  const feedError = useAtomValue(notificationFeedErrorFamily(projectKeyForState));
+  const desktopState = useAtomValue(desktopStateFamily(projectKeyForState));
   const beginNotificationFeedRefresh = useSetAtom(beginNotificationFeedRefreshAtom);
   const applyNotificationFeedSuccess = useSetAtom(applyNotificationFeedSuccessAtom);
   const applyNotificationFeedFailure = useSetAtom(applyNotificationFeedFailureAtom);
@@ -313,12 +313,12 @@ export default function NotificationsScreen() {
   const refresh = useCallback(async () => {
     if (!endpoint) return;
     setBusy("refresh");
-    beginNotificationFeedRefresh(projectPathKey);
+    beginNotificationFeedRefresh(projectKeyForState);
     try {
       const token = await getToken();
       const next = await listNotifications(endpoint, { token });
       applyNotificationFeedSuccess({
-        projectPath: projectPathKey,
+        projectStateKey: projectKeyForState,
         feed: {
           notifications: next.notifications,
           unreadCount: next.unreadCount,
@@ -327,7 +327,7 @@ export default function NotificationsScreen() {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      applyNotificationFeedFailure({ projectPath: projectPathKey, error: msg });
+      applyNotificationFeedFailure({ projectStateKey: projectKeyForState, error: msg });
     } finally {
       setBusy(null);
     }
@@ -337,7 +337,7 @@ export default function NotificationsScreen() {
     beginNotificationFeedRefresh,
     endpoint,
     getToken,
-    projectPathKey,
+    projectKeyForState,
   ]);
 
   const mutate = useCallback(
@@ -355,10 +355,10 @@ export default function NotificationsScreen() {
         } else {
           await clearNotifications(endpoint, input, { token });
         }
-        beginNotificationFeedRefresh(projectPathKey);
+        beginNotificationFeedRefresh(projectKeyForState);
         const next = await listNotifications(endpoint, { token });
         applyNotificationFeedSuccess({
-          projectPath: projectPathKey,
+          projectStateKey: projectKeyForState,
           feed: {
             notifications: next.notifications,
             unreadCount: next.unreadCount,
@@ -368,7 +368,7 @@ export default function NotificationsScreen() {
         kickRefresh();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        applyNotificationFeedFailure({ projectPath: projectPathKey, error: msg });
+        applyNotificationFeedFailure({ projectStateKey: projectKeyForState, error: msg });
       } finally {
         setBusy(null);
       }
@@ -380,13 +380,16 @@ export default function NotificationsScreen() {
       endpoint,
       getToken,
       kickRefresh,
-      projectPathKey,
+      projectKeyForState,
     ],
   );
 
   function openCard(card: ForYouCard) {
     if (card.notificationId) {
-      markNotificationsReadLocal({ projectPath, ids: [card.notificationId] });
+      markNotificationsReadLocal({
+        projectStateKey: projectKeyForState,
+        ids: [card.notificationId],
+      });
       if (card.unread) {
         void mutate(`open:${card.notificationId}`, "read", { id: card.notificationId });
       }
@@ -464,7 +467,7 @@ export default function NotificationsScreen() {
           disabled={!endpoint || unreadCount === 0 || busy !== null}
           onPress={() => {
             markNotificationsReadLocal({
-              projectPath,
+              projectStateKey: projectKeyForState,
               ids: notificationRecords.filter((record) => record.unread).map((record) => record.id),
             });
             void mutate("read-all", "read");
@@ -539,7 +542,10 @@ export default function NotificationsScreen() {
             onOpen={(item) => void openCard(item)}
             onRead={(item) => {
               if (!item.notificationId) return;
-              markNotificationsReadLocal({ projectPath, ids: [item.notificationId] });
+              markNotificationsReadLocal({
+                projectStateKey: projectKeyForState,
+                ids: [item.notificationId],
+              });
               void mutate(`read:${item.notificationId}`, "read", { id: item.notificationId });
             }}
             onClear={(item) =>

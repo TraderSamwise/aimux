@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { findProjectForRef } from "@/lib/project-key";
+import { findProjectForRef, projectStateKey } from "@/lib/project-key";
 import { serviceEndpointKey } from "@/lib/daemon-url";
 import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
@@ -217,7 +217,7 @@ export default function GlobalNotificationsScreen() {
           notification: {
             ...row.notification,
             unread: notificationEffectiveUnread({
-              projectPath: row.projectPath,
+              projectStateKey: projectStateKey(rowProjectRef(row)),
               notification: row.notification,
               readState,
             }),
@@ -350,7 +350,10 @@ export default function GlobalNotificationsScreen() {
 
   const markRowRead = useCallback(
     (row: GlobalNotificationRow) => {
-      markNotificationsReadLocal({ projectPath: row.projectPath, ids: [row.notification.id] });
+      markNotificationsReadLocal({
+        projectStateKey: projectStateKey(rowProjectRef(row)),
+        ids: [row.notification.id],
+      });
       void (async () => {
         const project = findProjectForRef(
           onlineProjectsRef.current,
@@ -476,4 +479,10 @@ export default function GlobalNotificationsScreen() {
       )}
     </Page>
   );
+}
+
+function rowProjectRef(row: { projectPath: string; machineId?: string }) {
+  return row.machineId
+    ? { machineId: row.machineId, path: row.projectPath }
+    : { path: row.projectPath };
 }
