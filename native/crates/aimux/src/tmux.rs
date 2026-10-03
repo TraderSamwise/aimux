@@ -1828,6 +1828,19 @@ impl TmuxRuntimeManager {
         window_index: i64,
         client_tty: Option<&str>,
     ) -> Result<(), String> {
+        // Sam was moved off his own dashboard onto the project session's and
+        // could not say what did it; neither could I, because nothing recorded
+        // the move. Every switch now names where it sent the client and why.
+        crate::debug_logging::log_lifecycle_always(
+            "switching a tmux client to another window",
+            "tmux-switch-client",
+            Some(serde_json::json!({
+                "targetSession": session_name,
+                "targetWindowIndex": window_index,
+                "clientTty": client_tty,
+                "landingOnADashboard": window_index == 0,
+            })),
+        );
         self.exec_interactive_owned(
             switch_client_argv(session_name, window_index, client_tty),
             None,
