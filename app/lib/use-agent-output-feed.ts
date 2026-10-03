@@ -11,6 +11,7 @@ import { agentOutputFeedRequestStartLines } from "@/lib/agent-output-feed-start-
 import { getLivePaneOutput, type AgentOutputResponse } from "@/lib/api";
 import { paneOutputSnapshotSettlesInitialTranscript } from "@/lib/chat-loading";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 import type { AgentOutputEvent, StreamEvent } from "@/lib/events";
 import { startHeartbeat } from "@/lib/heartbeat";
 import { getErrorMessage } from "@/lib/request-errors";
@@ -54,7 +55,7 @@ function outputFeedKey(input: {
   sessionId: string | null | undefined;
 }) {
   if (!input.endpoint || !input.sessionId) return "";
-  return `${input.endpoint.host}:${input.endpoint.port}:${input.sessionId}:${input.mode}`;
+  return `${serviceEndpointKey(input.endpoint)}:${input.sessionId}:${input.mode}`;
 }
 
 export function useAgentOutputFeed({
@@ -71,9 +72,19 @@ export function useAgentOutputFeed({
   const setLastError = useSetAtom(lastErrorFamily(sessionId ?? ""));
   const endpointHost = endpoint?.host ?? null;
   const endpointPort = endpoint?.port ?? null;
+  // The machine is part of the address: the same host and port name a
+  // different project service on each machine, so it keys the feed too.
+  const endpointMachineId = endpoint?.machineId ?? null;
   const stableEndpoint = useMemo(
-    () => (endpointHost && endpointPort ? { host: endpointHost, port: endpointPort } : null),
-    [endpointHost, endpointPort],
+    () =>
+      endpointHost && endpointPort
+        ? {
+            host: endpointHost,
+            port: endpointPort,
+            ...(endpointMachineId ? { machineId: endpointMachineId } : {}),
+          }
+        : null,
+    [endpointHost, endpointMachineId, endpointPort],
   );
   const feedKey = outputFeedKey({ endpoint: stableEndpoint, mode, sessionId });
   const streamFailedRef = useRef(false);

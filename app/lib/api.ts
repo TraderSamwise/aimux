@@ -339,7 +339,8 @@ async function callServiceViaRelay<T>(
   body?: unknown,
 ): Promise<T> {
   const proxyPath = `/proxy/${endpoint.host}/${endpoint.port}${path}`;
-  return callDaemonViaRelay<T>(method, proxyPath, body, opts);
+  // An explicit machine wins; otherwise the address says which host it is on.
+  return callDaemonViaRelay<T>(method, proxyPath, body, withEndpointMachine(endpoint, opts));
 }
 
 export function shouldRouteViaRelay(): boolean {
@@ -397,13 +398,20 @@ function projectStreamRoute(
 ): ProjectStreamRoute {
   const headers: Record<string, string> = {};
   if (opts?.token) headers.Authorization = `Bearer ${opts.token}`;
+  const machineId = opts?.machineId ?? endpoint.machineId;
   return {
     path,
     directUrl: `${getServiceUrl(endpoint)}${path}`,
     relayPath: projectProxyPath(endpoint, path),
     headers,
-    ...(opts?.machineId ? { machineId: opts.machineId } : {}),
+    ...(machineId ? { machineId } : {}),
   };
+}
+
+function withEndpointMachine(endpoint: ServiceEndpoint, opts?: ApiOpts): ApiOpts | undefined {
+  const machineId = opts?.machineId ?? endpoint.machineId;
+  if (!machineId) return opts;
+  return { ...opts, machineId };
 }
 
 // ── Daemon (port 43190) ───────────────────────────────────────────────────
@@ -1367,11 +1375,22 @@ export async function createShareInvite(
   serviceEndpoint?: ServiceEndpoint | null,
   opts?: ApiOpts,
 ): Promise<ShareInviteResponse> {
+  // The machine travels as its own field, so the share is bound to the host
+  // that is sharing it. It is kept out of `serviceEndpoint` because that goes
+  // on to the guest, and a guest is told nothing about the fleet.
   return callJson<ShareInviteResponse>(
     `${relayHttpUrl()}/shares/invite`,
     {
       method: "POST",
-      body: JSON.stringify({ projectRoot, sessionId, email, serviceEndpoint }),
+      body: JSON.stringify({
+        projectRoot,
+        sessionId,
+        email,
+        ...(serviceEndpoint?.machineId ? { machineId: serviceEndpoint.machineId } : {}),
+        serviceEndpoint: serviceEndpoint
+          ? { host: serviceEndpoint.host, port: serviceEndpoint.port }
+          : serviceEndpoint,
+      }),
     },
     opts,
   );

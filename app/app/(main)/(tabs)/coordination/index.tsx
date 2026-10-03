@@ -29,6 +29,7 @@ import {
 } from "@/stores/coordination";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { selectedSessionIdAtom } from "@/stores/projects";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 function reachabilityLabel(reachability: CoordinationReachability): string {
   switch (reachability) {
@@ -134,7 +135,7 @@ export default function CoordinationScreen() {
   const { getToken } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const endpointRef = useRef(endpoint);
   const endpointKeyRef = useRef(endpointKey);
   const projectPathRef = useRef(projectPathKey);

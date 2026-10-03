@@ -308,7 +308,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         projectId: item.projectId || source.project.id,
         projectName,
         projectRoot,
-        serviceEndpoint: source.project.serviceEndpoint,
+        serviceEndpoint: tileServiceEndpoint(source.project),
         sessionId,
         windowId: item.target?.windowId,
         windowIndex: item.target?.windowIndex,
@@ -424,4 +424,17 @@ export function summarizeExposeTiles(tiles: ExposeTile[]): ExposeSummary {
       summary.ready++;
   }
   return summary;
+}
+
+// A tile is opened against the project's own host, so the address it carries
+// has to say which machine that is -- `127.0.0.1:43191` is a different
+// project service on each one.
+function tileServiceEndpoint(project: {
+  machineId?: string;
+  serviceEndpoint: ServiceEndpoint | null;
+}): ServiceEndpoint | null {
+  if (!project.serviceEndpoint) return null;
+  return project.machineId
+    ? { ...project.serviceEndpoint, machineId: project.machineId }
+    : project.serviceEndpoint;
 }

@@ -34,6 +34,7 @@ import {
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { TaskWorkflowActions } from "@/components/workflow-actions";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 type ProjectSection =
   | "dashboard"
@@ -210,7 +211,7 @@ export default function ProjectScreen() {
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
   const section = resolveProjectSection(cleanSearchValue(searchParams.section));
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const requestTrackerRef = useRef(
     createProjectResourceRequestTracker({
       projectPath: projectPathKey,

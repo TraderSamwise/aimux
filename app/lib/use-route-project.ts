@@ -55,12 +55,20 @@ export function useRouteProject(): RouteProject {
   const routeEndpoint = getProjectServiceEndpoint(project);
   const endpointHost = routeEndpoint?.host ?? null;
   const endpointPort = routeEndpoint?.port ?? null;
+  // Rebuilt from primitives so the object identity is stable across polls.
+  // The machine is one of those primitives: dropping it here would send every
+  // project call to whichever host the relay guessed.
+  const endpointMachineId = routeEndpoint?.machineId ?? null;
   const endpoint = useMemo<ServiceEndpoint | null>(
     () =>
       endpointHost !== null && endpointPort !== null
-        ? { host: endpointHost, port: endpointPort }
+        ? {
+            host: endpointHost,
+            port: endpointPort,
+            ...(endpointMachineId ? { machineId: endpointMachineId } : {}),
+          }
         : null,
-    [endpointHost, endpointPort],
+    [endpointHost, endpointMachineId, endpointPort],
   );
 
   return useMemo(

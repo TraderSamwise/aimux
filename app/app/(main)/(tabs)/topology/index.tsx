@@ -27,6 +27,7 @@ import {
   type TopologyRequestScope,
 } from "@/stores/topology";
 import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-location";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 type TopologyViewMode = "map" | "tree" | "table";
 type ProjectTopologyModel = ProjectTopologyResponse["topology"];
@@ -220,7 +221,7 @@ export default function TopologyScreen() {
     mode?: string | string[];
     project?: string | string[];
   }>();
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const pathname = usePathname();

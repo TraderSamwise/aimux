@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -199,7 +200,7 @@ export default function GlobalNotificationsScreen() {
       onlineProjects
         .map((project) => {
           const endpoint = getProjectServiceEndpoint(project);
-          return `${project.path}:${endpoint?.host ?? ""}:${endpoint?.port ?? ""}`;
+          return `${project.path}:${serviceEndpointKey(endpoint) ?? ""}`;
         })
         .join("|"),
     [onlineProjects],

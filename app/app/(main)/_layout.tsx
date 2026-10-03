@@ -95,6 +95,7 @@ import {
 } from "@/stores/settings";
 import { addSecurityEventAtom } from "@/stores/security";
 import { PROJECT_API_EVENT_NAMES } from "../../../src/project-api-contract";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 const PROJECT_LIST_POLL_INTERVAL_MS = 10_000;
 const PROJECT_VIEW_FALLBACK_POLL_INTERVAL_MS = 10_000;
@@ -440,7 +441,7 @@ export default function MainLayout() {
   // selection change and on a refresh-nonce bump (from optimistic mutations).
   // Keyed by host:port primitives so the timer survives project-list reconciles
   // that create new array identities.
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   useEffect(() => {
     if (activeShare) return;
     if (!effectiveProjectPath) return;

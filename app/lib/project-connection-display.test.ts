@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// `serviceEndpointKey` lives beside the daemon URL resolver, which reaches the
+// Expo env and then react-native.
+vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 import {
   formatProjectEndpointLabel,
   getProjectServiceEndpoint,
@@ -6,6 +10,7 @@ import {
   isRelayUnavailableForProjectDiscovery,
   projectStateErrorCopy,
 } from "./project-connection-display";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 const endpoint = { host: "127.0.0.1", port: 46975 };
 
@@ -113,5 +118,48 @@ describe("isRelayUnavailableForProjectDiscovery", () => {
     expect(isRelayUnavailableForProjectDiscovery("disconnected")).toBe(false);
     expect(isRelayUnavailableForProjectDiscovery("connecting")).toBe(false);
     expect(isRelayUnavailableForProjectDiscovery("connected")).toBe(false);
+  });
+});
+
+describe("the machine a project service address belongs to", () => {
+  // Structurally what `getProjectServiceEndpoint` reads, so this file does not
+  // have to pull `@/lib/api` (and react-native with it) into the test.
+  type EndpointProject = Parameters<typeof getProjectServiceEndpoint>[0];
+  function project(overrides: Partial<NonNullable<EndpointProject>>): NonNullable<EndpointProject> {
+    return {
+      id: "aimux",
+      name: "aimux",
+      path: "/repo/aimux",
+      dashboardSessionName: "aimux-aimux",
+      service: null,
+      serviceAlive: true,
+      serviceEndpoint: { host: "127.0.0.1", port: 43191 },
+      ...overrides,
+    };
+  }
+
+  // 127.0.0.1:43191 is a different project service on each machine, so the
+  // address is not an address until it says whose loopback it is.
+  it("stamps the machine the project came from", () => {
+    expect(getProjectServiceEndpoint(project({ machineId: "strix" }))).toEqual({
+      host: "127.0.0.1",
+      port: 43191,
+      machineId: "strix",
+    });
+  });
+
+  // Local mode and shared surfaces have one host to mean, and a key that
+  // compares by value must not gain an undefined field.
+  it("leaves the address alone when there is no machine", () => {
+    expect(getProjectServiceEndpoint(project({}))).toEqual({ host: "127.0.0.1", port: 43191 });
+    expect(getProjectServiceEndpoint(project({ serviceAlive: false }))).toBeNull();
+    expect(getProjectServiceEndpoint(project({ serviceEndpoint: null }))).toBeNull();
+  });
+
+  it("keys two machines' identical addresses apart", () => {
+    const mbp = getProjectServiceEndpoint(project({ machineId: "mbp" }));
+    const strix = getProjectServiceEndpoint(project({ machineId: "strix" }));
+    expect(serviceEndpointKey(mbp)).not.toBe(serviceEndpointKey(strix));
+    expect(serviceEndpointKey(null)).toBeNull();
   });
 });

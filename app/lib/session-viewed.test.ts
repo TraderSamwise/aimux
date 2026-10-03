@@ -13,7 +13,20 @@ describe("sessionViewedMark", () => {
       sharedView: false,
     });
     expect(mark?.sessionId).toBe("codex-1");
-    expect(mark?.key.split("\u0000")).toEqual(["codex-1", "127.0.0.1", "51513", "t"]);
+    expect(mark?.key.split("\u0000")).toEqual(["codex-1", "", "127.0.0.1", "51513", "t"]);
+  });
+
+  // The same host and port name a different project service on each machine,
+  // so two machines' sessions must not share a viewed mark.
+  it("keeps two machines' identical addresses apart", () => {
+    const keyFor = (machineId: string) =>
+      sessionViewedMark({
+        sessionId: "codex-1",
+        endpoint: { ...endpoint, machineId },
+        token: "t",
+        sharedView: false,
+      })?.key;
+    expect(keyFor("mbp")).not.toBe(keyFor("strix"));
   });
 
   it("does not mark anything in a shared view", () => {

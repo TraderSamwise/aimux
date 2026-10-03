@@ -667,6 +667,7 @@ export default function ExposeScreen() {
   const projectRequestServiceAlive = projectForRequest?.serviceAlive ?? false;
   const projectRequestEndpointHost = projectEndpoint?.host ?? "";
   const projectRequestEndpointPort = projectEndpoint?.port ?? null;
+  const projectRequestMachineId = projectEndpoint?.machineId ?? "";
   const projectRequest = useMemo<DaemonProject | null>(
     () =>
       projectRequestPath
@@ -677,8 +678,13 @@ export default function ExposeScreen() {
             dashboardSessionName: projectRequestDashboardSessionName,
             service: null,
             serviceAlive: projectRequestServiceAlive,
+            machineId: projectRequestMachineId || undefined,
             serviceEndpoint: projectRequestEndpointHost
-              ? { host: projectRequestEndpointHost, port: projectRequestEndpointPort ?? 0 }
+              ? {
+                  host: projectRequestEndpointHost,
+                  port: projectRequestEndpointPort ?? 0,
+                  ...(projectRequestMachineId ? { machineId: projectRequestMachineId } : {}),
+                }
               : null,
           }
         : null,
@@ -686,6 +692,7 @@ export default function ExposeScreen() {
       projectRequestDashboardSessionName,
       projectRequestEndpointHost,
       projectRequestEndpointPort,
+      projectRequestMachineId,
       projectRequestId,
       projectRequestName,
       projectRequestPath,

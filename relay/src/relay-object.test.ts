@@ -1730,6 +1730,36 @@ describe("RelayObject machines", () => {
   });
 
   // A share is one session on one host, not a window onto the fleet.
+  it("binds a new share to the machine the owner named", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+
+    const response = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Sam",
+        email: "sam@example.com",
+        body: {
+          projectRoot: "/repo/aimux",
+          sessionId: "claude-1",
+          email: "guest@example.com",
+          machineId: "strix",
+          serviceEndpoint: { host: "127.0.0.1", port: 43191 },
+        },
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    const sharing = await storage.get<{ shares: Record<string, { machineId?: string }> }>("sharing-state:v1");
+    expect(Object.values(sharing!.shares).map((share) => share.machineId)).toEqual(["strix"]);
+  });
+
   it("tells a shared guest nothing about which machines exist", async () => {
     const mbp = daemonSocket("mbp", "sam-mbp");
     const strix = daemonSocket("strix", "sam-strix");

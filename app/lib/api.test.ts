@@ -1671,3 +1671,52 @@ describe("listing projects across machines", () => {
     expect(failures).toEqual([]);
   });
 });
+
+describe("routing a project call to the machine the project is on", () => {
+  afterEach(() => {
+    setApiRelay(null);
+  });
+
+  function relayRecorder() {
+    const request = vi.fn(
+      async (_method: string, _path: string, _body?: unknown, _machineId?: string) => ({
+        status: 200,
+        body: { ok: true },
+      }),
+    );
+    setApiRelay({ wsConnected: true, request, machines: [] } as unknown as RelayTransport);
+    return request;
+  }
+
+  it("takes the machine from the address it was given", async () => {
+    installFetchMock();
+    const request = relayRecorder();
+
+    await getProjectHealth({ host: "127.0.0.1", port: 43191, machineId: "strix" });
+
+    expect(request.mock.calls[0]?.[3]).toBe("strix");
+  });
+
+  // An address with no machine is a single-machine account, and the relay
+  // resolves it. Sending `undefined` would be a different frame.
+  it("sends no machine when the address has none", async () => {
+    installFetchMock();
+    const request = relayRecorder();
+
+    await getProjectHealth({ host: "127.0.0.1", port: 43191 });
+
+    expect(request.mock.calls[0]).toHaveLength(3);
+  });
+
+  it("lets an explicit machine override the address", async () => {
+    installFetchMock();
+    const request = relayRecorder();
+
+    await getProjectHealth(
+      { host: "127.0.0.1", port: 43191, machineId: "strix" },
+      { machineId: "mbp" },
+    );
+
+    expect(request.mock.calls[0]?.[3]).toBe("mbp");
+  });
+});

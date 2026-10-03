@@ -1385,6 +1385,9 @@ export class RelayObject extends DurableObject<Env> {
     let body: {
       projectRoot?: string;
       serviceEndpoint?: { host?: string; port?: number };
+      // Which of the owner's machines hosts the session. The guest's requests
+      // are routed there and nowhere else.
+      machineId?: string;
       sessionId?: string;
       email?: string;
     };
@@ -1401,6 +1404,7 @@ export class RelayObject extends DurableObject<Env> {
         serviceEndpoint: body.serviceEndpoint
           ? { host: body.serviceEndpoint.host ?? "", port: Number(body.serviceEndpoint.port) }
           : undefined,
+        machineId: body.machineId,
         sessionId: body.sessionId ?? "",
         email: body.email ?? "",
       });

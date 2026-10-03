@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 import { Pressable, ScrollView, View } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -74,9 +75,7 @@ export default function ServiceDetailScreen() {
   }, [getToken]);
 
   const found = useMemo(() => findService(groups, serviceId), [groups, serviceId]);
-  const endpointHost = endpoint?.host ?? null;
-  const endpointPort = endpoint?.port ?? null;
-  const endpointKey = endpointHost && endpointPort ? `${endpointHost}:${endpointPort}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
 
   useEffect(() => {
     if (found || !endpointKey || !projectPath || !serviceId) {

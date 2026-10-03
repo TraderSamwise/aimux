@@ -917,6 +917,9 @@ export default function ChatScreen() {
   const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
+  // Part of the address, not a detail of it: the same host and port name a
+  // different project service on each machine.
+  const endpointMachineId = serviceEndpoint?.machineId ?? null;
   const useScrollableNativeHeader = Platform.OS !== "web";
   const chatBubbleMaxWidth = Math.max(
     260,
@@ -941,18 +944,23 @@ export default function ChatScreen() {
         if (
           current?.projectPath === stateProjectPath &&
           current.endpoint.host === endpointHost &&
-          current.endpoint.port === endpointPort
+          current.endpoint.port === endpointPort &&
+          (current.endpoint.machineId ?? null) === endpointMachineId
         ) {
           return current;
         }
         return {
-          endpoint: { host: endpointHost, port: endpointPort },
+          endpoint: {
+            host: endpointHost,
+            port: endpointPort,
+            ...(endpointMachineId ? { machineId: endpointMachineId } : {}),
+          },
           projectPath: stateProjectPath,
         };
       });
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointHost, endpointPort, stateProjectPath]);
+  }, [endpointHost, endpointMachineId, endpointPort, stateProjectPath]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- a new chat route starts with chrome visible
@@ -1505,7 +1513,15 @@ export default function ChatScreen() {
     interruptInFlightRef.current = true;
     setSendError(null);
     try {
-      await interruptLivePane({ host: endpointHost, port: endpointPort }, sessionId, { token });
+      await interruptLivePane(
+        {
+          host: endpointHost,
+          port: endpointPort,
+          ...(endpointMachineId ? { machineId: endpointMachineId } : {}),
+        },
+        sessionId,
+        { token },
+      );
       void refreshOutputSnapshot("interrupt").catch((error) => {
         setSendError(formatPostActionTranscriptRefreshResult("Interrupt sent", error));
       });
@@ -1516,6 +1532,7 @@ export default function ChatScreen() {
     }
   }, [
     endpointHost,
+    endpointMachineId,
     endpointPort,
     markOutputInterrupted,
     refreshOutputSnapshot,

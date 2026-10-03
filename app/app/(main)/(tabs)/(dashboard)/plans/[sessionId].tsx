@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 import { ActivityIndicator, ScrollView, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -43,12 +44,7 @@ export default function PlanEditorScreen() {
   const { getToken } = useAuth();
   const router = useRouter();
 
-  const serviceEndpointHost = serviceEndpoint?.host ?? null;
-  const serviceEndpointPort = serviceEndpoint?.port ?? null;
-  const endpointKey =
-    serviceEndpointHost && serviceEndpointPort
-      ? `${serviceEndpointHost}:${serviceEndpointPort}`
-      : null;
+  const endpointKey = serviceEndpointKey(serviceEndpoint);
   const planKey = useMemo(
     () =>
       projectPath && sessionId

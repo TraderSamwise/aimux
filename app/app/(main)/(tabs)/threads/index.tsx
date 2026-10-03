@@ -24,6 +24,7 @@ import {
 } from "@/stores/project";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { cn } from "@/lib/utils";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 export default function ThreadsScreen() {
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
@@ -46,7 +47,7 @@ export default function ThreadsScreen() {
   const endpointKeyRef = useRef<string | null>(null);
   const refreshSeqRef = useRef(0);
   const refreshGenerationRef = useRef(0);
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const requestScopeRef = useRef<ProjectResourceRequestScope>({
     projectPath: projectPathKey,
     endpointKey,

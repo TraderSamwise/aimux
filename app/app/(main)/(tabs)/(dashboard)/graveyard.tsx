@@ -32,6 +32,7 @@ import {
   settleProjectGraveyardRefreshAtom,
 } from "@/stores/project";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 export default function GraveyardScreen() {
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
@@ -51,7 +52,7 @@ export default function GraveyardScreen() {
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
   const graveyardRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("graveyard"));
 
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const busyScope = `${projectPathKey}:${endpointKey ?? "no-endpoint"}`;
   const busyId = busyMarker?.startsWith(`${busyScope}:`)
     ? busyMarker.slice(busyScope.length + 1)

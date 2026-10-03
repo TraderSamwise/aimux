@@ -25,6 +25,7 @@ import {
   type LibraryRequestScope,
 } from "@/stores/library";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -77,7 +78,7 @@ export default function LibraryScreen() {
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ document?: string | string[] }>();
   const selectedDocumentId = cleanSearchValue(searchParams.document);
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const endpointRef = useRef(endpoint);
   const endpointKeyRef = useRef(endpointKey);
   const projectPathRef = useRef(projectPathKey);
