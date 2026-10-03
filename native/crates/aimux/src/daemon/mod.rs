@@ -20,3 +20,4 @@ pub mod status;
 pub mod stream;
 pub mod text;
 pub mod tmux_doctor;
+pub mod watchdog;

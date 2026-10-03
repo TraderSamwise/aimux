@@ -2666,6 +2666,9 @@ pub fn run_daemon_internal() -> Result<()> {
     let route_runtime = Arc::clone(&runtime);
     let stream_runtime = Arc::clone(&runtime);
     let shutdown_runtime = Arc::clone(&runtime);
+    // Off the async runtime on purpose: a watchdog scheduled on the runtime it
+    // watches stalls with it, which is the exact failure it exists to catch.
+    crate::daemon::watchdog::spawn_daemon_watchdog(host.clone(), port);
     // aimux-async-seam: permanent - daemon process entry point starts the async listener from mainline sync startup
     let serve_result = crate::async_runtime::process_runtime().block_on(
         serve_daemon_http_with_metadata_and_interceptor_until(
