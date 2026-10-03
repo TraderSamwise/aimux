@@ -226,10 +226,13 @@ fn restores_selected_worktree_entry_by_id_after_refresh_reorders_rows() {
 fn skips_write_when_screen_is_unchanged() {
     let root = temp_dir("dashboard-ui-state-unchanged");
     fs::create_dir_all(&root).expect("create temp dir");
-    let path = root.join("dashboard-ui-client-client.json");
+    // A real client session name: only those restore their saved screen, so a
+    // stand-in like "client" would reload as unset and make the write happen.
+    let path = root.join("dashboard-ui-client-aimux-proj-client-1234abcd.json");
     fs::write(&path, r#"{"screen":"topology","level":"sessions"}"#).expect("seed state");
 
-    let mut state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+    let mut state = DashboardUiStatePersistence::new(&root, "aimux-proj-client-1234abcd")
+        .expect("create ui state");
     assert!(
         !state
             .persist_screen(DashboardScreen::Topology)
@@ -239,7 +242,7 @@ fn skips_write_when_screen_is_unchanged() {
         fs::read_to_string(&path).expect("read state"),
         r#"{"screen":"topology","level":"sessions"}"#
     );
-    assert_eq!(state.client_session(), "client");
+    assert_eq!(state.client_session(), "aimux-proj-client-1234abcd");
     fs::remove_dir_all(root).ok();
 }
 
@@ -335,4 +338,40 @@ fn temp_dir(prefix: &str) -> PathBuf {
         .expect("time")
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+}
+
+// Sam pressed Enter on the dashboard and landed on the project session's
+// window, rendering Topology that an earlier session had left there hours
+// before. The project session's dashboard is the one any client can be dropped
+// onto, so it starts where a dashboard should start.
+#[test]
+fn the_project_session_dashboard_does_not_restore_someone_elses_screen() {
+    let root = temp_dir("dashboard-ui-state-project-session");
+    fs::create_dir_all(&root).expect("create temp dir");
+    fs::write(
+        root.join("dashboard-ui-client-aimux-proj-0d3e172022f4.json"),
+        r#"{"screen":"topology","level":"sessions"}"#,
+    )
+    .expect("seed state");
+
+    let project_session = DashboardUiStatePersistence::new(&root, "aimux-proj-0d3e172022f4")
+        .expect("create ui state");
+    assert_eq!(
+        project_session.load_screen(),
+        None,
+        "a dashboard anyone can be dropped onto starts on the dashboard"
+    );
+
+    fs::write(
+        root.join("dashboard-ui-client-aimux-proj-0d3e172022f4-client-aa1074f0.json"),
+        r#"{"screen":"topology","level":"sessions"}"#,
+    )
+    .expect("seed client state");
+    let client = DashboardUiStatePersistence::new(&root, "aimux-proj-0d3e172022f4-client-aa1074f0")
+        .expect("create ui state");
+    assert_eq!(
+        client.load_screen(),
+        Some(DashboardScreen::Topology),
+        "a client still returns to the screen it left"
+    );
 }

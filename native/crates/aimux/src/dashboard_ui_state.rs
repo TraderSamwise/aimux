@@ -44,8 +44,13 @@ impl DashboardUiStatePersistence {
         let client_snapshot = read_dashboard_state_snapshot(&path);
         let shared_snapshot =
             read_dashboard_state_snapshot(&shared_dashboard_state_path(project_state_dir.as_ref()));
+        // Only a client session remembers its screen. The project session's
+        // dashboard is the one any client can be dropped onto, and it was
+        // restoring a screen some earlier session left behind -- Sam landed on
+        // it showing Topology, hours after whoever put it there had gone.
         let last_screen = client_snapshot
             .as_ref()
+            .filter(|_| crate::tmux::is_tmux_client_session_name(client_session))
             .and_then(read_dashboard_screen_from_snapshot);
         let last_preview_source = shared_snapshot
             .as_ref()
