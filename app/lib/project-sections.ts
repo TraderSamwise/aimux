@@ -15,14 +15,27 @@ export interface ProjectSection {
   // From the relay's machine list, never inferred from the projects. A machine
   // whose projects all look idle is not an offline machine.
   online: boolean;
+  // The rows to render, after the Active/All filter.
   projects: DaemonProject[];
+  // Every project on that machine, filter or no filter. The header and the
+  // machine panel both show this, so one host cannot read as "3" in the list
+  // and "5 projects" in the panel.
+  totalProjects: number;
 }
 
 export function groupProjectsByMachine(
   projects: readonly DaemonProject[],
   machines: readonly RelayMachine[],
+  // The list before the Active/All filter, so a header's count is about the
+  // machine rather than about what the filter left.
+  allProjects: readonly DaemonProject[] = projects,
 ): ProjectSection[] {
   const online = new Map(machines.map((machine) => [machine.id, machine.name]));
+  const totalByMachine = new Map<string, number>();
+  for (const project of allProjects) {
+    if (!project.machineId) continue;
+    totalByMachine.set(project.machineId, (totalByMachine.get(project.machineId) ?? 0) + 1);
+  }
   const byMachine = new Map<string, DaemonProject[]>();
   const machineless: DaemonProject[] = [];
   const lastKnownNames = new Map<string, string>();
@@ -47,6 +60,7 @@ export function groupProjectsByMachine(
     machineName: online.get(machineId) || lastKnownNames.get(machineId) || machineId,
     online: online.has(machineId),
     projects: sortProjectsByName(byMachine.get(machineId) ?? []),
+    totalProjects: totalByMachine.get(machineId) ?? 0,
   }));
 
   // Connected machines first, then the ones that are away, each by name, so
@@ -58,7 +72,12 @@ export function groupProjectsByMachine(
   );
 
   if (machineless.length > 0) {
-    sections.push({ machineName: "", online: true, projects: sortProjectsByName(machineless) });
+    sections.push({
+      machineName: "",
+      online: true,
+      projects: sortProjectsByName(machineless),
+      totalProjects: allProjects.filter((project) => !project.machineId).length,
+    });
   }
   return sections;
 }

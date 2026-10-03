@@ -113,6 +113,11 @@ export class RelayTransport {
   private stopped = false;
   private daemonOnline = false;
   private daemonMachines: RelayMachine[] = [];
+  // The last fleet the relay actually named, kept across a closed socket.
+  // `machines` is cleared on close because the app must not offer hosts it
+  // cannot reach; a caller that has to NAME a machine needs the last answer
+  // instead, because sending none is refused once there are several.
+  private lastNamedMachines: RelayMachine[] = [];
   private deviceId: string | null = null;
   private consecutiveHandshakeFailures = 0;
   private _status: RelayStatus = "disconnected";
@@ -147,6 +152,13 @@ export class RelayTransport {
     return this.daemonMachines;
   }
 
+  // For callers that must name a machine. A reconnect clears `machines` until
+  // the next `daemon_status`, and in that window a machine-less request is
+  // refused rather than answered -- so they ask the last known fleet.
+  get namedMachines(): RelayMachine[] {
+    return this.daemonMachines.length > 0 ? this.daemonMachines : this.lastNamedMachines;
+  }
+
   onMachinesChange(listener: RelayMachinesListener): () => void {
     this.machinesListeners.add(listener);
     return () => this.machinesListeners.delete(listener);
@@ -175,6 +187,7 @@ export class RelayTransport {
   }
 
   private setMachines(machines: RelayMachine[]): void {
+    if (machines.length > 0) this.lastNamedMachines = machines;
     if (sameRelayMachines(this.daemonMachines, machines)) return;
     this.daemonMachines = machines;
     for (const listener of this.machinesListeners) {
@@ -275,6 +288,7 @@ export class RelayTransport {
     this.rejectAllPending("Disconnected");
     this.rejectAllProjectEventSubscriptions("Disconnected");
     this.setMachines([]);
+    this.lastNamedMachines = [];
     if (this.ws) {
       try {
         this.ws.close(1000);

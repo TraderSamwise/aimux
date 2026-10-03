@@ -515,6 +515,30 @@ describe("RelayTransport machines", () => {
     restore();
   });
 
+  // A caller that must NAME a machine cannot send none: the relay refuses
+  // that once the account has several. So the last answer survives the blip
+  // even though the display list does not.
+  it("keeps the last named fleet across a closed socket", async () => {
+    vi.useFakeTimers();
+    const { transport, sockets, restore } = await connectedTransport();
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "daemon_status",
+        online: true,
+        machines: [{ id: "mbp", name: "sam-mbp" }],
+      }),
+    });
+    sockets[0]!.close(1006);
+
+    expect(transport.machines).toEqual([]);
+    expect(transport.namedMachines).toEqual([{ id: "mbp", name: "sam-mbp" }]);
+
+    transport.disconnect();
+    expect(transport.namedMachines).toEqual([]);
+    vi.useRealTimers();
+    restore();
+  });
+
   it("forgets the fleet when the socket closes", async () => {
     vi.useFakeTimers();
     const { transport, sockets, restore } = await connectedTransport();

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   findProjectByRef,
+  resolveRouteProjectRef,
   projectRefFromPayload,
   findProjectForRef,
   preferMachineBearingRef,
@@ -197,5 +198,63 @@ describe("a ref out of a push payload", () => {
   it("resolves nothing without a path", () => {
     expect(projectRefFromPayload([MBP_AIMUX], "", "mbp")).toBeNull();
     expect(projectRefFromPayload([MBP_AIMUX], null, "mbp")).toBeNull();
+  });
+});
+
+describe("which project a screen is on", () => {
+  // The layout and the route hook used to answer this separately: the layout
+  // preferred the selection's machine for a machine-less URL while the hook
+  // refused the ambiguity, so the layout fetched state for a project every
+  // screen rendered as not-found. One rule, so they cannot disagree.
+  it("keeps the selection's machine for a URL that names the same path", () => {
+    expect(
+      resolveRouteProjectRef({
+        urlRef: { path: MBP_AIMUX.path },
+        selectedRef: { machineId: "mbp", path: MBP_AIMUX.path },
+        shareProjectRoot: null,
+      }),
+    ).toEqual({ machineId: "mbp", path: MBP_AIMUX.path });
+  });
+
+  it("follows the URL to a different project", () => {
+    expect(
+      resolveRouteProjectRef({
+        urlRef: { path: "/repo/other" },
+        selectedRef: { machineId: "mbp", path: MBP_AIMUX.path },
+        shareProjectRoot: null,
+      }),
+    ).toEqual({ path: "/repo/other" });
+  });
+
+  it("follows a URL that names its own machine", () => {
+    expect(
+      resolveRouteProjectRef({
+        urlRef: { machineId: "strix", path: MBP_AIMUX.path },
+        selectedRef: { machineId: "mbp", path: MBP_AIMUX.path },
+        shareProjectRoot: null,
+      }),
+    ).toEqual({ machineId: "strix", path: MBP_AIMUX.path });
+  });
+
+  it("falls back to the selection when the URL names nothing", () => {
+    expect(
+      resolveRouteProjectRef({
+        urlRef: null,
+        selectedRef: { machineId: "mbp", path: MBP_AIMUX.path },
+        shareProjectRoot: null,
+      }),
+    ).toEqual({ machineId: "mbp", path: MBP_AIMUX.path });
+  });
+
+  // A share names one host and carries no machine of its own, and it wins
+  // over both: a guest has no selection and no business with a machine.
+  it("takes a share's root over the URL and the selection", () => {
+    expect(
+      resolveRouteProjectRef({
+        urlRef: { machineId: "strix", path: MBP_AIMUX.path },
+        selectedRef: { machineId: "mbp", path: MBP_AIMUX.path },
+        shareProjectRoot: "/repo/shared",
+      }),
+    ).toEqual({ path: "/repo/shared" });
   });
 });

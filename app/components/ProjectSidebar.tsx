@@ -158,6 +158,7 @@ function SidebarStateCard({
 function WorktreeTree({
   projectPath,
   projectStateKey: projectStateKeyProp,
+  machineName,
   endpoint,
   token,
   desktopState,
@@ -169,6 +170,8 @@ function WorktreeTree({
 }: {
   projectPath: string;
   projectStateKey: ProjectStateKey;
+  // Which host this project is on, when the account has more than one.
+  machineName?: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   desktopState: DesktopState | null;
@@ -182,10 +185,16 @@ function WorktreeTree({
   const operationFailureSummary = summarizeOperationFailures(desktopState?.operationFailures);
 
   if (!endpoint && desktopState === null) {
+    // Naming the host is the whole answer when there are several of them:
+    // "the host is not running" does not say which one to go and start.
     return (
       <SidebarStateCard
-        title="Project host not running."
-        detail="Start the host to see worktrees, agents, and services."
+        title={machineName ? `${machineName} is not reachable.` : "Project host not running."}
+        detail={
+          machineName
+            ? `Start aimux on ${machineName} to see its worktrees, agents, and services.`
+            : "Start the host to see worktrees, agents, and services."
+        }
       />
     );
   }
@@ -638,6 +647,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                       <WorktreeTree
                         projectPath={effectiveProject.path}
                         projectStateKey={routeProjectStateKey}
+                        machineName={effectiveProject.machineName}
                         endpoint={endpoint}
                         token={token}
                         desktopState={desktopState}
@@ -653,6 +663,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                   <WorktreeTree
                     projectPath={effectiveProject.path}
                     projectStateKey={routeProjectStateKey}
+                    machineName={effectiveProject.machineName}
                     endpoint={endpoint}
                     token={token}
                     desktopState={desktopState}

@@ -665,7 +665,7 @@ export default function ExposeScreen() {
   const currentProject = findProjectForRef(projects, currentProjectRef) ?? null;
   const currentProjectPath = currentProject?.path ?? currentProjectRef?.path ?? null;
   const currentProjectMachineId = currentProject?.machineId ?? currentProjectRef?.machineId;
-  const projectForRequest = currentProject ?? projects[0] ?? null;
+  const projectForRequest = currentProject ?? (currentProjectRef ? null : (projects[0] ?? null));
   const projectEndpoint = projectForRequest ? getProjectServiceEndpoint(projectForRequest) : null;
   const projectRequestId = projectForRequest?.id ?? "";
   const projectRequestName = projectForRequest?.name ?? "";

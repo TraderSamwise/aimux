@@ -8,9 +8,21 @@ import {
   isRelayUnavailableForProjectDiscovery,
 } from "@/lib/project-connection-display";
 import { useRouteShare } from "@/lib/use-route-share";
-import { findProjectForRef, projectRefOf, type ProjectRef } from "@/lib/project-key";
+import {
+  findProjectForRef,
+  parseProjectKey,
+  projectKey,
+  projectRefOf,
+  resolveRouteProjectRef,
+  type ProjectRef,
+} from "@/lib/project-key";
 import { projectRefFromSearchOrLocation } from "@/lib/view-location";
-import { lastSyncAtAtom, projectsAtom, selectedProjectAtom } from "@/stores/projects";
+import {
+  lastSyncAtAtom,
+  projectsAtom,
+  selectedProjectAtom,
+  selectedProjectRefAtom,
+} from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import type { ActiveSharedSession } from "@/stores/settings";
 
@@ -33,36 +45,28 @@ export function useRouteProject(): RouteProject {
   const projects = useAtomValue(projectsAtom);
   const lastSyncAt = useAtomValue(lastSyncAtAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const activeShare = useRouteShare();
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const routeRef = projectRefFromSearchOrLocation(searchParams.project, searchParams.machine);
   const routeProjectPath = routeRef?.path ?? null;
-  const sharedRouteProject = useMemo(
-    () =>
-      activeShare && (!routeProjectPath || routeProjectPath === activeShare.projectRoot)
-        ? projectFromActiveShare(activeShare)
-        : null,
-    [activeShare, routeProjectPath],
+  const sharedRouteProject =
+    activeShare && (!routeProjectPath || routeProjectPath === activeShare.projectRoot)
+      ? projectFromActiveShare(activeShare)
+      : null;
+  // The same rule the layout uses, so the two cannot answer differently for a
+  // URL that names a path and no machine.
+  const effectiveRefKey = projectKey(
+    resolveRouteProjectRef({
+      urlRef: routeRef,
+      selectedRef: selectedProjectRef,
+      shareProjectRoot: sharedRouteProject?.path,
+    }),
   );
-  const routeMachineId = routeRef?.machineId ?? null;
-  const routeProject = useMemo(
-    () =>
-      routeProjectPath
-        ? routeProjectPath === sharedRouteProject?.path
-          ? // A share has one host and no machine of its own, so it is matched
-            // by path as it always was.
-            sharedRouteProject
-          : (findProjectForRef(
-              projects,
-              routeMachineId
-                ? { machineId: routeMachineId, path: routeProjectPath }
-                : { path: routeProjectPath },
-            ) ?? null)
-        : null,
-    [projects, routeMachineId, routeProjectPath, sharedRouteProject],
-  );
-  const project = routeProjectPath ? routeProject : (sharedRouteProject ?? selectedProject);
+  const routeProject =
+    sharedRouteProject ?? findProjectForRef(projects, parseProjectKey(effectiveRefKey)) ?? null;
+  const project = routeProject ?? (routeProjectPath ? null : selectedProject);
   const relayUnavailable =
     !activeShare && relayConfigured && isRelayUnavailableForProjectDiscovery(relayStatus);
   const projectLoading = Boolean(
@@ -88,12 +92,12 @@ export function useRouteProject(): RouteProject {
   );
 
   const projectRef = projectRefOf(project);
-  const projectRefKey = projectRef ? `${projectRef.machineId ?? ""}:${projectRef.path}` : null;
+  const projectRefKey = projectKey(projectRef);
   return useMemo(
     () => ({
       project,
       projectPath: routeProjectPath ?? project?.path ?? null,
-      machineId: project?.machineId ?? routeMachineId,
+      machineId: project?.machineId ?? null,
       projectRef,
       endpoint,
       routeProjectPath,
@@ -102,7 +106,7 @@ export function useRouteProject(): RouteProject {
     // projectRefKey stands in for projectRef, whose identity is fresh each
     // render; the ref itself is stable in content.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [endpoint, project, projectLoading, projectRefKey, routeMachineId, routeProjectPath],
+    [endpoint, project, projectLoading, projectRefKey, routeProjectPath],
   );
 }
 

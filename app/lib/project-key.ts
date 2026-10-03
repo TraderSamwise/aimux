@@ -122,6 +122,23 @@ export function projectRefFromPayload<T extends { machineId?: string; path: stri
   return uniqueProjectRefForPath(projects, path);
 }
 
+// Which project a screen is on, from the three things that can say so.
+//
+// One rule, called by the layout and by `useRouteProject`, because they used to
+// answer this separately: the layout preferred the selection's machine for a
+// machine-less URL while the hook refused the ambiguity, so the layout fetched
+// state for a project every screen rendered as not-found. The URL writer adds
+// `machine=` without telling the router, so the two never converged.
+export function resolveRouteProjectRef(input: {
+  urlRef: ProjectRef | null | undefined;
+  selectedRef: ProjectRef | null | undefined;
+  shareProjectRoot: string | null | undefined;
+}): ProjectRef | null {
+  // A share names one host and carries no machine of its own.
+  if (input.shareProjectRoot) return { path: input.shareProjectRoot };
+  return preferMachineBearingRef(input.urlRef, input.selectedRef);
+}
+
 declare const projectStateKeyBrand: unique symbol;
 
 // The key a project-scoped atom family is indexed by.

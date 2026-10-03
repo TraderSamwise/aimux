@@ -98,7 +98,23 @@ export const selectedSessionAtom = atom<DesktopSession | null>((get) => {
 // back to the first sorted project and clears stale session selection.
 export const reconcileProjectsAtom = atom(
   null,
-  (get, set, incoming: DaemonProject[], options?: { unansweredMachineIds?: readonly string[] }) => {
+  (
+    get,
+    set,
+    incoming: DaemonProject[],
+    options?: {
+      unansweredMachineIds?: readonly string[];
+      // The machines this snapshot is authoritative for. A selection on a
+      // machine that is not in it was not contradicted by anything, so it is
+      // kept -- a laptop that wakes five seconds after the app loads must not
+      // cost Sam the project he had open.
+      answeringMachineIds?: readonly string[];
+      // Written here rather than after the call: setting "ok" and then
+      // correcting it let a subscriber render a tick of "the list is whole"
+      // on every poll that was in fact short.
+      status?: ProjectListStatus;
+    },
+  ) => {
     const previousProjects = get(projectsAtom);
     // A machine that did not answer has not lost its projects; it is simply
     // absent from this snapshot. Dropping them would empty part of the list
@@ -107,7 +123,7 @@ export const reconcileProjectsAtom = atom(
       ...incoming,
       ...projectsOnMachines(previousProjects, options?.unansweredMachineIds, incoming),
     ];
-    set(projectListStatusAtom, PROJECT_LIST_OK);
+    set(projectListStatusAtom, options?.status ?? PROJECT_LIST_OK);
     const sorted = reconcileProjectList(previousProjects, merged);
     let nextRef = get(selectedProjectRefAtom);
     let nextSession = get(selectedSessionIdAtom);
@@ -130,13 +146,14 @@ export const reconcileProjectsAtom = atom(
 
     if (!nextRef && sorted.length > 0) {
       nextRef = projectRefOf(sorted[0]);
-    } else if (nextRef && !resolved) {
+    } else if (nextRef && !resolved && selectionWasContradicted(nextRef, options)) {
       nextRef = projectRefOf(sorted[0]);
       nextSession = null;
     } else if (resolved) {
       nextRef = projectRefOf(resolved);
     }
-    // else: the stored selection is still reachable — keep it.
+    // else: the stored selection is still reachable, or nothing in this
+    // snapshot had the standing to contradict it.
 
     if (sorted !== previousProjects) set(projectsAtom, sorted);
     if (!sameProjectRef(nextRef, get(selectedProjectRefAtom))) {
@@ -146,6 +163,27 @@ export const reconcileProjectsAtom = atom(
     set(lastSyncAtAtom, Date.now());
   },
 );
+
+// Whether this snapshot is entitled to move the selection off `ref`.
+//
+// Only the machine the selection names can say its project is gone. A ref for
+// a machine that did not answer -- or has not connected yet -- is unresolved,
+// not absent, and resetting it to `sorted[0]` both loses the user's place and
+// starts a fight with the URL, which still names the old one.
+function selectionWasContradicted(
+  ref: ProjectRef,
+  options?: {
+    unansweredMachineIds?: readonly string[];
+    answeringMachineIds?: readonly string[];
+  },
+): boolean {
+  const answering = options?.answeringMachineIds;
+  // Local mode and the first poll of a session: nothing is scoped by machine,
+  // so the snapshot speaks for everything, as it always did.
+  if (!answering) return true;
+  if (!ref.machineId) return true;
+  return answering.includes(ref.machineId);
+}
 
 // The previous snapshot's projects for machines that did not answer this time.
 //

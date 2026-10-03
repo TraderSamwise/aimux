@@ -40,7 +40,7 @@ export function ProjectPicker({
   const hiddenCount = Math.max(0, projects.length - visibleProjects.length);
   // Every machine at once. A switcher would hide two thirds of the fleet,
   // which is the opposite of what having three machines is for.
-  const sections = groupProjectsByMachine(visibleProjects, machines);
+  const sections = groupProjectsByMachine(visibleProjects, machines, projects);
   const showSections = shouldShowMachineSections(sections);
   const emptyMessage = projectListEmptyMessage(status);
   const staleMessage = projects.length > 0 ? projectListStaleMessage(status) : null;
@@ -123,13 +123,13 @@ export function ProjectPicker({
                   numberOfLines={1}
                   ellipsizeMode="middle"
                 >
-                  {section.machineName || "this machine"}
+                  {section.machineName || "unnamed host"}
                 </Text>
                 <Text className="text-[10px] font-semibold uppercase tracking-wider text-[#5b5d66]">
                   {section.online
-                    ? section.projects.length === 0
+                    ? section.totalProjects === 0
                       ? "no projects"
-                      : `${section.projects.length}`
+                      : `${section.totalProjects}`
                     : "offline"}
                 </Text>
               </View>

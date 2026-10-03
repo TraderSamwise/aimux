@@ -1556,7 +1556,12 @@ describe("listing projects across machines", () => {
       async (_method: string, _path: string, _body?: unknown, machineId?: string) =>
         answer(machineId),
     );
-    setApiRelay({ wsConnected: true, request, machines } as unknown as RelayTransport);
+    setApiRelay({
+      wsConnected: true,
+      request,
+      machines,
+      namedMachines: machines,
+    } as unknown as RelayTransport);
     return request;
   }
 
@@ -1684,7 +1689,12 @@ describe("routing a project call to the machine the project is on", () => {
         body: { ok: true },
       }),
     );
-    setApiRelay({ wsConnected: true, request, machines: [] } as unknown as RelayTransport);
+    setApiRelay({
+      wsConnected: true,
+      request,
+      machines: [],
+      namedMachines: [],
+    } as unknown as RelayTransport);
     return request;
   }
 
@@ -1718,5 +1728,73 @@ describe("routing a project call to the machine the project is on", () => {
     );
 
     expect(request.mock.calls[0]?.[3]).toBe("mbp");
+  });
+});
+
+describe("a refusal that names the machines", () => {
+  afterEach(() => {
+    setApiRelay(null);
+  });
+
+  // The relay refuses a request that names no machine when several are
+  // connected, and the list it sends back is the only part that says what to
+  // do about it. Dropping it leaves "name one with machineId" on screen with
+  // nothing to name.
+  it("puts the machine list from a 409 into the message", async () => {
+    installFetchMock();
+    setApiRelay({
+      wsConnected: true,
+      machines: [],
+      namedMachines: [],
+      request: vi.fn(async () => ({
+        status: 409,
+        body: {
+          ok: false,
+          error: "Several machines are connected; name one with machineId",
+          machines: [
+            { id: "mbp", name: "sam-mbp" },
+            { id: "strix", name: "sam-strix" },
+          ],
+        },
+      })),
+    } as unknown as RelayTransport);
+
+    await expect(getProjectHealth({ host: "127.0.0.1", port: 43191 })).rejects.toThrow(
+      "Several machines are connected; name one with machineId: sam-mbp, sam-strix",
+    );
+  });
+
+  it("falls back to a machine's id when the relay could not name it", async () => {
+    installFetchMock();
+    setApiRelay({
+      wsConnected: true,
+      machines: [],
+      namedMachines: [],
+      request: vi.fn(async () => ({
+        status: 409,
+        body: { ok: false, error: "Several machines are connected", machines: [{ id: "abc123" }] },
+      })),
+    } as unknown as RelayTransport);
+
+    await expect(getProjectHealth({ host: "127.0.0.1", port: 43191 })).rejects.toThrow(
+      "Several machines are connected: abc123",
+    );
+  });
+
+  it("leaves a refusal that names none alone", async () => {
+    installFetchMock();
+    setApiRelay({
+      wsConnected: true,
+      machines: [],
+      namedMachines: [],
+      request: vi.fn(async () => ({
+        status: 503,
+        body: { ok: false, error: "Daemon not connected", machines: [] },
+      })),
+    } as unknown as RelayTransport);
+
+    await expect(getProjectHealth({ host: "127.0.0.1", port: 43191 })).rejects.toThrow(
+      "Daemon not connected",
+    );
   });
 });

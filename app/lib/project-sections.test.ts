@@ -115,3 +115,25 @@ describe("whether the list needs machine headers at all", () => {
     expect(shouldShowMachineSections(groupProjectsByMachine([], []))).toBe(false);
   });
 });
+
+describe("what a section header counts", () => {
+  // One host must not read as "1" in the list and "2 projects" in the machine
+  // panel just because the Active filter hid one of them.
+  it("counts every project on the machine, not the rows the filter left", () => {
+    const all = [project("aimux", "mbp", "sam-mbp"), project("sblr", "mbp", "sam-mbp")];
+    const sections = groupProjectsByMachine([all[0]], [MBP], all);
+    expect(sections[0].projects).toHaveLength(1);
+    expect(sections[0].totalProjects).toBe(2);
+  });
+
+  it("counts the machineless group the same way", () => {
+    const all = [project("aimux"), project("sblr")];
+    const sections = groupProjectsByMachine([all[0]], [], all);
+    expect(sections[0].totalProjects).toBe(2);
+  });
+
+  it("defaults to the rows it was given when nothing else is", () => {
+    const sections = groupProjectsByMachine([project("aimux", "mbp", "sam-mbp")], [MBP]);
+    expect(sections[0].totalProjects).toBe(1);
+  });
+});

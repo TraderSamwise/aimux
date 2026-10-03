@@ -222,6 +222,34 @@ describe("local notification read state", () => {
     ).toBe(true);
   });
 
+  // What a build before machines existed wrote: the project PATH and the id.
+  // Without reading those, everything Sam had read in the last three days
+  // would come back unread the moment the app updated.
+  it("still honours a read mark written before machines existed", () => {
+    const key = projectStateKey({ machineId: "mbp", path: "/repo" });
+    const readState = {
+      readAtByKey: { ["/repo\u0000notice-1"]: "2026-01-01T00:05:00.000Z" },
+    };
+
+    expect(
+      notificationEffectiveUnread({
+        projectStateKey: key,
+        notification: notification("notice-1"),
+        readState,
+        nowMs: Date.parse("2026-01-01T00:10:00.000Z"),
+      }),
+    ).toBe(false);
+    // Still scoped to the project it was written for.
+    expect(
+      notificationEffectiveUnread({
+        projectStateKey: projectStateKey({ machineId: "mbp", path: "/other" }),
+        notification: notification("notice-1"),
+        readState,
+        nowMs: Date.parse("2026-01-01T00:10:00.000Z"),
+      }),
+    ).toBe(true);
+  });
+
   it("expires unread status after the local unread window", () => {
     const record = notification("notice-1");
     const nowMs = Date.parse(record.createdAt) + NOTIFICATION_LOCAL_UNREAD_WINDOW_MS + 1;

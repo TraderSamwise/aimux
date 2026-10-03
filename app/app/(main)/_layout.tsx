@@ -102,9 +102,9 @@ import { serviceEndpointKey } from "@/lib/daemon-url";
 import {
   findProjectForRef,
   parseProjectKey,
-  preferMachineBearingRef,
   projectKey,
   projectStateKey,
+  resolveRouteProjectRef,
   sameProjectRef,
 } from "@/lib/project-key";
 
@@ -173,9 +173,11 @@ export default function MainLayout() {
   const urlProjectRef = useMemo(() => parseProjectKey(urlProjectKey), [urlProjectKey]);
   // Both halves of the effective project come from one source, so a path is
   // never paired with another host's machine.
-  const effectiveProjectRef = activeShare
-    ? { path: activeShare.projectRoot }
-    : preferMachineBearingRef(urlProjectRef, selectedProjectRef);
+  const effectiveProjectRef = resolveRouteProjectRef({
+    urlRef: urlProjectRef,
+    selectedRef: selectedProjectRef,
+    shareProjectRoot: activeShare?.projectRoot,
+  });
   const effectiveProjectPath = effectiveProjectRef?.path ?? null;
   // A primitive stand-in for the ref, so an effect that depends on it does not
   // re-run on every render just because the object is rebuilt.
@@ -394,7 +396,9 @@ export default function MainLayout() {
       }
       try {
         const token = await getTokenRef.current();
-        const { projects, failures } = await listProjectsAcrossMachines({ token });
+        const { projects, failures, answeringMachineIds } = await listProjectsAcrossMachines({
+          token,
+        });
         if (!cancelled) {
           reconcileProjects(projects, {
             // A machine that left the relay is never queried, so it has no
@@ -404,10 +408,11 @@ export default function MainLayout() {
               ...failures.map((failure) => failure.machineId),
               ...store.get(departedMachineIdsAtom),
             ],
+            answeringMachineIds,
+            // A list missing one machine is real but short, and "ok" would
+            // call it whole.
+            status: failures.length > 0 ? projectListPartial(failures) : undefined,
           });
-          // Set after reconcile, which sets the status to ok: a list missing
-          // one machine is real but short, and "ok" would call it whole.
-          if (failures.length > 0) setProjectListStatus(projectListPartial(failures));
         }
       } catch (err) {
         // A fetch that failed is not a list of zero projects. Every non-transient

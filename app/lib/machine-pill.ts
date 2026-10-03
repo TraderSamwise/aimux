@@ -10,7 +10,9 @@ export interface MachinePillState {
   // The machine the open project is on, when that is the useful answer.
   label: string | null;
   online: boolean;
-  // True when there is a fleet to show, so the pill is worth pressing.
+  // True when there is a fleet to show, so the pill is worth pressing. A
+  // screen with no project open -- Monitor, an empty selection -- still has a
+  // fleet to show, so the panel is reachable there too.
   openable: boolean;
 }
 
@@ -28,11 +30,14 @@ export function machinePillState(input: {
   const current = input.currentMachineId
     ? input.machines.find((machine) => machine.id === input.currentMachineId)
     : undefined;
+  const label = current?.name || input.currentMachineName || input.currentMachineId || null;
   return {
     // A project on a machine the relay no longer reports keeps its name and
     // reads as offline: the host going away is what the pill has to show.
-    label: current?.name || input.currentMachineName || input.currentMachineId || null,
-    online: Boolean(current),
+    // With no project open there is no host to name, and the fleet size is
+    // the answer instead -- the panel still has to be reachable from there.
+    label: label ?? `${fleetSize} machines`,
+    online: label ? Boolean(current) : input.machines.length > 0,
     openable: true,
   };
 }

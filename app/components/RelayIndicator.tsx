@@ -110,6 +110,11 @@ export function RelayIndicator() {
         >
           {meta.label}
         </Text>
+        {canOpenMachinePanel ? (
+          <Text className={cn("ml-1 text-[9px]", meta.text)} accessibilityElementsHidden>
+            ▾
+          </Text>
+        ) : null}
       </Pressable>
       {canOpenPairingHelp && hovered ? (
         <View

@@ -43,7 +43,9 @@ describe("what the Remote pill says", () => {
     ).toEqual({ label: "sam-strix", online: false, openable: true });
   });
 
-  it("is still worth pressing when no project is open", () => {
+  // Monitor, or an empty selection: there is no host to name, but the fleet
+  // is still worth opening, so the panel has to be reachable from there.
+  it("names the fleet when no project is open", () => {
     expect(
       machinePillState({
         machines: [MBP, STRIX],
@@ -51,7 +53,18 @@ describe("what the Remote pill says", () => {
         currentMachineId: null,
         currentMachineName: null,
       }),
-    ).toEqual({ label: null, online: false, openable: true });
+    ).toEqual({ label: "2 machines", online: true, openable: true });
+  });
+
+  it("counts a departed machine in the fleet it names", () => {
+    expect(
+      machinePillState({
+        machines: [MBP],
+        departedMachineIds: ["strix"],
+        currentMachineId: null,
+        currentMachineName: null,
+      }),
+    ).toEqual({ label: "2 machines", online: true, openable: true });
   });
 
   it("prefers the relay's name over the one the project was stamped with", () => {

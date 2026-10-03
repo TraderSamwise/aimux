@@ -1,5 +1,5 @@
 import { atom } from "jotai";
-import type { ProjectStateKey } from "@/lib/project-key";
+import { parseProjectKey, type ProjectStateKey } from "@/lib/project-key";
 import { atomFamily, atomWithStorage, unwrap } from "jotai/utils";
 import type { NotificationRecord } from "@/lib/api";
 import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
@@ -67,6 +67,33 @@ export function notificationLocalReadKey(
   return `${normalizedProjectStateKey}\u0000${normalizedNotificationId}`;
 }
 
+// What a build before machines existed wrote: the project PATH and the id.
+//
+// These marks are read-only and never written again, because a mark must now
+// say which machine. Without reading them, every notification Sam had read in
+// the last three days would come back unread the moment the app updated.
+export function legacyNotificationLocalReadKey(
+  projectStateKey: string | null | undefined,
+  notificationId: string | null | undefined,
+): string | null {
+  const ref = parseProjectKey(projectStateKey);
+  if (!ref) return null;
+  const normalizedNotificationId = notificationId?.trim();
+  if (!normalizedNotificationId) return null;
+  return `${ref.path}\u0000${normalizedNotificationId}`;
+}
+
+function notificationWasReadLocally(
+  readState: NotificationLocalReadState,
+  projectStateKey: string | null | undefined,
+  notificationId: string | null | undefined,
+): boolean {
+  const key = notificationLocalReadKey(projectStateKey, notificationId);
+  if (key && readState.readAtByKey[key]) return true;
+  const legacy = legacyNotificationLocalReadKey(projectStateKey, notificationId);
+  return Boolean(legacy && readState.readAtByKey[legacy]);
+}
+
 function notificationIsInsideUnreadWindow(
   notification: NotificationRecord,
   nowMs: number,
@@ -85,8 +112,8 @@ export function notificationEffectiveUnread(input: {
   const { projectStateKey, notification, readState, nowMs = Date.now() } = input;
   if (!notification.unread) return false;
   if (!notificationIsInsideUnreadWindow(notification, nowMs)) return false;
-  const key = notificationLocalReadKey(projectStateKey, notification.id);
-  return key ? !readState.readAtByKey[key] : true;
+  if (!notificationLocalReadKey(projectStateKey, notification.id)) return true;
+  return !notificationWasReadLocally(readState, projectStateKey, notification.id);
 }
 
 export function applyNotificationLocalReadState(
