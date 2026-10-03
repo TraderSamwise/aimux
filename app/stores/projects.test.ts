@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DaemonProject } from "@/lib/api";
 import { projectKey } from "@/lib/project-key";
+import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import {
   explicitProjectSelectionAtom,
   projectsAtom,
@@ -178,6 +179,34 @@ describe("reconciling a project list that is missing a machine", () => {
     });
 
     expect(store.get(projectsAtom).map((project) => project.id)).toEqual(["aimux"]);
+  });
+
+  // The host did not answer, so whether a dashboard is running there is
+  // unknown. Keeping the green dot and the agent count would be the list
+  // telling Sam a machine that is away has live agents on it.
+  it("keeps the project but not its liveness", () => {
+    const store = createStore();
+    store.set(reconcileProjectsAtom, [
+      {
+        ...machineProject("tealstreet", "strix", "sam-strix"),
+        dashboardAlive: true,
+        onlineAgentCount: 4,
+      },
+    ]);
+
+    store.set(reconcileProjectsAtom, [], { unansweredMachineIds: ["strix"] });
+
+    const kept = store.get(projectsAtom)[0];
+    expect(kept).toMatchObject({
+      id: "tealstreet",
+      machineId: "strix",
+      serviceAlive: false,
+      service: null,
+    });
+    expect(kept.dashboardAlive).toBeUndefined();
+    expect(kept.onlineAgentCount).toBeUndefined();
+    // No endpoint, so nothing tries to call a machine that is not there.
+    expect(getProjectServiceEndpoint(kept)).toBeNull();
   });
 
   it("keeps nothing when no machine is named as unanswered", () => {

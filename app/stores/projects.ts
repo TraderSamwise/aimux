@@ -159,7 +159,27 @@ export function projectsOnMachines(
   );
   const wanted = new Set(machineIds.filter((id) => !answeredMachineIds.has(id)));
   if (wanted.size === 0) return [];
-  return projects.filter((project) => project.machineId && wanted.has(project.machineId));
+  return projects
+    .filter((project) => project.machineId && wanted.has(project.machineId))
+    .map(withUnaskableLiveness);
+}
+
+// What is kept is the project, not its liveness. The host did not answer, so
+// whether a dashboard is running there is unknown -- not false, and certainly
+// not the green dot and agent count it had a moment ago. Clearing
+// `serviceAlive` also takes the endpoint away, so nothing tries to call a
+// machine that is not there.
+function withUnaskableLiveness(project: DaemonProject): DaemonProject {
+  if (project.dashboardAlive === undefined && !project.serviceAlive && !project.onlineAgentCount) {
+    return project;
+  }
+  return {
+    ...project,
+    dashboardAlive: undefined,
+    service: null,
+    serviceAlive: false,
+    onlineAgentCount: undefined,
+  };
 }
 
 // Select a project, clearing the session selection.

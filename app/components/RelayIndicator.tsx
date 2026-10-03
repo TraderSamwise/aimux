@@ -103,7 +103,13 @@ export function RelayIndicator() {
         )}
       >
         <View className={cn("mr-1.5 h-1.5 w-1.5 rounded-full", meta.dot)} />
-        <Text className={cn("text-[11px] font-medium", meta.text)}>{meta.label}</Text>
+        <Text
+          className={cn("max-w-[10rem] text-[11px] font-medium", meta.text)}
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
+          {meta.label}
+        </Text>
       </Pressable>
       {canOpenPairingHelp && hovered ? (
         <View
