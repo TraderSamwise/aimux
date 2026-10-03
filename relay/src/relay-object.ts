@@ -9,6 +9,9 @@ import {
   machineTag,
   resolveDaemonTarget,
   resolveSharedDaemonTarget,
+  shareMachineIdFromTags,
+  shareMachineTag,
+  sharedHostOnline,
 } from "./machines.js";
 import { createHostedAttachment } from "./attachments.js";
 import { deliverNotificationPush, deliverSecurityAlert } from "./security-delivery.js";
@@ -215,7 +218,12 @@ export class RelayObject extends DurableObject<Env> {
       if (shareId) {
         const sharedAuth = await this.authorizeSharedClientConnect(request, shareId);
         if (!sharedAuth.ok) return new Response(sharedAuth.error, { status: sharedAuth.status });
-        sharedClientTags = [`share:${shareId}`, `user:${sharedAuth.userId}`];
+        sharedClientTags = [
+          `share:${shareId}`,
+          `user:${sharedAuth.userId}`,
+          // So "is my host up" can be answered from the socket alone.
+          ...(sharedAuth.share.machineId ? [shareMachineTag(sharedAuth.share.machineId)] : []),
+        ];
         sharedClientAuth = sharedAuth;
       } else {
         const proofInput = deviceProofInputFromUrl(url);
@@ -231,18 +239,19 @@ export class RelayObject extends DurableObject<Env> {
         }
       }
     }
-    const pair = new WebSocketPair();
-    const [client, server] = Object.values(pair);
-
     const daemonOwnerUserId = role === "daemon" ? request.headers.get("X-Aimux-User-Id")?.trim() : undefined;
     const daemonMachine = role === "daemon" ? machineFromConnectUrl(url) : undefined;
-    if (daemonMachine) {
-      if (!this.daemonSockets.has(daemonMachine.id) && this.daemonSockets.size >= MAX_MACHINES_PER_ROOM) {
-        return new Response(`This account already has ${MAX_MACHINES_PER_ROOM} machines connected to the relay.`, {
-          status: 503,
-        });
-      }
+    if (
+      daemonMachine &&
+      !this.daemonSockets.has(daemonMachine.id) &&
+      this.daemonSockets.size >= MAX_MACHINES_PER_ROOM
+    ) {
+      return new Response(`This account already has ${MAX_MACHINES_PER_ROOM} machines connected to the relay.`, {
+        status: 503,
+      });
     }
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(
       server,
       clientDevice
@@ -706,24 +715,41 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   // A guest is told whether the host it was shared from is up, and nothing
-  // about the rest of the account's machines.
-  private machineStatus(forSharedClient: boolean): RelayMessage {
+  // about the rest of the account's machines. `online` for a guest is about
+  // that one host: "any machine is up" is a fact about a fleet it cannot see
+  // and the wrong answer about the host it can.
+  private machineStatus(sharedHostMachineId: string | null): RelayMessage {
     const machines = this.onlineMachines();
-    return forSharedClient
-      ? { type: "daemon_status", online: machines.length > 0 }
-      : { type: "daemon_status", online: machines.length > 0, machines };
+    if (sharedHostMachineId === null) {
+      return { type: "daemon_status", online: machines.length > 0, machines };
+    }
+    return {
+      type: "daemon_status",
+      online: sharedHostOnline(machines, sharedHostMachineId || undefined),
+    };
   }
 
   private sendMachineStatus(ws: WebSocket): void {
-    this.send(ws, this.machineStatus(isSharedClientSocket(this.ctx.getTags(ws))));
+    this.send(ws, this.machineStatus(this.sharedHostMachineIdForSocket(ws)));
+  }
+
+  // `null` means an owner socket. An empty string means a guest whose share
+  // names no host, which is a share made before machines existed.
+  private sharedHostMachineIdForSocket(ws: WebSocket): string | null {
+    const tags = this.ctx.getTags(ws);
+    if (!isSharedClientSocket(tags)) return null;
+    return shareMachineIdFromTags(tags) ?? "";
   }
 
   private broadcastMachineStatus(): void {
-    const ownerStatus = JSON.stringify(this.machineStatus(false));
-    const sharedStatus = JSON.stringify(this.machineStatus(true));
+    const ownerStatus = JSON.stringify(this.machineStatus(null));
     for (const client of this.clientSockets) {
       try {
-        client.send(isSharedClientSocket(this.ctx.getTags(client)) ? sharedStatus : ownerStatus);
+        // A guest's answer is about its own host, so it is resolved per socket
+        // from that socket's tags rather than broadcast as one string.
+        const sharedHostMachineId = this.sharedHostMachineIdForSocket(client);
+        if (sharedHostMachineId === null) client.send(ownerStatus);
+        else client.send(JSON.stringify(this.machineStatus(sharedHostMachineId)));
       } catch {
         this.clientSockets.delete(client);
       }
@@ -1634,13 +1660,15 @@ export class RelayObject extends DurableObject<Env> {
       const tags = this.ctx.getTags(ws);
       if (tags.includes("daemon")) {
         const machine = machineFromTags(tags);
-        if (this.daemonSockets.has(machine.id)) {
-          // Two live sockets for one machine is the state eviction prevents;
-          // if hibernation left both, the later one loses as it did before.
+        // Two live sockets for one machine is the state eviction prevents. If
+        // hibernation left both, the NEWEST wins -- `getWebSockets` is in
+        // accept order, so keeping the first would resurrect the socket the
+        // connect path already closed and leave the new daemon reconnecting.
+        const superseded = this.daemonSockets.get(machine.id);
+        if (superseded) {
           try {
-            ws.close(1000, "Replaced");
+            superseded.close(1000, "Replaced");
           } catch {}
-          continue;
         }
         this.daemonSockets.set(machine.id, ws);
         this.daemonMachineNames.set(machine.id, machine.name);

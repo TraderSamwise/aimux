@@ -51,11 +51,18 @@ impl MachineIdentity {
     }
 }
 
+/// The id the relay keeps for daemons that predate machine identity. It is a
+/// real, matchable id otherwise, so a daemon that could ask for it could evict
+/// such a daemon -- or be evicted by one.
+pub const RESERVED_UNIDENTIFIED_MACHINE_ID: &str = "unidentified";
+
 /// A machine id travels in a URL query string and in a relay socket tag, so it
-/// is restricted to characters that need no encoding in either.
+/// is restricted to characters that need no encoding in either. Must agree with
+/// the relay's own `isValidMachineId`.
 pub fn is_valid_machine_id(id: &str) -> bool {
     !id.is_empty()
         && id.chars().count() <= MAX_MACHINE_ID_CHARS
+        && id != RESERVED_UNIDENTIFIED_MACHINE_ID
         && id.chars().all(|character| {
             character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
         })
@@ -95,9 +102,14 @@ pub fn os_hostname() -> Option<String> {
         .iter()
         .position(|byte| *byte == 0)
         .unwrap_or(buffer.len());
-    let raw = std::str::from_utf8(&buffer[..end]).ok()?.trim();
-    let trimmed = raw.strip_suffix(".local").unwrap_or(raw);
-    sanitize_machine_name(trimmed)
+    hostname_display_name(std::str::from_utf8(&buffer[..end]).ok()?)
+}
+
+/// The pure half of `os_hostname`, so the `.local` rule is testable without a
+/// hostname this machine happens to have.
+pub fn hostname_display_name(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    sanitize_machine_name(trimmed.strip_suffix(".local").unwrap_or(trimmed))
 }
 
 pub fn load_or_create(resolver: &PathResolver) -> io::Result<MachineIdentity> {
@@ -120,12 +132,30 @@ pub fn load_or_create_with(
     now_nanos: u128,
     pid: u32,
 ) -> io::Result<MachineIdentity> {
+    load_or_create_with_writer(path, hostname, now_nanos, pid, write_identity)
+}
+
+pub fn load_or_create_with_writer(
+    path: impl AsRef<Path>,
+    hostname: Option<&str>,
+    now_nanos: u128,
+    pid: u32,
+    write: fn(&Path, &MachineIdentity) -> io::Result<()>,
+) -> io::Result<MachineIdentity> {
     let path = path.as_ref();
     match fs::read(path) {
         Ok(bytes) => {
             let stored = serde_json::from_slice::<MachineIdentity>(&bytes)
                 .ok()
-                .filter(|identity| identity.version == 1 && is_valid_machine_id(&identity.id));
+                .filter(|identity| identity.version == 1 && is_valid_machine_id(&identity.id))
+                // The name is formatted into the handshake URL, so a
+                // hand-edited one carrying a space or a newline would break
+                // every connect attempt.
+                .map(|identity| MachineIdentity {
+                    name: sanitize_machine_name(&identity.name)
+                        .unwrap_or_else(|| identity.id.clone()),
+                    ..identity
+                });
             match stored {
                 // The id survives a hostname change; the name follows it.
                 Some(stored) => {
@@ -135,20 +165,29 @@ pub fn load_or_create_with(
                     if name == stored.name {
                         return Ok(stored);
                     }
-                    let renamed = MachineIdentity { name, ..stored };
-                    write_identity(path, &renamed)?;
-                    Ok(renamed)
+                    let renamed = MachineIdentity {
+                        name,
+                        ..stored.clone()
+                    };
+                    // A home we cannot write to must not cost us the id. The
+                    // caller's fallback is a fresh in-memory id per call, which
+                    // is the eviction this file exists to stop, so a rename we
+                    // cannot persist keeps the old name and the right id.
+                    match write(path, &renamed) {
+                        Ok(()) => Ok(renamed),
+                        Err(_) => Ok(stored),
+                    }
                 }
                 // A hand-edited or truncated file is kept rather than deleted:
                 // the id it held is the only record of what this machine was.
                 None => {
                     quarantine_corrupt_file(path);
-                    create_identity(path, hostname, now_nanos, pid)
+                    create_identity(path, hostname, now_nanos, pid, write)
                 }
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            create_identity(path, hostname, now_nanos, pid)
+            create_identity(path, hostname, now_nanos, pid, write)
         }
         Err(error) => Err(error),
     }
@@ -161,9 +200,10 @@ fn create_identity(
     hostname: Option<&str>,
     now_nanos: u128,
     pid: u32,
+    write: fn(&Path, &MachineIdentity) -> io::Result<()>,
 ) -> io::Result<MachineIdentity> {
     let created = MachineIdentity::fresh(hostname, now_nanos, pid);
-    write_identity(path, &created)?;
+    write(path, &created)?;
     let landed = fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<MachineIdentity>(&bytes).ok())
@@ -328,6 +368,88 @@ mod tests {
         assert!(is_valid_machine_id("sam-mbp-01"));
         assert!(!is_valid_machine_id("SAM"));
         assert!(!is_valid_machine_id("sam mbp"));
+    }
+
+    // The slot the relay keeps for daemons that predate machine identity. A
+    // daemon that could ask for it could evict such a daemon, or be evicted.
+    #[test]
+    fn the_reserved_id_is_refused() {
+        assert!(!is_valid_machine_id(RESERVED_UNIDENTIFIED_MACHINE_ID));
+        let path = temp_path("reserved");
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(
+            &path,
+            format!(r#"{{"version":1,"id":"{RESERVED_UNIDENTIFIED_MACHINE_ID}","name":"x"}}"#),
+        )
+        .expect("seed");
+        let identity = load_or_create_with(&path, Some("sam-mbp"), 1_000, 11).expect("recreate");
+        assert_ne!(identity.id, RESERVED_UNIDENTIFIED_MACHINE_ID);
+    }
+
+    // The fallback for a failed load is a fresh id per call, so throwing away
+    // a good id because the rename could not be written would reintroduce the
+    // eviction this file exists to stop.
+    #[test]
+    fn a_home_we_cannot_write_keeps_the_id_it_already_had() {
+        fn refuse(_: &Path, _: &MachineIdentity) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+        let path = temp_path("readonly");
+        let created = load_or_create_with(&path, Some("sam-mbp"), 1_000, 11).expect("create");
+
+        let renamed = load_or_create_with_writer(&path, Some("sam-strix"), 2_000, 22, refuse)
+            .expect("a rename we cannot persist is not a failure to identify");
+
+        assert_eq!(renamed.id, created.id);
+        assert_eq!(renamed.name, created.name, "the rename did not persist");
+    }
+
+    // The name is formatted into the handshake URL, so one with a space in it
+    // would break every connect attempt.
+    #[test]
+    fn a_hand_edited_name_is_re_sanitized_on_load() {
+        let path = temp_path("edited-name");
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(
+            &path,
+            br#"{"version":1,"id":"abc123def456","name":"sam mbp extra"}"#,
+        )
+        .expect("seed");
+        let identity = load_or_create_with(&path, None, 1_000, 11).expect("load");
+        assert_eq!(identity.id, "abc123def456");
+        assert_eq!(identity.name, "abc123def456");
+    }
+
+    // The fallback when the identity cannot be persisted at all. Two hosts
+    // that both fail must not land on the same id, or they evict each other.
+    #[test]
+    fn an_ephemeral_identity_is_still_distinct_per_call() {
+        let first = MachineIdentity::ephemeral(Some("sam-mbp"));
+        let second = MachineIdentity::ephemeral(Some("sam-mbp"));
+        assert!(is_valid_machine_id(&first.id));
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.name, "sam-mbp");
+        assert_eq!(
+            MachineIdentity::ephemeral(None).name.chars().count(),
+            MACHINE_ID_HEX_CHARS
+        );
+    }
+
+    // macOS churns the suffix (`host.local`, `host-2.local`), and a name that
+    // moves with DHCP would rewrite the identity file on every reconnect.
+    #[test]
+    fn a_local_suffix_is_dropped_from_a_hostname() {
+        assert_eq!(
+            hostname_display_name("sam-mbp.local"),
+            Some("sam-mbp".to_owned())
+        );
+        assert_eq!(hostname_display_name("sam-mbp"), Some("sam-mbp".to_owned()));
+        assert_eq!(
+            hostname_display_name("  sam-mbp.local  "),
+            Some("sam-mbp".to_owned())
+        );
+        assert_eq!(hostname_display_name(".local"), None);
+        assert_eq!(hostname_display_name("Sam's MacBook.local"), None);
     }
 
     #[test]

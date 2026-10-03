@@ -7,6 +7,10 @@
 
 export const MACHINE_TAG_PREFIX = "machine:";
 export const MACHINE_NAME_TAG_PREFIX = "machineName:";
+// Which machine a shared guest's share is bound to. On the socket's tags
+// because tags are the only per-socket state that survives hibernation, so the
+// answer never needs a storage read on a broadcast path.
+export const SHARE_MACHINE_TAG_PREFIX = "shareMachine:";
 
 // A daemon from before machine identity existed. It gets one slot, so such a
 // daemon behaves exactly as it does today: alone in the room, replaced by the
@@ -24,8 +28,14 @@ export interface MachineInfo {
 // An id is interpolated into a socket tag and echoed to clients, so it is
 // restricted to characters that cannot break either. Matches the daemon's own
 // `is_valid_machine_id`.
+//
+// The reserved id is refused. It is a real, matchable id otherwise, so a daemon
+// could ask for the slot kept for daemons that predate machine identity and
+// evict one -- or be evicted by one.
 export function isValidMachineId(id: string): boolean {
-  return id.length > 0 && id.length <= MAX_MACHINE_ID_CHARS && /^[a-z0-9-]+$/.test(id);
+  return (
+    id.length > 0 && id.length <= MAX_MACHINE_ID_CHARS && id !== UNIDENTIFIED_MACHINE_ID && /^[a-z0-9-]+$/.test(id)
+  );
 }
 
 // A name is only ever an OS hostname. Anything else is refused rather than
@@ -60,6 +70,15 @@ export function machineNameFromTags(tags: readonly string[]): string | undefined
   return sanitizeMachineName(
     tags.find((tag) => tag.startsWith(MACHINE_NAME_TAG_PREFIX))?.slice(MACHINE_NAME_TAG_PREFIX.length),
   );
+}
+
+export function shareMachineTag(machineId: string): string {
+  return `${SHARE_MACHINE_TAG_PREFIX}${machineId}`;
+}
+
+export function shareMachineIdFromTags(tags: readonly string[]): string | undefined {
+  const tagged = tags.find((tag) => tag.startsWith(SHARE_MACHINE_TAG_PREFIX))?.slice(SHARE_MACHINE_TAG_PREFIX.length);
+  return tagged && isValidMachineId(tagged) ? tagged : undefined;
 }
 
 export function machineFromTags(tags: readonly string[]): MachineInfo {
@@ -133,10 +152,21 @@ export function resolveSharedDaemonTarget(
   if (machines.length === 1) {
     return { ok: true, machineId: machines[0].id };
   }
+  // Deliberately the same text as a disconnected host: the number of machines
+  // on the account is not a guest's business either.
   return {
     ok: false,
     status: 503,
-    error: "This shared chat is not bound to a machine",
+    error: "The machine hosting this shared chat is not connected",
     machines: [],
   };
+}
+
+// Whether the host a guest was shared from is up. `daemon_status.online` means
+// "any machine", which for a guest is a fact about a fleet it cannot see and
+// the wrong answer about the one host it can.
+export function sharedHostOnline(machines: readonly MachineInfo[], shareMachineId: string | undefined): boolean {
+  const bound = shareMachineId?.trim();
+  if (!bound) return machines.length > 0;
+  return machines.some((machine) => machine.id === bound);
 }

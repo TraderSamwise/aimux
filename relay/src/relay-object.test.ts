@@ -1785,6 +1785,27 @@ describe("RelayObject machines", () => {
     expect(lastSentTo(guest)).toEqual({ type: "daemon_status", online: true });
   });
 
+  // "Any machine is up" is a fact about a fleet the guest cannot see, and the
+  // wrong answer about the one host it can.
+  it("tells a shared guest whether its own host is up, not the fleet", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const guestOnStrix = fakeSocket(["client", `share:${shareId}`, "user:user_guest", "shareMachine:strix"]);
+    storage.sockets = [mbp, strix, guestOnStrix];
+
+    await object.webSocketClose(strix);
+
+    expect(lastSentTo(guestOnStrix)).toEqual({ type: "daemon_status", online: false });
+  });
+
   it("will not let a shared guest choose which machine answers", async () => {
     const mbp = daemonSocket("mbp", "sam-mbp");
     const strix = daemonSocket("strix", "sam-strix");
@@ -1817,7 +1838,11 @@ describe("RelayObject machines", () => {
       id: "req-1",
       type: "response",
       status: 503,
-      body: { ok: false, error: "This shared chat is not bound to a machine", machines: [] },
+      body: {
+        ok: false,
+        error: "The machine hosting this shared chat is not connected",
+        machines: [],
+      },
     });
 
     // Bound to the mbp, the guest's request goes there -- not to the machine

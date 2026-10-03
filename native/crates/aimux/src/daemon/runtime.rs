@@ -211,6 +211,9 @@ pub struct RealDaemonRuntime {
     daemon_scheduler: Option<DaemonSchedulerHandle>,
     #[cfg(feature = "remote-control")]
     relay: Arc<crate::remote::daemon_relay::RelaySupervisor>,
+    /// Resolved once per process; see `machine_identity`.
+    #[cfg(feature = "remote-control")]
+    machine_identity: std::sync::OnceLock<crate::machine_identity::MachineIdentity>,
 }
 
 #[derive(Default)]
@@ -615,26 +618,35 @@ impl RealDaemonRuntime {
     /// must not become a machine-less connect -- that is the eviction bug the
     /// identity exists to stop -- so the failure is logged with its cause and a
     /// distinct in-memory identity is used until the next restart.
+    ///
+    /// Resolved once per process. `start_relay` is called on every status poll
+    /// and usually returns without reconnecting, so reading the file each time
+    /// would be a disk read per tick -- and with an unreadable file, a new
+    /// ephemeral id and a log line per tick.
     #[cfg(feature = "remote-control")]
     fn machine_identity(&self) -> crate::machine_identity::MachineIdentity {
-        match crate::machine_identity::load_or_create(&self.resolver) {
-            Ok(identity) => identity,
-            Err(error) => {
-                let identity = crate::machine_identity::MachineIdentity::ephemeral(
-                    crate::machine_identity::os_hostname().as_deref(),
-                );
-                log_lifecycle_always(
-                    "relay could not persist machine identity; using an ephemeral id",
-                    "daemon",
-                    Some(json!({
-                        "path": self.resolver.machine_identity_path().display().to_string(),
-                        "error": error.to_string(),
-                        "machineId": identity.id,
-                    })),
-                );
-                identity
-            }
-        }
+        self.machine_identity
+            .get_or_init(
+                || match crate::machine_identity::load_or_create(&self.resolver) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        let identity = crate::machine_identity::MachineIdentity::ephemeral(
+                            crate::machine_identity::os_hostname().as_deref(),
+                        );
+                        log_lifecycle_always(
+                            "relay could not persist machine identity; using an ephemeral id",
+                            "daemon",
+                            Some(json!({
+                                "path": self.resolver.machine_identity_path().display().to_string(),
+                                "error": error.to_string(),
+                                "machineId": identity.id,
+                            })),
+                        );
+                        identity
+                    }
+                },
+            )
+            .clone()
     }
 
     /// Called once the daemon is up, so a machine that was left logged in and
@@ -781,6 +793,8 @@ impl RealDaemonRuntime {
             daemon_scheduler: None,
             #[cfg(feature = "remote-control")]
             relay: Arc::new(crate::remote::daemon_relay::RelaySupervisor::default()),
+            #[cfg(feature = "remote-control")]
+            machine_identity: std::sync::OnceLock::new(),
         }
     }
 
@@ -818,6 +832,8 @@ impl RealDaemonRuntime {
             daemon_scheduler: None,
             #[cfg(feature = "remote-control")]
             relay: Arc::new(crate::remote::daemon_relay::RelaySupervisor::default()),
+            #[cfg(feature = "remote-control")]
+            machine_identity: std::sync::OnceLock::new(),
         }
     }
 

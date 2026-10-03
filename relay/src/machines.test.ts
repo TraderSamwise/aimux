@@ -28,6 +28,16 @@ describe("machine identity on the wire", () => {
     });
   });
 
+  // The slot kept for daemons that predate machine identity. A daemon that
+  // could ask for it could evict one, or be evicted by one.
+  it("refuses the reserved id", () => {
+    expect(isValidMachineId(UNIDENTIFIED_MACHINE_ID)).toBe(false);
+    expect(machineFromConnectUrl(new URL(`wss://relay/daemon/connect?machineId=${UNIDENTIFIED_MACHINE_ID}`)).id).toBe(
+      UNIDENTIFIED_MACHINE_ID,
+    );
+    expect(machineFromTags(["daemon", `machine:${UNIDENTIFIED_MACHINE_ID}`]).id).toBe(UNIDENTIFIED_MACHINE_ID);
+  });
+
   it("refuses an id that could break a socket tag", () => {
     for (const id of ["Has Caps", "has space", "semi;colon", "machine:nested", "", "a".repeat(65)]) {
       expect(isValidMachineId(id)).toBe(false);
@@ -122,5 +132,15 @@ describe("choosing which machine answers a shared guest", () => {
       error: "The machine hosting this shared chat is not connected",
       machines: [],
     });
+  });
+
+  // The number of machines on the account is not a guest's business, so an
+  // unbound share and an away host are refused in the same words.
+  it("does not let the wording reveal that the fleet is plural", () => {
+    const away = resolveSharedDaemonTarget([MBP], "strix");
+    const unbound = resolveSharedDaemonTarget([MBP, STRIX], undefined);
+    expect(away.ok).toBe(false);
+    expect(unbound.ok).toBe(false);
+    expect(away.ok === false && away.error).toBe(unbound.ok === false && unbound.error);
   });
 });

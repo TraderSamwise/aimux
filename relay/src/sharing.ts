@@ -182,9 +182,17 @@ export function findShareForSession(
   state: SharingState,
   ownerUserId: string,
   sessionId: string,
+  machineId?: string,
 ): SharedSessionRecord | undefined {
+  const wanted = sanitizeShareMachineId(machineId);
   return Object.values(state.shares).find(
-    (share) => share.ownerUserId === ownerUserId && share.sessionId === sessionId,
+    (share) =>
+      share.ownerUserId === ownerUserId &&
+      share.sessionId === sessionId &&
+      // A session id names a session on one host. Matching without the machine
+      // would let an invite for strix's `claude-1` rebind the guests of the
+      // mbp's share of the same name to strix.
+      sanitizeShareMachineId(share.machineId) === wanted,
   );
 }
 
@@ -202,7 +210,7 @@ export async function createShareInvite(
   const machineId = sanitizeShareMachineId(input.machineId);
   const current = normalizeSharingState(state);
   const share =
-    findShareForSession(current, owner.userId, sessionId) ??
+    findShareForSession(current, owner.userId, sessionId, machineId) ??
     createShare({ owner, projectRoot, serviceEndpoint, machineId, sessionId, now });
   if (serviceEndpoint) {
     share.serviceEndpoint = serviceEndpoint;
