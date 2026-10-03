@@ -31,6 +31,10 @@ export type ExposeStatusKind =
 
 export interface ExposeSourceItem {
   id?: string;
+  // Stamped by the global fan-out. A project id and a project root both repeat
+  // across machines, so without this the screen groups two hosts' items under
+  // one project and the tiles sit under the wrong host's name.
+  machineId?: string;
   target?: {
     windowId?: string;
     windowIndex?: number;
@@ -441,4 +445,33 @@ function tileServiceEndpoint(project: {
   return project.machineId
     ? { ...project.serviceEndpoint, machineId: project.machineId }
     : project.serviceEndpoint;
+}
+
+export function sourcesForGlobalExposeItems(projects: DaemonProject[], items: ExposeSourceItem[]) {
+  // Keyed by the machine too: a project id and a project root both repeat
+  // across hosts, so a map on either alone keeps whichever project came last
+  // and files one machine's items under the other machine's project.
+  const scope = (machineId: string | undefined, value: string) =>
+    `${machineId ?? ""}\u0000${value}`;
+  const byProjectId = new Map(
+    projects.map((project) => [scope(project.machineId, project.id), project]),
+  );
+  const byProjectPath = new Map(
+    projects.map((project) => [scope(project.machineId, project.path), project]),
+  );
+  const grouped = new Map<string, { project: DaemonProject; items: ExposeSourceItem[] }>();
+  for (const item of items) {
+    const project =
+      (item.projectId ? byProjectId.get(scope(item.machineId, item.projectId)) : undefined) ??
+      (item.projectRoot ? byProjectPath.get(scope(item.machineId, item.projectRoot)) : undefined);
+    if (!project) continue;
+    const groupKey = scope(project.machineId, project.id);
+    let source = grouped.get(groupKey);
+    if (!source) {
+      source = { project, items: [] };
+      grouped.set(groupKey, source);
+    }
+    source.items.push(item);
+  }
+  return [...grouped.values()];
 }

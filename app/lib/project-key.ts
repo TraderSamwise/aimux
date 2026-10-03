@@ -158,3 +158,24 @@ export const NO_PROJECT_STATE_KEY = "\u0000__aimux_no_project__" as ProjectState
 export function projectStateKey(ref: ProjectRef | null | undefined): ProjectStateKey {
   return (projectKey(ref) ?? NO_PROJECT_STATE_KEY) as ProjectStateKey;
 }
+
+declare const agentStateKeyBrand: unique symbol;
+
+// The key a per-agent atom family is indexed by.
+//
+// A session id is unique within one project service, not across the fleet: the
+// same checkout on two machines can hold a `claude-1` on each. These families
+// took the bare session id, so opening strix's agent showed the mbp's
+// transcript, streaming state and error banner until a snapshot landed --
+// and the transcript merge could splice the two hosts' messages together.
+//
+// Branded for the same reason `ProjectStateKey` is: a call site still passing a
+// bare session id has to be a compile error.
+export type AgentStateKey = string & { readonly [agentStateKeyBrand]: true };
+
+export function agentStateKey(
+  projectStateKey: ProjectStateKey,
+  sessionId: string | null | undefined,
+): AgentStateKey {
+  return `${projectStateKey}\u0000${sessionId?.trim() ?? ""}` as AgentStateKey;
+}

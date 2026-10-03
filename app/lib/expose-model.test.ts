@@ -8,6 +8,7 @@ import {
   groupExposeTiles,
   summarizeExposeTiles,
   type ExposeSourceItem,
+  sourcesForGlobalExposeItems,
 } from "./expose-model";
 import { worktreeTone } from "./worktree-tone";
 
@@ -650,5 +651,68 @@ describe("expose model", () => {
       role: "user",
       parts: [{ type: "text", text: "check again" }],
     });
+  });
+});
+
+describe("grouping global Expose items by the project they came from", () => {
+  const project = (machineId: string | undefined, id: string, path: string) => ({
+    id,
+    name: id,
+    path,
+    machineId,
+    machineName: machineId ? `sam-${machineId}` : undefined,
+    dashboardSessionName: `aimux-${id}`,
+    service: null,
+    serviceAlive: true,
+    serviceEndpoint: null,
+  });
+
+  // A project id and a project root both repeat across hosts, so a map on
+  // either alone kept whichever project came last and filed one machine's
+  // items under the other machine's project.
+  it("keeps two machines' identical projects apart", () => {
+    const sources = sourcesForGlobalExposeItems(
+      [project("mbp", "aimux", "/repo/aimux"), project("strix", "aimux", "/repo/aimux")],
+      [
+        { id: "a", machineId: "mbp", projectId: "aimux", projectRoot: "/repo/aimux" },
+        { id: "b", machineId: "strix", projectId: "aimux", projectRoot: "/repo/aimux" },
+      ],
+    );
+
+    expect(sources).toHaveLength(2);
+    expect(sources.map((source) => [source.project.machineId, source.items.length])).toEqual([
+      ["mbp", 1],
+      ["strix", 1],
+    ]);
+  });
+
+  it("groups one machine's items together", () => {
+    const sources = sourcesForGlobalExposeItems(
+      [project("mbp", "aimux", "/repo/aimux")],
+      [
+        { id: "a", machineId: "mbp", projectId: "aimux" },
+        { id: "b", machineId: "mbp", projectRoot: "/repo/aimux" },
+      ],
+    );
+    expect(sources).toHaveLength(1);
+    expect(sources[0].items).toHaveLength(2);
+  });
+
+  // Local mode, or an older relay: nothing is machine-scoped on either side.
+  it("still groups when nothing names a machine", () => {
+    const sources = sourcesForGlobalExposeItems(
+      [project(undefined, "aimux", "/repo/aimux")],
+      [{ id: "a", projectId: "aimux" }],
+    );
+    expect(sources).toHaveLength(1);
+  });
+
+  it("drops an item whose project is not in the list", () => {
+    expect(
+      sourcesForGlobalExposeItems(
+        [project("mbp", "aimux", "/repo/aimux")],
+        [{ id: "a", machineId: "strix", projectId: "aimux" }],
+      ),
+    ).toEqual([]);
   });
 });

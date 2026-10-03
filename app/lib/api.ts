@@ -668,7 +668,7 @@ function mergeGlobalExposeItems(
   results.forEach((result, index) => {
     const machine = machines[index];
     if (result.status === "fulfilled") {
-      items.push(...(result.value.items ?? []));
+      items.push(...(result.value.items ?? []).map((item) => ({ ...item, machineId: machine.id })));
       projectReadErrors.push(...(result.value.projectReadErrors ?? []));
       return;
     }
@@ -682,11 +682,11 @@ function mergeGlobalExposeItems(
     // No machine answered, so there is no list -- only an error.
     throw new ApiError(
       0,
-      { projectReadErrors },
-      results
+      { projectReadErrors, failures: projectReadErrors },
+      `No machine answered — ${results
         .map((result) => (result.status === "rejected" ? relayFailureMessage(result.reason) : ""))
         .filter(Boolean)
-        .join("; "),
+        .join("; ")}`,
     );
   }
   return { ok: true, items, ...(projectReadErrors.length > 0 ? { projectReadErrors } : {}) };

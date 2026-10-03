@@ -8,6 +8,10 @@ import type { ActiveSharedSession, MonitorSettings } from "@/stores/settings";
 export interface MonitorProjectTarget {
   kind: "project-agent";
   id: string;
+  // Which machine's copy of the project. The same checkout on two hosts gives
+  // two targets, and without this they share an id -- so a saved setting for
+  // one matches the other and the monitor streams the wrong host.
+  machineId?: string;
   projectPath: string;
   projectName: string;
   sessionId: string;
@@ -43,7 +47,8 @@ export function monitorSessionTargetsForProject(
     .filter((session) => !session.overseer && !session.scribe)
     .map((session) => ({
       kind: "project-agent",
-      id: monitorProjectTargetId(project.path, session.id),
+      id: monitorProjectTargetId(project.machineId, project.path, session.id),
+      machineId: project.machineId,
       projectPath: project.path,
       projectName: project.name,
       sessionId: session.id,
@@ -71,7 +76,14 @@ export function monitorSharedTargets(
 
 export function targetMatchesSettings(target: MonitorTarget, settings: MonitorSettings): boolean {
   if (target.kind !== settings.targetKind || target.sessionId !== settings.sessionId) return false;
-  if (target.kind === "project-agent") return target.projectPath === settings.projectPath;
+  if (target.kind === "project-agent") {
+    return (
+      target.projectPath === settings.projectPath &&
+      // A setting saved before machines existed names no machine and matches
+      // the project wherever it is; one that names a machine matches only it.
+      (!settings.machineId || settings.machineId === target.machineId)
+    );
+  }
   return target.ownerUserId === settings.shareOwnerUserId && target.shareId === settings.shareId;
 }
 
@@ -81,8 +93,12 @@ export function monitorTargetLabel(target: MonitorTarget | null | undefined): st
   return `${target.projectName} / ${target.sessionLabel}`;
 }
 
-export function monitorProjectTargetId(projectPath: string, sessionId: string): string {
-  return `project:${projectPath}:${sessionId}`;
+export function monitorProjectTargetId(
+  machineId: string | undefined,
+  projectPath: string,
+  sessionId: string,
+): string {
+  return `project:${machineId ?? ""}:${projectPath}:${sessionId}`;
 }
 
 export function monitorSharedTargetId(ownerUserId: string, shareId: string): string {

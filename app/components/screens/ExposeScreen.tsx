@@ -25,6 +25,7 @@ import {
   type ExposeFilter,
   type ExposeSourceItem,
   type ExposeTile,
+  sourcesForGlobalExposeItems,
 } from "@/lib/expose-model";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
@@ -90,25 +91,6 @@ function resolveScope(value: string | string[] | undefined): ExposeScope {
 function resolveFilter(value: string | string[] | undefined): ExposeFilter {
   const first = Array.isArray(value) ? value[0] : value;
   return FILTER_OPTIONS.some((option) => option.value === first) ? (first as ExposeFilter) : "all";
-}
-
-function sourcesForGlobalExposeItems(projects: DaemonProject[], items: ExposeSourceItem[]) {
-  const byProjectId = new Map(projects.map((project) => [project.id, project]));
-  const byProjectPath = new Map(projects.map((project) => [project.path, project]));
-  const grouped = new Map<string, { project: DaemonProject; items: ExposeSourceItem[] }>();
-  for (const item of items) {
-    const project =
-      (item.projectId ? byProjectId.get(item.projectId) : undefined) ??
-      (item.projectRoot ? byProjectPath.get(item.projectRoot) : undefined);
-    if (!project) continue;
-    let source = grouped.get(project.id);
-    if (!source) {
-      source = { project, items: [] };
-      grouped.set(project.id, source);
-    }
-    source.items.push(item);
-  }
-  return [...grouped.values()];
 }
 
 function buildFilterOptions(summary: ReturnType<typeof summarizeExposeTiles>) {

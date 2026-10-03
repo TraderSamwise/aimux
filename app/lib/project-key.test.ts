@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  agentStateKey,
   findProjectByRef,
+  projectStateKey,
   resolveRouteProjectRef,
   projectRefFromPayload,
   findProjectForRef,
@@ -256,5 +258,34 @@ describe("which project a screen is on", () => {
         shareProjectRoot: "/repo/shared",
       }),
     ).toEqual({ path: "/repo/shared" });
+  });
+});
+
+describe("what identifies an agent", () => {
+  const mbp = projectStateKey({ machineId: "mbp", path: "/repo/aimux" });
+  const strix = projectStateKey({ machineId: "strix", path: "/repo/aimux" });
+
+  // A session id is unique within one project service, not across the fleet.
+  // These keyed the transcript, streaming state and error banner, so opening
+  // strix's agent showed the mbp's conversation until a snapshot landed -- and
+  // the transcript merge could splice the two hosts' messages together.
+  it("tells the same session id on two machines apart", () => {
+    expect(agentStateKey(mbp, "claude-1")).not.toBe(agentStateKey(strix, "claude-1"));
+  });
+
+  it("tells two sessions on one machine apart", () => {
+    expect(agentStateKey(mbp, "claude-1")).not.toBe(agentStateKey(mbp, "claude-2"));
+  });
+
+  it("is stable for the same agent", () => {
+    expect(agentStateKey(mbp, "claude-1")).toBe(agentStateKey(mbp, "claude-1"));
+    expect(agentStateKey(mbp, "  claude-1  ")).toBe(agentStateKey(mbp, "claude-1"));
+  });
+
+  // A route with no session still needs a key, and it must not be the key of
+  // some other agent.
+  it("has a key for no session at all", () => {
+    expect(agentStateKey(mbp, null)).not.toBe(agentStateKey(mbp, "claude-1"));
+    expect(agentStateKey(mbp, undefined)).toBe(agentStateKey(mbp, ""));
   });
 });

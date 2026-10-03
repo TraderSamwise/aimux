@@ -101,6 +101,7 @@ export default function MonitorScreen() {
         ...current,
         targetKind: target.kind,
         projectPath: target.kind === "project-agent" ? target.projectPath : target.projectRoot,
+        machineId: target.kind === "project-agent" ? (target.machineId ?? null) : null,
         sessionId: target.sessionId,
         shareOwnerUserId: target.kind === "shared-chat" ? target.ownerUserId : null,
         shareId: target.kind === "shared-chat" ? target.shareId : null,

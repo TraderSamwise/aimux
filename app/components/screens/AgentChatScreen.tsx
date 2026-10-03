@@ -24,7 +24,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
-import { projectStateKey } from "@/lib/project-key";
+import { agentStateKey, projectStateKey, type AgentStateKey } from "@/lib/project-key";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import { useColorScheme } from "nativewind";
@@ -479,6 +479,10 @@ export default function ChatScreen() {
   const stateProjectPath = projectPath ?? "";
   // Keyed by the pair: two machines' copies of one checkout are two projects.
   const stateProjectKey = projectStateKey(projectRef);
+  // A session id is unique within one project service, not across the fleet:
+  // the same checkout on two machines can hold an agent of the same name, and
+  // their transcripts, streaming state and errors must not be one atom.
+  const agentKey = agentStateKey(stateProjectKey, sessionId);
   const desktopState = useAtomValue(desktopStateFamily(stateProjectKey));
   const worktreeGroups = useAtomValue(worktreeGroupsFamily(stateProjectKey));
   const selectSession = useSetAtom(selectedSessionIdAtom);
@@ -486,10 +490,10 @@ export default function ChatScreen() {
   const clearLocalInterruptHold = useSetAtom(clearLocalInterruptHoldAtom);
   const setGlobalChatChromeVisible = useSetAtom(chatChromeVisibleAtom);
   const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
-  const transcript = useAtomValue(transcriptFamily(sessionKey));
-  const transcriptLastError = useAtomValue(lastErrorFamily(sessionKey));
-  const activity = useAtomValue(activityFamily(sessionKey));
-  const activityText = useAtomValue(activityTextFamily(sessionKey));
+  const transcript = useAtomValue(transcriptFamily(agentKey));
+  const transcriptLastError = useAtomValue(lastErrorFamily(agentKey));
+  const activity = useAtomValue(activityFamily(agentKey));
+  const activityText = useAtomValue(activityTextFamily(agentKey));
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
@@ -1004,6 +1008,7 @@ export default function ChatScreen() {
     enabled: heartbeatReady && !routeSessionMissing,
     endpoint: serviceEndpoint ?? null,
     mode: agentOutputFeedMode,
+    projectStateKey: stateProjectKey,
     sessionId,
     startLine: CHAT_OUTPUT_CAPTURE_START_LINE,
     token,
@@ -1259,7 +1264,7 @@ export default function ChatScreen() {
       const sendOperationId = sendOperationIdRef.current + 1;
       sendOperationIdRef.current = sendOperationId;
       const sendComposerDraftKey = composerDraftKey;
-      clearLocalInterruptHold(sessionId);
+      clearLocalInterruptHold(agentKey);
       const baselineUserMessageCount = userMessageCountRef.current;
       const baselineParsedMessageCount = parsedMessageCountRef.current;
       const baselineParsedUserMessageCount = parsedUserMessageCountRef.current;
@@ -1401,6 +1406,7 @@ export default function ChatScreen() {
       }
     },
     [
+      agentKey,
       clearLocalInterruptHold,
       composerAwaitingAck,
       composerDraftKey,
@@ -1524,7 +1530,7 @@ export default function ChatScreen() {
    */
   const handleInterrupt = useCallback(async () => {
     if (!endpointHost || !endpointPort || !sessionId) return;
-    markOutputInterrupted(sessionId);
+    markOutputInterrupted(agentKey);
     if (interruptInFlightRef.current) return;
     interruptInFlightRef.current = true;
     setSendError(null);
@@ -1550,6 +1556,7 @@ export default function ChatScreen() {
     endpointHost,
     endpointMachineId,
     endpointPort,
+    agentKey,
     markOutputInterrupted,
     refreshOutputSnapshot,
     sessionId,
@@ -2622,7 +2629,7 @@ export default function ChatScreen() {
                       onRequestHistoryPage={requestChatHistoryPage}
                       onRetryTranscriptLoad={handleRetryTranscriptLoad}
                       serviceEndpoint={displayServiceEndpoint}
-                      sessionKey={sessionKey}
+                      agentKey={agentKey}
                       topContentInset={chatTopContentReserve}
                     />
                   </View>
@@ -2634,7 +2641,7 @@ export default function ChatScreen() {
                       dividerWidth={chatDividerWidth}
                       keyboardVisible={keyboardVisible}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
-                      sessionKey={sessionKey}
+                      agentKey={agentKey}
                       topContentInset={chatTopContentReserve}
                     />
                   </View>
@@ -2834,7 +2841,7 @@ type AgentTerminalOutputPaneProps = {
   dividerWidth: number;
   keyboardVisible: boolean;
   onChromeVisibleChange: (visible: boolean) => void;
-  sessionKey: string;
+  agentKey: AgentStateKey;
   topContentInset: number;
 };
 
@@ -2843,12 +2850,12 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
   dividerWidth,
   keyboardVisible,
   onChromeVisibleChange,
-  sessionKey,
+  agentKey,
   topContentInset,
 }: AgentTerminalOutputPaneProps) {
-  const outputPlain = useAtomValue(outputBufferFamily(sessionKey));
-  const outputAnsi = useAtomValue(outputAnsiFamily(sessionKey));
-  const outputAvailable = useAtomValue(outputAvailableFamily(sessionKey));
+  const outputPlain = useAtomValue(outputBufferFamily(agentKey));
+  const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
+  const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
   const scrollRef = useRef<ChatScrollHandle | null>(null);
   const output = outputAnsi || outputPlain;
   const outputTail = useMemo(
@@ -2868,9 +2875,9 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
         lines: liveLines,
         outputAvailable,
         outputText: outputTail,
-        sessionKey,
+        sessionKey: agentKey,
       }),
-    [liveLines, outputAvailable, outputTail, sessionKey],
+    [liveLines, outputAvailable, outputTail, agentKey],
   );
   const [visibleOutput, setVisibleOutput] = useState(liveOutput);
   const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
@@ -2888,11 +2895,11 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
     viewportHeight: 0,
   });
   const extraContentPadding = useSharedValue(bottomContentInset);
-  const visibleLines = visibleOutput.sessionKey === sessionKey ? visibleOutput.lines : liveLines;
+  const visibleLines = visibleOutput.sessionKey === agentKey ? visibleOutput.lines : liveLines;
   const visibleOutputText =
-    visibleOutput.sessionKey === sessionKey ? visibleOutput.outputText : outputTail;
+    visibleOutput.sessionKey === agentKey ? visibleOutput.outputText : outputTail;
   const visibleOutputAvailable =
-    visibleOutput.sessionKey === sessionKey ? visibleOutput.outputAvailable : outputAvailable;
+    visibleOutput.sessionKey === agentKey ? visibleOutput.outputAvailable : outputAvailable;
   const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
 
   const cancelPendingTerminalScroll = useCallback(() => {
@@ -2939,7 +2946,7 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
     terminalInitialLayoutKeyRef.current = null;
     onChromeVisibleChange(true);
     executeTerminalScrollCommand(chatCommandForNavigationFocus());
-  }, [executeTerminalScrollCommand, onChromeVisibleChange, sessionKey]);
+  }, [executeTerminalScrollCommand, onChromeVisibleChange, agentKey]);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -2960,14 +2967,14 @@ const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
         ...terminalGeometryRef.current,
         viewportHeight: event.nativeEvent.layout.height,
       };
-      if (terminalInitialLayoutKeyRef.current !== sessionKey) {
-        terminalInitialLayoutKeyRef.current = sessionKey;
+      if (terminalInitialLayoutKeyRef.current !== agentKey) {
+        terminalInitialLayoutKeyRef.current = agentKey;
         executeTerminalScrollCommand(chatCommandForInitialLayout());
         return;
       }
       executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
     },
-    [executeTerminalScrollCommand, sessionKey],
+    [executeTerminalScrollCommand, agentKey],
   );
 
   const handleTerminalContentSizeChange = useCallback(
@@ -3107,7 +3114,7 @@ type AgentChatSessionViewportProps = {
   onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
   placeholderState: ChatTranscriptPlaceholderState;
   serviceEndpoint: ServiceEndpoint;
-  sessionKey: string;
+  agentKey: AgentStateKey;
   topContentInset: number;
 };
 
@@ -3124,7 +3131,7 @@ const AgentChatSessionViewport = React.memo(
         onRetryTranscriptLoad,
         placeholderState,
         serviceEndpoint,
-        sessionKey,
+        agentKey,
         topContentInset,
       },
       ref,
@@ -3133,9 +3140,9 @@ const AgentChatSessionViewport = React.memo(
         () =>
           chatVisibleTranscriptForPinned({
             liveMessages: allMessages,
-            sessionKey,
+            sessionKey: agentKey,
           }),
-        [allMessages, sessionKey],
+        [allMessages, agentKey],
       );
       const [visibleChatTranscript, setVisibleChatTranscript] = useState<
         ChatVisibleTranscript<ChatMessage>
@@ -3161,7 +3168,7 @@ const AgentChatSessionViewport = React.memo(
 
       const visibleMessages = chatVisibleTranscriptMessages(visibleChatTranscript, {
         liveMessages: allMessages,
-        sessionKey,
+        sessionKey: agentKey,
       });
 
       const applyVisibleChatTranscript = useCallback((next: ChatVisibleTranscript<ChatMessage>) => {
@@ -3173,9 +3180,9 @@ const AgentChatSessionViewport = React.memo(
 
       const showLiveChatTranscript = useCallback(() => {
         const live = liveChatTranscriptRef.current;
-        if (live.sessionKey !== sessionKey) return;
+        if (live.sessionKey !== agentKey) return;
         applyVisibleChatTranscript(live);
-      }, [applyVisibleChatTranscript, sessionKey]);
+      }, [applyVisibleChatTranscript, agentKey]);
 
       const clearNewMessageBadgeTimers = useCallback(() => {
         if (newMessageBadgeDebounceRef.current !== null) {
@@ -3240,7 +3247,7 @@ const AgentChatSessionViewport = React.memo(
       const showNewest = useCallback(() => {
         const live = chatVisibleTranscriptForPinned({
           liveMessages: allMessages,
-          sessionKey,
+          sessionKey: agentKey,
         });
         liveChatTranscriptRef.current = live;
         chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
@@ -3255,7 +3262,7 @@ const AgentChatSessionViewport = React.memo(
         executeChatScrollCommand,
         onChromeVisibleChange,
         resetNewMessageBadge,
-        sessionKey,
+        agentKey,
       ]);
 
       useImperativeHandle(ref, () => ({ showNewest }), [showNewest]);
@@ -3266,7 +3273,7 @@ const AgentChatSessionViewport = React.memo(
 
       useFocusEffect(
         useCallback(() => {
-          chatInitialLayoutKeyRef.current = sessionKey || null;
+          chatInitialLayoutKeyRef.current = agentKey || null;
           chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
           chatScrollChromeRef.current = createChatScrollChromeState();
           resetNewMessageBadge();
@@ -3284,7 +3291,7 @@ const AgentChatSessionViewport = React.memo(
           executeChatScrollCommand,
           onChromeVisibleChange,
           resetNewMessageBadge,
-          sessionKey,
+          agentKey,
           showLiveChatTranscript,
         ]),
       );
@@ -3295,7 +3302,7 @@ const AgentChatSessionViewport = React.memo(
             ...chatScrollMetricsRef.current,
             viewportHeight: event.nativeEvent.layout.height,
           };
-          const layoutKey = sessionKey || "unscoped";
+          const layoutKey = agentKey || "unscoped";
           if (chatInitialLayoutKeyRef.current !== layoutKey) {
             chatInitialLayoutKeyRef.current = layoutKey;
             executeChatScrollCommand(chatCommandForInitialLayout());
@@ -3306,7 +3313,7 @@ const AgentChatSessionViewport = React.memo(
             "content",
           );
         },
-        [executeChatScrollCommand, sessionKey],
+        [executeChatScrollCommand, agentKey],
       );
 
       const handleChatContentSizeChange = useCallback(
@@ -3366,10 +3373,10 @@ const AgentChatSessionViewport = React.memo(
         const next = chatVisibleTranscriptForLiveChange(visibleChatTranscriptRef.current, {
           intent: chatScrollPolicyRef.current.intent,
           liveMessages: allMessages,
-          sessionKey,
+          sessionKey: agentKey,
         });
         applyVisibleChatTranscript(next);
-      }, [allMessages, applyVisibleChatTranscript, liveChatTranscript, sessionKey]);
+      }, [allMessages, applyVisibleChatTranscript, liveChatTranscript, agentKey]);
 
       useEffect(() => {
         if (chatScrollPolicyRef.current.intent !== "reading") return;

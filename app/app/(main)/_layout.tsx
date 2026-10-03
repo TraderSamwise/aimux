@@ -696,6 +696,7 @@ export default function MainLayout() {
             const notification = evaluateAlertEvent(event, notificationSettings, {
               projectName: effectiveProject?.name,
               projectPath: effectiveProjectPath ?? undefined,
+              machineId: effectiveProjectRef?.machineId,
             });
             if (
               notification &&

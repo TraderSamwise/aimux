@@ -14,6 +14,7 @@ import {
   stripTrustedAimuxHeaders,
   summarizeShare,
   upsertAcceptedShare,
+  type ShareActor,
 } from "./sharing";
 
 const owner = {
@@ -371,5 +372,48 @@ describe("sharing state", () => {
     );
 
     expect(Object.values(created.state.shares)[0].serviceEndpoint).toBeUndefined();
+  });
+});
+
+describe("which share a new invite extends", () => {
+  const owner: ShareActor = { userId: "user_owner", displayName: "Sam", role: "owner" };
+
+  async function invite(state: Parameters<typeof createShareInvite>[0], machineId?: string) {
+    return createShareInvite(state, {
+      owner,
+      projectRoot: "/repo/aimux",
+      sessionId: "claude-1",
+      email: "guest@example.com",
+      machineId,
+    });
+  }
+
+  // A session id names a session on one host, so an invite for strix's
+  // `claude-1` must not rebind the guests of the mbp's share of that name.
+  it("keeps two machines' shares of one session id apart", async () => {
+    const first = await invite(emptySharingState(), "mbp");
+    const second = await invite(first.state, "strix");
+
+    expect(second.token.share.id).not.toBe(first.token.share.id);
+    expect(Object.keys(second.state.shares)).toHaveLength(2);
+  });
+
+  it("extends the same share when the machine is the same", async () => {
+    const first = await invite(emptySharingState(), "mbp");
+    const second = await invite(first.state, "mbp");
+
+    expect(second.token.share.id).toBe(first.token.share.id);
+    expect(Object.keys(second.state.shares)).toHaveLength(1);
+  });
+
+  // A share made before machines existed is the same share. Creating a second
+  // one would leave its guests on a record nothing routes any more.
+  it("adopts a share that names no machine rather than duplicating it", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const bound = await invite(legacy.state, "mbp");
+
+    expect(bound.token.share.id).toBe(legacy.token.share.id);
+    expect(bound.token.share.machineId).toBe("mbp");
+    expect(Object.keys(bound.state.shares)).toHaveLength(1);
   });
 });

@@ -61,7 +61,10 @@ export function useRouteProject(): RouteProject {
     resolveRouteProjectRef({
       urlRef: routeRef,
       selectedRef: selectedProjectRef,
-      shareProjectRoot: sharedRouteProject?.path,
+      // The layout passes the share root unconditionally; the narrower
+      // `sharedRouteProject?.path` made the two disagree for a URL that names
+      // some other path while a share is active.
+      shareProjectRoot: activeShare?.projectRoot,
     }),
   );
   const routeProject =

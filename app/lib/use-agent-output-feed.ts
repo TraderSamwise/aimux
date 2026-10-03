@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { agentStateKey, type ProjectStateKey } from "@/lib/project-key";
 import { useSetAtom } from "jotai";
 
 import {
@@ -36,6 +37,9 @@ export type AgentOutputFeedInput = {
   enabled: boolean;
   endpoint: ServiceEndpoint | null;
   mode: AgentOutputFeedMode;
+  // Which project service the session belongs to. A session id alone is not
+  // unique across the fleet.
+  projectStateKey: ProjectStateKey;
   sessionId: string | null | undefined;
   startLine: number;
   token: string | null;
@@ -63,13 +67,16 @@ export function useAgentOutputFeed({
   enabled,
   endpoint,
   mode,
+  projectStateKey,
   sessionId,
   startLine,
   token,
 }: AgentOutputFeedInput): AgentOutputFeed {
   const applyOutputSnapshot = useSetAtom(applyOutputSnapshotAtom);
   const applyOutputEvent = useSetAtom(applyOutputEventAtom);
-  const setLastError = useSetAtom(lastErrorFamily(sessionId ?? ""));
+  // A session id is unique within one project service, not across the fleet.
+  const agentKey = agentStateKey(projectStateKey, sessionId);
+  const setLastError = useSetAtom(lastErrorFamily(agentKey));
   const endpointHost = endpoint?.host ?? null;
   const endpointPort = endpoint?.port ?? null;
   // The machine is part of the address: the same host and port name a
@@ -105,7 +112,7 @@ export function useAgentOutputFeed({
         return false;
       }
       applyOutputSnapshot({
-        sessionId: result.sessionId,
+        agentStateKey: agentStateKey(projectStateKey, result.sessionId),
         output: result.output,
         outputAnsi: result.outputAnsi,
         outputAvailable: result.outputAvailable,
@@ -118,7 +125,7 @@ export function useAgentOutputFeed({
       });
       return paneOutputSnapshotSettlesInitialTranscript(result);
     },
-    [applyOutputSnapshot, sessionId, setLastError],
+    [applyOutputSnapshot, projectStateKey, sessionId, setLastError],
   );
 
   const applyStreamOutput = useCallback(
@@ -132,10 +139,10 @@ export function useAgentOutputFeed({
       }
       lastStreamOutputAtRef.current = Date.now();
       streamFailedRef.current = false;
-      applyOutputEvent(event);
+      applyOutputEvent({ projectStateKey, event });
       return paneOutputSnapshotSettlesInitialTranscript(event);
     },
-    [applyOutputEvent, sessionId, setLastError],
+    [applyOutputEvent, projectStateKey, sessionId, setLastError],
   );
 
   const refreshOutputSnapshot = useCallback(

@@ -51,6 +51,7 @@ export function NotificationProvider() {
       {
         projectName: selectedProject?.name,
         projectPath: selectedProject?.path ?? undefined,
+        machineId: selectedProject?.machineId,
       },
       seenIds,
       1,
@@ -78,6 +79,7 @@ export function NotificationProvider() {
     projectScope,
     selectedProject?.name,
     selectedProject?.path,
+    selectedProject?.machineId,
   ]);
 
   useEffect(() => {
@@ -97,6 +99,7 @@ export function NotificationProvider() {
         {
           projectName: selectedProject?.name,
           projectPath: selectedProject?.path ?? undefined,
+          machineId: selectedProject?.machineId,
         },
       );
 
@@ -114,6 +117,7 @@ export function NotificationProvider() {
     projectScope,
     selectedProject?.name,
     selectedProject?.path,
+    selectedProject?.machineId,
   ]);
 
   return null;

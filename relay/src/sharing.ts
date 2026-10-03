@@ -185,15 +185,18 @@ export function findShareForSession(
   machineId?: string,
 ): SharedSessionRecord | undefined {
   const wanted = sanitizeShareMachineId(machineId);
-  return Object.values(state.shares).find(
-    (share) =>
-      share.ownerUserId === ownerUserId &&
-      share.sessionId === sessionId &&
-      // A session id names a session on one host. Matching without the machine
-      // would let an invite for strix's `claude-1` rebind the guests of the
-      // mbp's share of the same name to strix.
-      sanitizeShareMachineId(share.machineId) === wanted,
+  const forOwnerSession = Object.values(state.shares).filter(
+    (share) => share.ownerUserId === ownerUserId && share.sessionId === sessionId,
   );
+  // A session id names a session on one host. Matching without the machine
+  // would let an invite for strix's `claude-1` rebind the guests of the mbp's
+  // share of the same name to strix.
+  const sameMachine = forOwnerSession.find((share) => sanitizeShareMachineId(share.machineId) === wanted);
+  if (sameMachine) return sameMachine;
+  // A share made before machines existed, or before this daemon had an id, is
+  // the same share. Adopting it is what lets a re-invite bind it rather than
+  // create a second share and strand the guests on the first.
+  return forOwnerSession.find((share) => !sanitizeShareMachineId(share.machineId));
 }
 
 export async function createShareInvite(

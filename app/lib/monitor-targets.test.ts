@@ -35,8 +35,9 @@ describe("monitor targets", () => {
     expect(monitorSessionTargetsForProject(project, state)).toEqual([
       {
         kind: "project-agent",
-        id: "project:/repo/aimux:claude-1",
+        id: "project::/repo/aimux:claude-1",
         projectPath: "/repo/aimux",
+        machineId: undefined,
         projectName: "aimux",
         sessionId: "claude-1",
         sessionLabel: "Claude",
@@ -87,6 +88,7 @@ describe("monitor targets", () => {
       speechLanguage: "en-US",
       audioSampleRate: 16000,
       projectPath: "/repo/aimux",
+      machineId: null,
       sessionId: "claude-1",
       shareOwnerUserId: null,
       shareId: null,
@@ -108,10 +110,53 @@ describe("monitor targets", () => {
         ...settings,
         targetKind: "shared-chat",
         projectPath: "/repo/scratch",
+        machineId: null,
         sessionId: "claude-2",
         shareOwnerUserId: "owner-1",
         shareId: "share-1",
       }),
     ).toBe(true);
+  });
+});
+
+describe("two machines holding the same checkout", () => {
+  const onMachine = (machineId: string): DaemonProject => ({
+    ...project,
+    machineId,
+    machineName: `sam-${machineId}`,
+  });
+
+  // The same path and session id on two hosts gave two targets one id, so a
+  // saved setting for one matched the other and the monitor streamed the
+  // wrong host.
+  it("gives their targets different ids", () => {
+    expect(monitorSessionTargetsForProject(onMachine("mbp"), state)[0].id).not.toBe(
+      monitorSessionTargetsForProject(onMachine("strix"), state)[0].id,
+    );
+  });
+
+  it("matches a saved setting only on the machine it named", () => {
+    const target = monitorSessionTargetsForProject(onMachine("mbp"), state)[0];
+    const settingsFor = (machineId: string | null): MonitorSettings => ({
+      intervalSeconds: 10,
+      targetKind: "project-agent",
+      captureMode: "camera",
+      cameraViewport: { centerX: 0.5, centerY: 0.5, zoom: 1 },
+      speechToText: false,
+      speechOnDeviceOnly: false,
+      speechInterimResults: false,
+      speechLanguage: "en-US",
+      audioSampleRate: 16000,
+      projectPath: target.projectPath,
+      machineId,
+      sessionId: "claude-1",
+      shareOwnerUserId: null,
+      shareId: null,
+    });
+
+    expect(targetMatchesSettings(target, settingsFor("mbp"))).toBe(true);
+    expect(targetMatchesSettings(target, settingsFor("strix"))).toBe(false);
+    // Saved before machines existed: it matches the project wherever it is.
+    expect(targetMatchesSettings(target, settingsFor(null))).toBe(true);
   });
 });
