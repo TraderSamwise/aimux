@@ -1,3 +1,4 @@
+import type { MachineInfo } from "./machines.js";
 import type { SecurityEventRecord } from "./security.js";
 
 export interface Env {
@@ -34,6 +35,9 @@ export interface RelayRequest {
   path: string;
   headers?: Record<string, string>;
   body?: unknown;
+  // Which machine should answer. Absent is a question, not a default: the
+  // relay resolves it only when there is exactly one machine to mean.
+  machineId?: string;
 }
 
 export interface RelayProjectEventsSubscribe {
@@ -41,6 +45,7 @@ export interface RelayProjectEventsSubscribe {
   type: "project_events_subscribe";
   path: string;
   headers?: Record<string, string>;
+  machineId?: string;
 }
 
 export interface RelayProjectEventsUnsubscribe {
@@ -67,6 +72,7 @@ export interface RelayProjectEventsError {
   message: string;
   deviceId?: string;
   approvalCode?: string;
+  machines?: MachineInfo[];
 }
 
 export interface RelayResponse {
@@ -76,11 +82,18 @@ export interface RelayResponse {
   body?: unknown;
 }
 
+export interface MachineListPayload {
+  machines: MachineInfo[];
+}
+
 export interface RelayControl {
   type: "ping" | "pong" | "connected" | "error" | "daemon_status";
   role?: "daemon" | "client";
   message?: string;
+  // True when ANY machine is up. `machines` is the answer that replaces it:
+  // "remote is up" became "which machines are up".
   online?: boolean;
+  machines?: MachineInfo[];
 }
 
 export interface RelaySecurityEventControl {
