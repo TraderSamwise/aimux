@@ -219,6 +219,10 @@ fn dashboard_action_timeout_ms(path: &str) -> u64 {
         | routes::graveyard_actions::REAP_DEAD_AGENTS
         | routes::graveyard_actions::RESURRECT_WORKTREE
         | routes::graveyard_actions::DELETE_WORKTREE => 10_000,
+        // One request that launches the whole offered fleet in turn. 35 agents
+        // took 12.4s on sam-strix, so the default budget expired a sixth of the
+        // way in and a working restore reported itself as a transport timeout.
+        routes::agents::RESTORE_PREVIOUS => 180_000,
         _ => 2_000,
     }
 }
@@ -246,6 +250,23 @@ mod tests {
                 &json!({ "ok": false, "error": "tmux failed to create window" })
             ),
             "dashboard action failed: tmux failed to create window"
+        );
+    }
+
+    // 35 agents took 12.4s on sam-strix. On the default budget the dashboard
+    // gave up a sixth of the way in and reported a working restore as a
+    // transport timeout, with every row still showing offline.
+    #[test]
+    fn restoring_a_fleet_is_not_given_a_single_actions_budget() {
+        let restore = dashboard_action_timeout_ms(routes::agents::RESTORE_PREVIOUS);
+        assert!(
+            restore >= 60_000,
+            "restore launches every offered agent in one request; got {restore}ms"
+        );
+        assert_eq!(
+            dashboard_action_timeout_ms(routes::agents::KILL),
+            2_000,
+            "a single-agent action keeps the short budget"
         );
     }
 

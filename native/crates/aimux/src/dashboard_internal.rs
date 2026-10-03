@@ -2436,6 +2436,9 @@ type DeferredDashboardRequest = (DashboardActionRequest, Option<(PendingTarget, 
 struct DashboardRequestOutcome {
     pending: Option<(PendingTarget, String, u64)>,
     failure: Option<String>,
+    /// What a successful mutation did, for the routes where succeeding quietly
+    /// is indistinguishable from doing nothing.
+    notice: Option<String>,
 }
 
 /// Send the mutations queued during key handling, now that the optimistic frame
@@ -2467,12 +2470,26 @@ fn flush_deferred_dashboard_requests(
         };
         let outcomes = outcomes.clone();
         thread::spawn(move || {
-            let failure = execute_dashboard_controller_action(&endpoint, &request)
-                .err()
-                .map(|error| error.to_string());
-            let _ = outcomes.send(DashboardRequestOutcome { pending, failure });
+            let (failure, notice) = match execute_dashboard_controller_action(&endpoint, &request) {
+                Ok(body) => (None, dashboard_action_notice(request.path, &body)),
+                Err(error) => (Some(error.to_string()), None),
+            };
+            let _ = outcomes.send(DashboardRequestOutcome {
+                pending,
+                failure,
+                notice,
+            });
         });
     }
+}
+
+/// The sentence a finished mutation leaves in the footer. Only routes whose
+/// success is otherwise invisible have one.
+fn dashboard_action_notice(path: &str, body: &Value) -> Option<String> {
+    if path == crate::project_api_contract::routes::agents::RESTORE_PREVIOUS {
+        return crate::agent_restore_outcome::restore_outcome_message(body);
+    }
+    None
 }
 
 /// Apply whatever off-thread mutations have finished. Returns true if the frame
@@ -2492,6 +2509,10 @@ fn drain_dashboard_request_outcomes(
             if let Some((target, id, token)) = outcome.pending.as_ref() {
                 pending_actions.clear_if_token(*target, id, *token);
             }
+        } else if let Some(message) = outcome.notice
+            && let Some(controller) = controller.as_deref_mut()
+        {
+            controller.footer_message = Some(message);
         }
     }
     changed
@@ -2500,6 +2521,26 @@ fn drain_dashboard_request_outcomes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_finished_restore_says_what_it_did_rather_than_nothing() {
+        let body = serde_json::json!({
+            "accepted": true,
+            "restored": [{ "sessionId": "codex-a" }],
+            "failed": [{ "sessionId": "claude-b", "error": "no backend session id" }],
+        });
+        let notice = dashboard_action_notice(
+            crate::project_api_contract::routes::agents::RESTORE_PREVIOUS,
+            &body,
+        )
+        .expect("a restore reports its outcome");
+        assert!(notice.contains("claude-b"), "{notice}");
+        assert_eq!(
+            dashboard_action_notice(crate::project_api_contract::routes::agents::KILL, &body),
+            None,
+            "only routes whose success is otherwise invisible speak up"
+        );
+    }
 
     #[test]
     fn a_slow_mutation_does_not_block_the_render_loop() {

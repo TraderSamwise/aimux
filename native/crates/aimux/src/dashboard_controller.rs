@@ -385,7 +385,7 @@ impl DashboardController {
             return self.handle_worktree_list_key(key);
         }
         if self.agent_restore_prompt_active(snapshot) {
-            return self.handle_agent_restore_prompt_key(key);
+            return self.handle_agent_restore_prompt_key(snapshot, key);
         }
         if self.worktree_cache_cleanup_confirm.is_some() {
             return self.handle_worktree_cache_cleanup_confirm_key(key);
@@ -1469,9 +1469,22 @@ impl DashboardController {
         !self.agent_restore_prompt_dismissed && snapshot.agent_restore_offer.is_some()
     }
 
-    fn handle_agent_restore_prompt_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+    fn handle_agent_restore_prompt_key(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
         if matches!(key, DashboardKey::Enter | DashboardKey::Printable('y')) {
             self.agent_restore_prompt_dismissed = true;
+            // Launching the fleet takes seconds per handful of agents, and the
+            // reply lands long after the keystroke. Without this the dashboard
+            // is silent for the whole restore and looks like it ignored Enter.
+            self.footer_message = Some(crate::agent_restore_outcome::restore_started_message(
+                snapshot
+                    .agent_restore_offer
+                    .as_ref()
+                    .map_or(0, |offer| offer.session_ids.len()),
+            ));
             return DashboardControllerEffect::Request(DashboardActionRequest {
                 method: "POST",
                 path: routes::agents::RESTORE_PREVIOUS,
