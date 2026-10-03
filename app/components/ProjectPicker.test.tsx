@@ -264,3 +264,97 @@ describe("a list that is on screen but not refreshing is marked stale", () => {
     expect(renderPickerText(projects, false)).not.toContain("Not refreshing");
   });
 });
+
+describe("ProjectPicker machine sections", () => {
+  function machineProject(name: string, machineId: string, machineName: string) {
+    return project({ id: name, name, dashboardAlive: true, machineId, machineName });
+  }
+
+  // Every machine at once. A switcher would hide two thirds of the fleet.
+  it("heads each machine's projects with that machine", () => {
+    const text = collectText(
+      ProjectPicker({
+        projects: [
+          machineProject("aimux", "mbp", "sam-mbp"),
+          machineProject("tealstreet", "strix", "sam-strix"),
+        ],
+        machines: [
+          { id: "mbp", name: "sam-mbp" },
+          { id: "strix", name: "sam-strix" },
+        ],
+        selectedRef: null,
+        showAllProjects: false,
+        onShowAllProjectsChange: vi.fn(),
+        onSelect: vi.fn(),
+      }),
+    );
+    expect(text).toContain("sam-mbp");
+    expect(text).toContain("sam-strix");
+    expect(text).toContain("aimux");
+    expect(text).toContain("tealstreet");
+  });
+
+  // Going away is information, not absence.
+  it("says a machine is offline and still shows what it had", () => {
+    const text = collectText(
+      ProjectPicker({
+        projects: [
+          machineProject("aimux", "mbp", "sam-mbp"),
+          machineProject("tealstreet", "strix", "sam-strix"),
+        ],
+        machines: [{ id: "mbp", name: "sam-mbp" }],
+        selectedRef: null,
+        showAllProjects: false,
+        onShowAllProjectsChange: vi.fn(),
+        onSelect: vi.fn(),
+      }),
+    );
+    expect(text).toContain("sam-strix");
+    expect(text).toContain("offline");
+    expect(text).toContain("tealstreet");
+  });
+
+  // Local mode and a shared surface have one host to mean; a header there is
+  // chrome around a list of one thing.
+  it("renders no machine header when nothing is machine-scoped", () => {
+    const text = collectText(
+      ProjectPicker({
+        projects: [project({ id: "aimux", name: "aimux", dashboardAlive: true })],
+        machines: [],
+        selectedRef: null,
+        showAllProjects: false,
+        onShowAllProjectsChange: vi.fn(),
+        onSelect: vi.fn(),
+      }),
+    );
+    expect(text).toContain("aimux");
+    expect(text).not.toContain("this machine");
+    expect(text).not.toContain("offline");
+  });
+
+  it("selects the row's own machine, not the other host's copy of the path", () => {
+    const onSelect = vi.fn();
+    const tree = renderNode(
+      ProjectPicker({
+        projects: [
+          machineProject("aimux", "mbp", "sam-mbp"),
+          machineProject("aimux", "strix", "sam-strix"),
+        ],
+        machines: [
+          { id: "mbp", name: "sam-mbp" },
+          { id: "strix", name: "sam-strix" },
+        ],
+        selectedRef: null,
+        showAllProjects: false,
+        onShowAllProjectsChange: vi.fn(),
+        onSelect,
+      }),
+    );
+    const rows = findNodes(tree, (node) => node.type === "Pressable").filter((node) =>
+      collectText(node.props.children as ReactNode).includes("aimux"),
+    );
+    expect(rows).toHaveLength(2);
+    rows.forEach((row) => (row.props as { onPress?: () => void }).onPress?.());
+    expect(onSelect.mock.calls.map(([ref]) => ref.machineId).sort()).toEqual(["mbp", "strix"]);
+  });
+});

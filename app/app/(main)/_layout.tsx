@@ -82,6 +82,9 @@ import {
   projectUpdateTouchesProjectApiView,
 } from "@/stores/projectViews";
 import {
+  departedMachineIdsAtom,
+  knownMachinesAtom,
+  recordRelayMachinesAtom,
   relayConfiguredAtom,
   relayMachinesAtom,
   relayPendingApprovalAtom,
@@ -280,6 +283,7 @@ export default function MainLayout() {
       store.set(relayStatusAtom, "disconnected");
       store.set(relayPendingApprovalAtom, null);
       store.set(relayMachinesAtom, []);
+      store.set(knownMachinesAtom, []);
       return;
     }
     store.set(relayConfiguredAtom, true);
@@ -298,7 +302,7 @@ export default function MainLayout() {
       store.set(relayPendingApprovalAtom, approval),
     );
     const unsubMachines = transport.onMachinesChange((machines) =>
-      store.set(relayMachinesAtom, machines),
+      store.set(recordRelayMachinesAtom, machines),
     );
     const unsubSecurity = transport.onSecurityEvent((event) => {
       store.set(addSecurityEventAtom, event);
@@ -326,6 +330,7 @@ export default function MainLayout() {
       store.set(relayStatusAtom, "disconnected");
       store.set(relayPendingApprovalAtom, null);
       store.set(relayMachinesAtom, []);
+      store.set(knownMachinesAtom, []);
     };
   }, [activeShareOwnerUserId, activeShareRelayKey, activeShareShareId, relayUrl, store]);
 
@@ -385,7 +390,13 @@ export default function MainLayout() {
         const { projects, failures } = await listProjectsAcrossMachines({ token });
         if (!cancelled) {
           reconcileProjects(projects, {
-            unansweredMachineIds: failures.map((failure) => failure.machineId),
+            // A machine that left the relay is never queried, so it has no
+            // failure to report -- without naming it here its projects would
+            // simply vanish instead of greying out.
+            unansweredMachineIds: [
+              ...failures.map((failure) => failure.machineId),
+              ...store.get(departedMachineIdsAtom),
+            ],
           });
           // Set after reconcile, which sets the status to ok: a list missing
           // one machine is real but short, and "ok" would call it whole.
@@ -397,7 +408,12 @@ export default function MainLayout() {
         if (!cancelled && !isTransientRequestError(err)) {
           const msg = getErrorMessage(err);
           if (isProjectHostOfflineError(msg)) {
-            reconcileProjects([]);
+            // No machine answered, so there is no list -- but a machine that
+            // merely went away still keeps its last-known projects, greyed,
+            // rather than disappearing.
+            reconcileProjects([], {
+              unansweredMachineIds: store.get(departedMachineIdsAtom),
+            });
             setProjectListStatus(projectListUnavailable("The daemon is offline."));
           } else {
             setProjectListStatus(projectListFailed(msg));

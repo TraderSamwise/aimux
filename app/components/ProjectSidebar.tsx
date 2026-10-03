@@ -70,7 +70,7 @@ import {
   projectStateErrorCopy,
   relayUnavailableProjectCopy,
 } from "@/lib/project-connection-display";
-import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { relayConfiguredAtom, relayMachinesAtom, relayStatusAtom } from "@/stores/relay";
 import { findProjectForRef, projectRefOf, type ProjectRef } from "@/lib/project-key";
 
 // Restyle palette (Linear-style lifted slate) — mirrors docs/mockups/project-view.html.
@@ -351,6 +351,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const { width } = useWindowDimensions();
   const projects = useAtomValue(projectsAtom);
   const projectListStatus = useAtomValue(projectListStatusAtom);
+  const relayMachines = useAtomValue(relayMachinesAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -570,6 +571,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
               projects={projects}
               status={projectListStatus}
               selectedRef={pickedProjectRef}
+              machines={relayMachines}
               showAllProjects={showAllPickerProjects}
               onShowAllProjectsChange={setShowAllPickerProjects}
               onSelect={handlePickProject}
