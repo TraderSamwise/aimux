@@ -460,9 +460,14 @@ describe("two machines raising the same notification", () => {
 
     const mbp = on("mbp");
     const strix = on("strix");
-    expect(mbp?.dedupeKey).not.toBe(strix?.dedupeKey);
+    // Asserted as exact values, not just as unequal: `not.toBe` on two ids
+    // also passes when they differ for some reason that has nothing to do
+    // with the machine, which is how a dropped machine would slip through.
+    expect(mbp?.dedupeKey).toBe("mbp\u0000agent:claude-a1:attention:needs_input");
+    expect(strix?.dedupeKey).toBe("strix\u0000agent:claude-a1:attention:needs_input");
     expect(mbp?.id).not.toBe(strix?.id);
     expect(mbp?.target?.machineId).toBe("mbp");
+    expect(strix?.target?.machineId).toBe("strix");
   });
 
   // A context with no machine is local mode or an older daemon, and its keys

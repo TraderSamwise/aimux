@@ -5,6 +5,17 @@ import { machinePanelRows, machinePillState } from "./machine-pill";
 const MBP = { id: "mbp", name: "sam-mbp" };
 const STRIX = { id: "strix", name: "sam-strix" };
 
+// The pill takes its count from the rows the panel will show, so the two
+// cannot disagree. A departed machine appears as one of those rows because it
+// still has projects.
+function rowsFor(machines: { id: string; name: string }[], departedMachineIds: string[]) {
+  return machinePanelRows({
+    machines,
+    projects: departedMachineIds.map((machineId) => ({ machineId })),
+    currentMachineId: null,
+  });
+}
+
 describe("what the Remote pill says", () => {
   // With one machine "Remote" is the whole answer, and the pill keeps the
   // relay status it has always shown.
@@ -12,7 +23,7 @@ describe("what the Remote pill says", () => {
     expect(
       machinePillState({
         machines: [MBP],
-        departedMachineIds: [],
+        panelRows: rowsFor([MBP], []),
         currentMachineId: "mbp",
         currentMachineName: "sam-mbp",
       }),
@@ -23,7 +34,7 @@ describe("what the Remote pill says", () => {
     expect(
       machinePillState({
         machines: [MBP, STRIX],
-        departedMachineIds: [],
+        panelRows: rowsFor([MBP, STRIX], []),
         currentMachineId: "strix",
         currentMachineName: "sam-strix",
       }),
@@ -36,7 +47,7 @@ describe("what the Remote pill says", () => {
     expect(
       machinePillState({
         machines: [MBP],
-        departedMachineIds: ["strix"],
+        panelRows: rowsFor([MBP], ["strix"]),
         currentMachineId: "strix",
         currentMachineName: "sam-strix",
       }),
@@ -49,7 +60,7 @@ describe("what the Remote pill says", () => {
     expect(
       machinePillState({
         machines: [MBP, STRIX],
-        departedMachineIds: [],
+        panelRows: rowsFor([MBP, STRIX], []),
         currentMachineId: null,
         currentMachineName: null,
       }),
@@ -60,7 +71,7 @@ describe("what the Remote pill says", () => {
     expect(
       machinePillState({
         machines: [MBP],
-        departedMachineIds: ["strix"],
+        panelRows: rowsFor([MBP], ["strix"]),
         currentMachineId: null,
         currentMachineName: null,
       }),
@@ -71,7 +82,7 @@ describe("what the Remote pill says", () => {
     expect(
       machinePillState({
         machines: [MBP, { id: "strix", name: "sam-strix-renamed" }],
-        departedMachineIds: [],
+        panelRows: rowsFor([MBP, { id: "strix", name: "sam-strix-renamed" }], []),
         currentMachineId: "strix",
         currentMachineName: "sam-strix",
       }).label,

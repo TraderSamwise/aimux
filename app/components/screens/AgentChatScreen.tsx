@@ -543,6 +543,7 @@ export default function ChatScreen() {
     activeShare && activeShare.sessionId === sessionId ? activeShare : null;
   const chatViewportKey = chatViewportKeyForRoute({
     focusToken: routeFocusToken,
+    machineId,
     projectPath: stateProjectPath,
     sessionKey,
     share: activeShareForRoute,
@@ -3160,7 +3161,7 @@ const AgentChatSessionViewport = React.memo(
       const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
       const visibleChatTranscriptRef =
         useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
-      const chatInitialLayoutKeyRef = useRef<string | null>(null);
+      const chatInitialLayoutKeyRef = useRef<AgentStateKey | null>(null);
       const newMessageBadgeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
       const newMessageBadgeFadeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
       const newMessageBadgeAnnouncedCountRef = useRef(0);
@@ -3273,7 +3274,7 @@ const AgentChatSessionViewport = React.memo(
 
       useFocusEffect(
         useCallback(() => {
-          chatInitialLayoutKeyRef.current = agentKey || null;
+          chatInitialLayoutKeyRef.current = agentKey;
           chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
           chatScrollChromeRef.current = createChatScrollChromeState();
           resetNewMessageBadge();
@@ -3302,9 +3303,8 @@ const AgentChatSessionViewport = React.memo(
             ...chatScrollMetricsRef.current,
             viewportHeight: event.nativeEvent.layout.height,
           };
-          const layoutKey = agentKey || "unscoped";
-          if (chatInitialLayoutKeyRef.current !== layoutKey) {
-            chatInitialLayoutKeyRef.current = layoutKey;
+          if (chatInitialLayoutKeyRef.current !== agentKey) {
+            chatInitialLayoutKeyRef.current = agentKey;
             executeChatScrollCommand(chatCommandForInitialLayout());
             return;
           }

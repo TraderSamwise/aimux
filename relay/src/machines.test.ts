@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import handshakeContract from "../../testdata/contracts/v1/relay-handshake.json";
 import {
   UNIDENTIFIED_MACHINE_ID,
   isValidMachineId,
@@ -142,5 +143,36 @@ describe("choosing which machine answers a shared guest", () => {
     expect(away.ok).toBe(false);
     expect(unbound.ok).toBe(false);
     expect(away.ok === false && away.error).toBe(unbound.ok === false && unbound.error);
+  });
+});
+
+// The daemon builds this URL in Rust and the relay parses it here. Each side
+// used to assert only its own copy of the shape, so renaming a parameter on
+// one side left both suites green while every daemon in the field landed in
+// the `unidentified` slot. Both sides now read the same file.
+describe("the daemon handshake contract", () => {
+  const contract = handshakeContract;
+
+  it("parses the machine out of the URL the Rust daemon builds", () => {
+    const url = new URL(contract.example.url.replace(/^wss:/, "https:"));
+
+    expect(url.pathname).toBe(contract.path);
+    expect(machineFromConnectUrl(url)).toEqual({
+      id: contract.example.machineId,
+      name: contract.example.machineName,
+    });
+  });
+
+  it("reads the parameter names the contract declares", () => {
+    const url = new URL(`https://relay.example${contract.path}`);
+    url.searchParams.set(contract.machineIdParam, "strix");
+    url.searchParams.set(contract.machineNameParam, "sam-strix");
+
+    expect(machineFromConnectUrl(url)).toEqual({ id: "strix", name: "sam-strix" });
+  });
+
+  it("agrees on the reserved id for a daemon that named no machine", () => {
+    expect(UNIDENTIFIED_MACHINE_ID).toBe(contract.reservedUnidentifiedMachineId);
+    expect(isValidMachineId(contract.reservedUnidentifiedMachineId)).toBe(false);
   });
 });

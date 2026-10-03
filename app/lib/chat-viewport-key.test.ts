@@ -32,6 +32,25 @@ describe("chatViewportKeyForRoute", () => {
     );
   });
 
+  // Same checkout, same agent name, two hosts: without the machine the
+  // viewport never remounted, so the mbp's scroll position and paged-back
+  // history start line carried into strix's transcript.
+  it("changes when the same checkout is on another machine", () => {
+    expect(
+      chatViewportKeyForRoute({
+        machineId: "mbp",
+        projectPath: "/repo/a",
+        sessionKey: "claude-1",
+      }),
+    ).not.toBe(
+      chatViewportKeyForRoute({
+        machineId: "strix",
+        projectPath: "/repo/a",
+        sessionKey: "claude-1",
+      }),
+    );
+  });
+
   it("separates shared chat scope from local project scope", () => {
     expect(
       chatViewportKeyForRoute({

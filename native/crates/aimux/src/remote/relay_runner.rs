@@ -821,15 +821,41 @@ mod tests {
         }
     }
 
+    const HANDSHAKE_CONTRACT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../testdata/contracts/v1/relay-handshake.json"
+    ));
+
+    /// The relay parses this URL in TypeScript. Both sides assert the same
+    /// file, because when each tested only its own copy of the shape a
+    /// renamed parameter kept both suites green while every daemon in the
+    /// field silently landed in the `unidentified` slot.
     #[test]
     fn the_daemon_handshake_declares_which_machine_it_is() {
+        let contract: Value = serde_json::from_str(HANDSHAKE_CONTRACT).expect("contract json");
+        let example = &contract["example"];
+        let machine = MachineIdentity {
+            version: 1,
+            id: example["machineId"].as_str().expect("machineId").to_owned(),
+            name: example["machineName"]
+                .as_str()
+                .expect("machineName")
+                .to_owned(),
+        };
+        let expected = example["url"].as_str().expect("url");
+        let relay_url = example["relayUrl"].as_str().expect("relayUrl");
+
+        assert_eq!(daemon_connect_url(relay_url, &machine), expected);
         assert_eq!(
-            daemon_connect_url("wss://relay.example", &test_machine()),
-            "wss://relay.example/daemon/connect?machineId=abc123def456&machineName=sam-strix"
+            daemon_connect_url(&format!("{relay_url}/"), &machine),
+            expected,
+            "a trailing slash must not double up on the handshake path"
         );
         assert_eq!(
-            daemon_connect_url("wss://relay.example/", &test_machine()),
-            "wss://relay.example/daemon/connect?machineId=abc123def456&machineName=sam-strix"
+            crate::machine_identity::RESERVED_UNIDENTIFIED_MACHINE_ID,
+            contract["reservedUnidentifiedMachineId"]
+                .as_str()
+                .expect("reservedUnidentifiedMachineId")
         );
     }
     use crate::remote::websocket::{
@@ -841,6 +867,7 @@ mod tests {
     use std::future::pending;
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll};
+    use std::time::Duration;
     use tokio::sync::Notify;
 
     fn project_event_frame(seq: usize) -> String {
@@ -950,6 +977,55 @@ mod tests {
             outbox.len(),
             MAX_RELAY_OUTBOX_FRAMES,
             "failed front requeue must still keep the outbox bounded"
+        );
+    }
+
+    /// Records the URL the runner actually dials, then stops it so the
+    /// reconnect ladder does not run.
+    struct UrlRecordingConnector {
+        urls: Arc<Mutex<Vec<String>>>,
+        handle: super::RelayHandle,
+    }
+
+    impl crate::remote::websocket::WebSocketConnector for UrlRecordingConnector {
+        fn connect<'a>(
+            &'a mut self,
+            url: &'a str,
+            _subprotocols: &'a [String],
+        ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+            self.urls.lock().unwrap().push(url.to_owned());
+            self.handle.stop();
+            Box::pin(async { Err(WebSocketError::handshake_refused(503, "stopped by test")) })
+        }
+    }
+
+    /// The machine has to survive the whole way from the supervisor's
+    /// `connect` to the socket. Asserting `daemon_connect_url` alone passes
+    /// while the runner dials a machine-less URL, which is the eviction bug.
+    #[test]
+    fn the_runner_dials_the_machine_it_was_constructed_with() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+        let urls = Arc::new(Mutex::new(Vec::new()));
+        let mut connector = UrlRecordingConnector {
+            urls: Arc::clone(&urls),
+            handle: runner.handle(),
+        };
+
+        // aimux-async-seam: test - drives the dial loop with no real sleeping
+        crate::async_runtime::block_on_named("relay:test-dial-url", async {
+            let mut sleep = |_: Duration| Box::pin(async {}) as BoxFuture<'static, ()>;
+            runner.run_with_sleep(&mut connector, &mut sleep).await;
+        });
+
+        assert_eq!(
+            urls.lock().unwrap().clone(),
+            vec![daemon_connect_url("wss://relay.example", &test_machine())],
         );
     }
 

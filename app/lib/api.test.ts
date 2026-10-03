@@ -1798,3 +1798,78 @@ describe("a refusal that names the machines", () => {
     );
   });
 });
+
+describe("listing Expose tiles across machines", () => {
+  afterEach(() => {
+    setApiRelay(null);
+    delete process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
+  });
+
+  function relayWithMachines(
+    machines: { id: string; name: string }[],
+    answer: (machineId: string | undefined) => Promise<{ status: number; body: unknown }>,
+  ) {
+    const request = vi.fn(
+      async (_method: string, _path: string, _body?: unknown, machineId?: string) =>
+        answer(machineId),
+    );
+    setApiRelay({
+      wsConnected: true,
+      request,
+      machines,
+      namedMachines: machines,
+    } as unknown as RelayTransport);
+    return request;
+  }
+
+  const bothMachines = [
+    { id: "mbp", name: "sam-mbp" },
+    { id: "strix", name: "sam-strix" },
+  ];
+
+  // Expose is "every agent everywhere", so it spans machines. Tiles came back
+  // unstamped, which filed every host's agents under whichever machine the
+  // relay happened to answer with -- so tapping a tile opened the wrong host.
+  it("stamps each tile with the machine that answered", async () => {
+    installFetchMock();
+    const request = relayWithMachines(bothMachines, async () => ({
+      status: 200,
+      body: { ok: true, items: [{ sessionId: "claude-1", projectPath: "/repo/aimux" }] },
+    }));
+
+    const { items } = await listGlobalExposeItems();
+
+    expect(request.mock.calls.map((call) => call[3])).toEqual(["mbp", "strix"]);
+    expect(items.map((item) => item.machineId)).toEqual(["mbp", "strix"]);
+  });
+
+  // One host blinking must shorten the tile list and say why, not empty it.
+  it("keeps the answering machine's tiles and reports the one that did not", async () => {
+    installFetchMock();
+    relayWithMachines(bothMachines, async (machineId) => {
+      if (machineId === "strix") throw new Error("Machine strix is not connected");
+      return {
+        status: 200,
+        body: { ok: true, items: [{ sessionId: "claude-1", projectPath: "/repo/aimux" }] },
+      };
+    });
+
+    const { items, projectReadErrors } = await listGlobalExposeItems();
+
+    expect(items.map((item) => item.machineId)).toEqual(["mbp"]);
+    expect(projectReadErrors).toEqual([
+      { projectName: "sam-strix", error: "Machine strix is not connected" },
+    ]);
+  });
+
+  // A fleet-wide failure is not an empty Expose. Rendering zero tiles says
+  // every agent stopped, which is the opposite of what happened.
+  it("throws when no machine answered rather than returning no tiles", async () => {
+    installFetchMock();
+    relayWithMachines(bothMachines, async () => {
+      throw new Error("Daemon not connected");
+    });
+
+    await expect(listGlobalExposeItems()).rejects.toThrow("No machine answered");
+  });
+});

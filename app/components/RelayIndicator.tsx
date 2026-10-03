@@ -8,7 +8,6 @@ import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import { useRouteShare } from "@/lib/use-route-share";
 import {
-  departedMachineIdsAtom,
   relayConfiguredAtom,
   relayMachinesAtom,
   relayPendingApprovalAtom,
@@ -39,7 +38,6 @@ export function RelayIndicator() {
   const status = useAtomValue(relayStatusAtom);
   const pendingApproval = useAtomValue(relayPendingApprovalAtom);
   const machines = useAtomValue(relayMachinesAtom);
-  const departedMachineIds = useAtomValue(departedMachineIdsAtom);
   const projects = useAtomValue(projectsAtom);
   const { project } = useRouteProject();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -52,9 +50,15 @@ export function RelayIndicator() {
 
   // A guest is told nothing about the fleet, and a device waiting for approval
   // has something more urgent to say, so both come before the machine label.
+  // One list, so the pill's count and the panel's rows cannot disagree.
+  const panelRows = machinePanelRows({
+    machines,
+    projects,
+    currentMachineId: project?.machineId,
+  });
   const pill = machinePillState({
     machines,
-    departedMachineIds,
+    panelRows,
     currentMachineId: project?.machineId,
     currentMachineName: project?.machineName,
   });
@@ -111,7 +115,11 @@ export function RelayIndicator() {
           {meta.label}
         </Text>
         {canOpenMachinePanel ? (
-          <Text className={cn("ml-1 text-[9px]", meta.text)} accessibilityElementsHidden>
+          <Text
+            className={cn("ml-1 text-[9px]", meta.text)}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          >
             ▾
           </Text>
         ) : null}
@@ -128,12 +136,7 @@ export function RelayIndicator() {
         </View>
       ) : null}
       {dialogOpen ? <PairDeviceDialog onDismiss={() => setDialogOpen(false)} /> : null}
-      {panelOpen ? (
-        <MachinePanel
-          rows={machinePanelRows({ machines, projects, currentMachineId: project?.machineId })}
-          onDismiss={() => setPanelOpen(false)}
-        />
-      ) : null}
+      {panelOpen ? <MachinePanel rows={panelRows} onDismiss={() => setPanelOpen(false)} /> : null}
     </View>
   );
 }

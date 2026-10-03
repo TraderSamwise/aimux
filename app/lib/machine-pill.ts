@@ -18,14 +18,14 @@ export interface MachinePillState {
 
 export function machinePillState(input: {
   machines: readonly RelayMachine[];
-  departedMachineIds: readonly string[];
+  // The rows the panel will show. The pill's own count is taken from them so
+  // it cannot say "3 machines" over a list of two -- a departed machine with
+  // nothing on it is counted by neither.
+  panelRows: readonly MachinePanelRow[];
   currentMachineId: string | null | undefined;
   currentMachineName: string | null | undefined;
 }): MachinePillState {
-  const fleetSize = new Set([
-    ...input.machines.map((machine) => machine.id),
-    ...input.departedMachineIds,
-  ]).size;
+  const fleetSize = input.panelRows.length;
   if (fleetSize < 2) return { label: null, online: true, openable: false };
   const current = input.currentMachineId
     ? input.machines.find((machine) => machine.id === input.currentMachineId)

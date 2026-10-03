@@ -1655,6 +1655,7 @@ export class RelayObject extends DurableObject<Env> {
     // failed after the maps are whole, so the client is told to ask again
     // rather than having its request answered by whichever daemon is alone.
     const unroutable: { client: WebSocket; id: string; kind: "request" | "subscription"; clientId: string }[] = [];
+    const supersededMachineIds = new Set<string>();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === exclude) continue;
       const tags = this.ctx.getTags(ws);
@@ -1666,6 +1667,10 @@ export class RelayObject extends DurableObject<Env> {
         // connect path already closed and leave the new daemon reconnecting.
         const superseded = this.daemonSockets.get(machine.id);
         if (superseded) {
+          // Its in-flight work goes with it, rather than waiting out the
+          // request TTL: the socket that was going to answer is gone, and the
+          // replacement never had those requests.
+          supersededMachineIds.add(machine.id);
           try {
             superseded.close(1000, "Replaced");
           } catch {}
@@ -1716,6 +1721,10 @@ export class RelayObject extends DurableObject<Env> {
       }
     }
     this.failUnroutableRebuiltWork(unroutable);
+    for (const machineId of supersededMachineIds) {
+      this.failPendingRequests("Daemon connection replaced", 502, machineId);
+      this.failProjectEventSubscriptions("Daemon connection replaced", 502, machineId);
+    }
   }
 
   private failUnroutableRebuiltWork(

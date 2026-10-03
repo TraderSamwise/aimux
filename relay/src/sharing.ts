@@ -183,6 +183,7 @@ export function findShareForSession(
   ownerUserId: string,
   sessionId: string,
   machineId?: string,
+  projectRoot?: string,
 ): SharedSessionRecord | undefined {
   const wanted = sanitizeShareMachineId(machineId);
   const forOwnerSession = Object.values(state.shares).filter(
@@ -193,10 +194,19 @@ export function findShareForSession(
   // share of the same name to strix.
   const sameMachine = forOwnerSession.find((share) => sanitizeShareMachineId(share.machineId) === wanted);
   if (sameMachine) return sameMachine;
-  // A share made before machines existed, or before this daemon had an id, is
-  // the same share. Adopting it is what lets a re-invite bind it rather than
-  // create a second share and strand the guests on the first.
-  return forOwnerSession.find((share) => !sanitizeShareMachineId(share.machineId));
+  if (!wanted) return undefined;
+  // A share made before machines existed is the same share, and adopting it is
+  // what lets a re-invite bind it rather than make a second one and strand its
+  // guests on the first. But "unbound" says nothing about WHICH host made it,
+  // so the checkout has to match too: otherwise strix's first invite for its
+  // own `claude-1` takes over the mbp's share of that name and rebinds its
+  // guests to the wrong host, which is what the machine binding exists to stop.
+  //
+  // Two unbound candidates is a question, not an answer, so neither is taken.
+  const adoptable = forOwnerSession.filter(
+    (share) => !sanitizeShareMachineId(share.machineId) && share.projectRoot === projectRoot,
+  );
+  return adoptable.length === 1 ? adoptable[0] : undefined;
 }
 
 export async function createShareInvite(
@@ -213,7 +223,7 @@ export async function createShareInvite(
   const machineId = sanitizeShareMachineId(input.machineId);
   const current = normalizeSharingState(state);
   const share =
-    findShareForSession(current, owner.userId, sessionId, machineId) ??
+    findShareForSession(current, owner.userId, sessionId, machineId, projectRoot) ??
     createShare({ owner, projectRoot, serviceEndpoint, machineId, sessionId, now });
   if (serviceEndpoint) {
     share.serviceEndpoint = serviceEndpoint;
