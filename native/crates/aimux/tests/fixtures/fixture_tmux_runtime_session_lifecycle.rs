@@ -264,7 +264,22 @@ fn normalize_text(text: &str) -> String {
         }
     }
     output.push_str(rest);
-    replace_tmux_bin(&output)
+    replace_aimux_bin(&replace_tmux_bin(&output))
+}
+
+/// Same reason as the tmux binary: the clipboard copy-command names this
+/// executable by absolute path, which is the test binary here.
+fn replace_aimux_bin(text: &str) -> String {
+    static AIMUX_BIN: OnceLock<Option<String>> = OnceLock::new();
+    let aimux_bin = AIMUX_BIN.get_or_init(|| {
+        std::env::current_exe()
+            .ok()
+            .map(|path| path.to_string_lossy().into_owned())
+    });
+    match aimux_bin {
+        Some(aimux_bin) => text.replace(aimux_bin.as_str(), "<aimux-bin>"),
+        None => text.to_owned(),
+    }
 }
 
 /// The resolved tmux binary is an absolute host path, so the recorded contract

@@ -137,6 +137,48 @@ fn computes_offline_restore_state_like_typescript() {
     );
 }
 
+// An agent that went offline without a recorded stop -- a daemon restart, a
+// crash -- has no backendSessionId and never had freshRelaunchAllowed written.
+// It used to come back "blocked: missing exact resumable backend session id",
+// which the user could do nothing with: neither resume nor relaunch.
+#[test]
+fn an_agent_that_died_without_a_recorded_stop_can_still_be_relaunched() {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-crashed", "rigId": "rig-1", "logicalId": "claude-crashed", "toolConfigKey": "claude", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [],
+        "sessions": [
+            { "id": "claude-crashed", "nodeId": "node-crashed", "status": "offline", "command": "claude", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ]
+    }))
+    .expect("valid topology");
+    let sessions = topology_desktop_session_list_with_live_window_ids(
+        &topology,
+        &BTreeMap::new(),
+        &tools(),
+        &support::live_windows("aimux-repo", &[]),
+    );
+
+    let crashed = find(&sessions, "claude-crashed");
+    assert!(
+        crashed.get("backendSessionId").is_none(),
+        "the premise is that nothing is resumable"
+    );
+    assert_eq!(
+        crashed["freshRelaunchAllowed"], true,
+        "a fresh start is the only restore that can work for it"
+    );
+    assert_eq!(crashed["restoreState"], "ready");
+    assert!(crashed.get("restoreBlockedReason").is_none());
+}
+
 #[test]
 fn describe_session_restorability_preserves_blocked_reasons() {
     let tools = tools();

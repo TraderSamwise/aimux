@@ -68,9 +68,16 @@ pub fn watchdog_action(
 /// exit can say which half failed rather than only that it gave up.
 pub fn probe_health(host: &str, port: u16) -> Result<(), String> {
     let address = format!("{host}:{port}");
-    let target = address
+    let target: std::net::SocketAddr = address
         .parse()
         .map_err(|error| format!("bad probe address {address}: {error}"))?;
+    // The daemon only ever listens on loopback, and this probe must never
+    // become a way to reach anything else.
+    if !target.ip().is_loopback() {
+        return Err(format!(
+            "refusing to probe a non-loopback address: {address}"
+        ));
+    }
     let mut stream = TcpStream::connect_timeout(&target, PROBE_TIMEOUT)
         .map_err(|error| format!("connect failed: {error}"))?;
     stream
@@ -220,6 +227,12 @@ mod tests {
             WatchdogAction::Recovered
         );
         assert_eq!(watchdog_action(true, 0, true, false), WatchdogAction::Wait);
+    }
+
+    #[test]
+    fn a_probe_refuses_an_address_that_is_not_loopback() {
+        let error = probe_health("93.184.216.34", 80).expect_err("not loopback");
+        assert!(error.contains("non-loopback"), "{error}");
     }
 
     #[test]

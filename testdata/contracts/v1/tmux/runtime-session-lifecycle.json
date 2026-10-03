@@ -75,7 +75,7 @@
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "'<aimux-bin>' __tmux-clipboard-copy-internal"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
           {
@@ -494,7 +494,7 @@
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "'<aimux-bin>' __tmux-clipboard-copy-internal"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
           {
@@ -875,7 +875,7 @@
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "'<aimux-bin>' __tmux-clipboard-copy-internal"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
           {
@@ -1272,7 +1272,7 @@
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "'<aimux-bin>' __tmux-clipboard-copy-internal"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
           {
@@ -1742,7 +1742,7 @@
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "'<aimux-bin>' __tmux-clipboard-copy-internal"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
           {
@@ -2187,7 +2187,7 @@
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "'<aimux-bin>' __tmux-clipboard-copy-internal"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
           {
@@ -2610,7 +2610,7 @@
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "'<aimux-bin>' __tmux-clipboard-copy-internal"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
           {
@@ -3029,7 +3029,7 @@
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "'<aimux-bin>' __tmux-clipboard-copy-internal"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
           {
@@ -3112,7 +3112,7 @@
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "window-size", "latest"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "history-limit", "20000"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "set-clipboard", "external"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "pbcopy"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "copy-command", "'<aimux-bin>' __tmux-clipboard-copy-internal"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "repeat-time", "300"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "focus-events", "off"] },
           {
