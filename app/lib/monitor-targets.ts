@@ -108,6 +108,17 @@ export function monitorTargetLabel(target: MonitorTarget | null | undefined): st
 /// sorted first, so speech went to that host's agent while both rows rendered
 /// identically -- invisible, and on a write path. This is the same rule
 /// `uniqueProjectRefForPath` applies to a project ref.
+/// Why a saved destination resolved to nothing, when the reason is that it
+/// could have been either of two hosts. "Choose a destination" does not say
+/// that the destination is still there and merely needs naming, so the user
+/// has no idea what changed.
+export function savedMonitorDestinationIsAmbiguous(
+  targets: readonly MonitorTarget[],
+  settings: MonitorSettings,
+): boolean {
+  return targets.filter((target) => targetMatchesSettings(target, settings)).length > 1;
+}
+
 export function resolveMonitorTarget(
   targets: readonly MonitorTarget[],
   settings: MonitorSettings,

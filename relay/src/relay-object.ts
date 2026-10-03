@@ -9,8 +9,6 @@ import {
   machineTag,
   resolveDaemonTarget,
   resolveSharedDaemonTarget,
-  shareMachineIdFromTags,
-  shareMachineTag,
   sharedHostOnline,
 } from "./machines.js";
 import { createHostedAttachment } from "./attachments.js";
@@ -50,6 +48,7 @@ import {
   getShareChatMode,
   listAcceptedShares,
   loadSharingState,
+  type SharingState,
   removeAcceptedShare,
   removeShareParticipant,
   revokeShareInvite,
@@ -218,12 +217,7 @@ export class RelayObject extends DurableObject<Env> {
       if (shareId) {
         const sharedAuth = await this.authorizeSharedClientConnect(request, shareId);
         if (!sharedAuth.ok) return new Response(sharedAuth.error, { status: sharedAuth.status });
-        sharedClientTags = [
-          `share:${shareId}`,
-          `user:${sharedAuth.userId}`,
-          // So "is my host up" can be answered from the socket alone.
-          ...(sharedAuth.share.machineId ? [shareMachineTag(sharedAuth.share.machineId)] : []),
-        ];
+        sharedClientTags = [`share:${shareId}`, `user:${sharedAuth.userId}`];
         sharedClientAuth = sharedAuth;
       } else {
         const proofInput = deviceProofInputFromUrl(url);
@@ -282,12 +276,12 @@ export class RelayObject extends DurableObject<Env> {
       this.daemonSockets.set(daemonMachine.id, server);
       this.daemonMachineNames.set(daemonMachine.id, daemonMachine.name);
       this.send(server, { type: "connected", role: "daemon" });
-      this.broadcastMachineStatus();
+      await this.broadcastMachineStatus();
     } else {
       this.clientSockets.add(server);
       if (clientDevice) this.clientDeviceIds.set(server, clientDevice.deviceId);
       this.send(server, { type: "connected", role: "client" });
-      this.sendMachineStatus(server);
+      await this.sendMachineStatus(server);
       await this.recordClientConnected(request, server, clientDevice!, sharedClientAuth, clientDeviceProof);
     }
 
@@ -645,11 +639,11 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    this.removeSocket(ws);
+    await this.removeSocket(ws);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    this.removeSocket(ws);
+    await this.removeSocket(ws);
   }
 
   async alarm(): Promise<void> {
@@ -662,7 +656,7 @@ export class RelayObject extends DurableObject<Env> {
       try {
         this.send(ws, { type: "ping" });
       } catch {
-        this.removeSocket(ws);
+        await this.removeSocket(ws);
       }
     }
     if (allSockets.length > 0 || this.pendingRequests.size > 0) {
@@ -670,7 +664,7 @@ export class RelayObject extends DurableObject<Env> {
     }
   }
 
-  private removeSocket(ws: WebSocket): void {
+  private async removeSocket(ws: WebSocket): Promise<void> {
     const tags = this.ctx.getTags(ws);
     const isDaemon = tags.includes("daemon");
     const closingMachineId = isDaemon ? machineFromTags(tags).id : undefined;
@@ -697,7 +691,7 @@ export class RelayObject extends DurableObject<Env> {
       }
       // Rehydration already dropped this machine from both maps.
       if (!replacementDaemon) {
-        this.broadcastMachineStatus();
+        await this.broadcastMachineStatus();
       }
     } else {
       this.clientSockets.delete(ws);
@@ -733,33 +727,57 @@ export class RelayObject extends DurableObject<Env> {
     if (sharedHostMachineId === null) {
       return { type: "daemon_status", online: machines.length > 0, machines };
     }
+    if (sharedHostMachineId === MISSING_SHARE_HOST) {
+      return { type: "daemon_status", online: false };
+    }
     return {
       type: "daemon_status",
       online: sharedHostOnline(machines, sharedHostMachineId || undefined),
     };
   }
 
-  private sendMachineStatus(ws: WebSocket): void {
-    this.send(ws, this.machineStatus(this.sharedHostMachineIdForSocket(ws)));
+  private async sendMachineStatus(ws: WebSocket): Promise<void> {
+    this.send(ws, this.machineStatus(await this.sharedHostMachineIdForSocket(ws)));
   }
 
-  // `null` means an owner socket. An empty string means a guest whose share
-  // names no host, which is a share made before machines existed.
-  private sharedHostMachineIdForSocket(ws: WebSocket): string | null {
+  // Which host a socket's answer is about. `null` means an owner socket, which
+  // hears about the whole fleet.
+  //
+  // Read from the stored share, which is what routing reads. It used to come
+  // from a `shareMachine:` tag frozen at connect -- and Workers tags cannot be
+  // changed afterwards -- so a share the owner bound to a host mid-session
+  // left the guest's indicator and its requests answering from two different
+  // records. A share that has gone is offline rather than "any machine up":
+  // nothing routes to a revoked share either.
+  private async sharedHostMachineIdForSocket(ws: WebSocket): Promise<string | null> {
     const tags = this.ctx.getTags(ws);
     if (!isSharedClientSocket(tags)) return null;
-    return shareMachineIdFromTags(tags) ?? "";
+    const state = await loadSharingState(this.ctx.storage);
+    return this.sharedHostFromState(state, tags);
   }
 
-  private broadcastMachineStatus(): void {
+  private sharedHostFromState(state: SharingState, tags: readonly string[]): string | null {
+    const shareId = shareIdFromTags(tags);
+    if (!shareId) return null;
+    const share = state.shares[shareId];
+    if (!share) return MISSING_SHARE_HOST;
+    return share.machineId ?? "";
+  }
+
+  private async broadcastMachineStatus(): Promise<void> {
     const ownerStatus = JSON.stringify(this.machineStatus(null));
+    // One read for the whole broadcast; a guest's answer is then resolved per
+    // socket from the same record routing uses.
+    const hasGuest = [...this.clientSockets].some((client) => isSharedClientSocket(this.ctx.getTags(client)));
+    const state = hasGuest ? await loadSharingState(this.ctx.storage) : null;
     for (const client of this.clientSockets) {
       try {
-        // A guest's answer is about its own host, so it is resolved per socket
-        // from that socket's tags rather than broadcast as one string.
-        const sharedHostMachineId = this.sharedHostMachineIdForSocket(client);
-        if (sharedHostMachineId === null) client.send(ownerStatus);
-        else client.send(JSON.stringify(this.machineStatus(sharedHostMachineId)));
+        const tags = this.ctx.getTags(client);
+        if (!state || !isSharedClientSocket(tags)) {
+          client.send(ownerStatus);
+          continue;
+        }
+        client.send(JSON.stringify(this.machineStatus(this.sharedHostFromState(state, tags))));
       } catch {
         this.clientSockets.delete(client);
       }
@@ -1448,6 +1466,12 @@ export class RelayObject extends DurableObject<Env> {
         email: body.email ?? "",
       });
       await saveSharingState(this.ctx.storage, result.state);
+      // An invite can change the share the guests already hold -- its host and
+      // its checkout both follow the invite -- and the receiver index is only
+      // written on accept, so without this a guest's copy kept the old root
+      // for good: a stale project name in its share list, and legacy
+      // `/agent/...` routes that match on the root failing for that guest.
+      const staleReceivers = await this.refreshShareForItsParticipants(result.token.share);
       const acceptUrl = `${this.shareInviteBaseUrl(request)}/shares/invite/${encodeURIComponent(owner.userId)}/${encodeURIComponent(result.token.token)}/accept`;
       let emailDelivered = false;
       try {
@@ -1471,6 +1495,10 @@ export class RelayObject extends DurableObject<Env> {
             tokenHash: undefined,
           },
           acceptUrl,
+          // Named rather than swallowed: the owner's record is canonical, so
+          // the share works, but these guests are reading a stale copy of it
+          // until their own index catches up.
+          ...(staleReceivers.length > 0 ? { staleReceivers } : {}),
         },
         201,
       );
@@ -1524,6 +1552,26 @@ export class RelayObject extends DurableObject<Env> {
 
   private securityActionBaseUrl(request: Request): string {
     return (this.env.SECURITY_ACTION_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
+  }
+
+  // Pushes the current summary to everyone already on the share, and returns
+  // the ones it could not reach.
+  private async refreshShareForItsParticipants(share: SharedSessionRecord): Promise<string[]> {
+    const summary = summarizeShare(share);
+    const stale: string[] = [];
+    for (const participant of Object.values(share.participants)) {
+      // The owner is a participant of their own share, and this object holds
+      // the canonical record -- pushing it back to itself would be a round
+      // trip to learn what it already knows.
+      if (participant.status !== "active" || !participant.userId) continue;
+      if (participant.userId === share.ownerUserId) continue;
+      try {
+        await this.upsertShareInReceiverIndex(participant.userId, summary);
+      } catch {
+        stale.push(participant.userId);
+      }
+    }
+    return stale;
   }
 
   private shareInviteBaseUrl(request: Request): string {
@@ -1960,8 +2008,16 @@ function json(body: unknown, status: number): Response {
   });
 }
 
+// A share that is no longer there. Distinct from a share that names no host,
+// which on a single-machine account is still reachable.
+const MISSING_SHARE_HOST = "\u0000missing";
+
 function isSharedClientSocket(tags: readonly string[]): boolean {
   return tags.some((tag) => tag.startsWith("share:"));
+}
+
+function shareIdFromTags(tags: readonly string[]): string | undefined {
+  return tags.find((tag) => tag.startsWith("share:"))?.slice("share:".length) || undefined;
 }
 
 // The client's own id out of an attachment that failed validation, so a

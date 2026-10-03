@@ -1332,6 +1332,78 @@ function fakeSocket(tags: string[]) {
   };
 }
 
+// A second invite for a share people are already on changes the record they
+// hold -- its host and its checkout both follow the invite -- and the receiver
+// index is written only on accept, so without a refresh a guest's copy keeps
+// the old root for good: a stale project name in its share list, and legacy
+// `/agent/...` routes that match on the root failing for that guest.
+describe("RelayObject refreshing a share its guests already hold", () => {
+  it("pushes the moved checkout to the guests, and names any it could not reach", async () => {
+    const upserted: { userId: string; projectRoot: string }[] = [];
+    let failNext = false;
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn((id: { name: string }) => ({
+          fetch: vi.fn(async (url: string, init?: RequestInit) => {
+            if (!String(url).includes("/internal/accepted-shares/upsert")) {
+              return new Response("{}", { status: 200 });
+            }
+            if (failNext) return new Response("nope", { status: 500 });
+            const body = JSON.parse(String(init?.body)) as {
+              share: { projectRoot: string };
+            };
+            upserted.push({ userId: id.name, projectRoot: body.share.projectRoot });
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    await createAcceptedShareInOwnerObject(object);
+    upserted.length = 0;
+
+    const moved = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: {
+          projectRoot: "/Users/sam/code/scratch",
+          sessionId: "claude-k4lihz",
+          email: "second@example.com",
+        },
+      }),
+    );
+
+    expect(moved.status).toBe(201);
+    expect(upserted).toEqual([{ userId: "user_guest", projectRoot: "/Users/sam/code/scratch" }]);
+    expect(await moved.json()).not.toHaveProperty("staleReceivers");
+
+    // A refresh that could not land is reported rather than swallowed: the
+    // share still works from the owner's record, but that guest is reading a
+    // stale copy of it.
+    failNext = true;
+    const again = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: {
+          projectRoot: "/Users/sam/code/scratch",
+          sessionId: "claude-k4lihz",
+          email: "third@example.com",
+        },
+      }),
+    );
+
+    expect(again.status).toBe(201);
+    expect(await again.json()).toMatchObject({ staleReceivers: ["user_guest"] });
+  });
+});
+
 async function createAcceptedShareInOwnerObject(object: RelayObject): Promise<string> {
   const invite = await createInvite(object);
   const accepted = await object.fetch(
@@ -1801,12 +1873,73 @@ describe("RelayObject machines", () => {
       },
     } as unknown as Env);
     const shareId = await createAcceptedShareInOwnerObject(object);
-    const guestOnStrix = fakeSocket(["client", `share:${shareId}`, "user:user_guest", "shareMachine:strix"]);
+    // Bound in storage, which is the record routing reads. It used to come
+    // from a tag frozen at connect, so a share bound to a host mid-session
+    // left the indicator and the requests answering from different records.
+    const sharing = await storage.get<{
+      shares: Record<string, { machineId?: string }>;
+    }>("sharing-state:v1");
+    sharing!.shares[shareId].machineId = "strix";
+    await storage.put("sharing-state:v1", sharing);
+    const guestOnStrix = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
     storage.sockets = [mbp, strix, guestOnStrix];
 
     await object.webSocketClose(strix);
 
     expect(lastSentTo(guestOnStrix)).toEqual({ type: "daemon_status", online: false });
+  });
+
+  // The tag that used to answer this was frozen at connect and Workers tags
+  // cannot be changed, so binding a share to a host mid-session left the
+  // guest's indicator reading one record while its requests read another --
+  // first saying connected while every request was refused, then, once the
+  // indicator was made strict, saying offline while routing would have worked.
+  it("follows a share bound to a host after the guest connected", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    // Connected while the share named no host, so no tag could have been set.
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, strix, guest];
+
+    const sharing = await storage.get<{
+      shares: Record<string, { machineId?: string }>;
+    }>("sharing-state:v1");
+    sharing!.shares[shareId].machineId = "mbp";
+    await storage.put("sharing-state:v1", sharing);
+
+    // Its host is up, so it is online -- a strict read of the absent tag made
+    // this false and locked the guest out of a share that routed fine.
+    await object.webSocketClose(strix);
+    expect(lastSentTo(guest)).toEqual({ type: "daemon_status", online: true });
+  });
+
+  // Nothing routes to a share that has gone, so neither does the indicator.
+  it("tells a guest its host is offline once the share is revoked", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, strix, guest];
+
+    await storage.put("sharing-state:v1", { version: 1, shares: {} });
+
+    await object.webSocketClose(strix);
+    expect(lastSentTo(guest)).toEqual({ type: "daemon_status", online: false });
   });
 
   it("will not let a shared guest choose which machine answers", async () => {
@@ -1877,7 +2010,7 @@ describe("RelayObject machines", () => {
     } as unknown as Env);
     const shareId = await createAcceptedShareInOwnerObject(object);
     const owner = fakeSocket(["client", "device:client_1", "user:user_owner"]);
-    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest", "shareMachine:mbp"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
     storage.sockets = [mbp, owner, guest];
     const sharing = await storage.get<{
       shares: Record<string, { sessionId: string; machineId?: string }>;

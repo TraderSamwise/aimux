@@ -7,11 +7,6 @@
 
 export const MACHINE_TAG_PREFIX = "machine:";
 export const MACHINE_NAME_TAG_PREFIX = "machineName:";
-// Which machine a shared guest's share is bound to. On the socket's tags
-// because tags are the only per-socket state that survives hibernation, so the
-// answer never needs a storage read on a broadcast path.
-export const SHARE_MACHINE_TAG_PREFIX = "shareMachine:";
-
 // A daemon from before machine identity existed. It gets one slot, so such a
 // daemon behaves exactly as it does today: alone in the room, replaced by the
 // next connection from the same (unidentified) machine.
@@ -70,15 +65,6 @@ export function machineNameFromTags(tags: readonly string[]): string | undefined
   return sanitizeMachineName(
     tags.find((tag) => tag.startsWith(MACHINE_NAME_TAG_PREFIX))?.slice(MACHINE_NAME_TAG_PREFIX.length),
   );
-}
-
-export function shareMachineTag(machineId: string): string {
-  return `${SHARE_MACHINE_TAG_PREFIX}${machineId}`;
-}
-
-export function shareMachineIdFromTags(tags: readonly string[]): string | undefined {
-  const tagged = tags.find((tag) => tag.startsWith(SHARE_MACHINE_TAG_PREFIX))?.slice(SHARE_MACHINE_TAG_PREFIX.length);
-  return tagged && isValidMachineId(tagged) ? tagged : undefined;
 }
 
 export function machineFromTags(tags: readonly string[]): MachineInfo {

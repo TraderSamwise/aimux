@@ -4,6 +4,7 @@ import {
   monitorSharedTargets,
   monitorTargetLabel,
   resolveMonitorTarget,
+  savedMonitorDestinationIsAmbiguous,
   targetMatchesSettings,
 } from "@/lib/monitor-targets";
 import type { DaemonProject } from "@/lib/api";
@@ -210,6 +211,14 @@ describe("resolving a saved monitor setting to one target", () => {
     expect(resolveMonitorTarget(onlyMbp, settingsFor(null))).toMatchObject({
       machineId: "mbp",
     });
+  });
+
+  // "Choose a destination" does not say the destination is still there and
+  // merely needs naming, so the user has no idea what changed.
+  it("says an ambiguous saved destination is ambiguous", () => {
+    expect(savedMonitorDestinationIsAmbiguous(targets, settingsFor(null))).toBe(true);
+    expect(savedMonitorDestinationIsAmbiguous(targets, settingsFor("strix"))).toBe(false);
+    expect(savedMonitorDestinationIsAmbiguous([], settingsFor(null))).toBe(false);
   });
 
   // Having to choose is no use if the choices read the same.
