@@ -1632,13 +1632,16 @@ describe("listing projects across machines", () => {
       body: { ok: true },
     }));
 
+    const endpointForRoute = { host: "127.0.0.1", port: 43210 };
     expect(
-      getAgentOutputStreamRoute({ host: "127.0.0.1", port: 43210 }, "session-1", {
-        machineId: "strix",
-      }).machineId,
+      getAgentOutputStreamRoute(
+        endpointForRoute,
+        { sessionId: "session-1" },
+        { machineId: "strix" },
+      ).machineId,
     ).toBe("strix");
     expect(
-      getAgentOutputStreamRoute({ host: "127.0.0.1", port: 43210 }, "session-1").machineId,
+      getAgentOutputStreamRoute(endpointForRoute, { sessionId: "session-1" }).machineId,
     ).toBeUndefined();
   });
 
