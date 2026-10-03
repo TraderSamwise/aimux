@@ -11,6 +11,7 @@
 
 import { getDaemonUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
 import { env } from "@/lib/env";
+import type { MachineListFailure } from "@/lib/project-list-status";
 import type { RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
 import type { ParsedAgentOutput } from "@/lib/events";
@@ -177,6 +178,11 @@ export interface ApiOpts {
   token?: string | null;
   signal?: AbortSignal;
   timeoutMs?: number;
+  // Which machine must answer. Only meaningful over the relay, and only needed
+  // once an account has more than one machine connected -- the relay resolves
+  // an absent machine when there is exactly one, and refuses to guess when
+  // there are several.
+  machineId?: string;
 }
 
 export class ApiError extends Error {
@@ -306,7 +312,15 @@ async function callDaemonViaRelay<T>(
 ): Promise<T> {
   const relay = _relay;
   if (!relay) throw new ApiError(0, null, "Relay not connected");
-  const result = await withRelayRequestTimeout(path, relay.request(method, path, body), opts);
+  // Three arguments when no machine is named, so a caller that never cared
+  // sends exactly the frame it always sent.
+  const result = await withRelayRequestTimeout(
+    path,
+    opts?.machineId
+      ? relay.request(method, path, body, opts.machineId)
+      : relay.request(method, path, body),
+    opts,
+  );
   if (result.status >= 400) {
     throw new ApiError(
       result.status,
@@ -371,6 +385,9 @@ export interface ProjectStreamRoute {
   directUrl: string;
   relayPath: string;
   headers: Record<string, string>;
+  // Carried alongside `relayPath` because a project-event subscription is
+  // routed by machine exactly like a request is.
+  machineId?: string;
 }
 
 function projectStreamRoute(
@@ -385,6 +402,7 @@ function projectStreamRoute(
     directUrl: `${getServiceUrl(endpoint)}${path}`,
     relayPath: projectProxyPath(endpoint, path),
     headers,
+    ...(opts?.machineId ? { machineId: opts.machineId } : {}),
   };
 }
 
@@ -400,6 +418,12 @@ export interface DaemonProject {
   id: string;
   name: string;
   path: string;
+  // Which machine this project is on. Absent in local mode and on a relay that
+  // reports no machines. `id` and `path` are NOT unique across machines -- the
+  // same checkout path exists on two of Sam's Macs -- so anything that keys a
+  // project must key on the pair.
+  machineId?: string;
+  machineName?: string;
   lastSeen?: string;
   dashboardSessionName: string;
   service: unknown | null;
@@ -413,8 +437,13 @@ export interface DaemonProject {
 }
 
 type RawDaemonProject = Partial<
-  Omit<DaemonProject, "onlineAgentCount" | "serviceAlive" | "dashboardAlive">
+  Omit<
+    DaemonProject,
+    "onlineAgentCount" | "serviceAlive" | "dashboardAlive" | "machineId" | "machineName"
+  >
 > & {
+  machineId?: unknown;
+  machineName?: unknown;
   onlineAgentCount?: unknown;
   serviceAlive?: unknown;
   dashboardAlive?: unknown;
@@ -450,6 +479,8 @@ function normalizeDaemonProject(project: RawDaemonProject): DaemonProject {
     id: stringField(project.id),
     name: stringField(project.name),
     path: stringField(project.path),
+    machineId: optionalStringField(project.machineId),
+    machineName: optionalStringField(project.machineName),
     lastSeen: optionalStringField(project.lastSeen),
     dashboardSessionName: stringField(project.dashboardSessionName),
     service: project.service ?? null,
@@ -491,6 +522,63 @@ export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
     opts,
   );
   return normalizeDaemonProjects(data.projects);
+}
+
+export interface MachineProjectList {
+  projects: DaemonProject[];
+  failures: MachineListFailure[];
+}
+
+// One `/projects` per machine, merged here. The relay stays a router and never
+// aggregates, so this is the only place that knows the fleet is plural.
+//
+// A machine that answers with nothing has no projects; a machine that errors is
+// a failure, and the two must not arrive looking alike.
+export async function listProjectsAcrossMachines(opts?: ApiOpts): Promise<MachineProjectList> {
+  const machines = shouldRouteViaRelay() ? (getApiRelay()?.machines ?? []) : [];
+  if (machines.length === 0) {
+    // Local mode, or a relay that has not told us the fleet yet. One
+    // machine-less call is exactly what this did before machines existed.
+    return { projects: await listProjects(opts), failures: [] };
+  }
+  const results = await Promise.allSettled(
+    machines.map(async (machine) =>
+      (await listProjects({ ...opts, machineId: machine.id })).map((project) => ({
+        ...project,
+        machineId: project.machineId ?? machine.id,
+        machineName: project.machineName ?? machine.name,
+      })),
+    ),
+  );
+  const projects: DaemonProject[] = [];
+  const failures: MachineListFailure[] = [];
+  results.forEach((result, index) => {
+    const machine = machines[index];
+    if (result.status === "fulfilled") {
+      projects.push(...result.value);
+      return;
+    }
+    failures.push({
+      machineId: machine.id,
+      machineName: machine.name,
+      error: relayFailureMessage(result.reason),
+    });
+  });
+  // Every machine failed: there is no list, only an error.
+  if (projects.length === 0 && failures.length === machines.length) {
+    throw new ApiError(
+      0,
+      { failures },
+      failures.map((failure) => `${failure.machineName}: ${failure.error}`).join("; "),
+    );
+  }
+  return { projects, failures };
+}
+
+function relayFailureMessage(reason: unknown): string {
+  if (reason instanceof ApiError) return reason.message;
+  if (reason instanceof Error) return reason.message;
+  return String(reason ?? "unknown error");
 }
 
 export async function listGlobalExposeItems(

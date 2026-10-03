@@ -428,3 +428,141 @@ function base64UrlDecodeToText(value: string): string {
   const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
   return atob(padded);
 }
+
+describe("RelayTransport machines", () => {
+  async function connectedTransport() {
+    const sockets: MockWebSocket[] = [];
+    const originalWebSocket = globalThis.WebSocket;
+    vi.stubGlobal(
+      "WebSocket",
+      class extends MockWebSocket {
+        constructor(url: string, protocols: string[]) {
+          super(url, protocols);
+          sockets.push(this);
+        }
+      },
+    );
+    const transport = new RelayTransport(
+      "wss://relay.example.test",
+      async () => "token",
+      async () => ({ deviceId: "client_1", kind: "web", name: "Web browser", platform: "web" }),
+      testProofOptions,
+    );
+    await transport.connect();
+    return {
+      transport,
+      sockets,
+      restore: () => vi.stubGlobal("WebSocket", originalWebSocket),
+    };
+  }
+
+  it("learns the fleet from daemon_status and reports changes", async () => {
+    const { transport, sockets, restore } = await connectedTransport();
+    const seen: string[][] = [];
+    transport.onMachinesChange((machines) => seen.push(machines.map((machine) => machine.id)));
+
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "daemon_status",
+        online: true,
+        machines: [
+          { id: "mbp", name: "sam-mbp" },
+          { id: "strix", name: "sam-strix" },
+        ],
+      }),
+    });
+
+    expect(transport.machines).toEqual([
+      { id: "mbp", name: "sam-mbp" },
+      { id: "strix", name: "sam-strix" },
+    ]);
+    expect(seen).toEqual([["mbp", "strix"]]);
+
+    // Same list again is not a change.
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "daemon_status",
+        online: true,
+        machines: [
+          { id: "mbp", name: "sam-mbp" },
+          { id: "strix", name: "sam-strix" },
+        ],
+      }),
+    });
+    expect(seen).toHaveLength(1);
+    restore();
+  });
+
+  // A shared guest is told nothing about the fleet, and an older relay says
+  // nothing either. Neither is a claim that there are zero machines.
+  it("treats a daemon_status without machines as unknown, not empty", async () => {
+    const { transport, sockets, restore } = await connectedTransport();
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "daemon_status",
+        online: true,
+        machines: [{ id: "mbp", name: "sam-mbp" }],
+      }),
+    });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "daemon_status", online: true }) });
+    expect(transport.machines).toEqual([{ id: "mbp", name: "sam-mbp" }]);
+
+    // An explicit empty list is an answer, and clears it.
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({ type: "daemon_status", online: false, machines: [] }),
+    });
+    expect(transport.machines).toEqual([]);
+    restore();
+  });
+
+  it("forgets the fleet when the socket closes", async () => {
+    vi.useFakeTimers();
+    const { transport, sockets, restore } = await connectedTransport();
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "daemon_status",
+        online: true,
+        machines: [{ id: "mbp", name: "sam-mbp" }],
+      }),
+    });
+    sockets[0]!.close(1006);
+    expect(transport.machines).toEqual([]);
+    transport.disconnect();
+    vi.useRealTimers();
+    restore();
+  });
+
+  it("names the machine on a request only when one was chosen", async () => {
+    const { transport, sockets, restore } = await connectedTransport();
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "daemon_status",
+        online: true,
+        machines: [{ id: "strix", name: "sam-strix" }],
+      }),
+    });
+
+    void transport.request("GET", "/projects", undefined, "strix");
+    expect(JSON.parse(sockets[0]!.sent.at(-1)!)).toMatchObject({
+      type: "request",
+      path: "/projects",
+      machineId: "strix",
+    });
+
+    void transport.request("GET", "/projects");
+    expect(JSON.parse(sockets[0]!.sent.at(-1)!)).not.toHaveProperty("machineId");
+
+    transport.subscribeProjectEvents(
+      "/proxy/127.0.0.1/43210/events",
+      undefined,
+      () => {},
+      () => {},
+      "strix",
+    );
+    expect(JSON.parse(sockets[0]!.sent.at(-1)!)).toMatchObject({
+      type: "project_events_subscribe",
+      machineId: "strix",
+    });
+    restore();
+  });
+});

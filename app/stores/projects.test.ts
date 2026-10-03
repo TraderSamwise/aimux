@@ -118,3 +118,79 @@ describe("project selection store", () => {
     expect(rememberedProjectViewPath("/missing")).toBeNull();
   });
 });
+
+describe("reconciling a project list that is missing a machine", () => {
+  // A machine that did not answer has not lost its projects. Dropping them
+  // would empty part of the list every time one host blinked.
+  it("keeps the projects of a machine that did not answer", () => {
+    const store = createStore();
+    store.set(reconcileProjectsAtom, [
+      machineProject("aimux", "mbp", "sam-mbp"),
+      machineProject("tealstreet-next", "strix", "sam-strix"),
+    ]);
+
+    store.set(reconcileProjectsAtom, [machineProject("aimux", "mbp", "sam-mbp")], {
+      unansweredMachineIds: ["strix"],
+    });
+
+    expect(store.get(projectsAtom).map((project) => [project.id, project.machineId])).toEqual([
+      ["aimux", "mbp"],
+      ["tealstreet-next", "strix"],
+    ]);
+  });
+
+  // The machine answered, so its list is authoritative: a removed project is
+  // removed, not retained forever.
+  it("drops a project the answering machine no longer has", () => {
+    const store = createStore();
+    store.set(reconcileProjectsAtom, [
+      machineProject("aimux", "mbp", "sam-mbp"),
+      machineProject("sblr", "mbp", "sam-mbp"),
+    ]);
+
+    store.set(reconcileProjectsAtom, [machineProject("aimux", "mbp", "sam-mbp")], {
+      unansweredMachineIds: ["strix"],
+    });
+
+    expect(store.get(projectsAtom).map((project) => project.id)).toEqual(["aimux"]);
+  });
+
+  it("keeps nothing when no machine is named as unanswered", () => {
+    const store = createStore();
+    store.set(reconcileProjectsAtom, [machineProject("aimux", "mbp", "sam-mbp")]);
+    store.set(reconcileProjectsAtom, []);
+    expect(store.get(projectsAtom)).toEqual([]);
+  });
+});
+
+function machineProject(id: string, machineId: string, machineName: string): DaemonProject {
+  return {
+    id,
+    name: id,
+    path: `/repo/${id}`,
+    machineId,
+    machineName,
+    dashboardSessionName: `aimux-${id}`,
+    service: null,
+    serviceAlive: true,
+    serviceEndpoint: null,
+  };
+}
+
+// Contradictory input: the machine both answered and was reported unanswered.
+// Retaining its old projects beside its new ones would double the list.
+describe("a machine that both answered and was named as unanswered", () => {
+  it("trusts the answer and does not duplicate its projects", () => {
+    const store = createStore();
+    store.set(reconcileProjectsAtom, [
+      machineProject("aimux", "mbp", "sam-mbp"),
+      machineProject("sblr", "mbp", "sam-mbp"),
+    ]);
+
+    store.set(reconcileProjectsAtom, [machineProject("aimux", "mbp", "sam-mbp")], {
+      unansweredMachineIds: ["mbp"],
+    });
+
+    expect(store.get(projectsAtom).map((project) => project.id)).toEqual(["aimux"]);
+  });
+});

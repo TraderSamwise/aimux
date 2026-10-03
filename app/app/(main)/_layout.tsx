@@ -8,7 +8,7 @@ import { NativeNotificationRouter } from "@/components/NativeNotificationRouter"
 import {
   getDesktopState,
   listNotifications,
-  listProjects,
+  listProjectsAcrossMachines,
   listShares,
   setApiRelay,
 } from "@/lib/api";
@@ -69,6 +69,7 @@ import {
 } from "@/stores/projects";
 import {
   projectListFailed,
+  projectListPartial,
   projectListUnavailable,
   relayUnavailableDetail,
 } from "@/lib/project-list-status";
@@ -80,7 +81,12 @@ import {
   projectUpdateTouchesNotificationFeed,
   projectUpdateTouchesProjectApiView,
 } from "@/stores/projectViews";
-import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
+import {
+  relayConfiguredAtom,
+  relayMachinesAtom,
+  relayPendingApprovalAtom,
+  relayStatusAtom,
+} from "@/stores/relay";
 import {
   activeSharedSessionAtom,
   acceptedSharedSessionsAtom,
@@ -229,6 +235,7 @@ export default function MainLayout() {
       store.set(relayConfiguredAtom, false);
       store.set(relayStatusAtom, "disconnected");
       store.set(relayPendingApprovalAtom, null);
+      store.set(relayMachinesAtom, []);
       return;
     }
     store.set(relayConfiguredAtom, true);
@@ -245,6 +252,9 @@ export default function MainLayout() {
     const unsub = transport.onStatusChange((status) => store.set(relayStatusAtom, status));
     const unsubPendingApproval = transport.onPendingApprovalChange((approval) =>
       store.set(relayPendingApprovalAtom, approval),
+    );
+    const unsubMachines = transport.onMachinesChange((machines) =>
+      store.set(relayMachinesAtom, machines),
     );
     const unsubSecurity = transport.onSecurityEvent((event) => {
       store.set(addSecurityEventAtom, event);
@@ -265,11 +275,13 @@ export default function MainLayout() {
     return () => {
       unsub();
       unsubPendingApproval();
+      unsubMachines();
       unsubSecurity();
       setApiRelay(null);
       transport.disconnect();
       store.set(relayStatusAtom, "disconnected");
       store.set(relayPendingApprovalAtom, null);
+      store.set(relayMachinesAtom, []);
     };
   }, [activeShareOwnerUserId, activeShareRelayKey, activeShareShareId, relayUrl, store]);
 
@@ -326,8 +338,15 @@ export default function MainLayout() {
       }
       try {
         const token = await getTokenRef.current();
-        const projects = await listProjects({ token });
-        if (!cancelled) reconcileProjects(projects);
+        const { projects, failures } = await listProjectsAcrossMachines({ token });
+        if (!cancelled) {
+          reconcileProjects(projects, {
+            unansweredMachineIds: failures.map((failure) => failure.machineId),
+          });
+          // Set after reconcile, which sets the status to ok: a list missing
+          // one machine is real but short, and "ok" would call it whole.
+          if (failures.length > 0) setProjectListStatus(projectListPartial(failures));
+        }
       } catch (err) {
         // A fetch that failed is not a list of zero projects. Every non-transient
         // outcome has to reach the UI as itself.

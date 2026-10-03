@@ -63,40 +63,70 @@ export const selectedSessionAtom = atom<DesktopSession | null>((get) => {
 // persisted selectedProjectPath if it's still present in the incoming list.
 // Otherwise falls back to the first sorted project and clears stale session
 // selection.
-export const reconcileProjectsAtom = atom(null, (get, set, incoming: DaemonProject[]) => {
-  set(projectListStatusAtom, PROJECT_LIST_OK);
-  const previousProjects = get(projectsAtom);
-  const sorted = reconcileProjectList(previousProjects, incoming);
-  let nextPath = get(selectedProjectPathAtom);
-  let nextSession = get(selectedSessionIdAtom);
+export const reconcileProjectsAtom = atom(
+  null,
+  (get, set, incoming: DaemonProject[], options?: { unansweredMachineIds?: readonly string[] }) => {
+    const previousProjects = get(projectsAtom);
+    // A machine that did not answer has not lost its projects; it is simply
+    // absent from this snapshot. Dropping them would empty part of the list
+    // every time one host blinked.
+    const merged = [
+      ...incoming,
+      ...projectsOnMachines(previousProjects, options?.unansweredMachineIds, incoming),
+    ];
+    set(projectListStatusAtom, PROJECT_LIST_OK);
+    const sorted = reconcileProjectList(previousProjects, merged);
+    let nextPath = get(selectedProjectPathAtom);
+    let nextSession = get(selectedSessionIdAtom);
 
-  if (incoming.length === 0 && previousProjects.length > 0) {
-    const explicitSelection = get(explicitProjectSelectionAtom);
-    const preservingRecentExplicitSelection =
-      explicitSelection &&
-      explicitSelection.path === nextPath &&
-      explicitSelection.expiresAt > Date.now();
-    if (preservingRecentExplicitSelection) {
-      set(lastSyncAtAtom, Date.now());
-      return;
+    if (merged.length === 0 && previousProjects.length > 0) {
+      const explicitSelection = get(explicitProjectSelectionAtom);
+      const preservingRecentExplicitSelection =
+        explicitSelection &&
+        explicitSelection.path === nextPath &&
+        explicitSelection.expiresAt > Date.now();
+      if (preservingRecentExplicitSelection) {
+        set(lastSyncAtAtom, Date.now());
+        return;
+      }
     }
-  }
 
-  const stillPresent = nextPath ? sorted.some((p) => p.path === nextPath) : false;
+    const stillPresent = nextPath ? sorted.some((p) => p.path === nextPath) : false;
 
-  if (!nextPath && sorted.length > 0) {
-    nextPath = sorted[0].path;
-  } else if (nextPath && !stillPresent) {
-    nextPath = sorted[0]?.path ?? null;
-    nextSession = null;
-  }
-  // else: stored path is still present — keep it.
+    if (!nextPath && sorted.length > 0) {
+      nextPath = sorted[0].path;
+    } else if (nextPath && !stillPresent) {
+      nextPath = sorted[0]?.path ?? null;
+      nextSession = null;
+    }
+    // else: stored path is still present — keep it.
 
-  if (sorted !== previousProjects) set(projectsAtom, sorted);
-  if (nextPath !== get(selectedProjectPathAtom)) set(selectedProjectPathAtom, nextPath);
-  if (nextSession !== get(selectedSessionIdAtom)) set(selectedSessionIdAtom, nextSession);
-  set(lastSyncAtAtom, Date.now());
-});
+    if (sorted !== previousProjects) set(projectsAtom, sorted);
+    if (nextPath !== get(selectedProjectPathAtom)) set(selectedProjectPathAtom, nextPath);
+    if (nextSession !== get(selectedSessionIdAtom)) set(selectedSessionIdAtom, nextSession);
+    set(lastSyncAtAtom, Date.now());
+  },
+);
+
+// The previous snapshot's projects for machines that did not answer this time.
+//
+// A project with no machine belongs to nobody in particular, so it is never
+// kept this way -- it would survive a genuinely empty list forever. A machine
+// that appears in the incoming list did answer, whatever the caller said, so
+// its stale projects are not retained alongside its fresh ones.
+export function projectsOnMachines(
+  projects: readonly DaemonProject[],
+  machineIds: readonly string[] | undefined,
+  answered: readonly DaemonProject[] = [],
+): DaemonProject[] {
+  if (!machineIds || machineIds.length === 0) return [];
+  const answeredMachineIds = new Set(
+    answered.map((project) => project.machineId).filter((id): id is string => Boolean(id)),
+  );
+  const wanted = new Set(machineIds.filter((id) => !answeredMachineIds.has(id)));
+  if (wanted.size === 0) return [];
+  return projects.filter((project) => project.machineId && wanted.has(project.machineId));
+}
 
 // Select a project, clearing the session selection (matches old Zustand `selectProject`).
 export const selectProjectAtom = atom(null, (_get, set, path: string | null) => {
