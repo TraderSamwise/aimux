@@ -59,6 +59,7 @@ pub mod event_loop_budget;
 pub mod expose_pane_output_tap;
 pub mod expose_socket;
 pub mod git_delivery;
+pub mod host_capacity;
 pub mod inbox_cleanup;
 pub mod install_cleanup;
 pub mod install_config;

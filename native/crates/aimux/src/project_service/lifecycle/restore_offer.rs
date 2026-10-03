@@ -2,6 +2,9 @@ use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
 use crate::atomic_write::write_json_atomic;
+use crate::host_capacity::{
+    LAUNCH_SPACING, available_memory_bytes, launch_capacity, memory_floor_bytes,
+};
 use crate::paths::{PathResolver, compute_project_id};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::router::ProjectServiceRequestContext;
@@ -73,7 +76,23 @@ pub(super) fn route_agent_restore_previous(
         .collect::<Vec<_>>();
     let mut restored = Vec::new();
     let mut failed = Vec::new();
-    for session_id in &session_ids {
+    let floor_bytes = memory_floor_bytes();
+    for (index, session_id) in session_ids.iter().enumerate() {
+        // Every agent restored here resumes its task, and those tasks run test
+        // suites. Putting the whole fleet back at once is what emptied 61GB of
+        // RAM and 8GB of swap on sam-strix and took the machine off the
+        // network. Ask the host between launches, and stop while it can still
+        // say no.
+        let capacity = launch_capacity(available_memory_bytes(), floor_bytes);
+        if let Some(reason) = capacity.message() {
+            for remaining in &session_ids[index..] {
+                failed.push(json!({ "sessionId": remaining, "error": reason }));
+            }
+            break;
+        }
+        if index > 0 {
+            std::thread::sleep(LAUNCH_SPACING);
+        }
         let response = resume_agent_session(context, session_id, runtime, false, "agent.restore");
         if response.status == 200 {
             restored.push(json!({
