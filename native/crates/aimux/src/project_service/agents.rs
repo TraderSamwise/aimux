@@ -917,14 +917,7 @@ fn should_relaunch_fresh_session(
     if string_field(session, "backendSessionId").is_some() {
         return false;
     }
-    // Nothing to resume. The stop path records freshRelaunchAllowed when it
-    // takes an agent offline with no resumable id, but an agent that went
-    // offline WITHOUT a recorded stop -- a daemon restart, a crash, a runtime
-    // rebuild -- never had it written, and reading the flag back here left the
-    // user an agent they could neither resume nor relaunch. A fresh start is
-    // the only restore that can work for it, so offer that rather than a dead
-    // end.
-    true
+    session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true)
 }
 
 fn blocked_restorability(reason: &str) -> Value {
