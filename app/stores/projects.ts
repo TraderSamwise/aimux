@@ -146,7 +146,7 @@ export const reconcileProjectsAtom = atom(
 
     if (!nextRef && sorted.length > 0) {
       nextRef = projectRefOf(sorted[0]);
-    } else if (nextRef && !resolved && selectionWasContradicted(nextRef, options)) {
+    } else if (nextRef && !resolved && selectionWasContradicted(nextRef, sorted, options)) {
       nextRef = projectRefOf(sorted[0]);
       nextSession = null;
     } else if (resolved) {
@@ -172,6 +172,7 @@ export const reconcileProjectsAtom = atom(
 // starts a fight with the URL, which still names the old one.
 function selectionWasContradicted(
   ref: ProjectRef,
+  projects: readonly DaemonProject[],
   options?: {
     unansweredMachineIds?: readonly string[];
     answeringMachineIds?: readonly string[];
@@ -181,7 +182,14 @@ function selectionWasContradicted(
   // Local mode and the first poll of a session: nothing is scoped by machine,
   // so the snapshot speaks for everything, as it always did.
   if (!answering) return true;
-  if (!ref.machineId) return true;
+  if (!ref.machineId) {
+    // A selection stored before machines existed names a path and no machine.
+    // If a machine still has that path the ref is ambiguous, not absent, and
+    // resetting it would move the user off a project that is plainly there --
+    // which is what happened on the first multi-machine poll after upgrading.
+    // Only a fleet that answered and has no copy of the path contradicts it.
+    return !projects.some((project) => project.path === ref.path);
+  }
   return answering.includes(ref.machineId);
 }
 

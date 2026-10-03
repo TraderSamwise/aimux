@@ -75,18 +75,22 @@ export function NativeNotificationRouter() {
       const sessionId = stringField(data, "sessionId");
       const notificationId = stringField(data, "notificationId");
       if (!projectRoot && !sessionId) return;
-      markNotificationsReadLocal({
-        projectStateKey: projectStateKey(
-          projectRefFromPayload(projectsRef.current, projectRoot, payloadMachineId),
-        ),
-        ids: [notificationId],
-      });
+      const tappedRef = projectRefFromPayload(projectsRef.current, projectRoot, payloadMachineId);
+      // Only marked where it can be found again. An unresolved ref -- a
+      // payload naming no machine while two hosts hold the path -- used to
+      // file the mark under the "no project" key, so the real project never
+      // saw it and the notification stayed unread for good. Leaving it unread
+      // is the right answer: the row in the app knows which machine, so the
+      // tap is still there to be made.
+      if (tappedRef) {
+        markNotificationsReadLocal({
+          projectStateKey: projectStateKey(tappedRef),
+          ids: [notificationId],
+        });
+      }
       void (async () => {
         if (!projectRoot || !notificationId) return;
-        const project = findProjectForRef(
-          projectsRef.current,
-          projectRefFromPayload(projectsRef.current, projectRoot, payloadMachineId),
-        );
+        const project = findProjectForRef(projectsRef.current, tappedRef);
         const endpoint = project ? getProjectServiceEndpoint(project) : null;
         if (!endpoint) return;
         try {
@@ -98,7 +102,6 @@ export function NativeNotificationRouter() {
       })();
       // With no machine named and two machines holding the path, the tap
       // selects nothing rather than opening the wrong host.
-      const tappedRef = projectRefFromPayload(projectsRef.current, projectRoot, payloadMachineId);
       if (tappedRef) selectProject(tappedRef);
       if (sessionId) {
         selectSession(sessionId);

@@ -103,6 +103,9 @@ describe("RelayObject request hibernation", () => {
             { id: "cold", serviceAlive: false },
           ],
         },
+        // Which machine answered, from the socket's tags. A daemon with no id
+        // lands in the reserved slot, which is what this fixture's tags say.
+        machineId: "unidentified",
       }),
     );
   });
@@ -1856,6 +1859,59 @@ describe("RelayObject machines", () => {
     );
     expect(strix.send).not.toHaveBeenCalled();
     expect(mbp.send).toHaveBeenCalledTimes(1);
+  });
+
+  // An owner client that asked before `daemon_status` named the fleet had no
+  // machine to attribute the answer to, so its projects arrived bare and the
+  // next poll re-keyed every project-scoped atom -- remounting the chat view
+  // seconds after it opened. A guest is told nothing: a share names one host
+  // and must not become a window onto the account.
+  it("tells an owner which machine answered, and a guest nothing", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const storage = storageWithSockets([mbp]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const owner = fakeSocket(["client", "device:client_1", "user:user_owner"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest", "shareMachine:mbp"]);
+    storage.sockets = [mbp, owner, guest];
+    const sharing = await storage.get<{
+      shares: Record<string, { sessionId: string; machineId?: string }>;
+    }>("sharing-state:v1");
+    sharing!.shares[shareId].machineId = "mbp";
+    await storage.put("sharing-state:v1", sharing);
+    const sharedPath = `/agents/history?sessionId=${sharing!.shares[shareId].sessionId}`;
+
+    for (const [socket, path] of [
+      [owner, "/projects"],
+      [guest, sharedPath],
+    ] as const) {
+      mbp.send.mockClear();
+      await object.webSocketMessage(socket, JSON.stringify({ id: "req-1", type: "request", method: "GET", path }));
+      const forwarded = JSON.parse(String(mbp.send.mock.calls[0][0])) as { id: string };
+      await object.webSocketMessage(
+        mbp,
+        JSON.stringify({ id: forwarded.id, type: "response", status: 200, body: { ok: true } }),
+      );
+    }
+
+    expect(lastSentTo(owner)).toEqual({
+      id: "req-1",
+      type: "response",
+      status: 200,
+      body: { ok: true },
+      machineId: "mbp",
+    });
+    expect(lastSentTo(guest)).toEqual({
+      id: "req-1",
+      type: "response",
+      status: 200,
+      body: { ok: true },
+    });
   });
 
   // A project id and root exist on more than one host, so a tapped

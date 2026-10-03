@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   monitorSessionTargetsForProject,
   monitorSharedTargets,
+  monitorTargetLabel,
+  resolveMonitorTarget,
   targetMatchesSettings,
 } from "@/lib/monitor-targets";
 import type { DaemonProject } from "@/lib/api";
@@ -158,5 +160,61 @@ describe("two machines holding the same checkout", () => {
     expect(targetMatchesSettings(target, settingsFor("strix"))).toBe(false);
     // Saved before machines existed: it matches the project wherever it is.
     expect(targetMatchesSettings(target, settingsFor(null))).toBe(true);
+  });
+});
+
+describe("resolving a saved monitor setting to one target", () => {
+  const onMachine = (machineId: string): DaemonProject => ({
+    ...project,
+    machineId,
+    machineName: `sam-${machineId}`,
+  });
+  const targets = [
+    ...monitorSessionTargetsForProject(onMachine("mbp"), state),
+    ...monitorSessionTargetsForProject(onMachine("strix"), state),
+  ];
+  const settingsFor = (machineId: string | null): MonitorSettings => ({
+    intervalSeconds: 10,
+    targetKind: "project-agent",
+    captureMode: "camera",
+    cameraViewport: { centerX: 0.5, centerY: 0.5, zoom: 1 },
+    speechToText: false,
+    speechOnDeviceOnly: false,
+    speechInterimResults: false,
+    speechLanguage: "en-US",
+    audioSampleRate: 16000,
+    projectPath: "/repo/aimux",
+    machineId,
+    sessionId: "claude-1",
+    shareOwnerUserId: null,
+    shareId: null,
+  });
+
+  it("resolves a setting that names its machine", () => {
+    expect(resolveMonitorTarget(targets, settingsFor("strix"))).toMatchObject({
+      machineId: "strix",
+    });
+  });
+
+  // Monitor types dictated speech into whatever this resolves to. Taking the
+  // first match sent it to whichever host sorted first, while both rows
+  // rendered identically -- so the wrong agent was typed into, invisibly.
+  it("resolves a machineless setting to nothing when two machines hold the project", () => {
+    expect(resolveMonitorTarget(targets, settingsFor(null))).toBeNull();
+  });
+
+  // One machine is unambiguous, so every setting saved before machines existed
+  // keeps working.
+  it("still resolves a machineless setting when only one machine has it", () => {
+    const onlyMbp = monitorSessionTargetsForProject(onMachine("mbp"), state);
+    expect(resolveMonitorTarget(onlyMbp, settingsFor(null))).toMatchObject({
+      machineId: "mbp",
+    });
+  });
+
+  // Having to choose is no use if the choices read the same.
+  it("names the host in the label so the two rows differ", () => {
+    expect(monitorTargetLabel(targets[0])).not.toBe(monitorTargetLabel(targets[1]));
+    expect(monitorTargetLabel(targets[0])).toContain("sam-mbp");
   });
 });

@@ -8,6 +8,7 @@ import {
   resolveDaemonTarget,
   resolveSharedDaemonTarget,
   sanitizeMachineName,
+  sharedHostOnline,
 } from "./machines";
 
 const MBP = { id: "mbp", name: "sam-mbp" };
@@ -174,5 +175,27 @@ describe("the daemon handshake contract", () => {
   it("agrees on the reserved id for a daemon that named no machine", () => {
     expect(UNIDENTIFIED_MACHINE_ID).toBe(contract.reservedUnidentifiedMachineId);
     expect(isValidMachineId(contract.reservedUnidentifiedMachineId)).toBe(false);
+  });
+});
+
+// A guest socket's `shareMachine:` tag is frozen at connect and Workers tags
+// cannot be changed afterwards, so a share the owner bound to a host
+// mid-session left the guest's indicator reading connected while every request
+// it sent was refused. The indicator now answers from the routing rule.
+describe("what a guest's indicator says versus what its requests do", () => {
+  const fleet = [MBP, STRIX];
+
+  it("agrees with routing for an unbound share once the account has two machines", () => {
+    expect(sharedHostOnline(fleet, undefined)).toBe(resolveSharedDaemonTarget(fleet, undefined).ok);
+    expect(sharedHostOnline(fleet, undefined)).toBe(false);
+  });
+
+  it("still reads connected for an unbound share on a single-machine account", () => {
+    expect(sharedHostOnline([MBP], undefined)).toBe(true);
+  });
+
+  it("agrees with routing for a bound share whose host is away", () => {
+    expect(sharedHostOnline([MBP], STRIX.id)).toBe(false);
+    expect(sharedHostOnline([MBP], MBP.id)).toBe(true);
   });
 });

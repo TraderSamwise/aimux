@@ -649,6 +649,33 @@ impl RealDaemonRuntime {
             .clone()
     }
 
+    /// What `aimux doctor` prints for this machine. A `~/.aimux` copied to a
+    /// second host carries its id, and two daemons claiming one id is
+    /// invisible from either side, so the id has to be readable somewhere.
+    ///
+    /// Never creates: see `machine_identity::read_stored`.
+    #[cfg(feature = "remote-control")]
+    fn machine_identity_report(&self) -> Value {
+        if let Some(resolved) = self.machine_identity.get() {
+            return json!({
+                "id": resolved.id,
+                "name": resolved.name,
+                "source": "resolved",
+            });
+        }
+        match crate::machine_identity::read_stored(&self.resolver) {
+            Ok(Some(stored)) => json!({
+                "id": stored.id,
+                "name": stored.name,
+                "source": "stored",
+            }),
+            // Not yet named is a different answer from could not be read, and
+            // a report that collapsed them would hide an unreadable home.
+            Ok(None) => json!({ "source": "unnamed" }),
+            Err(error) => json!({ "source": "unreadable", "error": error.to_string() }),
+        }
+    }
+
     /// Called once the daemon is up, so a machine that was left logged in and
     /// enabled reconnects on its own rather than waiting for a CLI call.
     #[cfg(feature = "remote-control")]
@@ -3778,11 +3805,11 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
             object.insert("relay".into(), self.relay_status());
             #[cfg(feature = "remote-control")]
             {
-                let machine = self.machine_identity();
-                object.insert(
-                    "machine".into(),
-                    json!({ "id": machine.id, "name": machine.name }),
-                );
+                // Reported, not resolved. Calling `machine_identity()` here
+                // would let a diagnostic be the first thing to establish the
+                // identity -- and, on a home it cannot write, cache an
+                // ephemeral id that every later connect then uses.
+                object.insert("machine".into(), self.machine_identity_report());
             }
         }
         let mut text = render_runtime_coherence_report(&report);
@@ -3790,11 +3817,19 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         // daemons claiming one id is invisible from either side -- so the id
         // has to be readable somewhere.
         if let Some(machine) = report.get("machine") {
-            text.push_str(&format!(
-                "\nmachine: {} ({})\n",
-                machine["name"].as_str().unwrap_or("?"),
-                machine["id"].as_str().unwrap_or("?"),
-            ));
+            let line = match machine["source"].as_str() {
+                Some("unnamed") => "machine: not named yet".to_owned(),
+                Some("unreadable") => format!(
+                    "machine: could not be read -- {}",
+                    machine["error"].as_str().unwrap_or("unknown error")
+                ),
+                _ => format!(
+                    "machine: {} ({})",
+                    machine["name"].as_str().unwrap_or("?"),
+                    machine["id"].as_str().unwrap_or("?"),
+                ),
+            };
+            text.push_str(&format!("\n{line}\n"));
         }
         text.push_str(&render_daemon_process_inventory_for_doctor(&report));
         Ok((report, text))
@@ -6014,6 +6049,55 @@ mod tests {
         assert!(
             text.contains(&first.id) && text.contains(&first.name),
             "doctor text must name the machine: {text}"
+        );
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A diagnostic must not be the thing that decides what this machine is.
+    /// `load_or_create` caches an ephemeral id for the process when the write
+    /// fails, so running `aimux doctor` on a full or read-only home would pick
+    /// the id every later connect used.
+    #[cfg(feature = "remote-control")]
+    #[test]
+    fn doctor_reports_the_machine_without_creating_one() {
+        let home = std::env::temp_dir().join(format!(
+            "aimux-machine-doctor-{}-{}",
+            std::process::id(),
+            TEST_SEQUENCE.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&home).expect("fixture home");
+        let resolver = PathResolver::new("/", "/", Some(home.to_string_lossy().into_owned()));
+        let identity_path = resolver.machine_identity_path();
+        let mut runtime = RealDaemonRuntime::new(
+            resolver,
+            AimuxDaemonInfo {
+                pid: std::process::id() as i32,
+                port: 43190,
+                started_at: "2026-10-03T00:00:00.000Z".to_owned(),
+                updated_at: "2026-10-03T00:00:00.000Z".to_owned(),
+            },
+        );
+
+        let (report, text) = runtime.doctor_versions_report().expect("doctor report");
+        assert_eq!(report["machine"]["source"], json!("unnamed"));
+        assert!(
+            !identity_path.exists(),
+            "a report must not establish the identity"
+        );
+        assert!(
+            text.contains("machine: not named yet"),
+            "not named yet is a different answer from unreadable: {text}"
+        );
+
+        // Once the daemon has resolved it, the report says so and names it.
+        let resolved = runtime.machine_identity();
+        let (report, text) = runtime.doctor_versions_report().expect("doctor report");
+        assert_eq!(report["machine"]["source"], json!("resolved"));
+        assert_eq!(report["machine"]["id"], json!(resolved.id));
+        assert!(
+            text.contains(&resolved.id),
+            "doctor text must name it: {text}"
         );
 
         let _ = fs::remove_dir_all(&home);

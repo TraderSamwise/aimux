@@ -20,6 +20,7 @@ import {
   buildExposeTiles,
   cropExposeTerminalPreviewFooter,
   exposeSetLabel,
+  exposeViewKey,
   filterExposeTiles,
   summarizeExposeTiles,
   type ExposeFilter,
@@ -688,10 +689,12 @@ export default function ExposeScreen() {
       projectRequestServiceAlive,
     ],
   );
-  const viewKey =
-    scope === "global"
-      ? `global:${exposePreviewMode}`
-      : `project:${currentProjectPath ?? ""}:${exposePreviewMode}`;
+  const viewKey = exposeViewKey({
+    scope,
+    machineId: currentProjectMachineId,
+    projectPath: currentProjectPath,
+    previewMode: exposePreviewMode,
+  });
   const currentTiles = useMemo(
     () => (loadedViewKey === viewKey ? tiles : []),
     [loadedViewKey, tiles, viewKey],

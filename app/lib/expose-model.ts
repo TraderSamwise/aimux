@@ -241,6 +241,20 @@ function exposeMixedSupervisorLabel(supervisorCount: number, baseLabel: string):
   return `${supervisorLabel} + ${baseLabel}`;
 }
 
+/// Which fetch a set of tiles belongs to. The machine is part of it because
+/// the fetch is machine-aware: with one checkout on two hosts, a path-only key
+/// kept the previous host's tiles on screen under the new host's header, and
+/// tapping one opened the agent on the host just navigated away from.
+export function exposeViewKey(input: {
+  scope: "global" | "project";
+  machineId?: string | null;
+  projectPath?: string | null;
+  previewMode: string;
+}): string {
+  if (input.scope === "global") return `global:${input.previewMode}`;
+  return ["project", input.machineId ?? "", input.projectPath ?? "", input.previewMode].join(":");
+}
+
 export function exposeSetLabel(tiles: readonly ExposeTile[], baseLabel: string): string {
   const supervisorCount = tiles.filter((tile) => tile.supervisorScoped).length;
   if (supervisorCount === 0) return baseLabel;

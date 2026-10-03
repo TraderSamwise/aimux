@@ -112,6 +112,23 @@ pub fn hostname_display_name(raw: &str) -> Option<String> {
     sanitize_machine_name(trimmed.strip_suffix(".local").unwrap_or(trimmed))
 }
 
+/// What is on disk, without creating anything.
+///
+/// For diagnostics. `load_or_create` is the wrong call for a report: it is the
+/// first thing that can establish the identity, and if the write fails it
+/// caches an ephemeral id for the rest of the process -- so merely running
+/// `aimux doctor` on a full or read-only home would decide what the daemon
+/// connects as. A report says what is there, including that nothing is.
+pub fn read_stored(resolver: &PathResolver) -> io::Result<Option<MachineIdentity>> {
+    match fs::read(resolver.machine_identity_path()) {
+        Ok(bytes) => Ok(serde_json::from_slice::<MachineIdentity>(&bytes)
+            .ok()
+            .filter(|identity| identity.version == 1 && is_valid_machine_id(&identity.id))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn load_or_create(resolver: &PathResolver) -> io::Result<MachineIdentity> {
     load_or_create_at(resolver.machine_identity_path(), os_hostname().as_deref())
 }

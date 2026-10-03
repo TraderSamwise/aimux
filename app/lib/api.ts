@@ -327,6 +327,19 @@ async function callDaemonViaRelay<T>(
   body?: unknown,
   opts?: ApiOpts,
 ): Promise<T> {
+  return (await callDaemonViaRelayNamingAnswerer<T>(method, path, body, opts)).body;
+}
+
+// The same call, keeping which machine answered. The relay stamps that from
+// the socket's tags, so it is not a thing the daemon claims -- which makes it
+// usable by a caller that could not name a machine because the fleet had not
+// been announced yet.
+async function callDaemonViaRelayNamingAnswerer<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  opts?: ApiOpts,
+): Promise<{ body: T; machineId?: string }> {
   const relay = _relay;
   if (!relay) throw new ApiError(0, null, "Relay not connected");
   // Three arguments when no machine is named, so a caller that never cared
@@ -345,7 +358,10 @@ async function callDaemonViaRelay<T>(
       apiErrorMessageFromBody(result.body, `HTTP ${result.status}`),
     );
   }
-  return result.body as T;
+  return {
+    body: result.body as T,
+    ...(result.machineId ? { machineId: result.machineId } : {}),
+  };
 }
 
 async function callServiceViaRelay<T>(
@@ -570,8 +586,12 @@ export async function listProjectsAcrossMachines(opts?: ApiOpts): Promise<Machin
   const machines = shouldRouteViaRelay() ? (getApiRelay()?.namedMachines ?? []) : [];
   if (machines.length === 0) {
     // Local mode, or a relay that has not told us the fleet yet. One
-    // machine-less call is exactly what this did before machines existed.
-    return { projects: await listProjects(opts), failures: [] };
+    // machine-less call is exactly what this did before machines existed --
+    // except that the relay now says which machine answered, so this poll's
+    // projects are attributed immediately. Without that they arrived bare and
+    // the next poll re-keyed every project-scoped atom, remounting the chat
+    // view seconds after it opened.
+    return listProjectsAttributedToTheAnsweringMachine(opts);
   }
   const results = await Promise.allSettled(
     machines.map(async (machine) =>
@@ -611,6 +631,30 @@ export async function listProjectsAcrossMachines(opts?: ApiOpts): Promise<Machin
     );
   }
   return { projects, failures, answeringMachineIds };
+}
+
+async function listProjectsAttributedToTheAnsweringMachine(
+  opts?: ApiOpts,
+): Promise<MachineProjectList> {
+  if (!shouldRouteViaRelay()) {
+    return { projects: await listProjects(opts), failures: [] };
+  }
+  const answered = await callDaemonViaRelayNamingAnswerer<{ ok: boolean; projects?: unknown }>(
+    "GET",
+    "/projects",
+    undefined,
+    opts,
+  );
+  const projects = normalizeDaemonProjects(answered.body.projects);
+  if (!answered.machineId) return { projects, failures: [] };
+  return {
+    projects: projects.map((project) => ({
+      ...project,
+      machineId: project.machineId ?? answered.machineId,
+    })),
+    failures: [],
+    answeringMachineIds: [answered.machineId],
+  };
 }
 
 function relayFailureMessage(reason: unknown): string {
@@ -669,7 +713,15 @@ function mergeGlobalExposeItems(
     const machine = machines[index];
     if (result.status === "fulfilled") {
       items.push(...(result.value.items ?? []).map((item) => ({ ...item, machineId: machine.id })));
-      projectReadErrors.push(...(result.value.projectReadErrors ?? []));
+      // Stamped with the host, because one checkout failing to read on two
+      // machines is otherwise two identical rows with nothing saying which.
+      projectReadErrors.push(
+        ...(result.value.projectReadErrors ?? []).map((error) =>
+          typeof error === "string"
+            ? { error, machineName: machine.name || machine.id }
+            : { ...error, machineName: machine.name || machine.id },
+        ),
+      );
       return;
     }
     projectReadErrors.push({

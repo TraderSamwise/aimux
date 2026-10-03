@@ -438,6 +438,18 @@ describe("which share a new invite extends", () => {
     expect(Object.keys(other.state.shares)).toHaveLength(2);
   });
 
+  // Adoption of an unbound share requires the root to match, so a root left
+  // behind by a moved checkout would make the next invite build a second share
+  // and strand the first one's guests.
+  it("follows the checkout the invite came from", async () => {
+    const first = await invite(emptySharingState(), "mbp", "/Users/sam/cs/aimux");
+    const moved = await invite(first.state, "mbp", "/Users/sam/code/aimux");
+
+    expect(moved.token.share.id).toBe(first.token.share.id);
+    expect(moved.token.share.projectRoot).toBe("/Users/sam/code/aimux");
+    expect(Object.keys(moved.state.shares)).toHaveLength(1);
+  });
+
   it("adopts neither when two unbound shares could be the one", () => {
     const unbound = (id: string): SharedSessionRecord => ({
       id,

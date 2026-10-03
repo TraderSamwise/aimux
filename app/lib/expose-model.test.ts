@@ -4,6 +4,7 @@ import {
   buildExposeTiles,
   cropExposeTerminalPreviewFooter,
   exposeSetLabel,
+  exposeViewKey,
   filterExposeTiles,
   groupExposeTiles,
   summarizeExposeTiles,
@@ -714,5 +715,44 @@ describe("grouping global Expose items by the project they came from", () => {
         [{ id: "a", machineId: "strix", projectId: "aimux" }],
       ),
     ).toEqual([]);
+  });
+});
+
+describe("which fetch a set of Expose tiles belongs to", () => {
+  const projectKeyOn = (machineId: string | null) =>
+    exposeViewKey({
+      scope: "project",
+      machineId,
+      projectPath: "/repo/aimux",
+      previewMode: "terminal",
+    });
+
+  // The fetch is machine-aware but the key was not, so opening project-scope
+  // Expose on the mbp and then switching to strix left the mbp's tiles on
+  // screen under strix's header -- and tapping one opened the mbp's agent.
+  it("separates two machines holding the same checkout", () => {
+    expect(projectKeyOn("mbp")).not.toBe(projectKeyOn("strix"));
+  });
+
+  it("is the same key for the same project on the same machine", () => {
+    expect(projectKeyOn("mbp")).toBe(projectKeyOn("mbp"));
+  });
+
+  // Global scope spans every machine, so naming one would be wrong.
+  it("names no machine in global scope", () => {
+    expect(exposeViewKey({ scope: "global", machineId: "mbp", previewMode: "terminal" })).toBe(
+      exposeViewKey({ scope: "global", machineId: "strix", previewMode: "terminal" }),
+    );
+  });
+
+  it("changes with the preview mode", () => {
+    expect(projectKeyOn("mbp")).not.toBe(
+      exposeViewKey({
+        scope: "project",
+        machineId: "mbp",
+        projectPath: "/repo/aimux",
+        previewMode: "chat",
+      }),
+    );
   });
 });

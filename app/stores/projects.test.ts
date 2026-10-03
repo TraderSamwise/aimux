@@ -334,3 +334,38 @@ describe("selecting a project when two machines hold the same path", () => {
     expect(store.get(selectedProjectRefAtom)).toEqual({ path: "/repo/aimux" });
   });
 });
+
+describe("a selection stored before machines existed", () => {
+  // Upgrading with one checkout on two hosts made the stored bare path
+  // ambiguous, so it resolved to nothing and the selection jumped to the first
+  // project with the agent cleared: Sam reopened the app somewhere else. A
+  // path two machines both have is unresolved, not absent.
+  it("is kept when a machine still has that path", () => {
+    const store = createStore();
+    store.set(selectedProjectKeyAtom, projectKey({ machineId: undefined, path: "/repo/aimux" }));
+    store.set(selectedSessionIdAtom, "claude-1");
+
+    store.set(
+      reconcileProjectsAtom,
+      [machineProject("aimux", "mbp", "sam-mbp"), machineProject("aimux", "strix", "sam-strix")],
+      { answeringMachineIds: ["mbp", "strix"] },
+    );
+
+    expect(store.get(selectedProjectRefAtom)?.path).toBe("/repo/aimux");
+    expect(store.get(selectedSessionIdAtom)).toBe("claude-1");
+  });
+
+  // Nothing in the fleet has it any more, so it really is gone.
+  it("is moved on when no machine has that path", () => {
+    const store = createStore();
+    store.set(selectedProjectKeyAtom, projectKey({ machineId: undefined, path: "/repo/gone" }));
+    store.set(selectedSessionIdAtom, "claude-1");
+
+    store.set(reconcileProjectsAtom, [machineProject("aimux", "mbp", "sam-mbp")], {
+      answeringMachineIds: ["mbp"],
+    });
+
+    expect(store.get(selectedProjectRefAtom)?.path).toBe("/repo/aimux");
+    expect(store.get(selectedSessionIdAtom)).toBeNull();
+  });
+});

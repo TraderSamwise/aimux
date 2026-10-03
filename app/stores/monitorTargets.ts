@@ -3,7 +3,7 @@ import { projectRefOf, projectStateKey } from "@/lib/project-key";
 import {
   monitorSessionTargetsForProject,
   monitorSharedTargets,
-  targetMatchesSettings,
+  resolveMonitorTarget,
   type MonitorTarget,
 } from "@/lib/monitor-targets";
 import { desktopStateFamily } from "@/stores/desktopState";
@@ -23,5 +23,5 @@ export const monitorTargetsAtom = atom<MonitorTarget[]>((get) => {
 
 export const selectedMonitorTargetAtom = atom<MonitorTarget | null>((get) => {
   const settings = get(monitorSettingsAtom);
-  return get(monitorTargetsAtom).find((target) => targetMatchesSettings(target, settings)) ?? null;
+  return resolveMonitorTarget(get(monitorTargetsAtom), settings);
 });

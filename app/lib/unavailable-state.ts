@@ -35,8 +35,10 @@ export function formatDaemonProjectReadError(error: DaemonProjectReadError): str
   if (typeof error === "string") return error;
   const project =
     stringField(error.projectName) || stringField(error.projectRoot) || stringField(error.root);
+  const machine = stringField(error.machineName);
   const message = stringField(error.error) || stringField(error.message) || "project read failed";
-  return project ? `${project}: ${message}` : message;
+  const subject = project && machine ? `${project} on ${machine}` : project || machine;
+  return subject ? `${subject}: ${message}` : message;
 }
 
 export function formatTmuxUnavailable(

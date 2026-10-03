@@ -449,6 +449,10 @@ export type DaemonProjectReadError =
       projectRoot?: string;
       root?: string;
       path?: string;
+      // Stamped client-side when a read is merged across machines. Two hosts
+      // holding one checkout produce byte-identical errors otherwise, so
+      // neither says which host failed.
+      machineName?: string;
       error?: string;
       message?: string;
       [k: string]: unknown;

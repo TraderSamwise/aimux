@@ -350,7 +350,17 @@ export class RelayObject extends DurableObject<Env> {
         this.pendingRequests.delete(parsed.id);
         this.detachClientPendingRequest(pending.client, parsed.id);
         try {
-          pending.client.send(JSON.stringify({ ...parsed, id: pending.clientRequestId }));
+          // Which machine answered, so a client that asked before it knew the
+          // machine list does not have to guess -- and so `/projects` results
+          // are stamped on the first poll rather than a poll later, which was
+          // remounting the chat view seconds after it opened.
+          //
+          // Not sent to a guest: a share names one host and must not become a
+          // window onto the rest of the account.
+          const answered = isSharedClientSocket(this.ctx.getTags(pending.client))
+            ? {}
+            : { machineId: pending.machineId };
+          pending.client.send(JSON.stringify({ ...parsed, ...answered, id: pending.clientRequestId }));
         } catch {
           // client has gone away — drop silently
         }
@@ -1701,7 +1711,21 @@ export class RelayObject extends DurableObject<Env> {
           });
         }
         for (const [relayRequestId, pending] of Object.entries(this.clientSocketAttachment(ws).pendingRequests ?? {})) {
-          if (!isPendingRequestAttachment(pending)) continue;
+          if (!isPendingRequestAttachment(pending)) {
+            // An attachment we cannot read is a request we cannot route, which
+            // is the same outcome as one naming no machine -- so it gets the
+            // same 502 rather than being dropped for the client to time out.
+            // The id is salvaged when it is there to salvage; when it is not,
+            // detaching is all that can be done, and leaving it would have it
+            // rebuilt on every future rehydrate.
+            unroutable.push({
+              client: ws,
+              id: relayRequestId,
+              kind: "request",
+              clientId: salvagedClientRequestId(pending) ?? relayRequestId,
+            });
+            continue;
+          }
           if (!pending.machineId) {
             unroutable.push({
               client: ws,
@@ -1938,6 +1962,14 @@ function json(body: unknown, status: number): Response {
 
 function isSharedClientSocket(tags: readonly string[]): boolean {
   return tags.some((tag) => tag.startsWith("share:"));
+}
+
+// The client's own id out of an attachment that failed validation, so a
+// request we cannot route can still be answered rather than abandoned.
+function salvagedClientRequestId(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const id = (value as { clientRequestId?: unknown }).clientRequestId;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
 function isPendingRequestAttachment(value: unknown): value is PendingRequestAttachment {

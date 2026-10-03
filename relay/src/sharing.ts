@@ -231,6 +231,11 @@ export async function createShareInvite(
   if (machineId) {
     share.machineId = machineId;
   }
+  // The checkout the share names tracks the one the invite came from. Without
+  // this a moved or renamed checkout left the stored root behind, and because
+  // adoption of an unbound share requires the root to match, the next invite
+  // made a second share and stranded the first one's guests.
+  share.projectRoot = projectRoot;
 
   const token = randomBase64Url(INVITE_TOKEN_BYTES);
   const invite: ShareInviteRecord = {

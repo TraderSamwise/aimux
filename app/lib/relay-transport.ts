@@ -28,6 +28,9 @@ interface RelayResponse {
   type: "response";
   status: number;
   body?: unknown;
+  // Which machine answered, stamped by the relay from the socket's tags.
+  // Absent on a shared-guest socket, which is told nothing about the fleet.
+  machineId?: string;
 }
 
 interface RelayProjectEventsSubscribed {
@@ -303,7 +306,7 @@ export class RelayTransport {
     path: string,
     body?: unknown,
     machineId?: string,
-  ): Promise<{ status: number; body: unknown }> {
+  ): Promise<{ status: number; body: unknown; machineId?: string }> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Relay not connected");
     }
@@ -455,7 +458,16 @@ export class RelayTransport {
         }
         clearTimeout(entry.timer);
         this.pending.delete(msg.id);
-        entry.resolve({ status: msg.status, body: msg.body });
+        entry.resolve({
+          status: msg.status,
+          body: msg.body,
+          // Which machine answered, stamped by the relay from the socket's
+          // tags. A caller that asked without naming one uses it rather than
+          // leaving the result unattributed until the machine list arrives.
+          ...(typeof msg.machineId === "string" && msg.machineId
+            ? { machineId: msg.machineId }
+            : {}),
+        });
       }
       return;
     }

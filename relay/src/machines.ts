@@ -165,8 +165,13 @@ export function resolveSharedDaemonTarget(
 // Whether the host a guest was shared from is up. `daemon_status.online` means
 // "any machine", which for a guest is a fact about a fleet it cannot see and
 // the wrong answer about the one host it can.
+//
+// Answered by asking `resolveSharedDaemonTarget`, so the indicator and the
+// routing cannot disagree. They did: a guest socket's `shareMachine:` tag is
+// frozen at connect and tags cannot be changed afterwards, so a share the
+// owner bound to a host mid-session left the guest reading "any machine up"
+// while every request it sent was refused with "the machine hosting this
+// shared chat is not connected".
 export function sharedHostOnline(machines: readonly MachineInfo[], shareMachineId: string | undefined): boolean {
-  const bound = shareMachineId?.trim();
-  if (!bound) return machines.length > 0;
-  return machines.some((machine) => machine.id === bound);
+  return resolveSharedDaemonTarget(machines, shareMachineId).ok;
 }

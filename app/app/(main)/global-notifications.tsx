@@ -165,7 +165,7 @@ function NotificationSection({
       </View>
       {rows.map((row) => (
         <GlobalNotificationCard
-          key={`${row.projectPath}:${row.notification.id}`}
+          key={`${row.machineId ?? ""}:${row.projectPath}:${row.notification.id}`}
           row={row}
           onOpen={onOpen}
           onRead={onRead}
