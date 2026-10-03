@@ -444,3 +444,41 @@ describe("notification policy", () => {
     ).toBeNull();
   });
 });
+
+describe("two machines raising the same notification", () => {
+  // A session id, a notification id and a dedupe key are all unique within one
+  // project service and not across the fleet, so one host's notification was
+  // deduplicating the other's away and a tap opened the wrong one.
+  it("gives each host its own dedupe key", () => {
+    const on = (machineId: string) =>
+      evaluateAgentNotification(
+        session({ attention: "needs_input", headline: "Waiting for input" }),
+        snapshotSessionForNotifications(session({ attention: "none" })),
+        enabledSettings,
+        { projectName: "aimux", projectPath: "/repo/aimux", machineId },
+      );
+
+    const mbp = on("mbp");
+    const strix = on("strix");
+    // Asserted as exact values, not just as unequal: `not.toBe` on two ids
+    // also passes when they differ for some reason that has nothing to do
+    // with the machine, which is how a dropped machine would slip through.
+    expect(mbp?.dedupeKey).toBe("mbp\u0000agent:claude-a1:attention:needs_input");
+    expect(strix?.dedupeKey).toBe("strix\u0000agent:claude-a1:attention:needs_input");
+    expect(mbp?.id).not.toBe(strix?.id);
+    expect(mbp?.target?.machineId).toBe("mbp");
+    expect(strix?.target?.machineId).toBe("strix");
+  });
+
+  // A context with no machine is local mode or an older daemon, and its keys
+  // must stay exactly what they were.
+  it("leaves a machineless context's keys alone", () => {
+    const event = evaluateAgentNotification(
+      session({ attention: "needs_input", headline: "Waiting for input" }),
+      snapshotSessionForNotifications(session({ attention: "none" })),
+      enabledSettings,
+      { projectName: "aimux", projectPath: "/repo/aimux" },
+    );
+    expect(event?.dedupeKey).toBe("agent:claude-a1:attention:needs_input");
+  });
+});

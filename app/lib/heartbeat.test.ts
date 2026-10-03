@@ -101,6 +101,7 @@ describe("startHeartbeat relay transport", () => {
       { Authorization: "Bearer token" },
       expect.any(Function),
       expect.any(Function),
+      undefined,
     );
     expect(events).toEqual([{ type: "ready", ...ready }]);
 
@@ -139,6 +140,7 @@ describe("startHeartbeat relay transport", () => {
       {},
       expect.any(Function),
       expect.any(Function),
+      undefined,
     );
     expect(events).toEqual([{ type: "agent_output", ...output }]);
   });
@@ -248,6 +250,27 @@ describe("startHeartbeat local transport", () => {
       expect.objectContaining({
         headers: { Authorization: "Bearer token" },
       }),
+    );
+  });
+});
+
+describe("heartbeat on a named machine", () => {
+  it("subscribes on the machine the address belongs to", () => {
+    const subscribeProjectEvents = vi.fn(() => ({ stop: vi.fn() }));
+    setApiRelay({ subscribeProjectEvents } as unknown as RelayTransport);
+
+    startHeartbeat({
+      serviceEndpoint: { host: "127.0.0.1", port: 43210, machineId: "strix" },
+      sessionId: null,
+      onEvent: () => {},
+    });
+
+    expect(subscribeProjectEvents).toHaveBeenCalledWith(
+      "/proxy/127.0.0.1/43210/events",
+      {},
+      expect.any(Function),
+      expect.any(Function),
+      "strix",
     );
   });
 });

@@ -962,6 +962,19 @@ pub(super) fn resume_agent_session(
         }
     }
 
+    // An agent is a process that starts work, and the work is what fills the
+    // machine. Refusing here is the difference between one launch that did not
+    // happen and a host that stops answering: sam-strix left the network for
+    // twenty minutes because nothing on this path asked.
+    if let Some(reason) = crate::host_capacity::launch_capacity(
+        crate::host_capacity::available_memory_bytes(),
+        crate::host_capacity::memory_floor_bytes(),
+    )
+    .message()
+    {
+        return json_user_facing_error(503, &format!("Cannot start {session_id}; {reason}"));
+    }
+
     let mut session = topology_session_to_session_state(&topology_session, &topology);
     let project_root = context.project_root().to_string_lossy().into_owned();
     let config = load_config_for_known_project_root(context.project_root());

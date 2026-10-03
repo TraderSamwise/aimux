@@ -1,4 +1,5 @@
 import { createStore } from "jotai";
+import { projectStateKey, type ProjectStateKey } from "@/lib/project-key";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getProjectObservability, listTasks } from "@/lib/api";
@@ -184,8 +185,11 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function requestMarker(projectPath: string, sequence = 1): ProjectResourceRequestMarker {
-  const scope = { projectPath, endpointKey, generation: 0 };
+function requestMarker(
+  projectStateKey: ProjectStateKey,
+  sequence = 1,
+): ProjectResourceRequestMarker {
+  const scope = { projectStateKey, endpointKey, generation: 0 };
   return {
     seq: sequence,
     requestKey: projectResourceRequestKey(scope, sequence),
@@ -194,8 +198,8 @@ function requestMarker(projectPath: string, sequence = 1): ProjectResourceReques
 }
 
 function refreshInput(
-  projectPath: string,
-  request = requestMarker(projectPath),
+  projectStateKey: ProjectStateKey,
+  request = requestMarker(projectStateKey),
   isCurrentRequest: (marker: ProjectResourceRequestMarker) => boolean = () => true,
 ) {
   return { endpoint, getToken, request, isCurrentRequest };
@@ -203,14 +207,14 @@ function refreshInput(
 
 function putObservability(
   store: TestStore,
-  projectPath: string,
+  projectStateKey: ProjectStateKey,
   value: ProjectObservabilityValue,
   requestKey = "seed-observability",
   updatedAt = 10,
 ) {
-  store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey });
+  store.set(beginProjectObservabilityRefreshAtom, { projectStateKey, requestKey });
   store.set(applyProjectObservabilitySuccessAtom, {
-    projectPath,
+    projectStateKey,
     requestKey,
     observability: value,
     updatedAt,
@@ -219,14 +223,14 @@ function putObservability(
 
 function putTasks(
   store: TestStore,
-  projectPath: string,
+  projectStateKey: ProjectStateKey,
   value: ProjectTasksValue,
   requestKey = "seed-tasks",
   updatedAt = 10,
 ) {
-  store.set(beginProjectTasksRefreshAtom, { projectPath, requestKey });
+  store.set(beginProjectTasksRefreshAtom, { projectStateKey, requestKey });
   store.set(applyProjectTasksSuccessAtom, {
-    projectPath,
+    projectStateKey,
     requestKey,
     tasks: value,
     updatedAt,
@@ -235,14 +239,14 @@ function putTasks(
 
 function putThreads(
   store: TestStore,
-  projectPath: string,
+  projectStateKey: ProjectStateKey,
   value: ProjectThreadsValue,
   requestKey = "seed-threads",
   updatedAt = 10,
 ) {
-  store.set(beginProjectThreadsRefreshAtom, { projectPath, requestKey });
+  store.set(beginProjectThreadsRefreshAtom, { projectStateKey, requestKey });
   store.set(applyProjectThreadsSuccessAtom, {
-    projectPath,
+    projectStateKey,
     requestKey,
     threads: value,
     updatedAt,
@@ -251,14 +255,14 @@ function putThreads(
 
 function putGraveyard(
   store: TestStore,
-  projectPath: string,
+  projectStateKey: ProjectStateKey,
   value: ProjectGraveyardValue,
   requestKey = "seed-graveyard",
   updatedAt = 10,
 ) {
-  store.set(beginProjectGraveyardRefreshAtom, { projectPath, requestKey });
+  store.set(beginProjectGraveyardRefreshAtom, { projectStateKey, requestKey });
   store.set(applyProjectGraveyardSuccessAtom, {
-    projectPath,
+    projectStateKey,
     requestKey,
     graveyard: value,
     updatedAt,
@@ -292,20 +296,20 @@ describe("project resource lifecycle", () => {
 
   it("keeps stale project observability after a refresh failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = observability();
     const requestKey = "request-1";
 
-    putObservability(store, projectPath, current);
-    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey });
+    putObservability(store, stateKey, current);
+    store.set(beginProjectObservabilityRefreshAtom, { projectStateKey: stateKey, requestKey });
     store.set(applyProjectObservabilityFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey,
       error: "service unavailable",
     });
 
-    expect(store.get(projectObservabilityFamily(projectPath))).toBe(current);
-    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectObservabilityFamily(stateKey))).toBe(current);
+    expect(store.get(projectObservabilityResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: "service unavailable",
       pending: false,
@@ -316,20 +320,23 @@ describe("project resource lifecycle", () => {
 
   it("clears stale project observability errors when retrying", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = observability();
     const requestKey = "request-1";
 
-    putObservability(store, projectPath, current);
-    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey });
+    putObservability(store, stateKey, current);
+    store.set(beginProjectObservabilityRefreshAtom, { projectStateKey: stateKey, requestKey });
     store.set(applyProjectObservabilityFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey,
       error: "request timed out after 10000ms",
     });
-    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey: "request-2" });
+    store.set(beginProjectObservabilityRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: "request-2",
+    });
 
-    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectObservabilityResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: null,
       pending: true,
@@ -340,20 +347,20 @@ describe("project resource lifecycle", () => {
 
   it("keeps stale project tasks after a refresh failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = tasks();
     const requestKey = "request-1";
 
-    putTasks(store, projectPath, current);
-    store.set(beginProjectTasksRefreshAtom, { projectPath, requestKey });
+    putTasks(store, stateKey, current);
+    store.set(beginProjectTasksRefreshAtom, { projectStateKey: stateKey, requestKey });
     store.set(applyProjectTasksFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey,
       error: "service unavailable",
     });
 
-    expect(store.get(projectTasksFamily(projectPath))).toBe(current);
-    expect(store.get(projectTasksResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectTasksFamily(stateKey))).toBe(current);
+    expect(store.get(projectTasksResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: "service unavailable",
       pending: false,
@@ -364,20 +371,20 @@ describe("project resource lifecycle", () => {
 
   it("keeps stale project threads after a refresh failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = threads();
     const requestKey = "request-1";
 
-    putThreads(store, projectPath, current);
-    store.set(beginProjectThreadsRefreshAtom, { projectPath, requestKey });
+    putThreads(store, stateKey, current);
+    store.set(beginProjectThreadsRefreshAtom, { projectStateKey: stateKey, requestKey });
     store.set(applyProjectThreadsFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey,
       error: "service unavailable",
     });
 
-    expect(store.get(projectThreadsFamily(projectPath))).toBe(current);
-    expect(store.get(projectThreadsResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectThreadsFamily(stateKey))).toBe(current);
+    expect(store.get(projectThreadsResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: "service unavailable",
       pending: false,
@@ -388,20 +395,20 @@ describe("project resource lifecycle", () => {
 
   it("keeps stale project graveyard after a refresh failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = graveyard();
     const requestKey = "request-1";
 
-    putGraveyard(store, projectPath, current);
-    store.set(beginProjectGraveyardRefreshAtom, { projectPath, requestKey });
+    putGraveyard(store, stateKey, current);
+    store.set(beginProjectGraveyardRefreshAtom, { projectStateKey: stateKey, requestKey });
     store.set(applyProjectGraveyardFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey,
       error: "service unavailable",
     });
 
-    expect(store.get(projectGraveyardFamily(projectPath))).toBe(current);
-    expect(store.get(projectGraveyardResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectGraveyardFamily(stateKey))).toBe(current);
+    expect(store.get(projectGraveyardResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: "service unavailable",
       pending: false,
@@ -412,7 +419,7 @@ describe("project resource lifecycle", () => {
 
   it("clears stale/error metadata after project resources recover", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const recoveredObservability = observability({
       project: {
         ...emptyProjectObservability(),
@@ -430,40 +437,49 @@ describe("project resource lifecycle", () => {
     const threadsKey = "threads-recover";
     const graveyardKey = "graveyard-recover";
 
-    putObservability(store, projectPath, observability(), "observability-seed");
-    putTasks(store, projectPath, tasks(), "tasks-seed");
-    putThreads(store, projectPath, threads(), "threads-seed");
-    putGraveyard(store, projectPath, graveyard(), "graveyard-seed");
-    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey: observabilityKey });
-    store.set(beginProjectTasksRefreshAtom, { projectPath, requestKey: tasksKey });
-    store.set(beginProjectThreadsRefreshAtom, { projectPath, requestKey: threadsKey });
-    store.set(beginProjectGraveyardRefreshAtom, { projectPath, requestKey: graveyardKey });
+    putObservability(store, stateKey, observability(), "observability-seed");
+    putTasks(store, stateKey, tasks(), "tasks-seed");
+    putThreads(store, stateKey, threads(), "threads-seed");
+    putGraveyard(store, stateKey, graveyard(), "graveyard-seed");
+    store.set(beginProjectObservabilityRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: observabilityKey,
+    });
+    store.set(beginProjectTasksRefreshAtom, { projectStateKey: stateKey, requestKey: tasksKey });
+    store.set(beginProjectThreadsRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: threadsKey,
+    });
+    store.set(beginProjectGraveyardRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: graveyardKey,
+    });
     store.set(applyProjectObservabilitySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: observabilityKey,
       observability: recoveredObservability,
       updatedAt: 20,
     });
     store.set(applyProjectTasksSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: tasksKey,
       tasks: recoveredTasks,
       updatedAt: 20,
     });
     store.set(applyProjectThreadsSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: threadsKey,
       threads: recoveredThreads,
       updatedAt: 20,
     });
     store.set(applyProjectGraveyardSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: graveyardKey,
       graveyard: recoveredGraveyard,
       updatedAt: 20,
     });
 
-    expect(store.get(projectObservabilityResourceFamily(projectPath))).toEqual({
+    expect(store.get(projectObservabilityResourceFamily(stateKey))).toEqual({
       value: recoveredObservability,
       error: null,
       pending: false,
@@ -471,7 +487,7 @@ describe("project resource lifecycle", () => {
       stale: false,
       updatedAt: 20,
     });
-    expect(store.get(projectTasksResourceFamily(projectPath))).toEqual({
+    expect(store.get(projectTasksResourceFamily(stateKey))).toEqual({
       value: recoveredTasks,
       error: null,
       pending: false,
@@ -479,7 +495,7 @@ describe("project resource lifecycle", () => {
       stale: false,
       updatedAt: 20,
     });
-    expect(store.get(projectThreadsResourceFamily(projectPath))).toEqual({
+    expect(store.get(projectThreadsResourceFamily(stateKey))).toEqual({
       value: recoveredThreads,
       error: null,
       pending: false,
@@ -487,7 +503,7 @@ describe("project resource lifecycle", () => {
       stale: false,
       updatedAt: 20,
     });
-    expect(store.get(projectGraveyardResourceFamily(projectPath))).toEqual({
+    expect(store.get(projectGraveyardResourceFamily(stateKey))).toEqual({
       value: recoveredGraveyard,
       error: null,
       pending: false,
@@ -499,18 +515,18 @@ describe("project resource lifecycle", () => {
 
   it("clears project resources when the project service endpoint disappears", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
-    putObservability(store, projectPath, observability());
-    putTasks(store, projectPath, tasks());
-    putThreads(store, projectPath, threads());
-    putGraveyard(store, projectPath, graveyard());
-    store.set(clearProjectObservabilityResourceAtom, projectPath);
-    store.set(clearProjectTasksResourceAtom, projectPath);
-    store.set(clearProjectThreadsResourceAtom, projectPath);
-    store.set(clearProjectGraveyardResourceAtom, projectPath);
+    putObservability(store, stateKey, observability());
+    putTasks(store, stateKey, tasks());
+    putThreads(store, stateKey, threads());
+    putGraveyard(store, stateKey, graveyard());
+    store.set(clearProjectObservabilityResourceAtom, stateKey);
+    store.set(clearProjectTasksResourceAtom, stateKey);
+    store.set(clearProjectThreadsResourceAtom, stateKey);
+    store.set(clearProjectGraveyardResourceAtom, stateKey);
 
-    expect(store.get(projectObservabilityResourceFamily(projectPath))).toEqual({
+    expect(store.get(projectObservabilityResourceFamily(stateKey))).toEqual({
       value: null,
       error: null,
       pending: false,
@@ -518,7 +534,7 @@ describe("project resource lifecycle", () => {
       stale: false,
       updatedAt: null,
     });
-    expect(store.get(projectTasksResourceFamily(projectPath))).toEqual({
+    expect(store.get(projectTasksResourceFamily(stateKey))).toEqual({
       value: null,
       error: null,
       pending: false,
@@ -526,7 +542,7 @@ describe("project resource lifecycle", () => {
       stale: false,
       updatedAt: null,
     });
-    expect(store.get(projectThreadsResourceFamily(projectPath))).toEqual({
+    expect(store.get(projectThreadsResourceFamily(stateKey))).toEqual({
       value: null,
       error: null,
       pending: false,
@@ -534,7 +550,7 @@ describe("project resource lifecycle", () => {
       stale: false,
       updatedAt: null,
     });
-    expect(store.get(projectGraveyardResourceFamily(projectPath))).toEqual({
+    expect(store.get(projectGraveyardResourceFamily(stateKey))).toEqual({
       value: null,
       error: null,
       pending: false,
@@ -546,7 +562,7 @@ describe("project resource lifecycle", () => {
 
   it("removes graveyard agent and worktree entries after successful mutations", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = graveyard({
       entries: [graveyardEntry("dead-1"), graveyardEntry("dead-2")],
       worktrees: [
@@ -555,34 +571,34 @@ describe("project resource lifecycle", () => {
       ],
     });
 
-    putGraveyard(store, projectPath, current);
-    store.set(removeProjectGraveyardAgentAtom, { projectPath, id: "dead-1" });
+    putGraveyard(store, stateKey, current);
+    store.set(removeProjectGraveyardAgentAtom, { projectStateKey: stateKey, id: "dead-1" });
     store.set(removeProjectGraveyardWorktreeAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       path: "/repo/.aimux/worktrees/feature-a",
     });
 
-    expect(store.get(projectGraveyardResourceFamily(projectPath)).value).toMatchObject({
+    expect(store.get(projectGraveyardResourceFamily(stateKey)).value).toMatchObject({
       entries: [{ id: "dead-2" }],
       worktrees: [{ path: "/repo/.aimux/worktrees/feature-b" }],
     });
-    expect(store.get(projectGraveyardResourceFamily(projectPath)).error).toBeNull();
+    expect(store.get(projectGraveyardResourceFamily(stateKey)).error).toBeNull();
   });
 
   it("records graveyard action errors without stealing refresh ownership", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = graveyard();
     const requestKey = "refresh-in-flight";
 
-    putGraveyard(store, projectPath, current);
-    store.set(beginProjectGraveyardRefreshAtom, { projectPath, requestKey });
+    putGraveyard(store, stateKey, current);
+    store.set(beginProjectGraveyardRefreshAtom, { projectStateKey: stateKey, requestKey });
     store.set(applyProjectGraveyardActionFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "resurrect failed",
     });
 
-    expect(store.get(projectGraveyardResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectGraveyardResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: "resurrect failed",
       pending: true,
@@ -594,53 +610,85 @@ describe("project resource lifecycle", () => {
   it("rejects in-flight project resource results from an old endpoint generation", () => {
     expect(
       isCurrentProjectResourceRequest(
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43190", generation: 1 },
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43190",
+          generation: 1,
+        },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
       ),
     ).toBe(false);
 
     expect(
       isCurrentProjectResourceRequest(
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
       ),
     ).toBe(true);
   });
 
   it("creates unique project resource request keys across component remounts", () => {
-    const scope = { projectPath: "/repo", endpointKey: "127.0.0.1:43190", generation: 1 };
+    const scope = {
+      projectStateKey: projectStateKey({ path: "/repo" }),
+      endpointKey: "127.0.0.1:43190",
+      generation: 1,
+    };
 
     expect(projectResourceRequestKey(scope)).not.toBe(projectResourceRequestKey(scope));
   });
 
   it("settles only the pending project observability request that owns the marker", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = observability();
     const staleRequest = projectResourceRequestKey(
-      { projectPath, endpointKey: "127.0.0.1:43190", generation: 1 },
+      { projectStateKey: stateKey, endpointKey: "127.0.0.1:43190", generation: 1 },
       1,
     );
     const currentRequest = projectResourceRequestKey(
-      { projectPath, endpointKey: "127.0.0.1:43191", generation: 2 },
+      { projectStateKey: stateKey, endpointKey: "127.0.0.1:43191", generation: 2 },
       2,
     );
 
-    putObservability(store, projectPath, current);
-    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey: staleRequest });
-    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey: currentRequest });
-    store.set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey: staleRequest });
+    putObservability(store, stateKey, current);
+    store.set(beginProjectObservabilityRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: staleRequest,
+    });
+    store.set(beginProjectObservabilityRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentRequest,
+    });
+    store.set(settleProjectObservabilityRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: staleRequest,
+    });
 
-    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectObservabilityResourceFamily(stateKey))).toMatchObject({
       value: current,
       pending: true,
       pendingRequestKey: currentRequest,
       stale: true,
     });
 
-    store.set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey: currentRequest });
+    store.set(settleProjectObservabilityRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentRequest,
+    });
 
-    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectObservabilityResourceFamily(stateKey))).toMatchObject({
       value: current,
       pending: false,
       pendingRequestKey: null,
@@ -650,32 +698,44 @@ describe("project resource lifecycle", () => {
 
   it("settles only the pending project tasks request that owns the marker", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = tasks();
     const staleRequest = projectResourceRequestKey(
-      { projectPath, endpointKey: "127.0.0.1:43190", generation: 1 },
+      { projectStateKey: stateKey, endpointKey: "127.0.0.1:43190", generation: 1 },
       1,
     );
     const currentRequest = projectResourceRequestKey(
-      { projectPath, endpointKey: "127.0.0.1:43191", generation: 2 },
+      { projectStateKey: stateKey, endpointKey: "127.0.0.1:43191", generation: 2 },
       2,
     );
 
-    putTasks(store, projectPath, current);
-    store.set(beginProjectTasksRefreshAtom, { projectPath, requestKey: staleRequest });
-    store.set(beginProjectTasksRefreshAtom, { projectPath, requestKey: currentRequest });
-    store.set(settleProjectTasksRefreshAtom, { projectPath, requestKey: staleRequest });
+    putTasks(store, stateKey, current);
+    store.set(beginProjectTasksRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: staleRequest,
+    });
+    store.set(beginProjectTasksRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentRequest,
+    });
+    store.set(settleProjectTasksRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: staleRequest,
+    });
 
-    expect(store.get(projectTasksResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectTasksResourceFamily(stateKey))).toMatchObject({
       value: current,
       pending: true,
       pendingRequestKey: currentRequest,
       stale: true,
     });
 
-    store.set(settleProjectTasksRefreshAtom, { projectPath, requestKey: currentRequest });
+    store.set(settleProjectTasksRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentRequest,
+    });
 
-    expect(store.get(projectTasksResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectTasksResourceFamily(stateKey))).toMatchObject({
       value: current,
       pending: false,
       pendingRequestKey: null,
@@ -685,32 +745,44 @@ describe("project resource lifecycle", () => {
 
   it("settles only the pending project threads request that owns the marker", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = threads();
     const staleRequest = projectResourceRequestKey(
-      { projectPath, endpointKey: "127.0.0.1:43190", generation: 1 },
+      { projectStateKey: stateKey, endpointKey: "127.0.0.1:43190", generation: 1 },
       1,
     );
     const currentRequest = projectResourceRequestKey(
-      { projectPath, endpointKey: "127.0.0.1:43191", generation: 2 },
+      { projectStateKey: stateKey, endpointKey: "127.0.0.1:43191", generation: 2 },
       2,
     );
 
-    putThreads(store, projectPath, current);
-    store.set(beginProjectThreadsRefreshAtom, { projectPath, requestKey: staleRequest });
-    store.set(beginProjectThreadsRefreshAtom, { projectPath, requestKey: currentRequest });
-    store.set(settleProjectThreadsRefreshAtom, { projectPath, requestKey: staleRequest });
+    putThreads(store, stateKey, current);
+    store.set(beginProjectThreadsRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: staleRequest,
+    });
+    store.set(beginProjectThreadsRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentRequest,
+    });
+    store.set(settleProjectThreadsRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: staleRequest,
+    });
 
-    expect(store.get(projectThreadsResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectThreadsResourceFamily(stateKey))).toMatchObject({
       value: current,
       pending: true,
       pendingRequestKey: currentRequest,
       stale: true,
     });
 
-    store.set(settleProjectThreadsRefreshAtom, { projectPath, requestKey: currentRequest });
+    store.set(settleProjectThreadsRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentRequest,
+    });
 
-    expect(store.get(projectThreadsResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectThreadsResourceFamily(stateKey))).toMatchObject({
       value: current,
       pending: false,
       pendingRequestKey: null,
@@ -720,32 +792,44 @@ describe("project resource lifecycle", () => {
 
   it("settles only the pending project graveyard request that owns the marker", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = graveyard();
     const staleRequest = projectResourceRequestKey(
-      { projectPath, endpointKey: "127.0.0.1:43190", generation: 1 },
+      { projectStateKey: stateKey, endpointKey: "127.0.0.1:43190", generation: 1 },
       1,
     );
     const currentRequest = projectResourceRequestKey(
-      { projectPath, endpointKey: "127.0.0.1:43191", generation: 2 },
+      { projectStateKey: stateKey, endpointKey: "127.0.0.1:43191", generation: 2 },
       2,
     );
 
-    putGraveyard(store, projectPath, current);
-    store.set(beginProjectGraveyardRefreshAtom, { projectPath, requestKey: staleRequest });
-    store.set(beginProjectGraveyardRefreshAtom, { projectPath, requestKey: currentRequest });
-    store.set(settleProjectGraveyardRefreshAtom, { projectPath, requestKey: staleRequest });
+    putGraveyard(store, stateKey, current);
+    store.set(beginProjectGraveyardRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: staleRequest,
+    });
+    store.set(beginProjectGraveyardRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentRequest,
+    });
+    store.set(settleProjectGraveyardRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: staleRequest,
+    });
 
-    expect(store.get(projectGraveyardResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectGraveyardResourceFamily(stateKey))).toMatchObject({
       value: current,
       pending: true,
       pendingRequestKey: currentRequest,
       stale: true,
     });
 
-    store.set(settleProjectGraveyardRefreshAtom, { projectPath, requestKey: currentRequest });
+    store.set(settleProjectGraveyardRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentRequest,
+    });
 
-    expect(store.get(projectGraveyardResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectGraveyardResourceFamily(stateKey))).toMatchObject({
       value: current,
       pending: false,
       pendingRequestKey: null,
@@ -755,7 +839,7 @@ describe("project resource lifecycle", () => {
 
   it("keeps stale project plan drafts after a refresh failure", () => {
     const store = createStore();
-    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const planKey = projectPlanResourceKey(projectStateKey({ path: "/repo" }), "session-1");
     const requestKey = "request-1";
 
     putPlan(store, planKey, plan());
@@ -785,7 +869,7 @@ describe("project resource lifecycle", () => {
 
   it("clears project plan resources when the project service endpoint disappears", () => {
     const store = createStore();
-    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const planKey = projectPlanResourceKey(projectStateKey({ path: "/repo" }), "session-1");
 
     putPlan(store, planKey, plan());
     store.set(clearProjectPlanResourceAtom, planKey);
@@ -802,7 +886,7 @@ describe("project resource lifecycle", () => {
 
   it("keeps unsaved project plan drafts when a refresh succeeds", () => {
     const store = createStore();
-    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const planKey = projectPlanResourceKey(projectStateKey({ path: "/repo" }), "session-1");
     const requestKey = "refresh";
 
     putPlan(store, planKey, plan());
@@ -839,7 +923,7 @@ describe("project resource lifecycle", () => {
 
   it("records project plan action errors without stealing refresh ownership", () => {
     const store = createStore();
-    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const planKey = projectPlanResourceKey(projectStateKey({ path: "/repo" }), "session-1");
     const requestKey = "refresh-in-flight";
 
     putPlan(store, planKey, plan());
@@ -859,7 +943,7 @@ describe("project resource lifecycle", () => {
 
   it("marks a project plan clean after save succeeds", () => {
     const store = createStore();
-    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const planKey = projectPlanResourceKey(projectStateKey({ path: "/repo" }), "session-1");
 
     putPlan(store, planKey, plan());
     store.set(editProjectPlanDraftAtom, {
@@ -887,7 +971,7 @@ describe("project resource lifecycle", () => {
 
   it("preserves newer project plan edits when an older save succeeds", () => {
     const store = createStore();
-    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const planKey = projectPlanResourceKey(projectStateKey({ path: "/repo" }), "session-1");
 
     putPlan(store, planKey, plan());
     store.set(editProjectPlanDraftAtom, {
@@ -920,7 +1004,7 @@ describe("project resource lifecycle", () => {
 
   it("keeps project plan drafts when the service endpoint disappears", () => {
     const store = createStore();
-    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const planKey = projectPlanResourceKey(projectStateKey({ path: "/repo" }), "session-1");
 
     putPlan(store, planKey, plan());
     store.set(editProjectPlanDraftAtom, {
@@ -947,13 +1031,13 @@ describe("project resource lifecycle", () => {
 
   it("settles only the pending project plan request that owns the marker", () => {
     const store = createStore();
-    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const planKey = projectPlanResourceKey(projectStateKey({ path: "/repo" }), "session-1");
     const staleRequest = projectResourceRequestKey(
-      { projectPath: planKey, endpointKey: "127.0.0.1:43190", generation: 1 },
+      { projectStateKey: planKey, endpointKey: "127.0.0.1:43190", generation: 1 },
       1,
     );
     const currentRequest = projectResourceRequestKey(
-      { projectPath: planKey, endpointKey: "127.0.0.1:43191", generation: 2 },
+      { projectStateKey: planKey, endpointKey: "127.0.0.1:43191", generation: 2 },
       2,
     );
 
@@ -981,43 +1065,49 @@ describe("project resource lifecycle", () => {
 
   it("ignores stale project resource success and failure requests", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const currentObservabilityRequest = "observability-current";
     const currentTasksRequest = "tasks-current";
     const currentThreadsRequest = "threads-current";
     const currentGraveyardRequest = "graveyard-current";
-    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const planKey = projectPlanResourceKey(projectStateKey({ path: "/repo" }), "session-1");
     const currentPlanRequest = "plan-current";
 
     store.set(beginProjectObservabilityRefreshAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: currentObservabilityRequest,
     });
     store.set(applyProjectObservabilitySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: "observability-stale",
       observability: observability(),
       updatedAt: 10,
     });
-    store.set(beginProjectTasksRefreshAtom, { projectPath, requestKey: currentTasksRequest });
+    store.set(beginProjectTasksRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentTasksRequest,
+    });
     store.set(applyProjectTasksFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: "tasks-stale",
       error: "old failure",
     });
-    store.set(beginProjectThreadsRefreshAtom, { projectPath, requestKey: currentThreadsRequest });
+    store.set(beginProjectThreadsRefreshAtom, {
+      projectStateKey: stateKey,
+      requestKey: currentThreadsRequest,
+    });
     store.set(applyProjectThreadsSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: "threads-stale",
       threads: threads(),
       updatedAt: 10,
     });
     store.set(beginProjectGraveyardRefreshAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: currentGraveyardRequest,
     });
     store.set(applyProjectGraveyardFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       requestKey: "graveyard-stale",
       error: "old failure",
     });
@@ -1038,25 +1128,25 @@ describe("project resource lifecycle", () => {
       error: "old failure",
     });
 
-    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectObservabilityResourceFamily(stateKey))).toMatchObject({
       value: null,
       error: null,
       pending: true,
       pendingRequestKey: currentObservabilityRequest,
     });
-    expect(store.get(projectTasksResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectTasksResourceFamily(stateKey))).toMatchObject({
       value: null,
       error: null,
       pending: true,
       pendingRequestKey: currentTasksRequest,
     });
-    expect(store.get(projectThreadsResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectThreadsResourceFamily(stateKey))).toMatchObject({
       value: null,
       error: null,
       pending: true,
       pendingRequestKey: currentThreadsRequest,
     });
-    expect(store.get(projectGraveyardResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectGraveyardResourceFamily(stateKey))).toMatchObject({
       value: null,
       error: null,
       pending: true,
@@ -1072,16 +1162,16 @@ describe("project resource lifecycle", () => {
 
   it("refreshes project observability through the resource atom", async () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     vi.mocked(getProjectObservability).mockResolvedValueOnce({
       ok: true,
       project: observability().project,
     });
 
-    await store.set(refreshProjectObservabilityResourceAtom, refreshInput(projectPath));
+    await store.set(refreshProjectObservabilityResourceAtom, refreshInput(stateKey));
 
     expect(getProjectObservability).toHaveBeenCalledWith(endpoint, { token: "token" });
-    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectObservabilityResourceFamily(stateKey))).toMatchObject({
       value: {
         project: observability().project,
       },
@@ -1094,13 +1184,13 @@ describe("project resource lifecycle", () => {
 
   it("refreshes project tasks through the resource atom", async () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     vi.mocked(listTasks).mockResolvedValueOnce({ ok: true, tasks: tasks().tasks });
 
-    await store.set(refreshProjectTasksResourceAtom, refreshInput(projectPath));
+    await store.set(refreshProjectTasksResourceAtom, refreshInput(stateKey));
 
     expect(listTasks).toHaveBeenCalledWith(endpoint, undefined, { token: "token" });
-    expect(store.get(projectTasksResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectTasksResourceFamily(stateKey))).toMatchObject({
       value: {
         tasks: tasks().tasks,
       },
@@ -1113,14 +1203,14 @@ describe("project resource lifecycle", () => {
 
   it("preserves stale project data when a resource refresh fails", async () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const existing = observability();
-    putObservability(store, projectPath, existing);
+    putObservability(store, stateKey, existing);
     vi.mocked(getProjectObservability).mockRejectedValueOnce(new Error("service unavailable"));
 
-    await store.set(refreshProjectObservabilityResourceAtom, refreshInput(projectPath));
+    await store.set(refreshProjectObservabilityResourceAtom, refreshInput(stateKey));
 
-    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(projectObservabilityResourceFamily(stateKey))).toMatchObject({
       value: existing,
       error: "service unavailable",
       pending: false,
@@ -1131,7 +1221,7 @@ describe("project resource lifecycle", () => {
 
   it("lets the latest project resource refresh win", async () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const first = deferred<{ ok: true; project: ReturnType<typeof observability>["project"] }>();
     const second = deferred<{ ok: true; project: ReturnType<typeof observability>["project"] }>();
     const firstProject = {
@@ -1146,26 +1236,26 @@ describe("project resource lifecycle", () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
 
-    const firstRequest = requestMarker(projectPath, 1);
-    const secondRequest = requestMarker(projectPath, 2);
+    const firstRequest = requestMarker(stateKey, 1);
+    const secondRequest = requestMarker(stateKey, 2);
     let currentRequestKey = firstRequest.requestKey;
     const isCurrentRequest = (marker: ProjectResourceRequestMarker) =>
       marker.requestKey === currentRequestKey;
 
     const firstRefresh = store.set(
       refreshProjectObservabilityResourceAtom,
-      refreshInput(projectPath, firstRequest, isCurrentRequest),
+      refreshInput(stateKey, firstRequest, isCurrentRequest),
     );
     const firstPendingKey = store.get(
-      projectObservabilityResourceFamily(projectPath),
+      projectObservabilityResourceFamily(stateKey),
     ).pendingRequestKey;
     currentRequestKey = secondRequest.requestKey;
     const secondRefresh = store.set(
       refreshProjectObservabilityResourceAtom,
-      refreshInput(projectPath, secondRequest, isCurrentRequest),
+      refreshInput(stateKey, secondRequest, isCurrentRequest),
     );
     const secondPendingKey = store.get(
-      projectObservabilityResourceFamily(projectPath),
+      projectObservabilityResourceFamily(stateKey),
     ).pendingRequestKey;
 
     expect(firstPendingKey).not.toEqual(secondPendingKey);
@@ -1175,8 +1265,6 @@ describe("project resource lifecycle", () => {
     first.resolve({ ok: true, project: firstProject });
     await firstRefresh;
 
-    expect(store.get(projectObservabilityFamily(projectPath))?.project.summary.agentsRunning).toBe(
-      2,
-    );
+    expect(store.get(projectObservabilityFamily(stateKey))?.project.summary.agentsRunning).toBe(2);
   });
 });

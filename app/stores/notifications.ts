@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import { parseProjectKey, type ProjectStateKey } from "@/lib/project-key";
 import { atomFamily, atomWithStorage, unwrap } from "jotai/utils";
 import type { NotificationRecord } from "@/lib/api";
 import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
@@ -18,13 +19,13 @@ export interface NotificationFeedResource {
 }
 
 export interface ApplyNotificationFeedSuccessInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   feed: ProjectNotificationFeed;
   updatedAt?: number;
 }
 
 export interface ApplyNotificationFeedFailureInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   error: string;
 }
 
@@ -57,13 +58,40 @@ export const notificationLocalReadStateAtom = unwrap(
 );
 
 export function notificationLocalReadKey(
-  projectPath: string | null | undefined,
+  projectStateKey: string | null | undefined,
   notificationId: string | null | undefined,
 ): string | null {
-  const normalizedProjectPath = projectPath?.trim();
+  const normalizedProjectStateKey = projectStateKey?.trim();
   const normalizedNotificationId = notificationId?.trim();
-  if (!normalizedProjectPath || !normalizedNotificationId) return null;
-  return `${normalizedProjectPath}\u0000${normalizedNotificationId}`;
+  if (!normalizedProjectStateKey || !normalizedNotificationId) return null;
+  return `${normalizedProjectStateKey}\u0000${normalizedNotificationId}`;
+}
+
+// What a build before machines existed wrote: the project PATH and the id.
+//
+// These marks are read-only and never written again, because a mark must now
+// say which machine. Without reading them, every notification Sam had read in
+// the last three days would come back unread the moment the app updated.
+export function legacyNotificationLocalReadKey(
+  projectStateKey: string | null | undefined,
+  notificationId: string | null | undefined,
+): string | null {
+  const ref = parseProjectKey(projectStateKey);
+  if (!ref) return null;
+  const normalizedNotificationId = notificationId?.trim();
+  if (!normalizedNotificationId) return null;
+  return `${ref.path}\u0000${normalizedNotificationId}`;
+}
+
+function notificationWasReadLocally(
+  readState: NotificationLocalReadState,
+  projectStateKey: string | null | undefined,
+  notificationId: string | null | undefined,
+): boolean {
+  const key = notificationLocalReadKey(projectStateKey, notificationId);
+  if (key && readState.readAtByKey[key]) return true;
+  const legacy = legacyNotificationLocalReadKey(projectStateKey, notificationId);
+  return Boolean(legacy && readState.readAtByKey[legacy]);
 }
 
 function notificationIsInsideUnreadWindow(
@@ -76,26 +104,26 @@ function notificationIsInsideUnreadWindow(
 }
 
 export function notificationEffectiveUnread(input: {
-  projectPath: string | null | undefined;
+  projectStateKey: string | null | undefined;
   notification: NotificationRecord;
   readState: NotificationLocalReadState;
   nowMs?: number;
 }): boolean {
-  const { projectPath, notification, readState, nowMs = Date.now() } = input;
+  const { projectStateKey, notification, readState, nowMs = Date.now() } = input;
   if (!notification.unread) return false;
   if (!notificationIsInsideUnreadWindow(notification, nowMs)) return false;
-  const key = notificationLocalReadKey(projectPath, notification.id);
-  return key ? !readState.readAtByKey[key] : true;
+  if (!notificationLocalReadKey(projectStateKey, notification.id)) return true;
+  return !notificationWasReadLocally(readState, projectStateKey, notification.id);
 }
 
 export function applyNotificationLocalReadState(
-  projectPath: string | null | undefined,
+  projectStateKey: string | null | undefined,
   notifications: NotificationRecord[],
   readState: NotificationLocalReadState,
   nowMs = Date.now(),
 ): NotificationRecord[] {
   return notifications.map((notification) => {
-    const unread = notificationEffectiveUnread({ projectPath, notification, readState, nowMs });
+    const unread = notificationEffectiveUnread({ projectStateKey, notification, readState, nowMs });
     return unread === notification.unread ? notification : { ...notification, unread };
   });
 }
@@ -120,7 +148,7 @@ export const markNotificationRecordsReadLocalAtom = atom(
     get,
     set,
     input: {
-      projectPath: string | null | undefined;
+      projectStateKey: string | null | undefined;
       ids: Iterable<string | null | undefined>;
       readAt?: string;
     },
@@ -131,7 +159,7 @@ export const markNotificationRecordsReadLocalAtom = atom(
     const readAtByKey = pruneReadAtByKey(previous.readAtByKey, nowMs);
     let changed = false;
     for (const id of input.ids) {
-      const key = notificationLocalReadKey(input.projectPath, id);
+      const key = notificationLocalReadKey(input.projectStateKey, id);
       if (!key || readAtByKey[key] === readAt) continue;
       readAtByKey[key] = readAt;
       changed = true;
@@ -140,16 +168,16 @@ export const markNotificationRecordsReadLocalAtom = atom(
   },
 );
 
-export const notificationFeedResourceFamily = atomFamily((_projectPath: string) =>
+export const notificationFeedResourceFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<NotificationFeedResource>(emptyNotificationFeedResource()),
 );
 
-export const notificationFeedFamily = atomFamily((projectPath: string) =>
+export const notificationFeedFamily = atomFamily((projectStateKey: ProjectStateKey) =>
   atom(
-    (get) => get(notificationFeedResourceFamily(projectPath)).value,
+    (get) => get(notificationFeedResourceFamily(projectStateKey)).value,
     (get, set, value: ProjectNotificationFeed | null) => {
-      const current = get(notificationFeedResourceFamily(projectPath));
-      set(notificationFeedResourceFamily(projectPath), {
+      const current = get(notificationFeedResourceFamily(projectStateKey));
+      set(notificationFeedResourceFamily(projectStateKey), {
         ...current,
         value,
         error: value ? null : current.error,
@@ -161,12 +189,12 @@ export const notificationFeedFamily = atomFamily((projectPath: string) =>
   ),
 );
 
-export const notificationFeedErrorFamily = atomFamily((projectPath: string) =>
+export const notificationFeedErrorFamily = atomFamily((projectStateKey: ProjectStateKey) =>
   atom(
-    (get) => get(notificationFeedResourceFamily(projectPath)).error,
+    (get) => get(notificationFeedResourceFamily(projectStateKey)).error,
     (get, set, error: string | null) => {
-      const current = get(notificationFeedResourceFamily(projectPath));
-      set(notificationFeedResourceFamily(projectPath), {
+      const current = get(notificationFeedResourceFamily(projectStateKey));
+      set(notificationFeedResourceFamily(projectStateKey), {
         ...current,
         error,
       });
@@ -174,16 +202,16 @@ export const notificationFeedErrorFamily = atomFamily((projectPath: string) =>
   ),
 );
 
-export const notificationObservedIdsFamily = atomFamily((_projectPath: string) =>
+export const notificationObservedIdsFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<ReadonlySet<string>>(new Set<string>()),
 );
 
 export const markNotificationRecordsObservedAtom = atom(
   null,
-  (get, set, input: { projectPath: string; ids: Iterable<string | undefined> }) => {
-    const projectPath = input.projectPath.trim();
-    if (!projectPath) return;
-    const scopedAtom = notificationObservedIdsFamily(projectPath);
+  (get, set, input: { projectStateKey: ProjectStateKey; ids: Iterable<string | undefined> }) => {
+    const projectStateKey = input.projectStateKey;
+    if (!projectStateKey) return;
+    const scopedAtom = notificationObservedIdsFamily(projectStateKey);
     const previous = get(scopedAtom);
     const next = new Set(previous);
     let changed = false;
@@ -203,20 +231,23 @@ export const kickNotificationFeedRefreshAtom = atom(null, (get, set) => {
   set(notificationFeedRefreshNonceAtom, get(notificationFeedRefreshNonceAtom) + 1);
 });
 
-export const beginNotificationFeedRefreshAtom = atom(null, (get, set, projectPath: string) => {
-  const current = get(notificationFeedResourceFamily(projectPath));
-  set(notificationFeedResourceFamily(projectPath), {
-    ...current,
-    error: null,
-    pending: true,
-    stale: current.value !== null,
-  });
-});
+export const beginNotificationFeedRefreshAtom = atom(
+  null,
+  (get, set, projectStateKey: ProjectStateKey) => {
+    const current = get(notificationFeedResourceFamily(projectStateKey));
+    set(notificationFeedResourceFamily(projectStateKey), {
+      ...current,
+      error: null,
+      pending: true,
+      stale: current.value !== null,
+    });
+  },
+);
 
 export const applyNotificationFeedSuccessAtom = atom(
   null,
-  (_get, set, { projectPath, feed, updatedAt }: ApplyNotificationFeedSuccessInput) => {
-    set(notificationFeedResourceFamily(projectPath), {
+  (_get, set, { projectStateKey, feed, updatedAt }: ApplyNotificationFeedSuccessInput) => {
+    set(notificationFeedResourceFamily(projectStateKey), {
       value: feed,
       error: null,
       pending: false,
@@ -228,9 +259,9 @@ export const applyNotificationFeedSuccessAtom = atom(
 
 export const applyNotificationFeedFailureAtom = atom(
   null,
-  (get, set, { projectPath, error }: ApplyNotificationFeedFailureInput) => {
-    const current = get(notificationFeedResourceFamily(projectPath));
-    set(notificationFeedResourceFamily(projectPath), {
+  (get, set, { projectStateKey, error }: ApplyNotificationFeedFailureInput) => {
+    const current = get(notificationFeedResourceFamily(projectStateKey));
+    set(notificationFeedResourceFamily(projectStateKey), {
       ...current,
       error,
       pending: false,
@@ -239,10 +270,13 @@ export const applyNotificationFeedFailureAtom = atom(
   },
 );
 
-export const clearNotificationFeedResourceAtom = atom(null, (_get, set, projectPath: string) => {
-  set(notificationFeedResourceFamily(projectPath), emptyNotificationFeedResource());
-});
+export const clearNotificationFeedResourceAtom = atom(
+  null,
+  (_get, set, projectStateKey: ProjectStateKey) => {
+    set(notificationFeedResourceFamily(projectStateKey), emptyNotificationFeedResource());
+  },
+);
 
-export const notificationUnreadCountFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(notificationFeedFamily(projectPath))?.unreadCount ?? 0),
+export const notificationUnreadCountFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(notificationFeedFamily(projectStateKey))?.unreadCount ?? 0),
 );

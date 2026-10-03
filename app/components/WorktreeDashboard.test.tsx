@@ -1,4 +1,5 @@
 import React, { type ReactNode } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("react-native", () => ({
@@ -55,7 +56,7 @@ vi.mock("@/lib/blur-web-active-element", () => ({
 }));
 
 vi.mock("@/lib/use-route-project", () => ({
-  useRouteProject: () => ({ projectPath: "/repo" }),
+  useRouteProject: () => ({ projectStateKey: projectStateKey({ path: "/repo" }) }),
 }));
 
 vi.mock("@/stores/desktopState", () => ({
@@ -177,7 +178,7 @@ describe("WorktreeCard", () => {
         onPickSession: vi.fn(),
         onPickService: vi.fn(),
         onKillSession: vi.fn(),
-        projectPath: "/repo",
+        projectStateKey: projectStateKey({ path: "/repo" }),
         endpoint: null,
         token: null,
       }),
@@ -234,7 +235,7 @@ describe("WorktreeCard", () => {
         onPickSession: vi.fn(),
         onPickService: vi.fn(),
         onKillSession: vi.fn(),
-        projectPath: "/repo",
+        projectStateKey: projectStateKey({ path: "/repo" }),
         endpoint: null,
         token: null,
       }),
@@ -274,7 +275,7 @@ describe("supervisor lane plane action", () => {
         onPickSession: vi.fn(),
         onPickService: vi.fn(),
         onKillSession: vi.fn(),
-        projectPath: "/repo",
+        projectStateKey: projectStateKey({ path: "/repo" }),
         endpoint: null,
         token: null,
       }),
@@ -300,7 +301,7 @@ describe("AgentRow", () => {
         }),
         digit: 1,
         selected: false,
-        projectPath: "/repo",
+        projectStateKey: projectStateKey({ path: "/repo" }),
         endpoint: null,
         token: null,
         onPick: vi.fn(),
@@ -326,7 +327,7 @@ describe("AgentRow", () => {
         digit: 1,
         selected: false,
         supervisorLane: true,
-        projectPath: "/repo",
+        projectStateKey: projectStateKey({ path: "/repo" }),
         endpoint: null,
         token: null,
         onPick: vi.fn(),

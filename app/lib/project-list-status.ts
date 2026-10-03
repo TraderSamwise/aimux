@@ -6,6 +6,9 @@
 export type ProjectListStatus =
   | { kind: "loading" }
   | { kind: "ok" }
+  // Some machines answered and some did not. The list on screen is real but
+  // short, which is a different fact from both "all of it" and "none of it".
+  | { kind: "partial"; detail: string }
   | { kind: "unavailable"; detail: string }
   | { kind: "failed"; detail: string };
 
@@ -22,6 +25,23 @@ export function projectListFailed(detail: string): Extract<ProjectListStatus, { 
   return { kind: "failed", detail: detail.trim() || "The project list request failed." };
 }
 
+export interface MachineListFailure {
+  machineId: string;
+  machineName: string;
+  error: string;
+}
+
+// Names the machines that did not answer. "Some machines are unreachable" tells
+// nobody which host to go and look at.
+export function projectListPartial(
+  failures: readonly MachineListFailure[],
+): Extract<ProjectListStatus, { kind: "partial" }> {
+  const detail = failures
+    .map((failure) => `${failure.machineName || failure.machineId}: ${failure.error}`)
+    .join("; ");
+  return { kind: "partial", detail: detail || "A machine did not answer." };
+}
+
 // What the picker shows in place of an empty list. `null` means the list is
 // trustworthy and an empty one really does mean no projects.
 export function projectListEmptyMessage(
@@ -34,6 +54,7 @@ export function projectListEmptyMessage(
       return { title: "Cannot reach the daemon", detail: status.detail };
     case "failed":
       return { title: "Could not load projects", detail: status.detail };
+    case "partial":
     case "ok":
       return null;
   }
@@ -44,6 +65,9 @@ export function projectListEmptyMessage(
 export function projectListStaleMessage(status: ProjectListStatus): string | null {
   if (status.kind === "unavailable" || status.kind === "failed") {
     return `Not refreshing: ${status.detail}`;
+  }
+  if (status.kind === "partial") {
+    return `Some machines did not answer: ${status.detail}`;
   }
   return null;
 }

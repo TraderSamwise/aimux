@@ -14,7 +14,8 @@ import {
   clearNotificationStartupIssueAtom,
   reportNotificationStartupIssueAtom,
 } from "@/stores/notificationStartup";
-import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
+import { findProjectForRef, projectRefFromPayload, projectStateKey } from "@/lib/project-key";
+import { projectsAtom, selectProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 
 if (Platform.OS !== "web") {
   Notifications.setNotificationHandler({
@@ -40,7 +41,7 @@ function stringField(data: unknown, key: string): string | undefined {
  */
 export function NativeNotificationRouter() {
   const router = useRouter();
-  const selectProject = useSetAtom(selectedProjectPathAtom);
+  const selectProject = useSetAtom(selectProjectAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const reportNotificationStartupIssue = useSetAtom(reportNotificationStartupIssueAtom);
@@ -67,13 +68,29 @@ export function NativeNotificationRouter() {
     const route = (response: Notifications.NotificationResponse | null) => {
       const data = response?.notification.request.content.data;
       const projectRoot = stringField(data, "projectRoot");
+      // Stamped by the relay from the sending daemon's own socket. A payload
+      // from before that existed names no machine, and still resolves when one
+      // machine has the path.
+      const payloadMachineId = stringField(data, "machineId");
       const sessionId = stringField(data, "sessionId");
       const notificationId = stringField(data, "notificationId");
       if (!projectRoot && !sessionId) return;
-      markNotificationsReadLocal({ projectPath: projectRoot, ids: [notificationId] });
+      const tappedRef = projectRefFromPayload(projectsRef.current, projectRoot, payloadMachineId);
+      // Only marked where it can be found again. An unresolved ref -- a
+      // payload naming no machine while two hosts hold the path -- used to
+      // file the mark under the "no project" key, so the real project never
+      // saw it and the notification stayed unread for good. Leaving it unread
+      // is the right answer: the row in the app knows which machine, so the
+      // tap is still there to be made.
+      if (tappedRef) {
+        markNotificationsReadLocal({
+          projectStateKey: projectStateKey(tappedRef),
+          ids: [notificationId],
+        });
+      }
       void (async () => {
         if (!projectRoot || !notificationId) return;
-        const project = projectsRef.current.find((item) => item.path === projectRoot);
+        const project = findProjectForRef(projectsRef.current, tappedRef);
         const endpoint = project ? getProjectServiceEndpoint(project) : null;
         if (!endpoint) return;
         try {
@@ -83,7 +100,9 @@ export function NativeNotificationRouter() {
           // Device-local read state is the source of truth for this tap.
         }
       })();
-      if (projectRoot) selectProject(projectRoot);
+      // With no machine named and two machines holding the path, the tap
+      // selects nothing rather than opening the wrong host.
+      if (tappedRef) selectProject(tappedRef);
       if (sessionId) {
         selectSession(sessionId);
         router.navigate({
@@ -92,12 +111,20 @@ export function NativeNotificationRouter() {
             focusToken: Date.now().toString(36),
             notificationId,
             project: projectRoot,
+            // Absent when two machines hold this path; the chat then opens on
+            // whatever the selection already resolved to rather than guessing.
+            ...(tappedRef?.machineId ? { machine: tappedRef.machineId } : {}),
             sessionId,
           },
         });
         return;
       }
-      router.navigate(buildViewHref("/notifications", { project: projectRoot }));
+      router.navigate(
+        buildViewHref("/notifications", {
+          project: projectRoot,
+          machine: tappedRef?.machineId,
+        }),
+      );
     };
 
     let active = true;

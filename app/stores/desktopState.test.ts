@@ -1,4 +1,5 @@
 import { createStore } from "jotai";
+import { projectStateKey } from "@/lib/project-key";
 import { describe, expect, it } from "vitest";
 
 import type { DesktopState } from "@/lib/desktop-state";
@@ -320,17 +321,17 @@ describe("desktop state resource lifecycle", () => {
 
   it("marks an in-flight refresh stale when a previous desktop-state exists", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const state = desktopState();
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state,
       updatedAt: 10,
     });
-    store.set(beginDesktopStateRefreshAtom, projectPath);
+    store.set(beginDesktopStateRefreshAtom, stateKey);
 
-    expect(store.get(desktopStateResourceFamily(projectPath))).toEqual({
+    expect(store.get(desktopStateResourceFamily(stateKey))).toEqual({
       value: state,
       error: null,
       pending: true,
@@ -341,21 +342,21 @@ describe("desktop state resource lifecycle", () => {
 
   it("clears stale refresh errors when retrying with a previous desktop-state", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const state = desktopState();
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state,
       updatedAt: 10,
     });
     store.set(applyDesktopStateFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "request timed out after 10000ms",
     });
-    store.set(beginDesktopStateRefreshAtom, projectPath);
+    store.set(beginDesktopStateRefreshAtom, stateKey);
 
-    expect(store.get(desktopStateResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(desktopStateResourceFamily(stateKey))).toMatchObject({
       value: state,
       error: null,
       pending: true,
@@ -365,22 +366,22 @@ describe("desktop state resource lifecycle", () => {
 
   it("keeps last good desktop-state after a critical refresh failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const state = desktopState();
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state,
       updatedAt: 10,
     });
     store.set(applyDesktopStateFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
 
-    expect(store.get(desktopStateFamily(projectPath))).toBe(state);
-    expect(store.get(desktopStateErrorFamily(projectPath))).toBe("service unavailable");
-    expect(store.get(desktopStateResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(desktopStateFamily(stateKey))).toBe(state);
+    expect(store.get(desktopStateErrorFamily(stateKey))).toBe("service unavailable");
+    expect(store.get(desktopStateResourceFamily(stateKey))).toMatchObject({
       value: state,
       error: "service unavailable",
       pending: false,
@@ -390,28 +391,28 @@ describe("desktop state resource lifecycle", () => {
 
   it("clears stale/error metadata after the critical resource recovers", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const state = desktopState();
     const recovered = desktopState({
       sessions: [{ id: "agent-1", status: "running", toolConfigKey: "claude" }],
     });
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state,
       updatedAt: 10,
     });
     store.set(applyDesktopStateFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state: recovered,
       updatedAt: 20,
     });
 
-    expect(store.get(desktopStateResourceFamily(projectPath))).toEqual({
+    expect(store.get(desktopStateResourceFamily(stateKey))).toEqual({
       value: recovered,
       error: null,
       pending: false,
@@ -422,16 +423,16 @@ describe("desktop state resource lifecycle", () => {
 
   it("clears the resource when the project service endpoint disappears", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state: desktopState(),
       updatedAt: 10,
     });
-    store.set(clearDesktopStateResourceAtom, projectPath);
+    store.set(clearDesktopStateResourceAtom, stateKey);
 
-    expect(store.get(desktopStateResourceFamily(projectPath))).toEqual({
+    expect(store.get(desktopStateResourceFamily(stateKey))).toEqual({
       value: null,
       error: null,
       pending: false,
@@ -471,38 +472,53 @@ describe("a poll that changes nothing must not invalidate the view", () => {
 
   it("keeps the previous state object when the payload is identical", () => {
     const store = createStore();
-    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: populated() });
-    const first = store.get(desktopStateFamily("/repo"));
+    store.set(applyDesktopStateSuccessAtom, {
+      projectStateKey: projectStateKey({ path: "/repo" }),
+      state: populated(),
+    });
+    const first = store.get(desktopStateFamily(projectStateKey({ path: "/repo" })));
 
-    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: populated() });
+    store.set(applyDesktopStateSuccessAtom, {
+      projectStateKey: projectStateKey({ path: "/repo" }),
+      state: populated(),
+    });
 
-    expect(store.get(desktopStateFamily("/repo"))).toBe(first);
+    expect(store.get(desktopStateFamily(projectStateKey({ path: "/repo" })))).toBe(first);
   });
 
   it("does not regroup when only a field the view never renders changed", () => {
     const store = createStore();
-    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: populated() });
-    const groupsBefore = store.get(worktreeGroupsFamily("/repo"));
+    store.set(applyDesktopStateSuccessAtom, {
+      projectStateKey: projectStateKey({ path: "/repo" }),
+      state: populated(),
+    });
+    const groupsBefore = store.get(worktreeGroupsFamily(projectStateKey({ path: "/repo" })));
 
     // loopAlertState is shipped by the daemon, read by nothing in the app, and
     // changed on nearly every poll. It must not cost a single row render.
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath: "/repo",
+      projectStateKey: projectStateKey({ path: "/repo" }),
       state: { ...populated(), loopAlertState: { changed: Date.now() } } as DesktopState,
     });
 
-    expect(store.get(worktreeGroupsFamily("/repo"))).toBe(groupsBefore);
+    expect(store.get(worktreeGroupsFamily(projectStateKey({ path: "/repo" })))).toBe(groupsBefore);
   });
 
   it("keeps unchanged sessions identical when one session changes", () => {
     const store = createStore();
-    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: populated() });
-    const before = store.get(desktopStateFamily("/repo"));
+    store.set(applyDesktopStateSuccessAtom, {
+      projectStateKey: projectStateKey({ path: "/repo" }),
+      state: populated(),
+    });
+    const before = store.get(desktopStateFamily(projectStateKey({ path: "/repo" })));
 
     const next = populated();
     next.sessions[1] = { ...next.sessions[1], status: "idle" };
-    store.set(applyDesktopStateSuccessAtom, { projectPath: "/repo", state: next });
-    const after = store.get(desktopStateFamily("/repo"));
+    store.set(applyDesktopStateSuccessAtom, {
+      projectStateKey: projectStateKey({ path: "/repo" }),
+      state: next,
+    });
+    const after = store.get(desktopStateFamily(projectStateKey({ path: "/repo" })));
 
     expect(after).not.toBe(before);
     expect(after?.sessions[0]).toBe(before?.sessions[0]);
@@ -539,10 +555,10 @@ describe("changes still reach the view", () => {
 
   function apply(store: ReturnType<typeof createStore>, sessions: DesktopState["sessions"]) {
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath: "/repo",
+      projectStateKey: projectStateKey({ path: "/repo" }),
       state: withSessions(sessions),
     });
-    return store.get(worktreeGroupsFamily("/repo"));
+    return store.get(worktreeGroupsFamily(projectStateKey({ path: "/repo" })));
   }
 
   it("regroups when an agent changes status", () => {
@@ -585,9 +601,45 @@ describe("changes still reach the view", () => {
   it("surfaces an error after a successful state without clearing the state", () => {
     const store = createStore();
     apply(store, [session("a")]);
-    store.set(applyDesktopStateFailureAtom, { projectPath: "/repo", error: "host offline" });
+    store.set(applyDesktopStateFailureAtom, {
+      projectStateKey: projectStateKey({ path: "/repo" }),
+      error: "host offline",
+    });
 
-    expect(store.get(desktopStateErrorFamily("/repo"))).toBe("host offline");
-    expect(store.get(desktopStateFamily("/repo"))?.sessions).toHaveLength(1);
+    expect(store.get(desktopStateErrorFamily(projectStateKey({ path: "/repo" })))).toBe(
+      "host offline",
+    );
+    expect(
+      store.get(desktopStateFamily(projectStateKey({ path: "/repo" })))?.sessions,
+    ).toHaveLength(1);
+  });
+});
+
+describe("two machines holding the same checkout", () => {
+  // The families used to take a bare path, so these two shared one atom: the
+  // mbp's agent list showed up under strix's project until the next poll.
+  it("keeps their desktop state apart", () => {
+    const store = createStore();
+    const mbp = projectStateKey({ machineId: "mbp", path: "/repo/aimux" });
+    const strix = projectStateKey({ machineId: "strix", path: "/repo/aimux" });
+
+    store.set(applyDesktopStateSuccessAtom, {
+      projectStateKey: mbp,
+      state: { ok: true, sessions: [], teammates: [], services: [], worktrees: [] },
+    });
+
+    expect(store.get(desktopStateFamily(mbp))).not.toBeNull();
+    expect(store.get(desktopStateFamily(strix))).toBeNull();
+  });
+
+  it("keeps their errors apart", () => {
+    const store = createStore();
+    const mbp = projectStateKey({ machineId: "mbp", path: "/repo/aimux" });
+    const strix = projectStateKey({ machineId: "strix", path: "/repo/aimux" });
+
+    store.set(applyDesktopStateFailureAtom, { projectStateKey: mbp, error: "mbp is unreachable" });
+
+    expect(store.get(desktopStateErrorFamily(mbp))).toBe("mbp is unreachable");
+    expect(store.get(desktopStateErrorFamily(strix))).toBeNull();
   });
 });

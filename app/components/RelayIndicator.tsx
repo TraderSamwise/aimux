@@ -1,12 +1,21 @@
 import React, { useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Modal, Platform, Pressable, StyleSheet, View } from "react-native";
 import { usePathname } from "expo-router";
 import { useAtomValue } from "jotai";
 import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
+import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import { useRouteShare } from "@/lib/use-route-share";
-import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
+import {
+  relayConfiguredAtom,
+  relayMachinesAtom,
+  relayPendingApprovalAtom,
+  relayStatusAtom,
+} from "@/stores/relay";
+import { projectsAtom } from "@/stores/projects";
+import { useRouteProject } from "@/lib/use-route-project";
+import { machinePanelRows, machinePillState } from "@/lib/machine-pill";
 import type { RelayStatus } from "@/lib/relay-transport";
 
 // Compact relay connection pill for the TopBar. Hidden entirely when no relay
@@ -28,20 +37,47 @@ export function RelayIndicator() {
   const configured = useAtomValue(relayConfiguredAtom);
   const status = useAtomValue(relayStatusAtom);
   const pendingApproval = useAtomValue(relayPendingApprovalAtom);
+  const machines = useAtomValue(relayMachinesAtom);
+  const projects = useAtomValue(projectsAtom);
+  const { project } = useRouteProject();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const activeShare = useRouteShare();
   const pathname = usePathname();
   const isShareSurface = pathname === "/shares" || pathname.startsWith("/shares/");
   if (!configured) return null;
 
+  // A guest is told nothing about the fleet, and a device waiting for approval
+  // has something more urgent to say, so both come before the machine label.
+  // One list, so the pill's count and the panel's rows cannot disagree.
+  const panelRows = machinePanelRows({
+    machines,
+    projects,
+    currentMachineId: project?.machineId,
+  });
+  const pill = machinePillState({
+    machines,
+    panelRows,
+    currentMachineId: project?.machineId,
+    currentMachineName: project?.machineName,
+  });
+  const showMachine =
+    !activeShare && !isShareSurface && status === "connected" && pill.openable && pill.label;
   const meta =
     activeShare || isShareSurface
       ? { label: "Shared", dot: "bg-sky-500", text: "text-sky-300" }
       : status === "device_pending" && pendingApproval?.approvalCode
         ? { ...STATUS_META.device_pending, label: `Code ${pendingApproval.approvalCode}` }
-        : STATUS_META[status];
+        : showMachine
+          ? {
+              label: pill.label!,
+              dot: pill.online ? "bg-emerald-500" : "bg-zinc-500",
+              text: pill.online ? "text-emerald-400" : "text-zinc-400",
+            }
+          : STATUS_META[status];
   const canOpenPairingHelp = !activeShare && !isShareSurface && status === "device_pending";
+  const canOpenMachinePanel = Boolean(showMachine);
 
   return (
     <View style={{ position: "relative" }}>
@@ -51,20 +87,42 @@ export function RelayIndicator() {
             ? `Run ${APPROVE_COMMAND} on your Mac to approve this device.`
             : undefined
         }
-        accessibilityLabel={canOpenPairingHelp ? "Pair device approval code" : "Remote status"}
-        disabled={!canOpenPairingHelp}
+        accessibilityLabel={
+          canOpenPairingHelp
+            ? "Pair device approval code"
+            : canOpenMachinePanel
+              ? `Machines, currently ${pill.label}`
+              : "Remote status"
+        }
+        disabled={!canOpenPairingHelp && !canOpenMachinePanel}
         onHoverIn={Platform.OS === "web" ? () => setHovered(true) : undefined}
         onHoverOut={Platform.OS === "web" ? () => setHovered(false) : undefined}
         onPress={() => {
           if (canOpenPairingHelp) setDialogOpen(true);
+          else if (canOpenMachinePanel) setPanelOpen(true);
         }}
         className={cn(
           "flex-row items-center rounded-md border border-border bg-secondary px-2 py-1",
-          canOpenPairingHelp ? "active:bg-accent" : "",
+          canOpenPairingHelp || canOpenMachinePanel ? "active:bg-accent" : "",
         )}
       >
         <View className={cn("mr-1.5 h-1.5 w-1.5 rounded-full", meta.dot)} />
-        <Text className={cn("text-[11px] font-medium", meta.text)}>{meta.label}</Text>
+        <Text
+          className={cn("max-w-[10rem] text-[11px] font-medium", meta.text)}
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
+          {meta.label}
+        </Text>
+        {canOpenMachinePanel ? (
+          <Text
+            className={cn("ml-1 text-[9px]", meta.text)}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          >
+            ▾
+          </Text>
+        ) : null}
       </Pressable>
       {canOpenPairingHelp && hovered ? (
         <View
@@ -78,6 +136,61 @@ export function RelayIndicator() {
         </View>
       ) : null}
       {dialogOpen ? <PairDeviceDialog onDismiss={() => setDialogOpen(false)} /> : null}
+      {panelOpen ? <MachinePanel rows={panelRows} onDismiss={() => setPanelOpen(false)} /> : null}
     </View>
+  );
+}
+
+// Every machine at once, including the ones that are away: the pill's job is
+// to say where the app is talking to, and which hosts it could be.
+function MachinePanel({
+  rows,
+  onDismiss,
+}: {
+  rows: ReturnType<typeof machinePanelRows>;
+  onDismiss: () => void;
+}) {
+  return (
+    <Modal transparent animationType="fade" onRequestClose={onDismiss}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onDismiss} className="bg-black/50" />
+      <View pointerEvents="box-none" className="flex-1 items-center justify-center p-6">
+        <Card className="w-full max-w-sm gap-1 p-4">
+          <Text className="text-[13px] font-semibold text-foreground">Machines</Text>
+          <Text className="mb-2 text-[12px] text-muted-foreground">
+            Every machine signed in to this account.
+          </Text>
+          {rows.length === 0 ? (
+            <Text className="text-[12px] text-muted-foreground">No machine is connected.</Text>
+          ) : (
+            rows.map((row) => (
+              <View key={row.id} className="flex-row items-center gap-2 py-1">
+                <View
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full",
+                    row.online ? "bg-emerald-500" : "bg-zinc-500",
+                  )}
+                />
+                <Text
+                  className={cn(
+                    "min-w-0 flex-1 font-mono text-[12px]",
+                    row.online ? "text-foreground" : "text-muted-foreground",
+                  )}
+                  numberOfLines={1}
+                  ellipsizeMode="middle"
+                >
+                  {row.name}
+                  {row.current ? " — open" : ""}
+                </Text>
+                <Text className="text-[11px] text-muted-foreground">
+                  {row.online
+                    ? `${row.projectCount} project${row.projectCount === 1 ? "" : "s"}`
+                    : "offline"}
+                </Text>
+              </View>
+            ))
+          )}
+        </Card>
+      </View>
+    </Modal>
   );
 }

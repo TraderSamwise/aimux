@@ -1,3 +1,4 @@
+import type { ProjectStateKey } from "@/lib/project-key";
 import {
   isCurrentProjectResourceRequest,
   projectResourceRequestKey,
@@ -12,7 +13,7 @@ export interface ProjectResourceRequestMarker {
 
 export function createProjectResourceRequestTracker(initialScope: {
   endpointKey: string | null;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
 }) {
   let seq = 0;
   let generation = 0;
@@ -22,7 +23,7 @@ export function createProjectResourceRequestTracker(initialScope: {
   };
 
   return {
-    update(scope: { endpointKey: string | null; projectPath: string }) {
+    update(scope: { endpointKey: string | null; projectStateKey: ProjectStateKey }) {
       generation += 1;
       currentScope = {
         ...scope,

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -27,6 +28,7 @@ import {
   type TopologyRequestScope,
 } from "@/stores/topology";
 import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-location";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 type TopologyViewMode = "map" | "tree" | "table";
 type ProjectTopologyModel = ProjectTopologyResponse["topology"];
@@ -207,10 +209,14 @@ function RowsList({
 }
 
 export default function TopologyScreen() {
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
+  const { project, projectPath, machineId, projectRef, endpoint, projectLoading } =
+    useRouteProject();
+  // Keyed by the pair: two machines' copies of one checkout are two
+  // projects, and sharing an atom between them bleeds one host into the
+  // other.
+  const projectKeyForState = projectStateKey(projectRef);
   const topologyRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("topology"));
-  const resource = useAtomValue(topologyResourceFamily(projectPathKey));
+  const resource = useAtomValue(topologyResourceFamily(projectKeyForState));
   const beginTopologyRefresh = useSetAtom(beginTopologyRefreshAtom);
   const applyTopologySuccess = useSetAtom(applyTopologySuccessAtom);
   const applyTopologyFailure = useSetAtom(applyTopologyFailureAtom);
@@ -220,7 +226,7 @@ export default function TopologyScreen() {
     mode?: string | string[];
     project?: string | string[];
   }>();
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const pathname = usePathname();
@@ -229,11 +235,11 @@ export default function TopologyScreen() {
   const getTokenRef = useRef(getToken);
   const endpointRef = useRef(endpoint);
   const endpointKeyRef = useRef(endpointKey);
-  const projectPathRef = useRef(projectPathKey);
+  const projectPathRef = useRef(projectKeyForState);
   const refreshSeqRef = useRef(0);
   const refreshGenerationRef = useRef(0);
   const requestScopeRef = useRef<TopologyRequestScope>({
-    projectPath: projectPathKey,
+    projectStateKey: projectKeyForState,
     endpointKey,
     generation: 0,
   });
@@ -246,35 +252,35 @@ export default function TopologyScreen() {
   useEffect(() => {
     refreshGenerationRef.current += 1;
     endpointKeyRef.current = endpointKey;
-    projectPathRef.current = projectPathKey;
+    projectPathRef.current = projectKeyForState;
     requestScopeRef.current = {
-      projectPath: projectPathKey,
+      projectStateKey: projectKeyForState,
       endpointKey,
       generation: refreshGenerationRef.current,
     };
-  }, [endpointKey, projectPathKey]);
+  }, [endpointKey, projectKeyForState]);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentProjectPath = projectPathRef.current;
+    const currentProjectStateKey = projectPathRef.current;
     const requestScope = {
-      projectPath: currentProjectPath,
+      projectStateKey: currentProjectStateKey,
       endpointKey: endpointKeyRef.current,
       generation: refreshGenerationRef.current,
     };
     if (!currentEndpoint) {
-      clearTopologyResource(currentProjectPath);
+      clearTopologyResource(currentProjectStateKey);
       return;
     }
-    beginTopologyRefresh(currentProjectPath);
+    beginTopologyRefresh(currentProjectStateKey);
     try {
       const token = await getTokenRef.current();
       const response = await getProjectTopology(currentEndpoint, { token });
       if (seq !== refreshSeqRef.current) return;
       if (!isCurrentTopologyRequest(requestScope, requestScopeRef.current)) return;
       applyTopologySuccess({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         topology: {
           ...response.topology,
           fetchedAt: new Date().toISOString(),
@@ -284,11 +290,11 @@ export default function TopologyScreen() {
       if (seq !== refreshSeqRef.current) return;
       if (!isCurrentTopologyRequest(requestScope, requestScopeRef.current)) return;
       if (isTransientRequestError(err)) {
-        settleTopologyRefresh(currentProjectPath);
+        settleTopologyRefresh(currentProjectStateKey);
         return;
       }
       applyTopologyFailure({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         error: getErrorMessage(err),
       });
     }
@@ -306,7 +312,7 @@ export default function TopologyScreen() {
       void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, projectPathKey, serializedRefresh, topologyRefreshNonce]);
+  }, [endpointKey, projectKeyForState, serializedRefresh, topologyRefreshNonce]);
 
   const visibleTopology = resource.value;
   const visibleError = resource.error;
@@ -320,11 +326,11 @@ export default function TopologyScreen() {
 
   function handlePickAgent(sessionId: string) {
     selectSession(sessionId);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, projectPath));
+    router.push(detailHrefForPath(pathname, "agent", sessionId, projectPath, machineId));
   }
 
   function handlePickService(serviceId: string) {
-    router.push(detailHrefForPath(pathname, "service", serviceId, projectPath));
+    router.push(detailHrefForPath(pathname, "service", serviceId, projectPath, machineId));
   }
 
   return (
@@ -389,7 +395,13 @@ export default function TopologyScreen() {
               options={VIEW_OPTIONS}
               value={mode}
               onChange={(nextMode) =>
-                router.replace(buildViewHref("/topology", { project: projectPath, mode: nextMode }))
+                router.replace(
+                  buildViewHref("/topology", {
+                    project: projectPath,
+                    machine: machineId,
+                    mode: nextMode,
+                  }),
+                )
               }
               className="ml-3"
             />

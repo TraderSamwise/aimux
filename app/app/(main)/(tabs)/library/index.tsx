@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -25,6 +26,7 @@ import {
   type LibraryRequestScope,
 } from "@/stores/library";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -65,10 +67,14 @@ function DocumentRow({
 export default function LibraryScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
+  const { project, projectPath, machineId, projectRef, endpoint, projectLoading } =
+    useRouteProject();
+  // Keyed by the pair: two machines' copies of one checkout are two
+  // projects, and sharing an atom between them bleeds one host into the
+  // other.
+  const projectKeyForState = projectStateKey(projectRef);
   const libraryRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("library"));
-  const resource = useAtomValue(libraryResourceFamily(projectPathKey));
+  const resource = useAtomValue(libraryResourceFamily(projectKeyForState));
   const beginLibraryRefresh = useSetAtom(beginLibraryRefreshAtom);
   const applyLibrarySuccess = useSetAtom(applyLibrarySuccessAtom);
   const applyLibraryFailure = useSetAtom(applyLibraryFailureAtom);
@@ -77,15 +83,15 @@ export default function LibraryScreen() {
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ document?: string | string[] }>();
   const selectedDocumentId = cleanSearchValue(searchParams.document);
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const endpointRef = useRef(endpoint);
   const endpointKeyRef = useRef(endpointKey);
-  const projectPathRef = useRef(projectPathKey);
+  const projectPathRef = useRef(projectKeyForState);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
   const refreshGenerationRef = useRef(0);
   const requestScopeRef = useRef<LibraryRequestScope>({
-    projectPath: projectPathKey,
+    projectStateKey: projectKeyForState,
     endpointKey,
     generation: 0,
   });
@@ -98,13 +104,13 @@ export default function LibraryScreen() {
   useEffect(() => {
     refreshGenerationRef.current += 1;
     endpointKeyRef.current = endpointKey;
-    projectPathRef.current = projectPathKey;
+    projectPathRef.current = projectKeyForState;
     requestScopeRef.current = {
-      projectPath: projectPathKey,
+      projectStateKey: projectKeyForState,
       endpointKey,
       generation: refreshGenerationRef.current,
     };
-  }, [endpointKey, projectPathKey]);
+  }, [endpointKey, projectKeyForState]);
 
   const visibleDocuments = useMemo(() => resource.value?.documents ?? [], [resource.value]);
 
@@ -119,24 +125,24 @@ export default function LibraryScreen() {
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentProjectPath = projectPathRef.current;
+    const currentProjectStateKey = projectPathRef.current;
     const requestScope = {
-      projectPath: currentProjectPath,
+      projectStateKey: currentProjectStateKey,
       endpointKey: endpointKeyRef.current,
       generation: refreshGenerationRef.current,
     };
     if (!currentEndpoint) {
-      clearLibraryResource(currentProjectPath);
+      clearLibraryResource(currentProjectStateKey);
       return;
     }
-    beginLibraryRefresh(currentProjectPath);
+    beginLibraryRefresh(currentProjectStateKey);
     try {
       const token = await getTokenRef.current();
       const response = await listProjectLibrary(currentEndpoint, { token });
       if (seq !== refreshSeqRef.current) return;
       if (!isCurrentLibraryRequest(requestScope, requestScopeRef.current)) return;
       applyLibrarySuccess({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         library: {
           documents: response.documents,
           fetchedAt: new Date().toISOString(),
@@ -146,7 +152,7 @@ export default function LibraryScreen() {
       if (seq !== refreshSeqRef.current) return;
       if (!isCurrentLibraryRequest(requestScope, requestScopeRef.current)) return;
       applyLibraryFailure({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -158,7 +164,7 @@ export default function LibraryScreen() {
       void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, libraryRefreshNonce, projectPathKey, serializedRefresh]);
+  }, [endpointKey, libraryRefreshNonce, projectKeyForState, serializedRefresh]);
 
   const visibleError = resource.error;
 
@@ -213,7 +219,11 @@ export default function LibraryScreen() {
                 selected={document.id === selectedDocument?.id}
                 onPress={() =>
                   router.replace(
-                    buildViewHref("/library", { project: projectPath, document: document.id }),
+                    buildViewHref("/library", {
+                      project: projectPath,
+                      machine: machineId,
+                      document: document.id,
+                    }),
                   )
                 }
               />

@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { atomFamily } from "jotai/utils";
 import type { CoordinationWorklistItem } from "@/lib/api";
 
@@ -16,18 +17,18 @@ export interface CoordinationWorklistResource {
 }
 
 export interface ApplyCoordinationWorklistSuccessInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   worklist: CoordinationWorklistValue;
   updatedAt?: number;
 }
 
 export interface ApplyCoordinationWorklistFailureInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   error: string;
 }
 
 export interface CoordinationWorklistRequestScope {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   endpointKey: string | null;
   generation: number;
 }
@@ -40,31 +41,34 @@ const emptyCoordinationWorklistResource = (): CoordinationWorklistResource => ({
   updatedAt: null,
 });
 
-export const coordinationWorklistResourceFamily = atomFamily((_projectPath: string) =>
+export const coordinationWorklistResourceFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<CoordinationWorklistResource>(emptyCoordinationWorklistResource()),
 );
 
-export const coordinationWorklistFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(coordinationWorklistResourceFamily(projectPath)).value),
+export const coordinationWorklistFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(coordinationWorklistResourceFamily(projectStateKey)).value),
 );
 
-export const coordinationWorklistErrorFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(coordinationWorklistResourceFamily(projectPath)).error),
+export const coordinationWorklistErrorFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(coordinationWorklistResourceFamily(projectStateKey)).error),
 );
 
-export const beginCoordinationWorklistRefreshAtom = atom(null, (get, set, projectPath: string) => {
-  const current = get(coordinationWorklistResourceFamily(projectPath));
-  set(coordinationWorklistResourceFamily(projectPath), {
-    ...current,
-    pending: true,
-    stale: current.value !== null,
-  });
-});
+export const beginCoordinationWorklistRefreshAtom = atom(
+  null,
+  (get, set, projectStateKey: ProjectStateKey) => {
+    const current = get(coordinationWorklistResourceFamily(projectStateKey));
+    set(coordinationWorklistResourceFamily(projectStateKey), {
+      ...current,
+      pending: true,
+      stale: current.value !== null,
+    });
+  },
+);
 
 export const applyCoordinationWorklistSuccessAtom = atom(
   null,
-  (_get, set, { projectPath, worklist, updatedAt }: ApplyCoordinationWorklistSuccessInput) => {
-    set(coordinationWorklistResourceFamily(projectPath), {
+  (_get, set, { projectStateKey, worklist, updatedAt }: ApplyCoordinationWorklistSuccessInput) => {
+    set(coordinationWorklistResourceFamily(projectStateKey), {
       value: worklist,
       error: null,
       pending: false,
@@ -76,9 +80,9 @@ export const applyCoordinationWorklistSuccessAtom = atom(
 
 export const applyCoordinationWorklistFailureAtom = atom(
   null,
-  (get, set, { projectPath, error }: ApplyCoordinationWorklistFailureInput) => {
-    const current = get(coordinationWorklistResourceFamily(projectPath));
-    set(coordinationWorklistResourceFamily(projectPath), {
+  (get, set, { projectStateKey, error }: ApplyCoordinationWorklistFailureInput) => {
+    const current = get(coordinationWorklistResourceFamily(projectStateKey));
+    set(coordinationWorklistResourceFamily(projectStateKey), {
       ...current,
       error,
       pending: false,
@@ -89,8 +93,8 @@ export const applyCoordinationWorklistFailureAtom = atom(
 
 export const clearCoordinationWorklistResourceAtom = atom(
   null,
-  (_get, set, projectPath: string) => {
-    set(coordinationWorklistResourceFamily(projectPath), emptyCoordinationWorklistResource());
+  (_get, set, projectStateKey: ProjectStateKey) => {
+    set(coordinationWorklistResourceFamily(projectStateKey), emptyCoordinationWorklistResource());
   },
 );
 
@@ -99,7 +103,7 @@ export function isCurrentCoordinationWorklistRequest(
   current: CoordinationWorklistRequestScope,
 ): boolean {
   return (
-    request.projectPath === current.projectPath &&
+    request.projectStateKey === current.projectStateKey &&
     request.endpointKey === current.endpointKey &&
     request.generation === current.generation
   );

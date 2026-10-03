@@ -1,4 +1,5 @@
 import { createStore } from "jotai";
+import { projectStateKey } from "@/lib/project-key";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -51,17 +52,17 @@ function topology(overrides: Partial<TopologyValue> = {}): TopologyValue {
 describe("topology resource lifecycle", () => {
   it("marks an in-flight refresh stale when a previous topology exists", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = topology();
 
     store.set(applyTopologySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       topology: current,
       updatedAt: 10,
     });
-    store.set(beginTopologyRefreshAtom, projectPath);
+    store.set(beginTopologyRefreshAtom, stateKey);
 
-    expect(store.get(topologyResourceFamily(projectPath))).toEqual({
+    expect(store.get(topologyResourceFamily(stateKey))).toEqual({
       value: current,
       error: null,
       pending: true,
@@ -72,22 +73,22 @@ describe("topology resource lifecycle", () => {
 
   it("keeps the last good topology after a refresh failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = topology();
 
     store.set(applyTopologySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       topology: current,
       updatedAt: 10,
     });
     store.set(applyTopologyFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
 
-    expect(store.get(topologyFamily(projectPath))).toBe(current);
-    expect(store.get(topologyErrorFamily(projectPath))).toBe("service unavailable");
-    expect(store.get(topologyResourceFamily(projectPath))).toMatchObject({
+    expect(store.get(topologyFamily(stateKey))).toBe(current);
+    expect(store.get(topologyErrorFamily(stateKey))).toBe("service unavailable");
+    expect(store.get(topologyResourceFamily(stateKey))).toMatchObject({
       value: current,
       error: "service unavailable",
       pending: false,
@@ -97,18 +98,18 @@ describe("topology resource lifecycle", () => {
 
   it("settles transient refreshes without surfacing a stale failure", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = topology();
 
     store.set(applyTopologySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       topology: current,
       updatedAt: 10,
     });
-    store.set(beginTopologyRefreshAtom, projectPath);
-    store.set(settleTopologyRefreshAtom, projectPath);
+    store.set(beginTopologyRefreshAtom, stateKey);
+    store.set(settleTopologyRefreshAtom, stateKey);
 
-    expect(store.get(topologyResourceFamily(projectPath))).toEqual({
+    expect(store.get(topologyResourceFamily(stateKey))).toEqual({
       value: current,
       error: null,
       pending: false,
@@ -119,26 +120,26 @@ describe("topology resource lifecycle", () => {
 
   it("clears stale/error metadata after the topology recovers", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const current = topology();
     const recovered = topology({ counts: { worktrees: 1, agents: 2, services: 0 } });
 
     store.set(applyTopologySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       topology: current,
       updatedAt: 10,
     });
     store.set(applyTopologyFailureAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       error: "service unavailable",
     });
     store.set(applyTopologySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       topology: recovered,
       updatedAt: 20,
     });
 
-    expect(store.get(topologyResourceFamily(projectPath))).toEqual({
+    expect(store.get(topologyResourceFamily(stateKey))).toEqual({
       value: recovered,
       error: null,
       pending: false,
@@ -149,16 +150,16 @@ describe("topology resource lifecycle", () => {
 
   it("clears the resource when the project service endpoint disappears", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
     store.set(applyTopologySuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       topology: topology(),
       updatedAt: 10,
     });
-    store.set(clearTopologyResourceAtom, projectPath);
+    store.set(clearTopologyResourceAtom, stateKey);
 
-    expect(store.get(topologyResourceFamily(projectPath))).toEqual({
+    expect(store.get(topologyResourceFamily(stateKey))).toEqual({
       value: null,
       error: null,
       pending: false,
@@ -170,15 +171,31 @@ describe("topology resource lifecycle", () => {
   it("rejects in-flight topology results from an old endpoint generation", () => {
     expect(
       isCurrentTopologyRequest(
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43190", generation: 1 },
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43190",
+          generation: 1,
+        },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
       ),
     ).toBe(false);
 
     expect(
       isCurrentTopologyRequest(
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
-        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
+        {
+          projectStateKey: projectStateKey({ path: "/repo" }),
+          endpointKey: "127.0.0.1:43191",
+          generation: 2,
+        },
       ),
     ).toBe(true);
   });

@@ -184,6 +184,10 @@ impl PathResolver {
         self.daemon_logs_dir().join("daemon-stdio.log")
     }
 
+    pub fn machine_identity_path(&self) -> PathBuf {
+        self.global_aimux_dir().join("machine.json")
+    }
+
     pub fn project_state_dir_for(&mut self, cwd: impl AsRef<Path>) -> PathBuf {
         self.global_aimux_dir()
             .join("projects")

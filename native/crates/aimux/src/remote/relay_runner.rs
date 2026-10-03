@@ -17,6 +17,7 @@ use tokio::sync::Notify;
 use crate::backlog_metrics::{
     BacklogMetric, BacklogMetricSnapshot, BacklogMetricStatus, RELAY_OUTBOX_BACKLOG, backlog_metric,
 };
+use crate::machine_identity::MachineIdentity;
 use crate::remote::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
     decide_connect_error, handle_frame, project_events_error_frame,
@@ -33,6 +34,19 @@ use crate::remote::websocket::{
 /// turn project event streams into unbounded memory. Overflow evicts old
 /// project-event frames before notification pushes.
 pub const MAX_RELAY_OUTBOX_FRAMES: usize = 512;
+
+/// The handshake declares which machine this daemon is. Without it the relay
+/// holds one daemon per account and the second machine to connect evicts the
+/// first. The id and name are both restricted to characters that need no
+/// encoding, so this is a plain format rather than a URL builder.
+pub fn daemon_connect_url(relay_url: &str, machine: &MachineIdentity) -> String {
+    format!(
+        "{}/daemon/connect?machineId={}&machineName={}",
+        relay_url.trim_end_matches('/'),
+        machine.id,
+        machine.name
+    )
+}
 
 pub struct DaemonRouteResponse {
     pub status: u16,
@@ -123,6 +137,7 @@ impl RelayHandle {
 pub struct RelayRunner {
     relay_url: String,
     token: String,
+    machine: MachineIdentity,
     bridge: Arc<dyn DaemonRelayBridge>,
     handle: RelayHandle,
     outbox: Arc<Mutex<VecDeque<String>>>,
@@ -132,7 +147,12 @@ pub struct RelayRunner {
 }
 
 impl RelayRunner {
-    pub fn new(relay_url: &str, token: &str, bridge: Arc<dyn DaemonRelayBridge>) -> Arc<Self> {
+    pub fn new(
+        relay_url: &str,
+        token: &str,
+        machine: MachineIdentity,
+        bridge: Arc<dyn DaemonRelayBridge>,
+    ) -> Arc<Self> {
         let relay_url = relay_url.trim_end_matches('/').to_owned();
         Arc::new(Self {
             handle: RelayHandle {
@@ -147,6 +167,7 @@ impl RelayRunner {
             },
             relay_url,
             token: token.to_owned(),
+            machine,
             bridge,
             outbox: Arc::new(Mutex::new(VecDeque::new())),
             outbox_ready: Arc::new(Notify::new()),
@@ -185,7 +206,7 @@ impl RelayRunner {
         sleep: &mut (dyn FnMut(Duration) -> BoxFuture<'static, ()> + Send),
     ) {
         let mut retry_ms = INITIAL_RETRY_MS;
-        let url = format!("{}/daemon/connect", self.relay_url);
+        let url = daemon_connect_url(&self.relay_url, &self.machine);
         let subprotocols = relay_subprotocols(&self.token);
 
         while !self.handle.is_stopped() {
@@ -787,9 +808,56 @@ impl CloseInfo {
 mod tests {
     use super::{
         DaemonRelayBridge, DaemonRouteResponse, MAX_RELAY_OUTBOX_FRAMES, ProjectEventStream,
-        ProjectEventStreamItem, RelayRunner, RelaySubscriptions, push_front_outbox_frame,
-        push_outbox_frame,
+        ProjectEventStreamItem, RelayRunner, RelaySubscriptions, daemon_connect_url,
+        push_front_outbox_frame, push_outbox_frame,
     };
+    use crate::machine_identity::MachineIdentity;
+
+    fn test_machine() -> MachineIdentity {
+        MachineIdentity {
+            version: 1,
+            id: "abc123def456".to_owned(),
+            name: "sam-strix".to_owned(),
+        }
+    }
+
+    const HANDSHAKE_CONTRACT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../testdata/contracts/v1/relay-handshake.json"
+    ));
+
+    /// The relay parses this URL in TypeScript. Both sides assert the same
+    /// file, because when each tested only its own copy of the shape a
+    /// renamed parameter kept both suites green while every daemon in the
+    /// field silently landed in the `unidentified` slot.
+    #[test]
+    fn the_daemon_handshake_declares_which_machine_it_is() {
+        let contract: Value = serde_json::from_str(HANDSHAKE_CONTRACT).expect("contract json");
+        let example = &contract["example"];
+        let machine = MachineIdentity {
+            version: 1,
+            id: example["machineId"].as_str().expect("machineId").to_owned(),
+            name: example["machineName"]
+                .as_str()
+                .expect("machineName")
+                .to_owned(),
+        };
+        let expected = example["url"].as_str().expect("url");
+        let relay_url = example["relayUrl"].as_str().expect("relayUrl");
+
+        assert_eq!(daemon_connect_url(relay_url, &machine), expected);
+        assert_eq!(
+            daemon_connect_url(&format!("{relay_url}/"), &machine),
+            expected,
+            "a trailing slash must not double up on the handshake path"
+        );
+        assert_eq!(
+            crate::machine_identity::RESERVED_UNIDENTIFIED_MACHINE_ID,
+            contract["reservedUnidentifiedMachineId"]
+                .as_str()
+                .expect("reservedUnidentifiedMachineId")
+        );
+    }
     use crate::remote::websocket::{
         BoxFuture, WebSocketConnectionParts, WebSocketError, WebSocketEvent, WebSocketReader,
         WebSocketWriter,
@@ -799,6 +867,7 @@ mod tests {
     use std::future::pending;
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll};
+    use std::time::Duration;
     use tokio::sync::Notify;
 
     fn project_event_frame(seq: usize) -> String {
@@ -911,13 +980,67 @@ mod tests {
         );
     }
 
+    /// Records the URL the runner actually dials, then stops it so the
+    /// reconnect ladder does not run.
+    struct UrlRecordingConnector {
+        urls: Arc<Mutex<Vec<String>>>,
+        handle: super::RelayHandle,
+    }
+
+    impl crate::remote::websocket::WebSocketConnector for UrlRecordingConnector {
+        fn connect<'a>(
+            &'a mut self,
+            url: &'a str,
+            _subprotocols: &'a [String],
+        ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+            self.urls.lock().unwrap().push(url.to_owned());
+            self.handle.stop();
+            Box::pin(async { Err(WebSocketError::handshake_refused(503, "stopped by test")) })
+        }
+    }
+
+    /// The machine has to survive the whole way from the supervisor's
+    /// `connect` to the socket. Asserting `daemon_connect_url` alone passes
+    /// while the runner dials a machine-less URL, which is the eviction bug.
+    #[test]
+    fn the_runner_dials_the_machine_it_was_constructed_with() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+        let urls = Arc::new(Mutex::new(Vec::new()));
+        let mut connector = UrlRecordingConnector {
+            urls: Arc::clone(&urls),
+            handle: runner.handle(),
+        };
+
+        // aimux-async-seam: test - drives the dial loop with no real sleeping
+        crate::async_runtime::block_on_named("relay:test-dial-url", async {
+            let mut sleep = |_: Duration| Box::pin(async {}) as BoxFuture<'static, ()>;
+            runner.run_with_sleep(&mut connector, &mut sleep).await;
+        });
+
+        assert_eq!(
+            urls.lock().unwrap().clone(),
+            vec![daemon_connect_url("wss://relay.example", &test_machine())],
+        );
+    }
+
     #[test]
     fn relay_route_stop_after_dispatch_still_sends_response_frame() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
         let bridge = Arc::new(StopAfterRouteBridge {
             handle: Mutex::new(None),
         });
-        let runner = RelayRunner::new("wss://relay.example/", "tok", bridge.clone());
+        let runner = RelayRunner::new(
+            "wss://relay.example/",
+            "tok",
+            test_machine(),
+            bridge.clone(),
+        );
         *bridge.handle.lock().unwrap() = Some(runner.handle());
         let sent = Arc::new(Mutex::new(Vec::new()));
         let connection = WebSocketConnectionParts {
@@ -955,7 +1078,12 @@ mod tests {
     #[test]
     fn relay_outbox_write_cancel_keeps_frame_queued_until_send_completes() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
-        let runner = RelayRunner::new("wss://relay.example/", "tok", Arc::new(NoopBridge));
+        let runner = RelayRunner::new(
+            "wss://relay.example/",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
         runner
             .push_notification(&json!({ "title": "still queued" }))
             .expect("notification queued");

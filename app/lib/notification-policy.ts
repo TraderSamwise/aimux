@@ -19,6 +19,10 @@ export interface ClientNotificationEvent {
   body: string;
   target?: {
     projectPath?: string;
+    // Which machine raised it. A session id is unique within one project
+    // service, not across the fleet, so without this one host's notification
+    // deduplicates the other's away and a tap opens the wrong one.
+    machineId?: string;
     sessionId?: string;
   };
 }
@@ -36,6 +40,7 @@ export interface SessionNotificationSnapshot {
 export interface SessionNotificationContext {
   projectName?: string;
   projectPath?: string;
+  machineId?: string;
 }
 
 export interface NotificationRecordBatchEvaluation {
@@ -122,13 +127,14 @@ export function evaluateNotificationRecord(
   const title = titleWithProject(record.title, context, record.projectName);
   return {
     id: record.id,
-    dedupeKey: record.dedupeKey || `notification:${record.id}`,
+    dedupeKey: machineScopedDedupeKey(context, record.dedupeKey || `notification:${record.id}`),
     category: "agent",
     kind,
     title,
     body: record.body || record.subtitle || record.title,
     target: {
       projectPath: context.projectPath,
+      machineId: context.machineId,
       sessionId: record.sessionId,
     },
   };
@@ -171,14 +177,17 @@ export function evaluateAlertEvent(
     `alert:${event.projectId}:${event.kind}:${event.sessionId ?? "project"}:${event.ts}`;
   return {
     id,
-    dedupeKey:
+    dedupeKey: machineScopedDedupeKey(
+      context,
       event.dedupeKey || (event.notificationId ? `notification:${event.notificationId}` : id),
+    ),
     category: "agent",
     kind,
     title,
     body: event.message || event.sessionId || event.kind,
     target: {
       projectPath: context.projectPath,
+      machineId: context.machineId,
       sessionId: event.sessionId,
     },
   };
@@ -209,6 +218,13 @@ function evaluateAttentionTransition(
   return null;
 }
 
+// A notification id, a session id and a dedupe key are all unique within one
+// project service and not across the fleet, so one host's notification would
+// deduplicate the other's away.
+function machineScopedDedupeKey(context: SessionNotificationContext, key: string): string {
+  return context.machineId ? `${context.machineId}\u0000${key}` : key;
+}
+
 function buildAgentEvent(
   kind: AgentNotificationKind,
   snapshot: SessionNotificationSnapshot,
@@ -218,14 +234,15 @@ function buildAgentEvent(
 ): ClientNotificationEvent {
   const projectPrefix = context.projectName ? `${context.projectName}: ` : "";
   return {
-    id: `${snapshot.id}:${transitionKey}`,
-    dedupeKey: `agent:${snapshot.id}:${transitionKey}`,
+    id: machineScopedDedupeKey(context, `${snapshot.id}:${transitionKey}`),
+    dedupeKey: machineScopedDedupeKey(context, `agent:${snapshot.id}:${transitionKey}`),
     category: "agent",
     kind,
     title: `${projectPrefix}${title}`,
     body: snapshot.headline || snapshot.label,
     target: {
       projectPath: context.projectPath,
+      machineId: context.machineId,
       sessionId: snapshot.id,
     },
   };

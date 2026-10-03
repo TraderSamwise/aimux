@@ -1,0 +1,13 @@
+{
+  "note": "The daemon-to-relay handshake, asserted by both sides. The Rust daemon builds this URL and the TypeScript relay parses it; each side used to test only its own copy of the shape, so renaming a parameter on one side passed both suites while every daemon in the field silently became `unidentified`.",
+  "path": "/daemon/connect",
+  "machineIdParam": "machineId",
+  "machineNameParam": "machineName",
+  "reservedUnidentifiedMachineId": "unidentified",
+  "example": {
+    "relayUrl": "wss://relay.aimux.app",
+    "machineId": "abc123def456",
+    "machineName": "sam-strix",
+    "url": "wss://relay.aimux.app/daemon/connect?machineId=abc123def456&machineName=sam-strix"
+  }
+}

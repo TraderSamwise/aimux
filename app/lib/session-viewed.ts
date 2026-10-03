@@ -27,6 +27,9 @@ export function sessionViewedMark(context: SessionViewedMarkContext): SessionVie
   return {
     key: [
       sessionId,
+      // The machine is part of the address: the same host and port name a
+      // different project service on each one.
+      context.endpoint.machineId ?? "",
       context.endpoint.host,
       String(context.endpoint.port),
       context.token ?? "",

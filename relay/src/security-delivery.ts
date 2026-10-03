@@ -58,6 +58,10 @@ export interface NotificationPushInput {
   sessionId?: string;
   projectId?: string;
   projectRoot?: string;
+  // Which machine raised it. A project id and root exist on more than one
+  // host, so without this a tapped notification deep-links to whichever one
+  // the app happens to resolve.
+  machineId?: string;
   dedupeKey?: string;
 }
 
@@ -80,6 +84,7 @@ export async function deliverNotificationPush(input: NotificationPushInput): Pro
         sessionId: input.sessionId,
         projectId: input.projectId,
         projectRoot: input.projectRoot,
+        machineId: input.machineId,
         dedupeKey: input.dedupeKey,
       },
     }));

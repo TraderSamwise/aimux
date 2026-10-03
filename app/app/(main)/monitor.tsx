@@ -16,7 +16,11 @@ import {
   type MonitorCapturePanelProps,
   type MonitorSample,
 } from "@/lib/monitor-capture";
-import { monitorTargetLabel, type MonitorTarget } from "@/lib/monitor-targets";
+import {
+  monitorTargetLabel,
+  savedMonitorDestinationIsAmbiguous,
+  type MonitorTarget,
+} from "@/lib/monitor-targets";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
 import { monitorTargetsAtom, selectedMonitorTargetAtom } from "@/stores/monitorTargets";
 import {
@@ -83,8 +87,11 @@ export default function MonitorScreen() {
     !sharedCameraOnlyBlocked &&
     !audioOnlyWithoutSpeech &&
     !sharedTextWithoutSpeech;
+  const destinationIsAmbiguous = savedMonitorDestinationIsAmbiguous(targets, settings);
   const deliveryHint = !selectedTarget
-    ? "Choose a destination before starting."
+    ? destinationIsAmbiguous
+      ? "This destination now exists on more than one machine. Choose which one."
+      : "Choose a destination before starting."
     : sharedCameraOnlyBlocked
       ? "Shared chat monitor currently sends speech text only. Switch to Audio or Both."
       : audioOnlyWithoutSpeech || sharedTextWithoutSpeech
@@ -101,6 +108,7 @@ export default function MonitorScreen() {
         ...current,
         targetKind: target.kind,
         projectPath: target.kind === "project-agent" ? target.projectPath : target.projectRoot,
+        machineId: target.kind === "project-agent" ? (target.machineId ?? null) : null,
         sessionId: target.sessionId,
         shareOwnerUserId: target.kind === "shared-chat" ? target.ownerUserId : null,
         shareId: target.kind === "shared-chat" ? target.shareId : null,

@@ -11,7 +11,8 @@
 
 import { getDaemonUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
 import { env } from "@/lib/env";
-import type { RelayTransport } from "@/lib/relay-transport";
+import type { MachineListFailure } from "@/lib/project-list-status";
+import type { RelayMachine, RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
 import type { ParsedAgentOutput } from "@/lib/events";
 import {
@@ -177,6 +178,11 @@ export interface ApiOpts {
   token?: string | null;
   signal?: AbortSignal;
   timeoutMs?: number;
+  // Which machine must answer. Only meaningful over the relay, and only needed
+  // once an account has more than one machine connected -- the relay resolves
+  // an absent machine when there is exactly one, and refuses to guess when
+  // there are several.
+  machineId?: string;
 }
 
 export class ApiError extends Error {
@@ -196,11 +202,28 @@ function apiErrorMessageFromBody(body: unknown, fallback: string): string {
   if (!body || typeof body !== "object") return fallback;
   const record = body as Record<string, unknown>;
   const base = typeof record.error === "string" ? record.error : fallback;
+  const withMachines = appendMachineNames(base, record.machines);
   const tmuxQuery = record.tmuxLiveWindowQuery;
-  if (!tmuxQuery || typeof tmuxQuery !== "object") return base;
+  if (!tmuxQuery || typeof tmuxQuery !== "object") return withMachines;
   const tmuxError = (tmuxQuery as Record<string, unknown>).error;
-  if (typeof tmuxError !== "string" || !tmuxError.trim()) return base;
-  return `${base}: tmux window query failed: ${tmuxError}`;
+  if (typeof tmuxError !== "string" || !tmuxError.trim()) return withMachines;
+  return `${withMachines}: tmux window query failed: ${tmuxError}`;
+}
+
+// The relay refuses a request that names no machine when several are connected,
+// and the list it sends back is the only part that tells anyone what to do
+// about it. Dropping it leaves "name one with machineId" on screen with nothing
+// to name.
+function appendMachineNames(message: string, machines: unknown): string {
+  if (!Array.isArray(machines) || machines.length === 0) return message;
+  const names = machines
+    .map((machine) =>
+      machine && typeof machine === "object"
+        ? ((machine as { name?: unknown; id?: unknown }).name ?? (machine as { id?: unknown }).id)
+        : undefined,
+    )
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  return names.length > 0 ? `${message}: ${names.join(", ")}` : message;
 }
 
 function apiTimeoutMs(opts?: ApiOpts): number {
@@ -304,9 +327,30 @@ async function callDaemonViaRelay<T>(
   body?: unknown,
   opts?: ApiOpts,
 ): Promise<T> {
+  return (await callDaemonViaRelayNamingAnswerer<T>(method, path, body, opts)).body;
+}
+
+// The same call, keeping which machine answered. The relay stamps that from
+// the socket's tags, so it is not a thing the daemon claims -- which makes it
+// usable by a caller that could not name a machine because the fleet had not
+// been announced yet.
+async function callDaemonViaRelayNamingAnswerer<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  opts?: ApiOpts,
+): Promise<{ body: T; machineId?: string }> {
   const relay = _relay;
   if (!relay) throw new ApiError(0, null, "Relay not connected");
-  const result = await withRelayRequestTimeout(path, relay.request(method, path, body), opts);
+  // Three arguments when no machine is named, so a caller that never cared
+  // sends exactly the frame it always sent.
+  const result = await withRelayRequestTimeout(
+    path,
+    opts?.machineId
+      ? relay.request(method, path, body, opts.machineId)
+      : relay.request(method, path, body),
+    opts,
+  );
   if (result.status >= 400) {
     throw new ApiError(
       result.status,
@@ -314,7 +358,10 @@ async function callDaemonViaRelay<T>(
       apiErrorMessageFromBody(result.body, `HTTP ${result.status}`),
     );
   }
-  return result.body as T;
+  return {
+    body: result.body as T,
+    ...(result.machineId ? { machineId: result.machineId } : {}),
+  };
 }
 
 async function callServiceViaRelay<T>(
@@ -325,7 +372,8 @@ async function callServiceViaRelay<T>(
   body?: unknown,
 ): Promise<T> {
   const proxyPath = `/proxy/${endpoint.host}/${endpoint.port}${path}`;
-  return callDaemonViaRelay<T>(method, proxyPath, body, opts);
+  // An explicit machine wins; otherwise the address says which host it is on.
+  return callDaemonViaRelay<T>(method, proxyPath, body, withEndpointMachine(endpoint, opts));
 }
 
 export function shouldRouteViaRelay(): boolean {
@@ -371,6 +419,9 @@ export interface ProjectStreamRoute {
   directUrl: string;
   relayPath: string;
   headers: Record<string, string>;
+  // Carried alongside `relayPath` because a project-event subscription is
+  // routed by machine exactly like a request is.
+  machineId?: string;
 }
 
 function projectStreamRoute(
@@ -380,12 +431,20 @@ function projectStreamRoute(
 ): ProjectStreamRoute {
   const headers: Record<string, string> = {};
   if (opts?.token) headers.Authorization = `Bearer ${opts.token}`;
+  const machineId = opts?.machineId ?? endpoint.machineId;
   return {
     path,
     directUrl: `${getServiceUrl(endpoint)}${path}`,
     relayPath: projectProxyPath(endpoint, path),
     headers,
+    ...(machineId ? { machineId } : {}),
   };
+}
+
+function withEndpointMachine(endpoint: ServiceEndpoint, opts?: ApiOpts): ApiOpts | undefined {
+  const machineId = opts?.machineId ?? endpoint.machineId;
+  if (!machineId) return opts;
+  return { ...opts, machineId };
 }
 
 // ── Daemon (port 43190) ───────────────────────────────────────────────────
@@ -400,6 +459,12 @@ export interface DaemonProject {
   id: string;
   name: string;
   path: string;
+  // Which machine this project is on. Absent in local mode and on a relay that
+  // reports no machines. `id` and `path` are NOT unique across machines -- the
+  // same checkout path exists on two of Sam's Macs -- so anything that keys a
+  // project must key on the pair.
+  machineId?: string;
+  machineName?: string;
   lastSeen?: string;
   dashboardSessionName: string;
   service: unknown | null;
@@ -413,8 +478,13 @@ export interface DaemonProject {
 }
 
 type RawDaemonProject = Partial<
-  Omit<DaemonProject, "onlineAgentCount" | "serviceAlive" | "dashboardAlive">
+  Omit<
+    DaemonProject,
+    "onlineAgentCount" | "serviceAlive" | "dashboardAlive" | "machineId" | "machineName"
+  >
 > & {
+  machineId?: unknown;
+  machineName?: unknown;
   onlineAgentCount?: unknown;
   serviceAlive?: unknown;
   dashboardAlive?: unknown;
@@ -450,6 +520,8 @@ function normalizeDaemonProject(project: RawDaemonProject): DaemonProject {
     id: stringField(project.id),
     name: stringField(project.name),
     path: stringField(project.path),
+    machineId: optionalStringField(project.machineId),
+    machineName: optionalStringField(project.machineName),
     lastSeen: optionalStringField(project.lastSeen),
     dashboardSessionName: stringField(project.dashboardSessionName),
     service: project.service ?? null,
@@ -493,6 +565,104 @@ export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
   return normalizeDaemonProjects(data.projects);
 }
 
+export interface MachineProjectList {
+  projects: DaemonProject[];
+  failures: MachineListFailure[];
+  // The machines this list speaks for. `undefined` means nothing here is
+  // scoped by machine -- local mode, or a relay that has not named the fleet --
+  // and the list is authoritative for everything, as it always was.
+  answeringMachineIds?: string[];
+}
+
+// One `/projects` per machine, merged here. The relay stays a router and never
+// aggregates, so this is the only place that knows the fleet is plural.
+//
+// A machine that answers with nothing has no projects; a machine that errors is
+// a failure, and the two must not arrive looking alike.
+export async function listProjectsAcrossMachines(opts?: ApiOpts): Promise<MachineProjectList> {
+  // `namedMachines`, not `machines`: a reconnect clears the live list until
+  // the next `daemon_status`, and a machine-less call in that window is
+  // refused outright once the account has several.
+  const machines = shouldRouteViaRelay() ? (getApiRelay()?.namedMachines ?? []) : [];
+  if (machines.length === 0) {
+    // Local mode, or a relay that has not told us the fleet yet. One
+    // machine-less call is exactly what this did before machines existed --
+    // except that the relay now says which machine answered, so this poll's
+    // projects are attributed immediately. Without that they arrived bare and
+    // the next poll re-keyed every project-scoped atom, remounting the chat
+    // view seconds after it opened.
+    return listProjectsAttributedToTheAnsweringMachine(opts);
+  }
+  const results = await Promise.allSettled(
+    machines.map(async (machine) =>
+      (await listProjects({ ...opts, machineId: machine.id })).map((project) => ({
+        ...project,
+        machineId: project.machineId ?? machine.id,
+        machineName: project.machineName ?? machine.name,
+      })),
+    ),
+  );
+  const projects: DaemonProject[] = [];
+  const failures: MachineListFailure[] = [];
+  const answeringMachineIds: string[] = [];
+  results.forEach((result, index) => {
+    const machine = machines[index];
+    if (result.status === "fulfilled") {
+      projects.push(...result.value);
+      answeringMachineIds.push(machine.id);
+      return;
+    }
+    failures.push({
+      machineId: machine.id,
+      machineName: machine.name,
+      error: relayFailureMessage(result.reason),
+    });
+  });
+  // Every machine failed: there is no list, only an error. The message is
+  // prefixed so a joined set of per-machine messages cannot read as one
+  // transient blip and be skipped by the caller.
+  if (projects.length === 0 && failures.length === machines.length) {
+    throw new ApiError(
+      0,
+      { failures },
+      `No machine answered — ${failures
+        .map((failure) => `${failure.machineName}: ${failure.error}`)
+        .join("; ")}`,
+    );
+  }
+  return { projects, failures, answeringMachineIds };
+}
+
+async function listProjectsAttributedToTheAnsweringMachine(
+  opts?: ApiOpts,
+): Promise<MachineProjectList> {
+  if (!shouldRouteViaRelay()) {
+    return { projects: await listProjects(opts), failures: [] };
+  }
+  const answered = await callDaemonViaRelayNamingAnswerer<{ ok: boolean; projects?: unknown }>(
+    "GET",
+    "/projects",
+    undefined,
+    opts,
+  );
+  const projects = normalizeDaemonProjects(answered.body.projects);
+  if (!answered.machineId) return { projects, failures: [] };
+  return {
+    projects: projects.map((project) => ({
+      ...project,
+      machineId: project.machineId ?? answered.machineId,
+    })),
+    failures: [],
+    answeringMachineIds: [answered.machineId],
+  };
+}
+
+function relayFailureMessage(reason: unknown): string {
+  if (reason instanceof ApiError) return reason.message;
+  if (reason instanceof Error) return reason.message;
+  return String(reason ?? "unknown error");
+}
+
 export async function listGlobalExposeItems(
   opts?: ApiOpts & {
     includeChatPreview?: boolean;
@@ -506,13 +676,72 @@ export async function listGlobalExposeItems(
   if (clientKind) params.set("clientKind", clientKind);
   if (clientId) params.set("clientId", clientId);
   const path = `${CORE_API_ROUTES.exposeItems}?${params.toString()}`;
-  if (shouldRouteViaRelay())
-    return callDaemonViaRelay<GlobalExposeItemsResponse>("GET", path, undefined, apiOpts);
+  if (shouldRouteViaRelay()) {
+    // "All projects" spans machines, so this spans machines. Named per call,
+    // because a request that names none is refused once there are several.
+    const machines = getApiRelay()?.namedMachines ?? [];
+    if (machines.length === 0) {
+      return callDaemonViaRelay<GlobalExposeItemsResponse>("GET", path, undefined, apiOpts);
+    }
+    const results = await Promise.allSettled(
+      machines.map((machine) =>
+        callDaemonViaRelay<GlobalExposeItemsResponse>("GET", path, undefined, {
+          ...apiOpts,
+          machineId: machine.id,
+        }),
+      ),
+    );
+    return mergeGlobalExposeItems(machines, results);
+  }
   return callJson<GlobalExposeItemsResponse>(
     `${getDaemonUrl()}${path}`,
     { method: "GET" },
     apiOpts,
   );
+}
+
+// A machine that errored becomes a project read error, which this response
+// already has a place for -- so one host being away shortens the tile list and
+// says why, rather than emptying it.
+function mergeGlobalExposeItems(
+  machines: readonly RelayMachine[],
+  results: readonly PromiseSettledResult<GlobalExposeItemsResponse>[],
+): GlobalExposeItemsResponse {
+  const items: GlobalExposeItemsResponse["items"] = [];
+  const projectReadErrors: NonNullable<GlobalExposeItemsResponse["projectReadErrors"]> = [];
+  results.forEach((result, index) => {
+    const machine = machines[index];
+    if (result.status === "fulfilled") {
+      items.push(...(result.value.items ?? []).map((item) => ({ ...item, machineId: machine.id })));
+      // Stamped with the host, because one checkout failing to read on two
+      // machines is otherwise two identical rows with nothing saying which.
+      projectReadErrors.push(
+        ...(result.value.projectReadErrors ?? []).map((error) =>
+          typeof error === "string"
+            ? { error, machineName: machine.name || machine.id }
+            : { ...error, machineName: machine.name || machine.id },
+        ),
+      );
+      return;
+    }
+    projectReadErrors.push({
+      projectName: machine.name || machine.id,
+      error: relayFailureMessage(result.reason),
+    });
+  });
+  const everyMachineFailed = results.every((result) => result.status === "rejected");
+  if (items.length === 0 && everyMachineFailed) {
+    // No machine answered, so there is no list -- only an error.
+    throw new ApiError(
+      0,
+      { projectReadErrors, failures: projectReadErrors },
+      `No machine answered — ${results
+        .map((result) => (result.status === "rejected" ? relayFailureMessage(result.reason) : ""))
+        .filter(Boolean)
+        .join("; ")}`,
+    );
+  }
+  return { ok: true, items, ...(projectReadErrors.length > 0 ? { projectReadErrors } : {}) };
 }
 
 export interface EnsureProjectResponse {
@@ -1279,11 +1508,22 @@ export async function createShareInvite(
   serviceEndpoint?: ServiceEndpoint | null,
   opts?: ApiOpts,
 ): Promise<ShareInviteResponse> {
+  // The machine travels as its own field, so the share is bound to the host
+  // that is sharing it. It is kept out of `serviceEndpoint` because that goes
+  // on to the guest, and a guest is told nothing about the fleet.
   return callJson<ShareInviteResponse>(
     `${relayHttpUrl()}/shares/invite`,
     {
       method: "POST",
-      body: JSON.stringify({ projectRoot, sessionId, email, serviceEndpoint }),
+      body: JSON.stringify({
+        projectRoot,
+        sessionId,
+        email,
+        ...(serviceEndpoint?.machineId ? { machineId: serviceEndpoint.machineId } : {}),
+        serviceEndpoint: serviceEndpoint
+          ? { host: serviceEndpoint.host, port: serviceEndpoint.port }
+          : serviceEndpoint,
+      }),
     },
     opts,
   );

@@ -4,6 +4,7 @@ import {
   actorDisplayPrefix,
   createShareInvite,
   emptySharingState,
+  findShareForSession,
   getShareChatMode,
   isSharedRelayRequestAllowed,
   listAcceptedShares,
@@ -14,6 +15,9 @@ import {
   stripTrustedAimuxHeaders,
   summarizeShare,
   upsertAcceptedShare,
+  type ShareActor,
+  type SharedSessionRecord,
+  type SharingState,
 } from "./sharing";
 
 const owner = {
@@ -371,5 +375,98 @@ describe("sharing state", () => {
     );
 
     expect(Object.values(created.state.shares)[0].serviceEndpoint).toBeUndefined();
+  });
+});
+
+describe("which share a new invite extends", () => {
+  const owner: ShareActor = { userId: "user_owner", displayName: "Sam", role: "owner" };
+
+  async function invite(
+    state: Parameters<typeof createShareInvite>[0],
+    machineId?: string,
+    projectRoot = "/repo/aimux",
+  ) {
+    return createShareInvite(state, {
+      owner,
+      projectRoot,
+      sessionId: "claude-1",
+      email: "guest@example.com",
+      machineId,
+    });
+  }
+
+  // A session id names a session on one host, so an invite for strix's
+  // `claude-1` must not rebind the guests of the mbp's share of that name.
+  it("keeps two machines' shares of one session id apart", async () => {
+    const first = await invite(emptySharingState(), "mbp");
+    const second = await invite(first.state, "strix");
+
+    expect(second.token.share.id).not.toBe(first.token.share.id);
+    expect(Object.keys(second.state.shares)).toHaveLength(2);
+  });
+
+  it("extends the same share when the machine is the same", async () => {
+    const first = await invite(emptySharingState(), "mbp");
+    const second = await invite(first.state, "mbp");
+
+    expect(second.token.share.id).toBe(first.token.share.id);
+    expect(Object.keys(second.state.shares)).toHaveLength(1);
+  });
+
+  // A share made before machines existed is the same share. Creating a second
+  // one would leave its guests on a record nothing routes any more.
+  it("adopts a share that names no machine rather than duplicating it", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const bound = await invite(legacy.state, "mbp");
+
+    expect(bound.token.share.id).toBe(legacy.token.share.id);
+    expect(bound.token.share.machineId).toBe("mbp");
+    expect(Object.keys(bound.state.shares)).toHaveLength(1);
+  });
+
+  // "Unbound" says nothing about which host made it, so adopting on the
+  // session id alone let strix's first invite take over the mbp's legacy share
+  // and rebind its guests to strix -- while `projectRoot` went on naming the
+  // mbp's checkout. The checkout is the evidence that it is the same share.
+  it("does not adopt an unbound share of a different checkout", async () => {
+    const legacy = await invite(emptySharingState(), undefined, "/Users/sam/cs/aimux");
+    const other = await invite(legacy.state, "strix", "/home/sam/aimux");
+
+    expect(other.token.share.id).not.toBe(legacy.token.share.id);
+    expect(other.token.share.projectRoot).toBe("/home/sam/aimux");
+    expect(Object.values(legacy.state.shares)[0].machineId).toBeUndefined();
+    expect(Object.keys(other.state.shares)).toHaveLength(2);
+  });
+
+  // Adoption of an unbound share requires the root to match, so a root left
+  // behind by a moved checkout would make the next invite build a second share
+  // and strand the first one's guests.
+  it("follows the checkout the invite came from", async () => {
+    const first = await invite(emptySharingState(), "mbp", "/Users/sam/cs/aimux");
+    const moved = await invite(first.state, "mbp", "/Users/sam/code/aimux");
+
+    expect(moved.token.share.id).toBe(first.token.share.id);
+    expect(moved.token.share.projectRoot).toBe("/Users/sam/code/aimux");
+    expect(Object.keys(moved.state.shares)).toHaveLength(1);
+  });
+
+  it("adopts neither when two unbound shares could be the one", () => {
+    const unbound = (id: string): SharedSessionRecord => ({
+      id,
+      ownerUserId: owner.userId,
+      projectRoot: "/repo/aimux",
+      sessionId: "claude-1",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      version: 1,
+      invites: {},
+      participants: {},
+    });
+    const state: SharingState = {
+      ...emptySharingState(),
+      shares: { a: unbound("a"), b: unbound("b") },
+    };
+
+    expect(findShareForSession(state, owner.userId, "claude-1", "strix", "/repo/aimux")).toBeUndefined();
   });
 });

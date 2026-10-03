@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { View } from "react-native";
 import { useAtomValue, useSetAtom } from "jotai";
 import { GitBranch, RotateCcw, Trash2 } from "lucide-react-native";
@@ -32,12 +33,16 @@ import {
   settleProjectGraveyardRefreshAtom,
 } from "@/stores/project";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 export default function GraveyardScreen() {
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
+  const { project, projectPath, projectRef, endpoint, projectLoading } = useRouteProject();
+  // Keyed by the pair: two machines' copies of one checkout are two
+  // projects, and sharing an atom between them bleeds one host into the
+  // other.
+  const projectKeyForState = projectStateKey(projectRef);
   const { getToken } = useAuth();
-  const resource = useAtomValue(projectGraveyardResourceFamily(projectPathKey));
+  const resource = useAtomValue(projectGraveyardResourceFamily(projectKeyForState));
   const [busyMarker, setBusyMarker] = useState<string | null>(null);
   const kickRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const beginGraveyardRefresh = useSetAtom(beginProjectGraveyardRefreshAtom);
@@ -51,8 +56,8 @@ export default function GraveyardScreen() {
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
   const graveyardRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("graveyard"));
 
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const busyScope = `${projectPathKey}:${endpointKey ?? "no-endpoint"}`;
+  const endpointKey = serviceEndpointKey(endpoint);
+  const busyScope = `${projectKeyForState}:${endpointKey ?? "no-endpoint"}`;
   const busyId = busyMarker?.startsWith(`${busyScope}:`)
     ? busyMarker.slice(busyScope.length + 1)
     : null;
@@ -60,7 +65,7 @@ export default function GraveyardScreen() {
   const getTokenRef = useRef(getToken);
   const requestTrackerRef = useRef(
     createProjectResourceRequestTracker({
-      projectPath: projectPathKey,
+      projectStateKey: projectKeyForState,
       endpointKey,
     }),
   );
@@ -75,30 +80,30 @@ export default function GraveyardScreen() {
 
   useEffect(() => {
     requestTrackerRef.current.update({
-      projectPath: projectPathKey,
+      projectStateKey: projectKeyForState,
       endpointKey,
     });
-  }, [endpointKey, projectPathKey]);
+  }, [endpointKey, projectKeyForState]);
 
   const refresh = useCallback(async () => {
     const currentEndpoint = endpointRef.current;
     const request = requestTrackerRef.current.begin();
-    const currentProjectPath = request.scope.projectPath;
+    const currentProjectStateKey = request.scope.projectStateKey;
     const requestKey = request.requestKey;
     if (!currentEndpoint) {
-      clearGraveyardResource(currentProjectPath);
+      clearGraveyardResource(currentProjectStateKey);
       return;
     }
-    beginGraveyardRefresh({ projectPath: currentProjectPath, requestKey });
+    beginGraveyardRefresh({ projectStateKey: currentProjectStateKey, requestKey });
     try {
       const token = await getTokenRef.current();
       const data = await listGraveyard(currentEndpoint, { token });
       if (!requestTrackerRef.current.isCurrent(request)) {
-        settleGraveyardRefresh({ projectPath: currentProjectPath, requestKey });
+        settleGraveyardRefresh({ projectStateKey: currentProjectStateKey, requestKey });
         return;
       }
       applyGraveyardSuccess({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         requestKey,
         graveyard: {
           entries: Array.isArray(data.entries) ? data.entries : [],
@@ -108,11 +113,11 @@ export default function GraveyardScreen() {
       });
     } catch (err) {
       if (!requestTrackerRef.current.isCurrent(request)) {
-        settleGraveyardRefresh({ projectPath: currentProjectPath, requestKey });
+        settleGraveyardRefresh({ projectStateKey: currentProjectStateKey, requestKey });
         return;
       }
       applyGraveyardFailure({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         requestKey,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -128,7 +133,7 @@ export default function GraveyardScreen() {
 
   useEffect(() => {
     void serializedRefresh();
-  }, [endpointKey, graveyardRefreshNonce, projectPathKey, serializedRefresh]);
+  }, [endpointKey, graveyardRefreshNonce, projectKeyForState, serializedRefresh]);
 
   useEffect(() => {
     const requestTracker = requestTrackerRef.current;
@@ -145,18 +150,18 @@ export default function GraveyardScreen() {
       const token = await getToken();
       const response = await resurrectGraveyardAgent(endpoint, entry.id, { token });
       recordTransition({
-        projectPath: projectPathKey,
+        projectStateKey: projectKeyForState,
         transition: response.transition,
         label: entry.label ?? entry.id,
         tool: entry.tool,
       });
       requestTrackerRef.current.invalidate();
-      removeGraveyardAgent({ projectPath: projectPathKey, id: entry.id });
+      removeGraveyardAgent({ projectStateKey: projectKeyForState, id: entry.id });
       kickRefresh();
       void serializedRefresh();
     } catch (err) {
       applyGraveyardActionFailure({
-        projectPath: projectPathKey,
+        projectStateKey: projectKeyForState,
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -172,18 +177,18 @@ export default function GraveyardScreen() {
       const token = await getToken();
       const response = await resurrectGraveyardWorktree(endpoint, entry.path, { token });
       recordTransition({
-        projectPath: projectPathKey,
+        projectStateKey: projectKeyForState,
         transition: response.transition,
         worktreeName: entry.name,
         worktreePath: entry.path,
       });
       requestTrackerRef.current.invalidate();
-      removeGraveyardWorktree({ projectPath: projectPathKey, path: entry.path });
+      removeGraveyardWorktree({ projectStateKey: projectKeyForState, path: entry.path });
       kickRefresh();
       void serializedRefresh();
     } catch (err) {
       applyGraveyardActionFailure({
-        projectPath: projectPathKey,
+        projectStateKey: projectKeyForState,
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -199,18 +204,18 @@ export default function GraveyardScreen() {
       const token = await getToken();
       const response = await deleteGraveyardWorktree(endpoint, entry.path, { token });
       recordTransition({
-        projectPath: projectPathKey,
+        projectStateKey: projectKeyForState,
         transition: response.transition,
         worktreeName: entry.name,
         worktreePath: entry.path,
       });
       requestTrackerRef.current.invalidate();
-      removeGraveyardWorktree({ projectPath: projectPathKey, path: entry.path });
+      removeGraveyardWorktree({ projectStateKey: projectKeyForState, path: entry.path });
       kickRefresh();
       void serializedRefresh();
     } catch (err) {
       applyGraveyardActionFailure({
-        projectPath: projectPathKey,
+        projectStateKey: projectKeyForState,
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {

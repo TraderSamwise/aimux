@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { atomFamily } from "jotai/utils";
 import type { ProjectTopologyResponse } from "@/lib/api";
 
@@ -15,18 +16,18 @@ export interface TopologyResource {
 }
 
 export interface ApplyTopologySuccessInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   topology: TopologyValue;
   updatedAt?: number;
 }
 
 export interface ApplyTopologyFailureInput {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   error: string;
 }
 
 export interface TopologyRequestScope {
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   endpointKey: string | null;
   generation: number;
 }
@@ -39,21 +40,21 @@ const emptyTopologyResource = (): TopologyResource => ({
   updatedAt: null,
 });
 
-export const topologyResourceFamily = atomFamily((_projectPath: string) =>
+export const topologyResourceFamily = atomFamily((_projectStateKey: ProjectStateKey) =>
   atom<TopologyResource>(emptyTopologyResource()),
 );
 
-export const topologyFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(topologyResourceFamily(projectPath)).value),
+export const topologyFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(topologyResourceFamily(projectStateKey)).value),
 );
 
-export const topologyErrorFamily = atomFamily((projectPath: string) =>
-  atom((get) => get(topologyResourceFamily(projectPath)).error),
+export const topologyErrorFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(topologyResourceFamily(projectStateKey)).error),
 );
 
-export const beginTopologyRefreshAtom = atom(null, (get, set, projectPath: string) => {
-  const current = get(topologyResourceFamily(projectPath));
-  set(topologyResourceFamily(projectPath), {
+export const beginTopologyRefreshAtom = atom(null, (get, set, projectStateKey: ProjectStateKey) => {
+  const current = get(topologyResourceFamily(projectStateKey));
+  set(topologyResourceFamily(projectStateKey), {
     ...current,
     pending: true,
     stale: current.value !== null,
@@ -62,8 +63,8 @@ export const beginTopologyRefreshAtom = atom(null, (get, set, projectPath: strin
 
 export const applyTopologySuccessAtom = atom(
   null,
-  (_get, set, { projectPath, topology, updatedAt }: ApplyTopologySuccessInput) => {
-    set(topologyResourceFamily(projectPath), {
+  (_get, set, { projectStateKey, topology, updatedAt }: ApplyTopologySuccessInput) => {
+    set(topologyResourceFamily(projectStateKey), {
       value: topology,
       error: null,
       pending: false,
@@ -75,9 +76,9 @@ export const applyTopologySuccessAtom = atom(
 
 export const applyTopologyFailureAtom = atom(
   null,
-  (get, set, { projectPath, error }: ApplyTopologyFailureInput) => {
-    const current = get(topologyResourceFamily(projectPath));
-    set(topologyResourceFamily(projectPath), {
+  (get, set, { projectStateKey, error }: ApplyTopologyFailureInput) => {
+    const current = get(topologyResourceFamily(projectStateKey));
+    set(topologyResourceFamily(projectStateKey), {
       ...current,
       error,
       pending: false,
@@ -86,25 +87,31 @@ export const applyTopologyFailureAtom = atom(
   },
 );
 
-export const settleTopologyRefreshAtom = atom(null, (get, set, projectPath: string) => {
-  const current = get(topologyResourceFamily(projectPath));
-  set(topologyResourceFamily(projectPath), {
-    ...current,
-    pending: false,
-    stale: current.value !== null && current.stale,
-  });
-});
+export const settleTopologyRefreshAtom = atom(
+  null,
+  (get, set, projectStateKey: ProjectStateKey) => {
+    const current = get(topologyResourceFamily(projectStateKey));
+    set(topologyResourceFamily(projectStateKey), {
+      ...current,
+      pending: false,
+      stale: current.value !== null && current.stale,
+    });
+  },
+);
 
-export const clearTopologyResourceAtom = atom(null, (_get, set, projectPath: string) => {
-  set(topologyResourceFamily(projectPath), emptyTopologyResource());
-});
+export const clearTopologyResourceAtom = atom(
+  null,
+  (_get, set, projectStateKey: ProjectStateKey) => {
+    set(topologyResourceFamily(projectStateKey), emptyTopologyResource());
+  },
+);
 
 export function isCurrentTopologyRequest(
   request: TopologyRequestScope,
   current: TopologyRequestScope,
 ): boolean {
   return (
-    request.projectPath === current.projectPath &&
+    request.projectStateKey === current.projectStateKey &&
     request.endpointKey === current.endpointKey &&
     request.generation === current.generation
   );

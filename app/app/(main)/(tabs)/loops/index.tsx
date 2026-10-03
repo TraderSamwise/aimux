@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -38,16 +39,15 @@ interface SessionEntry {
   order: number;
 }
 
-const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
-
 export default function LoopsScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectPathKey = projectPath ?? EMPTY_PROJECT_PATH;
-  const state = useAtomValue(desktopStateFamily(projectPathKey));
-  const stateError = useAtomValue(desktopStateErrorFamily(projectPathKey));
-  const groups = useAtomValue(worktreeGroupsFamily(projectPathKey));
+  const { project, projectPath, machineId, projectRef, endpoint, projectLoading } =
+    useRouteProject();
+  const projectKeyForState = projectStateKey(projectRef);
+  const state = useAtomValue(desktopStateFamily(projectKeyForState));
+  const stateError = useAtomValue(desktopStateErrorFamily(projectKeyForState));
+  const groups = useAtomValue(worktreeGroupsFamily(projectKeyForState));
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
@@ -149,7 +149,7 @@ export default function LoopsScreen() {
 
   function openAgent(entry: SessionEntry) {
     selectSession(entry.session.id);
-    router.push(detailHrefForPath(pathname, "agent", entry.session.id, projectPath));
+    router.push(detailHrefForPath(pathname, "agent", entry.session.id, projectPath, machineId));
   }
 
   return (

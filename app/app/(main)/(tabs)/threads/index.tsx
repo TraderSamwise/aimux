@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -24,12 +25,17 @@ import {
 } from "@/stores/project";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { cn } from "@/lib/utils";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 export default function ThreadsScreen() {
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
+  const { project, projectPath, machineId, projectRef, endpoint, projectLoading } =
+    useRouteProject();
+  // Keyed by the pair: two machines' copies of one checkout are two
+  // projects, and sharing an atom between them bleeds one host into the
+  // other.
+  const projectKeyForState = projectStateKey(projectRef);
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("threads"));
-  const threadsResource = useAtomValue(projectThreadsResourceFamily(projectPathKey));
+  const threadsResource = useAtomValue(projectThreadsResourceFamily(projectKeyForState));
   const beginThreadsRefresh = useSetAtom(beginProjectThreadsRefreshAtom);
   const applyThreadsSuccess = useSetAtom(applyProjectThreadsSuccessAtom);
   const applyThreadsFailure = useSetAtom(applyProjectThreadsFailureAtom);
@@ -42,13 +48,13 @@ export default function ThreadsScreen() {
   const selectedThreadId = cleanSearchValue(searchParams.threadId);
 
   const endpointRef = useRef(endpoint);
-  const projectPathRef = useRef(projectPathKey);
+  const projectStateKeyRef = useRef(projectKeyForState);
   const endpointKeyRef = useRef<string | null>(null);
   const refreshSeqRef = useRef(0);
   const refreshGenerationRef = useRef(0);
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const requestScopeRef = useRef<ProjectResourceRequestScope>({
-    projectPath: projectPathKey,
+    projectStateKey: projectKeyForState,
     endpointKey,
     generation: 0,
   });
@@ -63,29 +69,29 @@ export default function ThreadsScreen() {
   useEffect(() => {
     refreshGenerationRef.current += 1;
     endpointKeyRef.current = endpointKey;
-    projectPathRef.current = projectPathKey;
+    projectStateKeyRef.current = projectKeyForState;
     requestScopeRef.current = {
-      projectPath: projectPathKey,
+      projectStateKey: projectKeyForState,
       endpointKey,
       generation: refreshGenerationRef.current,
     };
-  }, [endpointKey, projectPathKey]);
+  }, [endpointKey, projectKeyForState]);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentProjectPath = projectPathRef.current;
+    const currentProjectStateKey = projectStateKeyRef.current;
     const requestScope = {
-      projectPath: currentProjectPath,
+      projectStateKey: currentProjectStateKey,
       endpointKey: endpointKeyRef.current,
       generation: refreshGenerationRef.current,
     };
     const requestKey = projectResourceRequestKey(requestScope);
     if (!currentEndpoint) {
-      clearThreadsResource(currentProjectPath);
+      clearThreadsResource(currentProjectStateKey);
       return;
     }
-    beginThreadsRefresh({ projectPath: currentProjectPath, requestKey });
+    beginThreadsRefresh({ projectStateKey: currentProjectStateKey, requestKey });
     try {
       const token = await getTokenRef.current();
       const data = await listThreads(currentEndpoint, undefined, { token });
@@ -93,11 +99,11 @@ export default function ThreadsScreen() {
         seq !== refreshSeqRef.current ||
         !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
       ) {
-        settleThreadsRefresh({ projectPath: currentProjectPath, requestKey });
+        settleThreadsRefresh({ projectStateKey: currentProjectStateKey, requestKey });
         return;
       }
       applyThreadsSuccess({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         requestKey,
         threads: {
           threads: Array.isArray(data) ? data : [],
@@ -109,11 +115,11 @@ export default function ThreadsScreen() {
         seq !== refreshSeqRef.current ||
         !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
       ) {
-        settleThreadsRefresh({ projectPath: currentProjectPath, requestKey });
+        settleThreadsRefresh({ projectStateKey: currentProjectStateKey, requestKey });
         return;
       }
       applyThreadsFailure({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         requestKey,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -130,14 +136,14 @@ export default function ThreadsScreen() {
 
   useEffect(() => {
     void serializedRefresh();
-  }, [endpointKey, projectPathKey, refreshNonce, serializedRefresh]);
+  }, [endpointKey, projectKeyForState, refreshNonce, serializedRefresh]);
 
   useEffect(() => {
     return () => {
       refreshSeqRef.current += 1;
       refreshGenerationRef.current += 1;
       requestScopeRef.current = {
-        projectPath: projectPathRef.current,
+        projectStateKey: projectStateKeyRef.current,
         endpointKey: endpointKeyRef.current,
         generation: refreshGenerationRef.current,
       };
@@ -203,6 +209,7 @@ export default function ThreadsScreen() {
                     router.replace(
                       buildViewHref("/threads", {
                         project: projectPath,
+                        machine: machineId,
                         threadId: t.thread.id,
                       }),
                     )

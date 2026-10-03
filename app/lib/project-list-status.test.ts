@@ -5,6 +5,7 @@ import {
   PROJECT_LIST_OK,
   projectListEmptyMessage,
   projectListFailed,
+  projectListPartial,
   projectListStaleMessage,
   projectListUnavailable,
   relayUnavailableDetail,
@@ -81,5 +82,35 @@ describe("the daemon-unreachable detail is written for the person reading it", (
 
   it("still says something for a status it does not know", () => {
     expect(relayUnavailableDetail("wat")).toBe("The relay is wat.");
+  });
+});
+
+describe("a project list missing one machine", () => {
+  it("names the machines that did not answer", () => {
+    const status = projectListPartial([
+      { machineId: "strix", machineName: "sam-strix", error: "Machine strix is not connected" },
+    ]);
+    expect(status).toEqual({
+      kind: "partial",
+      detail: "sam-strix: Machine strix is not connected",
+    });
+  });
+
+  it("falls back to the id when the machine has no name", () => {
+    expect(
+      projectListPartial([{ machineId: "abc123", machineName: "", error: "timed out" }]).detail,
+    ).toBe("abc123: timed out");
+  });
+
+  // The list on screen is real, so nothing replaces it -- but it is short, and
+  // saying so is the difference between a partial answer and a wrong one.
+  it("shows the list and says it is short", () => {
+    const status = projectListPartial([
+      { machineId: "strix", machineName: "sam-strix", error: "timed out" },
+    ]);
+    expect(projectListEmptyMessage(status)).toBeNull();
+    expect(projectListStaleMessage(status)).toBe(
+      "Some machines did not answer: sam-strix: timed out",
+    );
   });
 });

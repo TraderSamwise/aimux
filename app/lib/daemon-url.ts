@@ -14,6 +14,20 @@ export function getDaemonUrl(): string {
 export interface ServiceEndpoint {
   host: string;
   port: number;
+  // Whose loopback. `127.0.0.1:43191` names a different project service on
+  // each of Sam's machines, so an address without the machine is not an
+  // address once more than one is connected. Absent in local mode and on a
+  // shared surface, where there is only ever one host to mean.
+  machineId?: string;
+}
+
+// One cache key for one address. Seven screens spelled this as
+// `host:port`, which is the same string for the same project service on two
+// different machines -- switching machines would have shown the other one's
+// data until the next refresh.
+export function serviceEndpointKey(endpoint: ServiceEndpoint | null | undefined): string | null {
+  if (!endpoint) return null;
+  return `${endpoint.machineId ?? ""}:${endpoint.host}:${endpoint.port}`;
 }
 
 export function getServiceUrl(endpoint: ServiceEndpoint): string {

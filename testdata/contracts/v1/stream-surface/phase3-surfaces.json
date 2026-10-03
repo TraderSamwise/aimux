@@ -48,7 +48,7 @@
       "observed": {
         "connects": [
           {
-            "url": "wss://relay.aimux.app/daemon/connect",
+            "url": "wss://relay.aimux.app/daemon/connect?machineId=testmachine01&machineName=test-host",
             "subprotocols": [
               "aimux",
               "aimux-token.tok"

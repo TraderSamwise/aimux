@@ -69,6 +69,7 @@ pub mod lifecycle_orphans;
 pub mod local_ui_server;
 pub mod logs;
 pub mod loop_watcher;
+pub mod machine_identity;
 pub mod managed_launch_env;
 pub mod native_cli_dispatch;
 pub mod native_plugin_gh_pr_context;

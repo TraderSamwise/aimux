@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_MACHINES_PER_ROOM } from "./machines";
 import { RelayObject } from "./relay-object";
 import { deviceProofMessage } from "./security";
 import type { Env } from "./types";
@@ -102,6 +103,9 @@ describe("RelayObject request hibernation", () => {
             { id: "cold", serviceAlive: false },
           ],
         },
+        // Which machine answered, from the socket's tags. A daemon with no id
+        // lands in the reserved slot, which is what this fixture's tags say.
+        machineId: "unidentified",
       }),
     );
   });
@@ -1200,7 +1204,7 @@ describe("RelayObject owner device security", () => {
         id: "req-1",
         type: "response",
         status: 503,
-        body: { ok: false, error: "Daemon not connected" },
+        body: { ok: false, error: "Daemon not connected", machines: [] },
       }),
     );
   });
@@ -1327,6 +1331,78 @@ function fakeSocket(tags: string[]) {
     deserializeAttachment: ReturnType<typeof vi.fn>;
   };
 }
+
+// A second invite for a share people are already on changes the record they
+// hold -- its host and its checkout both follow the invite -- and the receiver
+// index is written only on accept, so without a refresh a guest's copy keeps
+// the old root for good: a stale project name in its share list, and legacy
+// `/agent/...` routes that match on the root failing for that guest.
+describe("RelayObject refreshing a share its guests already hold", () => {
+  it("pushes the moved checkout to the guests, and names any it could not reach", async () => {
+    const upserted: { userId: string; projectRoot: string }[] = [];
+    let failNext = false;
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn((id: { name: string }) => ({
+          fetch: vi.fn(async (url: string, init?: RequestInit) => {
+            if (!String(url).includes("/internal/accepted-shares/upsert")) {
+              return new Response("{}", { status: 200 });
+            }
+            if (failNext) return new Response("nope", { status: 500 });
+            const body = JSON.parse(String(init?.body)) as {
+              share: { projectRoot: string };
+            };
+            upserted.push({ userId: id.name, projectRoot: body.share.projectRoot });
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    await createAcceptedShareInOwnerObject(object);
+    upserted.length = 0;
+
+    const moved = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: {
+          projectRoot: "/Users/sam/code/scratch",
+          sessionId: "claude-k4lihz",
+          email: "second@example.com",
+        },
+      }),
+    );
+
+    expect(moved.status).toBe(201);
+    expect(upserted).toEqual([{ userId: "user_guest", projectRoot: "/Users/sam/code/scratch" }]);
+    expect(await moved.json()).not.toHaveProperty("staleReceivers");
+
+    // A refresh that could not land is reported rather than swallowed: the
+    // share still works from the owner's record, but that guest is reading a
+    // stale copy of it.
+    failNext = true;
+    const again = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: {
+          projectRoot: "/Users/sam/code/scratch",
+          sessionId: "claude-k4lihz",
+          email: "third@example.com",
+        },
+      }),
+    );
+
+    expect(again.status).toBe(201);
+    expect(await again.json()).toMatchObject({ staleReceivers: ["user_guest"] });
+  });
+});
 
 async function createAcceptedShareInOwnerObject(object: RelayObject): Promise<string> {
   const invite = await createInvite(object);
@@ -1475,5 +1551,596 @@ describe("RelayObject owner identification", () => {
     expect(headers["x-aimux-share-id"]).toBeUndefined();
     expect(headers["x-aimux-actor-role"]).toBeUndefined();
     expect(headers.accept).toBe("application/json");
+  });
+});
+
+describe("RelayObject machines", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "WebSocketPair",
+      class TestWebSocketPair {
+        0 = fakeSocket([]);
+        1 = fakeSocket([]);
+      },
+    );
+  });
+
+  function daemonSocket(machineId: string, machineName: string) {
+    return fakeSocket(["daemon", "user:user_owner", `machine:${machineId}`, `machineName:${machineName}`]);
+  }
+
+  async function connectDaemon(object: RelayObject, query: string) {
+    return object
+      .fetch(
+        new Request(`https://relay.aimux.app/daemon/connect${query}`, {
+          headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
+        }),
+      )
+      .catch((error) => error);
+  }
+
+  function lastSentTo(socket: ReturnType<typeof fakeSocket>) {
+    const calls = socket.send.mock.calls;
+    return calls.length === 0 ? undefined : (JSON.parse(String(calls.at(-1)?.[0])) as Record<string, unknown>);
+  }
+
+  // The whole reason this exists: connecting strix used to kick the mbp off.
+  it("lets a second machine join instead of evicting the first", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([mbp, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    const response = await connectDaemon(object, "?machineId=strix&machineName=sam-strix");
+
+    expect(response).toBeInstanceOf(RangeError);
+    expect(mbp.close).not.toHaveBeenCalled();
+    expect(mbp.send).not.toHaveBeenCalled();
+    expect(lastSentTo(client)).toEqual({
+      type: "daemon_status",
+      online: true,
+      machines: [
+        { id: "mbp", name: "sam-mbp" },
+        { id: "strix", name: "sam-strix" },
+      ],
+    });
+  });
+
+  it("replaces only the reconnecting machine's own daemon", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await connectDaemon(object, "?machineId=mbp&machineName=sam-mbp");
+
+    expect(mbp.close).toHaveBeenCalledWith(1000, "Replaced");
+    expect(mbp.send).toHaveBeenCalledWith(expect.stringContaining("Replaced by new daemon connection"));
+    expect(strix.close).not.toHaveBeenCalled();
+    expect(strix.send).not.toHaveBeenCalled();
+  });
+
+  it("sends a request to the machine the client named", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([mbp, strix, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "strix" }),
+    );
+
+    expect(strix.send).toHaveBeenCalledTimes(1);
+    expect(mbp.send).not.toHaveBeenCalled();
+    expect(JSON.parse(String(strix.send.mock.calls[0]?.[0]))).toMatchObject({
+      type: "request",
+      path: "/projects",
+    });
+  });
+
+  // Picking one would route a kill to the wrong host.
+  it("refuses to guess a machine and answers with the list instead", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([mbp, strix, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "POST", path: "/agents/kill" }),
+    );
+
+    expect(mbp.send).not.toHaveBeenCalled();
+    expect(strix.send).not.toHaveBeenCalled();
+    expect(lastSentTo(client)).toEqual({
+      id: "req-1",
+      type: "response",
+      status: 409,
+      body: {
+        ok: false,
+        error: "Several machines are connected; name one with machineId",
+        machines: [
+          { id: "mbp", name: "sam-mbp" },
+          { id: "strix", name: "sam-strix" },
+        ],
+      },
+    });
+  });
+
+  it("will not let one machine answer another machine's request", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([mbp, strix, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "mbp" }),
+    );
+    const relayRequestId = (JSON.parse(String(mbp.send.mock.calls[0]?.[0])) as { id: string }).id;
+    client.send.mockClear();
+
+    await object.webSocketMessage(
+      strix,
+      JSON.stringify({ id: relayRequestId, type: "response", status: 200, body: { ok: true, stolen: true } }),
+    );
+
+    expect(client.send).not.toHaveBeenCalled();
+    expect(strix.send).toHaveBeenCalledWith(expect.stringContaining("No pending relay request"));
+
+    await object.webSocketMessage(
+      mbp,
+      JSON.stringify({ id: relayRequestId, type: "response", status: 200, body: { ok: true } }),
+    );
+    expect(lastSentTo(client)).toMatchObject({ id: "req-1", type: "response", status: 200 });
+  });
+
+  it("fails only the lost machine's in-flight work and keeps the other online", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([mbp, strix, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "mbp-req", type: "request", method: "GET", path: "/projects", machineId: "mbp" }),
+    );
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "strix-req", type: "request", method: "GET", path: "/projects", machineId: "strix" }),
+    );
+    const strixRelayId = (JSON.parse(String(strix.send.mock.calls[0]?.[0])) as { id: string }).id;
+    client.send.mockClear();
+    storage.sockets = [strix, client];
+
+    await object.webSocketClose(mbp);
+
+    const sent = client.send.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+    expect(sent).toEqual([
+      { id: "mbp-req", type: "response", status: 502, body: { ok: false, error: "Daemon connection lost" } },
+      { type: "daemon_status", online: true, machines: [{ id: "strix", name: "sam-strix" }] },
+    ]);
+
+    // The surviving machine's request is still routable afterwards.
+    client.send.mockClear();
+    await object.webSocketMessage(
+      strix,
+      JSON.stringify({ id: strixRelayId, type: "response", status: 200, body: { ok: true } }),
+    );
+    expect(lastSentTo(client)).toMatchObject({ id: "strix-req", status: 200 });
+  });
+
+  // Written by an older relay, so it carries no machine. Answering it from
+  // whichever daemon is alone in the room is exactly the mix-up to avoid.
+  it("fails rebuilt work that lost which machine it was for", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const client = fakeSocket(["client", "device:client_1"]);
+    (client as unknown as { serializeAttachment: (value: unknown) => void }).serializeAttachment({
+      pendingRequests: { "do-old-1": { clientRequestId: "req-old", expiresAt: Date.now() + 60_000 } },
+      projectEventSubscriptions: { "do-old-2": "sub-old" },
+    });
+    const storage = storageWithSockets([mbp, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(client, JSON.stringify({ type: "ping" }));
+
+    const sent = client.send.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+    expect(sent).toEqual([
+      {
+        id: "sub-old",
+        type: "project_events_error",
+        status: 503,
+        message: "Relay lost which machine this stream was for; subscribe again",
+      },
+      {
+        id: "req-old",
+        type: "response",
+        status: 503,
+        body: { ok: false, error: "Relay lost which machine this request was for; retry it" },
+      },
+      { type: "pong" },
+    ]);
+    expect(mbp.send).not.toHaveBeenCalled();
+  });
+
+  // A close delivered after hibernation arrives with every in-memory map empty,
+  // so the machine has to come from the durable attachment.
+  it("unsubscribes a hibernated client's stream from the right machine", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const client = fakeSocket(["client", "device:client_1"]);
+    (client as unknown as { serializeAttachment: (value: unknown) => void }).serializeAttachment({
+      projectEventSubscriptions: { "do-1": { clientSubscriptionId: "sub-1", machineId: "strix" } },
+    });
+    const storage = storageWithSockets([mbp, strix, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketClose(client);
+
+    expect(JSON.parse(String(strix.send.mock.calls.at(-1)?.[0]))).toEqual({
+      id: "do-1",
+      type: "project_events_unsubscribe",
+    });
+    expect(mbp.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps one slot for a daemon that does not say which machine it is", async () => {
+    const legacy = fakeSocket(["daemon", "user:user_owner"]);
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([legacy, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects" }),
+    );
+
+    expect(legacy.send).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(legacy.send.mock.calls[0]?.[0]))).toMatchObject({ path: "/projects" });
+  });
+
+  // A share is one session on one host, not a window onto the fleet.
+  it("binds a new share to the machine the owner named", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+
+    const response = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Sam",
+        email: "sam@example.com",
+        body: {
+          projectRoot: "/repo/aimux",
+          sessionId: "claude-1",
+          email: "guest@example.com",
+          machineId: "strix",
+          serviceEndpoint: { host: "127.0.0.1", port: 43191 },
+        },
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    const sharing = await storage.get<{ shares: Record<string, { machineId?: string }> }>("sharing-state:v1");
+    expect(Object.values(sharing!.shares).map((share) => share.machineId)).toEqual(["strix"]);
+  });
+
+  it("tells a shared guest nothing about which machines exist", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const owner = fakeSocket(["client", "device:client_1"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, strix, owner, guest];
+
+    await object.webSocketClose(mbp);
+
+    expect(lastSentTo(owner)).toEqual({
+      type: "daemon_status",
+      online: true,
+      machines: [{ id: "strix", name: "sam-strix" }],
+    });
+    expect(lastSentTo(guest)).toEqual({ type: "daemon_status", online: true });
+  });
+
+  // "Any machine is up" is a fact about a fleet the guest cannot see, and the
+  // wrong answer about the one host it can.
+  it("tells a shared guest whether its own host is up, not the fleet", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    // Bound in storage, which is the record routing reads. It used to come
+    // from a tag frozen at connect, so a share bound to a host mid-session
+    // left the indicator and the requests answering from different records.
+    const sharing = await storage.get<{
+      shares: Record<string, { machineId?: string }>;
+    }>("sharing-state:v1");
+    sharing!.shares[shareId].machineId = "strix";
+    await storage.put("sharing-state:v1", sharing);
+    const guestOnStrix = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, strix, guestOnStrix];
+
+    await object.webSocketClose(strix);
+
+    expect(lastSentTo(guestOnStrix)).toEqual({ type: "daemon_status", online: false });
+  });
+
+  // The tag that used to answer this was frozen at connect and Workers tags
+  // cannot be changed, so binding a share to a host mid-session left the
+  // guest's indicator reading one record while its requests read another --
+  // first saying connected while every request was refused, then, once the
+  // indicator was made strict, saying offline while routing would have worked.
+  it("follows a share bound to a host after the guest connected", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    // Connected while the share named no host, so no tag could have been set.
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, strix, guest];
+
+    const sharing = await storage.get<{
+      shares: Record<string, { machineId?: string }>;
+    }>("sharing-state:v1");
+    sharing!.shares[shareId].machineId = "mbp";
+    await storage.put("sharing-state:v1", sharing);
+
+    // Its host is up, so it is online -- a strict read of the absent tag made
+    // this false and locked the guest out of a share that routed fine.
+    await object.webSocketClose(strix);
+    expect(lastSentTo(guest)).toEqual({ type: "daemon_status", online: true });
+  });
+
+  // Nothing routes to a share that has gone, so neither does the indicator.
+  it("tells a guest its host is offline once the share is revoked", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, strix, guest];
+
+    await storage.put("sharing-state:v1", { version: 1, shares: {} });
+
+    await object.webSocketClose(strix);
+    expect(lastSentTo(guest)).toEqual({ type: "daemon_status", online: false });
+  });
+
+  it("will not let a shared guest choose which machine answers", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, strix, guest];
+    // The invite acceptance above told both machines; that is not this test.
+    mbp.send.mockClear();
+    strix.send.mockClear();
+    const sharing = await storage.get<{
+      shares: Record<string, { sessionId: string; machineId?: string }>;
+    }>("sharing-state:v1");
+    const sharedPath = `/agents/history?sessionId=${sharing!.shares[shareId].sessionId}`;
+
+    // An unbound share with two machines up is refused, and says nothing.
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: sharedPath, machineId: "strix" }),
+    );
+    expect(mbp.send).not.toHaveBeenCalled();
+    expect(strix.send).not.toHaveBeenCalled();
+    expect(lastSentTo(guest)).toEqual({
+      id: "req-1",
+      type: "response",
+      status: 503,
+      body: {
+        ok: false,
+        error: "The machine hosting this shared chat is not connected",
+        machines: [],
+      },
+    });
+
+    // Bound to the mbp, the guest's request goes there -- not to the machine
+    // the guest asked for.
+    sharing!.shares[shareId].machineId = "mbp";
+    await storage.put("sharing-state:v1", sharing);
+
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({ id: "req-2", type: "request", method: "GET", path: sharedPath, machineId: "strix" }),
+    );
+    expect(strix.send).not.toHaveBeenCalled();
+    expect(mbp.send).toHaveBeenCalledTimes(1);
+  });
+
+  // An owner client that asked before `daemon_status` named the fleet had no
+  // machine to attribute the answer to, so its projects arrived bare and the
+  // next poll re-keyed every project-scoped atom -- remounting the chat view
+  // seconds after it opened. A guest is told nothing: a share names one host
+  // and must not become a window onto the account.
+  it("tells an owner which machine answered, and a guest nothing", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const storage = storageWithSockets([mbp]);
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("{}", { status: 200 })) })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const owner = fakeSocket(["client", "device:client_1", "user:user_owner"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mbp, owner, guest];
+    const sharing = await storage.get<{
+      shares: Record<string, { sessionId: string; machineId?: string }>;
+    }>("sharing-state:v1");
+    sharing!.shares[shareId].machineId = "mbp";
+    await storage.put("sharing-state:v1", sharing);
+    const sharedPath = `/agents/history?sessionId=${sharing!.shares[shareId].sessionId}`;
+
+    for (const [socket, path] of [
+      [owner, "/projects"],
+      [guest, sharedPath],
+    ] as const) {
+      mbp.send.mockClear();
+      await object.webSocketMessage(socket, JSON.stringify({ id: "req-1", type: "request", method: "GET", path }));
+      const forwarded = JSON.parse(String(mbp.send.mock.calls[0][0])) as { id: string };
+      await object.webSocketMessage(
+        mbp,
+        JSON.stringify({ id: forwarded.id, type: "response", status: 200, body: { ok: true } }),
+      );
+    }
+
+    expect(lastSentTo(owner)).toEqual({
+      id: "req-1",
+      type: "response",
+      status: 200,
+      body: { ok: true },
+      machineId: "mbp",
+    });
+    expect(lastSentTo(guest)).toEqual({
+      id: "req-1",
+      type: "response",
+      status: 200,
+      body: { ok: true },
+    });
+  });
+
+  // A project id and root exist on more than one host, so a tapped
+  // notification without this deep-links to whichever one the app resolves.
+  it("stamps a push with the machine that raised it", async () => {
+    const pushed: unknown[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      pushed.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([strix]);
+    await storage.put("security-state:v1", {
+      version: 1,
+      devices: {},
+      pushTokens: {
+        phone: {
+          id: "phone",
+          token: "ExponentPushToken[x]",
+          platform: "ios",
+          userId: "user_owner",
+          deviceId: "phone",
+          createdAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+      actions: {},
+      events: [],
+    });
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      strix,
+      JSON.stringify({
+        type: "notification_push",
+        notification: { title: "Agent needs input", projectRoot: "/repo/aimux" },
+      }),
+    );
+
+    globalThis.fetch = originalFetch;
+    expect(pushed).toHaveLength(1);
+    const messages = pushed[0] as { data: { machineId?: string; projectRoot?: string } }[];
+    expect(messages[0].data).toMatchObject({ machineId: "strix", projectRoot: "/repo/aimux" });
+  });
+
+  it("tells every machine about a security event", async () => {
+    const mbp = daemonSocket("mbp", "sam-mbp");
+    const strix = daemonSocket("strix", "sam-strix");
+    const storage = storageWithSockets([mbp, strix]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    const response = await object
+      .fetch(
+        new Request("https://relay.aimux.app/client/connect?deviceId=new_phone&deviceKind=ios&deviceName=iPhone", {
+          headers: { Upgrade: "websocket", "X-Aimux-User-Id": "user_owner" },
+        }),
+      )
+      .catch((error) => error);
+
+    expect(response).toBeInstanceOf(RangeError);
+    expect(mbp.send).toHaveBeenCalledWith(expect.stringContaining("new_client_detected"));
+    expect(strix.send).toHaveBeenCalledWith(expect.stringContaining("new_client_detected"));
+  });
+
+  it("lets an unidentified daemon share the room with a named one", async () => {
+    const legacy = fakeSocket(["daemon", "user:user_owner"]);
+    const strix = daemonSocket("strix", "sam-strix");
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([legacy, strix, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "unidentified" }),
+    );
+
+    expect(legacy.send).toHaveBeenCalledTimes(1);
+    expect(strix.send).not.toHaveBeenCalled();
+    expect(lastSentTo(client)).toBeUndefined();
+  });
+
+  it("refuses a machine beyond the room cap rather than growing without end", async () => {
+    const existing = Array.from({ length: MAX_MACHINES_PER_ROOM }, (_, index) =>
+      daemonSocket(`m${index}`, `host-${index}`),
+    );
+    const storage = storageWithSockets(existing);
+    const object = createObject(storage, {} as unknown as Env);
+
+    const response = await connectDaemon(object, "?machineId=onetoomany&machineName=extra");
+
+    expect(response).toBeInstanceOf(Response);
+    expect((response as Response).status).toBe(503);
+    // An existing machine reconnecting is not a new machine, so it still fits.
+    const reconnect = await connectDaemon(object, "?machineId=m0&machineName=host-0");
+    expect(reconnect).toBeInstanceOf(RangeError);
   });
 });

@@ -46,6 +46,7 @@ import {
   listTeammates,
   listShares,
   listProjects,
+  listProjectsAcrossMachines,
   listNotifications,
   listSwitchableAgents,
   listTasks,
@@ -1526,5 +1527,349 @@ describe("api relay routing", () => {
         "Bearer clerk-token",
       );
     }
+  });
+});
+
+describe("listing projects across machines", () => {
+  afterEach(() => {
+    setApiRelay(null);
+    delete process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
+  });
+
+  function project(id: string) {
+    return {
+      id,
+      name: id,
+      path: `/repo/${id}`,
+      dashboardSessionName: `aimux-${id}`,
+      service: null,
+      serviceAlive: true,
+      serviceEndpoint: null,
+    };
+  }
+
+  function relayWithMachines(
+    machines: { id: string; name: string }[],
+    answer: (machineId: string | undefined) => Promise<{ status: number; body: unknown }>,
+  ) {
+    const request = vi.fn(
+      async (_method: string, _path: string, _body?: unknown, machineId?: string) =>
+        answer(machineId),
+    );
+    setApiRelay({
+      wsConnected: true,
+      request,
+      machines,
+      namedMachines: machines,
+    } as unknown as RelayTransport);
+    return request;
+  }
+
+  it("asks every machine and stamps each project with the one that answered", async () => {
+    installFetchMock();
+    const request = relayWithMachines(
+      [
+        { id: "mbp", name: "sam-mbp" },
+        { id: "strix", name: "sam-strix" },
+      ],
+      async (machineId) => ({
+        status: 200,
+        body: { ok: true, projects: [project(`${machineId}-repo`)] },
+      }),
+    );
+
+    const { projects, failures } = await listProjectsAcrossMachines();
+
+    expect(request.mock.calls.map((call) => call[3])).toEqual(["mbp", "strix"]);
+    expect(projects.map((entry) => [entry.id, entry.machineId, entry.machineName])).toEqual([
+      ["mbp-repo", "mbp", "sam-mbp"],
+      ["strix-repo", "strix", "sam-strix"],
+    ]);
+    expect(failures).toEqual([]);
+  });
+
+  // One host blinking must not empty the other host's list.
+  it("returns the machines that answered and names the one that did not", async () => {
+    installFetchMock();
+    relayWithMachines(
+      [
+        { id: "mbp", name: "sam-mbp" },
+        { id: "strix", name: "sam-strix" },
+      ],
+      async (machineId) => {
+        if (machineId === "strix") throw new Error("Machine strix is not connected");
+        return { status: 200, body: { ok: true, projects: [project("aimux")] } };
+      },
+    );
+
+    const { projects, failures } = await listProjectsAcrossMachines();
+
+    expect(projects.map((entry) => entry.machineId)).toEqual(["mbp"]);
+    expect(failures).toEqual([
+      { machineId: "strix", machineName: "sam-strix", error: "Machine strix is not connected" },
+    ]);
+  });
+
+  // Nothing is a valid answer. Only the machines that errored are failures.
+  it("does not treat an empty answer as a failure", async () => {
+    installFetchMock();
+    relayWithMachines(
+      [
+        { id: "mbp", name: "sam-mbp" },
+        { id: "strix", name: "sam-strix" },
+      ],
+      async (machineId) => {
+        if (machineId === "strix") throw new Error("timed out");
+        return { status: 200, body: { ok: true, projects: [] } };
+      },
+    );
+
+    const { projects, failures } = await listProjectsAcrossMachines();
+
+    expect(projects).toEqual([]);
+    expect(failures.map((failure) => failure.machineId)).toEqual(["strix"]);
+  });
+
+  it("carries the machine on a project stream route", async () => {
+    installFetchMock();
+    relayWithMachines([{ id: "strix", name: "sam-strix" }], async () => ({
+      status: 200,
+      body: { ok: true },
+    }));
+
+    const endpointForRoute = { host: "127.0.0.1", port: 43210 };
+    expect(
+      getAgentOutputStreamRoute(
+        endpointForRoute,
+        { sessionId: "session-1" },
+        { machineId: "strix" },
+      ).machineId,
+    ).toBe("strix");
+    expect(
+      getAgentOutputStreamRoute(endpointForRoute, { sessionId: "session-1" }).machineId,
+    ).toBeUndefined();
+  });
+
+  // No machine answered: there is no list, only an error. Returning an empty
+  // one would render as "no projects".
+  it("throws when every machine failed", async () => {
+    installFetchMock();
+    relayWithMachines([{ id: "mbp", name: "sam-mbp" }], async () => {
+      throw new Error("Daemon not connected");
+    });
+
+    await expect(listProjectsAcrossMachines()).rejects.toThrow("sam-mbp: Daemon not connected");
+  });
+
+  // Local mode, or a relay that has not reported the fleet yet.
+  it("makes one machine-less call when no machines are known", async () => {
+    installFetchMock();
+    const request = relayWithMachines([], async () => ({
+      status: 200,
+      body: { ok: true, projects: [project("aimux")] },
+    }));
+
+    const { projects, failures } = await listProjectsAcrossMachines();
+
+    expect(request).toHaveBeenCalledWith("GET", "/projects", undefined);
+    expect(projects.map((entry) => entry.machineId)).toEqual([undefined]);
+    expect(failures).toEqual([]);
+  });
+});
+
+describe("routing a project call to the machine the project is on", () => {
+  afterEach(() => {
+    setApiRelay(null);
+  });
+
+  function relayRecorder() {
+    const request = vi.fn(
+      async (_method: string, _path: string, _body?: unknown, _machineId?: string) => ({
+        status: 200,
+        body: { ok: true },
+      }),
+    );
+    setApiRelay({
+      wsConnected: true,
+      request,
+      machines: [],
+      namedMachines: [],
+    } as unknown as RelayTransport);
+    return request;
+  }
+
+  it("takes the machine from the address it was given", async () => {
+    installFetchMock();
+    const request = relayRecorder();
+
+    await getProjectHealth({ host: "127.0.0.1", port: 43191, machineId: "strix" });
+
+    expect(request.mock.calls[0]?.[3]).toBe("strix");
+  });
+
+  // An address with no machine is a single-machine account, and the relay
+  // resolves it. Sending `undefined` would be a different frame.
+  it("sends no machine when the address has none", async () => {
+    installFetchMock();
+    const request = relayRecorder();
+
+    await getProjectHealth({ host: "127.0.0.1", port: 43191 });
+
+    expect(request.mock.calls[0]).toHaveLength(3);
+  });
+
+  it("lets an explicit machine override the address", async () => {
+    installFetchMock();
+    const request = relayRecorder();
+
+    await getProjectHealth(
+      { host: "127.0.0.1", port: 43191, machineId: "strix" },
+      { machineId: "mbp" },
+    );
+
+    expect(request.mock.calls[0]?.[3]).toBe("mbp");
+  });
+});
+
+describe("a refusal that names the machines", () => {
+  afterEach(() => {
+    setApiRelay(null);
+  });
+
+  // The relay refuses a request that names no machine when several are
+  // connected, and the list it sends back is the only part that says what to
+  // do about it. Dropping it leaves "name one with machineId" on screen with
+  // nothing to name.
+  it("puts the machine list from a 409 into the message", async () => {
+    installFetchMock();
+    setApiRelay({
+      wsConnected: true,
+      machines: [],
+      namedMachines: [],
+      request: vi.fn(async () => ({
+        status: 409,
+        body: {
+          ok: false,
+          error: "Several machines are connected; name one with machineId",
+          machines: [
+            { id: "mbp", name: "sam-mbp" },
+            { id: "strix", name: "sam-strix" },
+          ],
+        },
+      })),
+    } as unknown as RelayTransport);
+
+    await expect(getProjectHealth({ host: "127.0.0.1", port: 43191 })).rejects.toThrow(
+      "Several machines are connected; name one with machineId: sam-mbp, sam-strix",
+    );
+  });
+
+  it("falls back to a machine's id when the relay could not name it", async () => {
+    installFetchMock();
+    setApiRelay({
+      wsConnected: true,
+      machines: [],
+      namedMachines: [],
+      request: vi.fn(async () => ({
+        status: 409,
+        body: { ok: false, error: "Several machines are connected", machines: [{ id: "abc123" }] },
+      })),
+    } as unknown as RelayTransport);
+
+    await expect(getProjectHealth({ host: "127.0.0.1", port: 43191 })).rejects.toThrow(
+      "Several machines are connected: abc123",
+    );
+  });
+
+  it("leaves a refusal that names none alone", async () => {
+    installFetchMock();
+    setApiRelay({
+      wsConnected: true,
+      machines: [],
+      namedMachines: [],
+      request: vi.fn(async () => ({
+        status: 503,
+        body: { ok: false, error: "Daemon not connected", machines: [] },
+      })),
+    } as unknown as RelayTransport);
+
+    await expect(getProjectHealth({ host: "127.0.0.1", port: 43191 })).rejects.toThrow(
+      "Daemon not connected",
+    );
+  });
+});
+
+describe("listing Expose tiles across machines", () => {
+  afterEach(() => {
+    setApiRelay(null);
+    delete process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
+  });
+
+  function relayWithMachines(
+    machines: { id: string; name: string }[],
+    answer: (machineId: string | undefined) => Promise<{ status: number; body: unknown }>,
+  ) {
+    const request = vi.fn(
+      async (_method: string, _path: string, _body?: unknown, machineId?: string) =>
+        answer(machineId),
+    );
+    setApiRelay({
+      wsConnected: true,
+      request,
+      machines,
+      namedMachines: machines,
+    } as unknown as RelayTransport);
+    return request;
+  }
+
+  const bothMachines = [
+    { id: "mbp", name: "sam-mbp" },
+    { id: "strix", name: "sam-strix" },
+  ];
+
+  // Expose is "every agent everywhere", so it spans machines. Tiles came back
+  // unstamped, which filed every host's agents under whichever machine the
+  // relay happened to answer with -- so tapping a tile opened the wrong host.
+  it("stamps each tile with the machine that answered", async () => {
+    installFetchMock();
+    const request = relayWithMachines(bothMachines, async () => ({
+      status: 200,
+      body: { ok: true, items: [{ sessionId: "claude-1", projectPath: "/repo/aimux" }] },
+    }));
+
+    const { items } = await listGlobalExposeItems();
+
+    expect(request.mock.calls.map((call) => call[3])).toEqual(["mbp", "strix"]);
+    expect(items.map((item) => item.machineId)).toEqual(["mbp", "strix"]);
+  });
+
+  // One host blinking must shorten the tile list and say why, not empty it.
+  it("keeps the answering machine's tiles and reports the one that did not", async () => {
+    installFetchMock();
+    relayWithMachines(bothMachines, async (machineId) => {
+      if (machineId === "strix") throw new Error("Machine strix is not connected");
+      return {
+        status: 200,
+        body: { ok: true, items: [{ sessionId: "claude-1", projectPath: "/repo/aimux" }] },
+      };
+    });
+
+    const { items, projectReadErrors } = await listGlobalExposeItems();
+
+    expect(items.map((item) => item.machineId)).toEqual(["mbp"]);
+    expect(projectReadErrors).toEqual([
+      { projectName: "sam-strix", error: "Machine strix is not connected" },
+    ]);
+  });
+
+  // A fleet-wide failure is not an empty Expose. Rendering zero tiles says
+  // every agent stopped, which is the opposite of what happened.
+  it("throws when no machine answered rather than returning no tiles", async () => {
+    installFetchMock();
+    relayWithMachines(bothMachines, async () => {
+      throw new Error("Daemon not connected");
+    });
+
+    await expect(listGlobalExposeItems()).rejects.toThrow("No machine answered");
   });
 });

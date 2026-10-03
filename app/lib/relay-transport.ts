@@ -28,6 +28,9 @@ interface RelayResponse {
   type: "response";
   status: number;
   body?: unknown;
+  // Which machine answered, stamped by the relay from the socket's tags.
+  // Absent on a shared-guest socket, which is told nothing about the fleet.
+  machineId?: string;
 }
 
 interface RelayProjectEventsSubscribed {
@@ -54,6 +57,9 @@ interface RelayProjectEventsError {
 interface RelayControl {
   type: "ping" | "pong" | "connected" | "error" | "daemon_status" | "security_event";
   online?: boolean;
+  // Which of the account's machines are up. Absent on a shared-guest socket,
+  // which is told only whether its own host is reachable.
+  machines?: RelayMachine[];
   message?: string;
   event?: SecurityEventRecord;
 }
@@ -83,7 +89,14 @@ export type RelayStatus =
   | "auth_failed"
   | "client_storage_error";
 
+// One of the account's machines, as the relay reports it.
+export interface RelayMachine {
+  id: string;
+  name: string;
+}
+
 export type RelayStatusListener = (status: RelayStatus) => void;
+export type RelayMachinesListener = (machines: RelayMachine[]) => void;
 export type RelayPendingApprovalListener = (
   approval: { deviceId?: string; approvalCode?: string } | null,
 ) => void;
@@ -102,11 +115,18 @@ export class RelayTransport {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private daemonOnline = false;
+  private daemonMachines: RelayMachine[] = [];
+  // The last fleet the relay actually named, kept across a closed socket.
+  // `machines` is cleared on close because the app must not offer hosts it
+  // cannot reach; a caller that has to NAME a machine needs the last answer
+  // instead, because sending none is refused once there are several.
+  private lastNamedMachines: RelayMachine[] = [];
   private deviceId: string | null = null;
   private consecutiveHandshakeFailures = 0;
   private _status: RelayStatus = "disconnected";
   private pendingApproval: { deviceId?: string; approvalCode?: string } | null = null;
   private listeners = new Set<RelayStatusListener>();
+  private machinesListeners = new Set<RelayMachinesListener>();
   private pendingApprovalListeners = new Set<RelayPendingApprovalListener>();
   private securityEventListeners = new Set<RelaySecurityEventListener>();
   private projectEventSubscriptions = new Map<string, ProjectEventSubscription>();
@@ -131,6 +151,22 @@ export class RelayTransport {
     return () => this.listeners.delete(listener);
   }
 
+  get machines(): RelayMachine[] {
+    return this.daemonMachines;
+  }
+
+  // For callers that must name a machine. A reconnect clears `machines` until
+  // the next `daemon_status`, and in that window a machine-less request is
+  // refused rather than answered -- so they ask the last known fleet.
+  get namedMachines(): RelayMachine[] {
+    return this.daemonMachines.length > 0 ? this.daemonMachines : this.lastNamedMachines;
+  }
+
+  onMachinesChange(listener: RelayMachinesListener): () => void {
+    this.machinesListeners.add(listener);
+    return () => this.machinesListeners.delete(listener);
+  }
+
   onPendingApprovalChange(listener: RelayPendingApprovalListener): () => void {
     this.pendingApprovalListeners.add(listener);
     return () => this.pendingApprovalListeners.delete(listener);
@@ -145,8 +181,20 @@ export class RelayTransport {
     if (this._status === status) return;
     this._status = status;
     if (status !== "device_pending") this.setPendingApproval(null);
+    // auth_failed can arrive on a still-open socket, from a device_blocked
+    // event. Nothing else would clear the fleet in that case.
+    if (status === "auth_failed") this.setMachines([]);
     for (const listener of this.listeners) {
       listener(status);
+    }
+  }
+
+  private setMachines(machines: RelayMachine[]): void {
+    if (machines.length > 0) this.lastNamedMachines = machines;
+    if (sameRelayMachines(this.daemonMachines, machines)) return;
+    this.daemonMachines = machines;
+    for (const listener of this.machinesListeners) {
+      listener(machines);
     }
   }
 
@@ -207,6 +255,9 @@ export class RelayTransport {
       this.ws = null;
       this.rejectAllPending("Connection lost");
       this.rejectAllProjectEventSubscriptions("Connection lost");
+      // The fleet is now unknown, which is not the same as unchanged. Holding
+      // the old list would leave the app offering machines it cannot reach.
+      this.setMachines([]);
       const code = (event as CloseEvent).code;
       if (code === 1008 || code === 4001 || code === 4003) {
         this.stopped = true;
@@ -239,6 +290,8 @@ export class RelayTransport {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.rejectAllPending("Disconnected");
     this.rejectAllProjectEventSubscriptions("Disconnected");
+    this.setMachines([]);
+    this.lastNamedMachines = [];
     if (this.ws) {
       try {
         this.ws.close(1000);
@@ -252,7 +305,8 @@ export class RelayTransport {
     method: string,
     path: string,
     body?: unknown,
-  ): Promise<{ status: number; body: unknown }> {
+    machineId?: string,
+  ): Promise<{ status: number; body: unknown; machineId?: string }> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Relay not connected");
     }
@@ -269,7 +323,16 @@ export class RelayTransport {
 
       this.pending.set(id, { resolve, reject, timer });
       try {
-        this.ws!.send(JSON.stringify({ id, type: "request", method, path, body }));
+        this.ws!.send(
+          JSON.stringify({
+            id,
+            type: "request",
+            method,
+            path,
+            body,
+            ...(machineId ? { machineId } : {}),
+          }),
+        );
       } catch (err) {
         // The socket can close between the readyState check above and the
         // send call (race with onclose / network drop). Clean up the entry
@@ -294,6 +357,7 @@ export class RelayTransport {
     headers: Record<string, string> | undefined,
     onEvent: (event: string, data: unknown) => void,
     onError: (error: Error) => void,
+    machineId?: string,
   ): { stop: () => void } {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Relay not connected");
@@ -305,7 +369,15 @@ export class RelayTransport {
     const id = `e${++idCounter}`;
     this.projectEventSubscriptions.set(id, { path, headers, onEvent, onError });
     try {
-      this.ws.send(JSON.stringify({ id, type: "project_events_subscribe", path, headers }));
+      this.ws.send(
+        JSON.stringify({
+          id,
+          type: "project_events_subscribe",
+          path,
+          headers,
+          ...(machineId ? { machineId } : {}),
+        }),
+      );
     } catch (err) {
       this.projectEventSubscriptions.delete(id);
       throw err instanceof Error ? err : new Error("Relay send failed");
@@ -342,6 +414,9 @@ export class RelayTransport {
 
     if (msg.type === "daemon_status") {
       this.daemonOnline = msg.online ?? false;
+      // Absent is not empty. A shared guest is told nothing about the fleet,
+      // and an older relay says nothing either; neither means zero machines.
+      if (msg.machines !== undefined) this.setMachines(normalizeRelayMachines(msg.machines));
       if (this._status === "device_pending") return;
       this.setStatus(this.daemonOnline ? "connected" : "daemon_offline");
       return;
@@ -383,7 +458,16 @@ export class RelayTransport {
         }
         clearTimeout(entry.timer);
         this.pending.delete(msg.id);
-        entry.resolve({ status: msg.status, body: msg.body });
+        entry.resolve({
+          status: msg.status,
+          body: msg.body,
+          // Which machine answered, stamped by the relay from the socket's
+          // tags. A caller that asked without naming one uses it rather than
+          // leaving the result unattributed until the machine list arrives.
+          ...(typeof msg.machineId === "string" && msg.machineId
+            ? { machineId: msg.machineId }
+            : {}),
+        });
       }
       return;
     }
@@ -488,5 +572,28 @@ function isSecurityEventRecord(value: unknown): value is SecurityEventRecord {
     typeof event.title === "string" &&
     typeof event.body === "string" &&
     typeof event.createdAt === "string"
+  );
+}
+
+// Only a well-formed entry counts. A machine the relay could not name falls
+// back to its id, which is what the daemon does too.
+function normalizeRelayMachines(value: unknown): RelayMachine[] {
+  if (!Array.isArray(value)) return [];
+  const machines: RelayMachine[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const { id, name } = entry as { id?: unknown; name?: unknown };
+    if (typeof id !== "string" || !id) continue;
+    machines.push({ id, name: typeof name === "string" && name ? name : id });
+  }
+  return machines;
+}
+
+function sameRelayMachines(left: readonly RelayMachine[], right: readonly RelayMachine[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (machine, index) => machine.id === right[index].id && machine.name === right[index].name,
+    )
   );
 }

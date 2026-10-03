@@ -36,7 +36,7 @@ import {
   buildViewPath,
   detailHrefForPath,
   parentViewHrefForPath,
-  projectPathFromSearchOrLocation,
+  projectRefFromSearchOrLocation,
   replaceBrowserViewPath,
   type SearchValue,
 } from "@/lib/view-location";
@@ -53,6 +53,7 @@ import {
   selectedProjectAtom,
   selectedProjectEndpointAtom,
   selectedProjectPathAtom,
+  selectedProjectRefAtom,
   selectedSessionIdAtom,
   rememberedProjectViewPath,
   selectProjectAtom,
@@ -69,7 +70,14 @@ import {
   projectStateErrorCopy,
   relayUnavailableProjectCopy,
 } from "@/lib/project-connection-display";
-import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { relayConfiguredAtom, relayMachinesAtom, relayStatusAtom } from "@/stores/relay";
+import {
+  findProjectForRef,
+  projectRefOf,
+  projectStateKey,
+  type ProjectRef,
+  type ProjectStateKey,
+} from "@/lib/project-key";
 
 // Restyle palette (Linear-style lifted slate) — mirrors docs/mockups/project-view.html.
 //   sidebar bg #161719 · hairline #2a2b31 · press #232429 · selected #26272d
@@ -79,7 +87,6 @@ const SIDEBAR_WIDTH = 320;
 const PROJECT_PICKER_EDGE_SWIPE_WIDTH = 28;
 const PROJECT_PICKER_EDGE_SWIPE_DISTANCE = 56;
 const PROJECT_PICKER_EDGE_SWIPE_MAX_VERTICAL_DRIFT = 36;
-const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 type SidebarMode = "dashboard" | "views";
 
@@ -150,6 +157,8 @@ function SidebarStateCard({
 
 function WorktreeTree({
   projectPath,
+  projectStateKey: projectStateKeyProp,
+  machineName,
   endpoint,
   token,
   desktopState,
@@ -160,6 +169,9 @@ function WorktreeTree({
   onKillSession,
 }: {
   projectPath: string;
+  projectStateKey: ProjectStateKey;
+  // Which host this project is on, when the account has more than one.
+  machineName?: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   desktopState: DesktopState | null;
@@ -169,14 +181,20 @@ function WorktreeTree({
   onPickService: (serviceId: string) => void;
   onKillSession: (sessionId: string) => void;
 }) {
-  const groups = useAtomValue(worktreeGroupsFamily(projectPath));
+  const groups = useAtomValue(worktreeGroupsFamily(projectStateKeyProp));
   const operationFailureSummary = summarizeOperationFailures(desktopState?.operationFailures);
 
   if (!endpoint && desktopState === null) {
+    // Naming the host is the whole answer when there are several of them:
+    // "the host is not running" does not say which one to go and start.
     return (
       <SidebarStateCard
-        title="Project host not running."
-        detail="Start the host to see worktrees, agents, and services."
+        title={machineName ? `${machineName} is not reachable.` : "Project host not running."}
+        detail={
+          machineName
+            ? `Start aimux on ${machineName} to see its worktrees, agents, and services.`
+            : "Start the host to see worktrees, agents, and services."
+        }
       />
     );
   }
@@ -224,6 +242,7 @@ function WorktreeTree({
       <WorktreeList
         groups={groups}
         projectPath={projectPath}
+        projectStateKey={projectStateKeyProp}
         endpoint={endpoint}
         token={token}
         padded={false}
@@ -297,10 +316,13 @@ function SidebarPrimaryNav({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const activeTab = mainTabForPath(pathname);
-  const routeProjectPath =
-    projectPath ?? projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
+  const navRef =
+    projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
+    selectedProjectRef;
+  const routeProjectPath = projectPath ?? navRef?.path ?? null;
+  const routeMachineId = (projectPath ? undefined : navRef?.machineId) ?? null;
 
   return (
     <View className="p-1.5">
@@ -314,6 +336,7 @@ function SidebarPrimaryNav({
               blurWebActiveElement();
               const href = buildViewHref(MAIN_TAB_ROUTES[tabId].href, {
                 project: routeProjectPath,
+                machine: routeMachineId,
               });
               onNavigate();
               router.push(href);
@@ -345,6 +368,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const { width } = useWindowDimensions();
   const projects = useAtomValue(projectsAtom);
   const projectListStatus = useAtomValue(projectListStatusAtom);
+  const relayMachines = useAtomValue(relayMachinesAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -361,11 +385,16 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const pathname = usePathname();
   const [sidebarMode, setSidebarMode] = useAtom(sidebarModeAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
-  const effectiveProjectPath =
-    projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
-  const effectiveProject =
-    projects.find((project) => project.path === effectiveProjectPath) ?? selectedProject;
+  // Both halves come from one source; pairing a URL path with the selected
+  // machine would name a project on neither host.
+  const effectiveProjectRef =
+    projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
+    projectRefOf(selectedProject);
+  const effectiveProjectPath = effectiveProjectRef?.path ?? null;
+  const effectiveProject = findProjectForRef(projects, effectiveProjectRef) ?? selectedProject;
   const routeProjectPath = effectiveProject?.path ?? effectiveProjectPath;
+  const pickedProjectRef = projectRefOf(effectiveProject) ?? effectiveProjectRef;
+  const routeProjectMachineId = pickedProjectRef?.machineId;
   const endpoint = effectiveProject
     ? getProjectServiceEndpoint(effectiveProject)
     : selectedProjectEndpoint;
@@ -407,10 +436,9 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     }
   }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
-  const desktopState = useAtomValue(desktopStateFamily(routeProjectPath ?? EMPTY_PROJECT_PATH));
-  const desktopStateError = useAtomValue(
-    desktopStateErrorFamily(routeProjectPath ?? EMPTY_PROJECT_PATH),
-  );
+  const routeProjectStateKey = projectStateKey(pickedProjectRef);
+  const desktopState = useAtomValue(desktopStateFamily(routeProjectStateKey));
+  const desktopStateError = useAtomValue(desktopStateErrorFamily(routeProjectStateKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const routeRelayUnavailable =
@@ -449,36 +477,51 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     ],
   };
 
-  function handlePickProject(path: string) {
+  function handlePickProject(ref: ProjectRef) {
     blurWebActiveElement();
     if (Platform.OS === "web") {
       replaceBrowserViewPath(
-        buildViewPath(MAIN_TAB_ROUTES.project.href, { project: path }) as string,
+        buildViewPath(MAIN_TAB_ROUTES.project.href, {
+          project: ref.path,
+          machine: ref.machineId,
+        }) as string,
       );
     }
-    selectProject(path);
+    selectProject(ref);
     setShowPicker(false);
-    router.replace((rememberedProjectViewPath(path) ?? buildMainTabHref("project", path)) as Href);
+    router.replace(
+      (rememberedProjectViewPath(ref) ??
+        buildMainTabHref("project", ref.path, ref.machineId)) as Href,
+    );
   }
 
   function handlePickSession(sessionId: string, sessionProjectPath = routeProjectPath) {
     blurWebActiveElement();
     setSelectedSession(sessionId);
     if (dismissSidebarOnNavigate) setSidebarOpen(false);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, sessionProjectPath));
+    // The machine only travels with its own path. A caller that overrode the
+    // path has named some other project, and pairing it with this machine
+    // would address a project on neither host.
+    const sessionMachineId =
+      sessionProjectPath === routeProjectPath ? routeProjectMachineId : undefined;
+    router.push(
+      detailHrefForPath(pathname, "agent", sessionId, sessionProjectPath, sessionMachineId),
+    );
   }
 
   function handlePickService(serviceId: string) {
     blurWebActiveElement();
     if (dismissSidebarOnNavigate) setSidebarOpen(false);
-    router.push(detailHrefForPath(pathname, "service", serviceId, routeProjectPath));
+    router.push(
+      detailHrefForPath(pathname, "service", serviceId, routeProjectPath, routeProjectMachineId),
+    );
   }
 
   function handleKillSession(sessionId: string) {
     if (selectedSessionId !== sessionId) return;
     setSelectedSession(null);
     if (pathname.includes("/agent/")) {
-      router.replace(parentViewHrefForPath(pathname, routeProjectPath));
+      router.replace(parentViewHrefForPath(pathname, routeProjectPath, routeProjectMachineId));
     }
   }
 
@@ -543,7 +586,8 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
             <ProjectPicker
               projects={projects}
               status={projectListStatus}
-              selectedPath={effectiveProjectPath}
+              selectedRef={pickedProjectRef}
+              machines={relayMachines}
               showAllProjects={showAllPickerProjects}
               onShowAllProjectsChange={setShowAllPickerProjects}
               onSelect={handlePickProject}
@@ -602,6 +646,8 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                     ) : (
                       <WorktreeTree
                         projectPath={effectiveProject.path}
+                        projectStateKey={routeProjectStateKey}
+                        machineName={effectiveProject.machineName}
                         endpoint={endpoint}
                         token={token}
                         desktopState={desktopState}
@@ -616,6 +662,8 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                 ) : (
                   <WorktreeTree
                     projectPath={effectiveProject.path}
+                    projectStateKey={routeProjectStateKey}
+                    machineName={effectiveProject.machineName}
                     endpoint={endpoint}
                     token={token}
                     desktopState={desktopState}

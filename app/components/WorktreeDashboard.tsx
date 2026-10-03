@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { projectStateKey as projectStateKeyOf, type ProjectStateKey } from "@/lib/project-key";
 import { Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -232,7 +233,7 @@ function AgentRowImpl({
   selected,
   compact,
   supervisorLane,
-  projectPath,
+  projectStateKey,
   endpoint,
   token,
   mainCheckoutPath,
@@ -245,7 +246,7 @@ function AgentRowImpl({
   selected: boolean;
   compact?: boolean;
   supervisorLane?: boolean;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   mainCheckoutPath?: string | null;
@@ -329,7 +330,7 @@ function AgentRowImpl({
         <StatusCell state={state} />
         <AgentActions
           session={session}
-          projectPath={projectPath}
+          projectStateKey={projectStateKey}
           endpoint={endpoint}
           token={token}
           compact
@@ -362,7 +363,7 @@ function ServiceRow({
   service,
   digit,
   compact,
-  projectPath,
+  projectStateKey,
   endpoint,
   token,
   onPress,
@@ -370,7 +371,7 @@ function ServiceRow({
   service: DesktopService;
   digit: number;
   compact?: boolean;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   onPress: () => void;
@@ -439,7 +440,7 @@ function ServiceRow({
         </Text>
         <ServiceActions
           service={service}
-          projectPath={projectPath}
+          projectStateKey={projectStateKey}
           endpoint={endpoint}
           token={token}
           compact
@@ -495,7 +496,7 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
 
 export function WorktreeCard({
   bucket,
-  projectPath,
+  projectStateKey,
   endpoint,
   token,
   selectedSessionId,
@@ -519,7 +520,7 @@ export function WorktreeCard({
   // Absent when a card is rendered on its own, and then each row computes its
   // own -- correct, just not self-updating.
   recencyById?: Record<string, string | null>;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   selectedSessionId: string | null;
@@ -581,7 +582,7 @@ export function WorktreeCard({
               selected={session.id === selectedSessionId}
               compact={compact}
               supervisorLane={bucket.isSupervisorLane}
-              projectPath={projectPath}
+              projectStateKey={projectStateKey}
               endpoint={endpoint}
               token={token}
               mainCheckoutPath={mainCheckoutPath}
@@ -596,7 +597,7 @@ export function WorktreeCard({
               service={service}
               digit={bucket.sessions.length + i + 1}
               compact={compact}
-              projectPath={projectPath}
+              projectStateKey={projectStateKey}
               endpoint={endpoint}
               token={token}
               onPress={() => onPickService(service.id)}
@@ -655,6 +656,7 @@ export const WorktreeList = React.memo(WorktreeListImpl);
 function WorktreeListImpl({
   groups,
   projectPath,
+  projectStateKey,
   endpoint,
   token,
   padded,
@@ -667,6 +669,7 @@ function WorktreeListImpl({
 }: {
   groups: WorktreeBucket[];
   projectPath: string;
+  projectStateKey: ProjectStateKey;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   padded: boolean;
@@ -728,6 +731,7 @@ function WorktreeListImpl({
     recencyById,
     mainCheckoutPath,
     projectPath,
+    projectStateKey,
     endpoint,
     token,
     selectedSessionId,
@@ -820,14 +824,15 @@ function WorktreeListImpl({
 export const WorktreeDashboard = React.memo(WorktreeDashboardImpl);
 
 function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
-  const { projectPath, endpoint } = useRouteProject();
+  const { projectPath, projectRef, endpoint } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
+  const stateProjectKey = projectStateKeyOf(projectRef);
   // Subscribing to the whole desktop state re-rendered every row whenever any
   // field changed, including ones this view never shows.
-  const desktopStatePresent = useAtomValue(desktopStatePresentFamily(stateProjectPath));
-  const operationFailures = useAtomValue(desktopStateOperationFailuresFamily(stateProjectPath));
-  const desktopStateError = useAtomValue(desktopStateErrorFamily(stateProjectPath));
-  const groups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
+  const desktopStatePresent = useAtomValue(desktopStatePresentFamily(stateProjectKey));
+  const operationFailures = useAtomValue(desktopStateOperationFailuresFamily(stateProjectKey));
+  const desktopStateError = useAtomValue(desktopStateErrorFamily(stateProjectKey));
+  const groups = useAtomValue(worktreeGroupsFamily(stateProjectKey));
   const selectedSessionId = useAtomValue(selectedSessionIdAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
@@ -957,13 +962,13 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
         />
       ) : null}
       <WorktreeManagementPanel
-        projectPath={stateProjectPath}
+        projectStateKey={stateProjectKey}
         endpoint={endpoint}
         token={token}
         groups={groups}
       />
       <AgentCreatePanel
-        projectPath={stateProjectPath}
+        projectStateKey={stateProjectKey}
         endpoint={endpoint}
         token={token}
         groups={groups}
@@ -971,6 +976,7 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
       <WorktreeList
         groups={groups}
         projectPath={stateProjectPath}
+        projectStateKey={stateProjectKey}
         endpoint={endpoint}
         token={token}
         padded={false}

@@ -49,6 +49,9 @@ export interface MonitorSettings {
   speechLanguage: string;
   audioSampleRate: MonitorAudioSampleRate;
   projectPath: string | null;
+  // Which machine's copy of that project. Absent in a setting saved before
+  // machines existed, which then matches the project wherever it is.
+  machineId: string | null;
   sessionId: string | null;
   shareOwnerUserId: string | null;
   shareId: string | null;
@@ -89,6 +92,7 @@ export const defaultSettings = Object.freeze<AppSettings>({
     speechLanguage: "en-US",
     audioSampleRate: 16000,
     projectPath: null,
+    machineId: null,
     sessionId: null,
     shareOwnerUserId: null,
     shareId: null,
@@ -187,6 +191,7 @@ function normalizeMonitorSettings(value: AppSettings["monitor"] | undefined): Mo
     speechLanguage: sanitizeLocale(value?.speechLanguage),
     audioSampleRate: normalizeMonitorAudioSampleRate(value?.audioSampleRate),
     projectPath: sanitizeNullableText(value?.projectPath),
+    machineId: sanitizeNullableText(value?.machineId),
     sessionId: sanitizeNullableText(value?.sessionId),
     shareOwnerUserId: sanitizeNullableText(value?.shareOwnerUserId),
     shareId: sanitizeNullableText(value?.shareId),

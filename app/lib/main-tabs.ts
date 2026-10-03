@@ -2,8 +2,8 @@ import { useCallback } from "react";
 import { TabActions } from "@react-navigation/native";
 import { useGlobalSearchParams, useRouter, type Href } from "expo-router";
 import { useAtomValue } from "jotai";
-import { selectedProjectPathAtom } from "@/stores/projects";
-import { projectPathFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
+import { selectedProjectRefAtom } from "@/stores/projects";
+import { projectRefFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
 
 export type MainTabId =
   | "dashboard"
@@ -46,7 +46,10 @@ export interface MainTabRoute {
 
 type MainTabNavigation = {
   dispatch: (action: ReturnType<typeof TabActions.jumpTo>) => void;
-  navigate?: (screen: MainTabRoute["screen"], params?: { project: string }) => void;
+  navigate?: (
+    screen: MainTabRoute["screen"],
+    params?: { project: string; machine?: string },
+  ) => void;
 };
 
 export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
@@ -112,12 +115,27 @@ export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
   },
 };
 
-export function buildMainTabHref(tabId: MainTabId, projectPath?: string | null): Href {
-  const params =
-    typeof projectPath === "string" && projectPath.trim().length > 0
-      ? { project: projectPath }
-      : {};
-  return { pathname: MAIN_TAB_ROUTES[tabId].internalHref, params } as Href;
+// The machine travels with the path, so moving between tabs does not lose
+// which host's copy of the project is open.
+export function buildMainTabHref(
+  tabId: MainTabId,
+  projectPath?: string | null,
+  machineId?: string | null,
+): Href {
+  return {
+    pathname: MAIN_TAB_ROUTES[tabId].internalHref,
+    params: mainTabProjectParams(projectPath, machineId) ?? {},
+  } as Href;
+}
+
+function mainTabProjectParams(
+  projectPath?: string | null,
+  machineId?: string | null,
+): { project: string; machine?: string } | undefined {
+  const project = typeof projectPath === "string" ? projectPath.trim() : "";
+  if (!project) return undefined;
+  const machine = typeof machineId === "string" ? machineId.trim() : "";
+  return machine ? { project, machine } : { project };
 }
 
 export function mainTabForPath(pathname: string): MainTabId {
@@ -135,16 +153,19 @@ export function mainTabForPath(pathname: string): MainTabId {
 
 export function useMainTabNavigation() {
   const router = useRouter();
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
-  const currentProjectPath =
-    projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
+  // Both halves come from the same place. Taking the path from the URL and the
+  // machine from the selection would pair a path with the wrong host.
+  const currentRef =
+    projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
+    selectedProjectRef;
 
   return useCallback(
     (tabId: MainTabId) => {
-      router.navigate(buildMainTabHref(tabId, currentProjectPath));
+      router.navigate(buildMainTabHref(tabId, currentRef?.path, currentRef?.machineId));
     },
-    [currentProjectPath, router],
+    [currentRef, router],
   );
 }
 
@@ -152,11 +173,9 @@ export function navigateMainTab(
   navigation: MainTabNavigation,
   tabId: MainTabId,
   projectPath?: string | null,
+  machineId?: string | null,
 ) {
-  const params =
-    typeof projectPath === "string" && projectPath.trim().length > 0
-      ? { project: projectPath }
-      : undefined;
+  const params = mainTabProjectParams(projectPath, machineId);
   if (navigation.navigate) {
     navigation.navigate(MAIN_TAB_ROUTES[tabId].screen, params);
     return;

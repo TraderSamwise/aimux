@@ -8,6 +8,7 @@ import {
   parentViewHrefForPath,
   projectPathFromSearch,
   replaceBrowserViewPath,
+  projectRefFromSearchOrLocation,
 } from "./view-location";
 
 describe("view location helpers", () => {
@@ -37,11 +38,14 @@ describe("view location helpers", () => {
   it("merges current search params with explicit overrides", () => {
     expect(
       mergeViewParams(
-        { project: "/old", mode: "map", lens: ["all"], section: undefined },
+        { project: "/old", machine: "mbp", mode: "map", lens: ["all"], section: undefined },
         { project: "/new", section: "queue" },
       ),
     ).toEqual({
       project: "/new",
+      // Carried, not reset: moving between tabs must not lose which host's
+      // copy of the project is open.
+      machine: "mbp",
       mode: "map",
       lens: "all",
       section: "queue",
@@ -93,5 +97,30 @@ describe("view location helpers", () => {
     replaceBrowserViewPath("/project?project=%2Fnew");
 
     expect(replaceState).toHaveBeenCalledWith({ key: "route" }, "", "/project?project=%2Fnew");
+  });
+});
+
+describe("a route that names which machine", () => {
+  it("puts the machine in the query beside the path", () => {
+    expect(buildViewPath("/project", { project: "/repo/aimux", machine: "strix" })).toBe(
+      "/project?project=%2Frepo%2Faimux&machine=strix",
+    );
+  });
+
+  it("reads both halves back out", () => {
+    expect(projectRefFromSearchOrLocation("/repo/aimux", "strix")).toEqual({
+      machineId: "strix",
+      path: "/repo/aimux",
+    });
+    expect(projectRefFromSearchOrLocation("/repo/aimux", undefined)).toEqual({
+      path: "/repo/aimux",
+    });
+    expect(projectRefFromSearchOrLocation(undefined, "strix")).toBeNull();
+  });
+
+  it("carries the machine into a detail route", () => {
+    expect(detailViewPathForPath("/project", "agent", "claude-1", "/repo/aimux", "strix")).toBe(
+      "/agent/claude-1/chat?project=%2Frepo%2Faimux&machine=strix",
+    );
   });
 });

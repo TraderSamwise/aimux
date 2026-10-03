@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { useAtomValue, useSetAtom } from "jotai";
 import { deliverBrowserNotification, isBrowserDocumentVisible } from "@/lib/browser-notifications";
 import {
@@ -14,13 +15,11 @@ import {
   notificationObservedIdsFamily,
 } from "@/stores/notifications";
 import { notificationSettingsAtom } from "@/stores/settings";
-import { selectedProjectAtom, selectedProjectPathAtom } from "@/stores/projects";
-
-const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
+import { selectedProjectAtom, selectedProjectRefAtom } from "@/stores/projects";
 
 export function NotificationProvider() {
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
-  const projectScope = selectedProjectPath ?? EMPTY_PROJECT_PATH;
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
+  const projectScope = projectStateKey(selectedProjectRef);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const desktopState = useAtomValue(desktopStateFamily(projectScope));
   const notificationFeed = useAtomValue(notificationFeedFamily(projectScope));
@@ -41,7 +40,7 @@ export function NotificationProvider() {
 
     if (!baselinedProjectsRef.current.has(projectScope)) {
       seenNotificationIdsRef.current.set(projectScope, currentIds);
-      markNotificationRecordsObserved({ projectPath: projectScope, ids: currentIds });
+      markNotificationRecordsObserved({ projectStateKey: projectScope, ids: currentIds });
       baselinedProjectsRef.current.add(projectScope);
       return;
     }
@@ -51,14 +50,18 @@ export function NotificationProvider() {
       notificationSettings,
       {
         projectName: selectedProject?.name,
-        projectPath: selectedProjectPath ?? undefined,
+        projectPath: selectedProject?.path ?? undefined,
+        machineId: selectedProject?.machineId,
       },
       seenIds,
       1,
     );
     for (const id of evaluation.observedIds) seenIds.add(id);
     if (evaluation.observedIds.length > 0) {
-      markNotificationRecordsObserved({ projectPath: projectScope, ids: evaluation.observedIds });
+      markNotificationRecordsObserved({
+        projectStateKey: projectScope,
+        ids: evaluation.observedIds,
+      });
     }
 
     if (notificationSettings.channels.browser && !isBrowserDocumentVisible()) {
@@ -75,7 +78,8 @@ export function NotificationProvider() {
     observedNotificationIds,
     projectScope,
     selectedProject?.name,
-    selectedProjectPath,
+    selectedProject?.path,
+    selectedProject?.machineId,
   ]);
 
   useEffect(() => {
@@ -94,7 +98,8 @@ export function NotificationProvider() {
         notificationSettings,
         {
           projectName: selectedProject?.name,
-          projectPath: selectedProjectPath ?? undefined,
+          projectPath: selectedProject?.path ?? undefined,
+          machineId: selectedProject?.machineId,
         },
       );
 
@@ -111,7 +116,8 @@ export function NotificationProvider() {
     notificationSettings,
     projectScope,
     selectedProject?.name,
-    selectedProjectPath,
+    selectedProject?.path,
+    selectedProject?.machineId,
   ]);
 
   return null;

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Play, RefreshCw, Send, Square, Trash2, Users } from "lucide-react-native";
@@ -36,12 +37,12 @@ export function TeammatePanel({
   session,
   endpoint,
   token,
-  projectPath,
+  projectStateKey,
 }: {
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
 }) {
   const [teammates, setTeammates] = useState<Teammate[]>([]);
   const [role, setRole] = useState("coder");
@@ -189,7 +190,7 @@ export function TeammatePanel({
       async () => {
         const response = await fn();
         recordTransition({
-          projectPath,
+          projectStateKey,
           transition: response.transition,
           label: next.label ?? response.sessionId,
           tool: next.tool,

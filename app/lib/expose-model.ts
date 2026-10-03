@@ -31,6 +31,10 @@ export type ExposeStatusKind =
 
 export interface ExposeSourceItem {
   id?: string;
+  // Stamped by the global fan-out. A project id and a project root both repeat
+  // across machines, so without this the screen groups two hosts' items under
+  // one project and the tiles sit under the wrong host's name.
+  machineId?: string;
   target?: {
     windowId?: string;
     windowIndex?: number;
@@ -77,6 +81,9 @@ export interface ExposeTile {
   projectId: string;
   projectName: string;
   projectRoot: string;
+  // Which machine's copy. A project id and root are not unique across the
+  // fleet, so opening a tile needs this to land on the right host.
+  machineId?: string;
   serviceEndpoint: ServiceEndpoint | null;
   sessionId: string;
   windowId?: string;
@@ -234,6 +241,20 @@ function exposeMixedSupervisorLabel(supervisorCount: number, baseLabel: string):
   return `${supervisorLabel} + ${baseLabel}`;
 }
 
+/// Which fetch a set of tiles belongs to. The machine is part of it because
+/// the fetch is machine-aware: with one checkout on two hosts, a path-only key
+/// kept the previous host's tiles on screen under the new host's header, and
+/// tapping one opened the agent on the host just navigated away from.
+export function exposeViewKey(input: {
+  scope: "global" | "project";
+  machineId?: string | null;
+  projectPath?: string | null;
+  previewMode: string;
+}): string {
+  if (input.scope === "global") return `global:${input.previewMode}`;
+  return ["project", input.machineId ?? "", input.projectPath ?? "", input.previewMode].join(":");
+}
+
 export function exposeSetLabel(tiles: readonly ExposeTile[], baseLabel: string): string {
   const supervisorCount = tiles.filter((tile) => tile.supervisorScoped).length;
   if (supervisorCount === 0) return baseLabel;
@@ -304,11 +325,12 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         metadata.kind === "service" ? label : agentDisplayLabel(agentDisplay, item.roleState);
       const kind = metadata.kind === "service" ? "service" : "agent";
       tiles.push({
-        id: `${projectRoot}:${item.target?.windowId ?? item.id ?? index}`,
+        id: `${source.project.machineId ?? ""}:${projectRoot}:${item.target?.windowId ?? item.id ?? index}`,
         projectId: item.projectId || source.project.id,
+        machineId: source.project.machineId,
         projectName,
         projectRoot,
-        serviceEndpoint: source.project.serviceEndpoint,
+        serviceEndpoint: tileServiceEndpoint(source.project),
         sessionId,
         windowId: item.target?.windowId,
         windowIndex: item.target?.windowIndex,
@@ -424,4 +446,46 @@ export function summarizeExposeTiles(tiles: ExposeTile[]): ExposeSummary {
       summary.ready++;
   }
   return summary;
+}
+
+// A tile is opened against the project's own host, so the address it carries
+// has to say which machine that is -- `127.0.0.1:43191` is a different
+// project service on each one.
+function tileServiceEndpoint(project: {
+  machineId?: string;
+  serviceEndpoint: ServiceEndpoint | null;
+}): ServiceEndpoint | null {
+  if (!project.serviceEndpoint) return null;
+  return project.machineId
+    ? { ...project.serviceEndpoint, machineId: project.machineId }
+    : project.serviceEndpoint;
+}
+
+export function sourcesForGlobalExposeItems(projects: DaemonProject[], items: ExposeSourceItem[]) {
+  // Keyed by the machine too: a project id and a project root both repeat
+  // across hosts, so a map on either alone keeps whichever project came last
+  // and files one machine's items under the other machine's project.
+  const scope = (machineId: string | undefined, value: string) =>
+    `${machineId ?? ""}\u0000${value}`;
+  const byProjectId = new Map(
+    projects.map((project) => [scope(project.machineId, project.id), project]),
+  );
+  const byProjectPath = new Map(
+    projects.map((project) => [scope(project.machineId, project.path), project]),
+  );
+  const grouped = new Map<string, { project: DaemonProject; items: ExposeSourceItem[] }>();
+  for (const item of items) {
+    const project =
+      (item.projectId ? byProjectId.get(scope(item.machineId, item.projectId)) : undefined) ??
+      (item.projectRoot ? byProjectPath.get(scope(item.machineId, item.projectRoot)) : undefined);
+    if (!project) continue;
+    const groupKey = scope(project.machineId, project.id);
+    let source = grouped.get(groupKey);
+    if (!source) {
+      source = { project, items: [] };
+      grouped.set(groupKey, source);
+    }
+    source.items.push(item);
+  }
+  return [...grouped.values()];
 }

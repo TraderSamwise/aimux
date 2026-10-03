@@ -1,3 +1,5 @@
+import { isValidMachineId } from "./machines.js";
+
 const SHARING_STATE_KEY = "sharing-state:v1";
 const INVITE_TOKEN_BYTES = 32;
 const MAX_SHARES = 200;
@@ -40,6 +42,9 @@ export interface SharedSessionRecord {
   ownerUserId: string;
   projectRoot: string;
   serviceEndpoint?: ShareServiceEndpoint;
+  // Which of the owner's machines hosts this session. Absent on shares made
+  // before machines existed; the relay then needs there to be only one.
+  machineId?: string;
   sessionId: string;
   createdAt: string;
   updatedAt: string;
@@ -78,6 +83,7 @@ export interface CreateShareInviteInput {
   owner: ShareActor;
   projectRoot: string;
   serviceEndpoint?: ShareServiceEndpoint;
+  machineId?: string;
   sessionId: string;
   email: string;
   now?: string;
@@ -176,10 +182,31 @@ export function findShareForSession(
   state: SharingState,
   ownerUserId: string,
   sessionId: string,
+  machineId?: string,
+  projectRoot?: string,
 ): SharedSessionRecord | undefined {
-  return Object.values(state.shares).find(
+  const wanted = sanitizeShareMachineId(machineId);
+  const forOwnerSession = Object.values(state.shares).filter(
     (share) => share.ownerUserId === ownerUserId && share.sessionId === sessionId,
   );
+  // A session id names a session on one host. Matching without the machine
+  // would let an invite for strix's `claude-1` rebind the guests of the mbp's
+  // share of the same name to strix.
+  const sameMachine = forOwnerSession.find((share) => sanitizeShareMachineId(share.machineId) === wanted);
+  if (sameMachine) return sameMachine;
+  if (!wanted) return undefined;
+  // A share made before machines existed is the same share, and adopting it is
+  // what lets a re-invite bind it rather than make a second one and strand its
+  // guests on the first. But "unbound" says nothing about WHICH host made it,
+  // so the checkout has to match too: otherwise strix's first invite for its
+  // own `claude-1` takes over the mbp's share of that name and rebinds its
+  // guests to the wrong host, which is what the machine binding exists to stop.
+  //
+  // Two unbound candidates is a question, not an answer, so neither is taken.
+  const adoptable = forOwnerSession.filter(
+    (share) => !sanitizeShareMachineId(share.machineId) && share.projectRoot === projectRoot,
+  );
+  return adoptable.length === 1 ? adoptable[0] : undefined;
 }
 
 export async function createShareInvite(
@@ -193,13 +220,22 @@ export async function createShareInvite(
   const sessionId = sanitizeRequiredText(input.sessionId, 160, "sessionId");
   const projectRoot = sanitizeRequiredText(input.projectRoot, 600, "projectRoot");
   const serviceEndpoint = sanitizeServiceEndpoint(input.serviceEndpoint);
+  const machineId = sanitizeShareMachineId(input.machineId);
   const current = normalizeSharingState(state);
   const share =
-    findShareForSession(current, owner.userId, sessionId) ??
-    createShare({ owner, projectRoot, serviceEndpoint, sessionId, now });
+    findShareForSession(current, owner.userId, sessionId, machineId, projectRoot) ??
+    createShare({ owner, projectRoot, serviceEndpoint, machineId, sessionId, now });
   if (serviceEndpoint) {
     share.serviceEndpoint = serviceEndpoint;
   }
+  if (machineId) {
+    share.machineId = machineId;
+  }
+  // The checkout the share names tracks the one the invite came from. Without
+  // this a moved or renamed checkout left the stored root behind, and because
+  // adoption of an unbound share requires the root to match, the next invite
+  // made a second share and stranded the first one's guests.
+  share.projectRoot = projectRoot;
 
   const token = randomBase64Url(INVITE_TOKEN_BYTES);
   const invite: ShareInviteRecord = {
@@ -347,6 +383,7 @@ function createShare(input: {
   owner: ShareActor;
   projectRoot: string;
   serviceEndpoint?: ShareServiceEndpoint;
+  machineId?: string;
   sessionId: string;
   now: string;
 }): SharedSessionRecord {
@@ -362,6 +399,7 @@ function createShare(input: {
     ownerUserId: owner.userId,
     projectRoot: input.projectRoot,
     serviceEndpoint: input.serviceEndpoint,
+    machineId: input.machineId,
     sessionId: input.sessionId,
     createdAt: input.now,
     updatedAt: input.now,
@@ -369,6 +407,11 @@ function createShare(input: {
     participants: { [owner.userId]: owner },
     invites: {},
   };
+}
+
+function sanitizeShareMachineId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && isValidMachineId(trimmed) ? trimmed : undefined;
 }
 
 function normalizeShare(share: SharedSessionRecord): SharedSessionRecord {
@@ -388,6 +431,7 @@ function normalizeShare(share: SharedSessionRecord): SharedSessionRecord {
   return {
     ...share,
     serviceEndpoint,
+    machineId: sanitizeShareMachineId(share.machineId),
     version: Number.isFinite(share.version) ? share.version : 1,
     participants: share.participants ?? {},
     invites,

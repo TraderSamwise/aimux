@@ -88,6 +88,8 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
         headers,
         (name, data) => dispatchPayload(name, data, onEvent, onError),
         onError ?? (() => {}),
+        // The address says which machine's loopback this is.
+        serviceEndpoint.machineId,
       );
     } catch (err) {
       onError?.(err instanceof Error ? err : new Error(String(err)));

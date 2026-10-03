@@ -1,4 +1,5 @@
 import { createStore } from "jotai";
+import { projectStateKey } from "@/lib/project-key";
 import { describe, expect, it } from "vitest";
 
 import type { DesktopState } from "@/lib/desktop-state";
@@ -114,70 +115,70 @@ describe("project lifecycle transition projection", () => {
 
   it("settles agent transitions only after desktop-state reaches the target state", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state: desktopState({
         sessions: [{ id: "agent-1", label: "claude", status: "offline" }],
       }),
     });
     store.set(recordProjectLifecycleTransitionAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       transition: transition("agent.resume", "agent-1"),
       label: "claude",
       tool: "claude",
     });
 
-    expect(store.get(desktopStateFamily(projectPath))?.sessions[0]).toMatchObject({
+    expect(store.get(desktopStateFamily(stateKey))?.sessions[0]).toMatchObject({
       id: "agent-1",
       status: "waiting",
       pendingAction: "starting",
     });
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state: desktopState({
         sessions: [{ id: "agent-1", label: "claude", status: "offline" }],
       }),
     });
 
-    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(1);
+    expect(store.get(projectLifecycleTransitionsFamily(stateKey))).toHaveLength(1);
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state: desktopState({
         sessions: [{ id: "agent-1", label: "claude", status: "running" }],
       }),
     });
 
-    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(0);
-    expect(store.get(desktopStateFamily(projectPath))?.sessions[0]).toMatchObject({
+    expect(store.get(projectLifecycleTransitionsFamily(stateKey))).toHaveLength(0);
+    expect(store.get(desktopStateFamily(stateKey))?.sessions[0]).toMatchObject({
       id: "agent-1",
       status: "running",
     });
-    expect(store.get(desktopStateFamily(projectPath))?.sessions[0]?.pendingAction).toBeUndefined();
+    expect(store.get(desktopStateFamily(stateKey))?.sessions[0]?.pendingAction).toBeUndefined();
   });
 
   it("records succeeded transitions until fresh desktop-state proves settlement", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state: desktopState({
         sessions: [{ id: "agent-1", label: "claude", status: "offline" }],
       }),
     });
     store.set(recordProjectLifecycleTransitionAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       transition: transition("agent.resume", "agent-1", "agent", undefined, "succeeded"),
       label: "claude",
       tool: "claude",
     });
 
-    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(1);
-    expect(store.get(desktopStateFamily(projectPath))?.sessions[0]).toMatchObject({
+    expect(store.get(projectLifecycleTransitionsFamily(stateKey))).toHaveLength(1);
+    expect(store.get(desktopStateFamily(stateKey))?.sessions[0]).toMatchObject({
       id: "agent-1",
       pendingAction: "starting",
     });
@@ -185,22 +186,22 @@ describe("project lifecycle transition projection", () => {
 
   it("clears an existing transition when the operation fails", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
 
     store.set(recordProjectLifecycleTransitionAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       transition: transition("agent.resume", "agent-1"),
       label: "claude",
       tool: "claude",
     });
     store.set(recordProjectLifecycleTransitionAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       transition: transition("agent.resume", "agent-1", "agent", undefined, "failed"),
       label: "claude",
       tool: "claude",
     });
 
-    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(0);
+    expect(store.get(projectLifecycleTransitionsFamily(stateKey))).toHaveLength(0);
   });
 
   it("updates agent rename labels optimistically", () => {
@@ -264,34 +265,34 @@ describe("project lifecycle transition projection", () => {
 
   it("keeps removed worktrees marked while dependent rows are still settling", () => {
     const store = createStore();
-    const projectPath = "/repo";
+    const stateKey = projectStateKey({ path: "/repo" });
     const path = "/repo/.aimux/worktrees/old";
 
     store.set(recordProjectLifecycleTransitionAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       transition: transition("worktree.remove", "old", "worktree", path, "settling"),
       worktreePath: path,
     });
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state: desktopState({
         sessions: [{ id: "agent-1", label: "codex", status: "offline", worktreePath: path }],
         worktrees: [],
       }),
     });
 
-    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(1);
-    expect(store.get(desktopStateFamily(projectPath))?.worktrees).toEqual([
+    expect(store.get(projectLifecycleTransitionsFamily(stateKey))).toHaveLength(1);
+    expect(store.get(desktopStateFamily(stateKey))?.worktrees).toEqual([
       { name: "old", path, branch: "old", removing: true },
     ]);
 
     store.set(applyDesktopStateSuccessAtom, {
-      projectPath,
+      projectStateKey: stateKey,
       state: desktopState({ sessions: [], services: [], worktrees: [] }),
     });
 
-    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(0);
-    expect(store.get(desktopStateFamily(projectPath))?.worktrees ?? []).toEqual([]);
+    expect(store.get(projectLifecycleTransitionsFamily(stateKey))).toHaveLength(0);
+    expect(store.get(desktopStateFamily(stateKey))?.worktrees ?? []).toEqual([]);
   });
 
   it("projects worktree resurrect transitions like worktree creation", () => {

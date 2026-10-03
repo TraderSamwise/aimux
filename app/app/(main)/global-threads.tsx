@@ -22,6 +22,7 @@ import {
   type GlobalThreadRow,
 } from "@/stores/globalInbox";
 import { projectsAtom, selectProjectAtom } from "@/stores/projects";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 function sortThreadRows(a: GlobalThreadRow, b: GlobalThreadRow): number {
   const aTime = Date.parse(a.thread.latestMessage?.ts ?? "");
@@ -53,7 +54,7 @@ export default function GlobalThreadsScreen() {
       onlineProjects
         .map((project) => {
           const endpoint = getProjectServiceEndpoint(project);
-          return `${project.path}:${endpoint?.host ?? ""}:${endpoint?.port ?? ""}`;
+          return `${project.path}:${serviceEndpointKey(endpoint) ?? ""}`;
         })
         .join("|"),
     [onlineProjects],
@@ -89,6 +90,7 @@ export default function GlobalThreadsScreen() {
           return threads.map((thread) => ({
             projectName: project.name,
             projectPath: project.path,
+            machineId: project.machineId,
             thread,
           }));
         }),
@@ -181,11 +183,16 @@ export default function GlobalThreadsScreen() {
       ) : (
         rows.map((row) => (
           <Pressable
-            key={`${row.projectPath}:${row.thread.thread.id}`}
+            key={`${row.machineId ?? ""}:${row.projectPath}:${row.thread.thread.id}`}
             onPress={() => {
-              selectProject(row.projectPath);
+              selectProject(
+                row.machineId
+                  ? { machineId: row.machineId, path: row.projectPath }
+                  : { path: row.projectPath },
+              );
               const webHref = buildViewPath("/threads", {
                 project: row.projectPath,
+                machine: row.machineId,
                 threadId: row.thread.thread.id,
               });
               if (Platform.OS === "web" && typeof window !== "undefined") {
@@ -195,6 +202,7 @@ export default function GlobalThreadsScreen() {
               router.navigate(
                 buildViewHref("/threads", {
                   project: row.projectPath,
+                  machine: row.machineId,
                   threadId: row.thread.thread.id,
                 }),
               );

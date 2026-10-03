@@ -1,4 +1,5 @@
 import { createStore } from "jotai";
+import { agentStateKey, projectStateKey } from "@/lib/project-key";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -24,37 +25,42 @@ describe("chat output store", () => {
   it("applies live-pane snapshots to the same state used by event streaming", () => {
     const store = createStore();
 
-    store.set(ingestEventAtom, { type: "error", sessionId: "agent-1", error: "stream lost" });
+    store.set(ingestEventAtom, {
+      projectStateKey: TEST_PROJECT_KEY,
+      event: { type: "error", sessionId: "agent-1", error: "stream lost" },
+    });
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       output: "hello",
       outputAnsi: undefined,
       messages: [],
     });
 
-    expect(store.get(outputBufferFamily("agent-1"))).toBe("hello");
-    expect(store.get(lastErrorFamily("agent-1"))).toBeNull();
+    expect(store.get(outputBufferFamily(agentKey("agent-1")))).toBe("hello");
+    expect(store.get(lastErrorFamily(agentKey("agent-1")))).toBeNull();
   });
 
   it("surfaces tmux-unavailable snapshots as transcript errors", () => {
     const store = createStore();
 
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       tmuxUnavailable: { ok: false, error: "tmux capture-pane timed out after 2s" },
     });
 
-    expect(store.get(lastErrorFamily("agent-1"))).toBe("tmux capture-pane timed out after 2s");
+    expect(store.get(lastErrorFamily(agentKey("agent-1")))).toBe(
+      "tmux capture-pane timed out after 2s",
+    );
 
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       output: "",
       outputAnsi: undefined,
       messages: [],
     });
 
-    expect(store.get(lastErrorFamily("agent-1"))).toBeNull();
+    expect(store.get(lastErrorFamily(agentKey("agent-1")))).toBeNull();
   });
 
   it("keeps a local interrupt visible through stale running snapshots", () => {
@@ -62,16 +68,16 @@ describe("chat output store", () => {
     vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
     const store = createStore();
 
-    store.set(markOutputInterruptedAtom, "agent-1");
+    store.set(markOutputInterruptedAtom, agentKey("agent-1"));
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       activity: "running",
       activityText: "Working...",
     });
 
-    expect(store.get(activityFamily("agent-1"))).toBe("interrupted");
-    expect(store.get(activityTextFamily("agent-1"))).toBe("");
+    expect(store.get(activityFamily(agentKey("agent-1")))).toBe("interrupted");
+    expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("");
   });
 
   it("keeps a local interrupt visible through full snapshots that omit activity", () => {
@@ -79,16 +85,16 @@ describe("chat output store", () => {
     vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
     const store = createStore();
 
-    store.set(markOutputInterruptedAtom, "agent-1");
+    store.set(markOutputInterruptedAtom, agentKey("agent-1"));
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       output: "stale output",
       outputAnsi: undefined,
     });
 
-    expect(store.get(outputBufferFamily("agent-1"))).toBe("stale output");
-    expect(store.get(activityFamily("agent-1"))).toBe("interrupted");
-    expect(store.get(activityTextFamily("agent-1"))).toBe("");
+    expect(store.get(outputBufferFamily(agentKey("agent-1")))).toBe("stale output");
+    expect(store.get(activityFamily(agentKey("agent-1")))).toBe("interrupted");
+    expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("");
   });
 
   it("accepts explicit non-running state during the local interrupt hold", () => {
@@ -96,16 +102,16 @@ describe("chat output store", () => {
     vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
     const store = createStore();
 
-    store.set(markOutputInterruptedAtom, "agent-1");
+    store.set(markOutputInterruptedAtom, agentKey("agent-1"));
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       activity: "done",
       activityText: "",
     });
 
-    expect(store.get(activityFamily("agent-1"))).toBe("done");
-    expect(store.get(activityTextFamily("agent-1"))).toBe("");
+    expect(store.get(activityFamily(agentKey("agent-1")))).toBe("done");
+    expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("");
   });
 
   it("accepts running snapshots after the local interrupt hold is cleared", () => {
@@ -113,17 +119,17 @@ describe("chat output store", () => {
     vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
     const store = createStore();
 
-    store.set(markOutputInterruptedAtom, "agent-1");
-    store.set(clearLocalInterruptHoldAtom, "agent-1");
+    store.set(markOutputInterruptedAtom, agentKey("agent-1"));
+    store.set(clearLocalInterruptHoldAtom, agentKey("agent-1"));
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       activity: "running",
       activityText: "Working...",
     });
 
-    expect(store.get(activityFamily("agent-1"))).toBe("running");
-    expect(store.get(activityTextFamily("agent-1"))).toBe("Working...");
+    expect(store.get(activityFamily(agentKey("agent-1")))).toBe("running");
+    expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("Working...");
   });
 
   it("accepts running snapshots after the local interrupt hold expires", () => {
@@ -131,17 +137,17 @@ describe("chat output store", () => {
     vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
     const store = createStore();
 
-    store.set(markOutputInterruptedAtom, "agent-1");
+    store.set(markOutputInterruptedAtom, agentKey("agent-1"));
     vi.advanceTimersByTime(5_001);
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       activity: "running",
       activityText: "Working...",
     });
 
-    expect(store.get(activityFamily("agent-1"))).toBe("running");
-    expect(store.get(activityTextFamily("agent-1"))).toBe("Working...");
+    expect(store.get(activityFamily(agentKey("agent-1")))).toBe("running");
+    expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("Working...");
   });
 });
 
@@ -157,166 +163,190 @@ describe("the projected transcript", () => {
   it("takes the messages the service projected", () => {
     const store = createStore();
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       output: "Published events: 21",
       outputAnsi: undefined,
       messages: [message],
     });
 
-    expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
+    expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([message]);
   });
 
   it("empties rather than going stale when a snapshot carries none", () => {
     const store = createStore();
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       output: "one",
       outputAnsi: undefined,
       messages: [message],
     });
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       output: "two",
       outputAnsi: undefined,
     });
 
-    expect(store.get(transcriptFamily("agent-1"))).toEqual([]);
+    expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([]);
   });
 
   it("keeps the coloured pane when the service sends one", () => {
     const store = createStore();
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: "\x1b[31mplain",
     });
 
-    expect(store.get(outputAnsiFamily("agent-1"))).toBe("\x1b[31mplain");
-    expect(store.get(outputBufferFamily("agent-1"))).toBe("plain");
+    expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("\x1b[31mplain");
+    expect(store.get(outputBufferFamily(agentKey("agent-1")))).toBe("plain");
   });
 
   it("falls back to the uncoloured pane against a service too old to send one", () => {
     const store = createStore();
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: undefined,
     });
 
-    expect(store.get(outputAnsiFamily("agent-1"))).toBe("plain");
+    expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("plain");
   });
 
   it("does not clear terminal buffers when a chat-only snapshot omits output", () => {
     const store = createStore();
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: "\x1b[32mplain",
     });
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       messages: [message],
     });
 
-    expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
-    expect(store.get(outputBufferFamily("agent-1"))).toBe("plain");
-    expect(store.get(outputAnsiFamily("agent-1"))).toBe("\x1b[32mplain");
-    expect(store.get(outputAvailableFamily("agent-1"))).toBe(true);
+    expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([message]);
+    expect(store.get(outputBufferFamily(agentKey("agent-1")))).toBe("plain");
+    expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("\x1b[32mplain");
+    expect(store.get(outputAvailableFamily(agentKey("agent-1")))).toBe(true);
   });
 
   it("takes them from a stream event too", () => {
     const store = createStore();
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      output: "Published events: 21",
-      outputAnsi: "\x1b[32mPublished events: 21",
-      startLine: -120,
-      messages: [message],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        output: "Published events: 21",
+        outputAnsi: "\x1b[32mPublished events: 21",
+        startLine: -120,
+        messages: [message],
+      },
     });
 
-    expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
-    expect(store.get(outputAnsiFamily("agent-1"))).toBe("\x1b[32mPublished events: 21");
+    expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([message]);
+    expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("\x1b[32mPublished events: 21");
   });
 
   it("does not clear terminal buffers when a chat-only stream event omits output", () => {
     const store = createStore();
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      output: "plain",
-      outputAnsi: "\x1b[32mplain",
-      startLine: -120,
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        output: "plain",
+        outputAnsi: "\x1b[32mplain",
+        startLine: -120,
+      },
     });
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -120,
-      messages: [message],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -120,
+        messages: [message],
+      },
     });
 
-    expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
-    expect(store.get(outputBufferFamily("agent-1"))).toBe("plain");
-    expect(store.get(outputAnsiFamily("agent-1"))).toBe("\x1b[32mplain");
-    expect(store.get(outputAvailableFamily("agent-1"))).toBe(true);
+    expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([message]);
+    expect(store.get(outputBufferFamily(agentKey("agent-1")))).toBe("plain");
+    expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("\x1b[32mplain");
+    expect(store.get(outputAvailableFamily(agentKey("agent-1")))).toBe(true);
   });
 
   it("records terminal availability from a chat-only stream event", () => {
     const store = createStore();
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -120,
-      outputAvailable: true,
-      messages: [message],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -120,
+        outputAvailable: true,
+        messages: [message],
+      },
     });
 
-    expect(store.get(transcriptFamily("agent-1"))).toEqual([message]);
-    expect(store.get(outputBufferFamily("agent-1"))).toBe("");
-    expect(store.get(outputAvailableFamily("agent-1"))).toBe(true);
+    expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([message]);
+    expect(store.get(outputBufferFamily(agentKey("agent-1")))).toBe("");
+    expect(store.get(outputAvailableFamily(agentKey("agent-1")))).toBe(true);
   });
 
   it("keeps activity text when a sparse stream event omits it", () => {
     const store = createStore();
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      output: "work",
-      outputAnsi: undefined,
-      startLine: -120,
-      activity: "running",
-      activityText: "Working... (3s)",
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        output: "work",
+        outputAnsi: undefined,
+        startLine: -120,
+        activity: "running",
+        activityText: "Working... (3s)",
+      },
     });
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -120,
-      messages: [message],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -120,
+        messages: [message],
+      },
     });
 
-    expect(store.get(activityTextFamily("agent-1"))).toBe("Working... (3s)");
+    expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("Working... (3s)");
   });
 
   it("clears activity text when a stream event explicitly sends empty text", () => {
     const store = createStore();
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      output: "work",
-      outputAnsi: undefined,
-      startLine: -120,
-      activity: "running",
-      activityText: "Working... (3s)",
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        output: "work",
+        outputAnsi: undefined,
+        startLine: -120,
+        activity: "running",
+        activityText: "Working... (3s)",
+      },
     });
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -120,
-      activityText: "",
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -120,
+        activityText: "",
+      },
     });
 
-    expect(store.get(activityTextFamily("agent-1"))).toBe("");
+    expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("");
   });
 
   it("keeps an expanded transcript window when a smaller snapshot arrives", () => {
@@ -342,22 +372,22 @@ describe("the projected transcript", () => {
     };
 
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       outputAvailable: true,
       startLine: -640,
       messages: [older, newer],
     });
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       outputAvailable: true,
       startLine: -160,
       messages: [newer, newest],
     });
 
-    expect(store.get(transcriptStartLineFamily("agent-1"))).toBe(-640);
-    expect(store.get(transcriptFamily("agent-1")).map((item) => item.id)).toEqual([
+    expect(store.get(transcriptStartLineFamily(agentKey("agent-1")))).toBe(-640);
+    expect(store.get(transcriptFamily(agentKey("agent-1"))).map((item) => item.id)).toEqual([
       "assistant:older",
       "assistant:newer",
       "assistant:newest",
@@ -393,21 +423,21 @@ describe("the projected transcript", () => {
     };
 
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       outputAvailable: true,
       startLine: -640,
       messages: [repeatedA, repeatedB],
     });
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       outputAvailable: true,
       startLine: -160,
       messages: [smallerWindowRepeatedB, newest],
     });
 
-    expect(store.get(transcriptFamily("agent-1")).map((item) => item.id)).toEqual([
+    expect(store.get(transcriptFamily(agentKey("agent-1"))).map((item) => item.id)).toEqual([
       "assistant:same",
       "assistant:same",
       "assistant:newest",
@@ -456,25 +486,34 @@ describe("the projected transcript", () => {
     };
 
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -160,
-      messages: [summary, connectivityProbe, prompt],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -160,
+        messages: [summary, connectivityProbe, prompt],
+      },
     });
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -160,
-      messages: [summary, differentToolCall, prompt],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -160,
+        messages: [summary, differentToolCall, prompt],
+      },
     });
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -160,
-      messages: [summary, prompt],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -160,
+        messages: [summary, prompt],
+      },
     });
 
-    expect(store.get(transcriptFamily("agent-1")).map((item) => item.text)).toEqual([
+    expect(store.get(transcriptFamily(agentKey("agent-1"))).map((item) => item.text)).toEqual([
       "Compact summary",
       'Searching for 2 patterns\ncurl /supabase {"query":"select 1;"}',
       "next prompt after compact",
@@ -515,19 +554,25 @@ describe("the projected transcript", () => {
     };
 
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -160,
-      messages: [prompt, partial],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -160,
+        messages: [prompt, partial],
+      },
     });
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -160,
-      messages: [prompt, completed, nextPrompt],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -160,
+        messages: [prompt, completed, nextPrompt],
+      },
     });
 
-    expect(store.get(transcriptFamily("agent-1")).map((item) => item.text)).toEqual([
+    expect(store.get(transcriptFamily(agentKey("agent-1"))).map((item) => item.text)).toEqual([
       "run the query",
       "Searching for 2 patterns...\nDone.",
       "next prompt",
@@ -550,38 +595,52 @@ describe("the projected transcript", () => {
     };
 
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -160,
-      messages: [tailOnly],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -160,
+        messages: [tailOnly],
+      },
     });
     store.set(ingestEventAtom, {
-      type: "agent_output",
-      sessionId: "agent-1",
-      startLine: -640,
-      messages: [wider],
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: -640,
+        messages: [wider],
+      },
     });
 
-    expect(store.get(transcriptStartLineFamily("agent-1"))).toBe(-640);
-    expect(store.get(transcriptFamily("agent-1"))).toEqual([wider]);
+    expect(store.get(transcriptStartLineFamily(agentKey("agent-1")))).toBe(-640);
+    expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([wider]);
   });
 
   it("clears stale activity text when a snapshot explicitly sends an empty label", () => {
     const store = createStore();
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       activity: "running",
       activityText: "Perambulating...",
     });
 
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       activity: "interrupted",
       activityText: "",
     });
 
-    expect(store.get(activityTextFamily("agent-1"))).toBe("");
+    expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("");
   });
 });
+
+// One project on one machine, so these tests key an agent the way the app does.
+const TEST_PROJECT_KEY = projectStateKey({ machineId: "mbp", path: "/repo" });
+
+// One project on one machine, so these tests key an agent the way the app does.
+function agentKey(sessionId: string) {
+  return agentStateKey(TEST_PROJECT_KEY, sessionId);
+}

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -29,6 +30,7 @@ import {
 } from "@/stores/coordination";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { selectedSessionIdAtom } from "@/stores/projects";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 function reachabilityLabel(reachability: CoordinationReachability): string {
   switch (reachability) {
@@ -122,10 +124,14 @@ function WorklistSection({
 export default function CoordinationScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
+  const { project, projectPath, machineId, projectRef, endpoint, projectLoading } =
+    useRouteProject();
+  // Keyed by the pair: two machines' copies of one checkout are two
+  // projects, and sharing an atom between them bleeds one host into the
+  // other.
+  const projectKeyForState = projectStateKey(projectRef);
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("coordination-worklist"));
-  const resource = useAtomValue(coordinationWorklistResourceFamily(projectPathKey));
+  const resource = useAtomValue(coordinationWorklistResourceFamily(projectKeyForState));
   const beginCoordinationWorklistRefresh = useSetAtom(beginCoordinationWorklistRefreshAtom);
   const applyCoordinationWorklistSuccess = useSetAtom(applyCoordinationWorklistSuccessAtom);
   const applyCoordinationWorklistFailure = useSetAtom(applyCoordinationWorklistFailureAtom);
@@ -134,15 +140,15 @@ export default function CoordinationScreen() {
   const { getToken } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const endpointRef = useRef(endpoint);
   const endpointKeyRef = useRef(endpointKey);
-  const projectPathRef = useRef(projectPathKey);
+  const projectPathRef = useRef(projectKeyForState);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
   const refreshGenerationRef = useRef(0);
   const requestScopeRef = useRef<CoordinationWorklistRequestScope>({
-    projectPath: projectPathKey,
+    projectStateKey: projectKeyForState,
     endpointKey,
     generation: 0,
   });
@@ -155,35 +161,35 @@ export default function CoordinationScreen() {
   useEffect(() => {
     refreshGenerationRef.current += 1;
     endpointKeyRef.current = endpointKey;
-    projectPathRef.current = projectPathKey;
+    projectPathRef.current = projectKeyForState;
     requestScopeRef.current = {
-      projectPath: projectPathKey,
+      projectStateKey: projectKeyForState,
       endpointKey,
       generation: refreshGenerationRef.current,
     };
-  }, [endpointKey, projectPathKey]);
+  }, [endpointKey, projectKeyForState]);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentProjectPath = projectPathRef.current;
+    const currentProjectStateKey = projectPathRef.current;
     const requestScope = {
-      projectPath: currentProjectPath,
+      projectStateKey: currentProjectStateKey,
       endpointKey: endpointKeyRef.current,
       generation: refreshGenerationRef.current,
     };
     if (!currentEndpoint) {
-      clearCoordinationWorklistResource(currentProjectPath);
+      clearCoordinationWorklistResource(currentProjectStateKey);
       return;
     }
-    beginCoordinationWorklistRefresh(currentProjectPath);
+    beginCoordinationWorklistRefresh(currentProjectStateKey);
     try {
       const token = await getTokenRef.current();
       const response = await getCoordinationWorklist(currentEndpoint, "user", { token });
       if (seq !== refreshSeqRef.current) return;
       if (!isCurrentCoordinationWorklistRequest(requestScope, requestScopeRef.current)) return;
       applyCoordinationWorklistSuccess({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         worklist: {
           items: response.worklist.items,
           fetchedAt: new Date().toISOString(),
@@ -193,7 +199,7 @@ export default function CoordinationScreen() {
       if (seq !== refreshSeqRef.current) return;
       if (!isCurrentCoordinationWorklistRequest(requestScope, requestScopeRef.current)) return;
       applyCoordinationWorklistFailure({
-        projectPath: currentProjectPath,
+        projectStateKey: currentProjectStateKey,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -210,7 +216,7 @@ export default function CoordinationScreen() {
       void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, projectPathKey, refreshNonce, serializedRefresh]);
+  }, [endpointKey, projectKeyForState, refreshNonce, serializedRefresh]);
 
   const visibleItems = useMemo(() => resource.value?.items ?? [], [resource.value?.items]);
   const visibleError = resource.error;
@@ -220,15 +226,17 @@ export default function CoordinationScreen() {
   function handlePressItem(item: CoordinationWorklistItem) {
     if (item.sessionId) {
       selectSession(item.sessionId);
-      router.push(detailHrefForPath(pathname, "agent", item.sessionId, projectPath));
+      router.push(detailHrefForPath(pathname, "agent", item.sessionId, projectPath, machineId));
       return;
     }
     const threadId = threadIdFor(item);
     if (threadId) {
-      router.push(buildViewHref("/threads", { project: projectPath, threadId }));
+      router.push(
+        buildViewHref("/threads", { project: projectPath, machine: machineId, threadId }),
+      );
       return;
     }
-    router.push(buildViewHref("/notifications", { project: projectPath }));
+    router.push(buildViewHref("/notifications", { project: projectPath, machine: machineId }));
   }
 
   return (

@@ -27,3 +27,29 @@ describe("isTransientRequestError", () => {
     );
   });
 });
+
+describe("an error that enumerates what failed", () => {
+  // The all-machines-failed error joins each machine's own message, and any
+  // one of those can contain "failed to fetch". Matching on the text would
+  // file a whole fleet being unreachable as something to ignore.
+  it("is never transient, whatever the text says", () => {
+    expect(
+      isTransientRequestError(
+        Object.assign(new Error("No machine answered — sam-mbp: failed to fetch"), {
+          body: {
+            failures: [{ machineId: "mbp", machineName: "sam-mbp", error: "failed to fetch" }],
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("still treats a bare blip as transient", () => {
+    expect(isTransientRequestError(new Error("failed to fetch"))).toBe(true);
+    expect(
+      isTransientRequestError(
+        Object.assign(new Error("failed to fetch"), { body: { failures: [] } }),
+      ),
+    ).toBe(true);
+  });
+});

@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { projectStateKey as projectStateKeyOf, type ProjectStateKey } from "@/lib/project-key";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 import { Pressable, ScrollView, View } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -47,10 +49,10 @@ function Row({ label, value }: { label: string; value: string }) {
 export default function ServiceDetailScreen() {
   const params = useLocalSearchParams<{ serviceId?: string | string[] }>();
   const serviceId = singleRouteParam(params.serviceId);
-  const { projectPath, endpoint } = useRouteProject();
-  const stateProjectPath = projectPath ?? "";
-  const groups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
-  const desktopStateResource = useAtomValue(desktopStateResourceFamily(stateProjectPath));
+  const { projectPath, projectRef, endpoint } = useRouteProject();
+  const stateProjectKey = projectStateKeyOf(projectRef);
+  const groups = useAtomValue(worktreeGroupsFamily(stateProjectKey));
+  const desktopStateResource = useAtomValue(desktopStateResourceFamily(stateProjectKey));
   const kickDesktopStateRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const router = useRouter();
   const pathname = usePathname();
@@ -74,9 +76,7 @@ export default function ServiceDetailScreen() {
   }, [getToken]);
 
   const found = useMemo(() => findService(groups, serviceId), [groups, serviceId]);
-  const endpointHost = endpoint?.host ?? null;
-  const endpointPort = endpoint?.port ?? null;
-  const endpointKey = endpointHost && endpointPort ? `${endpointHost}:${endpointPort}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
 
   useEffect(() => {
     if (found || !endpointKey || !projectPath || !serviceId) {
@@ -117,7 +117,7 @@ export default function ServiceDetailScreen() {
           <ServiceDetailBody
             service={found.service}
             bucket={found.bucket}
-            projectPath={stateProjectPath}
+            projectStateKey={stateProjectKey}
             endpoint={endpoint}
             token={token}
             onRemoved={goBack}
@@ -131,14 +131,14 @@ export default function ServiceDetailScreen() {
 function ServiceDetailBody({
   service,
   bucket,
-  projectPath,
+  projectStateKey,
   endpoint,
   token,
   onRemoved,
 }: {
   service: DesktopService;
   bucket: WorktreeBucket;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   onRemoved: () => void;
@@ -171,7 +171,7 @@ function ServiceDetailBody({
         <View className="ml-3 mt-7">
           <ServiceActions
             service={service}
-            projectPath={projectPath}
+            projectStateKey={projectStateKey}
             endpoint={endpoint}
             token={token}
             onRemoved={onRemoved}

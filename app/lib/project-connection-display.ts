@@ -3,9 +3,15 @@ import type { DaemonProject } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { RelayStatus } from "@/lib/relay-transport";
 
-export function getProjectServiceEndpoint(project: DaemonProject | null | undefined) {
-  if (!project?.serviceAlive) return null;
-  return project.serviceEndpoint;
+// The endpoint is stamped with the machine the project came from, so a call
+// made with it reaches that host rather than whichever one the relay picks.
+export function getProjectServiceEndpoint(
+  project: DaemonProject | null | undefined,
+): ServiceEndpoint | null {
+  if (!project?.serviceAlive || !project.serviceEndpoint) return null;
+  return project.machineId
+    ? { ...project.serviceEndpoint, machineId: project.machineId }
+    : project.serviceEndpoint;
 }
 
 export function formatProjectEndpointLabel(

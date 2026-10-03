@@ -1,5 +1,16 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
+import {
+  MAX_MACHINES_PER_ROOM,
+  type MachineInfo,
+  machineFromConnectUrl,
+  machineFromTags,
+  machineNameTag,
+  machineTag,
+  resolveDaemonTarget,
+  resolveSharedDaemonTarget,
+  sharedHostOnline,
+} from "./machines.js";
 import { createHostedAttachment } from "./attachments.js";
 import { deliverNotificationPush, deliverSecurityAlert } from "./security-delivery.js";
 import { deliverShareInvite } from "./sharing-delivery.js";
@@ -37,6 +48,7 @@ import {
   getShareChatMode,
   listAcceptedShares,
   loadSharingState,
+  type SharingState,
   removeAcceptedShare,
   removeShareParticipant,
   revokeShareInvite,
@@ -62,12 +74,21 @@ const PENDING_REQUEST_TTL_MS = 60_000;
 
 interface ClientSocketAttachment {
   pendingRequests?: Record<string, PendingRequestAttachment>;
-  projectEventSubscriptions?: Record<string, string>;
+  // Written by an older relay as a bare clientSubscriptionId. Such an entry
+  // carries no machine, so it cannot be routed and is failed on rehydration
+  // rather than sent to whichever daemon happens to be alone in the room.
+  projectEventSubscriptions?: Record<string, ProjectEventSubscriptionAttachment | string>;
 }
 
 interface PendingRequestAttachment {
   clientRequestId: string;
   expiresAt: number;
+  machineId?: string;
+}
+
+interface ProjectEventSubscriptionAttachment {
+  clientSubscriptionId: string;
+  machineId: string;
 }
 
 interface SharedClientAuth {
@@ -77,11 +98,20 @@ interface SharedClientAuth {
 }
 
 export class RelayObject extends DurableObject<Env> {
-  private daemonWs: WebSocket | null = null;
+  // One daemon per machine, keyed by machine id. This was a single socket, and
+  // that is what made connecting a second machine evict the first.
+  private daemonSockets = new Map<string, WebSocket>();
+  private daemonMachineNames = new Map<string, string>();
   private clientSockets = new Set<WebSocket>();
   private clientDeviceIds = new Map<WebSocket, string>();
-  private pendingRequests = new Map<string, { client: WebSocket; clientRequestId: string; expiresAt: number }>();
-  private eventSubscriptions = new Map<string, { client: WebSocket; clientSubscriptionId: string }>();
+  private pendingRequests = new Map<
+    string,
+    { client: WebSocket; clientRequestId: string; expiresAt: number; machineId: string }
+  >();
+  private eventSubscriptions = new Map<
+    string,
+    { client: WebSocket; clientSubscriptionId: string; machineId: string }
+  >();
   private requestCounter = 0;
 
   async fetch(request: Request): Promise<Response> {
@@ -203,37 +233,55 @@ export class RelayObject extends DurableObject<Env> {
         }
       }
     }
+    const daemonOwnerUserId = role === "daemon" ? request.headers.get("X-Aimux-User-Id")?.trim() : undefined;
+    const daemonMachine = role === "daemon" ? machineFromConnectUrl(url) : undefined;
+    if (
+      daemonMachine &&
+      !this.daemonSockets.has(daemonMachine.id) &&
+      this.daemonSockets.size >= MAX_MACHINES_PER_ROOM
+    ) {
+      return new Response(`This account already has ${MAX_MACHINES_PER_ROOM} machines connected to the relay.`, {
+        status: 503,
+      });
+    }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-
-    const daemonOwnerUserId = role === "daemon" ? request.headers.get("X-Aimux-User-Id")?.trim() : undefined;
     this.ctx.acceptWebSocket(
       server,
       clientDevice
         ? [role, `device:${clientDevice.deviceId}`, ...sharedClientTags]
-        : daemonOwnerUserId
-          ? [role, `user:${daemonOwnerUserId}`]
+        : daemonMachine
+          ? [
+              role,
+              ...(daemonOwnerUserId ? [`user:${daemonOwnerUserId}`] : []),
+              machineTag(daemonMachine.id),
+              machineNameTag(daemonMachine.name),
+            ]
           : [role],
     );
 
-    if (role === "daemon") {
+    if (daemonMachine) {
       this.rehydrateSockets(server);
-      if (this.daemonWs) {
-        this.failPendingRequests("Daemon connection replaced", 502);
-        this.failProjectEventSubscriptions("Daemon connection replaced", 502);
+      // Only this machine's daemon is replaced. A daemon on another machine is
+      // not a stale connection, it is the other machine.
+      const replaced = this.daemonSockets.get(daemonMachine.id);
+      if (replaced) {
+        this.failPendingRequests("Daemon connection replaced", 502, daemonMachine.id);
+        this.failProjectEventSubscriptions("Daemon connection replaced", 502, daemonMachine.id);
         try {
-          this.send(this.daemonWs, { type: "error", message: "Replaced by new daemon connection" });
-          this.daemonWs.close(1000, "Replaced");
+          this.send(replaced, { type: "error", message: "Replaced by new daemon connection" });
+          replaced.close(1000, "Replaced");
         } catch {}
       }
-      this.daemonWs = server;
+      this.daemonSockets.set(daemonMachine.id, server);
+      this.daemonMachineNames.set(daemonMachine.id, daemonMachine.name);
       this.send(server, { type: "connected", role: "daemon" });
-      this.broadcastToClients({ type: "daemon_status", online: true });
+      await this.broadcastMachineStatus();
     } else {
       this.clientSockets.add(server);
       if (clientDevice) this.clientDeviceIds.set(server, clientDevice.deviceId);
       this.send(server, { type: "connected", role: "client" });
-      this.send(server, { type: "daemon_status", online: this.daemonWs !== null });
+      await this.sendMachineStatus(server);
       await this.recordClientConnected(request, server, clientDevice!, sharedClientAuth, clientDeviceProof);
     }
 
@@ -274,23 +322,39 @@ export class RelayObject extends DurableObject<Env> {
     }
 
     if (isDaemon && parsed.type === "project_event") {
-      this.forwardProjectEvent(parsed);
+      this.forwardProjectEvent(parsed, machineFromTags(tags).id);
       return;
     }
 
     if (isDaemon && (parsed.type === "project_events_subscribed" || parsed.type === "project_events_error")) {
-      this.forwardProjectEventControl(parsed);
+      this.forwardProjectEventControl(parsed, machineFromTags(tags).id);
       return;
     }
 
     if (isDaemon && parsed.type === "response") {
       this.sweepExpiredPending();
       const pending = this.pendingRequests.get(parsed.id);
+      // A daemon may only answer its own machine's request. Without this any
+      // machine in the room could reply to another machine's request id.
+      if (pending && pending.machineId !== machineFromTags(tags).id) {
+        this.reportUnmatchedDaemonResponse(ws, parsed.id);
+        return;
+      }
       if (pending) {
         this.pendingRequests.delete(parsed.id);
         this.detachClientPendingRequest(pending.client, parsed.id);
         try {
-          pending.client.send(JSON.stringify({ ...parsed, id: pending.clientRequestId }));
+          // Which machine answered, so a client that asked before it knew the
+          // machine list does not have to guess -- and so `/projects` results
+          // are stamped on the first poll rather than a poll later, which was
+          // remounting the chat view seconds after it opened.
+          //
+          // Not sent to a guest: a share names one host and must not become a
+          // window onto the rest of the account.
+          const answered = isSharedClientSocket(this.ctx.getTags(pending.client))
+            ? {}
+            : { machineId: pending.machineId };
+          pending.client.send(JSON.stringify({ ...parsed, ...answered, id: pending.clientRequestId }));
         } catch {
           // client has gone away — drop silently
         }
@@ -328,34 +392,39 @@ export class RelayObject extends DurableObject<Env> {
         });
         return;
       }
-      if (this.daemonWs) {
-        const relayRequestId = this.nextRelayRequestId();
-        const expiresAt = Date.now() + PENDING_REQUEST_TTL_MS;
-        this.pendingRequests.set(relayRequestId, {
-          client: ws,
-          clientRequestId: parsed.id,
-          expiresAt,
-        });
-        this.attachClientPendingRequest(ws, relayRequestId, parsed.id, expiresAt);
-        const daemonMessage = JSON.stringify({ ...parsed, ...clientResult.requestPatch, id: relayRequestId });
-        try {
-          this.daemonWs.send(daemonMessage);
-        } catch {
-          this.pendingRequests.delete(relayRequestId);
-          this.detachClientPendingRequest(ws, relayRequestId);
-          this.send(ws, {
-            id: parsed.id,
-            type: "response",
-            status: 502,
-            body: { ok: false, error: "Daemon connection lost" },
-          });
-        }
-      } else {
+      const target = clientResult.share
+        ? resolveSharedDaemonTarget(this.onlineMachines(), clientResult.share.machineId)
+        : resolveDaemonTarget(this.onlineMachines(), parsed.machineId);
+      if (!target.ok) {
         this.send(ws, {
           id: parsed.id,
           type: "response",
-          status: 503,
-          body: { ok: false, error: "Daemon not connected" },
+          status: target.status,
+          body: { ok: false, error: target.error, machines: target.machines },
+        });
+        return;
+      }
+      const daemon = this.daemonSockets.get(target.machineId)!;
+      const relayRequestId = this.nextRelayRequestId();
+      const expiresAt = Date.now() + PENDING_REQUEST_TTL_MS;
+      this.pendingRequests.set(relayRequestId, {
+        client: ws,
+        clientRequestId: parsed.id,
+        expiresAt,
+        machineId: target.machineId,
+      });
+      this.attachClientPendingRequest(ws, relayRequestId, parsed.id, expiresAt, target.machineId);
+      const daemonMessage = JSON.stringify({ ...parsed, ...clientResult.requestPatch, id: relayRequestId });
+      try {
+        daemon.send(daemonMessage);
+      } catch {
+        this.pendingRequests.delete(relayRequestId);
+        this.detachClientPendingRequest(ws, relayRequestId);
+        this.send(ws, {
+          id: parsed.id,
+          type: "response",
+          status: 502,
+          body: { ok: false, error: "Daemon connection lost" },
         });
       }
     }
@@ -394,21 +463,30 @@ export class RelayObject extends DurableObject<Env> {
       });
       return;
     }
-    if (!this.daemonWs) {
+    const target = clientResult.share
+      ? resolveSharedDaemonTarget(this.onlineMachines(), clientResult.share.machineId)
+      : resolveDaemonTarget(this.onlineMachines(), message.machineId);
+    if (!target.ok) {
       this.send(ws, {
         id: message.id,
         type: "project_events_error",
-        status: 503,
-        message: "Daemon not connected",
+        status: target.status,
+        message: target.error,
+        machines: target.machines,
       });
       return;
     }
+    const daemon = this.daemonSockets.get(target.machineId)!;
 
     const relaySubscriptionId = this.nextRelayRequestId();
-    this.eventSubscriptions.set(relaySubscriptionId, { client: ws, clientSubscriptionId: message.id });
-    this.attachClientProjectEventSubscription(ws, relaySubscriptionId, message.id);
+    this.eventSubscriptions.set(relaySubscriptionId, {
+      client: ws,
+      clientSubscriptionId: message.id,
+      machineId: target.machineId,
+    });
+    this.attachClientProjectEventSubscription(ws, relaySubscriptionId, message.id, target.machineId);
     try {
-      this.daemonWs.send(
+      daemon.send(
         JSON.stringify({
           id: relaySubscriptionId,
           type: "project_events_subscribe",
@@ -433,27 +511,31 @@ export class RelayObject extends DurableObject<Env> {
       if (entry.client !== ws || entry.clientSubscriptionId !== clientSubscriptionId) continue;
       this.eventSubscriptions.delete(relaySubscriptionId);
       this.detachClientProjectEventSubscription(ws, relaySubscriptionId);
-      this.sendDaemonProjectEventsUnsubscribe(relaySubscriptionId);
+      this.sendDaemonProjectEventsUnsubscribe(relaySubscriptionId, entry.machineId);
     }
   }
 
-  private forwardProjectEvent(message: Extract<RelayMessage, { type: "project_event" }>): void {
+  private forwardProjectEvent(
+    message: Extract<RelayMessage, { type: "project_event" }>,
+    senderMachineId: string,
+  ): void {
     const subscription = this.eventSubscriptions.get(message.id);
-    if (!subscription) return;
+    if (!subscription || subscription.machineId !== senderMachineId) return;
     try {
       subscription.client.send(JSON.stringify({ ...message, id: subscription.clientSubscriptionId }));
     } catch {
       this.eventSubscriptions.delete(message.id);
       this.detachClientProjectEventSubscription(subscription.client, message.id);
-      this.sendDaemonProjectEventsUnsubscribe(message.id);
+      this.sendDaemonProjectEventsUnsubscribe(message.id, subscription.machineId);
     }
   }
 
   private forwardProjectEventControl(
     message: Extract<RelayMessage, { type: "project_events_subscribed" | "project_events_error" }>,
+    senderMachineId: string,
   ): void {
     const subscription = this.eventSubscriptions.get(message.id);
-    if (!subscription) return;
+    if (!subscription || subscription.machineId !== senderMachineId) return;
     if (message.type === "project_events_error") {
       this.eventSubscriptions.delete(message.id);
       this.detachClientProjectEventSubscription(subscription.client, message.id);
@@ -463,7 +545,7 @@ export class RelayObject extends DurableObject<Env> {
     } catch {
       this.eventSubscriptions.delete(message.id);
       this.detachClientProjectEventSubscription(subscription.client, message.id);
-      this.sendDaemonProjectEventsUnsubscribe(message.id);
+      this.sendDaemonProjectEventsUnsubscribe(message.id, subscription.machineId);
     }
   }
 
@@ -485,6 +567,9 @@ export class RelayObject extends DurableObject<Env> {
         sessionId: notification.sessionId,
         projectId: notification.projectId,
         projectRoot: notification.projectRoot,
+        // From the socket's own tags, not from the frame: which machine sent
+        // this is not something the sender gets to claim.
+        machineId: machineFromTags(tags).id,
         dedupeKey: notification.dedupeKey,
       });
     } catch (error) {
@@ -554,11 +639,11 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    this.removeSocket(ws);
+    await this.removeSocket(ws);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    this.removeSocket(ws);
+    await this.removeSocket(ws);
   }
 
   async alarm(): Promise<void> {
@@ -571,7 +656,7 @@ export class RelayObject extends DurableObject<Env> {
       try {
         this.send(ws, { type: "ping" });
       } catch {
-        this.removeSocket(ws);
+        await this.removeSocket(ws);
       }
     }
     if (allSockets.length > 0 || this.pendingRequests.size > 0) {
@@ -579,21 +664,34 @@ export class RelayObject extends DurableObject<Env> {
     }
   }
 
-  private removeSocket(ws: WebSocket): void {
+  private async removeSocket(ws: WebSocket): Promise<void> {
     const tags = this.ctx.getTags(ws);
-    const wasKnownActiveDaemon = tags.includes("daemon") && this.daemonWs === ws;
-    const closingProjectEventSubscriptionIds = tags.includes("client")
-      ? Object.keys(this.clientSocketAttachment(ws).projectEventSubscriptions ?? {})
+    const isDaemon = tags.includes("daemon");
+    const closingMachineId = isDaemon ? machineFromTags(tags).id : undefined;
+    // Read before rehydration, which clears every map. An evicted socket's late
+    // close must not tear down the replacement that already took its slot.
+    const wasRegisteredDaemon = closingMachineId ? this.daemonSockets.get(closingMachineId) === ws : false;
+    // From the attachment, not the live map: a close delivered after
+    // hibernation arrives before anything has rebuilt that map.
+    const closingProjectEventSubscriptions = tags.includes("client")
+      ? Object.entries(this.clientSocketAttachment(ws).projectEventSubscriptions ?? {}).map(([id, stored]) => ({
+          id,
+          machineId: projectEventSubscriptionAttachment(stored)?.machineId,
+        }))
       : [];
     this.rehydrateSockets(ws);
-    if (tags.includes("daemon") && (wasKnownActiveDaemon || !this.daemonWs)) {
-      const replacementDaemon = this.daemonWs;
-      // Fail every in-flight request immediately instead of waiting for
-      // the TTL — the daemon that was going to answer just disappeared.
-      this.failPendingRequests("Daemon connection lost", 502);
-      this.failProjectEventSubscriptions("Daemon connection lost", 502);
+    if (isDaemon && closingMachineId) {
+      const replacementDaemon = this.daemonSockets.get(closingMachineId);
+      if (wasRegisteredDaemon || !replacementDaemon) {
+        // Fail this machine's in-flight work immediately instead of waiting for
+        // the TTL — the daemon that was going to answer just disappeared. Work
+        // bound for another machine is untouched; that machine is still there.
+        this.failPendingRequests("Daemon connection lost", 502, closingMachineId);
+        this.failProjectEventSubscriptions("Daemon connection lost", 502, closingMachineId);
+      }
+      // Rehydration already dropped this machine from both maps.
       if (!replacementDaemon) {
-        this.broadcastToClients({ type: "daemon_status", online: false });
+        await this.broadcastMachineStatus();
       }
     } else {
       this.clientSockets.delete(ws);
@@ -602,14 +700,98 @@ export class RelayObject extends DurableObject<Env> {
         if (entry.client === ws) this.pendingRequests.delete(id);
       }
       this.clearClientPendingRequests(ws);
-      for (const id of closingProjectEventSubscriptionIds) {
+      for (const { id, machineId } of closingProjectEventSubscriptions) {
+        this.eventSubscriptions.delete(id);
         this.detachClientProjectEventSubscription(ws, id);
-        this.sendDaemonProjectEventsUnsubscribe(id);
+        // No machine means an entry written by an older relay. There is no
+        // daemon to tell, and rehydration has already failed it to the client.
+        if (machineId) this.sendDaemonProjectEventsUnsubscribe(id, machineId);
       }
     }
     try {
       ws.close(1000, "Closed");
     } catch {}
+  }
+
+  // Sorted so the list a client renders does not reorder on every reconnect.
+  private onlineMachines(): MachineInfo[] {
+    return [...this.daemonSockets.keys()].sort().map((id) => ({ id, name: this.daemonMachineNames.get(id) ?? id }));
+  }
+
+  // A guest is told whether the host it was shared from is up, and nothing
+  // about the rest of the account's machines. `online` for a guest is about
+  // that one host: "any machine is up" is a fact about a fleet it cannot see
+  // and the wrong answer about the host it can.
+  private machineStatus(sharedHostMachineId: string | null): RelayMessage {
+    const machines = this.onlineMachines();
+    if (sharedHostMachineId === null) {
+      return { type: "daemon_status", online: machines.length > 0, machines };
+    }
+    if (sharedHostMachineId === MISSING_SHARE_HOST) {
+      return { type: "daemon_status", online: false };
+    }
+    return {
+      type: "daemon_status",
+      online: sharedHostOnline(machines, sharedHostMachineId || undefined),
+    };
+  }
+
+  private async sendMachineStatus(ws: WebSocket): Promise<void> {
+    this.send(ws, this.machineStatus(await this.sharedHostMachineIdForSocket(ws)));
+  }
+
+  // Which host a socket's answer is about. `null` means an owner socket, which
+  // hears about the whole fleet.
+  //
+  // Read from the stored share, which is what routing reads. It used to come
+  // from a `shareMachine:` tag frozen at connect -- and Workers tags cannot be
+  // changed afterwards -- so a share the owner bound to a host mid-session
+  // left the guest's indicator and its requests answering from two different
+  // records. A share that has gone is offline rather than "any machine up":
+  // nothing routes to a revoked share either.
+  private async sharedHostMachineIdForSocket(ws: WebSocket): Promise<string | null> {
+    const tags = this.ctx.getTags(ws);
+    if (!isSharedClientSocket(tags)) return null;
+    const state = await loadSharingState(this.ctx.storage);
+    return this.sharedHostFromState(state, tags);
+  }
+
+  private sharedHostFromState(state: SharingState, tags: readonly string[]): string | null {
+    const shareId = shareIdFromTags(tags);
+    if (!shareId) return null;
+    const share = state.shares[shareId];
+    if (!share) return MISSING_SHARE_HOST;
+    return share.machineId ?? "";
+  }
+
+  private async broadcastMachineStatus(): Promise<void> {
+    const ownerStatus = JSON.stringify(this.machineStatus(null));
+    // One read for the whole broadcast; a guest's answer is then resolved per
+    // socket from the same record routing uses.
+    const hasGuest = [...this.clientSockets].some((client) => isSharedClientSocket(this.ctx.getTags(client)));
+    const state = hasGuest ? await loadSharingState(this.ctx.storage) : null;
+    for (const client of this.clientSockets) {
+      try {
+        const tags = this.ctx.getTags(client);
+        if (!state || !isSharedClientSocket(tags)) {
+          client.send(ownerStatus);
+          continue;
+        }
+        client.send(JSON.stringify(this.machineStatus(this.sharedHostFromState(state, tags))));
+      } catch {
+        this.clientSockets.delete(client);
+      }
+    }
+  }
+
+  // A security event concerns the account, not one host, so every machine hears
+  // it -- each turns it into a desktop notification on its own screen.
+  private broadcastToDaemons(msg: RelayMessage): void {
+    for (const daemon of this.daemonSockets.values()) {
+      try {
+        this.send(daemon, msg);
+      } catch {}
+    }
   }
 
   private broadcastToClients(msg: RelayMessage, exclude?: WebSocket): void {
@@ -716,11 +898,7 @@ export class RelayObject extends DurableObject<Env> {
       // any event it receives into a desktop notification, so skipping only the
       // push path below would have left the toast firing all night.
       if (event.alert === false) continue;
-      if (this.daemonWs) {
-        try {
-          this.send(this.daemonWs, { type: "security_event", event });
-        } catch {}
-      }
+      this.broadcastToDaemons({ type: "security_event", event });
       if (event.kind === "new_client_detected") {
         try {
           this.send(ws, { type: "security_event", event });
@@ -903,11 +1081,7 @@ export class RelayObject extends DurableObject<Env> {
     await saveSecurityState(this.ctx.storage, result.state);
     if (event) {
       this.broadcastToClients({ type: "security_event", event });
-      if (this.daemonWs) {
-        try {
-          this.send(this.daemonWs, { type: "security_event", event });
-        } catch {}
-      }
+      this.broadcastToDaemons({ type: "security_event", event });
     }
     if (action === "block") this.closeClientSocketsForDevice(result.device.id, "Remote device blocked");
     return json(
@@ -997,7 +1171,11 @@ export class RelayObject extends DurableObject<Env> {
     ws: WebSocket,
     request: Extract<RelayMessage, { type: "request" }>,
   ): Promise<
-    | { ok: true; requestPatch?: { headers?: Record<string, string>; body?: unknown } }
+    | {
+        ok: true;
+        share?: SharedSessionRecord;
+        requestPatch?: { headers?: Record<string, string>; body?: unknown };
+      }
     | { ok: false; status: number; error: string }
   > {
     const tags = this.ctx.getTags(ws);
@@ -1038,6 +1216,7 @@ export class RelayObject extends DurableObject<Env> {
     if (!bodyPatch.ok) return bodyPatch;
     return {
       ok: true,
+      share,
       requestPatch: {
         headers: {
           ...stripTrustedAimuxHeaders(request.headers),
@@ -1263,6 +1442,9 @@ export class RelayObject extends DurableObject<Env> {
     let body: {
       projectRoot?: string;
       serviceEndpoint?: { host?: string; port?: number };
+      // Which of the owner's machines hosts the session. The guest's requests
+      // are routed there and nowhere else.
+      machineId?: string;
       sessionId?: string;
       email?: string;
     };
@@ -1279,10 +1461,17 @@ export class RelayObject extends DurableObject<Env> {
         serviceEndpoint: body.serviceEndpoint
           ? { host: body.serviceEndpoint.host ?? "", port: Number(body.serviceEndpoint.port) }
           : undefined,
+        machineId: body.machineId,
         sessionId: body.sessionId ?? "",
         email: body.email ?? "",
       });
       await saveSharingState(this.ctx.storage, result.state);
+      // An invite can change the share the guests already hold -- its host and
+      // its checkout both follow the invite -- and the receiver index is only
+      // written on accept, so without this a guest's copy kept the old root
+      // for good: a stale project name in its share list, and legacy
+      // `/agent/...` routes that match on the root failing for that guest.
+      const staleReceivers = await this.refreshShareForItsParticipants(result.token.share);
       const acceptUrl = `${this.shareInviteBaseUrl(request)}/shares/invite/${encodeURIComponent(owner.userId)}/${encodeURIComponent(result.token.token)}/accept`;
       let emailDelivered = false;
       try {
@@ -1306,6 +1495,10 @@ export class RelayObject extends DurableObject<Env> {
             tokenHash: undefined,
           },
           acceptUrl,
+          // Named rather than swallowed: the owner's record is canonical, so
+          // the share works, but these guests are reading a stale copy of it
+          // until their own index catches up.
+          ...(staleReceivers.length > 0 ? { staleReceivers } : {}),
         },
         201,
       );
@@ -1359,6 +1552,26 @@ export class RelayObject extends DurableObject<Env> {
 
   private securityActionBaseUrl(request: Request): string {
     return (this.env.SECURITY_ACTION_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
+  }
+
+  // Pushes the current summary to everyone already on the share, and returns
+  // the ones it could not reach.
+  private async refreshShareForItsParticipants(share: SharedSessionRecord): Promise<string[]> {
+    const summary = summarizeShare(share);
+    const stale: string[] = [];
+    for (const participant of Object.values(share.participants)) {
+      // The owner is a participant of their own share, and this object holds
+      // the canonical record -- pushing it back to itself would be a round
+      // trip to learn what it already knows.
+      if (participant.status !== "active" || !participant.userId) continue;
+      if (participant.userId === share.ownerUserId) continue;
+      try {
+        await this.upsertShareInReceiverIndex(participant.userId, summary);
+      } catch {
+        stale.push(participant.userId);
+      }
+    }
+    return stale;
   }
 
   private shareInviteBaseUrl(request: Request): string {
@@ -1454,11 +1667,7 @@ export class RelayObject extends DurableObject<Env> {
 
     if (options.broadcast) {
       this.broadcastToClients({ type: "security_event", event });
-      if (this.daemonWs) {
-        try {
-          this.send(this.daemonWs, { type: "security_event", event });
-        } catch {}
-      }
+      this.broadcastToDaemons({ type: "security_event", event });
     }
 
     const pushTokens = Object.values(state.pushTokens);
@@ -1494,40 +1703,130 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   private rehydrateSockets(exclude?: WebSocket): void {
-    this.daemonWs = null;
+    this.daemonSockets.clear();
+    this.daemonMachineNames.clear();
     this.clientSockets.clear();
     this.clientDeviceIds.clear();
     this.pendingRequests.clear();
     this.eventSubscriptions.clear();
+    // Work rebuilt without a machine cannot be routed. It is collected and
+    // failed after the maps are whole, so the client is told to ask again
+    // rather than having its request answered by whichever daemon is alone.
+    const unroutable: { client: WebSocket; id: string; kind: "request" | "subscription"; clientId: string }[] = [];
+    const supersededMachineIds = new Set<string>();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === exclude) continue;
       const tags = this.ctx.getTags(ws);
       if (tags.includes("daemon")) {
-        if (!this.daemonWs) {
-          this.daemonWs = ws;
-        } else {
+        const machine = machineFromTags(tags);
+        // Two live sockets for one machine is the state eviction prevents. If
+        // hibernation left both, the NEWEST wins -- `getWebSockets` is in
+        // accept order, so keeping the first would resurrect the socket the
+        // connect path already closed and leave the new daemon reconnecting.
+        const superseded = this.daemonSockets.get(machine.id);
+        if (superseded) {
+          // Its in-flight work goes with it, rather than waiting out the
+          // request TTL: the socket that was going to answer is gone, and the
+          // replacement never had those requests.
+          supersededMachineIds.add(machine.id);
           try {
-            ws.close(1000, "Replaced");
+            superseded.close(1000, "Replaced");
           } catch {}
         }
+        this.daemonSockets.set(machine.id, ws);
+        this.daemonMachineNames.set(machine.id, machine.name);
       } else if (tags.includes("client")) {
         this.clientSockets.add(ws);
         const deviceId = this.deviceIdFromTags(ws);
         if (deviceId) this.clientDeviceIds.set(ws, deviceId);
-        for (const [relaySubscriptionId, clientSubscriptionId] of Object.entries(
+        for (const [relaySubscriptionId, stored] of Object.entries(
           this.clientSocketAttachment(ws).projectEventSubscriptions ?? {},
         )) {
-          this.eventSubscriptions.set(relaySubscriptionId, { client: ws, clientSubscriptionId });
+          const subscription = projectEventSubscriptionAttachment(stored);
+          if (!subscription) {
+            unroutable.push({
+              client: ws,
+              id: relaySubscriptionId,
+              kind: "subscription",
+              clientId: typeof stored === "string" ? stored : stored.clientSubscriptionId,
+            });
+            continue;
+          }
+          this.eventSubscriptions.set(relaySubscriptionId, {
+            client: ws,
+            clientSubscriptionId: subscription.clientSubscriptionId,
+            machineId: subscription.machineId,
+          });
         }
         for (const [relayRequestId, pending] of Object.entries(this.clientSocketAttachment(ws).pendingRequests ?? {})) {
-          if (!isPendingRequestAttachment(pending)) continue;
+          if (!isPendingRequestAttachment(pending)) {
+            // An attachment we cannot read is a request we cannot route, which
+            // is the same outcome as one naming no machine -- so it gets the
+            // same 502 rather than being dropped for the client to time out.
+            // The id is salvaged when it is there to salvage; when it is not,
+            // detaching is all that can be done, and leaving it would have it
+            // rebuilt on every future rehydrate.
+            unroutable.push({
+              client: ws,
+              id: relayRequestId,
+              kind: "request",
+              clientId: salvagedClientRequestId(pending) ?? relayRequestId,
+            });
+            continue;
+          }
+          if (!pending.machineId) {
+            unroutable.push({
+              client: ws,
+              id: relayRequestId,
+              kind: "request",
+              clientId: pending.clientRequestId,
+            });
+            continue;
+          }
           this.pendingRequests.set(relayRequestId, {
             client: ws,
             clientRequestId: pending.clientRequestId,
             expiresAt: pending.expiresAt,
+            machineId: pending.machineId,
           });
         }
       }
+    }
+    this.failUnroutableRebuiltWork(unroutable);
+    for (const machineId of supersededMachineIds) {
+      this.failPendingRequests("Daemon connection replaced", 502, machineId);
+      this.failProjectEventSubscriptions("Daemon connection replaced", 502, machineId);
+    }
+  }
+
+  private failUnroutableRebuiltWork(
+    entries: { client: WebSocket; id: string; kind: "request" | "subscription"; clientId: string }[],
+  ): void {
+    for (const entry of entries) {
+      if (entry.kind === "request") {
+        this.detachClientPendingRequest(entry.client, entry.id);
+      } else {
+        this.detachClientProjectEventSubscription(entry.client, entry.id);
+      }
+      try {
+        entry.client.send(
+          JSON.stringify(
+            entry.kind === "request"
+              ? {
+                  id: entry.clientId,
+                  type: "response",
+                  status: 503,
+                  body: { ok: false, error: "Relay lost which machine this request was for; retry it" },
+                }
+              : {
+                  id: entry.clientId,
+                  type: "project_events_error",
+                  status: 503,
+                  message: "Relay lost which machine this stream was for; subscribe again",
+                },
+          ),
+        );
+      } catch {}
     }
   }
 
@@ -1541,8 +1840,10 @@ export class RelayObject extends DurableObject<Env> {
     return `do-${Date.now().toString(36)}-${this.requestCounter}`;
   }
 
-  private failPendingRequests(message: string, status: number): void {
-    for (const [, entry] of this.pendingRequests) {
+  private failPendingRequests(message: string, status: number, machineId?: string): void {
+    for (const [relayRequestId, entry] of this.pendingRequests) {
+      if (machineId && entry.machineId !== machineId) continue;
+      this.pendingRequests.delete(relayRequestId);
       try {
         entry.client.send(
           JSON.stringify({
@@ -1555,13 +1856,16 @@ export class RelayObject extends DurableObject<Env> {
       } catch {
         // client gone too — nothing to deliver
       }
-      this.clearClientPendingRequests(entry.client);
+      // Detached one by one: clearing the client's whole attachment would drop
+      // the requests it still has in flight to another machine.
+      this.detachClientPendingRequest(entry.client, relayRequestId);
     }
-    this.pendingRequests.clear();
   }
 
-  private failProjectEventSubscriptions(message: string, status: number): void {
-    for (const [, entry] of this.eventSubscriptions) {
+  private failProjectEventSubscriptions(message: string, status: number, machineId?: string): void {
+    for (const [relaySubscriptionId, entry] of this.eventSubscriptions) {
+      if (machineId && entry.machineId !== machineId) continue;
+      this.eventSubscriptions.delete(relaySubscriptionId);
       try {
         entry.client.send(
           JSON.stringify({
@@ -1572,15 +1876,15 @@ export class RelayObject extends DurableObject<Env> {
           }),
         );
       } catch {}
-      this.clearClientProjectEventSubscriptions(entry.client);
+      this.detachClientProjectEventSubscription(entry.client, relaySubscriptionId);
     }
-    this.eventSubscriptions.clear();
   }
 
-  private sendDaemonProjectEventsUnsubscribe(id: string): void {
-    if (!this.daemonWs) return;
+  private sendDaemonProjectEventsUnsubscribe(id: string, machineId: string): void {
+    const daemon = this.daemonSockets.get(machineId);
+    if (!daemon) return;
     try {
-      this.send(this.daemonWs, { id, type: "project_events_unsubscribe" });
+      this.send(daemon, { id, type: "project_events_unsubscribe" });
     } catch {}
   }
 
@@ -1604,13 +1908,14 @@ export class RelayObject extends DurableObject<Env> {
     ws: WebSocket,
     relaySubscriptionId: string,
     clientSubscriptionId: string,
+    machineId: string,
   ): void {
     const attachment = this.clientSocketAttachment(ws);
     this.saveClientSocketAttachment(ws, {
       ...attachment,
       projectEventSubscriptions: {
         ...(attachment.projectEventSubscriptions ?? {}),
-        [relaySubscriptionId]: clientSubscriptionId,
+        [relaySubscriptionId]: { clientSubscriptionId, machineId },
       },
     });
   }
@@ -1620,13 +1925,14 @@ export class RelayObject extends DurableObject<Env> {
     relayRequestId: string,
     clientRequestId: string,
     expiresAt: number,
+    machineId: string,
   ): void {
     const attachment = this.clientSocketAttachment(ws);
     this.saveClientSocketAttachment(ws, {
       ...attachment,
       pendingRequests: {
         ...(attachment.pendingRequests ?? {}),
-        [relayRequestId]: { clientRequestId, expiresAt },
+        [relayRequestId]: { clientRequestId, expiresAt, machineId },
       },
     });
   }
@@ -1656,11 +1962,6 @@ export class RelayObject extends DurableObject<Env> {
     });
   }
 
-  private clearClientProjectEventSubscriptions(ws: WebSocket): void {
-    const attachment = this.clientSocketAttachment(ws);
-    this.saveClientSocketAttachment(ws, { ...attachment, projectEventSubscriptions: undefined });
-  }
-
   private closeAllSockets(reason: string): void {
     this.failPendingRequests(reason, 423);
     this.failProjectEventSubscriptions(reason, 423);
@@ -1669,7 +1970,8 @@ export class RelayObject extends DurableObject<Env> {
         ws.close(1008, reason);
       } catch {}
     }
-    this.daemonWs = null;
+    this.daemonSockets.clear();
+    this.daemonMachineNames.clear();
     this.clientSockets.clear();
     this.clientDeviceIds.clear();
   }
@@ -1706,10 +2008,45 @@ function json(body: unknown, status: number): Response {
   });
 }
 
+// A share that is no longer there. Distinct from a share that names no host,
+// which on a single-machine account is still reachable.
+const MISSING_SHARE_HOST = "\u0000missing";
+
+function isSharedClientSocket(tags: readonly string[]): boolean {
+  return tags.some((tag) => tag.startsWith("share:"));
+}
+
+function shareIdFromTags(tags: readonly string[]): string | undefined {
+  return tags.find((tag) => tag.startsWith("share:"))?.slice("share:".length) || undefined;
+}
+
+// The client's own id out of an attachment that failed validation, so a
+// request we cannot route can still be answered rather than abandoned.
+function salvagedClientRequestId(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const id = (value as { clientRequestId?: unknown }).clientRequestId;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
 function isPendingRequestAttachment(value: unknown): value is PendingRequestAttachment {
   if (!value || typeof value !== "object") return false;
   const pending = value as Partial<Record<keyof PendingRequestAttachment, unknown>>;
-  return typeof pending.clientRequestId === "string" && typeof pending.expiresAt === "number";
+  return (
+    typeof pending.clientRequestId === "string" &&
+    typeof pending.expiresAt === "number" &&
+    (pending.machineId === undefined || typeof pending.machineId === "string")
+  );
+}
+
+// A bare string is what an older relay stored: a client subscription id with no
+// machine. It is not an attachment this relay can route, so it is refused here
+// and failed by the caller rather than guessed at.
+function projectEventSubscriptionAttachment(value: unknown): ProjectEventSubscriptionAttachment | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const stored = value as Partial<Record<keyof ProjectEventSubscriptionAttachment, unknown>>;
+  return typeof stored.clientSubscriptionId === "string" && typeof stored.machineId === "string"
+    ? { clientSubscriptionId: stored.clientSubscriptionId, machineId: stored.machineId }
+    : undefined;
 }
 
 function errorMessage(error: unknown, fallback: string): string {

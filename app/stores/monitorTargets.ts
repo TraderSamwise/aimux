@@ -1,8 +1,9 @@
 import { atom } from "jotai";
+import { projectRefOf, projectStateKey } from "@/lib/project-key";
 import {
   monitorSessionTargetsForProject,
   monitorSharedTargets,
-  targetMatchesSettings,
+  resolveMonitorTarget,
   type MonitorTarget,
 } from "@/lib/monitor-targets";
 import { desktopStateFamily } from "@/stores/desktopState";
@@ -12,12 +13,15 @@ import { projectsAtom } from "@/stores/projects";
 export const monitorTargetsAtom = atom<MonitorTarget[]>((get) => {
   const projects = get(projectsAtom);
   const projectTargets = projects.flatMap((project) =>
-    monitorSessionTargetsForProject(project, get(desktopStateFamily(project.path))),
+    monitorSessionTargetsForProject(
+      project,
+      get(desktopStateFamily(projectStateKey(projectRefOf(project)))),
+    ),
   );
   return [...projectTargets, ...monitorSharedTargets(get(acceptedSharedSessionsAtom))];
 });
 
 export const selectedMonitorTargetAtom = atom<MonitorTarget | null>((get) => {
   const settings = get(monitorSettingsAtom);
-  return get(monitorTargetsAtom).find((target) => targetMatchesSettings(target, settings)) ?? null;
+  return resolveMonitorTarget(get(monitorTargetsAtom), settings);
 });

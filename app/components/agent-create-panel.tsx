@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useSetAtom } from "jotai";
 import { Plus } from "lucide-react-native";
@@ -20,12 +21,12 @@ type ToolChoice = (typeof TOOL_CHOICES)[number];
 export function AgentCreatePanel({
   endpoint,
   token,
-  projectPath,
+  projectStateKey,
   groups,
 }: {
   endpoint: ServiceEndpoint | null;
   token: string | null;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   groups: WorktreeBucket[];
 }) {
   const [tool, setTool] = useState<ToolChoice>("claude");
@@ -78,7 +79,7 @@ export function AgentCreatePanel({
         { token },
       );
       recordTransition({
-        projectPath,
+        projectStateKey,
         transition: response.transition,
         label: response.sessionId,
         tool: selectedTool,

@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { findProjectForRef, projectStateKey } from "@/lib/project-key";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -42,7 +44,7 @@ import {
 import {
   projectsAtom,
   selectProjectAtom,
-  selectedProjectPathAtom,
+  selectedProjectRefAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
 
@@ -163,7 +165,7 @@ function NotificationSection({
       </View>
       {rows.map((row) => (
         <GlobalNotificationCard
-          key={`${row.projectPath}:${row.notification.id}`}
+          key={`${row.machineId ?? ""}:${row.projectPath}:${row.notification.id}`}
           row={row}
           onOpen={onOpen}
           onRead={onRead}
@@ -178,7 +180,7 @@ export default function GlobalNotificationsScreen() {
   const selectProject = useSetAtom(selectProjectAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const projects = useAtomValue(projectsAtom);
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const [notificationScope, setNotificationScope] = useState<GlobalNotificationScope>("all");
   const { getToken } = useAuth();
   const resource = useAtomValue(globalNotificationResourceAtom);
@@ -199,7 +201,7 @@ export default function GlobalNotificationsScreen() {
       onlineProjects
         .map((project) => {
           const endpoint = getProjectServiceEndpoint(project);
-          return `${project.path}:${endpoint?.host ?? ""}:${endpoint?.port ?? ""}`;
+          return `${project.path}:${serviceEndpointKey(endpoint) ?? ""}`;
         })
         .join("|"),
     [onlineProjects],
@@ -215,7 +217,7 @@ export default function GlobalNotificationsScreen() {
           notification: {
             ...row.notification,
             unread: notificationEffectiveUnread({
-              projectPath: row.projectPath,
+              projectStateKey: projectStateKey(rowProjectRef(row)),
               notification: row.notification,
               readState,
             }),
@@ -225,10 +227,11 @@ export default function GlobalNotificationsScreen() {
     [readState, resource.value?.rows],
   );
   const scopeProject = useMemo(
-    () => projects.find((project) => project.path === selectedProjectPath) ?? null,
-    [projects, selectedProjectPath],
+    () => findProjectForRef(projects, selectedProjectRef) ?? null,
+    [projects, selectedProjectRef],
   );
-  const scopeProjectPath = scopeProject?.path ?? selectedProjectPath;
+  const scopeProjectPath = scopeProject?.path ?? selectedProjectRef?.path ?? null;
+  const scopeProjectMachineId = scopeProject?.machineId ?? selectedProjectRef?.machineId;
   const activeNotificationScope =
     notificationScope === "project" && scopeProjectPath ? notificationScope : "all";
   const visibleRows = useMemo(
@@ -246,8 +249,13 @@ export default function GlobalNotificationsScreen() {
       : `${visibleUnreadCount} unread across ${onlineProjects.length} online project${
           onlineProjects.length === 1 ? "" : "s"
         }`;
+  // Scoped to the project on one machine. Counting the other machine's copy
+  // of the same path would inflate the badge for a project you are not on.
   const projectUnreadCount = rows.filter(
-    (row) => row.notification.unread && row.projectPath === scopeProjectPath,
+    (row) =>
+      row.notification.unread &&
+      row.projectPath === scopeProjectPath &&
+      (row.machineId ?? undefined) === scopeProjectMachineId,
   ).length;
   const scopeOptions = useMemo(() => {
     const options: Array<SegmentOption<GlobalNotificationScope>> = [
@@ -289,6 +297,7 @@ export default function GlobalNotificationsScreen() {
             .map((notification) => ({
               projectName: project.name,
               projectPath: project.path,
+              machineId: project.machineId,
               notification,
             }));
         }),
@@ -341,9 +350,17 @@ export default function GlobalNotificationsScreen() {
 
   const markRowRead = useCallback(
     (row: GlobalNotificationRow) => {
-      markNotificationsReadLocal({ projectPath: row.projectPath, ids: [row.notification.id] });
+      markNotificationsReadLocal({
+        projectStateKey: projectStateKey(rowProjectRef(row)),
+        ids: [row.notification.id],
+      });
       void (async () => {
-        const project = onlineProjectsRef.current.find((item) => item.path === row.projectPath);
+        const project = findProjectForRef(
+          onlineProjectsRef.current,
+          row.machineId
+            ? { machineId: row.machineId, path: row.projectPath }
+            : { path: row.projectPath },
+        );
         const endpoint = project ? getProjectServiceEndpoint(project) : null;
         if (!endpoint) return;
         try {
@@ -359,24 +376,36 @@ export default function GlobalNotificationsScreen() {
 
   function openRow(row: GlobalNotificationRow) {
     markRowRead(row);
-    selectProject(row.projectPath);
+    const rowRef = row.machineId
+      ? { machineId: row.machineId, path: row.projectPath }
+      : { path: row.projectPath };
+    selectProject(rowRef);
     const sessionId = row.notification.sessionId;
     if (sessionId) {
       selectSession(sessionId);
-      const webHref = detailViewPathForPath("/project", "agent", sessionId, row.projectPath);
+      const webHref = detailViewPathForPath(
+        "/project",
+        "agent",
+        sessionId,
+        row.projectPath,
+        row.machineId,
+      );
       if (Platform.OS === "web" && typeof window !== "undefined") {
         window.location.assign(String(webHref));
         return;
       }
-      router.push(detailHrefForPath("/project", "agent", sessionId, row.projectPath));
+      router.push(
+        detailHrefForPath("/project", "agent", sessionId, row.projectPath, row.machineId),
+      );
       return;
     }
-    const inboxHref = buildViewPath("/notifications", { project: row.projectPath });
+    const inboxParams = { project: row.projectPath, machine: row.machineId };
+    const inboxHref = buildViewPath("/notifications", inboxParams);
     if (Platform.OS === "web" && typeof window !== "undefined") {
       window.location.assign(String(inboxHref));
       return;
     }
-    router.push(buildViewHref("/notifications", { project: row.projectPath }));
+    router.push(buildViewHref("/notifications", inboxParams));
   }
 
   return (
@@ -450,4 +479,10 @@ export default function GlobalNotificationsScreen() {
       )}
     </Page>
   );
+}
+
+function rowProjectRef(row: { projectPath: string; machineId?: string }) {
+  return row.machineId
+    ? { machineId: row.machineId, path: row.projectPath }
+    : { path: row.projectPath };
 }

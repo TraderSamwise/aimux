@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { findProjectForRef, projectRefOf } from "@/lib/project-key";
 import { Platform, ScrollView, Text as RNText, View, useWindowDimensions } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -19,19 +20,21 @@ import {
   buildExposeTiles,
   cropExposeTerminalPreviewFooter,
   exposeSetLabel,
+  exposeViewKey,
   filterExposeTiles,
   summarizeExposeTiles,
   type ExposeFilter,
   type ExposeSourceItem,
   type ExposeTile,
+  sourcesForGlobalExposeItems,
 } from "@/lib/expose-model";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
 import { appStatusClasses, appStatusColors } from "@/lib/status-tone";
 import { formatDaemonProjectReadError, formatTmuxUnavailable } from "@/lib/unavailable-state";
 import { cn } from "@/lib/utils";
-import { detailHrefForPath, projectPathFromSearchOrLocation } from "@/lib/view-location";
-import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
+import { detailHrefForPath, projectRefFromSearchOrLocation } from "@/lib/view-location";
+import { projectsAtom, selectedProjectRefAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayStatusAtom } from "@/stores/relay";
 import { exposePreviewModeAtom, type ExposePreviewMode } from "@/stores/settings";
 import { sidebarOpenAtom } from "@/stores/ui";
@@ -89,25 +92,6 @@ function resolveScope(value: string | string[] | undefined): ExposeScope {
 function resolveFilter(value: string | string[] | undefined): ExposeFilter {
   const first = Array.isArray(value) ? value[0] : value;
   return FILTER_OPTIONS.some((option) => option.value === first) ? (first as ExposeFilter) : "all";
-}
-
-function sourcesForGlobalExposeItems(projects: DaemonProject[], items: ExposeSourceItem[]) {
-  const byProjectId = new Map(projects.map((project) => [project.id, project]));
-  const byProjectPath = new Map(projects.map((project) => [project.path, project]));
-  const grouped = new Map<string, { project: DaemonProject; items: ExposeSourceItem[] }>();
-  for (const item of items) {
-    const project =
-      (item.projectId ? byProjectId.get(item.projectId) : undefined) ??
-      (item.projectRoot ? byProjectPath.get(item.projectRoot) : undefined);
-    if (!project) continue;
-    let source = grouped.get(project.id);
-    if (!source) {
-      source = { project, items: [] };
-      grouped.set(project.id, source);
-    }
-    source.items.push(item);
-  }
-  return [...grouped.values()];
 }
 
 function buildFilterOptions(summary: ReturnType<typeof summarizeExposeTiles>) {
@@ -627,12 +611,13 @@ export default function ExposeScreen() {
   const pathname = usePathname();
   const projects = useAtomValue(projectsAtom);
   const [exposePreviewMode, setExposePreviewMode] = useAtom(exposePreviewModeAtom);
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const setSidebarOpen = useSetAtom(sidebarOpenAtom);
   const searchParams = useGlobalSearchParams<{
     project?: string | string[];
+    machine?: string | string[];
     scope?: string | string[];
     filter?: string | string[];
   }>();
@@ -645,7 +630,10 @@ export default function ExposeScreen() {
   const [loadedViewKey, setLoadedViewKey] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  const routeProjectPath = projectPathFromSearchOrLocation(searchParams.project);
+  const routeProjectRef = projectRefFromSearchOrLocation(
+    searchParams.project,
+    searchParams.machine,
+  );
   const scope = resolveScope(searchParams.scope);
   const routeFilter = resolveFilter(searchParams.filter);
   const [localFilter, setLocalFilter] = useState<{
@@ -656,9 +644,11 @@ export default function ExposeScreen() {
     value: routeFilter,
   });
   const filter = localFilter.routeFilter === routeFilter ? localFilter.value : routeFilter;
-  const currentProjectPath = routeProjectPath ?? selectedProjectPath ?? projects[0]?.path ?? null;
-  const currentProject = projects.find((project) => project.path === currentProjectPath) ?? null;
-  const projectForRequest = currentProject ?? projects[0] ?? null;
+  const currentProjectRef = routeProjectRef ?? selectedProjectRef ?? projectRefOf(projects[0]);
+  const currentProject = findProjectForRef(projects, currentProjectRef) ?? null;
+  const currentProjectPath = currentProject?.path ?? currentProjectRef?.path ?? null;
+  const currentProjectMachineId = currentProject?.machineId ?? currentProjectRef?.machineId;
+  const projectForRequest = currentProject ?? (currentProjectRef ? null : (projects[0] ?? null));
   const projectEndpoint = projectForRequest ? getProjectServiceEndpoint(projectForRequest) : null;
   const projectRequestId = projectForRequest?.id ?? "";
   const projectRequestName = projectForRequest?.name ?? "";
@@ -667,6 +657,7 @@ export default function ExposeScreen() {
   const projectRequestServiceAlive = projectForRequest?.serviceAlive ?? false;
   const projectRequestEndpointHost = projectEndpoint?.host ?? "";
   const projectRequestEndpointPort = projectEndpoint?.port ?? null;
+  const projectRequestMachineId = projectEndpoint?.machineId ?? "";
   const projectRequest = useMemo<DaemonProject | null>(
     () =>
       projectRequestPath
@@ -677,8 +668,13 @@ export default function ExposeScreen() {
             dashboardSessionName: projectRequestDashboardSessionName,
             service: null,
             serviceAlive: projectRequestServiceAlive,
+            machineId: projectRequestMachineId || undefined,
             serviceEndpoint: projectRequestEndpointHost
-              ? { host: projectRequestEndpointHost, port: projectRequestEndpointPort ?? 0 }
+              ? {
+                  host: projectRequestEndpointHost,
+                  port: projectRequestEndpointPort ?? 0,
+                  ...(projectRequestMachineId ? { machineId: projectRequestMachineId } : {}),
+                }
               : null,
           }
         : null,
@@ -686,16 +682,19 @@ export default function ExposeScreen() {
       projectRequestDashboardSessionName,
       projectRequestEndpointHost,
       projectRequestEndpointPort,
+      projectRequestMachineId,
       projectRequestId,
       projectRequestName,
       projectRequestPath,
       projectRequestServiceAlive,
     ],
   );
-  const viewKey =
-    scope === "global"
-      ? `global:${exposePreviewMode}`
-      : `project:${currentProjectPath ?? ""}:${exposePreviewMode}`;
+  const viewKey = exposeViewKey({
+    scope,
+    machineId: currentProjectMachineId,
+    projectPath: currentProjectPath,
+    previewMode: exposePreviewMode,
+  });
   const currentTiles = useMemo(
     () => (loadedViewKey === viewKey ? tiles : []),
     [loadedViewKey, tiles, viewKey],
@@ -775,6 +774,7 @@ export default function ExposeScreen() {
       pathname: "/expose",
       params: {
         project: currentProjectPath ?? undefined,
+        machine: currentProjectMachineId,
         scope: nextScope === "global" ? "global" : undefined,
         filter: filter === "all" ? undefined : filter,
       },
@@ -791,10 +791,14 @@ export default function ExposeScreen() {
     if (shouldDismissSidebarOnNavigate(width)) setSidebarOpen(false);
     if (tile.kind === "agent") {
       setSelectedSession(tile.sessionId);
-      router.push(detailHrefForPath(pathname, "agent", tile.sessionId, tile.projectRoot));
+      router.push(
+        detailHrefForPath(pathname, "agent", tile.sessionId, tile.projectRoot, tile.machineId),
+      );
       return;
     }
-    router.push(detailHrefForPath(pathname, "service", tile.sessionId, tile.projectRoot));
+    router.push(
+      detailHrefForPath(pathname, "service", tile.sessionId, tile.projectRoot, tile.machineId),
+    );
   }
 
   return (

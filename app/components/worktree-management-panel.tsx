@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useSetAtom } from "jotai";
 import { Plus, Trash2 } from "lucide-react-native";
@@ -25,12 +26,12 @@ type WorktreeAction = "create" | "remove";
 export function WorktreeManagementPanel({
   endpoint,
   token,
-  projectPath,
+  projectStateKey,
   groups,
 }: {
   endpoint: ServiceEndpoint | null;
   token: string | null;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   groups: WorktreeBucket[];
 }) {
   const [name, setName] = useState("");
@@ -115,7 +116,7 @@ export function WorktreeManagementPanel({
                 runAction("create", async () => {
                   const response = await createWorktree(endpoint, trimmedName, { token });
                   recordTransition({
-                    projectPath,
+                    projectStateKey,
                     transition: response.transition,
                     worktreeName: trimmedName,
                     worktreePath: response.path,
@@ -163,7 +164,7 @@ export function WorktreeManagementPanel({
                   ? runAction("remove", async () => {
                       const localTransition = localWorktreeRemoveTransition(removePath);
                       recordTransition({
-                        projectPath,
+                        projectStateKey,
                         transition: localTransition,
                         worktreePath: removePath,
                       });
@@ -172,14 +173,14 @@ export function WorktreeManagementPanel({
                         response = await removeWorktree(endpoint, removePath, { token });
                       } catch (e) {
                         recordTransition({
-                          projectPath,
+                          projectStateKey,
                           transition: failLocalProjectLifecycleTransition(localTransition),
                           worktreePath: removePath,
                         });
                         throw e;
                       }
                       recordTransition({
-                        projectPath,
+                        projectStateKey,
                         transition: response.transition,
                         worktreePath: removePath,
                       });

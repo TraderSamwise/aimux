@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Platform } from "react-native";
 import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
@@ -8,7 +8,7 @@ import { NativeNotificationRouter } from "@/components/NativeNotificationRouter"
 import {
   getDesktopState,
   listNotifications,
-  listProjects,
+  listProjectsAcrossMachines,
   listShares,
   setApiRelay,
 } from "@/lib/api";
@@ -35,7 +35,7 @@ import {
   shouldApplySharedSessionHydrate,
 } from "@/lib/shared-sessions";
 import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
-import { projectPathFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
+import { projectRefFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
 import {
   applyDesktopStateFailureAtom,
   applyDesktopStateSuccessAtom,
@@ -64,11 +64,12 @@ import {
   reconcileProjectsAtom,
   rememberProjectViewPath,
   selectedProjectEndpointAtom,
-  selectedProjectPathAtom,
+  selectedProjectRefAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
 import {
   projectListFailed,
+  projectListPartial,
   projectListUnavailable,
   relayUnavailableDetail,
 } from "@/lib/project-list-status";
@@ -80,7 +81,15 @@ import {
   projectUpdateTouchesNotificationFeed,
   projectUpdateTouchesProjectApiView,
 } from "@/stores/projectViews";
-import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
+import {
+  departedMachineIdsAtom,
+  knownMachinesAtom,
+  recordRelayMachinesAtom,
+  relayConfiguredAtom,
+  relayMachinesAtom,
+  relayPendingApprovalAtom,
+  relayStatusAtom,
+} from "@/stores/relay";
 import {
   activeSharedSessionAtom,
   acceptedSharedSessionsAtom,
@@ -89,6 +98,15 @@ import {
 } from "@/stores/settings";
 import { addSecurityEventAtom } from "@/stores/security";
 import { PROJECT_API_EVENT_NAMES } from "../../../src/project-api-contract";
+import { serviceEndpointKey } from "@/lib/daemon-url";
+import {
+  findProjectForRef,
+  parseProjectKey,
+  projectKey,
+  projectStateKey,
+  resolveRouteProjectRef,
+  sameProjectRef,
+} from "@/lib/project-key";
 
 const PROJECT_LIST_POLL_INTERVAL_MS = 10_000;
 const PROJECT_VIEW_FALLBACK_POLL_INTERVAL_MS = 10_000;
@@ -109,7 +127,7 @@ export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
   const setProjectListStatus = useSetAtom(projectListStatusAtom);
   const projects = useAtomValue(projectsAtom);
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const explicitProjectSelection = useAtomValue(explicitProjectSelectionAtom);
   const activeShare = useRouteShare();
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -143,16 +161,36 @@ export default function MainLayout() {
   const stackScreenOptions = useAppStackScreenOptions();
   const pathname = usePathname();
   const searchParams = useGlobalSearchParams();
-  const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project as SearchValue);
-  const effectiveProjectPath = activeShare?.projectRoot ?? urlProjectPath ?? selectedProjectPath;
+  // Rebuilt from a key string so its identity is stable across renders: this
+  // is an effect dependency, and a fresh object every render would re-run the
+  // URL-to-selection effect on every paint.
+  const urlProjectKey = projectKey(
+    projectRefFromSearchOrLocation(
+      searchParams.project as SearchValue,
+      searchParams.machine as SearchValue,
+    ),
+  );
+  const urlProjectRef = useMemo(() => parseProjectKey(urlProjectKey), [urlProjectKey]);
+  // Both halves of the effective project come from one source, so a path is
+  // never paired with another host's machine.
+  const effectiveProjectRef = resolveRouteProjectRef({
+    urlRef: urlProjectRef,
+    selectedRef: selectedProjectRef,
+    shareProjectRoot: activeShare?.projectRoot,
+  });
+  const effectiveProjectPath = effectiveProjectRef?.path ?? null;
+  // A primitive stand-in for the ref, so an effect that depends on it does not
+  // re-run on every render just because the object is rebuilt.
+  const effectiveProjectKey = projectKey(effectiveProjectRef);
+  const effectiveProjectStateKey = projectStateKey(effectiveProjectRef);
   const effectiveProject = activeShare
     ? projectFromActiveShare(activeShare)
-    : projects.find((project) => project.path === effectiveProjectPath);
+    : findProjectForRef(projects, effectiveProjectRef);
   const endpoint = activeShare
     ? activeShare.serviceEndpoint
     : effectiveProject
       ? getProjectServiceEndpoint(effectiveProject)
-      : urlProjectPath && urlProjectPath !== selectedProjectPath
+      : urlProjectRef && !sameProjectRef(urlProjectRef, selectedProjectRef)
         ? null
         : selectedProjectEndpoint;
   const relayUrl = env.AIMUX_RELAY_URL;
@@ -172,22 +210,38 @@ export default function MainLayout() {
     setLegacyActiveShareRef.current = setLegacyActiveShare;
   }, [setAcceptedShares, setLegacyActiveShare]);
 
+  // URL -> selection. Compared as refs, and only when the URL names a machine
+  // or the selection does not: a machineless URL must not downgrade a
+  // selection that knows its host, or this and the writer below trade
+  // corrections forever.
   usePrePaintEffect(() => {
-    if (activeShare || !urlProjectPath || urlProjectPath === selectedProjectPath) return;
+    if (activeShare || !urlProjectRef) return;
+    if (sameProjectRef(urlProjectRef, selectedProjectRef)) return;
+    // A machineless URL does not downgrade a selection that knows which host
+    // holds that same path; the URL writer below fills the machine back in.
+    if (
+      !urlProjectRef.machineId &&
+      selectedProjectRef?.machineId &&
+      selectedProjectRef.path === urlProjectRef.path
+    ) {
+      return;
+    }
+    const urlKey = projectKey(urlProjectRef);
+    const selectedKey = projectKey(selectedProjectRef);
     if (
       explicitProjectSelection &&
-      explicitProjectSelection.path === selectedProjectPath &&
-      explicitProjectSelection.path !== urlProjectPath &&
+      explicitProjectSelection.key === selectedKey &&
+      explicitProjectSelection.key !== urlKey &&
       explicitProjectSelection.expiresAt > Date.now()
     ) {
       return;
     }
-    if (explicitProjectSelection?.path === urlProjectPath) {
+    if (explicitProjectSelection?.key === urlKey) {
       store.set(explicitProjectSelectionAtom, null);
     }
-    store.set(selectedProjectPathAtom, urlProjectPath);
+    store.set(selectedProjectRefAtom, urlProjectRef);
     store.set(selectedSessionIdAtom, null);
-  }, [activeShare, explicitProjectSelection, selectedProjectPath, store, urlProjectPath]);
+  }, [activeShare, explicitProjectSelection, selectedProjectRef, store, urlProjectRef]);
 
   useEffect(() => {
     if (!activeShare) return;
@@ -200,8 +254,16 @@ export default function MainLayout() {
     if (!effectiveProjectPath || !isProjectScopedPath(pathname)) return;
     if (activeShare) return;
     const url = new URL(window.location.href);
-    if (url.searchParams.get("project") === effectiveProjectPath) return;
+    const effectiveMachineId = effectiveProjectRef?.machineId ?? "";
+    if (
+      url.searchParams.get("project") === effectiveProjectPath &&
+      (url.searchParams.get("machine") ?? "") === effectiveMachineId
+    ) {
+      return;
+    }
     url.searchParams.set("project", effectiveProjectPath);
+    if (effectiveMachineId) url.searchParams.set("machine", effectiveMachineId);
+    else url.searchParams.delete("machine");
     window.history.replaceState(
       window.history.state,
       "",
@@ -212,14 +274,14 @@ export default function MainLayout() {
   useEffect(() => {
     if (activeShare || !effectiveProjectPath || !isProjectScopedPath(pathname)) return;
     rememberProjectViewPath(
-      effectiveProjectPath,
+      parseProjectKey(effectiveProjectKey),
       projectViewPathForCurrentRoute(
         pathname,
         effectiveProjectPath,
         searchParams as Record<string, string | string[] | undefined>,
       ),
     );
-  }, [activeShare, effectiveProjectPath, pathname, searchParams]);
+  }, [activeShare, effectiveProjectKey, effectiveProjectPath, pathname, searchParams]);
 
   // Relay transport lifecycle: connect when a relay URL is configured, mirror
   // its status into the store, and register it with the API layer so requests
@@ -229,6 +291,8 @@ export default function MainLayout() {
       store.set(relayConfiguredAtom, false);
       store.set(relayStatusAtom, "disconnected");
       store.set(relayPendingApprovalAtom, null);
+      store.set(relayMachinesAtom, []);
+      store.set(knownMachinesAtom, []);
       return;
     }
     store.set(relayConfiguredAtom, true);
@@ -245,6 +309,9 @@ export default function MainLayout() {
     const unsub = transport.onStatusChange((status) => store.set(relayStatusAtom, status));
     const unsubPendingApproval = transport.onPendingApprovalChange((approval) =>
       store.set(relayPendingApprovalAtom, approval),
+    );
+    const unsubMachines = transport.onMachinesChange((machines) =>
+      store.set(recordRelayMachinesAtom, machines),
     );
     const unsubSecurity = transport.onSecurityEvent((event) => {
       store.set(addSecurityEventAtom, event);
@@ -265,11 +332,14 @@ export default function MainLayout() {
     return () => {
       unsub();
       unsubPendingApproval();
+      unsubMachines();
       unsubSecurity();
       setApiRelay(null);
       transport.disconnect();
       store.set(relayStatusAtom, "disconnected");
       store.set(relayPendingApprovalAtom, null);
+      store.set(relayMachinesAtom, []);
+      store.set(knownMachinesAtom, []);
     };
   }, [activeShareOwnerUserId, activeShareRelayKey, activeShareShareId, relayUrl, store]);
 
@@ -311,7 +381,7 @@ export default function MainLayout() {
       if (cancelled) return;
       if (activeShare) {
         applyDesktopStateSuccess({
-          projectPath: activeShare.projectRoot,
+          projectStateKey: projectStateKey({ path: activeShare.projectRoot }),
           state: desktopStateFromActiveShare(activeShare),
         });
         timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
@@ -326,15 +396,36 @@ export default function MainLayout() {
       }
       try {
         const token = await getTokenRef.current();
-        const projects = await listProjects({ token });
-        if (!cancelled) reconcileProjects(projects);
+        const { projects, failures, answeringMachineIds } = await listProjectsAcrossMachines({
+          token,
+        });
+        if (!cancelled) {
+          reconcileProjects(projects, {
+            // A machine that left the relay is never queried, so it has no
+            // failure to report -- without naming it here its projects would
+            // simply vanish instead of greying out.
+            unansweredMachineIds: [
+              ...failures.map((failure) => failure.machineId),
+              ...store.get(departedMachineIdsAtom),
+            ],
+            answeringMachineIds,
+            // A list missing one machine is real but short, and "ok" would
+            // call it whole.
+            status: failures.length > 0 ? projectListPartial(failures) : undefined,
+          });
+        }
       } catch (err) {
         // A fetch that failed is not a list of zero projects. Every non-transient
         // outcome has to reach the UI as itself.
         if (!cancelled && !isTransientRequestError(err)) {
           const msg = getErrorMessage(err);
           if (isProjectHostOfflineError(msg)) {
-            reconcileProjects([]);
+            // No machine answered, so there is no list -- but a machine that
+            // merely went away still keeps its last-known projects, greyed,
+            // rather than disappearing.
+            reconcileProjects([], {
+              unansweredMachineIds: store.get(departedMachineIdsAtom),
+            });
             setProjectListStatus(projectListUnavailable("The daemon is offline."));
           } else {
             setProjectListStatus(projectListFailed(msg));
@@ -421,13 +512,13 @@ export default function MainLayout() {
   // selection change and on a refresh-nonce bump (from optimistic mutations).
   // Keyed by host:port primitives so the timer survives project-list reconciles
   // that create new array identities.
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   useEffect(() => {
     if (activeShare) return;
     if (!effectiveProjectPath) return;
     if (!relayReadyForRequests) return;
     if (!endpoint) {
-      clearDesktopStateResource(effectiveProjectPath);
+      clearDesktopStateResource(effectiveProjectStateKey);
       return;
     }
     let cancelled = false;
@@ -439,16 +530,16 @@ export default function MainLayout() {
       activeController?.abort();
       const controller = new AbortController();
       activeController = controller;
-      beginDesktopStateRefresh(effectiveProjectPath!);
+      beginDesktopStateRefresh(effectiveProjectStateKey);
       try {
         const token = await getTokenRef.current();
         const state = await getDesktopState(endpoint!, { token, signal: controller.signal });
         if (cancelled) return;
-        applyDesktopStateSuccess({ projectPath: effectiveProjectPath!, state });
+        applyDesktopStateSuccess({ projectStateKey: effectiveProjectStateKey, state });
       } catch (err) {
         if (!cancelled && !controller.signal.aborted && !isTransientRequestError(err)) {
           const msg = getErrorMessage(err);
-          applyDesktopStateFailure({ projectPath: effectiveProjectPath!, error: msg });
+          applyDesktopStateFailure({ projectStateKey: effectiveProjectStateKey, error: msg });
           if (!isProjectHostOfflineError(msg)) {
             console.warn("desktop-state fetch failed:", err);
           }
@@ -486,7 +577,7 @@ export default function MainLayout() {
     if (!effectiveProjectPath) return;
     if (!relayReadyForRequests) return;
     if (!endpoint) {
-      clearNotificationFeedResource(effectiveProjectPath);
+      clearNotificationFeedResource(effectiveProjectStateKey);
       return;
     }
     let cancelled = false;
@@ -498,13 +589,13 @@ export default function MainLayout() {
       activeController?.abort();
       const controller = new AbortController();
       activeController = controller;
-      beginNotificationFeedRefresh(effectiveProjectPath!);
+      beginNotificationFeedRefresh(effectiveProjectStateKey);
       try {
         const token = await getTokenRef.current();
         const feed = await listNotifications(endpoint!, { token, signal: controller.signal });
         if (cancelled) return;
         applyNotificationFeedSuccess({
-          projectPath: effectiveProjectPath!,
+          projectStateKey: effectiveProjectStateKey,
           feed: {
             notifications: feed.notifications,
             unreadCount: feed.unreadCount,
@@ -514,7 +605,7 @@ export default function MainLayout() {
       } catch (err) {
         if (!cancelled && !controller.signal.aborted && !isTransientRequestError(err)) {
           const msg = getErrorMessage(err);
-          applyNotificationFeedFailure({ projectPath: effectiveProjectPath!, error: msg });
+          applyNotificationFeedFailure({ projectStateKey: effectiveProjectStateKey, error: msg });
           if (!isProjectHostOfflineError(msg)) {
             console.warn("notification fetch failed:", err);
           }
@@ -550,7 +641,7 @@ export default function MainLayout() {
     if (!effectiveProjectPath) return;
     if (!activeShare && !relayReadyForRequests) return;
     if (!endpoint) return;
-    const projectPath = effectiveProjectPath;
+    const projectStateKeyForStream = effectiveProjectStateKey;
     let cancelled = false;
     let handle: { stop: () => void } | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -596,12 +687,16 @@ export default function MainLayout() {
             }
             if (event.type !== "alert") return;
             if (event.notificationId) {
-              markNotificationRecordsObserved({ projectPath, ids: [event.notificationId] });
+              markNotificationRecordsObserved({
+                projectStateKey: projectStateKeyForStream,
+                ids: [event.notificationId],
+              });
             }
             kickNotificationFeedRefresh();
             const notification = evaluateAlertEvent(event, notificationSettings, {
               projectName: effectiveProject?.name,
-              projectPath,
+              projectPath: effectiveProjectPath ?? undefined,
+              machineId: effectiveProjectRef?.machineId,
             });
             if (
               notification &&

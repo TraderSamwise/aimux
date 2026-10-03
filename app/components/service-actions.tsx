@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import type { ProjectStateKey } from "@/lib/project-key";
 import { View } from "react-native";
 import { useSetAtom } from "jotai";
 import { Play, Square, Trash2 } from "lucide-react-native";
@@ -24,14 +25,14 @@ export function ServiceActions({
   service,
   endpoint,
   token,
-  projectPath,
+  projectStateKey,
   compact = false,
   onRemoved,
 }: {
   service: DesktopService;
   endpoint: ServiceEndpoint | null;
   token: string | null;
-  projectPath: string;
+  projectStateKey: ProjectStateKey;
   compact?: boolean;
   onRemoved?: () => void;
 }) {
@@ -55,7 +56,7 @@ export function ServiceActions({
       const localTransition = opts?.localTransition?.();
       if (localTransition) {
         recordTransition({
-          projectPath,
+          projectStateKey,
           transition: localTransition,
           label: service.label || service.id,
           worktreePath: service.worktreePath,
@@ -64,7 +65,7 @@ export function ServiceActions({
       try {
         const response = await fn();
         recordTransition({
-          projectPath,
+          projectStateKey,
           transition: response.transition,
           label: service.label || service.id,
           worktreePath: service.worktreePath,
@@ -75,7 +76,7 @@ export function ServiceActions({
       } catch (e) {
         if (localTransition) {
           recordTransition({
-            projectPath,
+            projectStateKey,
             transition: failLocalProjectLifecycleTransition(localTransition),
             label: service.label || service.id,
             worktreePath: service.worktreePath,

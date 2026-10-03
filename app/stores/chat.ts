@@ -1,4 +1,5 @@
 import { atom, type Getter, type Setter } from "jotai";
+import { agentStateKey, type AgentStateKey, type ProjectStateKey } from "@/lib/project-key";
 import { atomFamily } from "jotai/utils";
 import type {
   AgentActivityState,
@@ -12,8 +13,10 @@ import type { TmuxUnavailableMarker } from "../../src/project-api-contract";
 
 // ─── Per-session base families ─────────────────────────────────────────────
 
-export const outputBufferFamily = atomFamily((_sessionId: string) => atom<string>(""));
-export const outputAvailableFamily = atomFamily((_sessionId: string) => atom<boolean>(false));
+export const outputBufferFamily = atomFamily((_agentStateKey: AgentStateKey) => atom<string>(""));
+export const outputAvailableFamily = atomFamily((_agentStateKey: AgentStateKey) =>
+  atom<boolean>(false),
+);
 /**
  * The same pane with tmux's colours still on it, for the terminal view.
  *
@@ -21,7 +24,7 @@ export const outputAvailableFamily = atomFamily((_sessionId: string) => atom<boo
  * every other reader (and the parser behind them) takes, and a service too old
  * to send this one leaves it empty rather than blanking the view.
  */
-export const outputAnsiFamily = atomFamily((_sessionId: string) => atom<string>(""));
+export const outputAnsiFamily = atomFamily((_agentStateKey: AgentStateKey) => atom<string>(""));
 /**
  * The conversation, as the service projected it.
  *
@@ -29,38 +32,40 @@ export const outputAnsiFamily = atomFamily((_sessionId: string) => atom<string>(
  * lives beside the parser that produces the blocks, so both this app and any
  * other client read the same one instead of each keeping a copy that drifts.
  */
-export const transcriptFamily = atomFamily((_sessionId: string) =>
+export const transcriptFamily = atomFamily((_agentStateKey: AgentStateKey) =>
   atom<AgentTranscriptMessage[]>([]),
 );
-export const transcriptStartLineFamily = atomFamily((_sessionId: string) =>
+export const transcriptStartLineFamily = atomFamily((_agentStateKey: AgentStateKey) =>
   atom<number | undefined>(undefined),
 );
-export const streamingFamily = atomFamily((_sessionId: string) => atom<boolean>(false));
+export const streamingFamily = atomFamily((_agentStateKey: AgentStateKey) => atom<boolean>(false));
 /**
  * What the runtime says the session is doing, as opposed to what arriving bytes
  * imply. `undefined` means the service does not report it — not that the agent
  * is idle — so readers must keep their own fallback for that case.
  */
-export const activityFamily = atomFamily((_sessionId: string) =>
+export const activityFamily = atomFamily((_agentStateKey: AgentStateKey) =>
   atom<AgentActivityState | undefined>(undefined),
 );
-export const attentionFamily = atomFamily((_sessionId: string) =>
+export const attentionFamily = atomFamily((_agentStateKey: AgentStateKey) =>
   atom<AgentAttentionState | undefined>(undefined),
 );
 /**
  * The tool's own progress line. Sparse events keep the last value so the footer
  * does not flicker; explicit empty strings still clear finished turns.
  */
-export const activityTextFamily = atomFamily((_sessionId: string) => atom<string>(""));
-const localInterruptedUntilFamily = atomFamily((_sessionId: string) => atom<number>(0));
+export const activityTextFamily = atomFamily((_agentStateKey: AgentStateKey) => atom<string>(""));
+const localInterruptedUntilFamily = atomFamily((_agentStateKey: AgentStateKey) => atom<number>(0));
 // Kept for future stream-token dedup; not wired up yet — see Task 3 deviation #6.
-export const streamTokenFamily = atomFamily((_sessionId: string) => atom<number>(0));
-export const lastErrorFamily = atomFamily((_sessionId: string) => atom<string | null>(null));
+export const streamTokenFamily = atomFamily((_agentStateKey: AgentStateKey) => atom<number>(0));
+export const lastErrorFamily = atomFamily((_agentStateKey: AgentStateKey) =>
+  atom<string | null>(null),
+);
 
 export const LOCAL_INTERRUPT_ACTIVITY_HOLD_MS = 5_000;
 
 export type AgentOutputPayload = {
-  sessionId: string;
+  agentStateKey: AgentStateKey;
   output?: string;
   /**
    * Required, though the value may be undefined: callers build this object
@@ -210,27 +215,27 @@ function transcriptMessageSignature(message: AgentTranscriptMessage): string {
 function applyTranscriptMessages(
   get: Getter,
   set: Setter,
-  sessionId: string,
+  agentStateKey: AgentStateKey,
   messages: AgentTranscriptMessage[],
   startLine: number | undefined,
 ) {
-  const startLineAtom = transcriptStartLineFamily(sessionId);
+  const startLineAtom = transcriptStartLineFamily(agentStateKey);
   const currentStartLine = get(startLineAtom);
   if (startLine === undefined || currentStartLine === undefined || startLine < currentStartLine) {
-    set(transcriptFamily(sessionId), messages);
+    set(transcriptFamily(agentStateKey), messages);
     set(startLineAtom, startLine);
     return;
   }
   if (startLine === currentStartLine) {
     set(
-      transcriptFamily(sessionId),
-      stabilizeSameWindowTranscriptMessages(get(transcriptFamily(sessionId)), messages),
+      transcriptFamily(agentStateKey),
+      stabilizeSameWindowTranscriptMessages(get(transcriptFamily(agentStateKey)), messages),
     );
     return;
   }
   set(
-    transcriptFamily(sessionId),
-    mergeTranscriptMessages(get(transcriptFamily(sessionId)), messages),
+    transcriptFamily(agentStateKey),
+    mergeTranscriptMessages(get(transcriptFamily(agentStateKey)), messages),
   );
 }
 
@@ -241,8 +246,8 @@ function applyAgentOutputPayload(
   options: { sparseActivity: boolean },
 ) {
   const localInterruptActive =
-    get(activityFamily(payload.sessionId)) === "interrupted" &&
-    get(localInterruptedUntilFamily(payload.sessionId)) > Date.now();
+    get(activityFamily(payload.agentStateKey)) === "interrupted" &&
+    get(localInterruptedUntilFamily(payload.agentStateKey)) > Date.now();
   const incomingLooksLikeStaleProgress =
     payload.activity === "running" ||
     (payload.activity === undefined &&
@@ -253,43 +258,43 @@ function applyAgentOutputPayload(
     (incomingLooksLikeStaleProgress || (!options.sparseActivity && payload.activity === undefined));
 
   if (payload.output !== undefined) {
-    set(outputBufferFamily(payload.sessionId), payload.output);
-    set(outputAnsiFamily(payload.sessionId), payload.outputAnsi ?? payload.output);
+    set(outputBufferFamily(payload.agentStateKey), payload.output);
+    set(outputAnsiFamily(payload.agentStateKey), payload.outputAnsi ?? payload.output);
     set(
-      outputAvailableFamily(payload.sessionId),
+      outputAvailableFamily(payload.agentStateKey),
       Boolean(payload.output.length || payload.outputAvailable),
     );
   } else if (payload.outputAnsi !== undefined) {
-    set(outputAnsiFamily(payload.sessionId), payload.outputAnsi);
+    set(outputAnsiFamily(payload.agentStateKey), payload.outputAnsi);
     set(
-      outputAvailableFamily(payload.sessionId),
+      outputAvailableFamily(payload.agentStateKey),
       Boolean(payload.outputAnsi.length || payload.outputAvailable),
     );
   } else if (payload.outputAvailable !== undefined) {
-    set(outputAvailableFamily(payload.sessionId), payload.outputAvailable);
+    set(outputAvailableFamily(payload.agentStateKey), payload.outputAvailable);
   }
   if (payload.messages !== undefined) {
-    applyTranscriptMessages(get, set, payload.sessionId, payload.messages, payload.startLine);
+    applyTranscriptMessages(get, set, payload.agentStateKey, payload.messages, payload.startLine);
   } else if (payload.output !== undefined) {
-    set(transcriptFamily(payload.sessionId), []);
-    set(transcriptStartLineFamily(payload.sessionId), payload.startLine);
+    set(transcriptFamily(payload.agentStateKey), []);
+    set(transcriptStartLineFamily(payload.agentStateKey), payload.startLine);
   }
   if (!options.sparseActivity || payload.activity !== undefined) {
     if (!preserveLocalInterrupt) {
-      set(activityFamily(payload.sessionId), payload.activity);
+      set(activityFamily(payload.agentStateKey), payload.activity);
       if (payload.activity !== "interrupted") {
-        set(localInterruptedUntilFamily(payload.sessionId), 0);
+        set(localInterruptedUntilFamily(payload.agentStateKey), 0);
       }
     }
   }
   if (payload.activityText !== undefined && !preserveLocalInterrupt) {
-    set(activityTextFamily(payload.sessionId), payload.activityText);
+    set(activityTextFamily(payload.agentStateKey), payload.activityText);
   }
   if (!options.sparseActivity || payload.attention !== undefined) {
-    set(attentionFamily(payload.sessionId), payload.attention);
+    set(attentionFamily(payload.agentStateKey), payload.attention);
   }
   set(
-    lastErrorFamily(payload.sessionId),
+    lastErrorFamily(payload.agentStateKey),
     formatTmuxUnavailable(payload.tmuxUnavailable, "tmux pane output unavailable"),
   );
 }
@@ -298,10 +303,10 @@ export const applyOutputSnapshotAtom = atom(null, (get, set, snapshot: AgentOutp
   applyAgentOutputPayload(get, set, snapshot, { sparseActivity: false });
 });
 
-export const markOutputInterruptedAtom = atom(null, (_get, set, sessionId: string) => {
-  set(localInterruptedUntilFamily(sessionId), Date.now() + LOCAL_INTERRUPT_ACTIVITY_HOLD_MS);
+export const markOutputInterruptedAtom = atom(null, (_get, set, agentStateKey: AgentStateKey) => {
+  set(localInterruptedUntilFamily(agentStateKey), Date.now() + LOCAL_INTERRUPT_ACTIVITY_HOLD_MS);
   set(applyOutputSnapshotAtom, {
-    sessionId,
+    agentStateKey,
     outputAnsi: undefined,
     activity: "interrupted",
     activityText: "",
@@ -309,13 +314,16 @@ export const markOutputInterruptedAtom = atom(null, (_get, set, sessionId: strin
   });
 });
 
-export const clearLocalInterruptHoldAtom = atom(null, (_get, set, sessionId: string) => {
-  set(localInterruptedUntilFamily(sessionId), 0);
+export const clearLocalInterruptHoldAtom = atom(null, (_get, set, agentStateKey: AgentStateKey) => {
+  set(localInterruptedUntilFamily(agentStateKey), 0);
 });
 
-function agentOutputEventPayload(event: AgentOutputEvent): AgentOutputPayload {
+function agentOutputEventPayload(
+  projectStateKey: ProjectStateKey,
+  event: AgentOutputEvent,
+): AgentOutputPayload {
   return {
-    sessionId: event.sessionId,
+    agentStateKey: agentStateKey(projectStateKey, event.sessionId),
     output: event.output,
     outputAnsi: event.outputAnsi,
     outputAvailable: event.outputAvailable,
@@ -328,33 +336,49 @@ function agentOutputEventPayload(event: AgentOutputEvent): AgentOutputPayload {
   };
 }
 
-export const applyOutputEventAtom = atom(null, (get, set, event: AgentOutputEvent) => {
-  applyAgentOutputPayload(get, set, agentOutputEventPayload(event), { sparseActivity: true });
-  set(streamingFamily(event.sessionId), true);
-});
+export interface AgentStreamEventInput<T> {
+  // Which project service this stream belongs to. The event itself names only
+  // a session, and a session id is unique within one service, not across the
+  // fleet.
+  projectStateKey: ProjectStateKey;
+  event: T;
+}
 
-// Route a single SSE event into the right per-session family slots.
-// Equivalent to the Zustand `ingestEvent` reducer.
-export const ingestEventAtom = atom(null, (get, set, event: StreamEvent) => {
-  switch (event.type) {
-    case "ready":
-      if (event.sessionId) {
-        set(streamingFamily(event.sessionId), false);
-        set(lastErrorFamily(event.sessionId), null);
-      }
-      return;
-    case "agent_output":
-      set(applyOutputEventAtom, event);
-      return;
-    case "alert":
-      if (!event.sessionId) return;
-      if (event.kind === "task_done" || event.kind === "task_failed") {
-        set(streamingFamily(event.sessionId), false);
-      }
-      return;
-    case "error":
-      set(lastErrorFamily(event.sessionId), event.error);
-      set(streamingFamily(event.sessionId), false);
-      return;
-  }
-});
+export const applyOutputEventAtom = atom(
+  null,
+  (get, set, { projectStateKey, event }: AgentStreamEventInput<AgentOutputEvent>) => {
+    applyAgentOutputPayload(get, set, agentOutputEventPayload(projectStateKey, event), {
+      sparseActivity: true,
+    });
+    set(streamingFamily(agentStateKey(projectStateKey, event.sessionId)), true);
+  },
+);
+
+// Route a single SSE event into the right per-agent family slots.
+export const ingestEventAtom = atom(
+  null,
+  (get, set, { projectStateKey, event }: AgentStreamEventInput<StreamEvent>) => {
+    const keyFor = (sessionId: string | undefined) => agentStateKey(projectStateKey, sessionId);
+    switch (event.type) {
+      case "ready":
+        if (event.sessionId) {
+          set(streamingFamily(keyFor(event.sessionId)), false);
+          set(lastErrorFamily(keyFor(event.sessionId)), null);
+        }
+        return;
+      case "agent_output":
+        set(applyOutputEventAtom, { projectStateKey, event });
+        return;
+      case "alert":
+        if (!event.sessionId) return;
+        if (event.kind === "task_done" || event.kind === "task_failed") {
+          set(streamingFamily(keyFor(event.sessionId)), false);
+        }
+        return;
+      case "error":
+        set(lastErrorFamily(keyFor(event.sessionId)), event.error);
+        set(streamingFamily(keyFor(event.sessionId)), false);
+        return;
+    }
+  },
+);

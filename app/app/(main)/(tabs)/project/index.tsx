@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -34,6 +35,7 @@ import {
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { TaskWorkflowActions } from "@/components/workflow-actions";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 
 type ProjectSection =
   | "dashboard"
@@ -194,14 +196,18 @@ function ProgressSection({ model }: { model: ProjectObservabilityModel }) {
 export default function ProjectScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
+  const { project, projectPath, machineId, projectRef, endpoint, projectLoading } =
+    useRouteProject();
+  // Keyed by the pair: two machines' copies of one checkout are two
+  // projects, and sharing an atom between them bleeds one host into the
+  // other.
+  const projectKeyForState = projectStateKey(projectRef);
   const projectObservabilityRefreshNonce = useAtomValue(
     projectApiViewRefreshNonceFamily("project-observability"),
   );
   const tasksRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("tasks"));
-  const projectResource = useAtomValue(projectObservabilityResourceFamily(projectPathKey));
-  const tasksResource = useAtomValue(projectTasksResourceFamily(projectPathKey));
+  const projectResource = useAtomValue(projectObservabilityResourceFamily(projectKeyForState));
+  const tasksResource = useAtomValue(projectTasksResourceFamily(projectKeyForState));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const refreshProjectObservabilityResource = useSetAtom(refreshProjectObservabilityResourceAtom);
@@ -210,10 +216,10 @@ export default function ProjectScreen() {
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
   const section = resolveProjectSection(cleanSearchValue(searchParams.section));
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointKey = serviceEndpointKey(endpoint);
   const requestTrackerRef = useRef(
     createProjectResourceRequestTracker({
-      projectPath: projectPathKey,
+      projectStateKey: projectKeyForState,
       endpointKey,
     }),
   );
@@ -221,13 +227,13 @@ export default function ProjectScreen() {
   useLayoutEffect(() => {
     const requestTracker = requestTrackerRef.current;
     requestTracker.update({
-      projectPath: projectPathKey,
+      projectStateKey: projectKeyForState,
       endpointKey,
     });
     return () => {
       requestTracker.invalidateGeneration();
     };
-  }, [endpointKey, projectPathKey]);
+  }, [endpointKey, projectKeyForState]);
 
   const projectModelReady = projectResource.value?.project !== undefined;
   const tasksReady = tasksResource.value !== null;
@@ -257,7 +263,7 @@ export default function ProjectScreen() {
   }, [
     endpointKey,
     projectObservabilityRefreshNonce,
-    projectPathKey,
+    projectKeyForState,
     serializedRefreshProjectView,
     tasksRefreshNonce,
   ]);
@@ -350,7 +356,11 @@ export default function ProjectScreen() {
                 active={section === item.id}
                 onPress={() =>
                   router.replace(
-                    buildViewHref("/project", { project: projectPath, section: item.id }),
+                    buildViewHref("/project", {
+                      project: projectPath,
+                      machine: machineId,
+                      section: item.id,
+                    }),
                   )
                 }
               />

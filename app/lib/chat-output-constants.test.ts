@@ -1,4 +1,5 @@
 import { createStore } from "jotai";
+import { agentStateKey, projectStateKey } from "@/lib/project-key";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -38,14 +39,14 @@ describe("chat output history pagination", () => {
 
     const store = createStore();
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       outputAvailable: true,
       startLine: CHAT_OUTPUT_CAPTURE_START_LINE,
       messages: [message("assistant:newer", "newer message")],
     });
     store.set(applyOutputSnapshotAtom, {
-      sessionId: "agent-1",
+      agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
       outputAvailable: true,
       startLine: requestedStartLine ?? undefined,
@@ -55,8 +56,8 @@ describe("chat output history pagination", () => {
       ],
     });
 
-    expect(store.get(transcriptStartLineFamily("agent-1"))).toBe(requestedStartLine);
-    expect(store.get(transcriptFamily("agent-1")).map((item) => item.id)).toEqual([
+    expect(store.get(transcriptStartLineFamily(agentKey("agent-1")))).toBe(requestedStartLine);
+    expect(store.get(transcriptFamily(agentKey("agent-1"))).map((item) => item.id)).toEqual([
       "assistant:older",
       "assistant:newer",
     ]);
@@ -84,3 +85,11 @@ describe("chat output history pagination", () => {
     ).toBeNull();
   });
 });
+
+// One project on one machine, so these tests key an agent the way the app does.
+const TEST_PROJECT_KEY = projectStateKey({ machineId: "mbp", path: "/repo" });
+
+// One project on one machine, so these tests key an agent the way the app does.
+function agentKey(sessionId: string) {
+  return agentStateKey(TEST_PROJECT_KEY, sessionId);
+}

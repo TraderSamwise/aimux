@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { NO_PROJECT_STATE_KEY, projectStateKey } from "@/lib/project-key";
+import { serviceEndpointKey } from "@/lib/daemon-url";
 import { ActivityIndicator, ScrollView, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -24,7 +26,7 @@ import {
   settleProjectPlanRefreshAtom,
 } from "@/stores/project";
 
-const NO_PROJECT_PLAN_KEY = "__aimux_no_project__";
+const NO_PROJECT_PLAN_KEY = NO_PROJECT_STATE_KEY;
 
 interface PlanRouteScope {
   endpointKey: string | null;
@@ -39,22 +41,18 @@ function samePlanRouteScope(a: PlanRouteScope, b: PlanRouteScope): boolean {
 export default function PlanEditorScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
   const sessionId = singleRouteParam(params.sessionId);
-  const { endpoint: serviceEndpoint, projectPath } = useRouteProject();
+  const { endpoint: serviceEndpoint, projectPath, projectRef } = useRouteProject();
   const { getToken } = useAuth();
   const router = useRouter();
 
-  const serviceEndpointHost = serviceEndpoint?.host ?? null;
-  const serviceEndpointPort = serviceEndpoint?.port ?? null;
-  const endpointKey =
-    serviceEndpointHost && serviceEndpointPort
-      ? `${serviceEndpointHost}:${serviceEndpointPort}`
-      : null;
+  const endpointKey = serviceEndpointKey(serviceEndpoint);
+  const projectKeyForState = projectStateKey(projectRef);
   const planKey = useMemo(
     () =>
       projectPath && sessionId
-        ? projectPlanResourceKey(projectPath, sessionId)
+        ? projectPlanResourceKey(projectKeyForState, sessionId)
         : NO_PROJECT_PLAN_KEY,
-    [projectPath, sessionId],
+    [projectKeyForState, projectPath, sessionId],
   );
   const planResource = useAtomValue(projectPlanResourceFamily(planKey));
   const plansRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("plans"));
@@ -69,7 +67,7 @@ export default function PlanEditorScreen() {
   const editPlanDraft = useSetAtom(editProjectPlanDraftAtom);
   const trackerRef = useRef(
     createProjectResourceRequestTracker({
-      projectPath: planKey,
+      projectStateKey: planKey,
       endpointKey,
     }),
   );
@@ -83,7 +81,7 @@ export default function PlanEditorScreen() {
   useEffect(() => {
     const tracker = trackerRef.current;
     routeScopeRef.current = { endpointKey, planKey, sessionId: sessionId ?? null };
-    tracker.update({ projectPath: planKey, endpointKey });
+    tracker.update({ projectStateKey: planKey, endpointKey });
     return () => {
       tracker.invalidateGeneration();
     };
