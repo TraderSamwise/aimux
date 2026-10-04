@@ -380,6 +380,22 @@ impl DashboardController {
         snapshot: &DesktopStateSnapshot,
         key: DashboardKey,
     ) -> DashboardControllerEffect {
+        let effect = self.handle_key_inner(snapshot, key);
+        // A newly dispatched action supersedes the last failure. Clearing on
+        // the *outcome* instead meant a slow success -- a graveyard is allowed
+        // 180s -- took down an unrelated refusal raised minutes later, because
+        // nothing tied an outcome to the alert it supposedly answered.
+        if matches!(effect, DashboardControllerEffect::Request(_)) {
+            self.footer_alert = None;
+        }
+        effect
+    }
+
+    fn handle_key_inner(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
         self.navigation.clamp(snapshot);
         self.footer_message = None;
         if self.launch_options.is_some() {
@@ -2709,6 +2725,9 @@ impl DashboardController {
     ) -> Option<DashboardControllerEffect> {
         let group = self.navigation.focused_worktree_group(snapshot)?;
         let path = group.path.as_ref()?;
+        // A fresh attempt supersedes the last one's refusal, so a refusal for
+        // one worktree cannot sit under a confirm prompt for another.
+        self.footer_alert = None;
         if group.removing
             || group.pending_action.as_deref() == Some("removing")
             || group.pending_action.as_deref() == Some("graveyarding")
@@ -2762,9 +2781,13 @@ impl DashboardController {
         // One key dismisses the whole error surface. The alert line and the
         // failure card are two renderings of the same thing, so clearing one
         // without the other would leave the user chasing the remainder.
-        let dismissed_alert = self.footer_alert.take().is_some();
+        //
+        // With nothing in the ledger there is no request to make, so the alert
+        // is taken here. With a ledger to clear, dispatching the request takes
+        // it -- taking it first discarded the refusal before the request meant
+        // to replace it existed, so a clear that 404'd lost both.
         if snapshot.operation_failures.is_empty() {
-            return if dismissed_alert {
+            return if self.footer_alert.take().is_some() {
                 DashboardControllerEffect::Render
             } else {
                 DashboardControllerEffect::Ignored

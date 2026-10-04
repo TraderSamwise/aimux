@@ -58,9 +58,14 @@ pub struct DashboardRenderInput<'a> {
     pub hidden_offline_agent_count: usize,
     pub scroll_offset: usize,
     pub footer_message: Option<&'a str>,
-    /// A failure to put in front of the user, rendered as its own filled bar
-    /// above the hints rather than replacing them.
-    pub footer_alert: Option<&'a str>,
+    /// Failures to put in front of the user, each its own filled bar above the
+    /// hints rather than replacing them.
+    ///
+    /// A list because there is more than one kind at a time: stale data and a
+    /// refused action are both true, and multiplexing them through one slot let
+    /// a transient refresh error hide the only report of a refused graveyard --
+    /// which `X` then discarded unseen.
+    pub footer_alerts: &'a [DashboardFooterAlert<'a>],
     pub details_sidebar_visible: bool,
     pub preview_source: &'a str,
     pub scribe_preview_entries: &'a [WorkOutlineEntry],
@@ -163,12 +168,9 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
                     .and_then(format_relative_recency)
                     .or_else(|| failure.created_at.clone())
                     .unwrap_or_default();
-                let target = failure
-                    .worktree_name
+                let target_hint = failure
+                    .target
                     .as_deref()
-                    .or(failure.target_id.as_deref())
-                    .or(failure.worktree_path.as_deref());
-                let target_hint = target
                     .map(|target| style(&format!(" · {}", truncate(target, 24)), Tone::Muted))
                     .unwrap_or_default();
                 format!(
@@ -216,7 +218,7 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
     if let Some(chrome) = loop_alert_chrome(input.snapshot) {
         footer_lines.push(truncate_ansi(&chrome, input.cols.saturating_sub(2)));
     }
-    if let Some(alert) = input.footer_alert {
+    for alert in input.footer_alerts {
         footer_lines.push(truncate_ansi(
             &dashboard_alert_line(alert),
             input.cols.saturating_sub(2),
@@ -315,14 +317,40 @@ fn format_duration_hint(ms: i64) -> String {
     }
 }
 
+/// A failure on the footer, and whether `X` is the way out of it.
+#[derive(Debug, Clone, Copy)]
+pub struct DashboardFooterAlert<'a> {
+    pub message: &'a str,
+    /// Whether `X` takes this one down.
+    ///
+    /// A stale-data notice is derived from the refresh, not stored, so it goes
+    /// when the refresh succeeds and no keypress touches it -- advertising a
+    /// dismiss key on it would be a lie.
+    pub dismissible: bool,
+}
+
 /// The line a failure gets.
 ///
 /// A filled pill rather than a tinted glyph, and the text in the ordinary
 /// reading tone rather than `Muted` -- an error painted as de-emphasised
 /// chrome is an error nobody reads, which is exactly how a refused graveyard
 /// went unnoticed through several attempts.
-fn dashboard_alert_line(message: &str) -> String {
-    format!("{} {}", pill("!", Tone::Danger), style(message, Tone::Text))
+///
+/// The dismiss key rides on the bar rather than the hint row. The hint row
+/// advertised `X` only while the ledger was non-empty, and the refusals this
+/// exists for never reach the ledger -- so the one surface that could say how
+/// to get rid of it was the one surface that stayed silent. Subscreens have no
+/// hint row to put it in at all.
+fn dashboard_alert_line(alert: &DashboardFooterAlert<'_>) -> String {
+    let mut line = format!(
+        "{} {}",
+        pill("!", Tone::Danger),
+        style(alert.message, Tone::Text)
+    );
+    if alert.dismissible {
+        line.push_str(&format!("  {}", style("[X] dismiss", Tone::Muted)));
+    }
+    line
 }
 
 fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterHint<'static>> {
@@ -2599,7 +2627,7 @@ pub struct DashboardSubscreenRenderInput<'a> {
     pub rows: usize,
     pub scroll_offset: usize,
     pub footer_message: Option<&'a str>,
-    pub footer_alert: Option<&'a str>,
+    pub footer_alerts: &'a [DashboardFooterAlert<'a>],
     pub details_sidebar_visible: bool,
     pub runtime_label: Option<&'a str>,
     pub version: Option<&'a str>,
@@ -2644,7 +2672,7 @@ pub fn render_dashboard_subscreen_frame(
         input.resource,
         input.selected_index,
     ))];
-    if let Some(alert) = input.footer_alert {
+    for alert in input.footer_alerts {
         footer.push(dashboard_alert_line(alert));
     }
     if let Some(message) = input.footer_message {

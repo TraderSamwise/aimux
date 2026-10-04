@@ -1265,7 +1265,7 @@ fn enter_from_worktree_level_renders_agent_details_rail() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
-        footer_alert: None,
+        footer_alerts: &[],
         details_sidebar_visible: controller.details_sidebar_visible,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -2868,6 +2868,7 @@ fn operation_failure(
         target_id: None,
         worktree_path: None,
         worktree_name: None,
+        target: None,
         cleared: false,
         extra: Default::default(),
     }
@@ -3165,6 +3166,96 @@ fn a_waiting_agent_blocks_the_graveyard_just_as_the_server_does() {
 
     assert!(controller.worktree_remove_confirm.is_none());
     assert!(controller.footer_alert.is_some());
+}
+
+/// The other direction the guard must not get wrong: a dead agent is not an
+/// attached one.
+///
+/// Adding `Offline` to the liveness set passed every other test in this file,
+/// because they *remove* the sessions rather than mark them dead -- and it would
+/// have made every worktree with a lingering offline agent un-graveyardable from
+/// the TUI, with no override and nothing to stop.
+#[test]
+fn an_offline_agent_does_not_block_the_graveyard() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    let path = snapshot.worktree_groups[1].path.clone().unwrap();
+    let mut marked = 0;
+    for session in snapshot
+        .sessions
+        .iter_mut()
+        .chain(snapshot.teammates.iter_mut())
+    {
+        if session.worktree_path.as_deref() == Some(path.as_str()) {
+            session.status = SessionStatus::Offline;
+            marked += 1;
+        }
+    }
+    assert!(
+        marked > 0,
+        "precondition: a session on this checkout to kill"
+    );
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert!(
+        controller.worktree_remove_confirm.is_some(),
+        "the server allows this, so the client must not block it"
+    );
+    assert_eq!(controller.footer_alert, None);
+}
+
+/// A new attempt supersedes the last one's refusal.
+///
+/// Without this a refusal for one worktree sat under a confirm prompt for
+/// another, and the alert survives keypresses now so nothing else took it down.
+#[test]
+fn a_fresh_attempt_supersedes_the_previous_refusal() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+    assert!(controller.footer_alert.is_some(), "precondition: a refusal");
+
+    let path = snapshot.worktree_groups[1].path.clone().unwrap();
+    for session in snapshot
+        .sessions
+        .iter_mut()
+        .chain(snapshot.teammates.iter_mut())
+    {
+        if session.worktree_path.as_deref() == Some(path.as_str()) {
+            session.status = SessionStatus::Offline;
+        }
+    }
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert!(controller.worktree_remove_confirm.is_some());
+    assert_eq!(
+        controller.footer_alert, None,
+        "the refusal the user just acted on must not outlive the retry"
+    );
+}
+
+/// Dispatching any action supersedes the failure on screen, so the alert cannot
+/// be clearing on an outcome that has nothing to do with it.
+#[test]
+fn dispatching_an_action_takes_down_the_failure_on_screen() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
+    controller.navigation.level = DashboardNavLevel::Sessions;
+
+    let effect = controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert!(
+        matches!(effect, DashboardControllerEffect::Request(_)),
+        "precondition: this key dispatches a request"
+    );
+    assert_eq!(controller.footer_alert, None);
 }
 
 /// And it must not refuse what the server would allow. An agent whose lane

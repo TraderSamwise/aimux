@@ -132,11 +132,11 @@ pub fn try_list_dashboard_operation_failures(
             .iter()
             .enumerate()
             .map(|(index, failure)| {
-                normalize_dashboard_operation_failure_record(
+                with_derived_operation_failure_target(normalize_dashboard_operation_failure_record(
                     format!("legacy-operation-failure-{index}"),
                     format!("invalid-operation-failure-{index}"),
                     failure,
-                )
+                ))
             })
             .filter(|failure| is_active_failure(failure, now_epoch_millis()))
             .collect(),
@@ -261,6 +261,35 @@ fn is_active_failure(failure: &Value, now: u128) -> bool {
         return true;
     };
     now.saturating_sub(created_at) < ACTIVE_FAILURE_MAX_AGE_MS
+}
+
+/// Which thing a failure is about, derived once so every surface renders the
+/// same answer instead of each walking its own chain of optional fields.
+///
+/// The TUI card, the app's card and the sidebar each had an order of their own,
+/// and two of them disagreed on the same record: a failed agent launch carries
+/// a session id and no worktree name, so a chain reaching for the path first
+/// named the repository while a chain reaching for the id named the agent.
+///
+/// A record with nothing to name omits the field rather than carrying `""`.
+/// The app decided whether to repeat the target with `title.includes(target)`,
+/// and `includes("")` is always true -- it rendered correctly by accident of
+/// that rather than by asking whether there was a target at all.
+pub fn operation_failure_target(failure: &Value) -> Option<String> {
+    ["worktreeName", "targetId", "worktreePath"]
+        .into_iter()
+        .find_map(|field| trimmed_owned(failure.get(field).and_then(Value::as_str)))
+}
+
+/// A stored row as the project service publishes it: the row plus its derived
+/// target. The one place a client's view of a failure is assembled.
+pub fn with_derived_operation_failure_target(mut failure: Value) -> Value {
+    if let (Some(target), Value::Object(record)) =
+        (operation_failure_target(&failure), &mut failure)
+    {
+        record.insert("target".into(), Value::String(target));
+    }
+    failure
 }
 
 fn operation_failure_store_unavailable(error: String) -> Value {

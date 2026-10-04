@@ -1,5 +1,5 @@
 {
-  "description": "One operation-failure ledger row, checked against every surface that renders it. The CLI card (dashboard_renderer) and the app card (lib/unavailable-state) each read this file, so a surface that changes what it shows on its own fails here rather than drifting quietly. Scoped to the title and the target because those are the only facts BOTH cards present: the CLI card renders title + target + recency and never the message, which it shows in the worktree detail panel instead. Keep each title under 48 characters and each target under 24 -- the CLI card truncates at those widths, and a longer value would make the assertion turn on the truncation rather than on the fact.",
+  "description": "One operation-failure ledger row, checked against every surface that renders it. `failure` is the STORED row, exactly as the ledger file holds it; `target` is what the project service derives from it and publishes alongside it, and `title` is what both cards head their row with. The CLI card (dashboard_renderer) and the app card (lib/unavailable-state) each read this file, so a surface that changes what it shows on its own fails here rather than drifting quietly. Neither card re-derives the target: the Rust half pins the service's derivation against `target` and then pins the card against the published row, and the app half pins its card against the same published row. Scoped to title and target because those are the only facts BOTH cards present -- the CLI card renders title + target + recency and never the message, which it shows in the worktree detail panel instead. Keep each title under 48 characters and each target under 24: the CLI card truncates at those widths, and a longer value would make the assertion turn on the truncation rather than on the fact.",
   "generatedBy": "hand-written; there is no capture script for this pair",
   "cases": [
     {
@@ -46,6 +46,34 @@
       },
       "title": "Failed to create codex agent",
       "target": "codex-ho1ofa"
+    },
+    {
+      "why": "a row with nothing to name -- the store-unavailable record and both legacy normalizations emit no worktreeName, targetId or worktreePath. The app decided whether to repeat the target with title.includes(target), and includes(\"\") is always true, so this rendered correctly by accident rather than by asking whether there was a target at all.",
+      "failure": {
+        "id": "operation-failure-store-unavailable",
+        "targetKind": "project",
+        "operation": "operation-failures.read",
+        "title": "Operation failure store unavailable",
+        "message": "failed to read dashboard operation failures at /repo/.aimux: permission denied",
+        "createdAt": "2026-10-04T12:03:00.000Z"
+      },
+      "title": "Operation failure store unavailable",
+      "target": null
+    },
+    {
+      "why": "a worktree row whose title does not spell its name the way the target does, so a surface that reads the target out of the title resolves the wrong thing rather than nothing",
+      "failure": {
+        "id": "f5",
+        "targetKind": "worktree",
+        "operation": "remove",
+        "title": "Failed to remove the attached checkout",
+        "message": "Cannot remove \"chat\" while agent \"codex\" is attached",
+        "worktreeName": "chat",
+        "worktreePath": "/repo/.aimux/worktrees/chat",
+        "createdAt": "2026-10-04T12:04:00.000Z"
+      },
+      "title": "Failed to remove the attached checkout",
+      "target": "chat"
     }
   ]
 }

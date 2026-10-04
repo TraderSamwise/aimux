@@ -430,6 +430,10 @@ pub struct DashboardOperationFailure {
     pub worktree_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_name: Option<String>,
+    /// Which thing failed, derived by the project service so the TUI card, the
+    /// app card and the sidebar cannot each pick a different field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub cleared: bool,
     #[serde(default, flatten)]

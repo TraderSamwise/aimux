@@ -7,7 +7,9 @@ use aimux::project_service::lifecycle::{
     SystemProjectLifecycleRuntime, ensure_default_scribe_agent,
     route_lifecycle_request_with_runtime,
 };
-use aimux::project_service::operation_failures::list_dashboard_operation_failures;
+use aimux::project_service::operation_failures::{
+    dashboard_operation_failures_path, list_dashboard_operation_failures,
+};
 use aimux::project_service::process::{ProjectServiceStartup, run_project_service_startup_tasks};
 use aimux::project_service::prompt_context::{get_prompt_context_text, set_prompt_context};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
@@ -373,7 +375,7 @@ fn agent_stop_reports_tmux_kill_failure_without_taking_session_offline() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
-        footer_alert: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -615,7 +617,7 @@ fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
-        footer_alert: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -4240,13 +4242,91 @@ fn worktree_graveyard_stops_services_and_moves_topology_entry() {
     cleanup(project);
 }
 
+/// A dead window is not an attached agent.
+///
+/// Topology status is durable: when a window dies without the service seeing it
+/// -- a crash, a `tmux kill-server` -- the row keeps reading `running`. The
+/// desktop snapshot corrects that for display, so the dashboard showed the agent
+/// offline while this route refused the graveyard naming it. The worktree became
+/// un-graveyardable, with nothing to stop and no way through, and once the
+/// refusal was recorded it also left a sticky card naming a dead agent.
+///
+/// `session_liveness` is the one place that asks this question; this route was a
+/// fourth caller that never got wired to it.
+#[test]
+fn worktree_graveyard_allows_a_live_status_whose_window_is_provably_gone() {
+    let project = temp_project("worktree-graveyard-dead-window");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    // tmux answered, and the session's window was not in what it returned.
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    assert_eq!(response.body["status"], "graveyarded");
+    assert!(
+        list_dashboard_operation_failures(&state_dir).is_empty(),
+        "nothing was refused, so nothing belongs on the failure card"
+    );
+    cleanup(project);
+}
+
+/// And the other direction: tmux being unaskable is not evidence the agent died.
+///
+/// A query that failed is not an empty window list. Treating it as one would
+/// delete a checkout out from under a live agent on the strength of a tmux
+/// hiccup, which is the expensive way to get this wrong.
+#[test]
+fn worktree_graveyard_still_refuses_when_tmux_cannot_be_asked() {
+    let project = temp_project("worktree-graveyard-tmux-unavailable");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("tmux list-windows failed");
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    assert_eq!(
+        read_topology(&state_dir)["worktrees"][0]["status"],
+        "active"
+    );
+    cleanup(project);
+}
+
 #[test]
 fn worktree_graveyard_rejects_attached_live_agent() {
     let project = temp_project("worktree-graveyard-attached");
     let state_dir = project.join("state");
     let worktree = project.join("wt");
     write_active_worktree_topology(&state_dir, &worktree, true);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // tmux confirms the agent's window, so this is a genuinely attached agent
+    // rather than a durable row whose window has died.
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::from_pairs([
+            ("@agent", "aimux"),
+            ("@service", "aimux"),
+        ]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -4370,7 +4450,13 @@ fn graveyarding_clears_every_failure_recorded_against_that_worktree() {
     let state_dir = project.join("state");
     let worktree = project.join("wt");
     write_active_worktree_topology(&state_dir, &worktree, true);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // tmux confirms the agent's window, so this is a genuinely attached agent
+    // rather than a durable row whose window has died.
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::from_pairs([
+            ("@agent", "aimux"),
+            ("@service", "aimux"),
+        ]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     // Refused twice, under two different operations, while the agent is up.
@@ -4410,13 +4496,134 @@ fn graveyarding_clears_every_failure_recorded_against_that_worktree() {
     cleanup(project);
 }
 
+/// A successful remove clears every row for that checkout, not just its own.
+///
+/// `remove` cleared only `remove` rows while graveyard had been broadened to
+/// clear all of them. So: refuse a remove, refuse a graveyard, then succeed at
+/// the remove -- the checkout and its topology entry are gone and the
+/// `graveyard` row renders for the full two-hour window against a worktree that
+/// no longer exists.
+#[test]
+fn removing_clears_every_failure_recorded_against_that_worktree() {
+    let project = temp_project("worktree-remove-clears-all");
+    let state_dir = project.join("state");
+    // No checkout on disk, as in `worktree_remove_missing_checkout_...`: this is
+    // about which ledger rows a successful remove clears, not about git.
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    let attached = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::from_pairs([
+            ("@agent", "aimux"),
+            ("@service", "aimux"),
+        ]));
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    for route in [
+        routes::worktree_actions::REMOVE,
+        routes::worktree_actions::GRAVEYARD,
+    ] {
+        let refused = route_lifecycle_request_with_runtime(
+            &attached,
+            "POST",
+            route,
+            Some(&json!({ "path": worktree })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(refused.status, 409, "{:?}", refused.body);
+    }
+    let operations: Vec<String> = list_dashboard_operation_failures(&state_dir)
+        .iter()
+        .filter_map(|failure| failure["operation"].as_str().map(str::to_owned))
+        .collect();
+    assert!(operations.contains(&"remove".to_owned()), "{operations:?}");
+    assert!(
+        operations.contains(&"graveyard".to_owned()),
+        "{operations:?}"
+    );
+
+    // The agent's window is gone, so the remove goes through.
+    let detached = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let removed = route_lifecycle_request_with_runtime(
+        &detached,
+        "POST",
+        routes::worktree_actions::REMOVE,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(removed.status, 200, "{:?}", removed.body);
+
+    let left = list_dashboard_operation_failures(&state_dir);
+    assert!(
+        left.is_empty(),
+        "the checkout is gone, so no row may still describe it: {left:?}"
+    );
+    cleanup(project);
+}
+
+/// An unwritable ledger says so in the response the user is already reading.
+///
+/// The refusal was correct and the row silently never arrived -- which is the
+/// transient-footer bug wearing the fix's clothes: the card stays empty and
+/// nothing explains why. AGENTS.md: errors are not empty values, and a wrapper
+/// must report the error that caused the failure.
+#[test]
+fn a_refusal_that_cannot_be_recorded_says_so_in_the_refusal() {
+    let project = temp_project("worktree-graveyard-unwritable-ledger");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    // A directory where the ledger file belongs: every write to it fails, on
+    // every platform, without depending on permissions.
+    std::fs::create_dir_all(dashboard_operation_failures_path(&state_dir)).unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::from_pairs([
+            ("@agent", "aimux"),
+            ("@service", "aimux"),
+        ]));
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    let error = response.body["error"].as_str().unwrap();
+    assert!(
+        error.contains("while agent \"active agent\" is attached"),
+        "the refusal itself still has to be the headline: {error}"
+    );
+    assert!(
+        error.contains("failed to record dashboard operation failure"),
+        "and the lost row has to be named somewhere: {error}"
+    );
+    assert_eq!(
+        read_topology(&state_dir)["worktrees"][0]["status"],
+        "active"
+    );
+    cleanup(project);
+}
+
 #[test]
 fn worktree_remove_rejects_attached_live_agent() {
     let project = temp_project("worktree-remove-attached");
     let state_dir = project.join("state");
     let worktree = project.join("wt");
     write_active_worktree_topology(&state_dir, &worktree, true);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // tmux confirms the agent's window, so this is a genuinely attached agent
+    // rather than a durable row whose window has died.
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::from_pairs([
+            ("@agent", "aimux"),
+            ("@service", "aimux"),
+        ]));
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -5018,21 +5225,42 @@ fn write_active_worktree_topology(state_dir: &PathBuf, worktree_path: &Path, inc
             { "id": "service:svc-web", "rigId": "rig-1", "logicalId": "svc-web", "role": "service", "runtime": "service", "toolConfigKey": "service", "cwd": worktree_path.as_ref(), "label": "web", "createdAt": "2026-01-01T00:00:00.000Z" }
         ])
     };
+    // A live agent has a live tmux window. Without a binding the agent had no
+    // tmuxTarget at all, so "running with a window" and "running with a window
+    // that died" were the same fixture -- and a route that tells them apart had
+    // nothing to be tested against.
+    let service_binding = json!({
+        "id": "tmux:service:svc-web",
+        "nodeId": "service:svc-web",
+        "tmuxSession": "aimux",
+        "tmuxWindowId": "@service",
+        "tmuxWindowIndex": 2,
+        "tmuxWindowName": "web",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+    });
+    let bindings = if include_agent {
+        json!([
+            service_binding,
+            {
+                "id": "tmux:agent:codex-live",
+                "nodeId": "agent:codex-live",
+                "tmuxSession": "aimux",
+                "tmuxWindowId": "@agent",
+                "tmuxWindowIndex": 1,
+                "tmuxWindowName": "codex",
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+            }
+        ])
+    } else {
+        json!([service_binding])
+    };
     let topology = coerce_runtime_topology(&json!({
         "version": 1,
         "generatedAt": "2026-01-01T00:00:00.000Z",
         "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
         "nodes": nodes,
         "edges": [],
-        "bindings": [{
-            "id": "tmux:service:svc-web",
-            "nodeId": "service:svc-web",
-            "tmuxSession": "aimux",
-            "tmuxWindowId": "@service",
-            "tmuxWindowIndex": 2,
-            "tmuxWindowName": "web",
-            "updatedAt": "2026-01-01T00:00:00.000Z"
-        }],
+        "bindings": bindings,
         "sessions": sessions,
         "services": [{
             "id": "svc-web",

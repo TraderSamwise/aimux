@@ -9,11 +9,7 @@ import type {
 export function formatOperationFailure(failure: ProjectOperationFailure): string {
   const title = stringField(failure.title) || stringField(failure.operation) || "operation failed";
   const message = stringField(failure.message);
-  const target =
-    stringField(failure.worktreeName) ||
-    stringField(failure.worktreePath) ||
-    stringField(failure.targetId);
-  return [target, title, message].filter(Boolean).join(": ");
+  return [operationFailureTarget(failure), title, message].filter(Boolean).join(": ");
 }
 
 /// What the dashboard and the sidebar put on their failure card.
@@ -30,19 +26,15 @@ export function operationFailureTitle(failure: ProjectOperationFailure): string 
   return stringField(failure.title) || stringField(failure.operation) || "Operation failed";
 }
 
-/// Which thing failed, by the same chain the CLI card uses.
+/// Which thing failed, as the project service derived it.
 ///
-/// Derived rather than assumed out of the title. Most titles the project
-/// service writes happen to name their target, but not all: a failed agent
-/// launch writes "Failed to create codex agent" with no worktree name and the
-/// session id as the target, and reading it out of the title would have shown
-/// the CLI a target and the app nothing.
+/// Not a chain of its own. This file held two different orders -- one reaching
+/// for the path before the id, one after -- so a failed agent launch could be
+/// measured by one and printed by the other, naming the repository in one place
+/// and the agent in another. The service now puts a single `target` on the
+/// record and both surfaces render that.
 export function operationFailureTarget(failure: ProjectOperationFailure): string {
-  return (
-    stringField(failure.worktreeName) ||
-    stringField(failure.targetId) ||
-    stringField(failure.worktreePath)
-  );
+  return stringField(failure.target);
 }
 
 export function summarizeOperationFailures(
@@ -53,18 +45,18 @@ export function summarizeOperationFailures(
   if (visible.length === 1) {
     const [failure] = visible;
     const title = operationFailureTitle(failure);
-    const target = operationFailureTarget(failure);
     const message = stringField(failure.message);
     return {
       title,
       detail:
-        [title.includes(target) ? "" : target, message].filter(Boolean).join(": ") ||
-        formatOperationFailure(failure),
+        [redundantTarget(failure) ? "" : operationFailureTarget(failure), message]
+          .filter(Boolean)
+          .join(": ") || formatOperationFailure(failure),
     };
   }
   return {
     title: `Project state has ${visible.length} operation failures`,
-    detail: visible.slice(0, 3).map(operationFailureTitle).join(" · "),
+    detail: visible.slice(0, 3).map(operationFailureRow).join(" · "),
   };
 }
 
@@ -91,6 +83,30 @@ export function formatPreviewCaptureUnavailable(
 ): string | null {
   if (!marker) return null;
   return marker.error ? `Could not read pane: ${marker.error}` : "Could not read pane";
+}
+
+/// One row of the multi-failure card, matching what the CLI card puts on a row.
+///
+/// The CLI lists `title · target` for every row; this listed titles alone, so
+/// three failed graveyards read as the same sentence three times with nothing
+/// saying which worktrees they were. Reverting the single-failure path to its
+/// old format passed the cross-surface test, which is how that stayed hidden.
+export function operationFailureRow(failure: ProjectOperationFailure): string {
+  const title = operationFailureTitle(failure);
+  if (redundantTarget(failure)) return title;
+  const target = operationFailureTarget(failure);
+  return target ? `${title} · ${target}` : title;
+}
+
+/// Whether the title already names the target, so repeating it would read as
+/// the worktree's name twice in one line.
+///
+/// An absent target is not a named one. The previous `title.includes(target)`
+/// said it was, because `includes("")` is true -- a record with nothing to name
+/// took the right branch for the wrong reason.
+function redundantTarget(failure: ProjectOperationFailure): boolean {
+  const target = operationFailureTarget(failure);
+  return target.length > 0 && operationFailureTitle(failure).includes(target);
 }
 
 function stringField(value: unknown): string {

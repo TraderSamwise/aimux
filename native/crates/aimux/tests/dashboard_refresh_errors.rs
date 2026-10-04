@@ -246,7 +246,7 @@ fn render_dashboard_with_footer(snapshot: &DesktopStateSnapshot, footer_message:
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: Some(footer_message),
-        footer_alert: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "terminal",
         scribe_preview_entries: &[],

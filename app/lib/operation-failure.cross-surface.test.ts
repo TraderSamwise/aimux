@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { summarizeOperationFailures } from "@/lib/unavailable-state";
+import { operationFailureRow, summarizeOperationFailures } from "@/lib/unavailable-state";
 import type { ProjectOperationFailure } from "../../src/project-api-contract";
 
 // The app half of the cross-surface operation-failure check. AGENTS.md "One
@@ -26,12 +26,24 @@ const FIXTURE_PATH = join(
 
 interface PresentationCase {
   why: string;
+  /** The STORED ledger row, as the file on disk holds it. */
   failure: ProjectOperationFailure;
   title: string;
-  target: string;
+  /** What the project service derives from the row; null when there is nothing to name. */
+  target: string | null;
 }
 
 const cases: PresentationCase[] = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")).cases;
+
+// The row a client actually receives. The service derives `target` once and
+// ships it alongside the stored fields; the app renders that and does not walk
+// a chain of its own, so the test has to hand it the published shape. The Rust
+// half pins the derivation itself against the same `target`.
+function published(testCase: PresentationCase): ProjectOperationFailure {
+  return testCase.target === null
+    ? testCase.failure
+    : { ...testCase.failure, target: testCase.target };
+}
 
 describe("what the app's failure card shows", () => {
   it("has cases to check", () => {
@@ -40,20 +52,46 @@ describe("what the app's failure card shows", () => {
 
   for (const testCase of cases) {
     it(`shows the shared title and target — ${testCase.why}`, () => {
-      const summary = summarizeOperationFailures([testCase.failure]);
+      const summary = summarizeOperationFailures([published(testCase)]);
       expect(summary).not.toBeNull();
       // The title is the failure's own, not a generic "something failed".
       expect(summary?.title).toBe(testCase.title);
-      // The target survives, because the title the service wrote names it.
-      expect(`${summary?.title} ${summary?.detail}`).toContain(testCase.target);
+      if (testCase.target === null) {
+        // Nothing to name, so nothing is named. The detail carries the message
+        // alone -- it must not pick up a stray separator from an empty target.
+        expect(summary?.detail).toBe(testCase.failure.message);
+      } else {
+        expect(`${summary?.title} ${summary?.detail}`).toContain(testCase.target);
+      }
     });
   }
 
-  it("lists the titles when there are several, the way the CLI card does", () => {
-    const summary = summarizeOperationFailures(cases.map((entry) => entry.failure));
+  it("names the target on every row when there are several, the way the CLI card does", () => {
+    // Reverting the single-failure path to its old format passed this suite
+    // while the multi path listed bare titles: three refused graveyards read as
+    // the same sentence three times with nothing saying which worktrees. The
+    // CLI card renders title + target on every row, so this one does too.
+    const summary = summarizeOperationFailures(cases.map(published));
     expect(summary?.title).toBe(`Project state has ${cases.length} operation failures`);
-    for (const entry of cases) {
+    for (const entry of cases.slice(0, 3)) {
       expect(summary?.detail).toContain(entry.title);
+      if (entry.target !== null && !entry.title.includes(entry.target)) {
+        expect(summary?.detail).toContain(entry.target);
+      }
     }
   });
+
+  for (const testCase of cases) {
+    it(`puts the target on its own row when the title omits it — ${testCase.why}`, () => {
+      const row = operationFailureRow(published(testCase));
+      expect(row).toContain(testCase.title);
+      if (testCase.target !== null && !testCase.title.includes(testCase.target)) {
+        expect(row).toContain(testCase.target);
+      }
+      // And never twice: the CLI card does not repeat a name the title spells.
+      if (testCase.target !== null && testCase.title.includes(testCase.target)) {
+        expect(row).toBe(testCase.title);
+      }
+    });
+  }
 });

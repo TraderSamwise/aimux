@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 
 use crate::config::load_config_for_project;
 use crate::daemon_state::mutate_metadata_state;
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::graveyard_cleanup::build_graveyard_cleanup_plan;
 use crate::project_service::operation_failures::{
     OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
-    add_dashboard_operation_failure, clear_dashboard_operation_failures,
+    clear_dashboard_operation_failures, try_add_dashboard_operation_failure,
 };
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::project_service::worktree_cache_cleanup::run_worktree_cache_cleanup;
@@ -22,9 +23,10 @@ use super::runtime_adapter::{
     ProjectLifecycleRuntime, prune_git_worktrees, remote_worktree_name_from_source,
     remove_git_worktree_checkout,
 };
+use super::session_liveness::LiveWindows;
 use super::{
-    LIVE_STATUSES, ensure_rig, json_error, lifecycle_response, live_window_id_for_service,
-    map_topology_array, now_iso, read_runtime_topology, upsert_array_item,
+    ensure_rig, json_error, lifecycle_response, live_window_id_for_service, map_topology_array,
+    now_iso, read_runtime_topology, upsert_array_item,
 };
 
 enum PreparedWorktreeSource {
@@ -76,27 +78,19 @@ pub(super) fn route_worktree_graveyard(
         return json_error(404, format!("Worktree \"{path}\" not found"));
     };
     let worktree_name = string_field(&worktree, "name");
-    if let Some(attached) = array_field(&topology, "sessions")
-        .into_iter()
-        .find(|session| {
-            string_field(session, "worktreePath") == path
-                && LIVE_STATUSES.contains(&string_field(session, "status").as_str())
-        })
+    if let Some(label) = attached_live_agent_label(context, &topology, &path, "worktree.graveyard")
     {
-        let label = trimmed_string(attached.get("label"))
-            .or_else(|| trimmed_string(attached.get("id")))
-            .unwrap_or_else(|| "agent".into());
         // Recorded, not just returned. A refusal is the outcome of an action
         // the user took, and before this it reached only a transient footer
         // string that the next keypress erased -- so retrying was the one move
         // guaranteed to destroy the explanation.
         let message =
             format!("Cannot graveyard \"{worktree_name}\" while agent \"{label}\" is attached");
-        record_worktree_operation_failure(
+        let message = record_worktree_operation_failure(
             &project_state_dir,
             "graveyard",
             format!("Failed to graveyard worktree \"{worktree_name}\""),
-            message.clone(),
+            message,
             &path,
             Some(&worktree_name),
         );
@@ -510,23 +504,14 @@ pub(super) fn route_worktree_remove(
         return json_error(404, format!("Worktree \"{path}\" not found"));
     };
     let worktree_name = string_field(&worktree, "name");
-    if let Some(attached) = array_field(&topology, "sessions")
-        .into_iter()
-        .find(|session| {
-            string_field(session, "worktreePath") == path
-                && LIVE_STATUSES.contains(&string_field(session, "status").as_str())
-        })
-    {
-        let label = trimmed_string(attached.get("label"))
-            .or_else(|| trimmed_string(attached.get("id")))
-            .unwrap_or_else(|| "agent".into());
+    if let Some(label) = attached_live_agent_label(context, &topology, &path, "worktree.remove") {
         let message =
             format!("Cannot remove \"{worktree_name}\" while agent \"{label}\" is attached");
-        record_worktree_operation_failure(
+        let message = record_worktree_operation_failure(
             &project_state_dir,
             "remove",
             format!("Failed to remove worktree \"{worktree_name}\""),
-            message.clone(),
+            message,
             &path,
             Some(&worktree_name),
         );
@@ -573,7 +558,7 @@ pub(super) fn route_worktree_remove(
         let _ = runtime.kill_window(&window_id);
     }
     prune_git_worktrees(&project_root);
-    clear_worktree_operation_failure(&project_state_dir, "remove", &path);
+    clear_all_worktree_operation_failures(&project_state_dir, &path);
     lifecycle_response(
         json!({ "path": path, "status": "removed" }),
         "worktree.remove",
@@ -589,20 +574,66 @@ fn record_worktree_operation_failure(
     message: String,
     worktree_path: &str,
     worktree_name: Option<&str>,
-) {
-    let _ = add_dashboard_operation_failure(
+) -> String {
+    match try_add_dashboard_operation_failure(
         project_state_dir,
         OperationFailureInput {
             target_kind: "worktree".into(),
             operation: operation.into(),
             title,
-            message,
+            message: message.clone(),
             target_id: None,
             worktree_path: Some(worktree_path.to_owned()),
             worktree_name: worktree_name.map(str::to_owned),
             created_at: None,
         },
-    );
+    ) {
+        Ok(_) => message,
+        // An unwritable ledger is the transient-footer bug wearing the fix's
+        // clothes: the refusal is correct, the card stays empty, and nothing
+        // says why. Say it in the response the user is already reading.
+        Err((error, _failure)) => {
+            log_always_at(
+                LogLevel::Error,
+                "failed to record worktree operation failure",
+                "lifecycle",
+                Some(json!({
+                    "operation": operation,
+                    "worktreePath": worktree_path,
+                    "error": error.to_string(),
+                })),
+            );
+            format!("{message}; additionally failed to record dashboard operation failure: {error}")
+        }
+    }
+}
+
+/// The agent whose presence refuses a destructive worktree action, if any.
+///
+/// Asks `LiveWindows` rather than the durable topology status. Topology keeps
+/// reading `running` after a window dies and the desktop snapshot does not --
+/// it projects the agent to `offline` -- so the raw-status check refused a
+/// graveyard naming an agent the dashboard showed as dead, with nothing left
+/// to stop and no way to proceed. tmux being unaskable still refuses: a
+/// checkout is not deleted on a guess.
+fn attached_live_agent_label(
+    context: &ProjectServiceRequestContext,
+    topology: &Value,
+    path: &str,
+    surface: &str,
+) -> Option<String> {
+    let live_windows = LiveWindows::for_context(context, surface);
+    array_field(topology, "sessions")
+        .into_iter()
+        .find(|session| {
+            string_field(session, "worktreePath") == path
+                && live_windows.session_is_live(session, topology)
+        })
+        .map(|session| {
+            trimmed_string(session.get("label"))
+                .or_else(|| trimmed_string(session.get("id")))
+                .unwrap_or_else(|| "agent".into())
+        })
 }
 
 fn clear_worktree_operation_failure(
@@ -627,7 +658,10 @@ fn clear_worktree_operation_failures_matching(
     operation: Option<&str>,
     worktree_path: &str,
 ) {
-    let _ = clear_dashboard_operation_failures(
+    // A clear that failed leaves a row claiming an action failed that has
+    // since succeeded. Nothing downstream can tell, so this is the only place
+    // it can be said at all.
+    if let Err(error) = clear_dashboard_operation_failures(
         project_state_dir,
         OperationFailureMatch {
             target_kind: Some("worktree".into()),
@@ -635,7 +669,18 @@ fn clear_worktree_operation_failures_matching(
             target_id: None,
             worktree_path: WorktreePathMatch::Exact(worktree_path.to_owned()),
         },
-    );
+    ) {
+        log_always_at(
+            LogLevel::Error,
+            "failed to clear worktree operation failures after a successful action",
+            "lifecycle",
+            Some(json!({
+                "operation": operation,
+                "worktreePath": worktree_path,
+                "error": error.to_string(),
+            })),
+        );
+    }
 }
 
 pub(super) fn route_graveyard_worktree_resurrect(
