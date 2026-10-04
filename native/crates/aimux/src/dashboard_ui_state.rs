@@ -81,19 +81,6 @@ impl DashboardUiStatePersistence {
         })
     }
 
-    pub fn persist_screen(&mut self, screen: DashboardScreen) -> Result<bool> {
-        if self.last_screen == Some(screen) {
-            return Ok(false);
-        }
-        let mut snapshot = read_dashboard_state_snapshot(&self.path)
-            .unwrap_or_else(|| Value::Object(Default::default()));
-        snapshot["screen"] = Value::String(screen.as_str().to_owned());
-        write_json_atomic(&self.path, &snapshot)
-            .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
-        self.last_screen = Some(screen);
-        Ok(true)
-    }
-
     pub fn persist_render_state(
         &mut self,
         screen: DashboardScreen,
