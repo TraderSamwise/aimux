@@ -170,9 +170,10 @@ mod a_signal_is_not_a_key {
         let waiting_thread = unsafe { libc::pthread_self() } as usize;
         let sender = std::thread::spawn(move || {
             let mut writer = std::fs::File::from(write_end);
-            std::thread::sleep(Duration::from_millis(10));
-            unsafe { libc::pthread_kill(waiting_thread as libc::pthread_t, libc::SIGUSR2) };
-            std::thread::sleep(Duration::from_millis(10));
+            for _ in 0..25 {
+                std::thread::sleep(Duration::from_millis(2));
+                unsafe { libc::pthread_kill(waiting_thread as libc::pthread_t, libc::SIGUSR2) };
+            }
             writer.write_all(b"1").expect("write a key");
             // Held open, so the key is readable rather than a hangup.
             std::thread::sleep(PATIENT_WAIT);

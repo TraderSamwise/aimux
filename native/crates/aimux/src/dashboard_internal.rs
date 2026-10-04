@@ -805,16 +805,20 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
                 rendered_once = true;
-                // Only when this frame is about to dispatch something, which is
-                // the frame that can take the terminal away: attaching hides
-                // this dashboard, the loop then renders nothing at all until
-                // the user comes back, and a selection left unwritten is the
-                // selection they do not return to. Every other pointer move is
-                // written by the deferred refresh, as it always was -- the
-                // write costs four fsyncs, and a held key would pay them at the
-                // autorepeat rate.
-                if !deferred_requests.is_empty()
-                    && let Some(ui_state) = ui_state.as_mut()
+                // Written by the frame rather than left to the refresh behind
+                // it, because attaching hides this dashboard: the loop then
+                // renders nothing at all until the user comes back, and a
+                // selection left unwritten is the selection they do not return
+                // to. The screen is written here too, and this is the only
+                // frame a subscreen gets.
+                //
+                // The write is four fsyncs, so what keeps a held key from
+                // paying them at the autorepeat rate is the frame gap above,
+                // which is the ceiling the old sleep gave this loop. Narrowing
+                // it to frames that dispatch something was the wrong lever: it
+                // silenced every subscreen and every move made while the
+                // project service was down.
+                if let Some(ui_state) = ui_state.as_mut()
                     && ui_state
                         .persist_controller_state(
                             controller.screen,
@@ -3207,15 +3211,15 @@ mod tests {
         );
     }
 
-    /// Nothing deferred, nothing owed.
+    /// Nothing deferred, nothing owed -- however long ago the last frame was.
     #[test]
     fn no_deferral_asks_for_nothing() {
-        assert!(!dashboard_refresh_deferral_expired(None, None, false));
-        assert!(!dashboard_refresh_deferral_expired(
-            None,
-            Some(Duration::from_secs(60)),
-            true
-        ));
+        for idle in [None, Some(Duration::from_secs(60))] {
+            assert!(
+                !dashboard_refresh_deferral_expired(None, idle, false),
+                "nothing was deferred, so nothing is due: idle={idle:?}"
+            );
+        }
     }
 
     /// Each of these makes the held snapshot the wrong thing to paint, so each

@@ -338,3 +338,60 @@ fn the_second_digit_lands_in_the_group_the_first_one_named() {
     );
     assert_eq!(state.level, DashboardNavLevel::Sessions);
 }
+
+/// The same gap, one level down. Rows inside a checkout are sorted by when
+/// they were created, so an agent appearing between `2` and `1` pushes every
+/// row the user counted down by one.
+///
+/// Anchoring the checkout alone was not enough: the jump found the right
+/// worktree and then entered the wrong agent inside it.
+#[test]
+fn the_second_digit_lands_on_the_row_the_user_counted() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let counted = snapshot.worktree_groups[1].sessions[0].id.clone();
+
+    // A newer agent sorts ahead of it, so what was row 1 is now row 2.
+    let mut reordered = snapshot.clone();
+    let mut ahead = reordered.worktree_groups[1].sessions[0].clone();
+    ahead.id = "arrived-first".into();
+    ahead.tmux_window_index = Some(0);
+    reordered.worktree_groups[1].sessions.insert(0, ahead);
+
+    let outcome = state.handle_digit(&reordered, '1');
+
+    match outcome {
+        DashboardNavigationOutcome::EntrySelected(DashboardEntryRef::Session(session)) => {
+            assert_eq!(
+                session.id, counted,
+                "the jump entered the row that moved into position, not the one counted"
+            );
+        }
+        other => panic!("expected the counted row to be entered, got {other:?}"),
+    }
+}
+
+/// And when the row is simply gone, nothing is entered on a guess. Resolving
+/// against whatever has shifted into that position is how a jump enters an
+/// agent the user never saw.
+#[test]
+fn a_jump_whose_row_has_gone_enters_nothing() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+
+    let gone = snapshot.worktree_groups[1].sessions[0].id.clone();
+    let mut emptied = snapshot.clone();
+    emptied.worktree_groups[1]
+        .sessions
+        .retain(|session| session.id != gone);
+    emptied.sessions.retain(|session| session.id != gone);
+
+    assert_eq!(
+        state.handle_digit(&emptied, '1'),
+        DashboardNavigationOutcome::Changed,
+        "a vanished row must not hand the keystroke to its replacement"
+    );
+    assert_eq!(state.level, DashboardNavLevel::Worktrees);
+}

@@ -47,9 +47,19 @@ pub struct DashboardNavigationState {
     pub worktree_index: usize,
     pub item_index: usize,
     pub quick_jump_digits: String,
-    /// Which checkout the pending digit was read off, so the second digit can
-    /// find it again if the list is rebuilt in the gap between the two.
-    quick_jump_group: Option<String>,
+    /// The checkout the pending digit was read off, and the rows that were
+    /// under it at the time, so the second digit lands on what was on screen
+    /// if the list is rebuilt in the gap between the two.
+    quick_jump_anchor: Option<QuickJumpAnchor>,
+}
+
+/// What `2` was pointing at, kept so `1` can mean the same thing a moment
+/// later. Both halves are needed: a group can move within the list, and the
+/// rows inside it are sorted by creation, so an agent appearing renumbers them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuickJumpAnchor {
+    group: String,
+    entries: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +107,7 @@ impl DashboardNavigationState {
             worktree_index: default_navigation_group_index(&groups),
             item_index: 0,
             quick_jump_digits: String::new(),
-            quick_jump_group: None,
+            quick_jump_anchor: None,
         };
         state.clamp(snapshot);
         state
@@ -337,18 +347,21 @@ impl DashboardNavigationState {
         if self.quick_jump_digits.is_empty() {
             return self.focus_group_digit(snapshot, value);
         }
-        // Find the checkout `2` highlighted again, by what it is rather than
-        // by where it sat. Between the two digits the list can be rebuilt -- an
-        // event arrives, an agent appears, a worktree goes -- and both the row
-        // index and the digits are renumbered by that. The user read `2` off
-        // the screen in front of them, so the group they saw is the one they
-        // asked for; if it is gone, the index is all that is left.
-        if let Some(wanted) = self.quick_jump_group.as_deref()
-            && let Some(index) = dashboard_navigation_groups(snapshot)
-                .iter()
-                .position(|group| navigation_group_identity(group) == wanted)
-        {
-            self.worktree_index = index;
+        // Resolve against what was on screen when `2` was pressed, not against
+        // the list as it stands now. Between the two digits an event can
+        // arrive and rebuild it -- a group moves, an agent appears and sorts
+        // ahead of its siblings -- and every index and digit is renumbered by
+        // that. The user read `2` and `1` off one screen; they meant one row.
+        if let Some(anchor) = self.quick_jump_anchor.take() {
+            let Some(outcome) = self.select_anchored_entry(snapshot, &anchor, value) else {
+                // The row is gone, or its checkout is. Nothing is selected on
+                // a guess: resolving against whatever has shifted into that
+                // position is how a jump enters the wrong agent.
+                self.clear_quick_jump();
+                return DashboardNavigationOutcome::Changed;
+            };
+            self.clear_quick_jump();
+            return outcome;
         }
         self.clear_quick_jump();
         match self.select_entry_digit(snapshot, value) {
@@ -357,9 +370,33 @@ impl DashboardNavigationState {
         }
     }
 
+    /// The row the user counted, found again by its id wherever it now sits.
+    fn select_anchored_entry<'a>(
+        &mut self,
+        snapshot: &'a DesktopStateSnapshot,
+        anchor: &QuickJumpAnchor,
+        digit: usize,
+    ) -> Option<DashboardNavigationOutcome<'a>> {
+        let wanted = anchor.entries.get(digit.checked_sub(1)?)?;
+        let groups = dashboard_navigation_groups(snapshot);
+        let group_index = groups
+            .iter()
+            .position(|group| navigation_group_identity(group) == anchor.group)?;
+        let item_index = groups
+            .get(group_index)?
+            .entries
+            .iter()
+            .position(|entry| entry.id == wanted)?;
+        let entry = entry_at(snapshot, group_index, item_index)?;
+        self.level = DashboardNavLevel::Sessions;
+        self.worktree_index = group_index;
+        self.item_index = item_index;
+        Some(DashboardNavigationOutcome::EntrySelected(entry))
+    }
+
     pub fn clear_quick_jump(&mut self) {
         self.quick_jump_digits.clear();
-        self.quick_jump_group = None;
+        self.quick_jump_anchor = None;
     }
 
     pub fn clamp(&mut self, snapshot: &DesktopStateSnapshot) {
@@ -402,9 +439,14 @@ impl DashboardNavigationState {
         self.worktree_index = index;
         self.item_index = 0;
         self.quick_jump_digits = digit.to_string();
-        self.quick_jump_group = groups
-            .get(index)
-            .map(|group| navigation_group_identity(group));
+        self.quick_jump_anchor = groups.get(index).map(|group| QuickJumpAnchor {
+            group: navigation_group_identity(group),
+            entries: group
+                .entries
+                .iter()
+                .map(|entry| entry.id.to_owned())
+                .collect(),
+        });
         DashboardNavigationOutcome::Changed
     }
 
