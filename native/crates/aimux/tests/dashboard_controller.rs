@@ -1265,6 +1265,7 @@ fn enter_from_worktree_level_renders_agent_details_rail() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: controller.details_sidebar_visible,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -2636,12 +2637,21 @@ fn empty_worktree_cache_cleanup_preview_dismisses_without_apply() {
 
 #[test]
 fn worktree_stop_key_confirms_then_dispatches_graveyard_request() {
-    let snapshot = snapshot();
+    let mut snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Worktrees;
     controller.navigation.worktree_index = 1;
     let worktree_path = snapshot.worktree_groups[1].path.as_ref().unwrap().clone();
     let worktree_name = snapshot.worktree_groups[1].name.clone();
+    // Nothing live attached: that is the only case the confirm is offered in.
+    // Cleared on the snapshot, which is what the check reads -- the group is a
+    // presentation of those sessions, not their source.
+    snapshot
+        .sessions
+        .retain(|session| session.worktree_path.as_deref() != Some(worktree_path.as_str()));
+    snapshot
+        .teammates
+        .retain(|session| session.worktree_path.as_deref() != Some(worktree_path.as_str()));
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Printable('x')),
@@ -2683,7 +2693,7 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_alert_message(),
         Some("Worktree feature-a is removing")
     );
 
@@ -2696,7 +2706,7 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_alert_message(),
         Some("Worktree feature-a is creating")
     );
 
@@ -2858,6 +2868,7 @@ fn operation_failure(
         target_id: None,
         worktree_path: None,
         worktree_name: None,
+        target: None,
         cleared: false,
         extra: Default::default(),
     }
@@ -3047,4 +3058,318 @@ fn a_failed_refresh_keeps_the_screen_it_already_drew() {
 
     controller.screen = DashboardScreen::Topology;
     assert_eq!(controller.cached_subscreen_resource(), Some(&loaded));
+}
+
+/// Sam pressed Enter on a refused graveyard several times and concluded
+/// nothing was happening. The refusal was there each time -- and each keypress
+/// wiped it before he could read it, so retrying was the one move guaranteed
+/// to destroy the explanation.
+#[test]
+fn a_failure_survives_the_next_keypress_and_a_note_does_not() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
+    controller.footer_message = Some("Offline agents hidden".into());
+
+    controller.handle_key(&snapshot, DashboardKey::Down);
+
+    assert_eq!(
+        controller.footer_alert_message(),
+        Some("Cannot graveyard \"fix-chat\": agent attached"),
+        "a failure must outlive the keypress that follows it"
+    );
+    assert_eq!(
+        controller.footer_message, None,
+        "a passing note is spent as soon as the next key arrives"
+    );
+}
+
+/// The alert line and the failure card are two renderings of one thing, so one
+/// key dismisses both rather than leaving the user chasing the remainder.
+#[test]
+fn clearing_failures_also_dismisses_the_alert_line() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
+
+    let effect = controller.handle_key(&snapshot, DashboardKey::ClearFailures);
+
+    assert_eq!(effect, DashboardControllerEffect::Render);
+    assert_eq!(controller.footer_alert, None);
+}
+
+/// And with a ledger to clear, which is the only branch a user with a failure
+/// ever reaches.
+///
+/// The golden snapshot's `operationFailures` is empty, so the test above only
+/// ever exercised the early return. The real path dispatches a clear request,
+/// and the line has to come down with the card.
+#[test]
+fn clearing_a_populated_ledger_also_dismisses_the_alert_line() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures = vec![DashboardOperationFailure {
+        id: "f1".into(),
+        target_kind: Some("worktree".into()),
+        operation: Some("graveyard".into()),
+        title: Some("Failed to graveyard worktree \"fix-chat\"".into()),
+        message: Some("Cannot graveyard \"fix-chat\" while agent \"claude\" is attached".into()),
+        created_at: None,
+        target_id: None,
+        worktree_path: None,
+        worktree_name: Some("fix-chat".into()),
+        target: Some("fix-chat".into()),
+        cleared: false,
+        extra: Default::default(),
+    }];
+    let mut controller = DashboardController::new(&snapshot);
+    controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
+
+    let effect = controller.handle_key(&snapshot, DashboardKey::ClearFailures);
+
+    assert!(
+        matches!(effect, DashboardControllerEffect::Request(_)),
+        "precondition: a populated ledger dispatches a clear"
+    );
+    assert_eq!(
+        controller.footer_alert, None,
+        "dismissing the surface has to take the line with the card"
+    );
+}
+
+/// Subscreens render the alert and raise their own (graveyard resurrect and
+/// delete both fail here), so the dismissal key has to reach them. Without it
+/// the only way to clear a failure was to leave the screen.
+#[test]
+fn an_alert_can_be_dismissed_from_a_subscreen() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('g'));
+    assert_ne!(
+        controller.screen,
+        DashboardScreen::Dashboard,
+        "precondition: this test needs to be on a subscreen"
+    );
+
+    controller.footer_alert = Some("Could not resurrect \"fix-chat\"".into());
+    let effect = controller.handle_key(&snapshot, DashboardKey::Printable('X'));
+
+    assert_eq!(effect, DashboardControllerEffect::Render);
+    assert_eq!(controller.footer_alert, None);
+}
+
+/// Sam was offered a confirmation whose only answer was no: the server refuses
+/// a graveyard while an agent is attached, so the dialog existed only to be
+/// refused. The client knows the agents, so it can say so before asking.
+#[test]
+fn graveyard_is_refused_up_front_when_an_agent_is_attached() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    assert!(
+        !snapshot.worktree_groups[1].sessions.is_empty(),
+        "precondition: this fixture worktree has a live agent"
+    );
+
+    let effect = controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert_eq!(effect, DashboardControllerEffect::Render);
+    assert!(
+        controller.worktree_remove_confirm.is_none(),
+        "a question with one answer must not be asked"
+    );
+    let alert = controller
+        .footer_alert_message()
+        .map(str::to_owned)
+        .expect("a refusal");
+    assert!(alert.contains("Cannot graveyard"), "{alert}");
+    assert!(alert.contains("Stop it first"), "{alert}");
+}
+
+/// The pre-check has to agree with the server's own set exactly. `waiting` is
+/// what the snapshot calls the server's `starting`, which the server counts as
+/// live -- treating it as idle here would ask a question that gets refused.
+#[test]
+fn a_waiting_agent_blocks_the_graveyard_just_as_the_server_does() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    let path = snapshot.worktree_groups[1].path.clone().unwrap();
+    for session in &mut snapshot.sessions {
+        if session.worktree_path.as_deref() == Some(path.as_str()) {
+            session.status = SessionStatus::Waiting;
+        }
+    }
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert!(controller.worktree_remove_confirm.is_none());
+    assert!(controller.footer_alert.is_some());
+}
+
+/// The other direction the guard must not get wrong: a dead agent is not an
+/// attached one.
+///
+/// Adding `Offline` to the liveness set passed every other test in this file,
+/// because they *remove* the sessions rather than mark them dead -- and it would
+/// have made every worktree with a lingering offline agent un-graveyardable from
+/// the TUI, with no override and nothing to stop.
+#[test]
+fn an_offline_agent_does_not_block_the_graveyard() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    let path = snapshot.worktree_groups[1].path.clone().unwrap();
+    let mut marked = 0;
+    for session in snapshot
+        .sessions
+        .iter_mut()
+        .chain(snapshot.teammates.iter_mut())
+    {
+        if session.worktree_path.as_deref() == Some(path.as_str()) {
+            session.status = SessionStatus::Offline;
+            marked += 1;
+        }
+    }
+    assert!(
+        marked > 0,
+        "precondition: a session on this checkout to kill"
+    );
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert!(
+        controller.worktree_remove_confirm.is_some(),
+        "the server allows this, so the client must not block it"
+    );
+    assert_eq!(controller.footer_alert, None);
+}
+
+/// A new attempt supersedes the last one's refusal.
+///
+/// Without this a refusal for one worktree sat under a confirm prompt for
+/// another, and the alert survives keypresses now so nothing else took it down.
+#[test]
+fn a_fresh_attempt_supersedes_the_previous_refusal() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+    assert!(controller.footer_alert.is_some(), "precondition: a refusal");
+
+    let path = snapshot.worktree_groups[1].path.clone().unwrap();
+    for session in snapshot
+        .sessions
+        .iter_mut()
+        .chain(snapshot.teammates.iter_mut())
+    {
+        if session.worktree_path.as_deref() == Some(path.as_str()) {
+            session.status = SessionStatus::Offline;
+        }
+    }
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert!(controller.worktree_remove_confirm.is_some());
+    assert_eq!(
+        controller.footer_alert, None,
+        "the refusal the user just acted on must not outlive the retry"
+    );
+}
+
+/// An unrelated action does not take down the failure on screen.
+///
+/// Superseding on *any* dispatched request was the same uncorrelated clear as
+/// superseding on any successful outcome, moved one step earlier: stopping an
+/// agent in the main checkout erased a refusal about a different worktree.
+/// Only a fresh attempt at the same kind of action supersedes it.
+#[test]
+fn an_unrelated_action_leaves_the_failure_on_screen() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
+    controller.navigation.level = DashboardNavLevel::Sessions;
+
+    let effect = controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert!(
+        matches!(effect, DashboardControllerEffect::Request(_)),
+        "precondition: this key dispatches a request against a session"
+    );
+    assert_eq!(
+        controller.footer_alert_message(),
+        Some("Cannot graveyard \"fix-chat\": agent attached"),
+        "stopping an agent is not an answer to a refused graveyard elsewhere"
+    );
+}
+
+/// And it must not refuse what the server would allow. An agent whose lane
+/// points at this worktree while its checkout lives elsewhere is grouped here,
+/// but the server matches on the checkout alone.
+#[test]
+fn an_agent_from_another_checkout_does_not_block_the_graveyard() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    let path = snapshot.worktree_groups[1].path.clone().unwrap();
+    for session in snapshot
+        .sessions
+        .iter_mut()
+        .chain(snapshot.teammates.iter_mut())
+    {
+        if session.worktree_path.as_deref() == Some(path.as_str()) {
+            session.status = SessionStatus::Running;
+            session.worktree_path = Some("/somewhere/else".into());
+        }
+    }
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert!(
+        controller.worktree_remove_confirm.is_some(),
+        "the server would allow this, so the client must not block it"
+    );
+    assert_eq!(controller.footer_alert, None);
+}
+
+/// The worktree group leaves out supervisor-plane and teammate agents, but the
+/// server scans every session in the topology. Asking the group's question
+/// instead of the server's let those two kinds open a dialog that was then
+/// refused -- the precise failure this pre-check exists to prevent.
+#[test]
+fn a_teammate_attached_to_the_worktree_blocks_the_graveyard() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    let path = snapshot.worktree_groups[1].path.clone().unwrap();
+
+    // Nothing in the group itself, and one live teammate on the same checkout.
+    let mut teammate = snapshot.sessions[0].clone();
+    teammate.id = "teammate-1".into();
+    teammate.label = Some("helper".into());
+    teammate.status = SessionStatus::Running;
+    teammate.worktree_path = Some(path.clone());
+    snapshot
+        .sessions
+        .retain(|session| session.worktree_path.as_deref() != Some(path.as_str()));
+    snapshot.worktree_groups[1].sessions.clear();
+    snapshot.teammates.push(teammate);
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+    assert!(
+        controller.worktree_remove_confirm.is_none(),
+        "a teammate on this checkout is one the server refuses on"
+    );
+    let alert = controller
+        .footer_alert_message()
+        .map(str::to_owned)
+        .expect("a refusal");
+    assert!(alert.contains("helper"), "{alert}");
 }

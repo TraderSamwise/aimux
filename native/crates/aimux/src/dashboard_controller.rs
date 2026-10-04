@@ -29,6 +29,14 @@ pub struct DashboardController {
     pub screen: DashboardScreen,
     pub navigation: DashboardNavigationState,
     pub footer_message: Option<String>,
+    /// A failure, as opposed to a passing note.
+    ///
+    /// Separate from `footer_message` because the two want opposite
+    /// lifetimes. A note ("Offline agents hidden") is spent the moment the
+    /// next key arrives; a failure is the answer to something the user asked
+    /// for, and clearing it on the next keypress meant retrying a refused
+    /// action destroyed the only explanation of why it was refused.
+    pub footer_alert: Option<DashboardFailureAlert>,
     pub tool_picker: Option<DashboardToolPickerState>,
     pub service_input: Option<DashboardServiceInputState>,
     pub launch_options: Option<DashboardLaunchOptionsState>,
@@ -322,12 +330,97 @@ impl DashboardOrchestrationInputState {
     }
 }
 
+/// Which action a request was: its route, and the arguments it was given.
+///
+/// The route alone is too coarse -- stopping one agent would answer a failure
+/// about another -- and a key picked out of the body is a guess that was wrong
+/// twice: `pending_action_for_request` keys fork on `sessionId` while the only
+/// fork dispatcher sends `sourceSessionId`, and it keys a worktree create on a
+/// `path` the dashboard never sends, so every create collapsed onto the main
+/// checkout's own key. The arguments are the identity: two attempts at the same
+/// action against the same target are the same request, and no body carries a
+/// timestamp, nonce or generated id, so that equality is a real property.
+///
+/// What this deliberately does not catch is a retry that becomes a *different*
+/// request, of which there are three shapes. Enter on a session whose tmux
+/// window has died sends a focus and gets a 404; the next refresh drops the
+/// window id, so Enter now sends a resume, which succeeds -- a different route
+/// entirely. Renaming or creating with a *corrected* name retries with
+/// different arguments. And a composer re-derives its target from the current
+/// selection on submit, so moving the cursor between attempts retries against
+/// something else.
+///
+/// In all three the failure stays up until dismissed, and its text stays true.
+/// The alternative is matching on the route alone, which is the uncorrelated
+/// clear this exists to prevent: one agent's success erasing another's failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardActionIdentity {
+    pub path: &'static str,
+    pub body: Value,
+}
+
+/// A failure on the footer, and which action it was about.
+///
+/// The origin is what lets a later success take it down without taking down
+/// somebody else's. Clearing on *any* successful outcome erased a refusal that
+/// a slow unrelated action happened to finish after, and clearing on any
+/// dispatched request erased it a step earlier; neither asked whether the two
+/// were about the same thing. A refusal raised before any request exists --
+/// a pre-check -- has no origin, and only `X` or a fresh attempt takes it down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardFailureAlert {
+    pub message: String,
+    pub origin: Option<DashboardActionIdentity>,
+}
+
+impl From<String> for DashboardFailureAlert {
+    fn from(message: String) -> Self {
+        Self::local(message)
+    }
+}
+
+impl From<&str> for DashboardFailureAlert {
+    fn from(message: &str) -> Self {
+        Self::local(message)
+    }
+}
+
+impl DashboardFailureAlert {
+    /// A refusal the client raised itself, with no request behind it.
+    pub fn local(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            origin: None,
+        }
+    }
+
+    pub fn for_action(message: impl Into<String>, origin: DashboardActionIdentity) -> Self {
+        Self {
+            message: message.into(),
+            origin: Some(origin),
+        }
+    }
+
+    /// Whether a settled action is the answer to this failure.
+    pub fn answered_by(&self, settled: &DashboardActionIdentity) -> bool {
+        self.origin.as_ref() == Some(settled)
+    }
+}
+
 impl DashboardController {
+    /// The failure on the footer, if any, as text.
+    pub fn footer_alert_message(&self) -> Option<&str> {
+        self.footer_alert
+            .as_ref()
+            .map(|alert| alert.message.as_str())
+    }
+
     pub fn new(snapshot: &DesktopStateSnapshot) -> Self {
         Self {
             screen: DashboardScreen::Dashboard,
             navigation: DashboardNavigationState::new(snapshot),
             footer_message: None,
+            footer_alert: None,
             tool_picker: None,
             service_input: None,
             launch_options: None,
@@ -683,6 +776,14 @@ impl DashboardController {
         }
         match key {
             DashboardKey::Printable('q') => DashboardControllerEffect::Quit,
+            // Subscreens render the alert and can raise one of their own
+            // (graveyard resurrect and delete both fail here), so the key that
+            // dismisses it has to work here too -- otherwise the only way out
+            // is to leave the screen.
+            DashboardKey::Printable('X') if self.footer_alert.is_some() => {
+                self.footer_alert = None;
+                DashboardControllerEffect::Render
+            }
             DashboardKey::Back | DashboardKey::Printable('d') => {
                 self.switch_screen(DashboardScreen::Dashboard)
             }
@@ -2692,6 +2793,9 @@ impl DashboardController {
     ) -> Option<DashboardControllerEffect> {
         let group = self.navigation.focused_worktree_group(snapshot)?;
         let path = group.path.as_ref()?;
+        // A fresh attempt supersedes the last one's refusal, so a refusal for
+        // one worktree cannot sit under a confirm prompt for another.
+        self.footer_alert = None;
         if group.removing
             || group.pending_action.as_deref() == Some("removing")
             || group.pending_action.as_deref() == Some("graveyarding")
@@ -2701,12 +2805,18 @@ impl DashboardController {
             } else {
                 "removing"
             };
-            self.footer_message = Some(format!("Worktree {} is {action}", group.name));
+            self.footer_alert = Some(DashboardFailureAlert::local(format!(
+                "Worktree {} is {action}",
+                group.name
+            )));
             return Some(DashboardControllerEffect::Render);
         }
         if group.pending {
             let action = group.pending_action.as_deref().unwrap_or("pending");
-            self.footer_message = Some(format!("Worktree {} is {action}", group.name));
+            self.footer_alert = Some(DashboardFailureAlert::local(format!(
+                "Worktree {} is {action}",
+                group.name
+            )));
             return Some(DashboardControllerEffect::Render);
         }
         if let Some(failure) = group.operation_failure.as_ref() {
@@ -2723,6 +2833,13 @@ impl DashboardController {
                 body: Value::Object(body),
             }));
         }
+        if let Some(attached) = graveyard_blocking_agent(snapshot, path) {
+            self.footer_alert = Some(DashboardFailureAlert::local(format!(
+                "Cannot graveyard {}: agent \"{attached}\" is attached. Stop it first.",
+                group.name
+            )));
+            return Some(DashboardControllerEffect::Render);
+        }
         self.worktree_remove_confirm = Some(DashboardWorktreeRemoveConfirm {
             path: path.clone(),
             name: group.name.clone(),
@@ -2735,16 +2852,41 @@ impl DashboardController {
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> DashboardControllerEffect {
+        // One key dismisses the whole error surface. The alert line and the
+        // failure card are two renderings of the same thing, so clearing one
+        // without the other would leave the user chasing the remainder.
         if snapshot.operation_failures.is_empty() {
-            return DashboardControllerEffect::Ignored;
+            // Nothing to ask the service for, so the alert is the whole job.
+            return if self.footer_alert.take().is_some() {
+                DashboardControllerEffect::Render
+            } else {
+                DashboardControllerEffect::Ignored
+            };
         }
+        // The alert comes down with the card, once the request that clears the
+        // card exists. Taking it before planning meant a plan that produced no
+        // request threw the message away and then asked for no repaint, so the
+        // state and the screen disagreed until the next frame.
         match plan_dashboard_action(None, DashboardActionKind::ClearOperationFailures) {
-            DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Request(request) => {
+                self.footer_alert = None;
+                DashboardControllerEffect::Request(request)
+            }
+            // This kind plans an unconditional request today, so neither arm
+            // below can run. They are spelled out anyway: a catch-all would
+            // turn a future `Blocked` into a keypress that reports nothing and
+            // does not even repaint, which is the silence this whole change is
+            // about. The assertion fails the suite rather than the user if that
+            // ever becomes reachable.
             DashboardActionPlan::Blocked(message) => {
+                debug_assert!(false, "clearing failures became blockable: {message}");
                 self.footer_message = Some(message);
                 DashboardControllerEffect::Render
             }
-            DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+            DashboardActionPlan::Ignored => {
+                debug_assert!(false, "clearing failures planned no request");
+                DashboardControllerEffect::Ignored
+            }
         }
     }
 }
@@ -3283,4 +3425,39 @@ fn find_service<'a>(
                 .flat_map(|group| group.services.iter()),
         )
         .find(|service| service.id == service_id)
+}
+
+/// The agent whose presence will make the server refuse a graveyard, if any.
+///
+/// Mirrors `LIVE_STATUSES` on the project service exactly -- client `Waiting`
+/// is the server's `starting` (`desktop_state.rs` maps it on the way out), so
+/// all three count. Getting this set wrong in either direction is its own bug:
+/// too narrow and the dialog still opens on a question with one answer, too
+/// wide and a graveyard the server would have allowed is blocked here.
+///
+/// Scanned from the snapshot rather than the worktree group, and matched on
+/// the checkout rather than on grouping, because those are two different
+/// questions. The group excludes supervisor-plane and teammate agents and
+/// includes agents whose lane points here while their checkout is elsewhere;
+/// the server asks only "is any session's worktreePath this path". Asking the
+/// group's question instead let a live supervisor or teammate open a dialog
+/// the server then refused -- the exact failure this exists to prevent.
+fn graveyard_blocking_agent(snapshot: &DesktopStateSnapshot, path: &str) -> Option<String> {
+    snapshot
+        .sessions
+        .iter()
+        .chain(snapshot.teammates.iter())
+        .find(|session| {
+            matches!(
+                session.status,
+                SessionStatus::Running | SessionStatus::Idle | SessionStatus::Waiting
+            ) && session.worktree_path.as_deref() == Some(path)
+        })
+        .map(|session| {
+            session
+                .label
+                .clone()
+                .filter(|label: &String| !label.trim().is_empty())
+                .unwrap_or_else(|| session.id.clone())
+        })
 }

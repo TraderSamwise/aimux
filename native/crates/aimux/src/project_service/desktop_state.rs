@@ -29,6 +29,7 @@ use super::http::query_params;
 use super::lifecycle::read_displayable_agent_restore_offer;
 use super::operation_failures::{
     list_dashboard_operation_failures, normalize_dashboard_operation_failure_record,
+    with_derived_operation_failure_target,
 };
 use super::preview_snapshots::{
     DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS,
@@ -251,7 +252,10 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
         live_window_projection,
     );
     if let Value::Object(object) = &mut state {
-        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir);
+        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir)
+            .into_iter()
+            .map(with_derived_operation_failure_target)
+            .collect::<Vec<_>>();
         if let Some(error) = live_window_query_error {
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
@@ -314,7 +318,10 @@ pub async fn desktop_state_for_context_async(
     )
     .await;
     if let Value::Object(object) = &mut state {
-        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir);
+        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir)
+            .into_iter()
+            .map(with_derived_operation_failure_target)
+            .collect::<Vec<_>>();
         if let Some(error) = live_window_query_error {
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
@@ -570,8 +577,11 @@ async fn build_desktop_state_with_live_window_projection_async(
     Value::Object(state)
 }
 
+/// Synthesized rather than stored, but published down the same pipe, so it goes
+/// through the same assembly as a stored row. It has nothing to name today; if
+/// it ever gains one, the clients must not be the place that notices.
 fn tmux_live_window_query_failure(error: &str) -> Value {
-    json!({
+    with_derived_operation_failure_target(json!({
         "id": "tmux-live-window-query",
         "targetKind": "tmux",
         "operation": "live-window-query",
@@ -582,7 +592,7 @@ fn tmux_live_window_query_failure(error: &str) -> Value {
         "createdAt": time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
-    })
+    }))
 }
 
 fn attach_control_plane_warnings(object: &mut Map<String, Value>) {

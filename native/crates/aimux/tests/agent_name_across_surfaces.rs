@@ -70,6 +70,7 @@ fn dashboard_row(label: &str) -> String {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],

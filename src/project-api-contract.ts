@@ -472,6 +472,8 @@ export interface ProjectOperationFailure {
   message?: string;
   worktreeName?: string;
   worktreePath?: string;
+  /** Which thing failed. Derived by the project service so no client picks its own field. */
+  target?: string;
   createdAt?: string;
   [k: string]: unknown;
 }

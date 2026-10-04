@@ -57,6 +57,7 @@ use services::*;
 use session_state::*;
 use teammates::*;
 use topology_helpers::*;
+pub(crate) use worktrees::clear_worktree_row_failure;
 use worktrees::*;
 
 const LIVE_STATUSES: &[&str] = &["starting", "running", "idle"];

@@ -6,8 +6,8 @@ use aimux::dashboard_model::{
 };
 use aimux::dashboard_pending_actions::DashboardPendingActions;
 use aimux::dashboard_renderer::{
-    DashboardNavLevel, DashboardRenderInput, DashboardSubscreenRenderInput, render_dashboard_frame,
-    render_dashboard_subscreen_frame,
+    DashboardFooterAlert, DashboardNavLevel, DashboardRenderInput, DashboardSubscreenRenderInput,
+    render_dashboard_frame, render_dashboard_subscreen_frame,
 };
 use aimux::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
@@ -61,6 +61,7 @@ fn renders_empty_dashboard_with_create_hint() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -96,6 +97,7 @@ fn matches_node_dashboard_full_frame_for_populated_agent_selection() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -173,6 +175,7 @@ fn matches_node_dashboard_full_frame_with_project_controls_and_scribe_preview() 
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "scribe",
         scribe_preview_entries: &preview_entries,
@@ -243,6 +246,7 @@ fn matches_node_coordination_subscreen_full_frame() {
         rows: 36,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
@@ -301,6 +305,7 @@ fn matches_node_topology_subscreen_full_frame() {
         rows: 36,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
@@ -439,6 +444,7 @@ fn matches_node_graveyard_subscreen_full_frame() {
         rows: 36,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
@@ -521,6 +527,7 @@ fn graveyard_subscreen_renders_pending_action_overlays_from_pending_model() {
         rows: 30,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
@@ -585,6 +592,7 @@ fn matches_node_project_subscreen_full_frame() {
         rows: 36,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
@@ -626,6 +634,7 @@ fn matches_node_library_subscreen_full_frame() {
         rows: 36,
         scroll_offset: 0,
         footer_message: Some("Path: /repo/.aimux/plans/codex-1.md"),
+        footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
         version: Some("0.1.34"),
@@ -694,6 +703,7 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
         hidden_offline_agent_count: 7,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -722,31 +732,58 @@ fn populated_dashboard_frame_fits_common_viewports() {
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let snapshot = &fixture.runtime_full;
 
+    // Both alerts at once: they are extra footer lines on a frame that already
+    // fills 24 rows. `compose_screen_frame` truncates footer lines to the
+    // viewport, so width is structurally safe -- what is not is the alert being
+    // squeezed out of the frame entirely at the smallest size, which is where
+    // the one report of a refused action would go missing. The gate passed
+    // `None` before, so this line was never rendered at any viewport at all.
+    let alerts = [
+        DashboardFooterAlert {
+            message: "Dashboard data stale: project service refused the connection; retrying",
+            dismissible: false,
+        },
+        DashboardFooterAlert {
+            message: "Cannot graveyard \"a-long-worktree-name-that-keeps-going\": agent \"claude-opus-5-with-a-long-label\" is attached. Stop it first.",
+            dismissible: true,
+        },
+    ];
     for (cols, rows) in [(80, 24), (120, 40), (200, 50)] {
-        let result = render_dashboard_frame(&DashboardRenderInput {
-            snapshot,
-            overseer_sessions: &[],
-            scribe_sessions: &[],
-            cols,
-            rows,
-            nav_level: DashboardNavLevel::Sessions,
-            selected_session_id: Some("claude-0"),
-            selected_service_id: None,
-            focused_worktree_path: Some("<WORKTREE>"),
-            focused_group_index: None,
-            runtime_label: Some("tmux"),
-            version: Some("local"),
-            hide_offline_agents: true,
-            hidden_offline_agent_count: 7,
-            scroll_offset: 0,
-            footer_message: None,
-            details_sidebar_visible: true,
-            preview_source: "output",
-            scribe_preview_entries: &[],
-        });
+        for footer_alerts in [&alerts[..0], &alerts[..1], &alerts[..]] {
+            let result = render_dashboard_frame(&DashboardRenderInput {
+                snapshot,
+                overseer_sessions: &[],
+                scribe_sessions: &[],
+                cols,
+                rows,
+                nav_level: DashboardNavLevel::Sessions,
+                selected_session_id: Some("claude-0"),
+                selected_service_id: None,
+                focused_worktree_path: Some("<WORKTREE>"),
+                focused_group_index: None,
+                runtime_label: Some("tmux"),
+                version: Some("local"),
+                hide_offline_agents: true,
+                hidden_offline_agent_count: 7,
+                scroll_offset: 0,
+                footer_message: None,
+                footer_alerts,
+                details_sidebar_visible: true,
+                preview_source: "output",
+                scribe_preview_entries: &[],
+            });
 
-        assert!(!strip_ansi(&result.frame).trim().is_empty());
-        assert_frame_fits_viewport(&result.frame, cols);
+            assert!(!strip_ansi(&result.frame).trim().is_empty());
+            assert_frame_fits_viewport(&result.frame, cols);
+            let plain = strip_ansi(&result.frame);
+            for alert in footer_alerts {
+                let head = alert.message.split(':').next().expect("a first clause");
+                assert!(
+                    plain.contains(head),
+                    "alert missing from the {cols}x{rows} frame: {head}"
+                );
+            }
+        }
     }
 }
 
@@ -801,6 +838,7 @@ fn orphan_worktrees_keep_node_first_seen_order() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -864,6 +902,7 @@ fn a_session_naming_the_main_path_stays_in_the_main_checkout_card() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -924,6 +963,7 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -978,6 +1018,7 @@ fn row_dot_ignores_legacy_direct_attention_without_semantic_state() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1010,6 +1051,7 @@ fn renders_state_aware_footer_hints_for_session_actions() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1060,6 +1102,7 @@ fn flat_session_footer_keeps_team_hint_for_selected_parent() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1122,6 +1165,7 @@ fn renders_selected_session_details_sidebar_when_visible() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1231,6 +1275,7 @@ fn renders_selected_teammates_in_tmux_window_order() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1300,6 +1345,7 @@ fn renders_typed_scribe_preview_rows_for_selected_session() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "scribe",
         scribe_preview_entries: &entries,
@@ -1357,6 +1403,7 @@ fn explicit_scribe_sessions_drive_scribe_preview_like_node_view_model() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "scribe",
         scribe_preview_entries: &entries,
@@ -1406,6 +1453,7 @@ fn teammate_scribe_does_not_enable_project_scribe_preview() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "scribe",
         scribe_preview_entries: &[],
@@ -1441,6 +1489,7 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1462,6 +1511,7 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1526,6 +1576,7 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1581,6 +1632,7 @@ fn selected_project_control_session_keeps_worktree_details_like_node() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1637,6 +1689,7 @@ fn flat_session_rows_exclude_project_control_sessions_like_node() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1691,6 +1744,7 @@ fn supervisor_section_renders_project_control_sessions() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1736,6 +1790,7 @@ fn focused_supervisor_section_renders_cursor() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1791,6 +1846,7 @@ fn supervisor_section_does_not_change_main_session_membership() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1836,6 +1892,7 @@ fn flat_footer_uses_no_session_hints_when_only_project_control_sessions_exist() 
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1884,6 +1941,7 @@ fn worktree_details_show_active_removal_status_and_progress() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1927,6 +1985,7 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -1955,6 +2014,7 @@ fn renders_service_and_failure_footer_hints() {
         target_id: None,
         worktree_path: None,
         worktree_name: None,
+        target: None,
         cleared: false,
         extra: Default::default(),
     });
@@ -1977,6 +2037,7 @@ fn renders_service_and_failure_footer_hints() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -2025,6 +2086,7 @@ fn renders_global_loop_alert_pause_chrome() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -2072,6 +2134,7 @@ fn unpaused_loop_alert_state_does_not_render_pause_chrome() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -2093,6 +2156,7 @@ fn help_screen_names_global_loop_alert_pause_shortcut_path() {
         rows: 24,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         runtime_label: None,
         version: None,
@@ -2124,6 +2188,7 @@ fn renders_typed_operation_failures_in_banner_and_worktree_details() {
         target_id: None,
         worktree_path: Some(worktree_path.clone()),
         worktree_name: Some("feature-a".into()),
+        target: Some("feature-a".into()),
         cleared: false,
         extra: Default::default(),
     }];
@@ -2146,6 +2211,7 @@ fn renders_typed_operation_failures_in_banner_and_worktree_details() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -2194,6 +2260,7 @@ fn renders_control_plane_daemon_process_warning_banner() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -2263,6 +2330,7 @@ fn a_topology_agent_row_says_which_agent_and_what_it_is_doing() {
         rows: 24,
         scroll_offset: 0,
         footer_message: None,
+        footer_alerts: &[],
         details_sidebar_visible: false,
         runtime_label: Some("tmux"),
         version: Some("0.1.65"),
@@ -2288,4 +2356,173 @@ fn a_topology_agent_row_says_which_agent_and_what_it_is_doing() {
         .find(|line| line.contains("(115868)"))
         .expect("the offline agent's row");
     assert!(offline.contains("Offline"), "{offline}");
+}
+
+/// The refusal was rendered in `Tone::Muted` -- an error painted as
+/// de-emphasised chrome -- and it replaced the whole hint row. So it was both
+/// hard to see and expensive to show. It is now a filled pill on its own line,
+/// and the hints stay where they were.
+#[test]
+fn a_failure_renders_as_an_alert_without_hiding_the_hints() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.sessions.clear();
+    snapshot.teammates.clear();
+    snapshot.services.clear();
+    snapshot.worktrees.clear();
+    snapshot.worktree_groups.clear();
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 100,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        footer_alerts: &[DashboardFooterAlert {
+            message: "Cannot graveyard \"fix-chat\" while agent \"claude\" is attached",
+            dismissible: true,
+        }],
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+
+    let plain = strip_ansi(&result.frame);
+    assert!(
+        plain.contains("Cannot graveyard \"fix-chat\" while agent \"claude\" is attached"),
+        "{plain}"
+    );
+    // The hints survive alongside it; the alert used to take their row.
+    assert!(plain.contains("q quit"), "{plain}");
+    assert!(plain.contains("n agent"), "{plain}");
+    // Inverse video, the same primitive the attention badges use -- not the
+    // dim tone an error was previously given.
+    assert!(
+        result.frame.contains("\x1b[31;7m ! \x1b[0m"),
+        "the alert must read as an alert, not as chrome"
+    );
+}
+
+/// The dismiss key is advertised on the alert that `X` takes down, and only on
+/// that one.
+///
+/// The hint row advertised `X` only while the ledger was non-empty, and the
+/// refusals this exists for never reach the ledger -- so the one surface that
+/// could say how to get rid of the bar was the one that stayed silent.
+/// Subscreens have no hint row at all. A refresh notice clears itself when the
+/// refresh succeeds, so offering a dismiss key on it would be a lie.
+#[test]
+fn only_a_dismissible_alert_advertises_the_key_that_dismisses_it() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = &fixture.runtime_light;
+
+    let alerts = [
+        DashboardFooterAlert {
+            message: "Dashboard data stale: connection refused; retrying",
+            dismissible: false,
+        },
+        DashboardFooterAlert {
+            message: "Cannot graveyard \"fix-chat\": agent \"claude\" is attached.",
+            dismissible: true,
+        },
+    ];
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 160,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        footer_alerts: &alerts,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    // Two lines, not one masking the other: a stale refresh and a refused
+    // action are both true, and they used to share a single slot.
+    let stale = plain
+        .lines()
+        .find(|line| line.contains("Dashboard data stale"))
+        .expect("the stale line");
+    let refusal = plain
+        .lines()
+        .find(|line| line.contains("Cannot graveyard"))
+        .expect("the refusal line");
+    assert_ne!(stale, refusal, "each alert gets its own line");
+    assert!(
+        refusal.contains("[X] dismiss"),
+        "a refusal has to say how to get rid of it: {refusal}"
+    );
+    assert!(
+        !stale.contains("[X] dismiss"),
+        "`X` does not clear a refresh error, so it must not be offered: {stale}"
+    );
+}
+/// A subscreen shows the alert, not just handles the key that dismisses it.
+///
+/// Graveyard resurrect and delete both fail here, and the subscreen footer is a
+/// fixed string with no room for a hint -- so if the bar does not render, a
+/// refusal raised on this screen is invisible and `X` dismisses something the
+/// user never saw. Every other subscreen test passes an empty alert list, so
+/// deleting the subscreen's render loop broke nothing.
+#[test]
+fn a_subscreen_renders_the_alert_and_how_to_dismiss_it() {
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Graveyard,
+        resource: None,
+        error: None,
+        selected_index: 0,
+        cols: 140,
+        rows: 36,
+        scroll_offset: 0,
+        footer_message: None,
+        footer_alerts: &[DashboardFooterAlert {
+            message: "Could not resurrect \"fix-chat\": the checkout is missing",
+            dismissible: true,
+        }],
+        details_sidebar_visible: false,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+    });
+
+    let plain = strip_ansi(&result.frame);
+    assert!(
+        plain.contains("Could not resurrect \"fix-chat\": the checkout is missing"),
+        "{plain}"
+    );
+    assert!(
+        plain.contains("[X] dismiss"),
+        "the subscreen footer has no hint row, so the bar has to carry it: {plain}"
+    );
+    assert!(
+        result.frame.contains("\x1b[31;7m ! \x1b[0m"),
+        "the alert must read as an alert here too, not as chrome"
+    );
+    // The screen's own footer survives alongside it.
+    assert!(plain.contains("q quit"), "{plain}");
 }

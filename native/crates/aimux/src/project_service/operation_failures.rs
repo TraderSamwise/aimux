@@ -74,9 +74,27 @@ pub fn route_operation_failures_request(
             ));
         }
     };
+    // A worktree's failure has a second home: `mark_worktree_remove_error`
+    // stamps `status: "error"` and an `operationFailure` onto the topology row,
+    // which the dashboard renders as a failed row with the error in its detail
+    // panel. Clearing only the ledger meant the dashboard said "Dismissed
+    // failure" and drew the same failure again on the next frame -- forever,
+    // and that worktree could never be graveyarded from the TUI. One key
+    // dismisses the error surface, so it has to reach both.
+    let cleared_rows = match worktree_path_match(body) {
+        WorktreePathMatch::Exact(path) => super::lifecycle::clear_worktree_row_failure(
+            context.project_state_dir().as_path(),
+            &path,
+        ),
+        WorktreePathMatch::Any => {
+            super::lifecycle::clear_worktree_row_failure(context.project_state_dir().as_path(), "")
+        }
+        // "only rows with no worktree path" cannot name a worktree row.
+        WorktreePathMatch::OnlyMissing => 0,
+    };
     Some(ProjectServiceDispatchResponse::json(
         200,
-        json!({ "ok": true, "cleared": cleared }),
+        json!({ "ok": true, "cleared": cleared + cleared_rows }),
     ))
 }
 
@@ -261,6 +279,41 @@ fn is_active_failure(failure: &Value, now: u128) -> bool {
         return true;
     };
     now.saturating_sub(created_at) < ACTIVE_FAILURE_MAX_AGE_MS
+}
+
+/// Which thing a failure is about, derived once so every surface renders the
+/// same answer instead of each walking its own chain of optional fields.
+///
+/// The TUI card, the app's card and the sidebar each had an order of their own,
+/// and two of them disagreed on the same record: a failed agent launch carries
+/// a session id and no worktree name, so a chain reaching for the path first
+/// named the repository while a chain reaching for the id named the agent.
+///
+/// A record with nothing to name omits the field rather than carrying `""`.
+/// The app decided whether to repeat the target with `title.includes(target)`,
+/// and `includes("")` is always true -- it rendered correctly by accident of
+/// that rather than by asking whether there was a target at all.
+pub fn operation_failure_target(failure: &Value) -> Option<String> {
+    ["worktreeName", "targetId", "worktreePath"]
+        .into_iter()
+        .find_map(|field| trimmed_owned(failure.get(field).and_then(Value::as_str)))
+}
+
+/// A stored row as the project service publishes it: the row plus its derived
+/// target.
+///
+/// Applied where the snapshot is assembled, not where the store is read. The
+/// store's own shape is a contract captured from the Node implementation this
+/// one replaced (`testdata/contracts/v1/operation-failures/failures.json`), and
+/// a derived field has no business in it -- adding one there failed that parity
+/// fixture on both platforms while every local gate stayed green.
+pub fn with_derived_operation_failure_target(mut failure: Value) -> Value {
+    if let (Some(target), Value::Object(record)) =
+        (operation_failure_target(&failure), &mut failure)
+    {
+        record.insert("target".into(), Value::String(target));
+    }
+    failure
 }
 
 fn operation_failure_store_unavailable(error: String) -> Value {
