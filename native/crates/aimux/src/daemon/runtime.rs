@@ -1604,7 +1604,11 @@ impl RealDaemonRuntime {
             project_root,
             open,
             |project_root, state_dir| {
-                stop_project_tmux_runtime_with_service_snapshots(project_root, state_dir)
+                stop_project_tmux_runtime_with_service_snapshots(
+                    project_root,
+                    state_dir,
+                    crate::service_state_snapshot::stop_without_restore_from_env(),
+                )
             },
         )
     }
@@ -4005,7 +4009,13 @@ impl DaemonSystemTextRuntime for RealDaemonRuntime {
             project_root,
             force,
             |project_root, project_state_dir| {
-                stop_project_tmux_runtime_with_service_snapshots(project_root, project_state_dir)
+                stop_project_tmux_runtime_with_service_snapshots(
+                    project_root,
+                    project_state_dir,
+                    // A forced remove is an operator who has already been told
+                    // what is at stake and said do it anyway.
+                    force || crate::service_state_snapshot::stop_without_restore_from_env(),
+                )
             },
         )
     }

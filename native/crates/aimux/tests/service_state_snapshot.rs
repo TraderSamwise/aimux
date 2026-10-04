@@ -99,9 +99,10 @@ fn stop_runtime_refuses_when_a_live_agent_is_in_no_restore_snapshot() {
     )
     .expect("seed snapshot");
 
-    let error =
-        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
-            .expect_err("an unrecorded live agent must stop the teardown");
+    let error = stop_project_tmux_runtime_with_service_snapshots_using(
+        &mut tmux, &repo_root, &state_dir, false,
+    )
+    .expect_err("an unrecorded live agent must stop the teardown");
 
     assert!(
         error.contains("codex-bbb"),
@@ -141,9 +142,10 @@ fn stop_runtime_proceeds_when_every_live_agent_is_recorded() {
     )
     .expect("seed snapshot");
 
-    let killed =
-        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
-            .expect("a recorded runtime stops normally");
+    let killed = stop_project_tmux_runtime_with_service_snapshots_using(
+        &mut tmux, &repo_root, &state_dir, false,
+    )
+    .expect("a recorded runtime stops normally");
 
     assert_eq!(killed, vec!["aimux-repo"]);
 }
@@ -156,9 +158,10 @@ fn stop_runtime_proceeds_when_there_are_no_agents_to_lose() {
     write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
         .expect("seed topology");
 
-    let killed =
-        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
-            .expect("an empty runtime stops normally");
+    let killed = stop_project_tmux_runtime_with_service_snapshots_using(
+        &mut tmux, &repo_root, &state_dir, false,
+    )
+    .expect("an empty runtime stops normally");
 
     assert_eq!(killed, vec!["aimux-repo"]);
 }
@@ -189,9 +192,10 @@ fn stop_runtime_ignores_an_agent_the_user_already_stopped() {
     )
     .expect("seed snapshot");
 
-    let killed =
-        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
-            .expect("a stopped agent is not an agent at risk");
+    let killed = stop_project_tmux_runtime_with_service_snapshots_using(
+        &mut tmux, &repo_root, &state_dir, false,
+    )
+    .expect("a stopped agent is not an agent at risk");
 
     assert_eq!(killed, vec!["aimux-repo"]);
 }
@@ -203,15 +207,14 @@ fn stop_runtime_can_be_forced_past_the_restore_check() {
     let (repo_root, state_dir, mut tmux) = stop_fixture("service-state-snapshot-forced");
     seed_topology_with_sessions(&state_dir, &repo_root, &["codex-aaa"]);
 
-    let refused =
-        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir);
+    let refused = stop_project_tmux_runtime_with_service_snapshots_using(
+        &mut tmux, &repo_root, &state_dir, false,
+    );
     assert!(refused.is_err(), "unrecorded agent must refuse by default");
 
-    // SAFETY: single-threaded test process; the var is removed before return.
-    unsafe { std::env::set_var("AIMUX_STOP_WITHOUT_RESTORE", "1") };
-    let killed =
-        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir);
-    unsafe { std::env::remove_var("AIMUX_STOP_WITHOUT_RESTORE") };
+    let killed = stop_project_tmux_runtime_with_service_snapshots_using(
+        &mut tmux, &repo_root, &state_dir, true,
+    );
 
     assert_eq!(killed.expect("forced stop proceeds"), vec!["aimux-repo"]);
 }
@@ -222,9 +225,10 @@ fn stop_runtime_refuses_when_the_topology_cannot_be_read() {
     let (repo_root, state_dir, mut tmux) = stop_fixture("service-state-snapshot-unreadable");
     fs::write(runtime_topology_path(&state_dir), b"{ not json").expect("corrupt topology");
 
-    let error =
-        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
-            .expect_err("an unreadable topology must not be treated as an empty one");
+    let error = stop_project_tmux_runtime_with_service_snapshots_using(
+        &mut tmux, &repo_root, &state_dir, false,
+    )
+    .expect_err("an unreadable topology must not be treated as an empty one");
 
     assert!(error.contains("topology"), "{error}");
     assert!(
@@ -275,9 +279,10 @@ fn stop_runtime_persists_service_snapshot_before_killing_tmux_sessions() {
         }],
     };
 
-    let killed =
-        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
-            .expect("stop runtime with snapshots");
+    let killed = stop_project_tmux_runtime_with_service_snapshots_using(
+        &mut tmux, &repo_root, &state_dir, false,
+    )
+    .expect("stop runtime with snapshots");
 
     assert_eq!(killed, vec![client_session, host_session]);
     let snapshot_index = call_index(&tmux.calls, "listProjectManagedWindows");

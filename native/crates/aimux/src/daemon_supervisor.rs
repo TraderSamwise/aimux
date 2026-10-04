@@ -824,6 +824,7 @@ pub fn stop_daemon_info(
                 crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots(
                     &project.project_root,
                     project_state_dir,
+                    crate::service_state_snapshot::stop_without_restore_from_env(),
                 )
             }),
         },
@@ -962,6 +963,31 @@ pub fn stop_daemon_info_with(
     let mut stopped_project_services = Vec::new();
     let mut stopped_tmux_sessions = Vec::new();
     let mut escalations = Vec::new();
+    // Every project is asked before any project is killed. Refusing partway
+    // through the loop left the machine half torn down -- the projects already
+    // visited had lost their runtimes, the rest kept theirs, and the daemon
+    // was never signalled.
+    for entry in state.projects.values() {
+        let Ok(project) = serde_json::from_value::<ProjectServiceState>(entry.clone()) else {
+            continue;
+        };
+        if !verify_project_service(&project) {
+            continue;
+        }
+        let project_state_dir = resolver
+            .clone()
+            .project_state_dir_for(&project.project_root);
+        crate::service_state_snapshot::assert_project_stop_is_recoverable(
+            &project_state_dir,
+            crate::service_state_snapshot::stop_without_restore_from_env(),
+        )
+        .map_err(|error| {
+            DaemonSupervisorError::Message(format!(
+                "refusing to stop: project {} could not be recorded first: {error}",
+                project.project_root
+            ))
+        })?;
+    }
     for entry in state.projects.values() {
         let Ok(project) = serde_json::from_value::<ProjectServiceState>(entry.clone()) else {
             continue;

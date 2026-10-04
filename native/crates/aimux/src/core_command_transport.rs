@@ -121,13 +121,9 @@ impl CoreCommandTransportError {
     /// refuses is a daemon that has stopped serving, not a busy one, and
     /// waiting on it only converts that into a timeout further up.
     pub fn is_connection_refused(&self) -> bool {
-        match self {
-            Self::Io(error) => error.kind() == io::ErrorKind::ConnectionRefused,
-            Self::TransientIoExhausted { source, .. } => {
-                source.kind() == io::ErrorKind::ConnectionRefused
-            }
-            _ => false,
-        }
+        // `TransientIoExhausted` is deliberately not checked: it only ever
+        // wraps the retryable kinds, and a refusal is not one of them.
+        matches!(self, Self::Io(error) if error.kind() == io::ErrorKind::ConnectionRefused)
     }
 }
 
@@ -410,7 +406,13 @@ impl WaitNotice {
                 let started = Instant::now();
                 let mut wait = LOOPBACK_WAIT_NOTICE_AFTER;
                 let mut finished = lock.lock().unwrap_or_else(|error| error.into_inner());
-                loop {
+                // Tested BEFORE the first wait. The request usually finishes
+                // and drops the notice before this thread is ever scheduled,
+                // and a `notify_all` sent then is lost -- leaving the join in
+                // `Drop` to block for the whole first interval. That made the
+                // fast path pay ten seconds for a feature whose only job is to
+                // narrate slow ones.
+                while !*finished {
                     // Woken by the request finishing, not by a poll. A polled
                     // sleep made every timeout-less request pay up to the
                     // sleep interval on the way out, just to join this thread.
@@ -418,10 +420,7 @@ impl WaitNotice {
                         .wait_timeout(finished, wait)
                         .unwrap_or_else(|error| error.into_inner());
                     finished = next;
-                    if *finished {
-                        return;
-                    }
-                    if timeout.timed_out() {
+                    if timeout.timed_out() && !*finished {
                         eprintln!(
                             "still waiting for {what} ({}s)",
                             started.elapsed().as_secs()
