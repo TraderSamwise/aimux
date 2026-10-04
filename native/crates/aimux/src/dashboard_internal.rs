@@ -2527,11 +2527,16 @@ fn flush_deferred_dashboard_requests(
             continue;
         };
         let outcomes = outcomes.clone();
+        // Captured here, before the request is handed to the thread that sends
+        // it. `execute_dashboard_controller_action` injects the caller's tmux
+        // pane into the body on its way out, so an identity taken in there
+        // would carry whichever pane happened to dispatch it -- and a focus
+        // retried from a different pane would never answer its own failure.
+        let action = Some(DashboardActionIdentity {
+            path: request.path,
+            body: request.body.clone(),
+        });
         thread::spawn(move || {
-            let action = Some(DashboardActionIdentity {
-                path: request.path,
-                body: request.body.clone(),
-            });
             let (failure, notice) = match execute_dashboard_controller_action(&endpoint, &request) {
                 Ok(body) => (None, dashboard_action_notice(request.path, &body)),
                 Err(error) => (Some(error.to_string()), None),
@@ -2821,6 +2826,51 @@ mod tests {
         assert!(
             alert.answered_by(&stop_agent("claude-a")),
             "a retry of this very action is what answers it"
+        );
+    }
+
+    /// The real shape: a settled action carries both an overlay token and an
+    /// identity, and the drain has to honour both.
+    ///
+    /// Every other test in this module sends `pending: None`, so the optimistic
+    /// overlay's token path through here was never exercised alongside the
+    /// alert's -- and the two live one line apart.
+    #[test]
+    fn a_settled_action_clears_its_overlay_and_tags_its_failure() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        let mut pending_actions = DashboardPendingActions::default();
+        let token = pending_actions.set_session_action(
+            "claude-a",
+            "stopping",
+            None,
+            pending_action_now_ms(std::time::Instant::now()),
+        );
+        assert!(
+            !pending_actions.is_empty(),
+            "precondition: the overlay is showing"
+        );
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: Some((PendingTarget::Session, "claude-a".into(), token)),
+            action: Some(stop_agent("claude-a")),
+            failure: Some("Could not stop agent claude-a".into()),
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert!(
+            pending_actions.is_empty(),
+            "a failed action must stop pretending it is still underway"
+        );
+        let alert = controller.footer_alert.as_ref().expect("a failure");
+        assert!(
+            alert.answered_by(&stop_agent("claude-a")),
+            "and it must be answerable by its own retry"
         );
     }
 

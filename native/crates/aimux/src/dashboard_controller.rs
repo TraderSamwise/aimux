@@ -337,9 +337,22 @@ impl DashboardOrchestrationInputState {
 /// twice: `pending_action_for_request` keys fork on `sessionId` while the only
 /// fork dispatcher sends `sourceSessionId`, and it keys a worktree create on a
 /// `path` the dashboard never sends, so every create collapsed onto the main
-/// checkout's own key. The arguments are the identity. Two attempts at the same
-/// action against the same target are the same request, and a retry after
-/// fixing the cause is byte-identical to the attempt that failed.
+/// checkout's own key. The arguments are the identity: two attempts at the same
+/// action against the same target are the same request, and no body carries a
+/// timestamp, nonce or generated id, so that equality is a real property.
+///
+/// What this deliberately does not catch is a retry that becomes a *different*
+/// request, of which there are three shapes. Enter on a session whose tmux
+/// window has died sends a focus and gets a 404; the next refresh drops the
+/// window id, so Enter now sends a resume, which succeeds -- a different route
+/// entirely. Renaming or creating with a *corrected* name retries with
+/// different arguments. And a composer re-derives its target from the current
+/// selection on submit, so moving the cursor between attempts retries against
+/// something else.
+///
+/// In all three the failure stays up until dismissed, and its text stays true.
+/// The alternative is matching on the route alone, which is the uncorrelated
+/// clear this exists to prevent: one agent's success erasing another's failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardActionIdentity {
     pub path: &'static str,
@@ -2859,11 +2872,21 @@ impl DashboardController {
                 self.footer_alert = None;
                 DashboardControllerEffect::Request(request)
             }
-            // This kind plans an unconditional request, so neither of the other
-            // outcomes can arrive. Handled rather than enumerated, because an
-            // arm written for a case that cannot happen is a claim nothing can
-            // check.
-            _ => DashboardControllerEffect::Ignored,
+            // This kind plans an unconditional request today, so neither arm
+            // below can run. They are spelled out anyway: a catch-all would
+            // turn a future `Blocked` into a keypress that reports nothing and
+            // does not even repaint, which is the silence this whole change is
+            // about. The assertion fails the suite rather than the user if that
+            // ever becomes reachable.
+            DashboardActionPlan::Blocked(message) => {
+                debug_assert!(false, "clearing failures became blockable: {message}");
+                self.footer_message = Some(message);
+                DashboardControllerEffect::Render
+            }
+            DashboardActionPlan::Ignored => {
+                debug_assert!(false, "clearing failures planned no request");
+                DashboardControllerEffect::Ignored
+            }
         }
     }
 }
