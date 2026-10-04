@@ -818,6 +818,7 @@ pub fn stop_daemon_info(
             send_signal_to_pid: Box::new(send_signal),
             wait_project_exit: Box::new(wait_for_project_service_info_exit),
             wait_daemon_exit: Box::new(wait_for_daemon_info_exit),
+            stop_without_restore: crate::service_state_snapshot::stop_without_restore_from_env(),
             stop_tmux_runtime: Box::new(|project: &ProjectServiceState| {
                 let mut resolver = resolver.clone();
                 let project_state_dir = resolver.project_state_dir_for(&project.project_root);
@@ -936,6 +937,10 @@ pub struct StopDaemonInfoHooks<'a> {
     pub wait_project_exit: WaitProjectExitHook<'a>,
     pub wait_daemon_exit: WaitDaemonExitHook<'a>,
     pub stop_tmux_runtime: StopTmuxRuntimeHook<'a>,
+    /// Stop even where the agents at risk could not be recorded. Passed in
+    /// rather than read here, so a test drives it without touching the
+    /// process-global environment its siblings share.
+    pub stop_without_restore: bool,
 }
 
 pub fn stop_daemon_info_with(
@@ -952,6 +957,7 @@ pub fn stop_daemon_info_with(
         mut wait_project_exit,
         mut wait_daemon_exit,
         mut stop_tmux_runtime,
+        stop_without_restore,
     } = hooks;
     signal_to_number(signal)?;
     if !verify_daemon_process(info) {
@@ -966,7 +972,14 @@ pub fn stop_daemon_info_with(
     // Every project is asked before any project is killed. Refusing partway
     // through the loop left the machine half torn down -- the projects already
     // visited had lost their runtimes, the rest kept theirs, and the daemon
-    // was never signalled.
+    // was never signalled. This narrows that window; it does not close it,
+    // because the kill loop can still fail on a later project for reasons
+    // nothing can ask about in advance.
+    //
+    // One clone for the whole pass: `project_state_dir_for` memoises the git
+    // root it resolves, and cloning per iteration threw that away and paid a
+    // `git rev-parse` per project instead.
+    let mut preflight_resolver = resolver.clone();
     for entry in state.projects.values() {
         let Ok(project) = serde_json::from_value::<ProjectServiceState>(entry.clone()) else {
             continue;
@@ -974,12 +987,10 @@ pub fn stop_daemon_info_with(
         if !verify_project_service(&project) {
             continue;
         }
-        let project_state_dir = resolver
-            .clone()
-            .project_state_dir_for(&project.project_root);
+        let project_state_dir = preflight_resolver.project_state_dir_for(&project.project_root);
         crate::service_state_snapshot::assert_project_stop_is_recoverable(
             &project_state_dir,
-            crate::service_state_snapshot::stop_without_restore_from_env(),
+            stop_without_restore,
         )
         .map_err(|error| {
             DaemonSupervisorError::Message(format!(

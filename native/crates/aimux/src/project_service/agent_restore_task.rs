@@ -370,8 +370,11 @@ pub fn assert_agents_are_restorable(
     }
     Err(format!(
         "agent restore snapshot does not record {} of {} running agents ({}); \
-         stopping would leave no way to bring them back. Set \
-         AIMUX_STOP_WITHOUT_RESTORE=1 to stop anyway.",
+         stopping would leave no way to bring them back. To stop anyway: \
+         `AIMUX_STOP_WITHOUT_RESTORE=1 aimux daemon stop`, or \
+         `aimux projects remove --force`. `aimux restart` is served by the \
+         daemon, so it honours the variable only from the daemon's own \
+         environment, not from your shell.",
         unrecorded.len(),
         restorable.len(),
         unrecorded.join(", ")

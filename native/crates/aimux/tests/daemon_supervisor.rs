@@ -412,6 +412,7 @@ fn stop_daemon_info_clears_state_and_returns_only_verified_services() {
         state,
         "SIGTERM",
         StopDaemonInfoHooks {
+            stop_without_restore: true,
             verify_project_service: Box::new(|_| false),
             verify_daemon_process: Box::new(|_| true),
             send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
@@ -481,6 +482,7 @@ fn stop_daemon_info_stops_verified_project_tmux_runtime_before_signaling() {
         state,
         "SIGTERM",
         StopDaemonInfoHooks {
+            stop_without_restore: true,
             verify_project_service: Box::new(|_: &ProjectServiceState| true),
             verify_daemon_process: Box::new(|_: &AimuxDaemonInfo| true),
             send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
@@ -562,6 +564,7 @@ fn stop_daemon_info_reports_project_service_escalation() {
         state,
         "SIGTERM",
         StopDaemonInfoHooks {
+            stop_without_restore: true,
             verify_project_service: Box::new(|_: &ProjectServiceState| true),
             verify_daemon_process: Box::new(|_: &AimuxDaemonInfo| true),
             send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
@@ -812,6 +815,7 @@ fn stop_daemon_info_refuses_to_signal_unverified_daemon_and_preserves_state() {
         state.clone(),
         "SIGTERM",
         StopDaemonInfoHooks {
+            stop_without_restore: true,
             verify_project_service: Box::new(|_| false),
             verify_daemon_process: Box::new(|_| false),
             send_signal_to_pid: Box::new(|pid: i32, signal: &str| {

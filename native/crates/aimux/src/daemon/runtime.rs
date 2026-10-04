@@ -999,7 +999,7 @@ impl RealDaemonRuntime {
                     return Ok(());
                 }
                 Err(format!(
-                    "refusing to remove project {project_root}: {} live agent(s) would lose tmux context ({}). Re-run with --force to stop the service, kill managed tmux sessions, and unregister it.",
+                    "refusing to remove project {project_root}: {} live agent(s) would lose tmux context ({}). Re-run with --force to stop the service, kill managed tmux sessions, and unregister it -- which also skips the check that those agents can be restored afterwards.",
                     live_agent_ids.len(),
                     live_agent_ids.join(", ")
                 ))
@@ -1020,7 +1020,7 @@ impl RealDaemonRuntime {
                     return Ok(());
                 }
                 Err(format!(
-                    "refusing to remove project {project_root}: could not verify live agents before killing {} managed tmux session(s): {}. Re-run with --force to stop the service, kill managed tmux sessions, and unregister it.",
+                    "refusing to remove project {project_root}: could not verify live agents before killing {} managed tmux session(s): {}. Re-run with --force to stop the service, kill managed tmux sessions, and unregister it -- which also skips the check that those agents can be restored afterwards.",
                     sessions.len(),
                     error.error
                 ))
