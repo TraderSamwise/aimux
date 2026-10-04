@@ -353,15 +353,23 @@ impl DashboardNavigationState {
         // ahead of its siblings -- and every index and digit is renumbered by
         // that. The user read `2` and `1` off one screen; they meant one row.
         if let Some(anchor) = self.quick_jump_anchor.take() {
-            let Some(outcome) = self.select_anchored_entry(snapshot, &anchor, value) else {
-                // The row is gone, or its checkout is. Nothing is selected on
-                // a guess: resolving against whatever has shifted into that
-                // position is how a jump enters the wrong agent.
-                self.clear_quick_jump();
-                return DashboardNavigationOutcome::Changed;
-            };
+            // The highlight follows the checkout first and unconditionally,
+            // because `2` on its own already moved it there and the user can
+            // see where it is. Leaving it on the index that checkout occupied
+            // a moment ago means the next `j` or `x` lands on whichever
+            // checkout has since slid into that row.
+            let groups = dashboard_navigation_groups(snapshot);
+            if let Some(group_index) = groups
+                .iter()
+                .position(|group| navigation_group_identity(group) == anchor.group)
+            {
+                self.worktree_index = group_index;
+            }
+            let outcome = self.select_anchored_entry(snapshot, &anchor, value);
             self.clear_quick_jump();
-            return outcome;
+            // No row, so nothing is entered: resolving against whatever has
+            // shifted into that position is how a jump enters the wrong agent.
+            return outcome.unwrap_or(DashboardNavigationOutcome::Changed);
         }
         self.clear_quick_jump();
         match self.select_entry_digit(snapshot, value) {
@@ -378,11 +386,8 @@ impl DashboardNavigationState {
         digit: usize,
     ) -> Option<DashboardNavigationOutcome<'a>> {
         let wanted = anchor.entries.get(digit.checked_sub(1)?)?;
-        let groups = dashboard_navigation_groups(snapshot);
-        let group_index = groups
-            .iter()
-            .position(|group| navigation_group_identity(group) == anchor.group)?;
-        let item_index = groups
+        let group_index = self.worktree_index;
+        let item_index = dashboard_navigation_groups(snapshot)
             .get(group_index)?
             .entries
             .iter()

@@ -394,4 +394,46 @@ fn a_jump_whose_row_has_gone_enters_nothing() {
         "a vanished row must not hand the keystroke to its replacement"
     );
     assert_eq!(state.level, DashboardNavLevel::Worktrees);
+    assert_eq!(
+        state.focused_worktree_path(&emptied),
+        snapshot.worktree_groups[1].path.as_deref(),
+        "and the highlight must still be on the checkout the jump named"
+    );
+}
+
+/// The checkout the jump named, even when the row inside it is gone and the
+/// list has been rebuilt around it. The next key acts on whatever is
+/// highlighted, so leaving it on a stale row index points `x` at a checkout
+/// the user never selected.
+#[test]
+fn a_jump_that_enters_nothing_still_moves_the_highlight() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let named = state
+        .focused_worktree_path(&snapshot)
+        .expect("digit 2 focused a checkout")
+        .to_owned();
+
+    // A checkout appears ahead of it and its only row goes, in the same gap.
+    let mut shifted = snapshot.clone();
+    let mut ahead = shifted.worktree_groups[1].clone();
+    ahead.name = "arrived-ahead".into();
+    ahead.path = Some("<AHEAD>".to_owned());
+    ahead.sessions.clear();
+    ahead.services.clear();
+    shifted.worktree_groups.insert(0, ahead);
+    let gone = snapshot.worktree_groups[1].sessions[0].id.clone();
+    shifted.worktree_groups[2]
+        .sessions
+        .retain(|session| session.id != gone);
+    shifted.sessions.retain(|session| session.id != gone);
+
+    state.handle_digit(&shifted, '1');
+
+    assert_eq!(
+        state.focused_worktree_path(&shifted),
+        Some(named.as_str()),
+        "the highlight was left on the row index, not on the checkout"
+    );
 }
