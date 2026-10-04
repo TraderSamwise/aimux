@@ -10,7 +10,7 @@ use crate::dashboard_client::{
     fetch_desktop_state, refresh_dashboard_statusline, resolve_project_service_endpoint,
 };
 use crate::dashboard_controller::{
-    DashboardController, DashboardControllerEffect, DashboardFailureAlert,
+    DashboardActionIdentity, DashboardController, DashboardControllerEffect, DashboardFailureAlert,
     DashboardOverseerWatchRequest, DashboardScreen, DashboardSubscreenAction,
     orchestration_targets_from_resource,
 };
@@ -2486,6 +2486,9 @@ type DeferredDashboardRequest = (DashboardActionRequest, Option<(PendingTarget, 
 /// The outcome of a mutation that ran off the render thread.
 struct DashboardRequestOutcome {
     pending: Option<(PendingTarget, String, u64)>,
+    /// Which action settled, so a failure can be tagged with it and a later
+    /// success can answer that same one and nobody else's.
+    action: Option<DashboardActionIdentity>,
     failure: Option<String>,
     /// What a successful mutation did, for the routes where succeeding quietly
     /// is indistinguishable from doing nothing.
@@ -2525,12 +2528,17 @@ fn flush_deferred_dashboard_requests(
         };
         let outcomes = outcomes.clone();
         thread::spawn(move || {
+            let action = Some(DashboardActionIdentity {
+                path: request.path,
+                body: request.body.clone(),
+            });
             let (failure, notice) = match execute_dashboard_controller_action(&endpoint, &request) {
                 Ok(body) => (None, dashboard_action_notice(request.path, &body)),
                 Err(error) => (Some(error.to_string()), None),
             };
             let _ = outcomes.send(DashboardRequestOutcome {
                 pending,
+                action,
                 failure,
                 notice,
             });
@@ -2563,10 +2571,8 @@ fn drain_dashboard_request_outcomes(
                 // keypress and is dismissed deliberately. Tagged with the action
                 // it was about, so a later success for that same thing can take
                 // it down and a success for anything else cannot.
-                controller.footer_alert = Some(match outcome.pending.as_ref() {
-                    Some((target, id, _)) => {
-                        DashboardFailureAlert::for_action(message, *target, id.as_str())
-                    }
+                controller.footer_alert = Some(match outcome.action.clone() {
+                    Some(action) => DashboardFailureAlert::for_action(message, action),
                     None => DashboardFailureAlert::local(message),
                 });
             }
@@ -2575,11 +2581,11 @@ fn drain_dashboard_request_outcomes(
             }
         } else {
             if let Some(controller) = controller.as_deref_mut()
-                && let Some((target, id, _)) = outcome.pending.as_ref()
+                && let Some(action) = outcome.action.as_ref()
                 && controller
                     .footer_alert
                     .as_ref()
-                    .is_some_and(|alert| alert.answered_by(*target, id))
+                    .is_some_and(|alert| alert.answered_by(action))
             {
                 // The action the failure was about has now succeeded. Leaving
                 // the refusal up after the user fixed it and retried is its own
@@ -2608,6 +2614,13 @@ mod tests {
         parse_desktop_state_snapshot(GOLDEN_SNAPSHOT).expect("golden snapshot")
     }
 
+    fn stop_agent(session_id: &str) -> DashboardActionIdentity {
+        DashboardActionIdentity {
+            path: crate::project_api_contract::routes::agents::STOP,
+            body: serde_json::json!({ "sessionId": session_id }),
+        }
+    }
+
     /// A success that lands late must not take down a failure it did not answer.
     ///
     /// Requests run on detached threads and a graveyard is allowed 180s, so an
@@ -2615,20 +2628,23 @@ mod tests {
     /// Clearing on any successful outcome made a slow success silently erase a
     /// refusal raised minutes later; clearing on any dispatched request erased
     /// it a step earlier. Neither asked whether the two were about the same
-    /// thing, so now the alert carries what it was about.
+    /// thing, so the alert carries which action it was.
     #[test]
     fn a_late_success_does_not_erase_a_failure_it_did_not_answer() {
         let snapshot = test_snapshot();
         let mut controller = DashboardController::new(&snapshot);
         controller.footer_alert = Some(DashboardFailureAlert::for_action(
             "Could not stop agent claude-a",
-            PendingTarget::Session,
-            "claude-a",
+            stop_agent("claude-a"),
         ));
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
-            pending: Some((PendingTarget::Worktree, "other-tree".into(), 1)),
+            pending: None,
+            action: Some(DashboardActionIdentity {
+                path: crate::project_api_contract::routes::worktree_actions::GRAVEYARD,
+                body: serde_json::json!({ "path": "/repo/.aimux/worktrees/other-tree" }),
+            }),
             failure: None,
             notice: Some("Worktree other-tree moved to the graveyard".into()),
         })
@@ -2639,17 +2655,82 @@ mod tests {
         drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
 
         assert_eq!(
-            controller
-                .footer_alert
-                .as_ref()
-                .map(|alert| alert.message.as_str()),
+            controller.footer_alert_message(),
             Some("Could not stop agent claude-a"),
-            "a different worktree's success is not an answer to this failure"
+            "a different action's success is not an answer to this failure"
         );
         assert_eq!(
             controller.footer_message.as_deref(),
             Some("Worktree other-tree moved to the graveyard"),
             "and the success still reports itself"
+        );
+    }
+
+    /// Nor may the same route against a different target answer it.
+    ///
+    /// The negative cases all used to differ in BOTH the route and the target,
+    /// so comparing only one of the two passed every test -- and comparing only
+    /// the route is exactly the mistake that erases one agent's failure when
+    /// another agent is stopped.
+    #[test]
+    fn the_same_route_against_another_target_does_not_answer_it() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.footer_alert = Some(DashboardFailureAlert::for_action(
+            "Could not stop agent claude-a",
+            stop_agent("claude-a"),
+        ));
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(stop_agent("claude-b")),
+            failure: None,
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("Could not stop agent claude-a"),
+            "stopping a different agent says nothing about this one"
+        );
+    }
+
+    /// And the same target on a different route does not answer it either.
+    #[test]
+    fn another_route_against_the_same_target_does_not_answer_it() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.footer_alert = Some(DashboardFailureAlert::for_action(
+            "Could not stop agent claude-a",
+            stop_agent("claude-a"),
+        ));
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(DashboardActionIdentity {
+                path: crate::project_api_contract::routes::agents::RESUME,
+                body: serde_json::json!({ "sessionId": "claude-a" }),
+            }),
+            failure: None,
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("Could not stop agent claude-a"),
+            "resuming it is not the same answer as stopping it"
         );
     }
 
@@ -2664,13 +2745,13 @@ mod tests {
         let mut controller = DashboardController::new(&snapshot);
         controller.footer_alert = Some(DashboardFailureAlert::for_action(
             "Could not stop agent claude-a",
-            PendingTarget::Session,
-            "claude-a",
+            stop_agent("claude-a"),
         ));
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
-            pending: Some((PendingTarget::Session, "claude-a".into(), 1)),
+            pending: None,
+            action: Some(stop_agent("claude-a")),
             failure: None,
             notice: None,
         })
@@ -2695,7 +2776,11 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
-            pending: Some((PendingTarget::Worktree, "fix-chat".into(), 1)),
+            pending: None,
+            action: Some(DashboardActionIdentity {
+                path: crate::project_api_contract::routes::worktree_actions::GRAVEYARD,
+                body: serde_json::json!({ "path": "/repo/.aimux/worktrees/fix-chat" }),
+            }),
             failure: None,
             notice: None,
         })
@@ -2720,8 +2805,9 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
-            pending: Some((PendingTarget::Worktree, "fix-chat".into(), 1)),
-            failure: Some("Cannot graveyard \"fix-chat\": agent attached".into()),
+            pending: None,
+            action: Some(stop_agent("claude-a")),
+            failure: Some("Could not stop agent claude-a".into()),
             notice: None,
         })
         .expect("queue outcome");
@@ -2731,15 +2817,52 @@ mod tests {
         drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
 
         let alert = controller.footer_alert.expect("a failure");
-        assert_eq!(
-            alert.message,
-            "Cannot graveyard \"fix-chat\": agent attached"
+        assert_eq!(alert.message, "Could not stop agent claude-a");
+        assert!(
+            alert.answered_by(&stop_agent("claude-a")),
+            "a retry of this very action is what answers it"
+        );
+    }
+
+    /// The subscreen frame is actually given the alert, not merely able to
+    /// render one.
+    ///
+    /// The renderer's own test hands it a `footer_alerts` list, which proves the
+    /// renderer. The wiring is a separate claim, and replacing it with an empty
+    /// list passed every test in the repository -- so a refusal raised on the
+    /// graveyard screen, which is where resurrect and delete both fail, would
+    /// have rendered nowhere while `X` dismissed something never seen.
+    #[test]
+    fn a_subscreen_frame_is_given_the_controller_alert() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.screen = DashboardScreen::Graveyard;
+        controller.footer_alert = Some(DashboardFailureAlert::local(
+            "Could not resurrect fix-chat: the checkout is missing",
+        ));
+        let mut pending_actions = DashboardPendingActions::default();
+
+        let frame = render_dashboard_subscreen_snapshot(
+            DashboardViewport {
+                cols: 140,
+                rows: 36,
+            },
+            &mut controller,
+            None,
+            0,
+            &mut pending_actions,
+            0,
+        );
+
+        let plain = crate::tui_render::text::strip_ansi(&frame.frame);
+        assert!(
+            plain.contains("Could not resurrect fix-chat: the checkout is missing"),
+            "{plain}"
         );
         assert!(
-            alert.answered_by(PendingTarget::Worktree, "fix-chat"),
-            "a retry of this worktree's graveyard is what answers it"
+            plain.contains("[X] dismiss"),
+            "the subscreen footer has no hint row, so the bar has to carry it: {plain}"
         );
-        assert_eq!(controller.footer_message, None);
     }
 
     #[test]

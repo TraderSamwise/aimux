@@ -11,7 +11,6 @@ use crate::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationGroupKind, DashboardNavigationOutcome,
     DashboardNavigationState, dashboard_navigation_groups,
 };
-use crate::dashboard_pending_actions::PendingTarget;
 use crate::dashboard_renderer::DashboardNavLevel;
 use crate::dashboard_service_input::{
     DashboardServiceInputEffect, DashboardServiceInputState, DashboardThreadReplyState,
@@ -331,6 +330,22 @@ impl DashboardOrchestrationInputState {
     }
 }
 
+/// Which action a request was: its route, and the arguments it was given.
+///
+/// The route alone is too coarse -- stopping one agent would answer a failure
+/// about another -- and a key picked out of the body is a guess that was wrong
+/// twice: `pending_action_for_request` keys fork on `sessionId` while the only
+/// fork dispatcher sends `sourceSessionId`, and it keys a worktree create on a
+/// `path` the dashboard never sends, so every create collapsed onto the main
+/// checkout's own key. The arguments are the identity. Two attempts at the same
+/// action against the same target are the same request, and a retry after
+/// fixing the cause is byte-identical to the attempt that failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardActionIdentity {
+    pub path: &'static str,
+    pub body: Value,
+}
+
 /// A failure on the footer, and which action it was about.
 ///
 /// The origin is what lets a later success take it down without taking down
@@ -342,7 +357,7 @@ impl DashboardOrchestrationInputState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardFailureAlert {
     pub message: String,
-    pub origin: Option<(PendingTarget, String)>,
+    pub origin: Option<DashboardActionIdentity>,
 }
 
 impl From<String> for DashboardFailureAlert {
@@ -366,22 +381,16 @@ impl DashboardFailureAlert {
         }
     }
 
-    pub fn for_action(
-        message: impl Into<String>,
-        target: PendingTarget,
-        id: impl Into<String>,
-    ) -> Self {
+    pub fn for_action(message: impl Into<String>, origin: DashboardActionIdentity) -> Self {
         Self {
             message: message.into(),
-            origin: Some((target, id.into())),
+            origin: Some(origin),
         }
     }
 
     /// Whether a settled action is the answer to this failure.
-    pub fn answered_by(&self, target: PendingTarget, id: &str) -> bool {
-        self.origin
-            .as_ref()
-            .is_some_and(|(origin_target, origin_id)| *origin_target == target && origin_id == id)
+    pub fn answered_by(&self, settled: &DashboardActionIdentity) -> bool {
+        self.origin.as_ref() == Some(settled)
     }
 }
 
@@ -2841,22 +2850,20 @@ impl DashboardController {
                 DashboardControllerEffect::Ignored
             };
         }
-        // The alert comes down with the card, but only once something is going
-        // to happen. Taking it before deciding meant an `Ignored` plan threw
-        // the message away and then asked for no repaint, so the state and the
-        // screen disagreed until the next frame -- unreachable today, since
-        // this kind always plans a request, and not worth leaving armed.
+        // The alert comes down with the card, once the request that clears the
+        // card exists. Taking it before planning meant a plan that produced no
+        // request threw the message away and then asked for no repaint, so the
+        // state and the screen disagreed until the next frame.
         match plan_dashboard_action(None, DashboardActionKind::ClearOperationFailures) {
             DashboardActionPlan::Request(request) => {
                 self.footer_alert = None;
                 DashboardControllerEffect::Request(request)
             }
-            DashboardActionPlan::Blocked(message) => {
-                self.footer_alert = None;
-                self.footer_message = Some(message);
-                DashboardControllerEffect::Render
-            }
-            DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+            // This kind plans an unconditional request, so neither of the other
+            // outcomes can arrive. Handled rather than enumerated, because an
+            // arm written for a case that cannot happen is a claim nothing can
+            // check.
+            _ => DashboardControllerEffect::Ignored,
         }
     }
 }

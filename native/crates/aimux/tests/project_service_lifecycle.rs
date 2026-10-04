@@ -4446,6 +4446,63 @@ fn graveyard_worktree_delete_refuses_while_an_agent_row_claims_the_checkout() {
     cleanup(project);
 }
 
+/// Every precondition a user can fix answers 409, not 500.
+///
+/// These were split: the attached-agent refusals said 409 while "cannot remove
+/// the main checkout" said 500 for the same class of answer -- the user was told
+/// aimux had broken when in fact they had been told no. Nothing in the
+/// repository branches on the code, so nothing was holding the value; this is
+/// what holds it now.
+///
+/// `Worktree "x" already exists` is the same class and still answers 500. Two
+/// tests assert that explicitly, so it is a route contract rather than an
+/// oversight, and changing it belongs in its own change rather than riding along
+/// with the dashboard's error surface.
+#[test]
+fn a_refusal_the_user_can_fix_answers_with_a_conflict() {
+    let project = temp_project("worktree-refusal-status-codes");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_active_worktree_topology(&state_dir, &worktree, false);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let project_root = project.to_string_lossy().into_owned();
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    for (route, body, why) in [
+        (
+            routes::worktree_actions::GRAVEYARD,
+            json!({ "path": project_root }),
+            "graveyard the main checkout",
+        ),
+        (
+            routes::worktree_actions::REMOVE,
+            json!({ "path": project_root }),
+            "remove the main checkout",
+        ),
+        (
+            routes::graveyard_actions::DELETE_WORKTREE,
+            json!({ "path": project_root }),
+            "delete the main checkout",
+        ),
+    ] {
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            route,
+            Some(&body),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(
+            response.status, 409,
+            "{why} is a refusal, not a server fault: {:?}",
+            response.body
+        );
+    }
+    cleanup(project);
+}
+
 /// A failed create keeps its marker, because it is not the stuck case.
 ///
 /// A create that failed wears the same two marks -- `status: "error"` and an
