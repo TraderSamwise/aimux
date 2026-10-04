@@ -47,6 +47,9 @@ pub struct DashboardNavigationState {
     pub worktree_index: usize,
     pub item_index: usize,
     pub quick_jump_digits: String,
+    /// Which checkout the pending digit was read off, so the second digit can
+    /// find it again if the list is rebuilt in the gap between the two.
+    quick_jump_group: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +97,7 @@ impl DashboardNavigationState {
             worktree_index: default_navigation_group_index(&groups),
             item_index: 0,
             quick_jump_digits: String::new(),
+            quick_jump_group: None,
         };
         state.clamp(snapshot);
         state
@@ -333,7 +337,20 @@ impl DashboardNavigationState {
         if self.quick_jump_digits.is_empty() {
             return self.focus_group_digit(snapshot, value);
         }
-        self.quick_jump_digits.clear();
+        // Find the checkout `2` highlighted again, by what it is rather than
+        // by where it sat. Between the two digits the list can be rebuilt -- an
+        // event arrives, an agent appears, a worktree goes -- and both the row
+        // index and the digits are renumbered by that. The user read `2` off
+        // the screen in front of them, so the group they saw is the one they
+        // asked for; if it is gone, the index is all that is left.
+        if let Some(wanted) = self.quick_jump_group.as_deref()
+            && let Some(index) = dashboard_navigation_groups(snapshot)
+                .iter()
+                .position(|group| navigation_group_identity(group) == wanted)
+        {
+            self.worktree_index = index;
+        }
+        self.clear_quick_jump();
         match self.select_entry_digit(snapshot, value) {
             DashboardNavigationOutcome::Ignored => DashboardNavigationOutcome::Changed,
             outcome => outcome,
@@ -342,6 +359,7 @@ impl DashboardNavigationState {
 
     pub fn clear_quick_jump(&mut self) {
         self.quick_jump_digits.clear();
+        self.quick_jump_group = None;
     }
 
     pub fn clamp(&mut self, snapshot: &DesktopStateSnapshot) {
@@ -384,6 +402,9 @@ impl DashboardNavigationState {
         self.worktree_index = index;
         self.item_index = 0;
         self.quick_jump_digits = digit.to_string();
+        self.quick_jump_group = groups
+            .get(index)
+            .map(|group| navigation_group_identity(group));
         DashboardNavigationOutcome::Changed
     }
 
@@ -404,6 +425,17 @@ impl DashboardNavigationState {
         self.clear_quick_jump();
         DashboardNavigationOutcome::EntrySelected(entry)
     }
+}
+
+/// What names a navigation group across a rebuild of the list.
+///
+/// The checkout path where there is one. The supervisor lane and the main
+/// checkout have none, so they fall back to the name, which is fixed for both.
+fn navigation_group_identity(group: &DashboardNavigationGroup<'_>) -> String {
+    group
+        .path
+        .map(str::to_owned)
+        .unwrap_or_else(|| group.name.to_owned())
 }
 
 fn entry_count(snapshot: &DesktopStateSnapshot, worktree_index: usize) -> usize {

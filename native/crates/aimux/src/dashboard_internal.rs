@@ -103,6 +103,15 @@ const DASHBOARD_STREAM_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const DASHBOARD_FALLBACK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL: Duration = Duration::from_millis(250);
 const DASHBOARD_RUNTIME_GUARD_INTERVAL: Duration = Duration::from_secs(5);
+/// The shortest gap between two cached frames.
+///
+/// Master could not paint faster than the sleep it has replaced, so a held key
+/// cost one frame per key-poll interval however fast it repeated. A cached
+/// frame is cheap but not free -- it can dispatch a request and write the
+/// selection -- so it keeps that ceiling. Two digits typed closer together than
+/// this arrive in one read and were always one frame.
+const DASHBOARD_MIN_CACHED_FRAME_GAP: Duration = DASHBOARD_KEY_POLL_INTERVAL;
+
 /// How long after the last keypress a deferred fetch waits before it is paid.
 ///
 /// A cached frame defers the fetch it skipped rather than cancelling it. Making
@@ -329,10 +338,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     // Pushed forward by every cached frame, so a run of keys stays on the fast
     // path and the fetch lands in the gap after it rather than inside it.
     let mut last_cached_frame_at: Option<Instant> = None;
-    // A persist on a cached frame leaves the later refresh's own persist with
-    // nothing to report, so the statusline POST it gates is carried instead of
-    // lost -- and stays off the keypress path.
-    let mut statusline_dirty = false;
+
     let mut pending_selection: Option<String> = None;
     let mut rendered_once = false;
     let mut viewport = DashboardViewport {
@@ -363,15 +369,15 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         Some(DashboardTerminalGuard::enter(&mut *output).context("enter dashboard terminal")?)
     };
 
+    // Carried across iterations, not reset per pass: a frame a keypress asked
+    // for can be held back to keep the frame gap, and when it lands it is still
+    // that keypress's frame. Both are cleared by the render that serves them.
+    let mut render_requested_by_input = false;
+    let mut cacheable_input = true;
     loop {
-        let mut render_requested_by_input = false;
         // Any reason to repaint that is not a keypress. A cached frame holds
         // none of it, so each one sends this iteration down the refresh path.
         let mut render_requested_by_data = false;
-        // Cleared by anything in this iteration's keys whose result is not
-        // already in the snapshot being held: a new overlay, a persisted
-        // reorder, a changed filter, or a route whose response is the frame.
-        let mut cacheable_input = true;
         let now = elapsed_millis(clock_start);
         let first_paint_pending = render_now && !rendered_once;
         let mut dashboard_visible = if first_paint_pending {
@@ -731,9 +737,20 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 .as_ref()
                 .is_some_and(|controller| !controller.navigation.quick_jump_digits.is_empty()),
         );
-        let render_due = render_now
-            || forced_refresh
-            || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL;
+        // Held rather than dropped: `render_now` stays set, so the frame goes
+        // up on the next pass. Master could not paint faster than the sleep
+        // this replaced, and a frame is not free -- it can dispatch a request
+        // and write the selection -- so a held key keeps that ceiling instead
+        // of paying it at the autorepeat rate.
+        let too_soon_for_another_frame = dashboard_frame_held_back(
+            render_now && render_requested_by_input,
+            render_requested_by_data || forced_refresh,
+            last_render.elapsed(),
+        );
+        let render_due = !too_soon_for_another_frame
+            && (render_now
+                || forced_refresh
+                || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL);
         if render_due {
             // Its own clock, not the 250ms one above: that one has already run
             // this iteration, so sharing it would silence this measurement
@@ -788,13 +805,16 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
                 rendered_once = true;
-                // Written here and not left to the deferred refresh, because
-                // attaching to an agent hides this dashboard: the loop then
-                // takes the invisible-screen path and renders nothing at all
-                // until the user comes back, so a selection left unwritten is
-                // the selection they do not return to.
-                //
-                if let Some(ui_state) = ui_state.as_mut()
+                // Only when this frame is about to dispatch something, which is
+                // the frame that can take the terminal away: attaching hides
+                // this dashboard, the loop then renders nothing at all until
+                // the user comes back, and a selection left unwritten is the
+                // selection they do not return to. Every other pointer move is
+                // written by the deferred refresh, as it always was -- the
+                // write costs four fsyncs, and a held key would pay them at the
+                // autorepeat rate.
+                if !deferred_requests.is_empty()
+                    && let Some(ui_state) = ui_state.as_mut()
                     && ui_state
                         .persist_controller_state(
                             controller.screen,
@@ -804,11 +824,22 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             &controller.navigation,
                         )
                         .unwrap_or(false)
+                    && let Some(endpoint) = latest_endpoint.as_ref()
                 {
-                    statusline_dirty = true;
+                    // Off-thread: this is a POST, and the point of this frame
+                    // is that it did not wait for one. Deferring it to the
+                    // refresh behind it strands it, because by then the
+                    // dashboard is hidden and that branch never runs.
+                    let endpoint = endpoint.clone();
+                    let client_session = ui_state.client_session().to_owned();
+                    thread::spawn(move || {
+                        let _ = refresh_dashboard_statusline(&endpoint, &client_session);
+                    });
                 }
                 scroll_offset = frame.scroll_offset;
                 render_now = false;
+                render_requested_by_input = false;
+                cacheable_input = true;
                 // Only the dashboard screen skipped a fetch that would
                 // otherwise have happened. A subscreen renders its own
                 // resource and never refreshed on input, so it is left alone.
@@ -939,33 +970,23 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             Some(controller),
                             &request_outcomes_tx,
                         );
-                        let carried_statusline = std::mem::take(&mut statusline_dirty);
                         let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
-                            dashboard_statusline_due(
-                                ui_state
-                                    .persist_controller_state(
-                                        controller.screen,
-                                        &controller.preview_source,
-                                        controller.details_sidebar_visible,
-                                        &visible_model.snapshot,
-                                        &controller.navigation,
-                                    )
-                                    .unwrap_or(false),
-                                carried_statusline,
-                            )
-                            .then(|| ui_state.client_session().to_owned())
+                            ui_state
+                                .persist_controller_state(
+                                    controller.screen,
+                                    &controller.preview_source,
+                                    controller.details_sidebar_visible,
+                                    &visible_model.snapshot,
+                                    &controller.navigation,
+                                )
+                                .unwrap_or(false)
+                                .then(|| ui_state.client_session().to_owned())
                         });
-                        match (
+                        if let (Some(endpoint), Some(client_session)) = (
                             loaded.endpoint.as_ref(),
                             statusline_client_session.as_deref(),
                         ) {
-                            (Some(endpoint), Some(client_session)) => {
-                                let _ = refresh_dashboard_statusline(endpoint, client_session);
-                            }
-                            // Nothing to send it to yet. Re-arm rather than
-                            // swallow, so the move is published once there is.
-                            (None, Some(_)) => statusline_dirty = true,
-                            _ => {}
+                            let _ = refresh_dashboard_statusline(endpoint, client_session);
                         }
                         scroll_offset = frame.scroll_offset;
                         if !ready_marked {
@@ -984,6 +1005,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             visible_model.hidden_offline_agent_count;
                         latest_snapshot = Some(visible_model.snapshot);
                         latest_endpoint = loaded.endpoint;
+                        render_requested_by_input = false;
+                        cacheable_input = true;
                         refresh_deferred_since = None;
                         last_cached_frame_at = None;
                         refresh_state.complete_refresh();
@@ -1051,6 +1074,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 }
                             }
                         }
+                        render_requested_by_input = false;
+                        cacheable_input = true;
                         refresh_deferred_since = None;
                         last_cached_frame_at = None;
                         refresh_state.complete_refresh();
@@ -1109,25 +1134,35 @@ struct DashboardRenderSourceInput {
     forced_refresh: bool,
 }
 
-/// Whether the tmux statusline still has to be told about a persisted change.
+/// Whether a frame a keypress asked for should wait a moment longer.
 ///
-/// Not the persist's own answer alone. A cached frame writes the same state a
-/// moment earlier, so by the time the deferred refresh persists there is
-/// nothing left to report -- and the statusline would never hear about the
-/// move that caused both.
-fn dashboard_statusline_due(persisted_change: bool, carried_from_cached_frame: bool) -> bool {
-    persisted_change || carried_from_cached_frame
+/// Held, never dropped -- the reason it was asked for outlives the pass, so the
+/// frame goes up on the next one. Master could not paint faster than the sleep
+/// this replaced, and a frame is not free: it can dispatch a request, spawn the
+/// thread that sends it, and write the selection to disk. A key repeating sixty
+/// times a second would otherwise pay all of that sixty times a second.
+///
+/// Only an input frame waits. Data arriving and a fetch coming due are not the
+/// user's keyboard and are already paced by their own clocks.
+fn dashboard_frame_held_back(
+    requested_by_input: bool,
+    requested_by_anything_else: bool,
+    since_last_frame: Duration,
+) -> bool {
+    requested_by_input
+        && !requested_by_anything_else
+        && since_last_frame < DASHBOARD_MIN_CACHED_FRAME_GAP
 }
 
 /// Whether a deferred fetch has waited long enough that the next frame must
 /// pay it.
 ///
-/// The middle of a quick jump is the one moment a fetch must not land. `2` then
-/// `1` is two keys against one list, and a refresh between them re-resolves the
-/// groups underneath the half-typed chord: `clamp` runs, nothing re-reads the
-/// pending digit, and a list that gained or reordered a group means `1` lands
-/// on a different agent than the one that was on screen. The ceiling still
-/// applies, so an abandoned chord cannot freeze the data for good.
+/// A fetch landing in the middle of a quick jump is a repaint the user did not
+/// ask for between two keys they meant as one, so it waits for the chord to
+/// finish. It is not what keeps the jump correct -- the chord holds the group
+/// it was read off and finds it again, so a rebuilt list cannot misdirect it
+/// -- and the ceiling still applies, so an abandoned chord cannot freeze the
+/// data for good.
 fn dashboard_refresh_deferral_expired(
     deferred_for: Option<Duration>,
     idle_for: Option<Duration>,
@@ -3281,50 +3316,39 @@ mod tests {
         );
     }
 
-    /// The rule above is load-bearing because `persist_controller_state` reports
-    /// a diff against what is already on disk. A cached frame writes the
-    /// selection so attaching cannot lose it -- which means the deferred
-    /// refresh's own persist finds nothing changed. Read the second answer
-    /// alone and the statusline is never told the pointer moved.
+    /// A held key repeats far faster than the loop used to be able to paint,
+    /// and a frame is not free: it can dispatch a request, spawn the thread
+    /// that sends it, and fsync the selection. So an input frame keeps the
+    /// ceiling the old sleep gave it.
     #[test]
-    fn a_cached_frames_persist_does_not_cost_the_statusline_its_refresh() {
-        let root = temp_dir("dashboard-internal-statusline-carry");
-        fs::create_dir_all(&root).expect("create temp dir");
-        let snapshot = fixture_snapshot();
-        let mut controller = DashboardController::new(&snapshot);
-        controller.navigation.level = DashboardNavLevel::Sessions;
-        controller.navigation.worktree_index = 0;
-        controller.navigation.item_index = 1;
-        let mut ui_state =
-            DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
-        let persist = |ui_state: &mut DashboardUiStatePersistence| {
-            ui_state
-                .persist_controller_state(
-                    DashboardScreen::Dashboard,
-                    "output",
-                    true,
-                    &snapshot,
-                    &controller.navigation,
-                )
-                .expect("persist navigation")
-        };
+    fn a_repeating_key_does_not_get_a_frame_each_time() {
+        assert!(dashboard_frame_held_back(
+            true,
+            false,
+            Duration::from_millis(15)
+        ));
+        assert!(!dashboard_frame_held_back(
+            true,
+            false,
+            DASHBOARD_MIN_CACHED_FRAME_GAP
+        ));
+    }
 
-        let from_cached_frame = persist(&mut ui_state);
-        let from_deferred_refresh = persist(&mut ui_state);
-
-        assert!(from_cached_frame, "the cached frame wrote the selection");
-        assert!(
-            !from_deferred_refresh,
-            "so the refresh behind it has nothing left to report"
-        );
-        assert!(
-            dashboard_statusline_due(from_deferred_refresh, from_cached_frame),
-            "and the carry is the only thing that still refreshes the statusline"
-        );
-        assert!(
-            !dashboard_statusline_due(from_deferred_refresh, false),
-            "without the carry the move is never published"
-        );
+    /// But only the keyboard waits. Data arriving and a fetch coming due have
+    /// their own clocks, and holding them would stall the dashboard behind a
+    /// key the user is merely leaning on.
+    #[test]
+    fn nothing_but_a_keypress_is_ever_held_back() {
+        assert!(!dashboard_frame_held_back(
+            true,
+            true,
+            Duration::from_millis(0)
+        ));
+        assert!(!dashboard_frame_held_back(
+            false,
+            false,
+            Duration::from_millis(0)
+        ));
     }
 
     /// The subscreen frame is actually given the alert, not merely able to

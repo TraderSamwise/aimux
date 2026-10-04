@@ -51,7 +51,13 @@ mod waiting_for_a_key {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::time::{Duration, Instant};
 
+    /// Short, for the assertions that are lower bounds: a loaded runner can
+    /// only make those longer, never shorter.
     const WAIT: Duration = Duration::from_millis(50);
+    /// Long, for the one assertion that is an upper bound. A ready descriptor
+    /// returns in microseconds, so only an implementation that waits anyway
+    /// reaches anywhere near this -- and no amount of CI load does.
+    const PATIENT_WAIT: Duration = Duration::from_secs(2);
 
     fn pipe() -> (OwnedFd, OwnedFd) {
         let mut fds = [0_i32; 2];
@@ -66,10 +72,11 @@ mod waiting_for_a_key {
         writer.write_all(b"2").expect("write a key");
 
         let started = Instant::now();
-        assert!(wait_for_input_on_fd(read_end.as_raw_fd(), WAIT));
+        assert!(wait_for_input_on_fd(read_end.as_raw_fd(), PATIENT_WAIT));
+        let waited = started.elapsed();
         assert!(
-            started.elapsed() < WAIT,
-            "a key that is already there must not wait out the interval"
+            waited < PATIENT_WAIT / 4,
+            "waited {waited:?} for a key that was already there"
         );
     }
 
@@ -113,7 +120,11 @@ mod a_signal_is_not_a_key {
     use std::time::{Duration, Instant};
 
     const WAIT: Duration = Duration::from_millis(200);
+    const PATIENT_WAIT: Duration = Duration::from_secs(2);
 
+    /// Left installed rather than restored: the default action for these is to
+    /// terminate the process, so putting it back would make a stray signal
+    /// during a later test fatal. A handler that does nothing cannot.
     extern "C" fn noop(_signal: i32) {}
 
     #[test]
@@ -164,17 +175,17 @@ mod a_signal_is_not_a_key {
             std::thread::sleep(Duration::from_millis(10));
             writer.write_all(b"1").expect("write a key");
             // Held open, so the key is readable rather than a hangup.
-            std::thread::sleep(Duration::from_millis(400));
+            std::thread::sleep(PATIENT_WAIT);
         });
 
         let started = Instant::now();
-        let readable = wait_for_input_on_fd(read_end.as_raw_fd(), WAIT);
+        let readable = wait_for_input_on_fd(read_end.as_raw_fd(), PATIENT_WAIT);
         let waited = started.elapsed();
         let _ = sender.join();
 
         assert!(readable, "the key behind the signal was never seen");
         assert!(
-            waited < WAIT,
+            waited < PATIENT_WAIT / 2,
             "waited {waited:?}, so the signal cost the keypress the rest of the interval"
         );
     }

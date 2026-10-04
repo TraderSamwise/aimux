@@ -302,3 +302,39 @@ fn leaves_the_selection_alone_for_an_agent_that_is_not_on_screen() {
         before
     );
 }
+
+/// The gap between `2` and `1` is a real gap -- a tenth of a second, in which
+/// an event can arrive and the list can be rebuilt. The second digit has to
+/// land in the checkout the first one highlighted, not at the row index that
+/// checkout happened to occupy at the time.
+///
+/// Without this the keystroke enters an agent in a different worktree, which is
+/// the worst outcome a navigation shortcut has: it looks like it worked.
+#[test]
+fn the_second_digit_lands_in_the_group_the_first_one_named() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let highlighted = state
+        .focused_worktree_path(&snapshot)
+        .expect("digit 2 focused a checkout")
+        .to_owned();
+
+    // A group appears ahead of it, so every index below shifts by one.
+    let mut reordered = snapshot.clone();
+    let mut inserted = reordered.worktree_groups[1].clone();
+    inserted.name = "inserted-ahead".into();
+    inserted.path = Some("<INSERTED>".to_owned());
+    inserted.sessions.clear();
+    inserted.services.clear();
+    reordered.worktree_groups.insert(0, inserted);
+
+    state.handle_digit(&reordered, '1');
+
+    assert_eq!(
+        state.focused_worktree_path(&reordered),
+        Some(highlighted.as_str()),
+        "the jump followed the row index instead of the digit"
+    );
+    assert_eq!(state.level, DashboardNavLevel::Sessions);
+}
