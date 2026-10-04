@@ -10,6 +10,7 @@ use crate::daemon_state::{
     StoppedDaemonInfo, clear_daemon_info, get_daemon_base_url, get_daemon_port, load_daemon_info,
     load_daemon_state, save_daemon_info, save_daemon_state, try_is_pid_alive,
 };
+use crate::debug_logging::log_lifecycle_always;
 use crate::paths::PathResolver;
 use crate::process_inspector::{
     ProcessFingerprint, ProjectServiceProcessIdentity, is_aimux_daemon_process,
@@ -503,13 +504,36 @@ pub fn ensure_daemon_running_at(
                 }
             }
             Err(error) => {
+                // Why it did not answer decides what to do about it, and is
+                // also the only thing that lets anyone read this state
+                // correctly later -- so it is carried, not dropped.
+                let refused = error.is_connection_refused();
                 if should_keep_unresponsive_daemon_after_pid_probe(
                     options.adopt_existing,
                     try_is_pid_alive(existing.pid),
+                    refused,
                 )? {
+                    log_lifecycle_always(
+                        "daemon kept despite failed health probe",
+                        "daemon",
+                        Some(json!({
+                            "pid": existing.pid,
+                            "port": existing.port,
+                            "error": error.to_string(),
+                        })),
+                    );
                     return Ok(existing);
                 }
-                let _ = error;
+                log_lifecycle_always(
+                    "daemon info cleared after failed health probe",
+                    "daemon",
+                    Some(json!({
+                        "pid": existing.pid,
+                        "port": existing.port,
+                        "connectionRefused": refused,
+                        "error": error.to_string(),
+                    })),
+                );
                 clear_daemon_info(resolver.daemon_info_path())?;
             }
         }
@@ -577,6 +601,7 @@ pub fn ensure_daemon_running_at(
 pub fn should_keep_unresponsive_daemon_after_pid_probe(
     adopt_existing: Option<bool>,
     daemon_pid_alive: Result<bool, String>,
+    endpoint_refused: bool,
 ) -> Result<bool, DaemonSupervisorError> {
     let daemon_pid_alive = daemon_pid_alive.map_err(|error| {
         DaemonSupervisorError::Message(format!(
@@ -586,6 +611,7 @@ pub fn should_keep_unresponsive_daemon_after_pid_probe(
     Ok(should_keep_unresponsive_daemon(
         adopt_existing,
         daemon_pid_alive,
+        endpoint_refused,
     ))
 }
 

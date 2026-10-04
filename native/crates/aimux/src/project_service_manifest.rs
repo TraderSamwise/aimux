@@ -303,11 +303,26 @@ pub fn is_stale_against_daemon(daemon_stamp: Option<&Value>, own_stamp: Option<&
     }
 }
 
+/// Whether a daemon that failed its health probe is worth keeping.
+///
+/// A live pid used to be enough, which meant a daemon that had stopped serving
+/// was handed back to the caller as if it were healthy. Every later request
+/// then blocked until its own timeout with nothing printed: on sam-strix an
+/// `aimux kill` sat for five minutes at 0% CPU and closed nothing, and the
+/// agent reading that concluded the project service was overloaded when it was
+/// answering in 21ms. It then ran `aimux restart`, which tears down the tmux
+/// runtime, and lost 37 live agents.
+///
+/// So a refused connection is never kept. The port is not served, and the pid
+/// being alive does not change that -- it is what makes the state so easy to
+/// misread. A timeout is kept, because a daemon under load really may be slow,
+/// but the caller is told.
 pub fn should_keep_unresponsive_daemon(
     adopt_existing: Option<bool>,
     daemon_pid_alive: bool,
+    endpoint_refused: bool,
 ) -> bool {
-    adopt_existing != Some(false) && daemon_pid_alive
+    adopt_existing != Some(false) && daemon_pid_alive && !endpoint_refused
 }
 
 fn js_number(value: &Value) -> Option<f64> {

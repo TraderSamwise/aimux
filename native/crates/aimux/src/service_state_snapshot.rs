@@ -161,7 +161,33 @@ pub fn persist_project_runtime_snapshots_before_tmux_stop_at(
         saved_at,
     );
     write_json_atomic(&state_path, &state).map_err(|error| error.to_string())?;
-    Ok(json!({ "sessions": [], "services": services }))
+
+    // Agents are not in `services`, and the snapshot that can bring them back
+    // is written by a periodic task that may be stale or failing -- on
+    // sam-strix it had been failing for minutes. Rebuilding it here, from the
+    // topology, is what makes "stop" survivable: the caller propagates this
+    // error, so a runtime whose agents could not be recorded is not torn down.
+    let restored = rebuild_agent_restore_snapshot(project_state_dir)?;
+    Ok(json!({ "sessions": [], "services": services, "restorableAgents": restored }))
+}
+
+/// Re-record which agents could be brought back, from the topology on disk.
+///
+/// A project with no topology yet has nothing to restore and is not an error;
+/// a topology we cannot read or a snapshot we cannot write is, because the
+/// caller is about to kill every pane and this file is the only way back.
+fn rebuild_agent_restore_snapshot(project_state_dir: &Path) -> Result<usize, String> {
+    let topology_path = runtime_topology_path(project_state_dir);
+    if !topology_path.exists() {
+        return Ok(0);
+    }
+    let topology = read_runtime_topology(&topology_path)
+        .map_err(|error| format!("runtime topology unreadable: {error}"))?;
+    crate::project_service::agent_restore_task::rebuild_restore_snapshot_from_topology(
+        project_state_dir,
+        &topology,
+    )
+    .map_err(|error| format!("agent restore snapshot could not be recorded: {error}"))
 }
 
 pub fn stop_project_tmux_runtime_with_service_snapshots(

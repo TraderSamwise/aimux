@@ -106,10 +106,17 @@ fn daemon_supervisor_actual(case: &Value) -> Value {
                 .map(|item| {
                     let adopt_existing = item["options"]["adoptExisting"].as_bool();
                     let daemon_pid_alive = item["daemonPidAlive"].as_bool().unwrap_or(false);
+                    // Absent in cases recorded before a refused port was a
+                    // distinct answer, where it means "did not refuse".
+                    let endpoint_refused = item["endpointRefused"].as_bool().unwrap_or(false);
                     json!({
                         "options": item["options"],
                         "daemonPidAlive": daemon_pid_alive,
-                        "keep": should_keep_unresponsive_daemon(adopt_existing, daemon_pid_alive),
+                        "keep": should_keep_unresponsive_daemon(
+                            adopt_existing,
+                            daemon_pid_alive,
+                            endpoint_refused,
+                        ),
                     })
                 })
                 .collect(),

@@ -12,6 +12,50 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Stopping a runtime kills every pane in it, and the only way back is the
+/// restore snapshot. That snapshot is written by a periodic task which can be
+/// stale or failing -- on sam-strix on 2026-10-04 it had been failing for
+/// minutes -- so the teardown re-records it first and refuses to proceed if it
+/// cannot. 37 live agents were killed by a teardown that did not check.
+#[test]
+fn stop_runtime_refuses_to_kill_when_the_restore_snapshot_cannot_be_recorded() {
+    let root = temp_root("service-state-snapshot-unrestorable");
+    let repo_root = root.join("repo");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&repo_root).expect("repo root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    // A topology that exists but cannot be parsed: the agents it names are
+    // unknown, so what the kill would destroy cannot be recorded.
+    fs::write(runtime_topology_path(&state_dir), b"{ not json").expect("corrupt topology");
+
+    let host_session = "aimux-repo";
+    let mut tmux = FakeTmux {
+        calls: Vec::new(),
+        available: true,
+        host_session: host_session.into(),
+        sessions: vec![host_session.into()],
+        repo_root: repo_root.clone(),
+        windows: Vec::new(),
+    };
+
+    let error =
+        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
+            .expect_err("a runtime that cannot be restored must not be torn down");
+
+    assert!(
+        error.contains("restore snapshot") || error.contains("topology"),
+        "the refusal must name what could not be recorded: {error}"
+    );
+    assert!(
+        !tmux
+            .calls
+            .iter()
+            .any(|call| call.starts_with("killSession:")),
+        "nothing may be killed once the snapshot failed: {:?}",
+        tmux.calls
+    );
+}
+
 #[test]
 fn stop_runtime_persists_service_snapshot_before_killing_tmux_sessions() {
     let root = temp_root("service-state-snapshot-stop");

@@ -112,16 +112,23 @@ fn stale_build_error_text_matches_supervisor_contract() {
 
 #[test]
 fn unresponsive_daemon_policy_matches_adopt_existing_truth_table() {
-    assert!(should_keep_unresponsive_daemon(None, true));
-    assert!(should_keep_unresponsive_daemon(Some(true), true));
-    assert!(!should_keep_unresponsive_daemon(Some(false), true));
-    assert!(!should_keep_unresponsive_daemon(None, false));
+    assert!(should_keep_unresponsive_daemon(None, true, false));
+    assert!(should_keep_unresponsive_daemon(Some(true), true, false));
+    assert!(!should_keep_unresponsive_daemon(Some(false), true, false));
+    assert!(!should_keep_unresponsive_daemon(None, false, false));
+
+    // A refused port is not a busy daemon. Keeping one is what let a dead
+    // daemon be handed back as healthy, so every later request blocked until
+    // its own timeout with nothing printed.
+    assert!(!should_keep_unresponsive_daemon(None, true, true));
+    assert!(!should_keep_unresponsive_daemon(Some(true), true, true));
 }
 
 #[test]
 fn unresponsive_daemon_pid_probe_failure_is_not_dead() {
-    let error = should_keep_unresponsive_daemon_after_pid_probe(None, Err("ps unavailable".into()))
-        .expect_err("unknown pid liveness must not become false");
+    let error =
+        should_keep_unresponsive_daemon_after_pid_probe(None, Err("ps unavailable".into()), false)
+            .expect_err("unknown pid liveness must not become false");
 
     assert!(
         error
@@ -135,10 +142,33 @@ fn unresponsive_daemon_pid_probe_failure_is_not_dead() {
 #[test]
 fn unresponsive_daemon_confirmed_dead_still_clears() {
     assert!(
-        !should_keep_unresponsive_daemon_after_pid_probe(None, Ok(false)).expect("confirmed dead")
+        !should_keep_unresponsive_daemon_after_pid_probe(None, Ok(false), false)
+            .expect("confirmed dead")
     );
     assert!(
-        should_keep_unresponsive_daemon_after_pid_probe(None, Ok(true)).expect("confirmed alive")
+        should_keep_unresponsive_daemon_after_pid_probe(None, Ok(true), false)
+            .expect("confirmed alive")
+    );
+}
+
+/// What happened on sam-strix on 2026-10-04: the daemon process was alive and
+/// its port refused every connection. It was handed back as healthy, so
+/// `aimux kill` blocked five minutes at 0% CPU and closed nothing, the agent
+/// reading that blamed the project service -- which was answering in 21ms --
+/// and ran `aimux restart`, which tears down the tmux runtime and took 37 live
+/// agents with it.
+#[test]
+fn a_live_pid_whose_port_refuses_is_not_kept() {
+    assert!(
+        !should_keep_unresponsive_daemon_after_pid_probe(None, Ok(true), true)
+            .expect("alive pid, refused port"),
+        "a daemon that is not serving must not be adopted because its pid exists"
+    );
+    // Still kept on a timeout: a daemon under real load may genuinely be slow,
+    // and clearing it there would restart a working control plane.
+    assert!(
+        should_keep_unresponsive_daemon_after_pid_probe(None, Ok(true), false)
+            .expect("alive pid, slow port")
     );
 }
 

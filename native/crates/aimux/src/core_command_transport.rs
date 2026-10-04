@@ -99,6 +99,22 @@ impl CoreCommandTransportError {
     pub fn ensure_daemon(error: impl Display) -> Self {
         Self::EnsureDaemon(error.to_string())
     }
+
+    /// Nothing is accepting connections at the address we asked.
+    ///
+    /// Categorically different from a timeout: a refusal is an answer, and it
+    /// says the port is not served. A process that is alive while its port
+    /// refuses is a daemon that has stopped serving, not a busy one, and
+    /// waiting on it only converts that into a timeout further up.
+    pub fn is_connection_refused(&self) -> bool {
+        match self {
+            Self::Io(error) => error.kind() == io::ErrorKind::ConnectionRefused,
+            Self::TransientIoExhausted { source, .. } => {
+                source.kind() == io::ErrorKind::ConnectionRefused
+            }
+            _ => false,
+        }
+    }
 }
 
 impl Display for CoreCommandTransportError {
