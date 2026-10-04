@@ -2718,12 +2718,12 @@ impl DashboardController {
             } else {
                 "removing"
             };
-            self.footer_message = Some(format!("Worktree {} is {action}", group.name));
+            self.footer_alert = Some(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
         if group.pending {
             let action = group.pending_action.as_deref().unwrap_or("pending");
-            self.footer_message = Some(format!("Worktree {} is {action}", group.name));
+            self.footer_alert = Some(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
         if let Some(failure) = group.operation_failure.as_ref() {
@@ -2739,6 +2739,13 @@ impl DashboardController {
                 path: routes::OPERATION_FAILURES_CLEAR,
                 body: Value::Object(body),
             }));
+        }
+        if let Some(attached) = graveyard_blocking_agent(snapshot, path) {
+            self.footer_alert = Some(format!(
+                "Cannot graveyard {}: agent \"{attached}\" is attached. Stop it first.",
+                group.name
+            ));
+            return Some(DashboardControllerEffect::Render);
         }
         self.worktree_remove_confirm = Some(DashboardWorktreeRemoveConfirm {
             path: path.clone(),
@@ -3308,4 +3315,39 @@ fn find_service<'a>(
                 .flat_map(|group| group.services.iter()),
         )
         .find(|service| service.id == service_id)
+}
+
+/// The agent whose presence will make the server refuse a graveyard, if any.
+///
+/// Mirrors `LIVE_STATUSES` on the project service exactly -- client `Waiting`
+/// is the server's `starting` (`desktop_state.rs` maps it on the way out), so
+/// all three count. Getting this set wrong in either direction is its own bug:
+/// too narrow and the dialog still opens on a question with one answer, too
+/// wide and a graveyard the server would have allowed is blocked here.
+///
+/// Scanned from the snapshot rather than the worktree group, and matched on
+/// the checkout rather than on grouping, because those are two different
+/// questions. The group excludes supervisor-plane and teammate agents and
+/// includes agents whose lane points here while their checkout is elsewhere;
+/// the server asks only "is any session's worktreePath this path". Asking the
+/// group's question instead let a live supervisor or teammate open a dialog
+/// the server then refused -- the exact failure this exists to prevent.
+fn graveyard_blocking_agent(snapshot: &DesktopStateSnapshot, path: &str) -> Option<String> {
+    snapshot
+        .sessions
+        .iter()
+        .chain(snapshot.teammates.iter())
+        .find(|session| {
+            matches!(
+                session.status,
+                SessionStatus::Running | SessionStatus::Idle | SessionStatus::Waiting
+            ) && session.worktree_path.as_deref() == Some(path)
+        })
+        .map(|session| {
+            session
+                .label
+                .clone()
+                .filter(|label: &String| !label.trim().is_empty())
+                .unwrap_or_else(|| session.id.clone())
+        })
 }

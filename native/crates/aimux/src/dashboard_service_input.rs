@@ -138,7 +138,7 @@ pub fn render_worktree_remove_confirm_overlay(
         format!(
             "  {}",
             style(
-                "Offlines attached agents and moves the checkout to the graveyard.",
+                "Stops this worktree's services and moves the checkout to the graveyard.",
                 Tone::Muted,
             )
         ),
