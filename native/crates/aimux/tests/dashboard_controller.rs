@@ -2693,7 +2693,7 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_alert.as_deref(),
+        controller.footer_alert_message(),
         Some("Worktree feature-a is removing")
     );
 
@@ -2706,7 +2706,7 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_alert.as_deref(),
+        controller.footer_alert_message(),
         Some("Worktree feature-a is creating")
     );
 
@@ -3075,7 +3075,7 @@ fn a_failure_survives_the_next_keypress_and_a_note_does_not() {
     controller.handle_key(&snapshot, DashboardKey::Down);
 
     assert_eq!(
-        controller.footer_alert.as_deref(),
+        controller.footer_alert_message(),
         Some("Cannot graveyard \"fix-chat\": agent attached"),
         "a failure must outlive the keypress that follows it"
     );
@@ -3179,7 +3179,10 @@ fn graveyard_is_refused_up_front_when_an_agent_is_attached() {
         controller.worktree_remove_confirm.is_none(),
         "a question with one answer must not be asked"
     );
-    let alert = controller.footer_alert.clone().expect("a refusal");
+    let alert = controller
+        .footer_alert_message()
+        .map(str::to_owned)
+        .expect("a refusal");
     assert!(alert.contains("Cannot graveyard"), "{alert}");
     assert!(alert.contains("Stop it first"), "{alert}");
 }
@@ -3298,7 +3301,7 @@ fn an_unrelated_action_leaves_the_failure_on_screen() {
         "precondition: this key dispatches a request against a session"
     );
     assert_eq!(
-        controller.footer_alert.as_deref(),
+        controller.footer_alert_message(),
         Some("Cannot graveyard \"fix-chat\": agent attached"),
         "stopping an agent is not an answer to a refused graveyard elsewhere"
     );
@@ -3364,6 +3367,9 @@ fn a_teammate_attached_to_the_worktree_blocks_the_graveyard() {
         controller.worktree_remove_confirm.is_none(),
         "a teammate on this checkout is one the server refuses on"
     );
-    let alert = controller.footer_alert.clone().expect("a refusal");
+    let alert = controller
+        .footer_alert_message()
+        .map(str::to_owned)
+        .expect("a refusal");
     assert!(alert.contains("helper"), "{alert}");
 }

@@ -25,8 +25,8 @@ use super::runtime_adapter::{
 };
 use super::session_liveness::LiveWindows;
 use super::{
-    ensure_rig, json_error, lifecycle_response, live_window_id_for_service, map_topology_array,
-    now_iso, read_runtime_topology, upsert_array_item,
+    LIVE_STATUSES, ensure_rig, json_error, lifecycle_response, live_window_id_for_service,
+    map_topology_array, now_iso, read_runtime_topology, upsert_array_item,
 };
 
 enum PreparedWorktreeSource {
@@ -78,8 +78,13 @@ pub(super) fn route_worktree_graveyard(
         return json_error(404, format!("Worktree \"{path}\" not found"));
     };
     let worktree_name = string_field(&worktree, "name");
-    if let Some(label) = attached_live_agent_label(context, &topology, &path, "worktree.graveyard")
-    {
+    if let Some(label) = attached_live_agent_label(
+        context,
+        &topology,
+        &path,
+        "worktree.graveyard",
+        AttachedAgentEvidence::WindowProjection,
+    ) {
         // Recorded, not just returned. A refusal is the outcome of an action
         // the user took, and before this it reached only a transient footer
         // string that the next keypress erased -- so retrying was the one move
@@ -139,11 +144,11 @@ pub(super) fn route_worktree_graveyard(
             topology
         })
     {
-        record_worktree_operation_failure(
+        let error = record_worktree_operation_failure(
             &project_state_dir,
             "graveyard",
             format!("Failed to graveyard worktree \"{worktree_name}\""),
-            error.clone(),
+            error,
             &path,
             Some(&worktree_name),
         );
@@ -153,6 +158,10 @@ pub(super) fn route_worktree_graveyard(
         let _ = runtime.kill_window(&window_id);
     }
     clear_all_worktree_operation_failures(&project_state_dir, &path);
+    // This route keeps the row, moving it to `status: "graveyard"`, so a
+    // stale failure marker would ride along with it. Remove and
+    // graveyard-delete drop the row outright, so they need no such call.
+    clear_worktree_row_failure(&project_state_dir, &path);
     lifecycle_response(
         json!({ "path": path, "status": "graveyarded" }),
         "worktree.graveyard",
@@ -202,11 +211,11 @@ pub(super) fn route_worktree_create(
     }
     if existing_worktree_create_conflicts(&topology, &target_path) {
         let message = format!("Worktree \"{name}\" already exists");
-        record_worktree_operation_failure(
+        let message = record_worktree_operation_failure(
             &project_state_dir,
             "create",
             format!("Failed to create worktree \"{name}\""),
-            message.clone(),
+            message,
             &target_path,
             Some(&name),
         );
@@ -214,11 +223,11 @@ pub(super) fn route_worktree_create(
     }
     if Path::new(&target_path).exists() {
         let message = format!("Worktree \"{name}\" already exists at {target_path}");
-        record_worktree_operation_failure(
+        let message = record_worktree_operation_failure(
             &project_state_dir,
             "create",
             format!("Failed to create worktree \"{name}\""),
-            message.clone(),
+            message,
             &target_path,
             Some(&name),
         );
@@ -243,11 +252,11 @@ pub(super) fn route_worktree_create(
         match runtime.prepare_remote_source_worktree(&main_repo, &source) {
             Ok(prepared) => Some(PreparedWorktreeSource::RemoteSource { source, prepared }),
             Err(error) => {
-                record_worktree_operation_failure(
+                let error = record_worktree_operation_failure(
                     &project_state_dir,
                     "create",
                     format!("Failed to create worktree \"{name}\" from remote source"),
-                    error.clone(),
+                    error,
                     &target_path,
                     Some(&name),
                 );
@@ -258,11 +267,11 @@ pub(super) fn route_worktree_create(
         match runtime.prepare_pull_request_worktree(&main_repo, &name, pr) {
             Ok(prepared) => Some(PreparedWorktreeSource::PullRequest { pr, prepared }),
             Err(error) => {
-                record_worktree_operation_failure(
+                let error = record_worktree_operation_failure(
                     &project_state_dir,
                     "create",
                     format!("Failed to create worktree \"{name}\" from pull request #{pr}"),
-                    error.clone(),
+                    error,
                     &target_path,
                     Some(&name),
                 );
@@ -276,11 +285,11 @@ pub(super) fn route_worktree_create(
                 prepared,
             }),
             Err(error) => {
-                record_worktree_operation_failure(
+                let error = record_worktree_operation_failure(
                     &project_state_dir,
                     "create",
                     format!("Failed to create worktree \"{name}\" from origin/{branch}"),
-                    error.clone(),
+                    error,
                     &target_path,
                     Some(&name),
                 );
@@ -386,11 +395,11 @@ pub(super) fn route_worktree_create(
         }
         Err(error) => {
             let _ = upsert_created_worktree_topology(&topology_input, "error", Some(&error));
-            record_worktree_operation_failure(
+            let error = record_worktree_operation_failure(
                 &project_state_dir,
                 "create",
                 format!("Failed to create worktree \"{name}\""),
-                error.clone(),
+                error,
                 &target_path,
                 Some(&name),
             );
@@ -487,7 +496,7 @@ pub(super) fn route_worktree_remove(
     };
     let project_root = context.project_root().to_string_lossy().into_owned();
     if path == project_root {
-        return json_error(500, "Cannot remove the main checkout");
+        return json_error(409, "Cannot remove the main checkout");
     }
     if !is_git_project_root(&project_root) {
         return json_error(500, project_checkout_required_message(&project_root));
@@ -504,7 +513,13 @@ pub(super) fn route_worktree_remove(
         return json_error(404, format!("Worktree \"{path}\" not found"));
     };
     let worktree_name = string_field(&worktree, "name");
-    if let Some(label) = attached_live_agent_label(context, &topology, &path, "worktree.remove") {
+    if let Some(label) = attached_live_agent_label(
+        context,
+        &topology,
+        &path,
+        "worktree.remove",
+        AttachedAgentEvidence::DurableStatus,
+    ) {
         let message =
             format!("Cannot remove \"{worktree_name}\" while agent \"{label}\" is attached");
         let message = record_worktree_operation_failure(
@@ -525,11 +540,11 @@ pub(super) fn route_worktree_remove(
     if Path::new(&path).exists() {
         if let Err(error) = remove_git_worktree_checkout(&project_root, &path) {
             mark_worktree_remove_error(&project_state_dir, &path, &worktree_name, &error);
-            record_worktree_operation_failure(
+            let error = record_worktree_operation_failure(
                 &project_state_dir,
                 "remove",
                 format!("Failed to remove worktree \"{worktree_name}\""),
-                error.clone(),
+                error,
                 &path,
                 Some(&worktree_name),
             );
@@ -567,6 +582,9 @@ pub(super) fn route_worktree_remove(
     )
 }
 
+/// Returns the message to give the user: the one passed in, plus a note when
+/// the ledger write itself failed. Dropping it hides that note.
+#[must_use]
 fn record_worktree_operation_failure(
     project_state_dir: &Path,
     operation: &str,
@@ -608,19 +626,38 @@ fn record_worktree_operation_failure(
     }
 }
 
-/// The agent whose presence refuses a destructive worktree action, if any.
+/// How much evidence it takes to call an agent on a checkout dead.
 ///
-/// Asks `LiveWindows` rather than the durable topology status. Topology keeps
-/// reading `running` after a window dies and the desktop snapshot does not --
-/// it projects the agent to `offline` -- so the raw-status check refused a
-/// graveyard naming an agent the dashboard showed as dead, with nothing left
-/// to stop and no way to proceed. tmux being unaskable still refuses: a
-/// checkout is not deleted on a guess.
+/// Not one question, because the two routes do not cost the same thing when
+/// the answer is wrong.
+enum AttachedAgentEvidence {
+    /// Trust the tmux inventory: a row claiming a live status whose window is
+    /// provably gone does not block.
+    ///
+    /// For graveyard, which moves topology state and deletes nothing. The
+    /// durable status keeps reading `running` after a window dies while the
+    /// desktop snapshot projects that agent to `offline`, so a status-only
+    /// check refused a graveyard naming an agent the dashboard showed as dead
+    /// -- nothing to stop, and no way through.
+    WindowProjection,
+    /// Refuse while the durable row claims a live status, however the window
+    /// looks.
+    ///
+    /// For remove, which runs `git worktree remove --force` and takes the checkout's
+    /// uncommitted work with it; nothing here asks whether the tree is dirty.
+    /// A dead tmux window is not evidence that the work in that tree is
+    /// disposable. Wrong in this direction costs somebody's afternoon; wrong
+    /// the other way costs a second keypress.
+    DurableStatus,
+}
+
+/// The agent whose presence refuses a worktree action, if any.
 fn attached_live_agent_label(
     context: &ProjectServiceRequestContext,
     topology: &Value,
     path: &str,
     surface: &str,
+    evidence: AttachedAgentEvidence,
 ) -> Option<String> {
     // Narrowed to this checkout before tmux is asked anything. Building the
     // inventory costs a subprocess, and most of these calls are for a worktree
@@ -632,10 +669,17 @@ fn attached_live_agent_label(
     if candidates.is_empty() {
         return None;
     }
-    let live_windows = LiveWindows::for_context(context, surface);
+    let live_windows = match evidence {
+        AttachedAgentEvidence::WindowProjection => Some(LiveWindows::for_context(context, surface)),
+        // No tmux query at all: the durable row is the whole answer.
+        AttachedAgentEvidence::DurableStatus => None,
+    };
     candidates
         .into_iter()
-        .find(|session| live_windows.session_is_live(session, topology))
+        .find(|session| match live_windows.as_ref() {
+            Some(live_windows) => live_windows.session_is_live(session, topology),
+            None => LIVE_STATUSES.contains(&string_field(session, "status").as_str()),
+        })
         .map(|session| {
             trimmed_string(session.get("label"))
                 .or_else(|| trimmed_string(session.get("id")))
@@ -805,7 +849,7 @@ pub(super) fn route_graveyard_worktree_delete(
     };
     let project_root = context.project_root().to_string_lossy().into_owned();
     if path == project_root {
-        return json_error(500, "Cannot remove the main checkout");
+        return json_error(409, "Cannot remove the main checkout");
     }
     if !is_git_project_root(&project_root) {
         return json_error(500, project_checkout_required_message(&project_root));
@@ -1127,6 +1171,52 @@ pub(super) fn mark_worktree_remove_error(
             worktree
         })
     });
+}
+
+/// Take the failure marker back off a worktree row.
+///
+/// `mark_worktree_remove_error` stamps `status: "error"` and an
+/// `operationFailure` onto the row, which the dashboard renders as a third
+/// failure surface: the row reads "failed" and the detail panel shows the
+/// error. Nothing ever removed it. A row is deleted when a remove succeeds, so
+/// the only way to reach this state was a remove that failed -- and then the
+/// marker outlived every attempt to get rid of it. Pressing `x` on such a row
+/// dispatched a ledger clear, which does not touch topology, so the dashboard
+/// said "Dismissed failure" and drew the same failure again on the next frame,
+/// forever, with no way to graveyard that worktree from the TUI.
+///
+/// Returns how many rows changed, so a caller can say whether it did anything.
+pub(crate) fn clear_worktree_row_failure(project_state_dir: &Path, worktree_path: &str) -> usize {
+    let mut cleared = 0;
+    let updated = update_runtime_topology(runtime_topology_path(project_state_dir), |topology| {
+        map_topology_array(topology, "worktrees", |mut worktree| {
+            let matches_path =
+                worktree_path.is_empty() || string_field(&worktree, "path") == worktree_path;
+            let has_failure = worktree.get("operationFailure").is_some()
+                || string_field(&worktree, "status") == "error";
+            if matches_path && has_failure {
+                if let Some(map) = worktree.as_object_mut() {
+                    map.remove("operationFailure");
+                }
+                if string_field(&worktree, "status") == "error" {
+                    object_insert_mut(&mut worktree, "status", Value::String("active".into()));
+                }
+                object_insert_mut(&mut worktree, "updatedAt", Value::String(now_iso()));
+                cleared += 1;
+            }
+            worktree
+        })
+    });
+    if let Err(error) = updated {
+        log_always_at(
+            LogLevel::Error,
+            "failed to clear worktree row failure marker",
+            "lifecycle",
+            Some(json!({ "worktreePath": worktree_path, "error": error })),
+        );
+        return 0;
+    }
+    cleared
 }
 
 pub(super) fn session_ids_for_worktree(topology: &Value, worktree_path: &str) -> Vec<String> {

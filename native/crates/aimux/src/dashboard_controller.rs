@@ -11,6 +11,7 @@ use crate::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationGroupKind, DashboardNavigationOutcome,
     DashboardNavigationState, dashboard_navigation_groups,
 };
+use crate::dashboard_pending_actions::PendingTarget;
 use crate::dashboard_renderer::DashboardNavLevel;
 use crate::dashboard_service_input::{
     DashboardServiceInputEffect, DashboardServiceInputState, DashboardThreadReplyState,
@@ -36,7 +37,7 @@ pub struct DashboardController {
     /// next key arrives; a failure is the answer to something the user asked
     /// for, and clearing it on the next keypress meant retrying a refused
     /// action destroyed the only explanation of why it was refused.
-    pub footer_alert: Option<String>,
+    pub footer_alert: Option<DashboardFailureAlert>,
     pub tool_picker: Option<DashboardToolPickerState>,
     pub service_input: Option<DashboardServiceInputState>,
     pub launch_options: Option<DashboardLaunchOptionsState>,
@@ -330,7 +331,68 @@ impl DashboardOrchestrationInputState {
     }
 }
 
+/// A failure on the footer, and which action it was about.
+///
+/// The origin is what lets a later success take it down without taking down
+/// somebody else's. Clearing on *any* successful outcome erased a refusal that
+/// a slow unrelated action happened to finish after, and clearing on any
+/// dispatched request erased it a step earlier; neither asked whether the two
+/// were about the same thing. A refusal raised before any request exists --
+/// a pre-check -- has no origin, and only `X` or a fresh attempt takes it down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardFailureAlert {
+    pub message: String,
+    pub origin: Option<(PendingTarget, String)>,
+}
+
+impl From<String> for DashboardFailureAlert {
+    fn from(message: String) -> Self {
+        Self::local(message)
+    }
+}
+
+impl From<&str> for DashboardFailureAlert {
+    fn from(message: &str) -> Self {
+        Self::local(message)
+    }
+}
+
+impl DashboardFailureAlert {
+    /// A refusal the client raised itself, with no request behind it.
+    pub fn local(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            origin: None,
+        }
+    }
+
+    pub fn for_action(
+        message: impl Into<String>,
+        target: PendingTarget,
+        id: impl Into<String>,
+    ) -> Self {
+        Self {
+            message: message.into(),
+            origin: Some((target, id.into())),
+        }
+    }
+
+    /// Whether a settled action is the answer to this failure.
+    pub fn answered_by(&self, target: PendingTarget, id: &str) -> bool {
+        self.origin
+            .as_ref()
+            .is_some_and(|(origin_target, origin_id)| *origin_target == target && origin_id == id)
+    }
+}
+
 impl DashboardController {
+    /// The failure on the footer, if any, as text.
+    pub fn footer_alert_message(&self) -> Option<&str> {
+        self.footer_alert
+            .as_ref()
+            .map(|alert| alert.message.as_str())
+    }
+
     pub fn new(snapshot: &DesktopStateSnapshot) -> Self {
         Self {
             screen: DashboardScreen::Dashboard,
@@ -2721,12 +2783,18 @@ impl DashboardController {
             } else {
                 "removing"
             };
-            self.footer_alert = Some(format!("Worktree {} is {action}", group.name));
+            self.footer_alert = Some(DashboardFailureAlert::local(format!(
+                "Worktree {} is {action}",
+                group.name
+            )));
             return Some(DashboardControllerEffect::Render);
         }
         if group.pending {
             let action = group.pending_action.as_deref().unwrap_or("pending");
-            self.footer_alert = Some(format!("Worktree {} is {action}", group.name));
+            self.footer_alert = Some(DashboardFailureAlert::local(format!(
+                "Worktree {} is {action}",
+                group.name
+            )));
             return Some(DashboardControllerEffect::Render);
         }
         if let Some(failure) = group.operation_failure.as_ref() {
@@ -2744,10 +2812,10 @@ impl DashboardController {
             }));
         }
         if let Some(attached) = graveyard_blocking_agent(snapshot, path) {
-            self.footer_alert = Some(format!(
+            self.footer_alert = Some(DashboardFailureAlert::local(format!(
                 "Cannot graveyard {}: agent \"{attached}\" is attached. Stop it first.",
                 group.name
-            ));
+            )));
             return Some(DashboardControllerEffect::Render);
         }
         self.worktree_remove_confirm = Some(DashboardWorktreeRemoveConfirm {
@@ -2765,22 +2833,26 @@ impl DashboardController {
         // One key dismisses the whole error surface. The alert line and the
         // failure card are two renderings of the same thing, so clearing one
         // without the other would leave the user chasing the remainder.
-        //
-        // Taken in both branches: this key is a deliberate dismissal of the
-        // whole error surface, and with a ledger to clear there is no later
-        // step that would take the line down. If the clear itself fails, that
-        // failure raises its own alert, which is the thing worth reading then.
-        let dismissed = self.footer_alert.take().is_some();
         if snapshot.operation_failures.is_empty() {
-            return if dismissed {
+            // Nothing to ask the service for, so the alert is the whole job.
+            return if self.footer_alert.take().is_some() {
                 DashboardControllerEffect::Render
             } else {
                 DashboardControllerEffect::Ignored
             };
         }
+        // The alert comes down with the card, but only once something is going
+        // to happen. Taking it before deciding meant an `Ignored` plan threw
+        // the message away and then asked for no repaint, so the state and the
+        // screen disagreed until the next frame -- unreachable today, since
+        // this kind always plans a request, and not worth leaving armed.
         match plan_dashboard_action(None, DashboardActionKind::ClearOperationFailures) {
-            DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Request(request) => {
+                self.footer_alert = None;
+                DashboardControllerEffect::Request(request)
+            }
             DashboardActionPlan::Blocked(message) => {
+                self.footer_alert = None;
                 self.footer_message = Some(message);
                 DashboardControllerEffect::Render
             }

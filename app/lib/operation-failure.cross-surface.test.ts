@@ -80,11 +80,11 @@ describe("what the app's failure card shows", () => {
       // The CLI card renders title + target on every row, so this one does too.
       const summary = summarizeOperationFailures(window.map(published));
       expect(summary?.title).toBe(`Project state has ${window.length} operation failures`);
+      // Each row whole, not each fragment somewhere in the joined string. A
+      // bare `toContain(target)` let one case's target be satisfied by
+      // another's -- the worktree `chat` by the worktree `fix-chat`.
       for (const entry of window) {
-        expect(summary?.detail).toContain(entry.title);
-        if (entry.target !== null && !entry.title.includes(entry.target)) {
-          expect(summary?.detail).toContain(entry.target);
-        }
+        expect(summary?.detail).toContain(operationFailureRow(published(entry)));
       }
     });
   }

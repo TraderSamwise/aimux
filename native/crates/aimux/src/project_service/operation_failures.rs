@@ -74,9 +74,27 @@ pub fn route_operation_failures_request(
             ));
         }
     };
+    // A worktree's failure has a second home: `mark_worktree_remove_error`
+    // stamps `status: "error"` and an `operationFailure` onto the topology row,
+    // which the dashboard renders as a failed row with the error in its detail
+    // panel. Clearing only the ledger meant the dashboard said "Dismissed
+    // failure" and drew the same failure again on the next frame -- forever,
+    // and that worktree could never be graveyarded from the TUI. One key
+    // dismisses the error surface, so it has to reach both.
+    let cleared_rows = match worktree_path_match(body) {
+        WorktreePathMatch::Exact(path) => super::lifecycle::clear_worktree_row_failure(
+            context.project_state_dir().as_path(),
+            &path,
+        ),
+        WorktreePathMatch::Any => {
+            super::lifecycle::clear_worktree_row_failure(context.project_state_dir().as_path(), "")
+        }
+        // "only rows with no worktree path" cannot name a worktree row.
+        WorktreePathMatch::OnlyMissing => 0,
+    };
     Some(ProjectServiceDispatchResponse::json(
         200,
-        json!({ "ok": true, "cleared": cleared }),
+        json!({ "ok": true, "cleared": cleared + cleared_rows }),
     ))
 }
 

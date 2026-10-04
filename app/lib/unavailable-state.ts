@@ -6,12 +6,6 @@ import type {
   TmuxUnavailableMarker,
 } from "../../src/project-api-contract";
 
-export function formatOperationFailure(failure: ProjectOperationFailure): string {
-  const title = stringField(failure.title) || stringField(failure.operation) || "operation failed";
-  const message = stringField(failure.message);
-  return [operationFailureTarget(failure), title, message].filter(Boolean).join(": ");
-}
-
 /// What the dashboard and the sidebar put on their failure card.
 ///
 /// One failure gets its own title, because "Project state has an operation
@@ -40,17 +34,21 @@ export function operationFailureTarget(failure: ProjectOperationFailure): string
 export function summarizeOperationFailures(
   failures: readonly ProjectOperationFailure[] | undefined,
 ): { title: string; detail: string } | null {
-  const visible = failures?.filter((failure) => Boolean(formatOperationFailure(failure))) ?? [];
+  // No filter. It used to drop rows whose formatted text was empty, which
+  // could never happen: the title falls back to the operation and then to a
+  // generic sentence, so every row formats to something. The only caller of
+  // the function it filtered on was the filter itself.
+  const visible = failures ?? [];
   if (visible.length === 0) return null;
   if (visible.length === 1) {
     const [failure] = visible;
     const title = operationFailureTitle(failure);
     const message = stringField(failure.message);
-    // No `|| formatOperationFailure(..)` fallback. That fallback prepends the
-    // target unconditionally, so a record whose title already names its target
-    // and carries no message printed the name twice -- the exact doubling
-    // `redundantTarget` exists to prevent. A title with nothing to add to it
-    // gets an empty detail, which is the honest answer.
+    // No fallback that prepends the target unconditionally: a record whose
+    // title already names its target and carries no message printed the name
+    // twice -- the exact doubling `redundantTarget` exists to prevent. A title
+    // with nothing to add to it gets an empty detail, which is the honest
+    // answer, and both cards render nothing for it.
     return {
       title,
       detail: [redundantTarget(failure) ? "" : operationFailureTarget(failure), message]
