@@ -47,7 +47,7 @@ use crate::dashboard_service_input::{
 };
 use crate::dashboard_terminal::{
     DashboardTerminalGuard, consume_terminal_resize, ensure_dashboard_stdin_nonblocking,
-    read_dashboard_keys, terminal_size,
+    read_dashboard_keys, terminal_size, wait_for_dashboard_input,
 };
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use crate::dashboard_tui_visibility::{
@@ -90,7 +90,7 @@ use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -340,6 +340,11 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         rows: options.rows,
     };
     let live_dashboard = !options.once && options.desktop_state_file.is_none();
+    // A live dashboard does not guarantee a terminal: `aimux` with no arguments
+    // runs one on whatever stdin it inherited. On a file, /dev/null or a closed
+    // pipe `poll` reports readable forever and the read behind it yields
+    // nothing, so those keep sleeping.
+    let wait_on_stdin = live_dashboard && io::stdin().is_terminal();
     let mut dashboard_ready_since: Option<Instant> = None;
     let mut viewport_state = DashboardViewportState::default();
     if live_dashboard {
@@ -347,6 +352,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     }
     let mut last_viewport_key = viewport.key();
     let mut last_tmux_viewport_check = Instant::now() - DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL;
+    let mut last_render_viewport_check = Instant::now() - DASHBOARD_KEY_POLL_INTERVAL;
     let mut last_render = Instant::now();
     let clock_start = Instant::now();
     let mut output = dashboard_output(options.once);
@@ -485,7 +491,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             mark_dashboard_tui_visible(&mut visibility_state, elapsed_millis(clock_start), None);
             let Some(snapshot) = latest_snapshot.as_ref() else {
                 render_now = true;
-                thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
+                wait_for_dashboard_keys(wait_on_stdin);
                 continue;
             };
             let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
@@ -729,7 +735,15 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             || forced_refresh
             || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL;
         if render_due {
-            if live_dashboard {
+            // Its own clock, not the 250ms one above: that one has already run
+            // this iteration, so sharing it would silence this measurement
+            // entirely rather than pace it -- and a grown pane needs two
+            // readings in a row before it is believed. The interval is the old
+            // ceiling of one reading per loop iteration, kept now that keys
+            // rather than a sleep decide how often the loop comes round.
+            if live_dashboard && last_render_viewport_check.elapsed() >= DASHBOARD_KEY_POLL_INTERVAL
+            {
+                last_render_viewport_check = Instant::now();
                 viewport = viewport_state.get_viewport_size(viewport);
             }
             let render_source = dashboard_render_source(DashboardRenderSourceInput {
@@ -1057,6 +1071,15 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 }
             }
         }
+        wait_for_dashboard_keys(wait_on_stdin);
+    }
+}
+
+/// Hold the loop for one key-poll interval, waking early if a key arrives.
+fn wait_for_dashboard_keys(wait_on_stdin: bool) {
+    if wait_on_stdin {
+        wait_for_dashboard_input(DASHBOARD_KEY_POLL_INTERVAL);
+    } else {
         thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
     }
 }
