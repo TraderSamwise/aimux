@@ -62,7 +62,7 @@ pub(super) fn route_worktree_graveyard(
     };
     let project_root = context.project_root().to_string_lossy().into_owned();
     if path == project_root {
-        return json_error(500, "Cannot graveyard the main checkout");
+        return json_error(409, "Cannot graveyard the main checkout");
     }
     let project_state_dir = context.project_state_dir();
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
@@ -86,10 +86,21 @@ pub(super) fn route_worktree_graveyard(
         let label = trimmed_string(attached.get("label"))
             .or_else(|| trimmed_string(attached.get("id")))
             .unwrap_or_else(|| "agent".into());
-        return json_error(
-            500,
-            format!("Cannot graveyard \"{worktree_name}\" while agent \"{label}\" is attached"),
+        // Recorded, not just returned. A refusal is the outcome of an action
+        // the user took, and before this it reached only a transient footer
+        // string that the next keypress erased -- so retrying was the one move
+        // guaranteed to destroy the explanation.
+        let message =
+            format!("Cannot graveyard \"{worktree_name}\" while agent \"{label}\" is attached");
+        record_worktree_operation_failure(
+            &project_state_dir,
+            "graveyard",
+            format!("Failed to graveyard worktree \"{worktree_name}\""),
+            message.clone(),
+            &path,
+            Some(&worktree_name),
         );
+        return json_error(409, message);
     }
     let live_service_window_ids = array_field(&topology, "services")
         .into_iter()
@@ -134,11 +145,20 @@ pub(super) fn route_worktree_graveyard(
             topology
         })
     {
+        record_worktree_operation_failure(
+            &project_state_dir,
+            "graveyard",
+            format!("Failed to graveyard worktree \"{worktree_name}\""),
+            error.clone(),
+            &path,
+            Some(&worktree_name),
+        );
         return json_error(500, error);
     }
     for window_id in live_service_window_ids {
         let _ = runtime.kill_window(&window_id);
     }
+    clear_all_worktree_operation_failures(&project_state_dir, &path);
     lifecycle_response(
         json!({ "path": path, "status": "graveyarded" }),
         "worktree.graveyard",
@@ -500,10 +520,17 @@ pub(super) fn route_worktree_remove(
         let label = trimmed_string(attached.get("label"))
             .or_else(|| trimmed_string(attached.get("id")))
             .unwrap_or_else(|| "agent".into());
-        return json_error(
-            500,
-            format!("Cannot remove \"{worktree_name}\" while agent \"{label}\" is attached"),
+        let message =
+            format!("Cannot remove \"{worktree_name}\" while agent \"{label}\" is attached");
+        record_worktree_operation_failure(
+            &project_state_dir,
+            "remove",
+            format!("Failed to remove worktree \"{worktree_name}\""),
+            message.clone(),
+            &path,
+            Some(&worktree_name),
         );
+        return json_error(409, message);
     }
     let live_service_window_ids = array_field(&topology, "services")
         .into_iter()
@@ -583,11 +610,28 @@ fn clear_worktree_operation_failure(
     operation: &str,
     worktree_path: &str,
 ) {
+    clear_worktree_operation_failures_matching(project_state_dir, Some(operation), worktree_path);
+}
+
+/// Clear every failure recorded against a worktree path.
+///
+/// Once the checkout is in the graveyard or deleted, a row saying its `remove`
+/// failed is pointing at something that no longer exists -- and nothing else
+/// would ever clear it, so it sat on the card for the full retention window.
+fn clear_all_worktree_operation_failures(project_state_dir: &Path, worktree_path: &str) {
+    clear_worktree_operation_failures_matching(project_state_dir, None, worktree_path);
+}
+
+fn clear_worktree_operation_failures_matching(
+    project_state_dir: &Path,
+    operation: Option<&str>,
+    worktree_path: &str,
+) {
     let _ = clear_dashboard_operation_failures(
         project_state_dir,
         OperationFailureMatch {
             target_kind: Some("worktree".into()),
-            operation: Some(operation.into()),
+            operation: operation.map(str::to_owned),
             target_id: None,
             worktree_path: WorktreePathMatch::Exact(worktree_path.to_owned()),
         },
@@ -757,6 +801,9 @@ pub(super) fn route_graveyard_worktree_delete(
         return json_error(500, error);
     }
     prune_git_worktrees(&project_root);
+    // The checkout is gone for good, so every failure still keyed to its path
+    // is describing something that no longer exists.
+    clear_all_worktree_operation_failures(&project_state_dir, &path);
     lifecycle_response(
         json!({ "path": path, "status": "removed" }),
         "graveyard.worktree.delete",

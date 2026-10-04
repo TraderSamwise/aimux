@@ -4256,7 +4256,9 @@ fn worktree_graveyard_rejects_attached_live_agent() {
     )
     .unwrap();
 
-    assert_eq!(response.status, 500);
+    // A precondition refusal is a conflict, not a server fault. 500 told the
+    // user aimux had broken when in fact they had been told no.
+    assert_eq!(response.status, 409);
     assert!(
         response.body["error"]
             .as_str()
@@ -4268,6 +4270,33 @@ fn worktree_graveyard_rejects_attached_live_agent() {
         read_topology(&state_dir)["worktrees"][0]["status"],
         "active"
     );
+
+    // The refusal is durable. It used to exist only as a transient footer
+    // string that the next keypress erased, so retrying destroyed the reason.
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert_eq!(failures[0]["operation"], "graveyard");
+    assert!(
+        failures[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("while agent \"active agent\" is attached"),
+        "{failures:?}"
+    );
+
+    // Pressing the key again must not stack a second row. The store replaces
+    // the existing one rather than skipping the write, so the count is what is
+    // being pinned here, not idempotence.
+    let repeat = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(repeat.status, 409);
+    assert_eq!(list_dashboard_operation_failures(&state_dir).len(), 1);
     cleanup(project);
 }
 
@@ -4328,6 +4357,57 @@ fn worktree_remove_missing_checkout_removes_topology_and_stops_services() {
     cleanup(project);
 }
 
+/// A refusal that the user then resolves must not leave its row behind. The
+/// row is keyed to the worktree path, so once the checkout reaches the
+/// graveyard every failure against that path is describing something that no
+/// longer exists -- and before the wildcard clear, nothing would ever remove a
+/// `remove` row after a successful `graveyard`.
+#[test]
+fn graveyarding_clears_every_failure_recorded_against_that_worktree() {
+    let project = temp_project("worktree-graveyard-clears");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    // Refused twice, under two different operations, while the agent is up.
+    for route in [
+        routes::worktree_actions::REMOVE,
+        routes::worktree_actions::GRAVEYARD,
+    ] {
+        let refused = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            route,
+            Some(&json!({ "path": worktree })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(refused.status, 409);
+    }
+    assert_eq!(list_dashboard_operation_failures(&state_dir).len(), 2);
+
+    // The agent goes away and the graveyard now succeeds.
+    write_active_worktree_topology(&state_dir, &worktree, false);
+    let ok = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(ok.status, 200, "{:?}", ok.body);
+
+    assert!(
+        list_dashboard_operation_failures(&state_dir).is_empty(),
+        "a resolved worktree must not leave failure rows behind: {:?}",
+        list_dashboard_operation_failures(&state_dir)
+    );
+    cleanup(project);
+}
+
 #[test]
 fn worktree_remove_rejects_attached_live_agent() {
     let project = temp_project("worktree-remove-attached");
@@ -4346,7 +4426,9 @@ fn worktree_remove_rejects_attached_live_agent() {
     )
     .unwrap();
 
-    assert_eq!(response.status, 500);
+    // A precondition refusal is a conflict, not a server fault. 500 told the
+    // user aimux had broken when in fact they had been told no.
+    assert_eq!(response.status, 409);
     assert!(
         response.body["error"]
             .as_str()
@@ -4358,6 +4440,33 @@ fn worktree_remove_rejects_attached_live_agent() {
         read_topology(&state_dir)["worktrees"][0]["status"],
         "active"
     );
+
+    // The refusal is durable. It used to exist only as a transient footer
+    // string that the next keypress erased, so retrying destroyed the reason.
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert_eq!(failures[0]["operation"], "remove");
+    assert!(
+        failures[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("while agent \"active agent\" is attached"),
+        "{failures:?}"
+    );
+
+    // Pressing the key again must not stack a second row. The store replaces
+    // the existing one rather than skipping the write, so the count is what is
+    // being pinned here, not idempotence.
+    let repeat = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::REMOVE,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(repeat.status, 409);
+    assert_eq!(list_dashboard_operation_failures(&state_dir).len(), 1);
     cleanup(project);
 }
 
