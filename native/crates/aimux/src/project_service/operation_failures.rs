@@ -135,13 +135,8 @@ pub fn clear_dashboard_operation_failures(
 }
 
 pub fn list_dashboard_operation_failures(project_state_dir: impl AsRef<Path>) -> Vec<Value> {
-    try_list_dashboard_operation_failures(project_state_dir).unwrap_or_else(|error| {
-        // Through the same assembly as a stored row, so the clients are never
-        // the place that notices a record skipped it.
-        vec![with_derived_operation_failure_target(
-            operation_failure_store_unavailable(error),
-        )]
-    })
+    try_list_dashboard_operation_failures(project_state_dir)
+        .unwrap_or_else(|error| vec![operation_failure_store_unavailable(error)])
 }
 
 pub fn try_list_dashboard_operation_failures(
@@ -155,11 +150,11 @@ pub fn try_list_dashboard_operation_failures(
             .iter()
             .enumerate()
             .map(|(index, failure)| {
-                with_derived_operation_failure_target(normalize_dashboard_operation_failure_record(
+                normalize_dashboard_operation_failure_record(
                     format!("legacy-operation-failure-{index}"),
                     format!("invalid-operation-failure-{index}"),
                     failure,
-                ))
+                )
             })
             .filter(|failure| is_active_failure(failure, now_epoch_millis()))
             .collect(),
@@ -305,7 +300,13 @@ pub fn operation_failure_target(failure: &Value) -> Option<String> {
 }
 
 /// A stored row as the project service publishes it: the row plus its derived
-/// target. The one place a client's view of a failure is assembled.
+/// target.
+///
+/// Applied where the snapshot is assembled, not where the store is read. The
+/// store's own shape is a contract captured from the Node implementation this
+/// one replaced (`testdata/contracts/v1/operation-failures/failures.json`), and
+/// a derived field has no business in it -- adding one there failed that parity
+/// fixture on both platforms while every local gate stayed green.
 pub fn with_derived_operation_failure_target(mut failure: Value) -> Value {
     if let (Some(target), Value::Object(record)) =
         (operation_failure_target(&failure), &mut failure)

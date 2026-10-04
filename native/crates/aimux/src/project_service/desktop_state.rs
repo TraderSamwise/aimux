@@ -252,7 +252,10 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
         live_window_projection,
     );
     if let Value::Object(object) = &mut state {
-        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir);
+        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir)
+            .into_iter()
+            .map(with_derived_operation_failure_target)
+            .collect::<Vec<_>>();
         if let Some(error) = live_window_query_error {
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
@@ -315,7 +318,10 @@ pub async fn desktop_state_for_context_async(
     )
     .await;
     if let Value::Object(object) = &mut state {
-        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir);
+        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir)
+            .into_iter()
+            .map(with_derived_operation_failure_target)
+            .collect::<Vec<_>>();
         if let Some(error) = live_window_query_error {
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
