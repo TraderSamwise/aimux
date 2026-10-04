@@ -43,6 +43,10 @@ impl TestDir {
         Self(path)
     }
 
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
     fn resolver(&self) -> PathResolver {
         PathResolver::new(
             &self.0,
@@ -441,6 +445,113 @@ fn stop_daemon_info_clears_state_and_returns_only_verified_services() {
         DaemonState::empty()
     );
     clear_daemon_info(resolver.daemon_info_path()).expect("clear is idempotent");
+}
+
+/// The pre-flight is the branch's central guard and had no test: every
+/// supervisor case sets `stop_without_restore: true`, which short-circuits it.
+///
+/// It must refuse before a single project is killed and before the daemon is
+/// signalled -- the half-torn-down machine is the thing it exists to prevent.
+#[test]
+fn stop_daemon_info_refuses_before_killing_anything_when_a_project_is_unrecorded() {
+    let test_dir = TestDir::new();
+    let mut resolver = test_dir.resolver();
+    let info = AimuxDaemonInfo {
+        pid: 9_999_991,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    let project_root = test_dir.path().join("repo");
+    std::fs::create_dir_all(&project_root).expect("repo root");
+    let project_root_text = project_root.to_string_lossy().into_owned();
+    let project = ProjectServiceState {
+        project_id: "project-1".into(),
+        project_root: project_root_text.clone(),
+        pid: 9_999_992,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+        status: None,
+        restart_count: None,
+        last_restart_at: None,
+        last_exit: None,
+    };
+    let state = DaemonState {
+        version: 1,
+        updated_at: Some(json!("now")),
+        projects: Map::from_iter([(
+            "project-1".into(),
+            serde_json::to_value(&project).expect("project JSON"),
+        )]),
+    };
+    save_daemon_info(resolver.daemon_info_path(), &info).expect("save daemon info");
+    save_daemon_state(resolver.daemon_state_path(), &state).expect("save daemon state");
+
+    // A running agent the restore snapshot knows nothing about.
+    let state_dir = resolver.project_state_dir_for(&project_root_text);
+    std::fs::create_dir_all(&state_dir).expect("state dir");
+    let mut topology = aimux::runtime_topology::empty_runtime_topology();
+    topology["rigs"] = json!([{
+        "id": "rig-1",
+        "name": "repo",
+        "projectRoot": project_root_text,
+        "createdAt": "2026-10-04T00:00:00.000Z",
+        "updatedAt": "2026-10-04T00:00:00.000Z",
+    }]);
+    topology["nodes"] = json!([{
+        "id": "node-1",
+        "rigId": "rig-1",
+        "logicalId": "codex-aaa",
+        "createdAt": "2026-10-04T00:00:00.000Z",
+    }]);
+    topology["sessions"] = json!([{
+        "id": "codex-aaa",
+        "nodeId": "node-1",
+        "status": "running",
+        "createdAt": "2026-10-04T00:00:00.000Z",
+        "updatedAt": "2026-10-04T00:00:00.000Z",
+    }]);
+    aimux::runtime_topology::write_runtime_topology(
+        aimux::runtime_topology::runtime_topology_path(&state_dir),
+        &topology,
+    )
+    .expect("seed topology");
+
+    let calls = RefCell::new(Vec::new());
+    let error = stop_daemon_info_with(
+        &resolver,
+        &info,
+        state,
+        "SIGTERM",
+        StopDaemonInfoHooks {
+            stop_without_restore: false,
+            verify_project_service: Box::new(|_: &ProjectServiceState| true),
+            verify_daemon_process: Box::new(|_: &AimuxDaemonInfo| true),
+            send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
+                calls.borrow_mut().push(format!("signal:{pid}:{signal}"));
+                Ok(())
+            }),
+            wait_project_exit: Box::new(|_: &ProjectServiceState, _| true),
+            wait_daemon_exit: Box::new(|_: &AimuxDaemonInfo, _| true),
+            stop_tmux_runtime: Box::new(|project: &ProjectServiceState| {
+                calls
+                    .borrow_mut()
+                    .push(format!("stop-tmux:{}", project.project_root));
+                Ok(Vec::new())
+            }),
+        },
+    )
+    .expect_err("an unrecorded running agent must stop the teardown");
+
+    assert!(
+        error.to_string().contains("codex-aaa"),
+        "the refusal must name the agent that would be lost: {error}"
+    );
+    assert!(
+        calls.borrow().is_empty(),
+        "nothing may be killed or signalled once the pre-flight refused: {:?}",
+        calls.borrow()
+    );
 }
 
 #[test]

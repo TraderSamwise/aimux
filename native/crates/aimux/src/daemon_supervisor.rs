@@ -799,6 +799,8 @@ pub fn stop_daemon_info(
     state: DaemonState,
     signal: &str,
 ) -> Result<StoppedDaemonInfo, DaemonSupervisorError> {
+    // Read once here, at the boundary, and carried as a decision from then on.
+    let stop_without_restore = crate::service_state_snapshot::stop_without_restore_from_env();
     stop_daemon_info_with(
         resolver,
         info,
@@ -818,14 +820,14 @@ pub fn stop_daemon_info(
             send_signal_to_pid: Box::new(send_signal),
             wait_project_exit: Box::new(wait_for_project_service_info_exit),
             wait_daemon_exit: Box::new(wait_for_daemon_info_exit),
-            stop_without_restore: crate::service_state_snapshot::stop_without_restore_from_env(),
+            stop_without_restore,
             stop_tmux_runtime: Box::new(|project: &ProjectServiceState| {
                 let mut resolver = resolver.clone();
                 let project_state_dir = resolver.project_state_dir_for(&project.project_root);
                 crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots(
                     &project.project_root,
                     project_state_dir,
-                    crate::service_state_snapshot::stop_without_restore_from_env(),
+                    stop_without_restore,
                 )
             }),
         },
@@ -976,9 +978,9 @@ pub fn stop_daemon_info_with(
     // because the kill loop can still fail on a later project for reasons
     // nothing can ask about in advance.
     //
-    // One clone for the whole pass: `project_state_dir_for` memoises the git
-    // root it resolves, and cloning per iteration threw that away and paid a
-    // `git rev-parse` per project instead.
+    // One clone for the whole pass. The cache it carries is keyed by resolved
+    // cwd, so distinct project roots never hit it either way -- this saves the
+    // map clone, not a `git rev-parse`.
     let mut preflight_resolver = resolver.clone();
     for entry in state.projects.values() {
         let Ok(project) = serde_json::from_value::<ProjectServiceState>(entry.clone()) else {

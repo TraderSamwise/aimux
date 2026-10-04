@@ -187,14 +187,12 @@ pub fn assert_project_stop_is_recoverable(
     project_state_dir: &Path,
     stop_without_restore: bool,
 ) -> Result<(), String> {
-    // Mirrors the teardown's own first move: with no tmux there is no runtime
-    // to lose, and the kill path returns without touching anything. Asking
-    // the question anyway made `aimux daemon stop` refuse on a host where
-    // tmux is simply not installed -- a stricter answer than the thing it is
-    // guarding, about a runtime that does not exist.
-    if !TmuxRuntimeManager::new().is_available() {
-        return Ok(());
-    }
+    // No tmux short-circuit here. It looked like it mirrored the teardown's
+    // own first move, but `TmuxRuntimeManager::new()` panics outright when the
+    // tmux binary is absent, so it never reached `is_available()` in the case
+    // it was written for -- and it cost a real `tmux -V` fork per project to
+    // not work. The uninstalled-tmux panic is in the teardown path already and
+    // is not this change's to fix.
     assert_agents_are_restorable_before_stop(project_state_dir, stop_without_restore)
 }
 
