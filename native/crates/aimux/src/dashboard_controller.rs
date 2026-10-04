@@ -29,6 +29,14 @@ pub struct DashboardController {
     pub screen: DashboardScreen,
     pub navigation: DashboardNavigationState,
     pub footer_message: Option<String>,
+    /// A failure, as opposed to a passing note.
+    ///
+    /// Separate from `footer_message` because the two want opposite
+    /// lifetimes. A note ("Offline agents hidden") is spent the moment the
+    /// next key arrives; a failure is the answer to something the user asked
+    /// for, and clearing it on the next keypress meant retrying a refused
+    /// action destroyed the only explanation of why it was refused.
+    pub footer_alert: Option<String>,
     pub tool_picker: Option<DashboardToolPickerState>,
     pub service_input: Option<DashboardServiceInputState>,
     pub launch_options: Option<DashboardLaunchOptionsState>,
@@ -328,6 +336,7 @@ impl DashboardController {
             screen: DashboardScreen::Dashboard,
             navigation: DashboardNavigationState::new(snapshot),
             footer_message: None,
+            footer_alert: None,
             tool_picker: None,
             service_input: None,
             launch_options: None,
@@ -683,6 +692,14 @@ impl DashboardController {
         }
         match key {
             DashboardKey::Printable('q') => DashboardControllerEffect::Quit,
+            // Subscreens render the alert and can raise one of their own
+            // (graveyard resurrect and delete both fail here), so the key that
+            // dismisses it has to work here too -- otherwise the only way out
+            // is to leave the screen.
+            DashboardKey::Printable('X') if self.footer_alert.is_some() => {
+                self.footer_alert = None;
+                DashboardControllerEffect::Render
+            }
             DashboardKey::Back | DashboardKey::Printable('d') => {
                 self.switch_screen(DashboardScreen::Dashboard)
             }
@@ -2735,8 +2752,16 @@ impl DashboardController {
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> DashboardControllerEffect {
+        // One key dismisses the whole error surface. The alert line and the
+        // failure card are two renderings of the same thing, so clearing one
+        // without the other would leave the user chasing the remainder.
+        let dismissed_alert = self.footer_alert.take().is_some();
         if snapshot.operation_failures.is_empty() {
-            return DashboardControllerEffect::Ignored;
+            return if dismissed_alert {
+                DashboardControllerEffect::Render
+            } else {
+                DashboardControllerEffect::Ignored
+            };
         }
         match plan_dashboard_action(None, DashboardActionKind::ClearOperationFailures) {
             DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),

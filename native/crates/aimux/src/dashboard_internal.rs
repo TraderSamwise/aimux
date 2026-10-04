@@ -1673,9 +1673,11 @@ fn render_dashboard_snapshot(
         hide_offline_agents: controller.hide_offline_agents,
         hidden_offline_agent_count: context.hidden_offline_agent_count,
         scroll_offset: context.scroll_offset,
-        footer_message: context
-            .refresh_error
-            .or(controller.footer_message.as_deref()),
+        footer_message: controller.footer_message.as_deref(),
+        // A refresh that failed is a failure, not a passing note, so it takes
+        // the alert channel rather than being multiplexed through the one that
+        // expires on the next keypress.
+        footer_alert: context.refresh_error.or(controller.footer_alert.as_deref()),
         details_sidebar_visible: controller.details_sidebar_visible,
         preview_source: &controller.preview_source,
         scribe_preview_entries: &scribe_preview_entries,
@@ -1965,6 +1967,7 @@ fn render_dashboard_subscreen_snapshot(
         rows: viewport.rows,
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
+        footer_alert: controller.footer_alert.as_deref(),
         details_sidebar_visible: controller.details_sidebar_visible,
         runtime_label: Some("tmux"),
         version: Some(&dashboard_runtime_version()),
@@ -2525,15 +2528,21 @@ fn drain_dashboard_request_outcomes(
         changed = true;
         if let Some(message) = outcome.failure {
             if let Some(controller) = controller.as_deref_mut() {
-                controller.footer_message = Some(message);
+                // A failed action is an alert, not a note: it outlives the
+                // next keypress and is dismissed deliberately.
+                controller.footer_alert = Some(message);
             }
             if let Some((target, id, token)) = outcome.pending.as_ref() {
                 pending_actions.clear_if_token(*target, id, *token);
             }
-        } else if let Some(message) = outcome.notice
-            && let Some(controller) = controller.as_deref_mut()
-        {
-            controller.footer_message = Some(message);
+        } else if let Some(controller) = controller.as_deref_mut() {
+            // The action that just succeeded is the answer to the failure on
+            // screen. Leaving the old refusal up after the user has fixed it
+            // and retried is its own small lie.
+            controller.footer_alert = None;
+            if let Some(message) = outcome.notice {
+                controller.footer_message = Some(message);
+            }
         }
     }
     changed
@@ -2542,6 +2551,63 @@ fn drain_dashboard_request_outcomes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const GOLDEN_SNAPSHOT: &str =
+        include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
+
+    fn test_snapshot() -> DesktopStateSnapshot {
+        parse_desktop_state_snapshot(GOLDEN_SNAPSHOT).expect("golden snapshot")
+    }
+
+    /// The action that just succeeded is the answer to the failure on screen.
+    /// Leaving the old refusal up after the user fixed it and retried is its
+    /// own small lie -- and the alert outlives keypresses now, so nothing else
+    /// would have taken it down.
+    #[test]
+    fn a_success_takes_down_the_failure_it_answers() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            failure: None,
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(controller.footer_alert, None);
+    }
+
+    /// And a failure still arrives on the channel that survives a keypress.
+    #[test]
+    fn a_failed_outcome_lands_on_the_alert_channel() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            failure: Some("Cannot graveyard \"fix-chat\": agent attached".into()),
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(
+            controller.footer_alert.as_deref(),
+            Some("Cannot graveyard \"fix-chat\": agent attached")
+        );
+        assert_eq!(controller.footer_message, None);
+    }
 
     #[test]
     fn a_finished_restore_says_what_it_did_rather_than_nothing() {

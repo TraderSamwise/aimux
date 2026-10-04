@@ -1265,6 +1265,7 @@ fn enter_from_worktree_level_renders_agent_details_rail() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
+        footer_alert: None,
         details_sidebar_visible: controller.details_sidebar_visible,
         preview_source: "output",
         scribe_preview_entries: &[],
@@ -3047,4 +3048,64 @@ fn a_failed_refresh_keeps_the_screen_it_already_drew() {
 
     controller.screen = DashboardScreen::Topology;
     assert_eq!(controller.cached_subscreen_resource(), Some(&loaded));
+}
+
+/// Sam pressed Enter on a refused graveyard several times and concluded
+/// nothing was happening. The refusal was there each time -- and each keypress
+/// wiped it before he could read it, so retrying was the one move guaranteed
+/// to destroy the explanation.
+#[test]
+fn a_failure_survives_the_next_keypress_and_a_note_does_not() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
+    controller.footer_message = Some("Offline agents hidden".into());
+
+    controller.handle_key(&snapshot, DashboardKey::Down);
+
+    assert_eq!(
+        controller.footer_alert.as_deref(),
+        Some("Cannot graveyard \"fix-chat\": agent attached"),
+        "a failure must outlive the keypress that follows it"
+    );
+    assert_eq!(
+        controller.footer_message, None,
+        "a passing note is spent as soon as the next key arrives"
+    );
+}
+
+/// The alert line and the failure card are two renderings of one thing, so one
+/// key dismisses both rather than leaving the user chasing the remainder.
+#[test]
+fn clearing_failures_also_dismisses_the_alert_line() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
+
+    let effect = controller.handle_key(&snapshot, DashboardKey::ClearFailures);
+
+    assert_eq!(effect, DashboardControllerEffect::Render);
+    assert_eq!(controller.footer_alert, None);
+}
+
+/// Subscreens render the alert and raise their own (graveyard resurrect and
+/// delete both fail here), so the dismissal key has to reach them. Without it
+/// the only way to clear a failure was to leave the screen.
+#[test]
+fn an_alert_can_be_dismissed_from_a_subscreen() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('g'));
+    assert_ne!(
+        controller.screen,
+        DashboardScreen::Dashboard,
+        "precondition: this test needs to be on a subscreen"
+    );
+
+    controller.footer_alert = Some("Could not resurrect \"fix-chat\"".into());
+    let effect = controller.handle_key(&snapshot, DashboardKey::Printable('X'));
+
+    assert_eq!(effect, DashboardControllerEffect::Render);
+    assert_eq!(controller.footer_alert, None);
 }

@@ -58,6 +58,9 @@ pub struct DashboardRenderInput<'a> {
     pub hidden_offline_agent_count: usize,
     pub scroll_offset: usize,
     pub footer_message: Option<&'a str>,
+    /// A failure to put in front of the user, rendered as its own filled bar
+    /// above the hints rather than replacing them.
+    pub footer_alert: Option<&'a str>,
     pub details_sidebar_visible: bool,
     pub preview_source: &'a str,
     pub scribe_preview_entries: &'a [WorkOutlineEntry],
@@ -213,6 +216,12 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
     if let Some(chrome) = loop_alert_chrome(input.snapshot) {
         footer_lines.push(truncate_ansi(&chrome, input.cols.saturating_sub(2)));
     }
+    if let Some(alert) = input.footer_alert {
+        footer_lines.push(truncate_ansi(
+            &dashboard_alert_line(alert),
+            input.cols.saturating_sub(2),
+        ));
+    }
     if let Some(message) = input.footer_message {
         footer_lines.push(format!(
             "{} {}",
@@ -304,6 +313,16 @@ fn format_duration_hint(ms: i64) -> String {
     } else {
         format!("{hours}h{rem}m")
     }
+}
+
+/// The line a failure gets.
+///
+/// A filled pill rather than a tinted glyph, and the text in the ordinary
+/// reading tone rather than `Muted` -- an error painted as de-emphasised
+/// chrome is an error nobody reads, which is exactly how a refused graveyard
+/// went unnoticed through several attempts.
+fn dashboard_alert_line(message: &str) -> String {
+    format!("{} {}", pill("!", Tone::Danger), style(message, Tone::Text))
 }
 
 fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterHint<'static>> {
@@ -2580,6 +2599,7 @@ pub struct DashboardSubscreenRenderInput<'a> {
     pub rows: usize,
     pub scroll_offset: usize,
     pub footer_message: Option<&'a str>,
+    pub footer_alert: Option<&'a str>,
     pub details_sidebar_visible: bool,
     pub runtime_label: Option<&'a str>,
     pub version: Option<&'a str>,
@@ -2624,6 +2644,9 @@ pub fn render_dashboard_subscreen_frame(
         input.resource,
         input.selected_index,
     ))];
+    if let Some(alert) = input.footer_alert {
+        footer.push(dashboard_alert_line(alert));
+    }
     if let Some(message) = input.footer_message {
         footer.push(style(message, Tone::Muted));
     }
