@@ -11,8 +11,7 @@ use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -396,28 +395,39 @@ pub fn execute_loopback_binary_request(
 /// blocking socket read with no timeout: there is no point in the read to
 /// return to and check a clock.
 struct WaitNotice {
-    done: Arc<AtomicBool>,
+    done: Arc<(Mutex<bool>, Condvar)>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
 impl WaitNotice {
     fn start(what: String) -> Self {
-        let done = Arc::new(AtomicBool::new(false));
+        let done = Arc::new((Mutex::new(false), Condvar::new()));
         let watched = Arc::clone(&done);
         let handle = thread::Builder::new()
             .name("aimux-wait-notice".into())
             .spawn(move || {
+                let (lock, signal) = &*watched;
                 let started = Instant::now();
-                let mut next = LOOPBACK_WAIT_NOTICE_AFTER;
-                while !watched.load(Ordering::Relaxed) {
-                    if started.elapsed() >= next {
+                let mut wait = LOOPBACK_WAIT_NOTICE_AFTER;
+                let mut finished = lock.lock().unwrap_or_else(|error| error.into_inner());
+                loop {
+                    // Woken by the request finishing, not by a poll. A polled
+                    // sleep made every timeout-less request pay up to the
+                    // sleep interval on the way out, just to join this thread.
+                    let (next, timeout) = signal
+                        .wait_timeout(finished, wait)
+                        .unwrap_or_else(|error| error.into_inner());
+                    finished = next;
+                    if *finished {
+                        return;
+                    }
+                    if timeout.timed_out() {
                         eprintln!(
                             "still waiting for {what} ({}s)",
                             started.elapsed().as_secs()
                         );
-                        next += LOOPBACK_WAIT_NOTICE_EVERY;
+                        wait = LOOPBACK_WAIT_NOTICE_EVERY;
                     }
-                    thread::sleep(Duration::from_millis(100));
                 }
             })
             .ok();
@@ -427,7 +437,11 @@ impl WaitNotice {
 
 impl Drop for WaitNotice {
     fn drop(&mut self) {
-        self.done.store(true, Ordering::Relaxed);
+        let (lock, signal) = &*self.done;
+        if let Ok(mut finished) = lock.lock() {
+            *finished = true;
+        }
+        signal.notify_all();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -1075,5 +1089,35 @@ mod tests {
 
         assert_eq!(attempts, 1);
         assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+    }
+
+    /// The notice exists so an unbounded wait is never silent, and it must not
+    /// tax the ordinary fast request to do it. A polled version made every
+    /// timeout-less call pay up to its sleep interval just to join the thread.
+    #[test]
+    fn wait_notice_stops_promptly_and_says_nothing_when_the_wait_is_short() {
+        let started = Instant::now();
+        {
+            let _notice = WaitNotice::start("a daemon that answers at once".into());
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(250),
+            "dropping the notice must not wait on a poll interval: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// The first notice is due after the configured delay, not immediately, so
+    /// a request of ordinary length prints nothing at all.
+    #[test]
+    fn wait_notice_is_quiet_until_the_wait_is_worth_mentioning() {
+        assert!(
+            LOOPBACK_WAIT_NOTICE_AFTER >= Duration::from_secs(5),
+            "a notice that fires on every quick call is noise, not information"
+        );
+        assert!(
+            LOOPBACK_WAIT_NOTICE_EVERY >= LOOPBACK_WAIT_NOTICE_AFTER,
+            "repeats must not be more frequent than the first notice"
+        );
     }
 }

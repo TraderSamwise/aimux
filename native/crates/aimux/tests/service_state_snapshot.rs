@@ -20,6 +20,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// snapshot id that the boot-stamped prompt gate no longer matches, which
 /// suppresses the very restore offer this protects.
 fn seed_topology_with_sessions(state_dir: &Path, repo_root: &Path, ids: &[&str]) {
+    let rows = ids.iter().map(|id| (*id, "running")).collect::<Vec<_>>();
+    seed_topology_with_statuses(state_dir, repo_root, &rows);
+}
+
+fn seed_topology_with_statuses(state_dir: &Path, repo_root: &Path, rows: &[(&str, &str)]) {
     const AT: &str = "2026-10-04T00:00:00.000Z";
     // A session is only part of the topology if its node, and that node's rig,
     // are there too -- the reader prunes dangling ones, so a fixture without
@@ -33,8 +38,8 @@ fn seed_topology_with_sessions(state_dir: &Path, repo_root: &Path, ids: &[&str])
         "updatedAt": AT,
     }]);
     topology["nodes"] = Value::Array(
-        ids.iter()
-            .map(|id| {
+        rows.iter()
+            .map(|(id, _)| {
                 json!({
                     "id": format!("node-{id}"),
                     "rigId": "rig-1",
@@ -45,12 +50,12 @@ fn seed_topology_with_sessions(state_dir: &Path, repo_root: &Path, ids: &[&str])
             .collect(),
     );
     topology["sessions"] = Value::Array(
-        ids.iter()
-            .map(|id| {
+        rows.iter()
+            .map(|(id, status)| {
                 json!({
                     "id": id,
                     "nodeId": format!("node-{id}"),
-                    "status": "running",
+                    "status": status,
                     "createdAt": AT,
                     "updatedAt": AT,
                 })
@@ -156,6 +161,59 @@ fn stop_runtime_proceeds_when_there_are_no_agents_to_lose() {
             .expect("an empty runtime stops normally");
 
     assert_eq!(killed, vec!["aimux-repo"]);
+}
+
+/// `aimux agent stop` leaves the session `offline` in the topology and
+/// deliberately prunes it from the restore snapshot. Comparing against
+/// "everything not graveyard/exited" counted that as an agent at risk, so one
+/// ordinary agent stop made every later `restart` and `daemon stop` refuse
+/// forever, with no way past it. Only agents that are actually up can be lost.
+#[test]
+fn stop_runtime_ignores_an_agent_the_user_already_stopped() {
+    let (repo_root, state_dir, mut tmux) = stop_fixture("service-state-snapshot-offline");
+    seed_topology_with_statuses(
+        &state_dir,
+        &repo_root,
+        &[("codex-aaa", "running"), ("codex-stopped", "offline")],
+    );
+    // The snapshot records only the running one, which is exactly what
+    // `agent stop` leaves behind.
+    fs::write(
+        state_dir.join("last-online-agents.json"),
+        json!({
+            "version": 1,
+            "sessionIds": ["codex-aaa"],
+            "sessions": [{ "id": "codex-aaa" }],
+        })
+        .to_string(),
+    )
+    .expect("seed snapshot");
+
+    let killed =
+        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
+            .expect("a stopped agent is not an agent at risk");
+
+    assert_eq!(killed, vec!["aimux-repo"]);
+}
+
+/// A guard on the only path that stops anything needs a way past it, or one
+/// unrecordable project becomes a daemon that cannot be stopped at all.
+#[test]
+fn stop_runtime_can_be_forced_past_the_restore_check() {
+    let (repo_root, state_dir, mut tmux) = stop_fixture("service-state-snapshot-forced");
+    seed_topology_with_sessions(&state_dir, &repo_root, &["codex-aaa"]);
+
+    let refused =
+        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir);
+    assert!(refused.is_err(), "unrecorded agent must refuse by default");
+
+    // SAFETY: single-threaded test process; the var is removed before return.
+    unsafe { std::env::set_var("AIMUX_STOP_WITHOUT_RESTORE", "1") };
+    let killed =
+        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir);
+    unsafe { std::env::remove_var("AIMUX_STOP_WITHOUT_RESTORE") };
+
+    assert_eq!(killed.expect("forced stop proceeds"), vec!["aimux-repo"]);
 }
 
 /// The topology is the record of what would die. Unreadable is not empty.

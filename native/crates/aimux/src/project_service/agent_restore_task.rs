@@ -331,7 +331,19 @@ pub fn assert_agents_are_restorable(
     project_state_dir: &std::path::Path,
     topology: &Value,
 ) -> Result<(), String> {
-    let restorable = restorable_session_ids(topology);
+    // Only agents that are actually up can be lost to a teardown, and this is
+    // the same set the periodic task records -- so the two cannot disagree.
+    //
+    // `restorable_session_ids` was the wrong question. It counts anything not
+    // `graveyard`/`exited`, which includes `offline`, and `aimux agent stop`
+    // leaves a session exactly there while deliberately pruning it from the
+    // snapshot. Comparing against it meant one ordinary agent stop made every
+    // later `restart` and `daemon stop` refuse forever.
+    let restorable = list_topology_session_states(topology, Some(ONLINE_SESSION_STATUSES))
+        .into_iter()
+        .map(|session| string_field(&session, "id"))
+        .filter(|id| !id.is_empty())
+        .collect::<BTreeSet<String>>();
     if restorable.is_empty() {
         return Ok(());
     }
@@ -357,8 +369,9 @@ pub fn assert_agents_are_restorable(
         return Ok(());
     }
     Err(format!(
-        "agent restore snapshot does not record {} of {} restorable agents ({}); \
-         stopping would leave no way to bring them back",
+        "agent restore snapshot does not record {} of {} running agents ({}); \
+         stopping would leave no way to bring them back. Set \
+         AIMUX_STOP_WITHOUT_RESTORE=1 to stop anyway.",
         unrecorded.len(),
         restorable.len(),
         unrecorded.join(", ")

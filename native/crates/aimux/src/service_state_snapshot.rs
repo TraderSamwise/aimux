@@ -179,6 +179,14 @@ pub fn persist_project_runtime_snapshots_before_tmux_stop_at(
 /// one is: it is the record of what would die, and proceeding without it is
 /// the guess that cost 37 agents on sam-strix.
 fn assert_agents_are_restorable_before_stop(project_state_dir: &Path) -> Result<(), String> {
+    // An operator who has read the refusal and wants to stop anyway must be
+    // able to. A guard on the only path that stops anything, with no way past
+    // it, turns one unrecordable project into a daemon that cannot be stopped
+    // at all -- and `stop` is what people reach for when things are already
+    // wrong.
+    if std::env::var("AIMUX_STOP_WITHOUT_RESTORE").is_ok_and(|value| value == "1") {
+        return Ok(());
+    }
     let topology = match read_runtime_topology(runtime_topology_path(project_state_dir)) {
         Ok(topology) => topology,
         Err(error) => return Err(format!("runtime topology unreadable: {error}")),
