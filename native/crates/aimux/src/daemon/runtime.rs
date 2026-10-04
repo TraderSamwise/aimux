@@ -999,7 +999,7 @@ impl RealDaemonRuntime {
                     return Ok(());
                 }
                 Err(format!(
-                    "refusing to remove project {project_root}: {} live agent(s) would lose tmux context ({}). Re-run with --force to stop the service, kill managed tmux sessions, and unregister it.",
+                    "refusing to remove project {project_root}: {} live agent(s) would lose tmux context ({}). Re-run with --force to stop the service, kill managed tmux sessions, and unregister it -- which also skips the check that those agents can be restored afterwards.",
                     live_agent_ids.len(),
                     live_agent_ids.join(", ")
                 ))
@@ -1020,7 +1020,7 @@ impl RealDaemonRuntime {
                     return Ok(());
                 }
                 Err(format!(
-                    "refusing to remove project {project_root}: could not verify live agents before killing {} managed tmux session(s): {}. Re-run with --force to stop the service, kill managed tmux sessions, and unregister it.",
+                    "refusing to remove project {project_root}: could not verify live agents before killing {} managed tmux session(s): {}. Re-run with --force to stop the service, kill managed tmux sessions, and unregister it -- which also skips the check that those agents can be restored afterwards.",
                     sessions.len(),
                     error.error
                 ))
@@ -1604,7 +1604,11 @@ impl RealDaemonRuntime {
             project_root,
             open,
             |project_root, state_dir| {
-                stop_project_tmux_runtime_with_service_snapshots(project_root, state_dir)
+                stop_project_tmux_runtime_with_service_snapshots(
+                    project_root,
+                    state_dir,
+                    crate::service_state_snapshot::stop_without_restore_from_env(),
+                )
             },
         )
     }
@@ -4005,7 +4009,13 @@ impl DaemonSystemTextRuntime for RealDaemonRuntime {
             project_root,
             force,
             |project_root, project_state_dir| {
-                stop_project_tmux_runtime_with_service_snapshots(project_root, project_state_dir)
+                stop_project_tmux_runtime_with_service_snapshots(
+                    project_root,
+                    project_state_dir,
+                    // A forced remove is an operator who has already been told
+                    // what is at stake and said do it anyway.
+                    force || crate::service_state_snapshot::stop_without_restore_from_env(),
+                )
             },
         )
     }

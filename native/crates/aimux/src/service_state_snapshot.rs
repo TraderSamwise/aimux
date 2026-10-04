@@ -122,12 +122,14 @@ pub fn persist_project_runtime_snapshots_before_tmux_stop(
     project_root: impl AsRef<Path>,
     project_state_dir: impl AsRef<Path>,
     tmux: &mut impl ServiceStateSnapshotRuntime,
+    stop_without_restore: bool,
 ) -> Result<Value, String> {
     persist_project_runtime_snapshots_before_tmux_stop_at(
         project_root,
         project_state_dir,
         tmux,
         &now_rfc3339()?,
+        stop_without_restore,
     )
 }
 
@@ -136,9 +138,14 @@ pub fn persist_project_runtime_snapshots_before_tmux_stop_at(
     project_state_dir: impl AsRef<Path>,
     tmux: &mut impl ServiceStateSnapshotRuntime,
     saved_at: &str,
+    stop_without_restore: bool,
 ) -> Result<Value, String> {
     let project_root = project_root.as_ref();
     let project_state_dir = project_state_dir.as_ref();
+    // Before anything is recorded or killed: this teardown ends every pane in
+    // the project, and refusing after the topology has been marked "stopped"
+    // would leave running services recorded as stopped.
+    assert_agents_are_restorable_before_stop(project_state_dir, stop_without_restore)?;
     let services = snapshot_project_service_windows(project_root, project_state_dir, tmux)?;
     if !services.is_empty() {
         update_runtime_topology(runtime_topology_path(project_state_dir), |mut topology| {
@@ -164,29 +171,93 @@ pub fn persist_project_runtime_snapshots_before_tmux_stop_at(
     Ok(json!({ "sessions": [], "services": services }))
 }
 
+/// Refuse to tear a runtime down when its agents are not recorded anywhere.
+///
+/// The snapshot is only consulted, never rewritten: it is deliberately
+/// retentive, the stop and kill routes are what remove sessions from it, and
+/// rewriting here would mint a new snapshot id that the boot-stamped prompt
+/// gate no longer matches -- suppressing the restore offer this protects.
+///
+/// A missing topology has nothing to lose and is not an error. An unreadable
+/// one is: it is the record of what would die, and proceeding without it is
+/// the guess that cost 37 agents on sam-strix.
+/// The restorability check on its own, so a caller tearing down several
+/// projects can ask about all of them before killing any of one.
+pub fn assert_project_stop_is_recoverable(
+    project_state_dir: &Path,
+    stop_without_restore: bool,
+) -> Result<(), String> {
+    // No tmux short-circuit here. It looked like it mirrored the teardown's
+    // own first move, but `TmuxRuntimeManager::new()` panics outright when the
+    // tmux binary is absent, so it never reached `is_available()` in the case
+    // it was written for -- and it cost a real `tmux -V` fork per project to
+    // not work. The uninstalled-tmux panic is in the teardown path already and
+    // is not this change's to fix.
+    assert_agents_are_restorable_before_stop(project_state_dir, stop_without_restore)
+}
+
+fn assert_agents_are_restorable_before_stop(
+    project_state_dir: &Path,
+    stop_without_restore: bool,
+) -> Result<(), String> {
+    // An operator who has read the refusal and wants to stop anyway must be
+    // able to. A guard on the only path that stops anything, with no way past
+    // it, turns one unrecordable project into a daemon that cannot be stopped
+    // at all -- and `stop` is what people reach for when things are already
+    // wrong.
+    if stop_without_restore {
+        return Ok(());
+    }
+    let topology = match read_runtime_topology(runtime_topology_path(project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return Err(format!("runtime topology unreadable: {error}")),
+    };
+    crate::project_service::agent_restore_task::assert_agents_are_restorable(
+        project_state_dir,
+        &topology,
+    )
+}
+
 pub fn stop_project_tmux_runtime_with_service_snapshots(
     project_root: impl AsRef<Path>,
     project_state_dir: impl AsRef<Path>,
+    stop_without_restore: bool,
 ) -> Result<Vec<String>, String> {
     let mut tmux = TmuxRuntimeManager::new();
     stop_project_tmux_runtime_with_service_snapshots_using(
         &mut tmux,
         project_root.as_ref(),
         project_state_dir.as_ref(),
+        stop_without_restore,
     )
+}
+
+/// Whether this process was told to stop even where agents could not be
+/// recorded.
+///
+/// Read once at the boundary rather than inside the check, so a test can drive
+/// the decision without mutating process-global state its siblings share.
+pub fn stop_without_restore_from_env() -> bool {
+    std::env::var("AIMUX_STOP_WITHOUT_RESTORE").is_ok_and(|value| value == "1")
 }
 
 pub fn stop_project_tmux_runtime_with_service_snapshots_using<T>(
     tmux: &mut T,
     project_root: &Path,
     project_state_dir: &Path,
+    stop_without_restore: bool,
 ) -> Result<Vec<String>, String>
 where
     T: TmuxRuntimeStopManager + ServiceStateSnapshotRuntime,
 {
     let killed = stop_project_tmux_runtime(tmux, &project_root.to_string_lossy(), |tmux, root| {
-        persist_project_runtime_snapshots_before_tmux_stop(Path::new(root), project_state_dir, tmux)
-            .map(|_| ())
+        persist_project_runtime_snapshots_before_tmux_stop(
+            Path::new(root),
+            project_state_dir,
+            tmux,
+            stop_without_restore,
+        )
+        .map(|_| ())
     })?;
     tmux.refresh_status();
     Ok(killed)

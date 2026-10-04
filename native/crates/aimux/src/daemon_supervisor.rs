@@ -10,6 +10,7 @@ use crate::daemon_state::{
     StoppedDaemonInfo, clear_daemon_info, get_daemon_base_url, get_daemon_port, load_daemon_info,
     load_daemon_state, save_daemon_info, save_daemon_state, try_is_pid_alive,
 };
+use crate::debug_logging::log_lifecycle_always;
 use crate::paths::PathResolver;
 use crate::process_inspector::{
     ProcessFingerprint, ProjectServiceProcessIdentity, is_aimux_daemon_process,
@@ -503,13 +504,47 @@ pub fn ensure_daemon_running_at(
                 }
             }
             Err(error) => {
+                // Why it did not answer decides what to do about it, and is
+                // also the only thing that lets anyone read this state
+                // correctly later -- so it is carried, not dropped.
+                let refused = error.is_connection_refused();
                 if should_keep_unresponsive_daemon_after_pid_probe(
                     options.adopt_existing,
                     try_is_pid_alive(existing.pid),
+                    refused,
                 )? {
+                    log_lifecycle_always(
+                        "daemon kept despite failed health probe",
+                        "daemon",
+                        Some(json!({
+                            "pid": existing.pid,
+                            "port": existing.port,
+                            "error": error.to_string(),
+                        })),
+                    );
+                    // Said out loud, not just logged. Requests on this path
+                    // have no timeout, so the next one can block for as long
+                    // as the daemon stays wedged -- and with nothing printed,
+                    // the only evidence left is a command that sat silent.
+                    // That is what sent an agent looking at the wrong
+                    // subsystem while 37 agents were killed on the strength of
+                    // its conclusion.
+                    eprintln!(
+                        "warning: aimux daemon (pid {}, port {}) did not answer its health probe ({}); continuing against it anyway",
+                        existing.pid, existing.port, error
+                    );
                     return Ok(existing);
                 }
-                let _ = error;
+                log_lifecycle_always(
+                    "daemon info cleared after failed health probe",
+                    "daemon",
+                    Some(json!({
+                        "pid": existing.pid,
+                        "port": existing.port,
+                        "connectionRefused": refused,
+                        "error": error.to_string(),
+                    })),
+                );
                 clear_daemon_info(resolver.daemon_info_path())?;
             }
         }
@@ -577,6 +612,7 @@ pub fn ensure_daemon_running_at(
 pub fn should_keep_unresponsive_daemon_after_pid_probe(
     adopt_existing: Option<bool>,
     daemon_pid_alive: Result<bool, String>,
+    endpoint_refused: bool,
 ) -> Result<bool, DaemonSupervisorError> {
     let daemon_pid_alive = daemon_pid_alive.map_err(|error| {
         DaemonSupervisorError::Message(format!(
@@ -586,6 +622,7 @@ pub fn should_keep_unresponsive_daemon_after_pid_probe(
     Ok(should_keep_unresponsive_daemon(
         adopt_existing,
         daemon_pid_alive,
+        endpoint_refused,
     ))
 }
 
@@ -762,6 +799,8 @@ pub fn stop_daemon_info(
     state: DaemonState,
     signal: &str,
 ) -> Result<StoppedDaemonInfo, DaemonSupervisorError> {
+    // Read once here, at the boundary, and carried as a decision from then on.
+    let stop_without_restore = crate::service_state_snapshot::stop_without_restore_from_env();
     stop_daemon_info_with(
         resolver,
         info,
@@ -781,12 +820,14 @@ pub fn stop_daemon_info(
             send_signal_to_pid: Box::new(send_signal),
             wait_project_exit: Box::new(wait_for_project_service_info_exit),
             wait_daemon_exit: Box::new(wait_for_daemon_info_exit),
+            stop_without_restore,
             stop_tmux_runtime: Box::new(|project: &ProjectServiceState| {
                 let mut resolver = resolver.clone();
                 let project_state_dir = resolver.project_state_dir_for(&project.project_root);
                 crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots(
                     &project.project_root,
                     project_state_dir,
+                    stop_without_restore,
                 )
             }),
         },
@@ -898,6 +939,10 @@ pub struct StopDaemonInfoHooks<'a> {
     pub wait_project_exit: WaitProjectExitHook<'a>,
     pub wait_daemon_exit: WaitDaemonExitHook<'a>,
     pub stop_tmux_runtime: StopTmuxRuntimeHook<'a>,
+    /// Stop even where the agents at risk could not be recorded. Passed in
+    /// rather than read here, so a test drives it without touching the
+    /// process-global environment its siblings share.
+    pub stop_without_restore: bool,
 }
 
 pub fn stop_daemon_info_with(
@@ -914,6 +959,7 @@ pub fn stop_daemon_info_with(
         mut wait_project_exit,
         mut wait_daemon_exit,
         mut stop_tmux_runtime,
+        stop_without_restore,
     } = hooks;
     signal_to_number(signal)?;
     if !verify_daemon_process(info) {
@@ -925,6 +971,36 @@ pub fn stop_daemon_info_with(
     let mut stopped_project_services = Vec::new();
     let mut stopped_tmux_sessions = Vec::new();
     let mut escalations = Vec::new();
+    // Every project is asked before any project is killed. Refusing partway
+    // through the loop left the machine half torn down -- the projects already
+    // visited had lost their runtimes, the rest kept theirs, and the daemon
+    // was never signalled. This narrows that window; it does not close it,
+    // because the kill loop can still fail on a later project for reasons
+    // nothing can ask about in advance.
+    //
+    // One clone for the whole pass. The cache it carries is keyed by resolved
+    // cwd, so distinct project roots never hit it either way -- this saves the
+    // map clone, not a `git rev-parse`.
+    let mut preflight_resolver = resolver.clone();
+    for entry in state.projects.values() {
+        let Ok(project) = serde_json::from_value::<ProjectServiceState>(entry.clone()) else {
+            continue;
+        };
+        if !verify_project_service(&project) {
+            continue;
+        }
+        let project_state_dir = preflight_resolver.project_state_dir_for(&project.project_root);
+        crate::service_state_snapshot::assert_project_stop_is_recoverable(
+            &project_state_dir,
+            stop_without_restore,
+        )
+        .map_err(|error| {
+            DaemonSupervisorError::Message(format!(
+                "refusing to stop: project {} could not be recorded first: {error}",
+                project.project_root
+            ))
+        })?;
+    }
     for entry in state.projects.values() {
         let Ok(project) = serde_json::from_value::<ProjectServiceState>(entry.clone()) else {
             continue;

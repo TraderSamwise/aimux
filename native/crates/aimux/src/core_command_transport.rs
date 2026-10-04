@@ -11,11 +11,25 @@ use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_LOOPBACK_TRANSIENT_RETRY_MS: u64 = 1_000;
 const LOOPBACK_TRANSIENT_RETRY_SLEEP_MS: u64 = 10;
+/// How long a daemon request may be silent before it says it is still waiting.
+///
+/// Most CLI routes pass no timeout, which sets no socket read timeout at all,
+/// so a wedged daemon -- one whose listener accepted the connection and then
+/// never answered -- blocks the command indefinitely. `aimux kill` sat five
+/// minutes at 0% CPU printing nothing, and the agent reading that blamed the
+/// wrong subsystem and destroyed a running fleet on the strength of it.
+///
+/// The wait is not shortened: `worktree create` and friends legitimately run
+/// for minutes, and capping them would break real work. It is only made
+/// audible, which is the part that was missing.
+const LOOPBACK_WAIT_NOTICE_AFTER: Duration = Duration::from_secs(10);
+const LOOPBACK_WAIT_NOTICE_EVERY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonHttpMethod {
@@ -98,6 +112,18 @@ pub enum CoreCommandTransportError {
 impl CoreCommandTransportError {
     pub fn ensure_daemon(error: impl Display) -> Self {
         Self::EnsureDaemon(error.to_string())
+    }
+
+    /// Nothing is accepting connections at the address we asked.
+    ///
+    /// Categorically different from a timeout: a refusal is an answer, and it
+    /// says the port is not served. A process that is alive while its port
+    /// refuses is a daemon that has stopped serving, not a busy one, and
+    /// waiting on it only converts that into a timeout further up.
+    pub fn is_connection_refused(&self) -> bool {
+        // `TransientIoExhausted` is deliberately not checked: it only ever
+        // wraps the retryable kinds, and a refusal is not one of them.
+        matches!(self, Self::Io(error) if error.kind() == io::ErrorKind::ConnectionRefused)
     }
 }
 
@@ -359,12 +385,82 @@ pub fn execute_loopback_binary_request(
     })
 }
 
+/// Prints "still waiting" to stderr until dropped.
+///
+/// A thread rather than a deadline, because the wait being watched is a
+/// blocking socket read with no timeout: there is no point in the read to
+/// return to and check a clock.
+struct WaitNotice {
+    done: Arc<(Mutex<bool>, Condvar)>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl WaitNotice {
+    fn start(what: String) -> Self {
+        let done = Arc::new((Mutex::new(false), Condvar::new()));
+        let watched = Arc::clone(&done);
+        let handle = thread::Builder::new()
+            .name("aimux-wait-notice".into())
+            .spawn(move || {
+                let (lock, signal) = &*watched;
+                let started = Instant::now();
+                let mut wait = LOOPBACK_WAIT_NOTICE_AFTER;
+                let mut finished = lock.lock().unwrap_or_else(|error| error.into_inner());
+                // Tested BEFORE the first wait. The request usually finishes
+                // and drops the notice before this thread is ever scheduled,
+                // and a `notify_all` sent then is lost -- leaving the join in
+                // `Drop` to block for the whole first interval. That made the
+                // fast path pay ten seconds for a feature whose only job is to
+                // narrate slow ones.
+                while !*finished {
+                    // Woken by the request finishing, not by a poll. A polled
+                    // sleep made every timeout-less request pay up to the
+                    // sleep interval on the way out, just to join this thread.
+                    let (next, timeout) = signal
+                        .wait_timeout(finished, wait)
+                        .unwrap_or_else(|error| error.into_inner());
+                    finished = next;
+                    if timeout.timed_out() && !*finished {
+                        eprintln!(
+                            "still waiting for {what} ({}s)",
+                            started.elapsed().as_secs()
+                        );
+                        wait = LOOPBACK_WAIT_NOTICE_EVERY;
+                    }
+                }
+            })
+            .ok();
+        Self { done, handle }
+    }
+}
+
+impl Drop for WaitNotice {
+    fn drop(&mut self) {
+        let (lock, signal) = &*self.done;
+        if let Ok(mut finished) = lock.lock() {
+            *finished = true;
+        }
+        signal.notify_all();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 fn execute_loopback_http_request(
     request: &DaemonJsonRequest,
 ) -> Result<Vec<u8>, CoreCommandTransportError> {
     let endpoint = parse_loopback_url(&request.url)?;
     let mut stream = connect_loopback(&endpoint, request.timeout_ms)?;
     let timeout = request_timeout(request.timeout_ms);
+    // Only an unbounded wait needs this. A request with a timeout ends by
+    // itself and says so; a long-lived stream is waiting by design.
+    let _notice = timeout.is_none().then(|| {
+        WaitNotice::start(format!(
+            "aimux daemon at {}:{}",
+            endpoint.host, endpoint.port
+        ))
+    });
     stream
         .set_read_timeout(timeout)
         .map_err(CoreCommandTransportError::Io)?;
@@ -992,5 +1088,35 @@ mod tests {
 
         assert_eq!(attempts, 1);
         assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+    }
+
+    /// The notice exists so an unbounded wait is never silent, and it must not
+    /// tax the ordinary fast request to do it. A polled version made every
+    /// timeout-less call pay up to its sleep interval just to join the thread.
+    #[test]
+    fn wait_notice_stops_promptly_and_says_nothing_when_the_wait_is_short() {
+        let started = Instant::now();
+        {
+            let _notice = WaitNotice::start("a daemon that answers at once".into());
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(250),
+            "dropping the notice must not wait on a poll interval: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// The first notice is due after the configured delay, not immediately, so
+    /// a request of ordinary length prints nothing at all.
+    #[test]
+    fn wait_notice_is_quiet_until_the_wait_is_worth_mentioning() {
+        assert!(
+            LOOPBACK_WAIT_NOTICE_AFTER >= Duration::from_secs(5),
+            "a notice that fires on every quick call is noise, not information"
+        );
+        assert!(
+            LOOPBACK_WAIT_NOTICE_EVERY >= LOOPBACK_WAIT_NOTICE_AFTER,
+            "repeats must not be more frequent than the first notice"
+        );
     }
 }

@@ -155,10 +155,16 @@ fn preserves_staleness_and_liveness_decisions() {
     assert!(is_stale_against_daemon(Some(&newer), Some(&older)));
     assert!(!is_stale_against_daemon(Some(&older), Some(&newer)));
     assert!(!is_stale_against_daemon(Some(&newer), None));
-    assert!(should_keep_unresponsive_daemon(None, true));
-    assert!(should_keep_unresponsive_daemon(Some(true), true));
-    assert!(!should_keep_unresponsive_daemon(Some(false), true));
-    assert!(!should_keep_unresponsive_daemon(None, false));
+    assert!(should_keep_unresponsive_daemon(None, true, false));
+    assert!(should_keep_unresponsive_daemon(Some(true), true, false));
+    assert!(!should_keep_unresponsive_daemon(Some(false), true, false));
+    assert!(!should_keep_unresponsive_daemon(None, false, false));
+
+    // A refused port is not a busy daemon. Keeping one is what let a dead
+    // daemon be handed back as healthy, so every later request blocked until
+    // its own timeout with nothing printed.
+    assert!(!should_keep_unresponsive_daemon(None, true, true));
+    assert!(!should_keep_unresponsive_daemon(Some(true), true, true));
 }
 
 #[test]

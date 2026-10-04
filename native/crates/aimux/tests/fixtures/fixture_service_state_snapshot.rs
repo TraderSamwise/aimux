@@ -92,6 +92,7 @@ fn service_state_snapshot_contract(case: &Value) -> Value {
                 case["input"]["metadataCreatedAt"]
                     .as_str()
                     .unwrap_or("<ts:1>"),
+                false,
             )
             .expect("persist snapshots");
             let topology =
@@ -116,7 +117,7 @@ fn service_state_snapshot_contract(case: &Value) -> Value {
             .expect("write existing state");
             let mut tmux = FakeSnapshotRuntime::new(Vec::new());
             let result = persist_project_runtime_snapshots_before_tmux_stop_at(
-                &repo_root, &state_dir, &mut tmux, "<ts:1>",
+                &repo_root, &state_dir, &mut tmux, "<ts:1>", false,
             )
             .expect("persist no windows");
             let state: Value = serde_json::from_slice(

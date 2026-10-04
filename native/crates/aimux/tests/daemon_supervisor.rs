@@ -43,6 +43,10 @@ impl TestDir {
         Self(path)
     }
 
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
     fn resolver(&self) -> PathResolver {
         PathResolver::new(
             &self.0,
@@ -112,16 +116,23 @@ fn stale_build_error_text_matches_supervisor_contract() {
 
 #[test]
 fn unresponsive_daemon_policy_matches_adopt_existing_truth_table() {
-    assert!(should_keep_unresponsive_daemon(None, true));
-    assert!(should_keep_unresponsive_daemon(Some(true), true));
-    assert!(!should_keep_unresponsive_daemon(Some(false), true));
-    assert!(!should_keep_unresponsive_daemon(None, false));
+    assert!(should_keep_unresponsive_daemon(None, true, false));
+    assert!(should_keep_unresponsive_daemon(Some(true), true, false));
+    assert!(!should_keep_unresponsive_daemon(Some(false), true, false));
+    assert!(!should_keep_unresponsive_daemon(None, false, false));
+
+    // A refused port is not a busy daemon. Keeping one is what let a dead
+    // daemon be handed back as healthy, so every later request blocked until
+    // its own timeout with nothing printed.
+    assert!(!should_keep_unresponsive_daemon(None, true, true));
+    assert!(!should_keep_unresponsive_daemon(Some(true), true, true));
 }
 
 #[test]
 fn unresponsive_daemon_pid_probe_failure_is_not_dead() {
-    let error = should_keep_unresponsive_daemon_after_pid_probe(None, Err("ps unavailable".into()))
-        .expect_err("unknown pid liveness must not become false");
+    let error =
+        should_keep_unresponsive_daemon_after_pid_probe(None, Err("ps unavailable".into()), false)
+            .expect_err("unknown pid liveness must not become false");
 
     assert!(
         error
@@ -135,10 +146,33 @@ fn unresponsive_daemon_pid_probe_failure_is_not_dead() {
 #[test]
 fn unresponsive_daemon_confirmed_dead_still_clears() {
     assert!(
-        !should_keep_unresponsive_daemon_after_pid_probe(None, Ok(false)).expect("confirmed dead")
+        !should_keep_unresponsive_daemon_after_pid_probe(None, Ok(false), false)
+            .expect("confirmed dead")
     );
     assert!(
-        should_keep_unresponsive_daemon_after_pid_probe(None, Ok(true)).expect("confirmed alive")
+        should_keep_unresponsive_daemon_after_pid_probe(None, Ok(true), false)
+            .expect("confirmed alive")
+    );
+}
+
+/// What happened on sam-strix on 2026-10-04: the daemon process was alive and
+/// its port refused every connection. It was handed back as healthy, so
+/// `aimux kill` blocked five minutes at 0% CPU and closed nothing, the agent
+/// reading that blamed the project service -- which was answering in 21ms --
+/// and ran `aimux restart`, which tears down the tmux runtime and took 37 live
+/// agents with it.
+#[test]
+fn a_live_pid_whose_port_refuses_is_not_kept() {
+    assert!(
+        !should_keep_unresponsive_daemon_after_pid_probe(None, Ok(true), true)
+            .expect("alive pid, refused port"),
+        "a daemon that is not serving must not be adopted because its pid exists"
+    );
+    // Still kept on a timeout: a daemon under real load may genuinely be slow,
+    // and clearing it there would restart a working control plane.
+    assert!(
+        should_keep_unresponsive_daemon_after_pid_probe(None, Ok(true), false)
+            .expect("alive pid, slow port")
     );
 }
 
@@ -382,6 +416,7 @@ fn stop_daemon_info_clears_state_and_returns_only_verified_services() {
         state,
         "SIGTERM",
         StopDaemonInfoHooks {
+            stop_without_restore: true,
             verify_project_service: Box::new(|_| false),
             verify_daemon_process: Box::new(|_| true),
             send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
@@ -410,6 +445,113 @@ fn stop_daemon_info_clears_state_and_returns_only_verified_services() {
         DaemonState::empty()
     );
     clear_daemon_info(resolver.daemon_info_path()).expect("clear is idempotent");
+}
+
+/// The pre-flight is the branch's central guard and had no test: every
+/// supervisor case sets `stop_without_restore: true`, which short-circuits it.
+///
+/// It must refuse before a single project is killed and before the daemon is
+/// signalled -- the half-torn-down machine is the thing it exists to prevent.
+#[test]
+fn stop_daemon_info_refuses_before_killing_anything_when_a_project_is_unrecorded() {
+    let test_dir = TestDir::new();
+    let mut resolver = test_dir.resolver();
+    let info = AimuxDaemonInfo {
+        pid: 9_999_991,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    let project_root = test_dir.path().join("repo");
+    std::fs::create_dir_all(&project_root).expect("repo root");
+    let project_root_text = project_root.to_string_lossy().into_owned();
+    let project = ProjectServiceState {
+        project_id: "project-1".into(),
+        project_root: project_root_text.clone(),
+        pid: 9_999_992,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+        status: None,
+        restart_count: None,
+        last_restart_at: None,
+        last_exit: None,
+    };
+    let state = DaemonState {
+        version: 1,
+        updated_at: Some(json!("now")),
+        projects: Map::from_iter([(
+            "project-1".into(),
+            serde_json::to_value(&project).expect("project JSON"),
+        )]),
+    };
+    save_daemon_info(resolver.daemon_info_path(), &info).expect("save daemon info");
+    save_daemon_state(resolver.daemon_state_path(), &state).expect("save daemon state");
+
+    // A running agent the restore snapshot knows nothing about.
+    let state_dir = resolver.project_state_dir_for(&project_root_text);
+    std::fs::create_dir_all(&state_dir).expect("state dir");
+    let mut topology = aimux::runtime_topology::empty_runtime_topology();
+    topology["rigs"] = json!([{
+        "id": "rig-1",
+        "name": "repo",
+        "projectRoot": project_root_text,
+        "createdAt": "2026-10-04T00:00:00.000Z",
+        "updatedAt": "2026-10-04T00:00:00.000Z",
+    }]);
+    topology["nodes"] = json!([{
+        "id": "node-1",
+        "rigId": "rig-1",
+        "logicalId": "codex-aaa",
+        "createdAt": "2026-10-04T00:00:00.000Z",
+    }]);
+    topology["sessions"] = json!([{
+        "id": "codex-aaa",
+        "nodeId": "node-1",
+        "status": "running",
+        "createdAt": "2026-10-04T00:00:00.000Z",
+        "updatedAt": "2026-10-04T00:00:00.000Z",
+    }]);
+    aimux::runtime_topology::write_runtime_topology(
+        aimux::runtime_topology::runtime_topology_path(&state_dir),
+        &topology,
+    )
+    .expect("seed topology");
+
+    let calls = RefCell::new(Vec::new());
+    let error = stop_daemon_info_with(
+        &resolver,
+        &info,
+        state,
+        "SIGTERM",
+        StopDaemonInfoHooks {
+            stop_without_restore: false,
+            verify_project_service: Box::new(|_: &ProjectServiceState| true),
+            verify_daemon_process: Box::new(|_: &AimuxDaemonInfo| true),
+            send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
+                calls.borrow_mut().push(format!("signal:{pid}:{signal}"));
+                Ok(())
+            }),
+            wait_project_exit: Box::new(|_: &ProjectServiceState, _| true),
+            wait_daemon_exit: Box::new(|_: &AimuxDaemonInfo, _| true),
+            stop_tmux_runtime: Box::new(|project: &ProjectServiceState| {
+                calls
+                    .borrow_mut()
+                    .push(format!("stop-tmux:{}", project.project_root));
+                Ok(Vec::new())
+            }),
+        },
+    )
+    .expect_err("an unrecorded running agent must stop the teardown");
+
+    assert!(
+        error.to_string().contains("codex-aaa"),
+        "the refusal must name the agent that would be lost: {error}"
+    );
+    assert!(
+        calls.borrow().is_empty(),
+        "nothing may be killed or signalled once the pre-flight refused: {:?}",
+        calls.borrow()
+    );
 }
 
 #[test]
@@ -451,6 +593,7 @@ fn stop_daemon_info_stops_verified_project_tmux_runtime_before_signaling() {
         state,
         "SIGTERM",
         StopDaemonInfoHooks {
+            stop_without_restore: true,
             verify_project_service: Box::new(|_: &ProjectServiceState| true),
             verify_daemon_process: Box::new(|_: &AimuxDaemonInfo| true),
             send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
@@ -532,6 +675,7 @@ fn stop_daemon_info_reports_project_service_escalation() {
         state,
         "SIGTERM",
         StopDaemonInfoHooks {
+            stop_without_restore: true,
             verify_project_service: Box::new(|_: &ProjectServiceState| true),
             verify_daemon_process: Box::new(|_: &AimuxDaemonInfo| true),
             send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
@@ -782,6 +926,7 @@ fn stop_daemon_info_refuses_to_signal_unverified_daemon_and_preserves_state() {
         state.clone(),
         "SIGTERM",
         StopDaemonInfoHooks {
+            stop_without_restore: true,
             verify_project_service: Box::new(|_| false),
             verify_daemon_process: Box::new(|_| false),
             send_signal_to_pid: Box::new(|pid: i32, signal: &str| {
@@ -823,4 +968,69 @@ fn lock_mtime_millis(path: &PathBuf) -> u128 {
         .duration_since(UNIX_EPOCH)
         .expect("mtime after epoch")
         .as_millis()
+}
+
+/// The five minutes of silence that misled an agent into destroying a running
+/// fleet. A request with no timeout sets no socket read timeout, so a wedged
+/// daemon -- one whose listener accepts and then never answers -- blocks the
+/// command indefinitely. The wait is not shortened, because `worktree create`
+/// legitimately runs for minutes; it is made audible instead.
+///
+/// This pins the shape the incident actually had: a refusal cannot produce it,
+/// because a refusal returns at once.
+#[test]
+fn a_wedged_daemon_request_ends_on_its_budget_rather_than_hanging() {
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let accepted = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buffer = [0_u8; 64];
+            let _ = stream.read(&mut buffer);
+            std::thread::sleep(std::time::Duration::from_millis(1_500));
+        }
+    });
+
+    let dir = std::env::temp_dir().join(format!(
+        "aimux-wedged-daemon-{}-{}",
+        std::process::id(),
+        port
+    ));
+    std::fs::create_dir_all(&dir).expect("fixture dir");
+    let info_path = dir.join("daemon.json");
+    std::fs::write(
+        &info_path,
+        serde_json::json!({
+            "pid": std::process::id(),
+            "port": port,
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "updatedAt": "2026-10-04T00:00:00.000Z",
+        })
+        .to_string(),
+    )
+    .expect("daemon info");
+
+    let started = std::time::Instant::now();
+    let result = aimux::core_command_transport::request_daemon_json_at(
+        "/health",
+        aimux::core_command_transport::DaemonRequestInit {
+            timeout_ms: Some(400),
+            ..Default::default()
+        },
+        &info_path,
+    );
+
+    assert!(
+        result.is_err(),
+        "a daemon that accepts and never answers must not read as success"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "a request carrying a budget must end on it, not hang: {:?}",
+        started.elapsed()
+    );
+    let _ = accepted.join();
+    let _ = std::fs::remove_dir_all(&dir);
 }
