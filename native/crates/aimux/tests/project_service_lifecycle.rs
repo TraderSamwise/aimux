@@ -4282,6 +4282,58 @@ fn worktree_graveyard_allows_a_live_status_whose_window_is_provably_gone() {
     cleanup(project);
 }
 
+/// A live-status session with no tmux window recorded at all reads as gone --
+/// on the server and on the dashboard alike.
+///
+/// This is deliberate and it is the narrow edge of the fix. A review asked for
+/// the server to refuse this case instead, on the grounds that `LIVE_STATUSES`
+/// includes `starting` and deleting a checkout under a launching agent is the
+/// expensive way to be wrong. It is not reachable from the launch route --
+/// `create_window` succeeds before the topology row is written, and
+/// `session_to_binding` requires a `tmuxTarget`, so a live row always has a
+/// binding -- and refusing here would put the server back out of step with the
+/// snapshot, which projects the same session to `offline` and so lets the
+/// client open the dialog. One of them refusing what the other allows is the
+/// whole bug this branch exists to close, so they agree, and this test is here
+/// to make the agreement a decision rather than an accident.
+#[test]
+fn a_live_session_with_no_window_recorded_reads_as_gone_on_both_sides() {
+    let project = temp_project("worktree-graveyard-unbound-session");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    // Drop the agent's binding, leaving the session row claiming `running`.
+    let topology_path = runtime_topology_path(&state_dir);
+    let mut topology = read_topology(&state_dir);
+    let bindings = topology["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|binding| binding["nodeId"] != "agent:codex-live")
+        .cloned()
+        .collect::<Vec<_>>();
+    topology["bindings"] = json!(bindings);
+    write_runtime_topology(topology_path, &topology).unwrap();
+
+    // tmux answered and holds the service window, so the query is not the
+    // reason the agent reads as gone -- the missing binding is.
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::from_pairs([("@service", "aimux")]));
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    cleanup(project);
+}
+
 /// And the other direction: tmux being unaskable is not evidence the agent died.
 ///
 /// A query that failed is not an empty window list. Treating it as one would
@@ -4307,6 +4359,14 @@ fn worktree_graveyard_still_refuses_when_tmux_cannot_be_asked() {
     .unwrap();
 
     assert_eq!(response.status, 409, "{:?}", response.body);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("while agent \"active agent\" is attached"),
+        "a refusal still has to name what is in the way: {:?}",
+        response.body
+    );
     assert_eq!(
         read_topology(&state_dir)["worktrees"][0]["status"],
         "active"

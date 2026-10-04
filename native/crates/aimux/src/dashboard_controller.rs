@@ -380,22 +380,6 @@ impl DashboardController {
         snapshot: &DesktopStateSnapshot,
         key: DashboardKey,
     ) -> DashboardControllerEffect {
-        let effect = self.handle_key_inner(snapshot, key);
-        // A newly dispatched action supersedes the last failure. Clearing on
-        // the *outcome* instead meant a slow success -- a graveyard is allowed
-        // 180s -- took down an unrelated refusal raised minutes later, because
-        // nothing tied an outcome to the alert it supposedly answered.
-        if matches!(effect, DashboardControllerEffect::Request(_)) {
-            self.footer_alert = None;
-        }
-        effect
-    }
-
-    fn handle_key_inner(
-        &mut self,
-        snapshot: &DesktopStateSnapshot,
-        key: DashboardKey,
-    ) -> DashboardControllerEffect {
         self.navigation.clamp(snapshot);
         self.footer_message = None;
         if self.launch_options.is_some() {
@@ -2782,12 +2766,13 @@ impl DashboardController {
         // failure card are two renderings of the same thing, so clearing one
         // without the other would leave the user chasing the remainder.
         //
-        // With nothing in the ledger there is no request to make, so the alert
-        // is taken here. With a ledger to clear, dispatching the request takes
-        // it -- taking it first discarded the refusal before the request meant
-        // to replace it existed, so a clear that 404'd lost both.
+        // Taken in both branches: this key is a deliberate dismissal of the
+        // whole error surface, and with a ledger to clear there is no later
+        // step that would take the line down. If the clear itself fails, that
+        // failure raises its own alert, which is the thing worth reading then.
+        let dismissed = self.footer_alert.take().is_some();
         if snapshot.operation_failures.is_empty() {
-            return if self.footer_alert.take().is_some() {
+            return if dismissed {
                 DashboardControllerEffect::Render
             } else {
                 DashboardControllerEffect::Ignored

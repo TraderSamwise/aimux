@@ -3099,6 +3099,44 @@ fn clearing_failures_also_dismisses_the_alert_line() {
     assert_eq!(controller.footer_alert, None);
 }
 
+/// And with a ledger to clear, which is the only branch a user with a failure
+/// ever reaches.
+///
+/// The golden snapshot's `operationFailures` is empty, so the test above only
+/// ever exercised the early return. The real path dispatches a clear request,
+/// and the line has to come down with the card.
+#[test]
+fn clearing_a_populated_ledger_also_dismisses_the_alert_line() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures = vec![DashboardOperationFailure {
+        id: "f1".into(),
+        target_kind: Some("worktree".into()),
+        operation: Some("graveyard".into()),
+        title: Some("Failed to graveyard worktree \"fix-chat\"".into()),
+        message: Some("Cannot graveyard \"fix-chat\" while agent \"claude\" is attached".into()),
+        created_at: None,
+        target_id: None,
+        worktree_path: None,
+        worktree_name: Some("fix-chat".into()),
+        target: Some("fix-chat".into()),
+        cleared: false,
+        extra: Default::default(),
+    }];
+    let mut controller = DashboardController::new(&snapshot);
+    controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
+
+    let effect = controller.handle_key(&snapshot, DashboardKey::ClearFailures);
+
+    assert!(
+        matches!(effect, DashboardControllerEffect::Request(_)),
+        "precondition: a populated ledger dispatches a clear"
+    );
+    assert_eq!(
+        controller.footer_alert, None,
+        "dismissing the surface has to take the line with the card"
+    );
+}
+
 /// Subscreens render the alert and raise their own (graveyard resurrect and
 /// delete both fail here), so the dismissal key has to reach them. Without it
 /// the only way to clear a failure was to leave the screen.
@@ -3240,10 +3278,14 @@ fn a_fresh_attempt_supersedes_the_previous_refusal() {
     );
 }
 
-/// Dispatching any action supersedes the failure on screen, so the alert cannot
-/// be clearing on an outcome that has nothing to do with it.
+/// An unrelated action does not take down the failure on screen.
+///
+/// Superseding on *any* dispatched request was the same uncorrelated clear as
+/// superseding on any successful outcome, moved one step earlier: stopping an
+/// agent in the main checkout erased a refusal about a different worktree.
+/// Only a fresh attempt at the same kind of action supersedes it.
 #[test]
-fn dispatching_an_action_takes_down_the_failure_on_screen() {
+fn an_unrelated_action_leaves_the_failure_on_screen() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
     controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
@@ -3253,9 +3295,13 @@ fn dispatching_an_action_takes_down_the_failure_on_screen() {
 
     assert!(
         matches!(effect, DashboardControllerEffect::Request(_)),
-        "precondition: this key dispatches a request"
+        "precondition: this key dispatches a request against a session"
     );
-    assert_eq!(controller.footer_alert, None);
+    assert_eq!(
+        controller.footer_alert.as_deref(),
+        Some("Cannot graveyard \"fix-chat\": agent attached"),
+        "stopping an agent is not an answer to a refused graveyard elsewhere"
+    );
 }
 
 /// And it must not refuse what the server would allow. An agent whose lane

@@ -2414,3 +2414,115 @@ fn a_failure_renders_as_an_alert_without_hiding_the_hints() {
         "the alert must read as an alert, not as chrome"
     );
 }
+
+/// The dismiss key is advertised on the alert that `X` takes down, and only on
+/// that one.
+///
+/// The hint row advertised `X` only while the ledger was non-empty, and the
+/// refusals this exists for never reach the ledger -- so the one surface that
+/// could say how to get rid of the bar was the one that stayed silent.
+/// Subscreens have no hint row at all. A refresh notice clears itself when the
+/// refresh succeeds, so offering a dismiss key on it would be a lie.
+#[test]
+fn only_a_dismissible_alert_advertises_the_key_that_dismisses_it() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = &fixture.runtime_light;
+
+    let alerts = [
+        DashboardFooterAlert {
+            message: "Dashboard data stale: connection refused; retrying",
+            dismissible: false,
+        },
+        DashboardFooterAlert {
+            message: "Cannot graveyard \"fix-chat\": agent \"claude\" is attached.",
+            dismissible: true,
+        },
+    ];
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 160,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        footer_alerts: &alerts,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    // Two lines, not one masking the other: a stale refresh and a refused
+    // action are both true, and they used to share a single slot.
+    let stale = plain
+        .lines()
+        .find(|line| line.contains("Dashboard data stale"))
+        .expect("the stale line");
+    let refusal = plain
+        .lines()
+        .find(|line| line.contains("Cannot graveyard"))
+        .expect("the refusal line");
+    assert_ne!(stale, refusal, "each alert gets its own line");
+    assert!(
+        refusal.contains("[X] dismiss"),
+        "a refusal has to say how to get rid of it: {refusal}"
+    );
+    assert!(
+        !stale.contains("[X] dismiss"),
+        "`X` does not clear a refresh error, so it must not be offered: {stale}"
+    );
+}
+/// A subscreen shows the alert, not just handles the key that dismisses it.
+///
+/// Graveyard resurrect and delete both fail here, and the subscreen footer is a
+/// fixed string with no room for a hint -- so if the bar does not render, a
+/// refusal raised on this screen is invisible and `X` dismisses something the
+/// user never saw. Every other subscreen test passes an empty alert list, so
+/// deleting the subscreen's render loop broke nothing.
+#[test]
+fn a_subscreen_renders_the_alert_and_how_to_dismiss_it() {
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Graveyard,
+        resource: None,
+        error: None,
+        selected_index: 0,
+        cols: 140,
+        rows: 36,
+        scroll_offset: 0,
+        footer_message: None,
+        footer_alerts: &[DashboardFooterAlert {
+            message: "Could not resurrect \"fix-chat\": the checkout is missing",
+            dismissible: true,
+        }],
+        details_sidebar_visible: false,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+    });
+
+    let plain = strip_ansi(&result.frame);
+    assert!(
+        plain.contains("Could not resurrect \"fix-chat\": the checkout is missing"),
+        "{plain}"
+    );
+    assert!(
+        plain.contains("[X] dismiss"),
+        "the subscreen footer has no hint row, so the bar has to carry it: {plain}"
+    );
+    assert!(
+        result.frame.contains("\x1b[31;7m ! \x1b[0m"),
+        "the alert must read as an alert here too, not as chrome"
+    );
+    // The screen's own footer survives alongside it.
+    assert!(plain.contains("q quit"), "{plain}");
+}

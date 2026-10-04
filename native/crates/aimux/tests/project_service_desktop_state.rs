@@ -514,6 +514,80 @@ fn route_desktop_state_reports_persisted_operation_failures() {
     assert_eq!(failures[0]["title"], "Worktree failed");
     assert_eq!(failures[0]["message"], "not a git repository");
     assert_eq!(failures[0]["worktreeName"], "feature");
+    // Derived by the service and published on the row, so neither the CLI card
+    // nor the app card walks its own chain of optional fields. Two of them used
+    // to, and they disagreed on which field named the thing that failed.
+    assert_eq!(failures[0]["target"], "feature");
+    cleanup(project);
+}
+
+/// A row with nothing to name omits the field rather than carrying `""`.
+///
+/// The app decided whether to repeat the target with `title.includes(target)`,
+/// and `includes("")` is always true, so an empty string rendered correctly by
+/// accident of that rather than by asking whether there was a target at all.
+#[test]
+fn route_desktop_state_omits_the_target_for_a_failure_with_nothing_to_name() {
+    let (project, state_dir) = write_desktop_state_fixtures("operation-failure-no-target");
+    add_dashboard_operation_failure(
+        &state_dir,
+        OperationFailureInput {
+            target_kind: "project".into(),
+            operation: "operation-failures.read".into(),
+            title: "Operation failure store unavailable".into(),
+            message: "permission denied".into(),
+            ..OperationFailureInput::default()
+        },
+    );
+    let isolation = support::TestIsolation::new("desktop-state-operation-failure-no-target");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+
+    assert_eq!(response.status, 200);
+    let failures = response.body["operationFailures"]
+        .as_array()
+        .expect("operation failures");
+    assert_eq!(failures.len(), 1);
+    assert!(
+        failures[0].get("target").is_none(),
+        "absent is not empty: {:?}",
+        failures[0]
+    );
+    cleanup(project);
+}
+
+/// An agent failure names the agent, not the repository it happens to sit in.
+///
+/// This is the shape the two chains disagreed on: a failed agent launch carries
+/// a session id and no worktree name, so the order that reached for the path
+/// first named the checkout while the order that reached for the id named the
+/// agent.
+#[test]
+fn route_desktop_state_names_the_agent_rather_than_its_checkout() {
+    let (project, state_dir) = write_desktop_state_fixtures("operation-failure-agent-target");
+    add_dashboard_operation_failure(
+        &state_dir,
+        OperationFailureInput {
+            target_kind: "agent".into(),
+            operation: "create".into(),
+            title: "Failed to create codex agent".into(),
+            message: "tmux refused a new window".into(),
+            target_id: Some("codex-ho1ofa".into()),
+            worktree_path: Some(project.to_string_lossy().into()),
+            ..OperationFailureInput::default()
+        },
+    );
+    let isolation = support::TestIsolation::new("desktop-state-operation-failure-agent-target");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+
+    assert_eq!(response.status, 200);
+    let failures = response.body["operationFailures"]
+        .as_array()
+        .expect("operation failures");
+    assert_eq!(failures[0]["target"], "codex-ho1ofa");
     cleanup(project);
 }
 

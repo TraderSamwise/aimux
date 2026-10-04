@@ -117,8 +117,13 @@ pub fn clear_dashboard_operation_failures(
 }
 
 pub fn list_dashboard_operation_failures(project_state_dir: impl AsRef<Path>) -> Vec<Value> {
-    try_list_dashboard_operation_failures(project_state_dir)
-        .unwrap_or_else(|error| vec![operation_failure_store_unavailable(error)])
+    try_list_dashboard_operation_failures(project_state_dir).unwrap_or_else(|error| {
+        // Through the same assembly as a stored row, so the clients are never
+        // the place that notices a record skipped it.
+        vec![with_derived_operation_failure_target(
+            operation_failure_store_unavailable(error),
+        )]
+    })
 }
 
 pub fn try_list_dashboard_operation_failures(

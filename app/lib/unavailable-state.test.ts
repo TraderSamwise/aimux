@@ -49,6 +49,26 @@ describe("unavailable state formatting", () => {
     });
   });
 
+  it("does not print the target twice when the title already names it", () => {
+    // The old fallback prepended the target unconditionally, so a record whose
+    // title already names it and carries no message read "fix-chat: Failed to
+    // graveyard worktree \"fix-chat\"" -- the exact doubling the redundancy
+    // check exists to prevent. Nothing more to say means an empty detail, and
+    // both cards render nothing for that.
+    expect(
+      summarizeOperationFailures([
+        {
+          worktreeName: "fix-chat",
+          target: "fix-chat",
+          title: 'Failed to graveyard worktree "fix-chat"',
+        },
+      ]),
+    ).toEqual({
+      title: 'Failed to graveyard worktree "fix-chat"',
+      detail: "",
+    });
+  });
+
   it("keeps daemon project read errors visible", () => {
     expect(
       formatDaemonProjectReadError({

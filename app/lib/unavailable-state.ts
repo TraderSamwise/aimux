@@ -46,12 +46,16 @@ export function summarizeOperationFailures(
     const [failure] = visible;
     const title = operationFailureTitle(failure);
     const message = stringField(failure.message);
+    // No `|| formatOperationFailure(..)` fallback. That fallback prepends the
+    // target unconditionally, so a record whose title already names its target
+    // and carries no message printed the name twice -- the exact doubling
+    // `redundantTarget` exists to prevent. A title with nothing to add to it
+    // gets an empty detail, which is the honest answer.
     return {
       title,
-      detail:
-        [redundantTarget(failure) ? "" : operationFailureTarget(failure), message]
-          .filter(Boolean)
-          .join(": ") || formatOperationFailure(failure),
+      detail: [redundantTarget(failure) ? "" : operationFailureTarget(failure), message]
+        .filter(Boolean)
+        .join(": "),
     };
   }
   return {

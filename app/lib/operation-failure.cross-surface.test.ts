@@ -66,20 +66,28 @@ describe("what the app's failure card shows", () => {
     });
   }
 
-  it("names the target on every row when there are several, the way the CLI card does", () => {
-    // Reverting the single-failure path to its old format passed this suite
-    // while the multi path listed bare titles: three refused graveyards read as
-    // the same sentence three times with nothing saying which worktrees. The
-    // CLI card renders title + target on every row, so this one does too.
-    const summary = summarizeOperationFailures(cases.map(published));
-    expect(summary?.title).toBe(`Project state has ${cases.length} operation failures`);
-    for (const entry of cases.slice(0, 3)) {
-      expect(summary?.detail).toContain(entry.title);
-      if (entry.target !== null && !entry.title.includes(entry.target)) {
-        expect(summary?.detail).toContain(entry.target);
+  // The card lists the first three and counts the rest, so a single pass only
+  // ever exercises three of the fixture's cases -- which left the two added for
+  // the shapes that break the old rule (a null target, and a title that does
+  // not spell its target) never reaching this assertion at all. Rotating puts
+  // every case in the rendered window.
+  for (let offset = 0; offset < cases.length; offset += 1) {
+    const window = Array.from({ length: 3 }, (_, i) => cases[(offset + i) % cases.length]);
+    it(`names the target on every row when there are several — from case ${offset + 1}`, () => {
+      // Reverting the single-failure path to its old format passed this suite
+      // while the multi path listed bare titles: three refused graveyards read
+      // as the same sentence three times with nothing saying which worktrees.
+      // The CLI card renders title + target on every row, so this one does too.
+      const summary = summarizeOperationFailures(window.map(published));
+      expect(summary?.title).toBe(`Project state has ${window.length} operation failures`);
+      for (const entry of window) {
+        expect(summary?.detail).toContain(entry.title);
+        if (entry.target !== null && !entry.title.includes(entry.target)) {
+          expect(summary?.detail).toContain(entry.target);
+        }
       }
-    }
-  });
+    });
+  }
 
   for (const testCase of cases) {
     it(`puts the target on its own row when the title omits it — ${testCase.why}`, () => {

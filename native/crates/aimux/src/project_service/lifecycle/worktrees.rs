@@ -622,13 +622,20 @@ fn attached_live_agent_label(
     path: &str,
     surface: &str,
 ) -> Option<String> {
-    let live_windows = LiveWindows::for_context(context, surface);
-    array_field(topology, "sessions")
+    // Narrowed to this checkout before tmux is asked anything. Building the
+    // inventory costs a subprocess, and most of these calls are for a worktree
+    // with no sessions at all.
+    let candidates = array_field(topology, "sessions")
         .into_iter()
-        .find(|session| {
-            string_field(session, "worktreePath") == path
-                && live_windows.session_is_live(session, topology)
-        })
+        .filter(|session| string_field(session, "worktreePath") == path)
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return None;
+    }
+    let live_windows = LiveWindows::for_context(context, surface);
+    candidates
+        .into_iter()
+        .find(|session| live_windows.session_is_live(session, topology))
         .map(|session| {
             trimmed_string(session.get("label"))
                 .or_else(|| trimmed_string(session.get("id")))
