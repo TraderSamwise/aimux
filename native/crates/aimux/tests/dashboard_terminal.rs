@@ -191,3 +191,36 @@ mod a_signal_is_not_a_key {
         );
     }
 }
+
+/// Why the render loop checks `is_terminal()` before waiting on stdin at all.
+///
+/// A regular file is always readable and never hangs up, so the wait returns
+/// true forever while the read behind it yields nothing. The hangup guard
+/// cannot catch this one; only not polling a non-terminal can.
+mod why_a_non_terminal_is_never_polled {
+    use aimux::dashboard_terminal::wait_for_input_on_fd;
+    use std::os::fd::AsRawFd;
+    use std::time::Duration;
+
+    #[test]
+    fn a_regular_file_reports_itself_readable_forever() {
+        let path = std::env::temp_dir().join(format!(
+            "aimux-dashboard-nonterminal-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"").expect("write empty file");
+        let file = std::fs::File::open(&path).expect("open file");
+
+        for _ in 0..3 {
+            assert!(
+                wait_for_input_on_fd(file.as_raw_fd(), Duration::from_millis(50)),
+                "an empty regular file still polls readable, which is the spin"
+            );
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+}

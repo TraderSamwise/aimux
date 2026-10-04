@@ -485,3 +485,36 @@ fn a_jump_whose_checkout_has_gone_enters_nothing_anywhere() {
     );
     assert_eq!(state.level, DashboardNavLevel::Worktrees);
 }
+
+/// Cancelling a jump with `0` leaves the highlight on the checkout it named,
+/// not on the row index that checkout used to occupy. The next key acts on
+/// wherever the highlight is, so a stale index points it at a stranger.
+#[test]
+fn cancelling_a_jump_still_leaves_the_highlight_where_it_was_put() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let named = state
+        .focused_worktree_path(&snapshot)
+        .expect("digit 2 focused a checkout")
+        .to_owned();
+
+    let mut shifted = snapshot.clone();
+    let mut ahead = shifted.worktree_groups[1].clone();
+    ahead.name = "arrived-ahead".into();
+    ahead.path = Some("<AHEAD>".to_owned());
+    ahead.sessions.clear();
+    ahead.services.clear();
+    shifted.worktree_groups.insert(0, ahead);
+
+    assert_eq!(
+        state.handle_digit(&shifted, '0'),
+        DashboardNavigationOutcome::Changed
+    );
+    assert_eq!(
+        state.focused_worktree_path(&shifted),
+        Some(named.as_str()),
+        "cancelling left the highlight on the row index, not the checkout"
+    );
+    assert_eq!(state.quick_jump_digits, "");
+}

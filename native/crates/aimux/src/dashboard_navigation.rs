@@ -333,6 +333,12 @@ impl DashboardNavigationState {
         let had_pending_worktree_digit = !self.quick_jump_digits.is_empty();
         if digit == '0' {
             if had_pending_worktree_digit {
+                // Cancelling the jump still leaves the highlight on the
+                // checkout it named, for the same reason completing it does:
+                // the next key acts on wherever the highlight is.
+                if let Some(anchor) = self.quick_jump_anchor.take() {
+                    self.follow_quick_jump_group(snapshot, &anchor);
+                }
                 self.clear_quick_jump();
                 return DashboardNavigationOutcome::Changed;
             }
@@ -353,21 +359,14 @@ impl DashboardNavigationState {
         // ahead of its siblings -- and every index and digit is renumbered by
         // that. The user read `2` and `1` off one screen; they meant one row.
         if let Some(anchor) = self.quick_jump_anchor.take() {
-            // The highlight follows the checkout first and unconditionally,
-            // because `2` on its own already moved it there and the user can
-            // see where it is. Leaving it on the index that checkout occupied
-            // a moment ago means the next `j` or `x` lands on whichever
-            // checkout has since slid into that row.
             let group_index = dashboard_navigation_groups(snapshot)
                 .iter()
                 .position(|group| navigation_group_identity(group) == anchor.group);
             // The highlight follows the checkout, because `2` already moved it
-            // there and the user can see where it is. Only when it is still
+            // there and the user can see where it is. Only while it is still
             // there, though: a checkout that has gone resolves no row, and a
             // stale index would resolve one in whatever slid into its place.
-            if let Some(group_index) = group_index {
-                self.worktree_index = group_index;
-            }
+            self.follow_quick_jump_group(snapshot, &anchor);
             let outcome = group_index
                 .and_then(|group_index| {
                     self.select_anchored_entry(snapshot, &anchor, value, group_index)
@@ -380,6 +379,23 @@ impl DashboardNavigationState {
         match self.select_entry_digit(snapshot, value) {
             DashboardNavigationOutcome::Ignored => DashboardNavigationOutcome::Changed,
             outcome => outcome,
+        }
+    }
+
+    /// Put the highlight back on the checkout the pending digit named,
+    /// wherever the list has since moved it to. Left alone when that checkout
+    /// is gone: there is nowhere right to put it, and the index it used to
+    /// occupy now belongs to something else.
+    fn follow_quick_jump_group(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        anchor: &QuickJumpAnchor,
+    ) {
+        if let Some(index) = dashboard_navigation_groups(snapshot)
+            .iter()
+            .position(|group| navigation_group_identity(group) == anchor.group)
+        {
+            self.worktree_index = index;
         }
     }
 
