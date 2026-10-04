@@ -336,7 +336,7 @@ impl DashboardNavigationState {
                 // Cancelling the jump still leaves the highlight on the
                 // checkout it named, for the same reason completing it does:
                 // the next key acts on wherever the highlight is.
-                if let Some(anchor) = self.quick_jump_anchor.take() {
+                if let Some(anchor) = self.quick_jump_anchor.clone() {
                     self.follow_quick_jump_group(snapshot, &anchor);
                 }
                 self.clear_quick_jump();

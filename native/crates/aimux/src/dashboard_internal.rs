@@ -836,17 +836,26 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 {
                     statusline_dirty = true;
                 }
-                // Published from here only on the frame that is dispatching
-                // something, because that frame can hide this dashboard and
-                // the refresh that would otherwise publish it never runs.
+                // Published from here only when nothing else will. A frame
+                // that is dispatching can hide this dashboard before the
+                // refresh behind it runs, and a subscreen has no refresh
+                // behind it at all, because only the dashboard screen defers
+                // one.
                 //
                 // Every other move waits for that refresh, which is not
                 // politeness: `statusline/refresh` invalidates the runtime
                 // view, `desktop-state` is in it, and the event comes back to
                 // this dashboard as a reason to fetch. Publishing per keypress
                 // would hand back, one round trip later, exactly the fetch the
-                // frame was cheap for skipping.
-                if !deferred_requests.is_empty()
+                // frame was cheap for skipping. A subscreen pays nothing for
+                // the exception: it writes its screen once on arrival and
+                // reports no change after, so scrolling one republishes
+                // nothing.
+                let nothing_else_will_publish_it = dashboard_frame_must_publish_statusline(
+                    !deferred_requests.is_empty(),
+                    controller.screen,
+                );
+                if nothing_else_will_publish_it
                     && statusline_dirty
                     && let (Some(endpoint), Some(ui_state)) =
                         (latest_endpoint.as_ref(), ui_state.as_ref())
@@ -1162,6 +1171,24 @@ struct DashboardRenderSourceInput {
     render_from_data: bool,
     selection_move_pending: bool,
     forced_refresh: bool,
+}
+
+/// Whether this cached frame has to publish the statusline itself, rather than
+/// leaving it to the refresh it deferred.
+///
+/// Leaving it is the default and it is the cheap one, because
+/// `statusline/refresh` invalidates the runtime view -- `desktop-state` is in
+/// it -- so the POST comes back to this dashboard as a reason to fetch. Doing
+/// it per keypress hands back, one round trip later, exactly the fetch the
+/// frame was cheap for skipping.
+///
+/// Two frames have nobody to leave it to. One that is dispatching can hide
+/// this dashboard before the refresh behind it runs. And a subscreen has no
+/// refresh behind it at all, since only the dashboard screen defers one -- a
+/// subscreen that left it would keep the tab bar pointing at Dashboard for as
+/// long as the user stayed.
+fn dashboard_frame_must_publish_statusline(dispatching: bool, screen: DashboardScreen) -> bool {
+    dispatching || screen != DashboardScreen::Dashboard
 }
 
 /// Whether the tmux statusline still has to be told about a persisted change.
@@ -3466,6 +3493,44 @@ mod tests {
             !dashboard_statusline_due(from_deferred_refresh, false),
             "without the carry the move is never published"
         );
+    }
+
+    /// A cached frame leaves the statusline to the refresh it deferred, because
+    /// publishing invalidates the runtime view and the event comes straight
+    /// back as the fetch the frame just skipped.
+    ///
+    /// Two frames have nothing to leave it to, and both have been a bug: the
+    /// dispatching frame, which can hide this dashboard before that refresh
+    /// runs, and any subscreen, which defers no refresh at all and would sit
+    /// there with the tab bar still reading Dashboard.
+    #[test]
+    fn a_frame_with_nobody_behind_it_publishes_the_statusline_itself() {
+        assert!(dashboard_frame_must_publish_statusline(
+            true,
+            DashboardScreen::Dashboard
+        ));
+        for screen in [
+            DashboardScreen::Topology,
+            DashboardScreen::Graveyard,
+            DashboardScreen::Coordination,
+            DashboardScreen::Project,
+            DashboardScreen::Library,
+            DashboardScreen::Help,
+        ] {
+            assert!(
+                dashboard_frame_must_publish_statusline(false, screen),
+                "{screen:?} defers no refresh, so nothing else would ever say it is showing"
+            );
+        }
+    }
+
+    /// And an ordinary pointer move does leave it, which is the whole point.
+    #[test]
+    fn an_ordinary_move_leaves_the_statusline_to_the_deferred_refresh() {
+        assert!(!dashboard_frame_must_publish_statusline(
+            false,
+            DashboardScreen::Dashboard
+        ));
     }
 
     /// The subscreen frame is actually given the alert, not merely able to
