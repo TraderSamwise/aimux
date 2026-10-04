@@ -794,12 +794,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 // until the user comes back, so a selection left unwritten is
                 // the selection they do not return to.
                 //
-                // Not mid-chord, though: `2` alone has no selected entry, and
-                // persisting that state erases the one already on disk.
-                let worth_persisting = controller.screen == DashboardScreen::Dashboard
-                    && controller.navigation.quick_jump_digits.is_empty();
-                if worth_persisting
-                    && let Some(ui_state) = ui_state.as_mut()
+                if let Some(ui_state) = ui_state.as_mut()
                     && ui_state
                         .persist_controller_state(
                             controller.screen,

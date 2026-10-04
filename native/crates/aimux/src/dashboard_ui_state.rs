@@ -475,8 +475,14 @@ fn persist_selected_entry(
     navigation: &DashboardNavigationState,
 ) {
     let Some(entry) = navigation.selected_entry(snapshot) else {
-        remove_object_key(state, "selectedEntryKind");
-        remove_object_key(state, "selectedEntryId");
+        // A pending jump digit is a transient, not a deselection. `2` on its
+        // way to `2` `1` has no entry yet, and forgetting the row here is the
+        // row the user does not come back to when they leave the agent they
+        // were about to enter.
+        if navigation.quick_jump_digits.is_empty() {
+            remove_object_key(state, "selectedEntryKind");
+            remove_object_key(state, "selectedEntryId");
+        }
         return;
     };
     match entry {
