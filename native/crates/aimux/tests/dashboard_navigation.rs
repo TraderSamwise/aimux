@@ -437,3 +437,51 @@ fn a_jump_that_enters_nothing_still_moves_the_highlight() {
         "the highlight was left on the row index, not on the checkout"
     );
 }
+
+/// A checkout that has gone resolves no row at all. The dangerous shape is a
+/// stale index plus an id that exists in whatever slid into that position:
+/// sessions are listed by the group that holds them regardless of their own
+/// worktree path, so one id really can appear in two groups.
+///
+/// Resolving the row against that index enters an agent in a checkout the user
+/// never named, and it looks like the jump worked.
+#[test]
+fn a_jump_whose_checkout_has_gone_enters_nothing_anywhere() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let counted = snapshot.worktree_groups[1].sessions[0].id.clone();
+
+    // The named checkout goes, and another takes its index while still listing
+    // the very row that was counted.
+    let mut removed = snapshot.clone();
+    let mut successor = snapshot.worktree_groups[1].clone();
+    successor.name = "took-its-place".into();
+    successor.path = Some("<SUCCESSOR>".to_owned());
+    for session in &mut successor.sessions {
+        session.worktree_path = Some("<SUCCESSOR>".to_owned());
+    }
+    for service in &mut successor.services {
+        service.worktree_path = Some("<SUCCESSOR>".to_owned());
+    }
+    removed.worktree_groups[1] = successor;
+    for session in &mut removed.sessions {
+        if session.worktree_path.as_deref() == Some("<WORKTREE>") {
+            session.worktree_path = Some("<SUCCESSOR>".to_owned());
+        }
+    }
+    for service in &mut removed.services {
+        if service.worktree_path.as_deref() == Some("<WORKTREE>") {
+            service.worktree_path = Some("<SUCCESSOR>".to_owned());
+        }
+    }
+
+    let outcome = state.handle_digit(&removed, '1');
+
+    assert_eq!(
+        outcome,
+        DashboardNavigationOutcome::Changed,
+        "the jump entered {counted} in a checkout that was never named"
+    );
+    assert_eq!(state.level, DashboardNavLevel::Worktrees);
+}

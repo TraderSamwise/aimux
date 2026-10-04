@@ -358,18 +358,23 @@ impl DashboardNavigationState {
             // see where it is. Leaving it on the index that checkout occupied
             // a moment ago means the next `j` or `x` lands on whichever
             // checkout has since slid into that row.
-            let groups = dashboard_navigation_groups(snapshot);
-            if let Some(group_index) = groups
+            let group_index = dashboard_navigation_groups(snapshot)
                 .iter()
-                .position(|group| navigation_group_identity(group) == anchor.group)
-            {
+                .position(|group| navigation_group_identity(group) == anchor.group);
+            // The highlight follows the checkout, because `2` already moved it
+            // there and the user can see where it is. Only when it is still
+            // there, though: a checkout that has gone resolves no row, and a
+            // stale index would resolve one in whatever slid into its place.
+            if let Some(group_index) = group_index {
                 self.worktree_index = group_index;
             }
-            let outcome = self.select_anchored_entry(snapshot, &anchor, value);
+            let outcome = group_index
+                .and_then(|group_index| {
+                    self.select_anchored_entry(snapshot, &anchor, value, group_index)
+                })
+                .unwrap_or(DashboardNavigationOutcome::Changed);
             self.clear_quick_jump();
-            // No row, so nothing is entered: resolving against whatever has
-            // shifted into that position is how a jump enters the wrong agent.
-            return outcome.unwrap_or(DashboardNavigationOutcome::Changed);
+            return outcome;
         }
         self.clear_quick_jump();
         match self.select_entry_digit(snapshot, value) {
@@ -384,9 +389,9 @@ impl DashboardNavigationState {
         snapshot: &'a DesktopStateSnapshot,
         anchor: &QuickJumpAnchor,
         digit: usize,
+        group_index: usize,
     ) -> Option<DashboardNavigationOutcome<'a>> {
         let wanted = anchor.entries.get(digit.checked_sub(1)?)?;
-        let group_index = self.worktree_index;
         let item_index = dashboard_navigation_groups(snapshot)
             .get(group_index)?
             .entries

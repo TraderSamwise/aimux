@@ -766,6 +766,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             let render_source = dashboard_render_source(DashboardRenderSourceInput {
                 has_snapshot: latest_snapshot.is_some(),
                 rendered_once,
+                render_requested: render_now,
                 screen: controller
                     .as_ref()
                     .map(|controller| controller.screen)
@@ -864,9 +865,6 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     controller.as_mut(),
                     &request_outcomes_tx,
                 );
-                if options.once {
-                    return Ok(());
-                }
             } else {
                 let refresh = resolve_dashboard_snapshot_refresh(
                     latest_snapshot.as_ref(),
@@ -1122,14 +1120,19 @@ enum DashboardRenderSource {
 /// for a round trip is what `2` `1` felt like: two fetches before the agent is
 /// attached, one per digit.
 ///
-/// Everything that could make the held snapshot the wrong thing to paint takes
-/// `Refresh` instead, because a cached frame cannot show what it does not hold:
+/// A frame nothing asked for is the fallback tick, which exists precisely to go
+/// and look -- so it fetches however long a subscreen has been sitting there.
+///
+/// Everything else that could make the held snapshot the wrong thing to paint
+/// takes `Refresh` too, because a cached frame cannot show what it does not
+/// hold:
 /// a new optimistic overlay, a reordered row, a changed offline filter, data
 /// that has just arrived, or a pointer the loop is about to move itself.
 #[derive(Debug, Clone, Copy)]
 struct DashboardRenderSourceInput {
     has_snapshot: bool,
     rendered_once: bool,
+    render_requested: bool,
     screen: DashboardScreen,
     input_driven: bool,
     cacheable_input: bool,
@@ -1187,6 +1190,7 @@ fn dashboard_refresh_deferral_expired(
 fn dashboard_render_source(input: DashboardRenderSourceInput) -> DashboardRenderSource {
     let cacheable = input.has_snapshot
         && input.rendered_once
+        && input.render_requested
         && !input.render_from_data
         && !input.selection_move_pending
         && !input.forced_refresh
@@ -3140,6 +3144,7 @@ mod tests {
             dashboard_render_source(DashboardRenderSourceInput {
                 has_snapshot: true,
                 rendered_once: true,
+                render_requested: true,
                 screen: DashboardScreen::Dashboard,
                 input_driven: true,
                 cacheable_input: true,
@@ -3231,6 +3236,7 @@ mod tests {
             dashboard_render_source(DashboardRenderSourceInput {
                 has_snapshot: true,
                 rendered_once: true,
+                render_requested: true,
                 screen: DashboardScreen::Dashboard,
                 input_driven,
                 cacheable_input,
@@ -3265,6 +3271,31 @@ mod tests {
         }
     }
 
+    /// The fallback tick exists to go and look, so it always does -- including
+    /// on a subscreen, which arms no deferral of its own. Serving it from the
+    /// held snapshot leaves someone sitting on Coordination reading rows from
+    /// minutes ago with nothing ever going back for more.
+    #[test]
+    fn the_tick_nobody_asked_for_always_goes_and_looks() {
+        for screen in [DashboardScreen::Dashboard, DashboardScreen::Coordination] {
+            assert_eq!(
+                dashboard_render_source(DashboardRenderSourceInput {
+                    has_snapshot: true,
+                    rendered_once: true,
+                    render_requested: false,
+                    screen,
+                    input_driven: false,
+                    cacheable_input: true,
+                    render_from_data: false,
+                    selection_move_pending: false,
+                    forced_refresh: false,
+                }),
+                DashboardRenderSource::Refresh,
+                "{screen:?}"
+            );
+        }
+    }
+
     /// Nothing is cached before there is something to cache.
     #[test]
     fn the_first_frame_always_loads() {
@@ -3273,6 +3304,7 @@ mod tests {
                 dashboard_render_source(DashboardRenderSourceInput {
                     has_snapshot,
                     rendered_once,
+                    render_requested: true,
                     screen: DashboardScreen::Dashboard,
                     input_driven: true,
                     cacheable_input: true,
@@ -3286,16 +3318,17 @@ mod tests {
         }
     }
 
-    /// A subscreen renders its own resource, so it keeps painting from the held
-    /// snapshot even on a repaint no key asked for -- but not while a refresh
-    /// request is in flight, which is the latch that would wedge every later
-    /// event-driven refresh behind a frame that never refreshed.
+    /// A subscreen renders its own resource, so a repaint it asked for paints
+    /// from the held snapshot -- but not while a refresh request is in flight,
+    /// which is the latch that would wedge every later event-driven refresh
+    /// behind a frame that never refreshed.
     #[test]
     fn a_subscreen_keeps_its_cached_frame_but_not_over_a_consumed_refresh() {
         assert_eq!(
             dashboard_render_source(DashboardRenderSourceInput {
                 has_snapshot: true,
                 rendered_once: true,
+                render_requested: true,
                 screen: DashboardScreen::Coordination,
                 input_driven: false,
                 cacheable_input: true,
@@ -3309,6 +3342,7 @@ mod tests {
             dashboard_render_source(DashboardRenderSourceInput {
                 has_snapshot: true,
                 rendered_once: true,
+                render_requested: true,
                 screen: DashboardScreen::Coordination,
                 input_driven: false,
                 cacheable_input: true,
