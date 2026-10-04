@@ -47,6 +47,19 @@ pub struct DashboardNavigationState {
     pub worktree_index: usize,
     pub item_index: usize,
     pub quick_jump_digits: String,
+    /// The checkout the pending digit was read off, and the rows that were
+    /// under it at the time, so the second digit lands on what was on screen
+    /// if the list is rebuilt in the gap between the two.
+    quick_jump_anchor: Option<QuickJumpAnchor>,
+}
+
+/// What `2` was pointing at, kept so `1` can mean the same thing a moment
+/// later. Both halves are needed: a group can move within the list, and the
+/// rows inside it are sorted by creation, so an agent appearing renumbers them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuickJumpAnchor {
+    group: String,
+    entries: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +107,7 @@ impl DashboardNavigationState {
             worktree_index: default_navigation_group_index(&groups),
             item_index: 0,
             quick_jump_digits: String::new(),
+            quick_jump_anchor: None,
         };
         state.clamp(snapshot);
         state
@@ -319,6 +333,12 @@ impl DashboardNavigationState {
         let had_pending_worktree_digit = !self.quick_jump_digits.is_empty();
         if digit == '0' {
             if had_pending_worktree_digit {
+                // Cancelling the jump still leaves the highlight on the
+                // checkout it named, for the same reason completing it does:
+                // the next key acts on wherever the highlight is.
+                if let Some(anchor) = self.quick_jump_anchor.take() {
+                    self.follow_quick_jump_group(snapshot, &anchor);
+                }
                 self.clear_quick_jump();
                 return DashboardNavigationOutcome::Changed;
             }
@@ -333,15 +353,76 @@ impl DashboardNavigationState {
         if self.quick_jump_digits.is_empty() {
             return self.focus_group_digit(snapshot, value);
         }
-        self.quick_jump_digits.clear();
+        // Resolve against what was on screen when `2` was pressed, not against
+        // the list as it stands now. Between the two digits an event can
+        // arrive and rebuild it -- a group moves, an agent appears and sorts
+        // ahead of its siblings -- and every index and digit is renumbered by
+        // that. The user read `2` and `1` off one screen; they meant one row.
+        if let Some(anchor) = self.quick_jump_anchor.take() {
+            let group_index = dashboard_navigation_groups(snapshot)
+                .iter()
+                .position(|group| navigation_group_identity(group) == anchor.group);
+            // The highlight follows the checkout, because `2` already moved it
+            // there and the user can see where it is. Only while it is still
+            // there, though: a checkout that has gone resolves no row, and a
+            // stale index would resolve one in whatever slid into its place.
+            self.follow_quick_jump_group(snapshot, &anchor);
+            let outcome = group_index
+                .and_then(|group_index| {
+                    self.select_anchored_entry(snapshot, &anchor, value, group_index)
+                })
+                .unwrap_or(DashboardNavigationOutcome::Changed);
+            self.clear_quick_jump();
+            return outcome;
+        }
+        self.clear_quick_jump();
         match self.select_entry_digit(snapshot, value) {
             DashboardNavigationOutcome::Ignored => DashboardNavigationOutcome::Changed,
             outcome => outcome,
         }
     }
 
+    /// Put the highlight back on the checkout the pending digit named,
+    /// wherever the list has since moved it to. Left alone when that checkout
+    /// is gone: there is nowhere right to put it, and the index it used to
+    /// occupy now belongs to something else.
+    fn follow_quick_jump_group(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        anchor: &QuickJumpAnchor,
+    ) {
+        if let Some(index) = dashboard_navigation_groups(snapshot)
+            .iter()
+            .position(|group| navigation_group_identity(group) == anchor.group)
+        {
+            self.worktree_index = index;
+        }
+    }
+
+    /// The row the user counted, found again by its id wherever it now sits.
+    fn select_anchored_entry<'a>(
+        &mut self,
+        snapshot: &'a DesktopStateSnapshot,
+        anchor: &QuickJumpAnchor,
+        digit: usize,
+        group_index: usize,
+    ) -> Option<DashboardNavigationOutcome<'a>> {
+        let wanted = anchor.entries.get(digit.checked_sub(1)?)?;
+        let item_index = dashboard_navigation_groups(snapshot)
+            .get(group_index)?
+            .entries
+            .iter()
+            .position(|entry| entry.id == wanted)?;
+        let entry = entry_at(snapshot, group_index, item_index)?;
+        self.level = DashboardNavLevel::Sessions;
+        self.worktree_index = group_index;
+        self.item_index = item_index;
+        Some(DashboardNavigationOutcome::EntrySelected(entry))
+    }
+
     pub fn clear_quick_jump(&mut self) {
         self.quick_jump_digits.clear();
+        self.quick_jump_anchor = None;
     }
 
     pub fn clamp(&mut self, snapshot: &DesktopStateSnapshot) {
@@ -384,6 +465,14 @@ impl DashboardNavigationState {
         self.worktree_index = index;
         self.item_index = 0;
         self.quick_jump_digits = digit.to_string();
+        self.quick_jump_anchor = groups.get(index).map(|group| QuickJumpAnchor {
+            group: navigation_group_identity(group),
+            entries: group
+                .entries
+                .iter()
+                .map(|entry| entry.id.to_owned())
+                .collect(),
+        });
         DashboardNavigationOutcome::Changed
     }
 
@@ -404,6 +493,17 @@ impl DashboardNavigationState {
         self.clear_quick_jump();
         DashboardNavigationOutcome::EntrySelected(entry)
     }
+}
+
+/// What names a navigation group across a rebuild of the list.
+///
+/// The checkout path where there is one. The supervisor lane and the main
+/// checkout have none, so they fall back to the name, which is fixed for both.
+fn navigation_group_identity(group: &DashboardNavigationGroup<'_>) -> String {
+    group
+        .path
+        .map(str::to_owned)
+        .unwrap_or_else(|| group.name.to_owned())
 }
 
 fn entry_count(snapshot: &DesktopStateSnapshot, worktree_index: usize) -> usize {

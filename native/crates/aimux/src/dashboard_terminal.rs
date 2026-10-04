@@ -4,6 +4,8 @@ use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub const TERMINAL_RESTORE_SEQUENCE: &str = "\x1b[0m\x1b[?25h\x1b[?1l\x1b>\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?2004l\x1b[?1049l";
 static TERMINAL_RESIZED: AtomicBool = AtomicBool::new(false);
@@ -106,6 +108,83 @@ pub fn read_dashboard_keys(input: &mut impl Read) -> io::Result<Vec<DashboardKey
         Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(Vec::new()),
         Err(error) => Err(error),
     }
+}
+
+/// Wait up to `timeout` for a key, rather than sleeping through it.
+///
+/// The dashboard loop used to sleep a flat interval between reads, so every
+/// keypress waited out the remainder of one -- and a two-key jump waited out
+/// two. The timeout is the same interval, so the loop's own cadences are
+/// unchanged; only a key arriving is faster.
+///
+/// Returns whether input is readable. A hangup is deliberately not readable:
+/// `poll` reports `POLLHUP` immediately and forever, and the read behind it
+/// yields nothing, so answering true would turn this into a spin.
+pub fn wait_for_dashboard_input(timeout: Duration) -> bool {
+    wait_for_input_on_fd(libc::STDIN_FILENO, timeout)
+}
+
+/// The same wait against an explicit descriptor, so the two cases that would
+/// turn it into a spin can be put under test.
+#[cfg(unix)]
+pub fn wait_for_input_on_fd(fd: i32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        let remaining = deadline - now;
+        let mut poll_fd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // Rounded up, because `poll` takes whole milliseconds and truncating
+        // would return a few hundred microseconds early every time round.
+        let ready = unsafe {
+            libc::poll(
+                &mut poll_fd,
+                1,
+                remaining
+                    .as_nanos()
+                    .div_ceil(1_000_000)
+                    .min(i32::MAX as u128) as i32,
+            )
+        };
+        if ready == 0 {
+            continue;
+        }
+        if ready < 0 {
+            // A signal, not a key. `poll` returns EINTR however the handler was
+            // installed, and SIGWINCH arrives many times a second while a window
+            // is being dragged -- returning here would let the signal rate pace
+            // the render loop, which is what `sleep` never did.
+            if io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            thread::sleep(remaining);
+            return false;
+        }
+        // `POLLHUP` and not merely the absence of `POLLIN`: a descriptor at
+        // EOF reports itself READABLE -- a read would return zero bytes
+        // without blocking -- so a plain `POLLIN` check answers true forever
+        // on a closed stdin and turns this wait into a busy loop. A hangup
+        // means no key is ever arriving, so it costs the interval silence does.
+        let readable = poll_fd.revents & libc::POLLIN != 0
+            && poll_fd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) == 0;
+        if readable {
+            return true;
+        }
+        thread::sleep(remaining);
+        return false;
+    }
+}
+
+#[cfg(not(unix))]
+pub fn wait_for_input_on_fd(_fd: i32, timeout: Duration) -> bool {
+    thread::sleep(timeout);
+    false
 }
 
 pub fn ensure_dashboard_stdin_nonblocking() -> io::Result<()> {

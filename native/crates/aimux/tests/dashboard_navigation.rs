@@ -302,3 +302,219 @@ fn leaves_the_selection_alone_for_an_agent_that_is_not_on_screen() {
         before
     );
 }
+
+/// The gap between `2` and `1` is a real gap -- a tenth of a second, in which
+/// an event can arrive and the list can be rebuilt. The second digit has to
+/// land in the checkout the first one highlighted, not at the row index that
+/// checkout happened to occupy at the time.
+///
+/// Without this the keystroke enters an agent in a different worktree, which is
+/// the worst outcome a navigation shortcut has: it looks like it worked.
+#[test]
+fn the_second_digit_lands_in_the_group_the_first_one_named() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let highlighted = state
+        .focused_worktree_path(&snapshot)
+        .expect("digit 2 focused a checkout")
+        .to_owned();
+
+    // A group appears ahead of it, so every index below shifts by one.
+    let mut reordered = snapshot.clone();
+    let mut inserted = reordered.worktree_groups[1].clone();
+    inserted.name = "inserted-ahead".into();
+    inserted.path = Some("<INSERTED>".to_owned());
+    inserted.sessions.clear();
+    inserted.services.clear();
+    reordered.worktree_groups.insert(0, inserted);
+
+    state.handle_digit(&reordered, '1');
+
+    assert_eq!(
+        state.focused_worktree_path(&reordered),
+        Some(highlighted.as_str()),
+        "the jump followed the row index instead of the digit"
+    );
+    assert_eq!(state.level, DashboardNavLevel::Sessions);
+}
+
+/// The same gap, one level down. Rows inside a checkout are sorted by when
+/// they were created, so an agent appearing between `2` and `1` pushes every
+/// row the user counted down by one.
+///
+/// Anchoring the checkout alone was not enough: the jump found the right
+/// worktree and then entered the wrong agent inside it.
+#[test]
+fn the_second_digit_lands_on_the_row_the_user_counted() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let counted = snapshot.worktree_groups[1].sessions[0].id.clone();
+
+    // A newer agent sorts ahead of it, so what was row 1 is now row 2.
+    let mut reordered = snapshot.clone();
+    let mut ahead = reordered.worktree_groups[1].sessions[0].clone();
+    ahead.id = "arrived-first".into();
+    ahead.tmux_window_index = Some(0);
+    reordered.worktree_groups[1].sessions.insert(0, ahead);
+
+    let outcome = state.handle_digit(&reordered, '1');
+
+    match outcome {
+        DashboardNavigationOutcome::EntrySelected(DashboardEntryRef::Session(session)) => {
+            assert_eq!(
+                session.id, counted,
+                "the jump entered the row that moved into position, not the one counted"
+            );
+        }
+        other => panic!("expected the counted row to be entered, got {other:?}"),
+    }
+}
+
+/// And when the row is simply gone, nothing is entered on a guess. Resolving
+/// against whatever has shifted into that position is how a jump enters an
+/// agent the user never saw.
+#[test]
+fn a_jump_whose_row_has_gone_enters_nothing() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+
+    let gone = snapshot.worktree_groups[1].sessions[0].id.clone();
+    let mut emptied = snapshot.clone();
+    emptied.worktree_groups[1]
+        .sessions
+        .retain(|session| session.id != gone);
+    emptied.sessions.retain(|session| session.id != gone);
+
+    assert_eq!(
+        state.handle_digit(&emptied, '1'),
+        DashboardNavigationOutcome::Changed,
+        "a vanished row must not hand the keystroke to its replacement"
+    );
+    assert_eq!(state.level, DashboardNavLevel::Worktrees);
+    assert_eq!(
+        state.focused_worktree_path(&emptied),
+        snapshot.worktree_groups[1].path.as_deref(),
+        "and the highlight must still be on the checkout the jump named"
+    );
+}
+
+/// The checkout the jump named, even when the row inside it is gone and the
+/// list has been rebuilt around it. The next key acts on whatever is
+/// highlighted, so leaving it on a stale row index points `x` at a checkout
+/// the user never selected.
+#[test]
+fn a_jump_that_enters_nothing_still_moves_the_highlight() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let named = state
+        .focused_worktree_path(&snapshot)
+        .expect("digit 2 focused a checkout")
+        .to_owned();
+
+    // A checkout appears ahead of it and its only row goes, in the same gap.
+    let mut shifted = snapshot.clone();
+    let mut ahead = shifted.worktree_groups[1].clone();
+    ahead.name = "arrived-ahead".into();
+    ahead.path = Some("<AHEAD>".to_owned());
+    ahead.sessions.clear();
+    ahead.services.clear();
+    shifted.worktree_groups.insert(0, ahead);
+    let gone = snapshot.worktree_groups[1].sessions[0].id.clone();
+    shifted.worktree_groups[2]
+        .sessions
+        .retain(|session| session.id != gone);
+    shifted.sessions.retain(|session| session.id != gone);
+
+    state.handle_digit(&shifted, '1');
+
+    assert_eq!(
+        state.focused_worktree_path(&shifted),
+        Some(named.as_str()),
+        "the highlight was left on the row index, not on the checkout"
+    );
+}
+
+/// A checkout that has gone resolves no row at all. The dangerous shape is a
+/// stale index plus an id that exists in whatever slid into that position:
+/// sessions are listed by the group that holds them regardless of their own
+/// worktree path, so one id really can appear in two groups.
+///
+/// Resolving the row against that index enters an agent in a checkout the user
+/// never named, and it looks like the jump worked.
+#[test]
+fn a_jump_whose_checkout_has_gone_enters_nothing_anywhere() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let counted = snapshot.worktree_groups[1].sessions[0].id.clone();
+
+    // The named checkout goes, and another takes its index while still listing
+    // the very row that was counted.
+    let mut removed = snapshot.clone();
+    let mut successor = snapshot.worktree_groups[1].clone();
+    successor.name = "took-its-place".into();
+    successor.path = Some("<SUCCESSOR>".to_owned());
+    for session in &mut successor.sessions {
+        session.worktree_path = Some("<SUCCESSOR>".to_owned());
+    }
+    for service in &mut successor.services {
+        service.worktree_path = Some("<SUCCESSOR>".to_owned());
+    }
+    removed.worktree_groups[1] = successor;
+    for session in &mut removed.sessions {
+        if session.worktree_path.as_deref() == Some("<WORKTREE>") {
+            session.worktree_path = Some("<SUCCESSOR>".to_owned());
+        }
+    }
+    for service in &mut removed.services {
+        if service.worktree_path.as_deref() == Some("<WORKTREE>") {
+            service.worktree_path = Some("<SUCCESSOR>".to_owned());
+        }
+    }
+
+    let outcome = state.handle_digit(&removed, '1');
+
+    assert_eq!(
+        outcome,
+        DashboardNavigationOutcome::Changed,
+        "the jump entered {counted} in a checkout that was never named"
+    );
+    assert_eq!(state.level, DashboardNavLevel::Worktrees);
+}
+
+/// Cancelling a jump with `0` leaves the highlight on the checkout it named,
+/// not on the row index that checkout used to occupy. The next key acts on
+/// wherever the highlight is, so a stale index points it at a stranger.
+#[test]
+fn cancelling_a_jump_still_leaves_the_highlight_where_it_was_put() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    state.handle_digit(&snapshot, '2');
+    let named = state
+        .focused_worktree_path(&snapshot)
+        .expect("digit 2 focused a checkout")
+        .to_owned();
+
+    let mut shifted = snapshot.clone();
+    let mut ahead = shifted.worktree_groups[1].clone();
+    ahead.name = "arrived-ahead".into();
+    ahead.path = Some("<AHEAD>".to_owned());
+    ahead.sessions.clear();
+    ahead.services.clear();
+    shifted.worktree_groups.insert(0, ahead);
+
+    assert_eq!(
+        state.handle_digit(&shifted, '0'),
+        DashboardNavigationOutcome::Changed
+    );
+    assert_eq!(
+        state.focused_worktree_path(&shifted),
+        Some(named.as_str()),
+        "cancelling left the highlight on the row index, not the checkout"
+    );
+    assert_eq!(state.quick_jump_digits, "");
+}

@@ -22,33 +22,6 @@ fn sanitizes_client_session_like_typescript_control_path() {
 }
 
 #[test]
-fn reads_existing_screen_and_preserves_other_client_fields() {
-    let root = temp_dir("dashboard-ui-state");
-    fs::create_dir_all(&root).expect("create temp dir");
-    let path = root.join("dashboard-ui-client-aimux-proj-client-1234abcd.json");
-    fs::write(
-        &path,
-        r#"{"screen":"library","level":"sessions","selectedEntryId":"codex-1"}"#,
-    )
-    .expect("seed state");
-
-    let mut state = DashboardUiStatePersistence::new(&root, "aimux-proj-client-1234abcd")
-        .expect("create ui state");
-    assert_eq!(state.load_screen(), Some(DashboardScreen::Library));
-    let changed = state
-        .persist_screen(DashboardScreen::Topology)
-        .expect("persist screen");
-    assert!(changed);
-
-    let saved: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&path).expect("read state")).expect("json");
-    assert_eq!(saved["screen"], "topology");
-    assert_eq!(saved["level"], "sessions");
-    assert_eq!(saved["selectedEntryId"], "codex-1");
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
 fn persists_preview_source_with_render_state() {
     let root = temp_dir("dashboard-ui-state-preview-source");
     fs::create_dir_all(&root).expect("create temp dir");
@@ -223,30 +196,6 @@ fn restores_selected_worktree_entry_by_id_after_refresh_reorders_rows() {
 }
 
 #[test]
-fn skips_write_when_screen_is_unchanged() {
-    let root = temp_dir("dashboard-ui-state-unchanged");
-    fs::create_dir_all(&root).expect("create temp dir");
-    // A real client session name: only those restore their saved screen, so a
-    // stand-in like "client" would reload as unset and make the write happen.
-    let path = root.join("dashboard-ui-client-aimux-proj-client-1234abcd.json");
-    fs::write(&path, r#"{"screen":"topology","level":"sessions"}"#).expect("seed state");
-
-    let mut state = DashboardUiStatePersistence::new(&root, "aimux-proj-client-1234abcd")
-        .expect("create ui state");
-    assert!(
-        !state
-            .persist_screen(DashboardScreen::Topology)
-            .expect("persist screen")
-    );
-    assert_eq!(
-        fs::read_to_string(&path).expect("read state"),
-        r#"{"screen":"topology","level":"sessions"}"#
-    );
-    assert_eq!(state.client_session(), "aimux-proj-client-1234abcd");
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
 fn ignores_invalid_persisted_screen() {
     let root = temp_dir("dashboard-ui-state-invalid");
     fs::create_dir_all(&root).expect("create temp dir");
@@ -374,4 +323,181 @@ fn the_project_session_dashboard_does_not_restore_someone_elses_screen() {
         Some(DashboardScreen::Topology),
         "a client still returns to the screen it left"
     );
+}
+
+/// Sam's requirement for the quick jump, stated in his words: "i still need the
+/// pointer to land on 2 1 after this s.t. if i exit the agent im where i expect
+/// to be pointing at".
+///
+/// So the jump is driven through the real keys rather than hand-set indices,
+/// and what the dashboard writes down is what a fresh pointer reads back.
+mod where_a_quick_jump_leaves_the_pointer {
+    use super::*;
+    use aimux::dashboard_controller::{DashboardController, DashboardKey};
+    use aimux::dashboard_model::DesktopStateGoldenFixture;
+    use aimux::dashboard_navigation::DashboardEntryRef;
+
+    const GOLDEN: &str =
+        include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
+
+    fn snapshot() -> DesktopStateSnapshot {
+        serde_json::from_str::<DesktopStateGoldenFixture>(GOLDEN)
+            .expect("valid fixture")
+            .runtime_full
+    }
+
+    fn entry_id(navigation: &DashboardNavigationState, snapshot: &DesktopStateSnapshot) -> String {
+        match navigation.selected_entry(snapshot) {
+            Some(DashboardEntryRef::Session(session)) => session.id.clone(),
+            Some(DashboardEntryRef::Service(service)) => service.id.clone(),
+            None => String::new(),
+        }
+    }
+
+    #[test]
+    fn the_completed_jump_is_what_a_fresh_pointer_reads_back() {
+        let root = temp_dir("dashboard-quick-jump-roundtrip");
+        fs::create_dir_all(&root).expect("create temp dir");
+        let snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        controller.handle_key(&snapshot, DashboardKey::Digit('2'));
+        controller.handle_key(&snapshot, DashboardKey::Digit('1'));
+        let landed_on = entry_id(&controller.navigation, &snapshot);
+        assert!(!landed_on.is_empty(), "the jump selected nothing");
+
+        let mut ui_state =
+            DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+        ui_state
+            .persist_controller_state(
+                DashboardScreen::Dashboard,
+                "output",
+                true,
+                &snapshot,
+                &controller.navigation,
+            )
+            .expect("persist the landed-on selection");
+
+        let mut returning = DashboardNavigationState::new(&snapshot);
+        ui_state.restore_navigation(&mut returning, &snapshot);
+
+        assert_eq!(
+            entry_id(&returning, &snapshot),
+            landed_on,
+            "coming back must point at the agent the jump entered"
+        );
+        assert_eq!(returning.level, DashboardNavLevel::Sessions);
+    }
+
+    /// And the middle of the jump keeps the row it has not left yet.
+    ///
+    /// `2` on its own is a real end state -- focus that group -- so it is
+    /// written down like any other. What it must not do is take the selected
+    /// row with it: it has no entry of its own, and deleting the stored one is
+    /// what loses the row the user comes back to.
+    #[test]
+    fn a_pending_jump_digit_does_not_take_the_selection_with_it() {
+        let root = temp_dir("dashboard-quick-jump-abandoned");
+        fs::create_dir_all(&root).expect("create temp dir");
+        let snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        let mut ui_state =
+            DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+        let persist = |ui_state: &mut DashboardUiStatePersistence,
+                       controller: &DashboardController| {
+            ui_state
+                .persist_controller_state(
+                    DashboardScreen::Dashboard,
+                    "output",
+                    true,
+                    &snapshot,
+                    &controller.navigation,
+                )
+                .expect("persist")
+        };
+        let written = |ui_state: &DashboardUiStatePersistence| -> serde_json::Value {
+            serde_json::from_str(&fs::read_to_string(ui_state.path()).expect("read ui state"))
+                .expect("valid ui state")
+        };
+
+        controller.handle_key(&snapshot, DashboardKey::Digit('2'));
+        controller.handle_key(&snapshot, DashboardKey::Digit('1'));
+        let landed_on = entry_id(&controller.navigation, &snapshot);
+        persist(&mut ui_state, &controller);
+        assert_eq!(
+            written(&ui_state)["selectedEntryId"],
+            serde_json::json!(landed_on),
+            "precondition: the completed jump wrote its row"
+        );
+
+        controller.handle_key(&snapshot, DashboardKey::Digit('2'));
+        assert!(
+            !controller.navigation.quick_jump_digits.is_empty(),
+            "precondition: a digit is pending"
+        );
+        assert!(
+            entry_id(&controller.navigation, &snapshot).is_empty(),
+            "precondition: mid-chord there is no entry of its own to write"
+        );
+        persist(&mut ui_state, &controller);
+
+        let after = written(&ui_state);
+        assert_eq!(
+            after["selectedEntryId"],
+            serde_json::json!(landed_on),
+            "the pending digit erased the row: {after}"
+        );
+        assert_eq!(
+            after["level"],
+            serde_json::json!("worktrees"),
+            "and focusing a group is still recorded as focusing a group"
+        );
+    }
+
+    /// The other direction, or the clause above is just a way of never
+    /// forgetting anything: stepping back out of a group is a real
+    /// deselection, and it has to reach disk.
+    #[test]
+    fn stepping_back_out_of_a_group_does_clear_the_row() {
+        let root = temp_dir("dashboard-quick-jump-back");
+        fs::create_dir_all(&root).expect("create temp dir");
+        let snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        let mut ui_state =
+            DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+        let persist = |ui_state: &mut DashboardUiStatePersistence,
+                       controller: &DashboardController| {
+            ui_state
+                .persist_controller_state(
+                    DashboardScreen::Dashboard,
+                    "output",
+                    true,
+                    &snapshot,
+                    &controller.navigation,
+                )
+                .expect("persist")
+        };
+        let written = |ui_state: &DashboardUiStatePersistence| -> serde_json::Value {
+            serde_json::from_str(&fs::read_to_string(ui_state.path()).expect("read ui state"))
+                .expect("valid ui state")
+        };
+
+        controller.handle_key(&snapshot, DashboardKey::Digit('2'));
+        controller.handle_key(&snapshot, DashboardKey::Digit('1'));
+        persist(&mut ui_state, &controller);
+        assert!(written(&ui_state).get("selectedEntryId").is_some());
+
+        controller.handle_key(&snapshot, DashboardKey::Back);
+        assert!(
+            controller.navigation.quick_jump_digits.is_empty(),
+            "precondition: no jump is in flight, this is a deliberate step out"
+        );
+        persist(&mut ui_state, &controller);
+
+        let after = written(&ui_state);
+        assert!(
+            after.get("selectedEntryId").is_none(),
+            "a deliberate deselection must still be written: {after}"
+        );
+    }
 }

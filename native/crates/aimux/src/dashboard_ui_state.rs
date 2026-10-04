@@ -81,19 +81,6 @@ impl DashboardUiStatePersistence {
         })
     }
 
-    pub fn persist_screen(&mut self, screen: DashboardScreen) -> Result<bool> {
-        if self.last_screen == Some(screen) {
-            return Ok(false);
-        }
-        let mut snapshot = read_dashboard_state_snapshot(&self.path)
-            .unwrap_or_else(|| Value::Object(Default::default()));
-        snapshot["screen"] = Value::String(screen.as_str().to_owned());
-        write_json_atomic(&self.path, &snapshot)
-            .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
-        self.last_screen = Some(screen);
-        Ok(true)
-    }
-
     pub fn persist_render_state(
         &mut self,
         screen: DashboardScreen,
@@ -475,8 +462,14 @@ fn persist_selected_entry(
     navigation: &DashboardNavigationState,
 ) {
     let Some(entry) = navigation.selected_entry(snapshot) else {
-        remove_object_key(state, "selectedEntryKind");
-        remove_object_key(state, "selectedEntryId");
+        // A pending jump digit is a transient, not a deselection. `2` on its
+        // way to `2` `1` has no entry yet, and forgetting the row here is the
+        // row the user does not come back to when they leave the agent they
+        // were about to enter.
+        if navigation.quick_jump_digits.is_empty() {
+            remove_object_key(state, "selectedEntryKind");
+            remove_object_key(state, "selectedEntryId");
+        }
         return;
     };
     match entry {
