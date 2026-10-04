@@ -862,6 +862,35 @@ pub(super) fn route_graveyard_worktree_delete(
     if !worktree_path_is_graveyarded(&topology, &path) {
         return json_error(404, format!("Graveyard worktree \"{path}\" not found"));
     }
+    // Graveyarding stops a worktree's services but leaves its agent rows alone,
+    // and it is allowed when a row claiming a live status has a dead window. So
+    // a dead window let two keypresses reach this route, which force-removes the
+    // checkout: the same work thrown away as relaxing remove itself, through a
+    // door nobody had looked at. Same evidence as remove, for the same reason.
+    let worktree_name = array_field(&topology, "worktrees")
+        .into_iter()
+        .find(|worktree| string_field(worktree, "path") == path)
+        .map(|worktree| string_field(&worktree, "name"))
+        .unwrap_or_else(|| worktree_name_from_path(&path));
+    if let Some(label) = attached_live_agent_label(
+        context,
+        &topology,
+        &path,
+        "graveyard.worktree.delete",
+        AttachedAgentEvidence::DurableStatus,
+    ) {
+        let message =
+            format!("Cannot delete \"{worktree_name}\" while agent \"{label}\" is attached");
+        let message = record_worktree_operation_failure(
+            &project_state_dir,
+            "graveyard.delete",
+            format!("Failed to delete worktree \"{worktree_name}\""),
+            message,
+            &path,
+            Some(&worktree_name),
+        );
+        return json_error(409, message);
+    }
     if Path::new(&path).exists() {
         if let Err(error) = remove_git_worktree_checkout(&project_root, &path) {
             return json_error(500, error);
@@ -1190,11 +1219,20 @@ pub(crate) fn clear_worktree_row_failure(project_state_dir: &Path, worktree_path
     let mut cleared = 0;
     let updated = update_runtime_topology(runtime_topology_path(project_state_dir), |topology| {
         map_topology_array(topology, "worktrees", |mut worktree| {
-            let matches_path =
-                worktree_path.is_empty() || string_field(&worktree, "path") == worktree_path;
+            let row_path = string_field(&worktree, "path");
+            let matches_path = worktree_path.is_empty() || row_path == worktree_path;
             let has_failure = worktree.get("operationFailure").is_some()
                 || string_field(&worktree, "status") == "error";
-            if matches_path && has_failure {
+            // Only a row with a checkout behind it. A failed *create* wears the
+            // same two marks on a row whose checkout was never made, and
+            // clearing those would say two false things: the dashboard would
+            // offer actions against a path that is not there, and
+            // `existing_worktree_create_conflicts` -- which treats a row
+            // carrying an `operationFailure` as retryable -- would start
+            // refusing the retry as "already exists". A failed remove is the
+            // case that gets stuck, and its checkout is still on disk.
+            let has_checkout = !row_path.is_empty() && Path::new(&row_path).exists();
+            if matches_path && has_failure && has_checkout {
                 if let Some(map) = worktree.as_object_mut() {
                     map.remove("operationFailure");
                 }

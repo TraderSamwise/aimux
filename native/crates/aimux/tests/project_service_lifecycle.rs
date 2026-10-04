@@ -4348,6 +4348,9 @@ fn clearing_failures_takes_the_marker_off_the_worktree_row() {
     let project = temp_project("worktree-row-failure-clear");
     let state_dir = project.join("state");
     let worktree = project.join("wt");
+    // The checkout is still there: that is what a failed *remove* leaves, and
+    // it is what distinguishes this from a failed create.
+    std::fs::create_dir_all(&worktree).unwrap();
     write_active_worktree_topology(&state_dir, &worktree, false);
     let worktree_path = worktree.to_string_lossy().into_owned();
     // The shape `mark_worktree_remove_error` leaves behind, written directly so
@@ -4383,6 +4386,106 @@ fn clearing_failures_takes_the_marker_off_the_worktree_row() {
     assert_eq!(
         cleared["worktrees"][0]["status"], "active",
         "and stop reading as failed"
+    );
+    cleanup(project);
+}
+
+/// Deleting a graveyarded checkout refuses while an agent row claims it.
+///
+/// Graveyarding stops a worktree's services but leaves its agent rows alone,
+/// and it is allowed when a row claiming a live status has a dead window. So a
+/// dead tmux window let two keypresses -- graveyard, then delete -- reach the
+/// forced checkout removal, which is the same work thrown away as relaxing
+/// remove itself, through the one route that had no agent check at all.
+#[test]
+fn graveyard_worktree_delete_refuses_while_an_agent_row_claims_the_checkout() {
+    let project = temp_project("graveyard-delete-attached");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    let worktree_path = worktree.to_string_lossy().into_owned();
+
+    // Graveyard it the way the dead-window case does: the row claims `running`
+    // and tmux says its window is gone.
+    let graveyarding = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+    let graveyarded = route_lifecycle_request_with_runtime(
+        &graveyarding,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(graveyarded.status, 200, "{:?}", graveyarded.body);
+
+    let response = route_lifecycle_request_with_runtime(
+        &graveyarding,
+        "POST",
+        routes::graveyard_actions::DELETE_WORKTREE,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("while agent \"active agent\" is attached"),
+        "{:?}",
+        response.body
+    );
+    assert!(
+        worktree.exists(),
+        "the checkout and its uncommitted work must still be there"
+    );
+    cleanup(project);
+}
+
+/// A failed create keeps its marker, because it is not the stuck case.
+///
+/// A create that failed wears the same two marks -- `status: "error"` and an
+/// `operationFailure` -- on a row whose checkout was never made. Clearing those
+/// would say two false things: the dashboard would offer actions against a path
+/// that is not there, and `existing_worktree_create_conflicts` treats a row
+/// carrying an `operationFailure` as retryable, so stripping it would make the
+/// retry start failing as "already exists". Only a row with a checkout behind
+/// it gets cleared.
+#[test]
+fn clearing_failures_leaves_a_failed_create_alone() {
+    let project = temp_project("worktree-row-failed-create");
+    let state_dir = project.join("state");
+    // No checkout on disk -- the create never got that far.
+    let worktree = project.join("never-made");
+    write_active_worktree_topology(&state_dir, &worktree, false);
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let topology_path = runtime_topology_path(&state_dir);
+    let mut topology = read_topology(&state_dir);
+    topology["worktrees"][0]["status"] = json!("error");
+    topology["worktrees"][0]["operationFailure"] = json!("fatal: could not create worktree");
+    write_runtime_topology(topology_path, &topology).unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::OPERATION_FAILURES_CLEAR,
+        Some(&json!({ "worktreePath": worktree_path })),
+    );
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    let after = read_topology(&state_dir);
+    assert_eq!(
+        after["worktrees"][0]["operationFailure"], "fatal: could not create worktree",
+        "the retry depends on this marker, so dismissing must not take it"
+    );
+    assert_eq!(
+        after["worktrees"][0]["status"], "error",
+        "and a checkout that was never made must not read as active"
     );
     cleanup(project);
 }
