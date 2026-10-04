@@ -17,9 +17,12 @@ describe("unavailable state formatting", () => {
           message: "tmux socket busy",
         },
       ]),
+      // The failure's own sentence, not a generic one. The target is carried
+      // because this title does not name it -- the CLI card resolves one the
+      // same way, so neither surface drops it.
     ).toEqual({
-      title: "Project state has an operation failure",
-      detail: "feature-a: Could not verify tmux windows: tmux socket busy",
+      title: "Could not verify tmux windows",
+      detail: "feature-a: tmux socket busy",
     });
   });
 

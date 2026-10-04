@@ -79,6 +79,7 @@ launcher_env
 logs
 loop_watcher_guards
 mobile_push_bridge
+operation_failure_surfaces
 plugin_tick_tasks
 process_inspector
 project_api_contract

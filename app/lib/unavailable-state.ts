@@ -16,18 +16,55 @@ export function formatOperationFailure(failure: ProjectOperationFailure): string
   return [target, title, message].filter(Boolean).join(": ");
 }
 
+/// What the dashboard and the sidebar put on their failure card.
+///
+/// One failure gets its own title, because "Project state has an operation
+/// failure" says nothing a person can act on while the sentence that does --
+/// "Failed to graveyard worktree fix-chat" -- sat buried in the detail line.
+/// The title the project service wrote already names its target, so repeating
+/// it here produced the worktree's name three times in one card.
+///
+/// Several failures get a count and their titles, which is what the CLI's own
+/// card lists. Both surfaces are reading one ledger; this is only how it reads.
+export function operationFailureTitle(failure: ProjectOperationFailure): string {
+  return stringField(failure.title) || stringField(failure.operation) || "Operation failed";
+}
+
+/// Which thing failed, by the same chain the CLI card uses.
+///
+/// Derived rather than assumed out of the title. Most titles the project
+/// service writes happen to name their target, but not all: a failed agent
+/// launch writes "Failed to create codex agent" with no worktree name and the
+/// session id as the target, and reading it out of the title would have shown
+/// the CLI a target and the app nothing.
+export function operationFailureTarget(failure: ProjectOperationFailure): string {
+  return (
+    stringField(failure.worktreeName) ||
+    stringField(failure.targetId) ||
+    stringField(failure.worktreePath)
+  );
+}
+
 export function summarizeOperationFailures(
   failures: readonly ProjectOperationFailure[] | undefined,
 ): { title: string; detail: string } | null {
-  const visible = failures?.map(formatOperationFailure).filter(Boolean) ?? [];
+  const visible = failures?.filter((failure) => Boolean(formatOperationFailure(failure))) ?? [];
   if (visible.length === 0) return null;
-  const title =
-    visible.length === 1
-      ? "Project state has an operation failure"
-      : `Project state has ${visible.length} operation failures`;
+  if (visible.length === 1) {
+    const [failure] = visible;
+    const title = operationFailureTitle(failure);
+    const target = operationFailureTarget(failure);
+    const message = stringField(failure.message);
+    return {
+      title,
+      detail:
+        [title.includes(target) ? "" : target, message].filter(Boolean).join(": ") ||
+        formatOperationFailure(failure),
+    };
+  }
   return {
-    title,
-    detail: visible.slice(0, 3).join(" · "),
+    title: `Project state has ${visible.length} operation failures`,
+    detail: visible.slice(0, 3).map(operationFailureTitle).join(" · "),
   };
 }
 
