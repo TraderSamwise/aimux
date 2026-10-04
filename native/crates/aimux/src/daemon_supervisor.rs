@@ -522,6 +522,17 @@ pub fn ensure_daemon_running_at(
                             "error": error.to_string(),
                         })),
                     );
+                    // Said out loud, not just logged. Requests on this path
+                    // have no timeout, so the next one can block for as long
+                    // as the daemon stays wedged -- and with nothing printed,
+                    // the only evidence left is a command that sat silent.
+                    // That is what sent an agent looking at the wrong
+                    // subsystem while 37 agents were killed on the strength of
+                    // its conclusion.
+                    eprintln!(
+                        "warning: aimux daemon (pid {}, port {}) did not answer its health probe ({}); continuing against it anyway",
+                        existing.pid, existing.port, error
+                    );
                     return Ok(existing);
                 }
                 log_lifecycle_always(

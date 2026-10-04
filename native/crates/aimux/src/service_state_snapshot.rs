@@ -139,6 +139,10 @@ pub fn persist_project_runtime_snapshots_before_tmux_stop_at(
 ) -> Result<Value, String> {
     let project_root = project_root.as_ref();
     let project_state_dir = project_state_dir.as_ref();
+    // Before anything is recorded or killed: this teardown ends every pane in
+    // the project, and refusing after the topology has been marked "stopped"
+    // would leave running services recorded as stopped.
+    assert_agents_are_restorable_before_stop(project_state_dir)?;
     let services = snapshot_project_service_windows(project_root, project_state_dir, tmux)?;
     if !services.is_empty() {
         update_runtime_topology(runtime_topology_path(project_state_dir), |mut topology| {
@@ -161,33 +165,28 @@ pub fn persist_project_runtime_snapshots_before_tmux_stop_at(
         saved_at,
     );
     write_json_atomic(&state_path, &state).map_err(|error| error.to_string())?;
-
-    // Agents are not in `services`, and the snapshot that can bring them back
-    // is written by a periodic task that may be stale or failing -- on
-    // sam-strix it had been failing for minutes. Rebuilding it here, from the
-    // topology, is what makes "stop" survivable: the caller propagates this
-    // error, so a runtime whose agents could not be recorded is not torn down.
-    let restored = rebuild_agent_restore_snapshot(project_state_dir)?;
-    Ok(json!({ "sessions": [], "services": services, "restorableAgents": restored }))
+    Ok(json!({ "sessions": [], "services": services }))
 }
 
-/// Re-record which agents could be brought back, from the topology on disk.
+/// Refuse to tear a runtime down when its agents are not recorded anywhere.
 ///
-/// A project with no topology yet has nothing to restore and is not an error;
-/// a topology we cannot read or a snapshot we cannot write is, because the
-/// caller is about to kill every pane and this file is the only way back.
-fn rebuild_agent_restore_snapshot(project_state_dir: &Path) -> Result<usize, String> {
-    let topology_path = runtime_topology_path(project_state_dir);
-    if !topology_path.exists() {
-        return Ok(0);
-    }
-    let topology = read_runtime_topology(&topology_path)
-        .map_err(|error| format!("runtime topology unreadable: {error}"))?;
-    crate::project_service::agent_restore_task::rebuild_restore_snapshot_from_topology(
+/// The snapshot is only consulted, never rewritten: it is deliberately
+/// retentive, the stop and kill routes are what remove sessions from it, and
+/// rewriting here would mint a new snapshot id that the boot-stamped prompt
+/// gate no longer matches -- suppressing the restore offer this protects.
+///
+/// A missing topology has nothing to lose and is not an error. An unreadable
+/// one is: it is the record of what would die, and proceeding without it is
+/// the guess that cost 37 agents on sam-strix.
+fn assert_agents_are_restorable_before_stop(project_state_dir: &Path) -> Result<(), String> {
+    let topology = match read_runtime_topology(runtime_topology_path(project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return Err(format!("runtime topology unreadable: {error}")),
+    };
+    crate::project_service::agent_restore_task::assert_agents_are_restorable(
         project_state_dir,
         &topology,
     )
-    .map_err(|error| format!("agent restore snapshot could not be recorded: {error}"))
 }
 
 pub fn stop_project_tmux_runtime_with_service_snapshots(

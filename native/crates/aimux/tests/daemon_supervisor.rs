@@ -854,3 +854,68 @@ fn lock_mtime_millis(path: &PathBuf) -> u128 {
         .expect("mtime after epoch")
         .as_millis()
 }
+
+/// The five minutes of silence that misled an agent into destroying a running
+/// fleet. A request with no timeout sets no socket read timeout, so a wedged
+/// daemon -- one whose listener accepts and then never answers -- blocks the
+/// command indefinitely. The wait is not shortened, because `worktree create`
+/// legitimately runs for minutes; it is made audible instead.
+///
+/// This pins the shape the incident actually had: a refusal cannot produce it,
+/// because a refusal returns at once.
+#[test]
+fn a_wedged_daemon_request_ends_on_its_budget_rather_than_hanging() {
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let accepted = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buffer = [0_u8; 64];
+            let _ = stream.read(&mut buffer);
+            std::thread::sleep(std::time::Duration::from_millis(1_500));
+        }
+    });
+
+    let dir = std::env::temp_dir().join(format!(
+        "aimux-wedged-daemon-{}-{}",
+        std::process::id(),
+        port
+    ));
+    std::fs::create_dir_all(&dir).expect("fixture dir");
+    let info_path = dir.join("daemon.json");
+    std::fs::write(
+        &info_path,
+        serde_json::json!({
+            "pid": std::process::id(),
+            "port": port,
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "updatedAt": "2026-10-04T00:00:00.000Z",
+        })
+        .to_string(),
+    )
+    .expect("daemon info");
+
+    let started = std::time::Instant::now();
+    let result = aimux::core_command_transport::request_daemon_json_at(
+        "/health",
+        aimux::core_command_transport::DaemonRequestInit {
+            timeout_ms: Some(400),
+            ..Default::default()
+        },
+        &info_path,
+    );
+
+    assert!(
+        result.is_err(),
+        "a daemon that accepts and never answers must not read as success"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "a request carrying a budget must end on it, not hang: {:?}",
+        started.elapsed()
+    );
+    let _ = accepted.join();
+    let _ = std::fs::remove_dir_all(&dir);
+}

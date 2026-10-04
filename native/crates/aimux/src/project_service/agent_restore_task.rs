@@ -30,7 +30,8 @@ use super::agents::{
     session_is_backed_by_live_window, try_cached_live_window_ids_for_session_projection_async,
 };
 use super::lifecycle::{
-    derive_agent_restore_offer, record_last_online_agents, restore_now_iso, restore_project_id,
+    derive_agent_restore_offer, read_last_online_agents_snapshot, record_last_online_agents,
+    restore_now_iso, restore_project_id,
 };
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::{CachedProjectConfig, PeriodicTask, PeriodicTaskFuture};
@@ -312,6 +313,56 @@ pub fn restore_session(session: &Value, metadata_session: Option<&Value>) -> Val
         restore.insert("projectControl".into(), Value::Bool(true));
     }
     Value::Object(restore)
+}
+
+/// Refuse a teardown whose agents are not already recorded.
+///
+/// Stopping a runtime kills every pane, and the snapshot is the only way back.
+/// This verifies rather than rewrites: the snapshot is deliberately retentive
+/// (see `record_last_online_agents`), the stop and kill routes are what remove
+/// sessions from it, and rewriting here would mint a new snapshot id that the
+/// boot-stamped prompt gate no longer matches -- suppressing the very restore
+/// offer this exists to protect.
+///
+/// A session the topology still holds but the snapshot does not is one that
+/// would be killed with no record of how to bring it back. That is the only
+/// condition that refuses.
+pub fn assert_agents_are_restorable(
+    project_state_dir: &std::path::Path,
+    topology: &Value,
+) -> Result<(), String> {
+    let restorable = restorable_session_ids(topology);
+    if restorable.is_empty() {
+        return Ok(());
+    }
+    let snapshot = read_last_online_agents_snapshot(project_state_dir)
+        .map_err(|error| format!("agent restore snapshot unreadable: {error}"))?;
+    let recorded = snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.get("sessionIds"))
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<BTreeSet<String>>()
+        })
+        .unwrap_or_default();
+    let unrecorded = restorable
+        .iter()
+        .filter(|id| !recorded.contains(*id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if unrecorded.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "agent restore snapshot does not record {} of {} restorable agents ({}); \
+         stopping would leave no way to bring them back",
+        unrecorded.len(),
+        restorable.len(),
+        unrecorded.join(", ")
+    ))
 }
 
 /// Re-record the snapshot so it holds every session the topology still says is

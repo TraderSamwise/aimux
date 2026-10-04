@@ -12,46 +12,169 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Stopping a runtime kills every pane in it, and the only way back is the
-/// restore snapshot. That snapshot is written by a periodic task which can be
-/// stale or failing -- on sam-strix on 2026-10-04 it had been failing for
-/// minutes -- so the teardown re-records it first and refuses to proceed if it
-/// cannot. 37 live agents were killed by a teardown that did not check.
-#[test]
-fn stop_runtime_refuses_to_kill_when_the_restore_snapshot_cannot_be_recorded() {
-    let root = temp_root("service-state-snapshot-unrestorable");
+/// Stopping a runtime kills every pane in it, and the restore snapshot is the
+/// only way back. On sam-strix on 2026-10-04 a teardown that checked nothing
+/// took 37 live agents with it.
+///
+/// The snapshot is consulted, never rewritten: rewriting would mint a new
+/// snapshot id that the boot-stamped prompt gate no longer matches, which
+/// suppresses the very restore offer this protects.
+fn seed_topology_with_sessions(state_dir: &Path, repo_root: &Path, ids: &[&str]) {
+    const AT: &str = "2026-10-04T00:00:00.000Z";
+    // A session is only part of the topology if its node, and that node's rig,
+    // are there too -- the reader prunes dangling ones, so a fixture without
+    // them silently describes an empty runtime.
+    let mut topology = empty_runtime_topology();
+    topology["rigs"] = json!([{
+        "id": "rig-1",
+        "name": "repo",
+        "projectRoot": repo_root.to_string_lossy(),
+        "createdAt": AT,
+        "updatedAt": AT,
+    }]);
+    topology["nodes"] = Value::Array(
+        ids.iter()
+            .map(|id| {
+                json!({
+                    "id": format!("node-{id}"),
+                    "rigId": "rig-1",
+                    "logicalId": id,
+                    "createdAt": AT,
+                })
+            })
+            .collect(),
+    );
+    topology["sessions"] = Value::Array(
+        ids.iter()
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "nodeId": format!("node-{id}"),
+                    "status": "running",
+                    "createdAt": AT,
+                    "updatedAt": AT,
+                })
+            })
+            .collect(),
+    );
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).expect("seed topology");
+}
+
+fn stop_fixture(label: &str) -> (PathBuf, PathBuf, FakeTmux) {
+    let root = temp_root(label);
     let repo_root = root.join("repo");
     let state_dir = root.join("state");
     fs::create_dir_all(&repo_root).expect("repo root");
     fs::create_dir_all(&state_dir).expect("state dir");
-    // A topology that exists but cannot be parsed: the agents it names are
-    // unknown, so what the kill would destroy cannot be recorded.
-    fs::write(runtime_topology_path(&state_dir), b"{ not json").expect("corrupt topology");
-
-    let host_session = "aimux-repo";
-    let mut tmux = FakeTmux {
+    let tmux = FakeTmux {
         calls: Vec::new(),
         available: true,
-        host_session: host_session.into(),
-        sessions: vec![host_session.into()],
+        host_session: "aimux-repo".into(),
+        sessions: vec!["aimux-repo".into()],
         repo_root: repo_root.clone(),
         windows: Vec::new(),
     };
+    (repo_root, state_dir, tmux)
+}
+
+#[test]
+fn stop_runtime_refuses_when_a_live_agent_is_in_no_restore_snapshot() {
+    let (repo_root, state_dir, mut tmux) = stop_fixture("service-state-snapshot-unrecorded");
+    seed_topology_with_sessions(&state_dir, &repo_root, &["codex-aaa", "codex-bbb"]);
+    // The snapshot records one of the two. Killing would lose the other with
+    // no record of how to bring it back.
+    fs::write(
+        state_dir.join("last-online-agents.json"),
+        json!({
+            "version": 1,
+            "sessionIds": ["codex-aaa"],
+            "sessions": [{ "id": "codex-aaa" }],
+        })
+        .to_string(),
+    )
+    .expect("seed snapshot");
 
     let error =
         stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
-            .expect_err("a runtime that cannot be restored must not be torn down");
+            .expect_err("an unrecorded live agent must stop the teardown");
 
     assert!(
-        error.contains("restore snapshot") || error.contains("topology"),
-        "the refusal must name what could not be recorded: {error}"
+        error.contains("codex-bbb"),
+        "the refusal must name the agent that would be lost: {error}"
+    );
+    assert!(
+        !error.contains("codex-aaa"),
+        "an agent that IS recorded must not be reported as at risk: {error}"
     );
     assert!(
         !tmux
             .calls
             .iter()
             .any(|call| call.starts_with("killSession:")),
-        "nothing may be killed once the snapshot failed: {:?}",
+        "nothing may be killed once the check refused: {:?}",
+        tmux.calls
+    );
+    assert!(
+        !state_dir.join("state.json").exists(),
+        "a refusal must leave nothing half-written"
+    );
+}
+
+/// The guard has to let the ordinary case through, or it just bricks `stop`.
+#[test]
+fn stop_runtime_proceeds_when_every_live_agent_is_recorded() {
+    let (repo_root, state_dir, mut tmux) = stop_fixture("service-state-snapshot-recorded");
+    seed_topology_with_sessions(&state_dir, &repo_root, &["codex-aaa"]);
+    fs::write(
+        state_dir.join("last-online-agents.json"),
+        json!({
+            "version": 1,
+            "sessionIds": ["codex-aaa"],
+            "sessions": [{ "id": "codex-aaa" }],
+        })
+        .to_string(),
+    )
+    .expect("seed snapshot");
+
+    let killed =
+        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
+            .expect("a recorded runtime stops normally");
+
+    assert_eq!(killed, vec!["aimux-repo"]);
+}
+
+/// A project with nothing running has nothing to lose, so an empty topology
+/// and an absent snapshot must not block a stop.
+#[test]
+fn stop_runtime_proceeds_when_there_are_no_agents_to_lose() {
+    let (repo_root, state_dir, mut tmux) = stop_fixture("service-state-snapshot-empty");
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+        .expect("seed topology");
+
+    let killed =
+        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
+            .expect("an empty runtime stops normally");
+
+    assert_eq!(killed, vec!["aimux-repo"]);
+}
+
+/// The topology is the record of what would die. Unreadable is not empty.
+#[test]
+fn stop_runtime_refuses_when_the_topology_cannot_be_read() {
+    let (repo_root, state_dir, mut tmux) = stop_fixture("service-state-snapshot-unreadable");
+    fs::write(runtime_topology_path(&state_dir), b"{ not json").expect("corrupt topology");
+
+    let error =
+        stop_project_tmux_runtime_with_service_snapshots_using(&mut tmux, &repo_root, &state_dir)
+            .expect_err("an unreadable topology must not be treated as an empty one");
+
+    assert!(error.contains("topology"), "{error}");
+    assert!(
+        !tmux
+            .calls
+            .iter()
+            .any(|call| call.starts_with("killSession:")),
+        "nothing may be killed once the check refused: {:?}",
         tmux.calls
     );
 }

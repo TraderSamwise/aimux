@@ -44,7 +44,8 @@ pub(crate) use restore_offer::read_displayable_agent_restore_offer;
 use restore_offer::*;
 pub use restore_snapshot::seed_agent_restore_prompt_gates_for_daemon_boot;
 pub(crate) use restore_snapshot::{
-    derive_agent_restore_offer, record_last_online_agents, restore_now_iso, restore_project_id,
+    derive_agent_restore_offer, read_last_online_agents_snapshot, record_last_online_agents,
+    restore_now_iso, restore_project_id,
 };
 #[cfg(test)]
 pub(crate) use runtime_adapter::AsyncProjectLifecycleRuntime;

@@ -11,11 +11,26 @@ use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_LOOPBACK_TRANSIENT_RETRY_MS: u64 = 1_000;
 const LOOPBACK_TRANSIENT_RETRY_SLEEP_MS: u64 = 10;
+/// How long a daemon request may be silent before it says it is still waiting.
+///
+/// Most CLI routes pass no timeout, which sets no socket read timeout at all,
+/// so a wedged daemon -- one whose listener accepted the connection and then
+/// never answered -- blocks the command indefinitely. `aimux kill` sat five
+/// minutes at 0% CPU printing nothing, and the agent reading that blamed the
+/// wrong subsystem and destroyed a running fleet on the strength of it.
+///
+/// The wait is not shortened: `worktree create` and friends legitimately run
+/// for minutes, and capping them would break real work. It is only made
+/// audible, which is the part that was missing.
+const LOOPBACK_WAIT_NOTICE_AFTER: Duration = Duration::from_secs(10);
+const LOOPBACK_WAIT_NOTICE_EVERY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonHttpMethod {
@@ -375,12 +390,64 @@ pub fn execute_loopback_binary_request(
     })
 }
 
+/// Prints "still waiting" to stderr until dropped.
+///
+/// A thread rather than a deadline, because the wait being watched is a
+/// blocking socket read with no timeout: there is no point in the read to
+/// return to and check a clock.
+struct WaitNotice {
+    done: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl WaitNotice {
+    fn start(what: String) -> Self {
+        let done = Arc::new(AtomicBool::new(false));
+        let watched = Arc::clone(&done);
+        let handle = thread::Builder::new()
+            .name("aimux-wait-notice".into())
+            .spawn(move || {
+                let started = Instant::now();
+                let mut next = LOOPBACK_WAIT_NOTICE_AFTER;
+                while !watched.load(Ordering::Relaxed) {
+                    if started.elapsed() >= next {
+                        eprintln!(
+                            "still waiting for {what} ({}s)",
+                            started.elapsed().as_secs()
+                        );
+                        next += LOOPBACK_WAIT_NOTICE_EVERY;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+            })
+            .ok();
+        Self { done, handle }
+    }
+}
+
+impl Drop for WaitNotice {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 fn execute_loopback_http_request(
     request: &DaemonJsonRequest,
 ) -> Result<Vec<u8>, CoreCommandTransportError> {
     let endpoint = parse_loopback_url(&request.url)?;
     let mut stream = connect_loopback(&endpoint, request.timeout_ms)?;
     let timeout = request_timeout(request.timeout_ms);
+    // Only an unbounded wait needs this. A request with a timeout ends by
+    // itself and says so; a long-lived stream is waiting by design.
+    let _notice = timeout.is_none().then(|| {
+        WaitNotice::start(format!(
+            "aimux daemon at {}:{}",
+            endpoint.host, endpoint.port
+        ))
+    });
     stream
         .set_read_timeout(timeout)
         .map_err(CoreCommandTransportError::Io)?;
