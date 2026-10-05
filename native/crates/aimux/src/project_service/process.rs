@@ -112,6 +112,22 @@ pub struct ProjectServiceStartup {
 }
 
 pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> Result<()> {
+    // Its own call, because `PR_SET_PTRACER` does not survive `exec`: the
+    // daemon cannot set it on behalf of a process it spawns. The project
+    // service is the other one that has pinned this machine, so covering only
+    // the daemon would have left half the fleet un-attachable while reading as
+    // fixed.
+    match crate::diagnostics_ptrace::allow_debugger_attach(|key| std::env::var(key).ok()) {
+        crate::diagnostics_ptrace::PtraceOptInOutcome::NotRequested => {}
+        outcome => log_lifecycle_always(
+            "project service debugger-attach opt-in",
+            "project-service",
+            Some(json!({
+                "outcome": format!("{outcome:?}"),
+                "env": crate::diagnostics_ptrace::ALLOW_PTRACE_ENV,
+            })),
+        ),
+    }
     crate::async_runtime::init_process_runtime()
         .context("initialize project-service async runtime")?;
     let aimux_home = PathResolver::from_env().global_aimux_dir();

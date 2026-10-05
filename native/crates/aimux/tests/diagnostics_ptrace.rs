@@ -94,3 +94,50 @@ fn a_kernel_refusal_is_reported_with_its_errno() {
         PtraceOptInOutcome::Failed { errno: 22 }
     );
 }
+
+/// Both processes that can wedge ask for themselves.
+///
+/// `PR_SET_PTRACER` does not survive `exec`, so the daemon cannot set it on
+/// behalf of the project services it spawns -- and the project service is the
+/// other process that has pinned this machine. Covering only the daemon would
+/// have read as fixed while leaving half the fleet un-attachable.
+///
+/// A source check rather than a behavioural one because the alternative is
+/// spawning a real daemon and a real project service to watch them not call a
+/// function. What it pins is the thing that would silently regress: a second
+/// entry point quietly losing its call.
+#[test]
+fn the_daemon_and_the_project_service_both_ask() {
+    for (path, source) in [
+        (
+            "daemon/runtime.rs",
+            include_str!("../src/daemon/runtime.rs"),
+        ),
+        (
+            "project_service/process.rs",
+            include_str!("../src/project_service/process.rs"),
+        ),
+    ] {
+        assert!(
+            source.contains("diagnostics_ptrace::allow_debugger_attach"),
+            "{path} has to ask for itself; the opt-in does not survive exec"
+        );
+    }
+}
+
+/// And the project service inherits the daemon's environment, so setting the
+/// variable once reaches both.
+///
+/// `SystemProjectServiceLauncher::launch` starts from `std::env::vars()`. If it
+/// ever switched to a curated allowlist -- which the tmux launch path already
+/// does, with `env -u` -- the variable would stop arriving and the opt-in would
+/// cover only the daemon again, silently.
+#[test]
+fn the_project_service_inherits_the_whole_environment() {
+    let source = include_str!("../src/daemon/runtime/project_services.rs");
+    assert!(
+        source.contains("std::env::vars().collect()"),
+        "the project service inherits the daemon's environment; if that becomes \
+         an allowlist, AIMUX_ALLOW_PTRACE has to join it"
+    );
+}

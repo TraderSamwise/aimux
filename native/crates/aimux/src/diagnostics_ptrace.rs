@@ -23,6 +23,13 @@
 //! macOS needs none of this: `sample` ships with the OS and gives named,
 //! symbolised per-thread stacks with no privileges, which is why this is a
 //! Linux-only concern.
+//!
+//! `PR_SET_PTRACER` does NOT survive `exec`, so it is not something the daemon
+//! can set once on behalf of the processes it spawns. Every process that could
+//! wedge has to ask for itself, which is why both the daemon and the per-project
+//! service call this -- the project service is the other one that has pinned
+//! this machine, and covering only the daemon would have left half the fleet
+//! un-attachable while reading as fixed.
 
 /// The env var that opts in.
 pub const ALLOW_PTRACE_ENV: &str = "AIMUX_ALLOW_PTRACE";
@@ -83,13 +90,15 @@ pub fn ptrace_opt_in_outcome(prctl_result: i32, errno: i32) -> PtraceOptInOutcom
 
 #[cfg(target_os = "linux")]
 fn apply_ptrace_opt_in() -> PtraceOptInOutcome {
-    // Not in `libc` as a constant, and the value is part of the ABI: 0x59616d61
-    // is "Yama" in ASCII, the subsystem that owns the restriction.
-    const PR_SET_PTRACER: libc::c_int = 0x5961_6d61;
-    const PR_SET_PTRACER_ANY: libc::c_ulong = libc::c_ulong::MAX;
+    // `libc`'s own constants, not hand-rolled ones. The first version of this
+    // declared `0x5961_6d61` and `c_ulong::MAX` locally -- both correct, and
+    // checked against `/usr/include/linux/prctl.h` on the machine this is for,
+    // but a hand-maintained ABI value next to a crate that already publishes it
+    // is a value that can drift while still compiling.
+    //
     // SAFETY: `prctl` is variadic and this option takes one unsigned-long
     // argument; the remaining three are required to be zero.
-    let result = unsafe { libc::prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0) };
+    let result = unsafe { libc::prctl(libc::PR_SET_PTRACER, libc::PR_SET_PTRACER_ANY, 0, 0, 0) };
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     ptrace_opt_in_outcome(result, errno)
 }
