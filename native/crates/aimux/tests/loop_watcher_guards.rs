@@ -2410,3 +2410,65 @@ fn a_change_to_the_paused_set_still_reaches_the_overseer() {
         "the overseer has to hear that the hold moved: {sends:?}"
     );
 }
+
+/// An upgrade does not fire one spurious paused summary.
+///
+/// `last_paused_summary_signature` is persisted, so narrowing what goes into
+/// the signature changes what a stored one means. Without a format marker the
+/// first scan after an upgrade compares an old-format signature against a new
+/// one, finds them different, fires `due_by_change`, and prompts the overseer
+/// about a set that has not changed -- exactly the noise this change removes,
+/// arriving at upgrade time. The same trap PR 396's own review caught in the
+/// pause keys.
+#[test]
+fn an_old_format_paused_signature_does_not_fire_on_upgrade() {
+    let state_dir = temp_state_dir("paused-signature-upgrade");
+    let path = loop_watcher_state_path(&state_dir);
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    // A state file written by the previous build: the signature carries the old
+    // `paused:` shape, with the goal in it.
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        &path,
+        serde_json::to_string(&json!({
+            "version": 1,
+            "lastNudgeAt": {},
+            "lastOverseerWakeAt": 0,
+            "stoppedSince": [],
+            "pendingSendKeys": {},
+            "pausedLoopAlerts": {
+                "worker": {
+                    "pausedAtMs": NOW,
+                    "loopKey": "2026-09-09T00:00:00.000Z",
+                }
+            },
+            // Zero, so the CADENCE cannot fire on the scan below and
+            // `due_by_change` is the only thing that could -- which is what
+            // this test is about. Nine made the cadence fire and proved nothing.
+            "pausedSummaryTicks": 0,
+            "lastPausedSummarySignature":
+                "paused:worker\u{1f}\u{1f}2026-09-09T00:00:00.000Z\u{1f}\u{1f}ship it\u{1f}",
+        }))
+        .expect("serialize legacy state"),
+    )
+    .expect("write legacy state");
+
+    let mut restarted = load_loop_watcher_state(&path).expect("load legacy state");
+    let mut ok = |_: &LoopSend| true;
+
+    // The stored signature is dropped as unreadable rather than compared, so
+    // this reads as "no previous signature" and says nothing. Kept and compared,
+    // it differs from the new format and `due_by_change` fires.
+    assert!(
+        restarted.scan(&input, NOW + 1, &mut ok).is_empty(),
+        "an upgrade must not prompt the overseer about an unchanged paused set"
+    );
+}
