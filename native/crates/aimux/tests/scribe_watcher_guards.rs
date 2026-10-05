@@ -285,3 +285,45 @@ fn a_wide_character_pane_still_produces_a_briefing() {
         "and must respect the budget"
     );
 }
+
+/// Why a stranded `needs_input` on the scribe is a deadlock and not a label.
+///
+/// `scribe_readiness` refuses a scribe whose attention is not normal, and
+/// nothing used to clear a stranded `needs_input` -- so the scribe watcher
+/// returned `None` on every scan, forever. Observed on tealstreet-next
+/// 2026-10-05: the scribe had finished its turn at 11:40 PM and had not been
+/// briefed in fifteen hours.
+///
+/// Pinned here beside the watcher it silences, because the fix is in the
+/// transcript reconciler and this is the consequence that makes it worth
+/// making. Both halves have to hold for the scribe to be briefed again.
+#[test]
+fn a_scribe_stranded_at_needs_input_is_never_briefed() {
+    let mut waiting = one_changed_agent();
+    waiting["metadata"]["sessions"]["scribe"]["derived"] =
+        json!({ "activity": "waiting", "attention": "needs_input" });
+
+    let mut watcher = ScribeWatcher::new();
+    let mut read = |_: &str, _: i64| Some(String::from("some real work happened here"));
+    let mut ok = |_: &ScribeBriefing| true;
+
+    for tick in 0..5 {
+        assert!(
+            watcher
+                .scan(&waiting, NOW + tick * 120_000, &mut read, &mut ok)
+                .is_none(),
+            "tick {tick}: the watcher refuses a scribe that is not ready, however long it waits"
+        );
+    }
+
+    // And the moment the attention is back to normal -- which is what the
+    // reconciler's Part C does for a project-control session whose transcript
+    // says the turn is over -- the same scan briefs it.
+    let settled = one_changed_agent();
+    assert!(
+        watcher
+            .scan(&settled, NOW + 600_000, &mut read, &mut ok)
+            .is_some(),
+        "clearing the attention is the whole unblock"
+    );
+}

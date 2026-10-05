@@ -10,6 +10,10 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 struct TestDeps {
     pending_interaction: bool,
+    /// Make `clear_stale_response` report failure, so a clear that did not land
+    /// can be seen being tried again rather than recorded as done.
+    refuse_clears: bool,
+    clear_attempts: usize,
     probe_result: Option<TranscriptProbe>,
     probe_results: BTreeMap<String, Option<TranscriptProbe>>,
     codex_path: Option<String>,
@@ -28,6 +32,10 @@ impl TranscriptReconcilerDeps for TestDeps {
         true
     }
     fn clear_stale_response(&mut self, session_id: &str) -> bool {
+        self.clear_attempts += 1;
+        if self.refuse_clears {
+            return false;
+        }
         self.cleared.push(session_id.to_owned());
         true
     }
@@ -51,6 +59,41 @@ fn complete() -> Option<TranscriptProbe> {
         size: 10,
         mtime_ms: 1,
     })
+}
+
+fn in_progress() -> Option<TranscriptProbe> {
+    Some(TranscriptProbe {
+        turn: "in_progress".to_owned(),
+        size: 10,
+        mtime_ms: 1,
+    })
+}
+
+/// A transcript that has grown since the last probe, which is what a working
+/// agent looks like and what stops the dwell from accumulating.
+fn complete_with_size(size: u64) -> Option<TranscriptProbe> {
+    Some(TranscriptProbe {
+        turn: "complete".to_owned(),
+        size,
+        mtime_ms: 1,
+    })
+}
+
+/// An overseer or a scribe. The only thing that differs is who reads its
+/// prompt, which is exactly what Part C turns on.
+fn control_session(tool: &str) -> SessionView {
+    SessionView {
+        project_control: true,
+        ..session(tool)
+    }
+}
+
+fn needs_input() -> Value {
+    json!({ "activity": "waiting", "attention": "needs_input" })
+}
+
+fn needs_response() -> Value {
+    json!({ "activity": "waiting", "attention": "needs_response" })
 }
 
 fn session(tool: &str) -> SessionView {
@@ -267,4 +310,151 @@ fn a_re_registered_interaction_resets_the_clear_confirmation() {
         "cleared despite the interaction re-registering: {:?}",
         deps.cleared
     );
+}
+
+/// A scribe stranded at `needs_input` is cleared so something can talk to it
+/// again.
+///
+/// The case observed on tealstreet-next 2026-10-05: the scribe finished its
+/// turn at 11:40 PM and had not been briefed in fifteen hours, because
+/// `scribe_readiness` refuses a scribe whose attention is not normal and
+/// nothing in the system clears a stranded `needs_input`.
+#[test]
+fn a_control_session_stranded_at_needs_input_is_cleared() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    assert!(
+        deps.cleared.is_empty(),
+        "not on the tick that first saw the transcript"
+    );
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    assert!(
+        deps.cleared.is_empty(),
+        "nor on the one that found it unchanged"
+    );
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    assert_eq!(deps.cleared, vec!["a".to_owned()]);
+    assert!(
+        deps.settled.is_empty(),
+        "the activity is not touched; only the attention was stranded"
+    );
+}
+
+/// A coder's `needs_input` is left alone, which is the whole reason Part C is
+/// gated on the role: a person reads a coder's prompt, and the reply is what
+/// clears it.
+#[test]
+fn a_coders_needs_input_is_never_cleared() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..6 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(deps.cleared.is_empty());
+    assert!(deps.settled.is_empty());
+}
+
+/// A control session genuinely mid-request keeps its `needs_input`.
+///
+/// The transcript is the discriminator, and it is why this cannot be a timer:
+/// an agent waiting on a permission prompt has a turn that is not complete, so
+/// no amount of dwelling clears it.
+#[test]
+fn a_control_session_still_mid_turn_keeps_its_needs_input() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: in_progress(),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..6 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(deps.cleared.is_empty());
+}
+
+/// A transcript still being appended to is not quiescent, so the dwell restarts
+/// rather than accumulating across probes that disagree.
+#[test]
+fn an_appending_transcript_restarts_the_dwell() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete_with_size(10),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    deps.probe_result = complete_with_size(11);
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    deps.probe_result = complete_with_size(12);
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    assert!(
+        deps.cleared.is_empty(),
+        "three ticks, but no two agreed, so it was never quiescent"
+    );
+}
+
+/// The two attentions do not share a dwell.
+///
+/// Part B clears a stranded `needs_response` and Part C a stranded
+/// `needs_input`, each with its own set, so a session that flips between them
+/// cannot have one attention's first tick pay for the other's second.
+#[test]
+fn flipping_between_the_two_attentions_does_not_shortcut_either_dwell() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+
+    reconciler.scan(&sessions, &metadata(needs_input(), json!({})), &mut deps);
+    reconciler.scan(&sessions, &metadata(needs_input(), json!({})), &mut deps);
+    // Now it is `needs_response`. Part B's dwell starts here, from nothing,
+    // however many ticks Part C had banked.
+    reconciler.scan(&sessions, &metadata(needs_response(), json!({})), &mut deps);
+    assert!(
+        deps.cleared.is_empty(),
+        "Part C's ticks must not pay for Part B's dwell"
+    );
+}
+
+/// A clear the service rejected is tried again rather than recorded as done.
+#[test]
+fn a_clear_that_does_not_land_is_tried_again() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        refuse_clears: true,
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..5 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(
+        deps.clear_attempts >= 2,
+        "a rejected clear has to be attempted again: {} attempts",
+        deps.clear_attempts
+    );
+    assert!(deps.cleared.is_empty());
 }
