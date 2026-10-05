@@ -1642,6 +1642,15 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
     append_count(&mut parts, &counts, "idle", "idle", Tone::Muted);
     append_count(&mut parts, &counts, "done", "done", Tone::Done);
     append_count(&mut parts, &counts, "offline", "offline", Tone::Muted);
+    // Had no arm, so a checkout whose only agent was interrupted summarised
+    // blank -- the roll-up said nothing at all about it.
+    append_count(
+        &mut parts,
+        &counts,
+        "interrupted",
+        "interrupted",
+        Tone::Idle,
+    );
     append_count(&mut parts, &counts, "creating", "creating", PROGRESS_TONE);
     append_count(&mut parts, &counts, "forking", "forking", PROGRESS_TONE);
     append_count(&mut parts, &counts, "migrating", "migrating", PROGRESS_TONE);

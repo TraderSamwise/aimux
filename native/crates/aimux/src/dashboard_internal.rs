@@ -329,6 +329,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     // Why the event stream is down, while it is. Derived rather than stored on
     // the controller, so the reconnect that makes it false also removes it.
     let mut event_stream_down: Option<String> = None;
+    let mut event_stream_health = DashboardStreamHealth::default();
     let mut refresh_state = DashboardProjectRefreshState::default();
     let mut visibility_state = DashboardTuiVisibilityState {
         started_in_dashboard: !options.once && options.desktop_state_file.is_none(),
@@ -454,6 +455,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             &mut event_stream,
             &mut event_stream_retry_at,
             &mut event_stream_down,
+            &mut event_stream_health,
             &mut refresh_state,
             controller
                 .as_ref()
@@ -1366,6 +1368,7 @@ fn drain_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
     down: &mut Option<String>,
+    stream_state: &mut DashboardStreamHealth,
     refresh_state: &mut DashboardProjectRefreshState,
     active_screen: Option<&str>,
     mut controller: Option<&mut DashboardController>,
@@ -1382,11 +1385,23 @@ fn drain_dashboard_event_stream(
                 // The subscription was accepted. Not the spawn, which says only
                 // that a connection was attempted, and not the first event,
                 // which on an idle project never comes.
+                //
+                // Unless the last stream opened and closed without delivering
+                // anything: a service that answers `/events` with a complete
+                // body does that every retry, and clearing here would flash the
+                // bar off and on every few seconds instead of saying plainly
+                // that the stream does not work.
+                if stream_state.accept_proves_recovery() && down.take().is_some() {
+                    render = true;
+                }
+                stream_state.delivered = false;
+            }
+            DashboardEventStreamMessage::Event(event) => {
+                // Demonstrably working, whatever happened last time.
+                stream_state.observe_delivery();
                 if down.take().is_some() {
                     render = true;
                 }
-            }
-            DashboardEventStreamMessage::Event(event) => {
                 if let DashboardProjectEvent::Alert(payload) = &event
                     && let Some(message) = dashboard_alert_footer_flash("dashboard", payload)
                     && let Some(controller) = controller.as_deref_mut()
@@ -1421,6 +1436,7 @@ fn drain_dashboard_event_stream(
                 // and nothing said it had gone again.
                 stream_closed = true;
                 render |= raise_stream_down(down, "project event stream ended");
+                stream_state.observe_close();
                 break;
             }
         }
@@ -1433,6 +1449,38 @@ fn drain_dashboard_event_stream(
         *retry_at = Some(Instant::now() + DASHBOARD_STREAM_RETRY_INTERVAL);
     }
     render
+}
+
+/// What the last stream cycle actually did.
+///
+/// A subscription being accepted is normally proof the stream is back, which is
+/// what an idle project needs -- it delivers nothing for minutes. But a service
+/// that answers `/events` with a complete body accepts and closes on every
+/// retry, and clearing on each accept would flash the report off and on rather
+/// than saying plainly that the stream does not work. So an accept clears it
+/// only when the last cycle was not one of those, and a delivered event clears
+/// it unconditionally.
+#[derive(Debug, Default)]
+struct DashboardStreamHealth {
+    delivered: bool,
+    closed_empty: bool,
+}
+
+impl DashboardStreamHealth {
+    /// Whether a subscription being accepted is proof the stream is back.
+    fn accept_proves_recovery(&self) -> bool {
+        !self.closed_empty
+    }
+
+    fn observe_delivery(&mut self) {
+        self.delivered = true;
+        self.closed_empty = false;
+    }
+
+    fn observe_close(&mut self) {
+        self.closed_empty = !self.delivered;
+        self.delivered = false;
+    }
 }
 
 /// Report that the event stream is down, and say whether that is news.
@@ -3347,6 +3395,40 @@ mod tests {
         // What `drain_dashboard_event_stream` does on `Opened`.
         assert!(down.take().is_some());
         assert_eq!(down, None);
+    }
+
+    /// A service that answers `/events` with a complete body accepts and closes
+    /// on every retry. Clearing on each accept flashed the report off and on
+    /// every couple of seconds; never clearing on an accept left a healthy but
+    /// idle project saying its stream was down, because it delivers nothing for
+    /// minutes.
+    #[test]
+    fn a_stream_that_opens_and_closes_without_delivering_keeps_saying_so() {
+        let mut health = DashboardStreamHealth::default();
+
+        // A healthy reconnect on an idle project: the accept is the proof,
+        // because the project delivers nothing for minutes.
+        assert!(health.accept_proves_recovery());
+
+        // The broken service: accepted, closed, nothing delivered.
+        health.observe_close();
+        assert!(
+            !health.accept_proves_recovery(),
+            "an accept from a stream that closed empty is not proof of anything"
+        );
+
+        // Still not, however many times it does the same thing.
+        health.observe_close();
+        assert!(!health.accept_proves_recovery());
+
+        // A delivered event is proof, and it is proof again afterwards.
+        health.observe_delivery();
+        assert!(health.accept_proves_recovery());
+        health.observe_close();
+        assert!(
+            health.accept_proves_recovery(),
+            "a stream that worked and then closed is a reconnect, not a broken endpoint"
+        );
     }
 
     /// A subscreen that silently stopped receiving events looked exactly like a

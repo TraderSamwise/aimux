@@ -94,6 +94,13 @@ function findCalls(source, needles) {
   return hits;
 }
 
+/** Where the trailing `#[cfg(test)]` module starts, or the end of the file. */
+function lastTestModule(source) {
+  const marker = "\n#[cfg(test)]\n";
+  const index = source.lastIndexOf(marker);
+  return index < 0 ? source.length : index;
+}
+
 const allowlist = JSON.parse(readFileSync(allowlistPath, "utf8"));
 // Keyed on the message, not a line number: an edit anywhere above would shift
 // a line key and silently move the exemption onto a different call site.
@@ -107,7 +114,11 @@ let classified = 0;
 for (const file of listRustFiles(SCAN_ROOT)) {
   const source = readFileSync(file, "utf8");
   // In-file `mod tests` deliberately builds both channels to assert on them.
-  const body = source.split("\n#[cfg(test)]\n")[0];
+  // Cut at the LAST one, not the first: several files have a test module in the
+  // middle, and cutting at the first silently stopped scanning the rest of the
+  // file. Scanning a mid-file test module can only produce a visible false
+  // positive, which is the better way to be wrong.
+  const body = source.slice(0, lastTestModule(source));
   const path = relative(repoRoot, file);
   scanned += 1;
   for (const hit of findCalls(body, NOTE_CALLS)) {

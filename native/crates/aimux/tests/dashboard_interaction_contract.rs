@@ -45,6 +45,12 @@ fn dashboard_interaction_matches_typescript_contract() {
 }
 
 fn run_case(case: &Value) -> Value {
+    run_case_controller(case).1
+}
+
+/// The controller as well as the summary, so the channel a message landed in
+/// can be pinned without the coalesced string hiding it.
+fn run_case_controller(case: &Value) -> (DashboardController, Value) {
     let snapshot_input = normalize_legacy_snapshot(case["input"]["snapshot"].clone());
     let snapshot: DesktopStateSnapshot =
         serde_json::from_value(snapshot_input).expect("snapshot parses");
@@ -84,7 +90,7 @@ fn run_case(case: &Value) -> Value {
         }
     }
 
-    json!({
+    let summary = json!({
         "screen": controller.screen.as_str(),
         "level": match controller.navigation.level {
             DashboardNavLevel::Worktrees => "worktrees",
@@ -95,14 +101,17 @@ fn run_case(case: &Value) -> Value {
         "quickJumpDigits": controller.navigation.quick_jump_digits,
         // The one line the footer shows, whichever channel is carrying it.
         // Node had a single slot; this build splits it into work under way, a
-        // spent note, and a failure that outlives the key.
+        // spent note, and a failure that outlives the key. Coalescing them here
+        // keeps the frozen values comparable -- and loses the distinction, so
+        // `footer_channel_is_pinned_per_case` pins that separately.
         "footerFlash": controller
             .footer_progress_message()
             .or_else(|| controller.footer_note_message())
             .or_else(|| controller.footer_alert_message()),
         "renders": renders,
         "requests": requests,
-    })
+    });
+    (controller, summary)
 }
 
 fn normalize_legacy_snapshot(mut snapshot: Value) -> Value {
@@ -210,4 +219,51 @@ fn find_group_entry_by_window_id<'a>(
         }
     }
     None
+}
+
+/// Which channel each frozen case's footer line lands in.
+///
+/// The contract compares one coalesced `footerFlash` string, so moving a
+/// message from the note channel to the failure channel leaves the frozen JSON
+/// unchanged -- the one gate that would have caught channel drift cannot see
+/// it. This is the missing half: the same two cases, pinned by channel.
+#[test]
+fn footer_channel_is_pinned_per_case() {
+    let contract: Value =
+        serde_json::from_str(CONTRACT).expect("valid dashboard interaction contract");
+    let cases = contract["cases"]
+        .as_array()
+        .expect("dashboard interaction cases");
+
+    for (id, channel) in [
+        ("dashboard-interaction-005", "alert"),
+        ("dashboard-interaction-006", "note"),
+    ] {
+        let case = cases
+            .iter()
+            .find(|case| case["id"].as_str() == Some(id))
+            .unwrap_or_else(|| panic!("{id} is no longer in the contract"));
+        let (controller, _) = run_case_controller(case);
+        let flash = case["output"]["footerFlash"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{id} has no footerFlash to place"));
+        match channel {
+            "alert" => {
+                assert_eq!(
+                    controller.footer_alert_message(),
+                    Some(flash),
+                    "{id}: a refusal has to outlive the next keypress"
+                );
+                assert_eq!(controller.footer_note_message(), None, "{id}");
+            }
+            _ => {
+                assert_eq!(
+                    controller.footer_note_message(),
+                    Some(flash),
+                    "{id}: work in flight is not a failure to dismiss"
+                );
+                assert_eq!(controller.footer_alert_message(), None, "{id}");
+            }
+        }
+    }
 }

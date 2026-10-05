@@ -1,4 +1,5 @@
 import type { NotificationRecord } from "@/lib/api";
+import { pendingActionLabel } from "@/lib/status-tone";
 import { agentCompactIdentity } from "@/lib/agent-display";
 import type { DesktopService, DesktopSession, DesktopState } from "@/lib/desktop-state";
 import type { SecurityInboxEvent } from "@/stores/security";
@@ -111,7 +112,11 @@ function pendingAgentCard(session: DesktopSession): ForYouCard | null {
     kind: session.pendingAction ? "progress" : "action-required",
     source: "agent",
     title: agentCompactIdentity(session),
-    body: session.pendingAction || session.previewLine || session.headline || "Agent is waiting",
+    body:
+      (session.pendingAction && pendingActionLabel(session.pendingAction)) ||
+      session.previewLine ||
+      session.headline ||
+      "Agent is waiting",
     subtitle: [session.worktreeName, session.status].filter(Boolean).join(" · "),
     createdAt: new Date(0).toISOString(),
     unread: true,
@@ -128,7 +133,7 @@ function pendingServiceCard(service: DesktopService): ForYouCard | null {
     kind: "progress",
     source: "service",
     title: service.label || service.id,
-    body: service.pendingAction,
+    body: pendingActionLabel(service.pendingAction),
     subtitle: [service.worktreeName, service.status].filter(Boolean).join(" · "),
     createdAt: new Date(0).toISOString(),
     unread: true,

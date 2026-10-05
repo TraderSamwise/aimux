@@ -1,4 +1,5 @@
 import type { DesktopService, DesktopSession } from "@/lib/desktop-state";
+import { pendingActionLabel } from "@/lib/status-tone";
 
 export function parseRecencyTimestamp(value?: string | null): number | null {
   if (!value) return null;
@@ -37,7 +38,9 @@ export function formatLabeledRecency(
 }
 
 function pendingActionRecencyLabel(value?: string | null): string | null {
-  return value ? value.replace(/_/g, " ") : null;
+  // The shared word, so this does not say "graveyarding 3s ago" beside a row
+  // that says "Removing".
+  return value ? pendingActionLabel(value).toLowerCase() : null;
 }
 
 export function formatSessionRecency(session: DesktopSession, now = Date.now()): string | null {

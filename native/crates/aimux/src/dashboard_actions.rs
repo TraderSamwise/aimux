@@ -129,7 +129,10 @@ fn pending_block(
     pending_action: Option<&str>,
 ) -> Option<DashboardActionPlan> {
     pending.then(|| {
-        let action = pending_action.unwrap_or("pending");
+        // The same word the row and the card use, rather than the raw action.
+        let action =
+            crate::dashboard_renderer::transient_state_label(pending_action.unwrap_or("pending"))
+                .to_lowercase();
         DashboardActionPlan::Busy(format!("{label} {id} is {action}"))
     })
 }

@@ -217,7 +217,7 @@ export const TRANSIENT_ACTIONS = [
 // has heard of is still answered, since the vocabulary is published by the
 // project service and this is a client.
 export function pendingActionStatusKind(action: string): AppStatusKind {
-  return action.trim() ? "working" : "offline";
+  return "working";
 }
 
 // The word every surface uses for an action in flight. Capitalising the raw
@@ -255,7 +255,9 @@ export function agentStatusKind(session: {
 }): AppStatusKind {
   // Not `needs`. An agent the daemon is starting is not an agent asking the
   // user for anything, and painting the two alike is what this fixes.
-  if (session.pendingAction) return pendingActionStatusKind(session.pendingAction);
+  // Trimmed, so a blank action does not short-circuit the attention a running
+  // agent is asking for.
+  if (session.pendingAction?.trim()) return pendingActionStatusKind(session.pendingAction);
   if (session.status === "offline" || session.status === "exited") return "offline";
   const attentionKind = normalizeAppStatusKind(session.attention);
   if (attentionKind) return attentionKind;
@@ -268,7 +270,7 @@ export function serviceStatusKind(service: {
   pendingAction?: string | null;
   status?: string | null;
 }): AppStatusKind {
-  if (service.pendingAction) return pendingActionStatusKind(service.pendingAction);
+  if (service.pendingAction?.trim()) return pendingActionStatusKind(service.pendingAction);
   return service.status === "running" ? "service" : "serviceOff";
 }
 

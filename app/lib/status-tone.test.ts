@@ -71,6 +71,12 @@ describe("an action in flight is work, not an ask", () => {
     expect(agentStatusKind({ status: "running", attention: "needs_input" })).toBe("needs");
   });
 
+  it("does not let a blank action short-circuit attention", () => {
+    expect(
+      agentStatusKind({ pendingAction: "  ", status: "running", attention: "needs_input" }),
+    ).toBe("needs");
+  });
+
   it("renders work in the cyan the TUI uses for the same fact", () => {
     expect(appStatusColors("working").foreground).toBe("#00afd7");
     expect(appStatusColors("needs").foreground).toBe("#d7af5f");
