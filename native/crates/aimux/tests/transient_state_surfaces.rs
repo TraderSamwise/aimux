@@ -126,6 +126,65 @@ fn every_transient_action_is_counted_in_the_progress_tone() {
     }
 }
 
+/// Services, which had the bug in its purest form: the label switched to the
+/// pending action and the tone did not, so a service being started while its
+/// last known status was Exited printed `[svc] starting` in red.
+#[test]
+fn a_service_in_flight_is_toned_by_what_it_is_doing() {
+    for (action, word) in [
+        ("starting", "starting"),
+        ("stopping", "stopping"),
+        ("removing", "removing"),
+        ("graveyarding", "removing"),
+    ] {
+        let fixture: DesktopStateGoldenFixture =
+            serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+        let mut snapshot = fixture.runtime_light.clone();
+        let group = snapshot
+            .worktree_groups
+            .iter_mut()
+            .find(|group| !group.services.is_empty())
+            .expect("a group with a service");
+        let service = group.services.first_mut().expect("a service");
+        service.pending = true;
+        service.pending_action = Some(action.to_owned());
+        // The status it would settle to, which is what used to decide the tone.
+        service.status = aimux::dashboard_model::ServiceStatus::Exited;
+        let frame = render_dashboard_frame(&DashboardRenderInput {
+            snapshot: &snapshot,
+            overseer_sessions: &[],
+            scribe_sessions: &[],
+            cols: 140,
+            rows: 50,
+            nav_level: DashboardNavLevel::Sessions,
+            selected_session_id: None,
+            selected_service_id: None,
+            focused_worktree_path: None,
+            focused_group_index: None,
+            runtime_label: Some("tmux"),
+            version: Some("local"),
+            hide_offline_agents: false,
+            hidden_offline_agent_count: 0,
+            scroll_offset: 0,
+            footer_progress: None,
+            footer_note: None,
+            footer_alerts: &[],
+            details_sidebar_visible: false,
+            preview_source: "output",
+            scribe_preview_entries: &[],
+        })
+        .frame;
+        assert!(
+            frame.contains(&format!("{PROGRESS_SGR}[svc] {word}")),
+            "{action} is not toned by what the service is doing"
+        );
+        assert!(
+            !frame.contains(&format!("{FAILURE_SGR}[svc] {word}")),
+            "{action} wears the tone that means it failed"
+        );
+    }
+}
+
 /// A state this build has not heard of must stay loud. The vocabulary is
 /// published by the project service, and the catch-all that used to paint every
 /// lifecycle action amber was also the arm that caught anything new -- so

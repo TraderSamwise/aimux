@@ -117,8 +117,11 @@ fn treats_pending_and_removing_worktree_health_specially() {
             }),
         ],
     );
-    assert_eq!(topology["worktrees"][0]["health"], "attention");
-    assert_eq!(topology["worktrees"][1]["health"], "offline");
+    // Both are work in flight, not a checkout asking for the person and not one
+    // that is already gone: `offline` is what a removal leaves behind, not what
+    // it looks like while it runs.
+    assert_eq!(topology["worktrees"][0]["health"], "active");
+    assert_eq!(topology["worktrees"][1]["health"], "active");
 }
 
 #[test]

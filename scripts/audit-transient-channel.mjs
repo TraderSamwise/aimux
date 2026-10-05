@@ -155,8 +155,8 @@ for (const file of listRustFiles(SCAN_ROOT)) {
 // a row the dashboard was busy with looked like a row waiting on the user.
 const TRANSIENT_LABELS = [
   "creating", "forking", "migrating", "switching", "starting", "stopping",
-  "graveyarding", "resurrecting", "renaming", "moving", "removing", "deleting",
-  "pending", "Loading", "Restoring",
+  "graveyarding", "resurrecting", "renaming", "moving", "removing",
+  "interrupting", "pending", "Loading", "Restoring",
 ];
 const WRONG_TONES = ["Tone::Attention", "Tone::Danger", "ChipTone::Danger", "ChipTone::Attention"];
 // The calls that put a tone on a label.
@@ -164,7 +164,7 @@ const TONE_CALLS = ["style(", "chip(", "pill(", "append_count("];
 
 for (const file of listRustFiles(SCAN_ROOT)) {
   const source = readFileSync(file, "utf8");
-  const body = source.split("\n#[cfg(test)]\n")[0];
+  const body = source.slice(0, lastTestModule(source));
   const path = relative(repoRoot, file);
   // One styling call at a time, not one line and not one statement. A line
   // cannot see a call rustfmt wrapped over five of them; a statement reads a

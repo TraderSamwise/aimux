@@ -159,10 +159,15 @@ export function normalizeAppStatusKind(value: string | null | undefined): AppSta
     case "waiting_on_peers":
       return "idle";
     case "exited":
-    case "graveyarding":
       return "offline";
-    case "interrupted":
+    // `graveyarding` and `stopping` are actions under way, not the states they
+    // leave behind. Mapping them to offline and idle here contradicted
+    // `TRANSIENT_ACTIONS` a few lines down and the TUI's answer for the same
+    // words.
+    case "graveyarding":
     case "stopping":
+      return "working";
+    case "interrupted":
       return "idle";
     default:
       return null;

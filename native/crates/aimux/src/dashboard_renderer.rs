@@ -1103,14 +1103,21 @@ fn service_row(service: &DashboardService, selected: bool, digit: Option<usize>)
         .as_deref()
         .or(service.command.as_deref())
         .unwrap_or("undefined");
-    let status_label = service
-        .pending_action
-        .as_deref()
-        .unwrap_or_else(|| service_status_str(&service.status));
-    let status_tone = match service.status {
-        ServiceStatus::Running => Tone::Done,
-        ServiceStatus::Exited => Tone::Danger,
-        _ => Tone::Muted,
+    // The label switched to the pending action and the tone did not, so a
+    // service being started while its last known status was Exited printed
+    // `[svc] starting` in red, and one being stopped while Running printed it
+    // in green. And it was the only pending-action site that skipped the shared
+    // word, so it said `graveyarding` where everything else says `removing`.
+    let (status_label, status_tone) = match service.pending_action.as_deref() {
+        Some(action) => (row_state_label(action).to_lowercase(), PROGRESS_TONE),
+        None => (
+            service_status_str(&service.status).to_owned(),
+            match service.status {
+                ServiceStatus::Running => Tone::Done,
+                ServiceStatus::Exited => Tone::Danger,
+                _ => Tone::Muted,
+            },
+        ),
     };
     let status = style(&format!("[svc] {status_label}"), status_tone);
     let time = service

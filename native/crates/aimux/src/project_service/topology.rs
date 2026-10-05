@@ -231,13 +231,15 @@ pub fn build_project_topology(project_name: &str, worktrees: Vec<Value>) -> Valu
 }
 
 fn worktree_health(worktree: &Value, child_healths: &[&str]) -> &'static str {
+    // Active, for the same reason `health_for_status` is: a checkout being
+    // created or renamed is busy, not asking for the person. And one being
+    // removed is busy too -- `offline` is what it becomes when the removal
+    // finishes, not what it is while the removal runs.
     if bool_field(worktree, "pending")
+        || bool_field(worktree, "removing")
         || string_field(worktree, "pendingAction").is_some_and(|value| !value.is_empty())
     {
-        return "attention";
-    }
-    if bool_field(worktree, "removing") {
-        return "offline";
+        return "active";
     }
     if !child_healths.is_empty() {
         return rollup_health(child_healths);

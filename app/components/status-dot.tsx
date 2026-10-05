@@ -107,7 +107,10 @@ export function TypeTag({ label }: { label: string }) {
   );
 }
 
-export function StatusPill({ status }: { status: string }) {
+// `label` lets a caller tone by one fact and word it by another -- the topology
+// rows tone by health, which knows about pending actions, and say the raw
+// runtime status, which does not.
+export function StatusPill({ status, label }: { status: string; label?: string }) {
   const tone = appStatusClasses(status);
   const colors = appStatusColors(status);
   return (
@@ -119,7 +122,7 @@ export function StatusPill({ status }: { status: string }) {
         className={cn("text-[10px] font-medium uppercase tracking-wide", tone.text)}
         style={{ color: colors.foreground }}
       >
-        {status}
+        {label ?? status}
       </Text>
     </View>
   );
