@@ -29,6 +29,7 @@ pub mod daemon;
 pub mod daemon_projects;
 pub mod daemon_state;
 pub mod daemon_supervisor;
+pub mod dashboard_action_progress;
 pub mod dashboard_actions;
 pub mod dashboard_client;
 pub mod dashboard_command_spec;

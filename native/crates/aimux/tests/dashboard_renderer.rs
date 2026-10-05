@@ -521,8 +521,8 @@ fn graveyard_subscreen_renders_pending_action_overlays_from_pending_model() {
         }
     });
     let mut pending = DashboardPendingActions::new();
-    pending.set_worktree_action(Some("/repo/feature-a"), "deleting", None, 0);
-    pending.set_session_action("codex-orphan", "resurrecting", None, 0);
+    pending.set_worktree_action(Some("/repo/feature-a"), "deleting", 0);
+    pending.set_session_action("codex-orphan", "resurrecting", 0);
     pending.apply_to_graveyard_resource(&mut resource);
 
     let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {

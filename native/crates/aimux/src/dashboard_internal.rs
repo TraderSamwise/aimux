@@ -2,6 +2,7 @@ use crate::async_subprocess::AsyncCommand;
 use crate::config::load_config_for_project;
 use crate::core_command_contract::CORE_COMMAND_NAMES;
 use crate::core_command_transport::send_core_command;
+use crate::dashboard_action_progress::progress_for_request;
 use crate::dashboard_actions::{
     DashboardActionKind, DashboardActionPlan, DashboardActionRequest, plan_dashboard_action,
 };
@@ -548,25 +549,30 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     PendingTarget::Session => pending_actions.set_session_action(
                                         &id,
                                         &kind,
-                                        None,
                                         pending_action_now_ms(clock_start),
                                     ),
                                     PendingTarget::Service => pending_actions.set_service_action(
                                         &id,
                                         &kind,
-                                        None,
                                         pending_action_now_ms(clock_start),
                                     ),
                                     PendingTarget::Worktree => pending_actions.set_worktree_action(
                                         Some(id.as_str()),
                                         &kind,
-                                        None,
                                         pending_action_now_ms(clock_start),
                                     ),
                                 };
                                 (target, id, token)
                             },
                         );
+                        // A route that makes something has no row to paint, so
+                        // its only report is the footer. Built from the same
+                        // path and body `flush_deferred_dashboard_requests`
+                        // identifies the action by, so this note is taken down
+                        // by its own outcome and by nobody else's.
+                        if let Some(message) = progress_for_request(request.path, &request.body) {
+                            controller.set_progress(message, DashboardActionIdentity::of(&request));
+                        }
                         // An overlay has to reach a frame, and only a freshly
                         // loaded snapshot carries one. A request without an
                         // overlay -- attaching to an agent is the common one --
@@ -3040,10 +3046,7 @@ fn flush_deferred_dashboard_requests(
         // pane into the body on its way out, so an identity taken in there
         // would carry whichever pane happened to dispatch it -- and a focus
         // retried from a different pane would never answer its own failure.
-        let action = Some(DashboardActionIdentity {
-            path: request.path,
-            body: request.body.clone(),
-        });
+        let action = Some(DashboardActionIdentity::of(&request));
         thread::spawn(move || {
             let (failure, notice) = match execute_dashboard_controller_action(&endpoint, &request) {
                 Ok(body) => (None, dashboard_action_notice(request.path, &body)),
@@ -3260,6 +3263,67 @@ mod tests {
             controller.footer_alert_message(),
             Some("Dashboard action requires a project-service endpoint")
         );
+    }
+
+    /// A create reports itself in the footer and is taken down by its own
+    /// outcome — the two halves built from the same request, by one constructor.
+    ///
+    /// A worktree create is allowed 180s. It paints no row, because the row it
+    /// makes does not exist yet, so this note is the only thing on screen
+    /// saying the key did anything.
+    #[test]
+    fn a_create_reports_itself_in_the_footer_until_its_own_outcome_returns() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        let request = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::worktree_actions::CREATE,
+            body: serde_json::json!({ "name": "feature-a" }),
+        };
+        let message = progress_for_request(request.path, &request.body).expect("a sentence");
+        controller.set_progress(message, DashboardActionIdentity::of(&request));
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Creating worktree feature-a")
+        );
+
+        // A key in the meantime is the whole reason this is not a note.
+        controller.handle_key(
+            &snapshot,
+            crate::dashboard_controller::DashboardKey::Printable('j'),
+        );
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Creating worktree feature-a"),
+            "a progress note outlives the keys pressed while it runs"
+        );
+
+        // Somebody else's outcome is not an answer to this one.
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(stop_agent("claude-a")),
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Creating worktree feature-a")
+        );
+
+        // Its own, built the way `flush_deferred_dashboard_requests` builds it.
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(DashboardActionIdentity::of(&request)),
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        assert_eq!(controller.footer_progress_message(), None);
     }
 
     /// "Aimux is updating", "is reconnecting", "is repairing tmux": four of the
@@ -3799,7 +3863,6 @@ mod tests {
         let token = pending_actions.set_session_action(
             "claude-a",
             "stopping",
-            None,
             pending_action_now_ms(std::time::Instant::now()),
         );
         assert!(
@@ -4249,7 +4312,7 @@ mod tests {
             thread::sleep(Duration::from_secs(3));
         });
         let mut pending_actions = DashboardPendingActions::new();
-        let token = pending_actions.set_session_action("claude-a1", "graveyarding", None, 0);
+        let token = pending_actions.set_session_action("claude-a1", "graveyarding", 0);
         let mut deferred: Vec<DeferredDashboardRequest> = vec![(
             DashboardActionRequest {
                 method: "POST",
@@ -4281,7 +4344,7 @@ mod tests {
     #[test]
     fn pending_action_deadline_requests_a_render_without_input() {
         let mut pending_actions = DashboardPendingActions::new();
-        pending_actions.set_session_action("claude-a1", "stopping", None, 0);
+        pending_actions.set_session_action("claude-a1", "stopping", 0);
 
         assert!(!pending_action_reconcile_due(&pending_actions, 399));
         assert!(pending_action_reconcile_due(&pending_actions, 400));

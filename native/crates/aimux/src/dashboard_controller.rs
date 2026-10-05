@@ -338,10 +338,11 @@ impl DashboardOrchestrationInputState {
 ///
 /// The route alone is too coarse -- stopping one agent would answer a failure
 /// about another -- and a key picked out of the body is a guess that was wrong
-/// twice: `pending_action_for_request` keys fork on `sessionId` while the only
-/// fork dispatcher sends `sourceSessionId`, and it keys a worktree create on a
+/// twice: `pending_action_for_request` keyed fork on `sessionId` while the only
+/// fork dispatcher sends `sourceSessionId`, and keyed a worktree create on a
 /// `path` the dashboard never sends, so every create collapsed onto the main
-/// checkout's own key. The arguments are the identity: two attempts at the same
+/// checkout's own key. Both arms are gone; the whole request is the identity
+/// now. The arguments are the identity: two attempts at the same
 /// action against the same target are the same request, and no body carries a
 /// timestamp, nonce or generated id, so that equality is a real property.
 ///
@@ -361,6 +362,20 @@ impl DashboardOrchestrationInputState {
 pub struct DashboardActionIdentity {
     pub path: &'static str,
     pub body: Value,
+}
+
+impl DashboardActionIdentity {
+    /// The one way an identity is taken, so the site that raises a note and the
+    /// site that takes it down cannot drift apart. Both read the request before
+    /// it is sent: `execute_dashboard_controller_action` injects the caller's
+    /// tmux pane into the body on its way out, and an identity taken after that
+    /// carries whichever pane dispatched it.
+    pub fn of(request: &DashboardActionRequest) -> Self {
+        Self {
+            path: request.path,
+            body: request.body.clone(),
+        }
+    }
 }
 
 /// A failure on the footer, and which action it was about.
@@ -1737,10 +1752,7 @@ impl DashboardController {
                         .as_ref()
                         .map_or(0, |offer| offer.session_ids.len()),
                 ),
-                DashboardActionIdentity {
-                    path: request.path,
-                    body: request.body.clone(),
-                },
+                DashboardActionIdentity::of(&request),
             );
             return DashboardControllerEffect::Request(request);
         }

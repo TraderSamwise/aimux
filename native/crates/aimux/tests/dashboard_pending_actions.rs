@@ -1,7 +1,9 @@
 use aimux::dashboard_model::{DesktopStateSnapshot, SessionStatus};
+use aimux::dashboard_navigation::{DashboardNavigationOutcome, DashboardNavigationState};
 use aimux::dashboard_pending_actions::{
     DashboardPendingActions, PendingTarget, pending_action_for_request,
 };
+use aimux::dashboard_renderer::DashboardNavLevel;
 use aimux::project_api_contract::routes;
 use serde_json::json;
 
@@ -18,6 +20,27 @@ fn snapshot_with(status: &str) -> DesktopStateSnapshot {
         "services": [],
         "worktrees": [],
         "worktreeGroups": [],
+        "mainCheckoutInfo": { "name": "main", "branch": "master" },
+        "agentRestoreOffer": null
+    }))
+    .expect("snapshot")
+}
+
+/// The main checkout as the dashboard carries it: a worktree group with no
+/// path, which is why its overlay key is a constant.
+fn snapshot_with_main_checkout() -> DesktopStateSnapshot {
+    serde_json::from_value(json!({
+        "sessions": [],
+        "teammates": [],
+        "services": [],
+        "worktrees": [],
+        "worktreeGroups": [{
+            "name": "Main Checkout",
+            "branch": "master",
+            "status": "active",
+            "sessions": [],
+            "services": []
+        }],
         "mainCheckoutInfo": { "name": "main", "branch": "master" },
         "agentRestoreOffer": null
     }))
@@ -55,7 +78,7 @@ fn graveyard_resource_with_worktree() -> serde_json::Value {
 #[test]
 fn stop_paints_a_stopping_overlay_before_the_model_catches_up() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "stopping", None, 0);
+    pending.set_session_action("claude-a1", "stopping", 0);
     let mut snapshot = snapshot_with("running");
 
     pending.reconcile(&snapshot, 10);
@@ -72,7 +95,7 @@ fn stop_paints_a_stopping_overlay_before_the_model_catches_up() {
 #[test]
 fn overlay_clears_once_the_model_reports_the_new_state() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "stopping", None, 0);
+    pending.set_session_action("claude-a1", "stopping", 0);
     let mut settled = snapshot_with("offline");
 
     pending.reconcile(&settled, 500);
@@ -88,7 +111,7 @@ fn an_overlay_survives_a_refresh_that_already_reports_the_new_state() {
     // The mutation is a blocking round trip, so the first refresh after it
     // usually already agrees. Without a floor the overlay never reaches a frame.
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "stopping", None, 0);
+    pending.set_session_action("claude-a1", "stopping", 0);
     let mut settled = snapshot_with("offline");
 
     pending.reconcile(&settled, 10);
@@ -104,7 +127,7 @@ fn an_overlay_survives_a_refresh_that_already_reports_the_new_state() {
 #[test]
 fn settled_stop_requests_a_second_reconcile_after_the_visible_floor() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "stopping", None, 0);
+    pending.set_session_action("claude-a1", "stopping", 0);
     let mut settled = snapshot_with("offline");
 
     pending.reconcile(&settled, 10);
@@ -127,7 +150,7 @@ fn settled_stop_requests_a_second_reconcile_after_the_visible_floor() {
 #[test]
 fn graveyarding_session_clears_after_the_removed_row_reaches_the_visible_floor() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "graveyarding", None, 0);
+    pending.set_session_action("claude-a1", "graveyarding", 0);
     let snapshot = snapshot_with("running");
 
     pending.reconcile(&snapshot, 10);
@@ -152,7 +175,7 @@ fn graveyarding_session_clears_after_the_removed_row_reaches_the_visible_floor()
 #[test]
 fn graveyarding_worktree_clears_after_the_removed_group_reaches_the_visible_floor() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_worktree_action(Some("/repo/wt"), "graveyarding", None, 0);
+    pending.set_worktree_action(Some("/repo/wt"), "graveyarding", 0);
     let present: DesktopStateSnapshot = serde_json::from_value(json!({
         "sessions": [],
         "teammates": [],
@@ -186,7 +209,7 @@ fn graveyarding_worktree_clears_after_the_removed_group_reaches_the_visible_floo
 #[test]
 fn stuck_stop_backs_off_until_the_timeout_after_the_visible_floor() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "stopping", None, 0);
+    pending.set_session_action("claude-a1", "stopping", 0);
     let running = snapshot_with("running");
 
     pending.reconcile(&running, 400);
@@ -198,7 +221,7 @@ fn stuck_stop_backs_off_until_the_timeout_after_the_visible_floor() {
 #[test]
 fn starting_overlay_requests_its_settle_deadline_after_the_visible_floor() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "starting", None, 0);
+    pending.set_session_action("claude-a1", "starting", 0);
     let offline = snapshot_with("offline");
 
     pending.reconcile(&offline, 400);
@@ -210,7 +233,7 @@ fn starting_overlay_requests_its_settle_deadline_after_the_visible_floor() {
 #[test]
 fn resume_paints_starting_and_shows_the_row_as_running() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "starting", None, 0);
+    pending.set_session_action("claude-a1", "starting", 0);
     let mut snapshot = snapshot_with("offline");
 
     pending.reconcile(&snapshot, 10);
@@ -226,7 +249,7 @@ fn resume_paints_starting_and_shows_the_row_as_running() {
 #[test]
 fn resurrecting_session_settles_when_the_restored_session_reappears_offline() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "resurrecting", None, 0);
+    pending.set_session_action("claude-a1", "resurrecting", 0);
     let snapshot = snapshot_with("offline");
 
     pending.reconcile(&snapshot, 400);
@@ -234,27 +257,26 @@ fn resurrecting_session_settles_when_the_restored_session_reappears_offline() {
     assert!(pending.is_empty());
 }
 
+/// The overlay paints rows the snapshot already has; it never invents one.
+///
+/// It used to be able to, from a caller-supplied seed row — but no caller ever
+/// supplied one, so every create painted nothing at all and the feature read as
+/// working. The routes that make something report themselves in the footer now.
 #[test]
-fn resurrecting_session_can_synthesize_the_seed_before_the_model_refreshes() {
-    let mut seed_snapshot = snapshot_with("offline");
-    let seed = seed_snapshot.sessions.remove(0);
+fn an_overlay_for_a_row_the_snapshot_lacks_paints_nothing() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "resurrecting", Some(seed), 0);
+    pending.set_session_action("claude-a1", "resurrecting", 0);
     let mut snapshot = empty_snapshot();
 
     pending.apply(&mut snapshot);
 
-    assert_eq!(snapshot.sessions.len(), 1);
-    assert_eq!(
-        snapshot.sessions[0].pending_action.as_deref(),
-        Some("resurrecting")
-    );
+    assert!(snapshot.sessions.is_empty());
 }
 
 #[test]
 fn deleting_graveyard_worktree_does_not_settle_just_because_active_groups_lack_it() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_worktree_action(Some("/repo/wt"), "deleting", None, 0);
+    pending.set_worktree_action(Some("/repo/wt"), "deleting", 0);
     let snapshot = empty_snapshot();
 
     pending.reconcile(&snapshot, 400);
@@ -275,7 +297,7 @@ fn deleting_graveyard_worktree_does_not_settle_just_because_active_groups_lack_i
 #[test]
 fn rename_overlay_clears_after_a_refreshed_model_reaches_the_visible_floor() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "renaming", None, 0);
+    pending.set_session_action("claude-a1", "renaming", 0);
     let mut snapshot = snapshot_with("running");
 
     pending.reconcile(&snapshot, 400);
@@ -288,7 +310,7 @@ fn rename_overlay_clears_after_a_refreshed_model_reaches_the_visible_floor() {
 #[test]
 fn a_starting_overlay_expires_on_its_own() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "starting", None, 0);
+    pending.set_session_action("claude-a1", "starting", 0);
     let snapshot = snapshot_with("offline");
 
     pending.reconcile(&snapshot, 5_000);
@@ -299,7 +321,7 @@ fn a_starting_overlay_expires_on_its_own() {
 #[test]
 fn a_stuck_overlay_times_out_instead_of_pinning_the_row() {
     let mut pending = DashboardPendingActions::new();
-    pending.set_session_action("claude-a1", "stopping", None, 0);
+    pending.set_session_action("claude-a1", "stopping", 0);
     let snapshot = snapshot_with("running");
 
     pending.reconcile(&snapshot, 14_000);
@@ -393,11 +415,92 @@ fn dashboard_mutations_map_to_the_overlay_they_should_paint() {
     assert!(pending_action_for_request(routes::graveyard_actions::CLEANUP, &json!({})).is_none());
 }
 
+/// The four routes that make something have no row to paint, and the keys they
+/// were reaching for belonged to something else.
+///
+/// The worktree one is the damaging shape: the dashboard sends `{"name": ...}`
+/// or `{"source": ...}`, never `path`, so `worktree_key(None)` returned the
+/// main checkout's own key and every create painted the Main Checkout row
+/// pending — where `x` was then refused with "Worktree Main Checkout is
+/// creating" for as long as the overlay's visible floor held it.
+#[test]
+fn a_route_that_makes_something_paints_no_row() {
+    let cases = [
+        (
+            routes::worktree_actions::CREATE,
+            json!({ "name": "feature-a" }),
+        ),
+        (
+            routes::worktree_actions::CREATE,
+            json!({ "source": "origin/pine" }),
+        ),
+        (
+            routes::agents::FORK,
+            json!({ "sourceSessionId": "claude-a1", "tool": "claude" }),
+        ),
+        (routes::agents::SPAWN, json!({ "tool": "claude" })),
+        (
+            routes::agents::SPAWN,
+            json!({ "sessionId": "named", "tool": "claude" }),
+        ),
+        (routes::services::CREATE, json!({ "command": "yarn dev" })),
+        (
+            routes::services::CREATE,
+            json!({ "serviceId": "named", "command": "yarn dev" }),
+        ),
+    ];
+    for (path, body) in cases {
+        assert!(
+            pending_action_for_request(path, &body).is_none(),
+            "{path} with {body} should paint no row"
+        );
+    }
+}
+
+/// The main checkout's key is what a worktree create used to collapse onto, and
+/// a pending main checkout is not cosmetic: Enter into it was refused with
+/// "Worktree Main Checkout is still creating" for as long as the overlay held.
+#[test]
+fn a_worktree_create_leaves_the_main_checkout_steppable() {
+    let mut pending = DashboardPendingActions::new();
+    // Whatever the request resolves to, recorded the way the render loop
+    // records it -- so a future regression onto any target, not just a
+    // worktree, still reaches the assertions below.
+    if let Some((target, id, kind)) = pending_action_for_request(
+        routes::worktree_actions::CREATE,
+        &json!({ "name": "feature-a" }),
+    ) {
+        match target {
+            PendingTarget::Session => pending.set_session_action(&id, &kind, 0),
+            PendingTarget::Service => pending.set_service_action(&id, &kind, 0),
+            PendingTarget::Worktree => pending.set_worktree_action(Some(&id), &kind, 0),
+        };
+    }
+
+    let mut snapshot = snapshot_with_main_checkout();
+    pending.apply(&mut snapshot);
+
+    let main = &snapshot.worktree_groups[0];
+    assert!(!main.pending, "the main checkout is not the thing created");
+    assert_eq!(main.pending_action, None);
+
+    let mut navigation = DashboardNavigationState::new(&snapshot);
+    navigation.level = DashboardNavLevel::Worktrees;
+    navigation.worktree_index = 0;
+    assert!(
+        !matches!(
+            navigation.step_in(&snapshot),
+            DashboardNavigationOutcome::Busy(_)
+        ),
+        "creating a worktree must not lock the user out of the main checkout"
+    );
+}
+
 #[test]
 fn a_failed_request_drops_only_its_own_overlay() {
     let mut pending = DashboardPendingActions::new();
-    let stale = pending.set_session_action("claude-a1", "stopping", None, 0);
-    let current = pending.set_session_action("claude-a1", "graveyarding", None, 0);
+    let stale = pending.set_session_action("claude-a1", "stopping", 0);
+    let current = pending.set_session_action("claude-a1", "graveyarding", 0);
 
     assert!(!pending.clear_if_token(PendingTarget::Session, "claude-a1", stale));
     assert!(pending.clear_if_token(PendingTarget::Session, "claude-a1", current));
