@@ -830,6 +830,29 @@ fn parse_json_response(bytes: &[u8]) -> Result<DaemonJsonResponse, CoreCommandTr
     })
 }
 
+/// What to say when the daemon's answer has no header terminator.
+///
+/// It all used to say "invalid daemon HTTP response: missing header
+/// terminator", which is a claim about FRAMING -- and the commonest way to get
+/// here is a daemon that accepted the connection and then died or closed
+/// without writing a byte. Reporting that as a framing problem sends the
+/// reader looking at the protocol instead of at the process, which is the
+/// wrapper lying about a child's failure that AGENTS.md names outright.
+///
+/// Both sides of the comparison: what came back, and what was looked for.
+fn unframed_response(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "daemon closed the connection without answering (no bytes read)".to_owned();
+    }
+    let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(120)]);
+    let preview = preview.trim_end();
+    format!(
+        "daemon response ended after {} byte(s) without completing its headers; \
+         it began: {preview:?}",
+        bytes.len()
+    )
+}
+
 struct HttpResponseParts {
     status: u16,
     headers: BTreeMap<String, String>,
@@ -837,11 +860,8 @@ struct HttpResponseParts {
 }
 
 fn parse_response_parts(bytes: &[u8]) -> Result<HttpResponseParts, CoreCommandTransportError> {
-    let header_end = find_bytes(bytes, b"\r\n\r\n").ok_or_else(|| {
-        CoreCommandTransportError::InvalidHttpResponse(
-            "invalid daemon HTTP response: missing header terminator".to_owned(),
-        )
-    })?;
+    let header_end = find_bytes(bytes, b"\r\n\r\n")
+        .ok_or_else(|| CoreCommandTransportError::InvalidHttpResponse(unframed_response(bytes)))?;
     let headers = std::str::from_utf8(&bytes[..header_end]).map_err(|error| {
         CoreCommandTransportError::InvalidHttpResponse(format!(
             "invalid daemon HTTP response headers: {error}"
@@ -1038,6 +1058,48 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A daemon that closes without answering must say so, not blame framing.
+    ///
+    /// `aimux` in a project reported "invalid daemon HTTP response: missing
+    /// header terminator" after waiting 70 seconds -- a claim about the
+    /// protocol for what is almost always a process that died or hung up.
+    /// AGENTS.md: a wrapper must report the child error, not convert it into a
+    /// framing claim.
+    #[test]
+    fn an_unanswered_request_names_the_silence_not_the_framing() {
+        let Err(CoreCommandTransportError::InvalidHttpResponse(message)) =
+            parse_response_parts(b"")
+        else {
+            panic!("an empty read is not a parseable response");
+        };
+        assert!(
+            message.contains("closed the connection without answering"),
+            "the reader has to be sent to the process, not the protocol: {message}"
+        );
+        assert!(
+            !message.contains("header terminator"),
+            "and not told the headers were malformed when none arrived: {message}"
+        );
+    }
+
+    /// A truncated answer names both sides: how much arrived, and what it was.
+    #[test]
+    fn a_truncated_response_shows_what_did_arrive() {
+        let Err(CoreCommandTransportError::InvalidHttpResponse(message)) =
+            parse_response_parts(b"HTTP/1.1 500 Internal Server Error\r\nX-Repair: pending")
+        else {
+            panic!("a half-written response is not parseable");
+        };
+        assert!(
+            message.contains("53 byte(s)"),
+            "how much arrived: {message}"
+        );
+        assert!(
+            message.contains("500 Internal Server Error"),
+            "and what it was, which is the part that says why: {message}"
+        );
+    }
 
     #[test]
     fn loopback_retry_treats_eagain_as_transient_until_success() {
