@@ -93,12 +93,22 @@ fn a_kernel_refusal_is_reported_with_its_errno() {
         ptrace_opt_in_outcome(7, libc::EPERM),
         PtraceOptInOutcome::Failed { errno: libc::EPERM }
     );
-    // `EINVAL` is the other answer and not a refusal: the kernel does not know
-    // this option, which means Yama is not built in. Reporting it as "refused"
-    // would send someone looking for a policy that is not there.
+    // `EINVAL` is a third answer: the kernel did not recognise what was asked,
+    // which is Yama absent OR a wrong option value. Not a refusal, and not
+    // "nothing to do here" -- folding it into `NotNeededOnThisPlatform` was the
+    // first attempt, and it made a wrong constant read as benign, which is the
+    // one failure no other test can catch.
     assert_eq!(
         ptrace_opt_in_outcome(-1, libc::EINVAL),
-        PtraceOptInOutcome::NotNeededOnThisPlatform
+        PtraceOptInOutcome::OptionUnknownToKernel {
+            errno: libc::EINVAL
+        }
+    );
+    assert_ne!(
+        ptrace_opt_in_outcome(-1, libc::EINVAL),
+        PtraceOptInOutcome::NotNeededOnThisPlatform,
+        "a Linux kernel that does not know the option is not a platform that \
+         does not need it"
     );
 }
 
@@ -163,4 +173,36 @@ fn the_project_service_inherits_the_whole_environment() {
         "the project service inherits the daemon's environment; if that becomes \
          an allowlist, AIMUX_ALLOW_PTRACE has to join it"
     );
+}
+
+/// Logging is configured before either process asks, so the answer is not lost.
+///
+/// `log_lifecycle_always` returns early when `RUNTIME_CONFIG` is unset, and the
+/// opt-in call is the FIRST statement of `run_daemon_internal` -- deliberately,
+/// so it covers the filesystem work that can hang. That only works because the
+/// binary configures logging before calling in. If those two ever swapped, the
+/// opt-in would go back to being silent, which is the whole failure this exists
+/// to end.
+#[test]
+fn logging_is_configured_before_either_entry_point_is_called() {
+    let source = include_str!("../src/bin/aimux.rs");
+    for (configure, run) in [
+        ("configure_daemon_logging(", "run_daemon_internal()"),
+        (
+            "configure_process_logging(",
+            "run_project_service_internal(",
+        ),
+    ] {
+        let configured = source
+            .find(configure)
+            .unwrap_or_else(|| panic!("{configure} is still called"));
+        let called = source
+            .find(run)
+            .unwrap_or_else(|| panic!("{run} is still called"));
+        assert!(
+            configured < called,
+            "{configure} has to come before {run}, or the opt-in's answer is \
+             dropped on the floor"
+        );
+    }
 }

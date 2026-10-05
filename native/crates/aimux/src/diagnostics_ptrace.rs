@@ -61,8 +61,18 @@ where
 pub enum PtraceOptInOutcome {
     /// Not asked for.
     NotRequested,
-    /// Asked for, and this platform does not need it.
+    /// Asked for, and this platform does not need it -- macOS, where `sample`
+    /// reads per-thread stacks with no privileges.
     NotNeededOnThisPlatform,
+    /// Asked for on Linux, and the kernel does not know the option.
+    ///
+    /// Its own variant rather than folded into `NotNeededOnThisPlatform`, which
+    /// is what a non-Linux build returns. Collapsing them was the first attempt
+    /// and it is worse than what it replaced: `EINVAL` is also what a BAD OPTION
+    /// VALUE returns, so a wrong constant would have read as "this platform does
+    /// not need it" and been silently benign -- and no test can catch a wrong
+    /// constant, because that is exactly the errno it produces.
+    OptionUnknownToKernel { errno: i32 },
     /// Asked for and applied.
     Allowed,
     /// Asked for and refused by the kernel, with errno.
@@ -95,11 +105,13 @@ pub fn ptrace_opt_in_outcome(prctl_result: i32, errno: i32) -> PtraceOptInOutcom
     if prctl_result == 0 {
         return PtraceOptInOutcome::Allowed;
     }
-    // `EINVAL` from this option means the kernel does not know it -- Yama is not
-    // built in -- which is a different answer from Yama saying no. Logging both
-    // as "refused" would send someone looking for a policy that is not there.
+    // `EINVAL` means the kernel did not recognise what was asked: Yama not
+    // built in, or an option value that is wrong. Either way it is not Yama
+    // saying no, and reporting it as a refusal would send someone looking for a
+    // policy that is not there -- but it is not "nothing to do here" either,
+    // which is why it has a variant of its own.
     if errno == libc::EINVAL {
-        return PtraceOptInOutcome::NotNeededOnThisPlatform;
+        return PtraceOptInOutcome::OptionUnknownToKernel { errno };
     }
     PtraceOptInOutcome::Failed { errno }
 }

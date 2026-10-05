@@ -89,8 +89,18 @@ capture_linux() {
     echo "## userspace stacks"
     local frames=""
     if [ -n "$EU_STACK" ]; then
-      frames="$(LD_LIBRARY_PATH="${EU_LIBS}${EU_LIBS:+:}${LD_LIBRARY_PATH:-}" \
-        "$EU_STACK" -p "$pid" 2>&1)"
+      # Joined explicitly rather than with nested expansions: a stray leading
+      # OR trailing colon means "the current directory" to the loader, and
+      # `${A}${A:+:}${B}` produces a trailing one whenever B is empty.
+      eu_path="$EU_LIBS"
+      if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+        if [ -n "$eu_path" ]; then
+          eu_path="$eu_path:$LD_LIBRARY_PATH"
+        else
+          eu_path="$LD_LIBRARY_PATH"
+        fi
+      fi
+      frames="$(LD_LIBRARY_PATH="$eu_path" "$EU_STACK" -p "$pid" 2>&1)"
       echo "$frames"
     elif have gdb; then
       frames="$(gdb -p "$pid" -batch -ex 'thread apply all bt' 2>&1)"
@@ -150,9 +160,22 @@ for pid in "${pids[@]}"; do
       rc=1
       continue
       ;;
+    0)
+      # `kill -0 0` is a permission probe against the whole process group, so a
+      # literal zero would otherwise pass the liveness check below and then
+      # capture nothing.
+      echo "not a pid: 0" >&2
+      rc=1
+      continue
+      ;;
   esac
+  # `/proc` first because it is the honest test where it exists; `kill -0` is
+  # the macOS fallback. It returns EPERM rather than success for a process owned
+  # by another user, so a root-owned aimux would read as absent -- said here
+  # rather than papered over, because capturing another user's process needs
+  # privileges this script does not have anyway.
   if [ ! -d "/proc/$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
-    echo "no such process: $pid" >&2
+    echo "no such process, or not yours: $pid" >&2
     rc=1
     continue
   fi
