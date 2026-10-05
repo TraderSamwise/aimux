@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { TRANSIENT_ACTIONS, agentStatusKind, serviceStatusKind } from "@/lib/status-tone";
+import {
+  TRANSIENT_ACTIONS,
+  agentStatusKind,
+  pendingActionLabel,
+  pendingActionStatusKind,
+  serviceStatusKind,
+} from "@/lib/status-tone";
 
 // The app half of the cross-surface transient-state check. AGENTS.md "One
 // Answer, Many Surfaces": a per-surface test passes happily while the surfaces
@@ -27,6 +33,7 @@ interface PresentationCase {
   why: string;
   action: string;
   family: "progress" | "attention" | "failure";
+  label: string;
 }
 
 const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8"));
@@ -42,9 +49,18 @@ describe("a transient state renders the same way on every surface", () => {
     expect([...TRANSIENT_ACTIONS].sort()).toEqual(cases.map((entry) => entry.action).sort());
   });
 
+  it.each(cases)("$action reads as $label ($why)", ({ action, label }) => {
+    expect(pendingActionLabel(action)).toBe(label);
+  });
+
   it.each(cases)("$action is $family ($why)", ({ action, family }) => {
-    expect(agentStatusKind({ pendingAction: action })).toBe(APP_FAMILY[family]);
-    expect(serviceStatusKind({ pendingAction: action })).toBe(APP_FAMILY[family]);
+    expect(pendingActionStatusKind(action)).toBe(APP_FAMILY[family]);
+    // Through the two callers as well, because an early return that bypasses
+    // the shared rule is exactly how this surface drifted in the first place.
+    expect(agentStatusKind({ pendingAction: action, status: "waiting" })).toBe(APP_FAMILY[family]);
+    expect(serviceStatusKind({ pendingAction: action, status: "offline" })).toBe(
+      APP_FAMILY[family],
+    );
   });
 
   // Pinned beside the others so that making progress quieter cannot quietly

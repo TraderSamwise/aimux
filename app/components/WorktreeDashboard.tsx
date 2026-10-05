@@ -23,6 +23,7 @@ import {
 } from "@/lib/unavailable-state";
 import {
   agentStatusKind,
+  pendingActionLabel,
   appStatusClasses,
   serviceStatusKind,
   type AppStatusKind,
@@ -73,7 +74,11 @@ interface AgentState {
 // status. Pill states read as active; the rest are quiet words.
 function deriveAgentState(session: DesktopSession): AgentState {
   if (session.pendingAction)
-    return { label: cap(session.pendingAction), kind: agentStatusKind(session), pill: false };
+    return {
+      label: pendingActionLabel(session.pendingAction),
+      kind: agentStatusKind(session),
+      pill: false,
+    };
   if (session.status === "offline") return { label: "Offline", kind: "offline", pill: false };
   if (session.status === "exited") return { label: "Exited", kind: "offline", pill: false };
   switch (session.attention) {

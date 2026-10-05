@@ -545,7 +545,7 @@ fn graveyard_subscreen_renders_pending_action_overlays_from_pending_model() {
     assert!(plain.contains("feature-a"));
     assert!(plain.contains(&format!("{PROGRESS_MARK} deleting")));
     assert!(plain.contains("codex:codex-orphan"));
-    assert!(plain.contains(&format!("{PROGRESS_MARK} resurrecting")));
+    assert!(plain.contains(&format!("{PROGRESS_MARK} restoring")));
 }
 
 #[test]

@@ -211,8 +211,40 @@ export const TRANSIENT_ACTIONS = [
 ] as const;
 
 // What an in-flight lifecycle action looks like. Work, not an ask.
-export function pendingActionStatusKind(): AppStatusKind {
-  return "working";
+//
+// It takes the action so the cross-surface test asserts something per action
+// rather than thirteen copies of one constant -- and so an action nobody here
+// has heard of is still answered, since the vocabulary is published by the
+// project service and this is a client.
+export function pendingActionStatusKind(action: string): AppStatusKind {
+  return action.trim() ? "working" : "offline";
+}
+
+// The word every surface uses for an action in flight. Capitalising the raw
+// action gave "Graveyarding" here while the TUI row said "Removing" and its
+// card said "graveyarding" -- three answers to one question.
+const TRANSIENT_LABELS: Record<string, string> = {
+  creating: "Creating",
+  forking: "Forking",
+  migrating: "Migrating",
+  switching: "Switching",
+  starting: "Starting",
+  stopping: "Stopping",
+  graveyarding: "Removing",
+  resurrecting: "Restoring",
+  renaming: "Renaming",
+  moving: "Moving",
+  interrupting: "Interrupting",
+  removing: "Removing",
+  pending: "Pending",
+};
+
+export function pendingActionLabel(action: string): string {
+  const known = TRANSIENT_LABELS[action];
+  if (known) return known;
+  // An action this build has not heard of is still shown, since the vocabulary
+  // is published by the project service and this is a client.
+  return action ? action.charAt(0).toUpperCase() + action.slice(1) : action;
 }
 
 export function agentStatusKind(session: {
@@ -223,7 +255,7 @@ export function agentStatusKind(session: {
 }): AppStatusKind {
   // Not `needs`. An agent the daemon is starting is not an agent asking the
   // user for anything, and painting the two alike is what this fixes.
-  if (session.pendingAction) return pendingActionStatusKind();
+  if (session.pendingAction) return pendingActionStatusKind(session.pendingAction);
   if (session.status === "offline" || session.status === "exited") return "offline";
   const attentionKind = normalizeAppStatusKind(session.attention);
   if (attentionKind) return attentionKind;
@@ -236,7 +268,7 @@ export function serviceStatusKind(service: {
   pendingAction?: string | null;
   status?: string | null;
 }): AppStatusKind {
-  if (service.pendingAction) return pendingActionStatusKind();
+  if (service.pendingAction) return pendingActionStatusKind(service.pendingAction);
   return service.status === "running" ? "service" : "serviceOff";
 }
 

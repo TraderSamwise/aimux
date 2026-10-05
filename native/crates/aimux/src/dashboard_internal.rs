@@ -1395,7 +1395,14 @@ fn drain_dashboard_event_stream(
                     // channel it rendered in the same grey as `✓ {title}` and
                     // was gone on the next keypress.
                     if dashboard_alert_flash_failed(payload) {
-                        controller.footer_alert = Some(DashboardFailureAlert::local(message));
+                        // Never over the top of one: this arrives unprompted
+                        // from the project service, and the alert slot holds
+                        // the answer to something the user just asked for.
+                        if controller.footer_alert.is_none() {
+                            controller.footer_alert = Some(DashboardFailureAlert::local(message));
+                        } else {
+                            controller.set_note(message);
+                        }
                     } else {
                         controller.set_note(message);
                     }
@@ -1409,7 +1416,11 @@ fn drain_dashboard_event_stream(
                 break;
             }
             DashboardEventStreamMessage::Ended => {
+                // A clean close is still no stream. Silent here, the report
+                // raised when it died was cleared by the open that preceded it
+                // and nothing said it had gone again.
                 stream_closed = true;
+                render |= raise_stream_down(down, "project event stream ended");
                 break;
             }
         }
@@ -3057,8 +3068,14 @@ fn drain_dashboard_request_outcomes(
                         // A 200 that names what did not work is a failure
                         // report, and the note channel erases it on the next
                         // key -- which for a 36-agent restore is immediately.
-                        controller.footer_alert =
-                            Some(DashboardFailureAlert::local(notice.message));
+                        // Tagged with the action, so a retry where everything
+                        // comes back answers it instead of stacking under it.
+                        controller.footer_alert = Some(match outcome.action.clone() {
+                            Some(action) => {
+                                DashboardFailureAlert::for_action(notice.message, action)
+                            }
+                            None => DashboardFailureAlert::local(notice.message),
+                        });
                     } else {
                         controller.set_note(notice.message);
                     }

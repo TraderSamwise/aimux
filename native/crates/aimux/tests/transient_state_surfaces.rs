@@ -60,7 +60,7 @@ fn frame_with_pending(action: &str) -> String {
     .frame
 }
 
-fn cases() -> Vec<(String, String)> {
+fn cases() -> Vec<(String, String, String)> {
     let fixture: Value = serde_json::from_str(SURFACES).expect("valid surfaces fixture");
     fixture["cases"]
         .as_array()
@@ -70,16 +70,30 @@ fn cases() -> Vec<(String, String)> {
             (
                 case["action"].as_str().expect("action").to_owned(),
                 case["family"].as_str().expect("family").to_owned(),
+                case["label"].as_str().expect("label").to_owned(),
             )
         })
         .collect()
+}
+
+/// The word, which was three different ones: the card said `graveyarding`, the
+/// row beside it said `Removing`, and the app said `Graveyarding`.
+#[test]
+fn every_transient_action_reads_as_the_same_word_on_both_surfaces() {
+    for (action, _, label) in cases() {
+        assert_eq!(
+            aimux::dashboard_renderer::transient_state_label(&action),
+            label,
+            "{action}"
+        );
+    }
 }
 
 /// The count the worktree card rolls up, which is the one place every action in
 /// the vocabulary is named on screen.
 #[test]
 fn every_transient_action_is_counted_in_the_progress_tone() {
-    for (action, family) in cases() {
+    for (action, family, _) in cases() {
         assert_eq!(
             family, "progress",
             "{action}: this test only knows how to check the progress family;              teach it the others before adding one"
@@ -102,6 +116,12 @@ fn every_transient_action_is_counted_in_the_progress_tone() {
         assert!(
             !frame.contains(&format!("{FAILURE_SGR}1 {counted}")),
             "{action} wears the tone that means it failed"
+        );
+        // The card border is drawn from the same ranking, and it was the one
+        // place the catch-all still put a busy checkout in the attention colour.
+        assert!(
+            !frame.contains(&format!("{ATTENTION_SGR}╭ ")),
+            "{action} gives the checkout the frame that means a person must act"
         );
     }
 }

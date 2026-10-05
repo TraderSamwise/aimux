@@ -374,7 +374,10 @@ pub fn should_render_after_project_event_refresh(
 /// `✗ {title}` is a failed task, and on the note channel it rendered in the
 /// same muted grey as `✓ {title}` and was gone on the next keypress.
 pub fn dashboard_alert_flash_failed(event: &Map<String, Value>) -> bool {
-    event.get("kind").and_then(Value::as_str) == Some("task_failed")
+    matches!(
+        event.get("kind").and_then(Value::as_str),
+        Some("task_failed" | "blocked")
+    )
 }
 
 pub fn dashboard_alert_footer_flash(mode: &str, event: &Map<String, Value>) -> Option<String> {

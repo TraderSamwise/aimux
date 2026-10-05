@@ -1221,6 +1221,12 @@ fn agent_identity_column_width(session: &DashboardSession, identity: &str) -> us
     COL_IDENTITY
 }
 
+/// The word a transient state reads as, for the cross-surface check. Exported
+/// because the app has to answer the same question the same way.
+pub fn transient_state_label(value: &str) -> &str {
+    row_state_label(value)
+}
+
 fn row_state_label(value: &str) -> &str {
     match value {
         "working" => "Working",
@@ -1245,6 +1251,10 @@ fn row_state_label(value: &str) -> &str {
         "switching" => "Switching",
         "renaming" => "Renaming",
         "moving" => "Moving",
+        "resurrecting" => "Restoring",
+        "interrupting" => "Interrupting",
+        "removing" => "Removing",
+        "pending" => "Pending",
         other => other,
     }
 }
@@ -1688,9 +1698,11 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     // mid-rename summarised as "removing", and `dashboard_navigation` then
     // refused Enter on it with "is still creating".
     if let Some(action) = worktree.pending_action {
-        // Bounded: this is a string the project service sends, and the card
-        // summary has a width budget that drops the title before it overflows.
-        return progress_label(&truncate(action, 16));
+        // The same word the rows use, lowercased for the summary line: the card
+        // said `graveyarding` while the row beside it said `Removing`. Bounded
+        // because this arrives over HTTP and the summary has a width budget
+        // that drops the whole thing before it overflows.
+        return progress_label(&truncate(&row_state_label(action).to_lowercase(), 16));
     }
     if worktree.removing {
         return progress_label("removing");
@@ -1734,7 +1746,11 @@ fn session_state_rank(state: Option<&str>) -> (usize, Tone) {
         Some("ready") => (1, Tone::Ready),
         Some("idle") => (1, Tone::Idle),
         Some("offline") | None => (0, Tone::Muted),
-        _ => (3, Tone::Attention),
+        // Everything else here is a lifecycle action in flight. The catch-all
+        // took `Tone::Attention`, and `worktree_tone` paints the card border
+        // with it -- so a checkout whose only agent was mid-create wore the
+        // same amber frame as one with an agent asking for input.
+        _ => (3, PROGRESS_TONE),
     }
 }
 
