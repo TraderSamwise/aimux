@@ -1609,9 +1609,9 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for session in &worktree.sessions {
         if let Some(label) = effective_session_row_state(session) {
-            // Services spell it `removing` and agents `graveyarding`; one word
-            // reaches the user, so one chip counts both rather than two chips
-            // both reading "removing".
+            // Services spell it `removing` and agents `graveyarding`, and a
+            // session can carry either; one word reaches the user, so one chip
+            // counts both rather than two chips both reading "removing".
             let label = if label == "removing" {
                 "graveyarding"
             } else {

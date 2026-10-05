@@ -2964,16 +2964,16 @@ impl DashboardController {
             || group.pending_action.as_deref() == Some("removing")
             || group.pending_action.as_deref() == Some("graveyarding")
         {
-            let action = if group.pending_action.as_deref() == Some("graveyarding") {
-                "graveyarding"
-            } else {
-                "removing"
-            };
+            let action =
+                crate::dashboard_renderer::transient_state_label("graveyarding").to_lowercase();
             self.set_busy(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
         if group.pending {
-            let action = group.pending_action.as_deref().unwrap_or("pending");
+            let action = crate::dashboard_renderer::transient_state_label(
+                group.pending_action.as_deref().unwrap_or("pending"),
+            )
+            .to_lowercase();
             self.set_busy(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
