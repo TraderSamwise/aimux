@@ -280,7 +280,7 @@ impl DashboardNavigationState {
             return DashboardNavigationOutcome::Busy(format!(
                 "Worktree {} is still {}",
                 group.name,
-                crate::dashboard_renderer::transient_state_label("creating").to_lowercase()
+                crate::transient_state::transient_state_label("creating").to_lowercase()
             ));
         }
         if group.pending_action == Some("removing")
@@ -290,7 +290,7 @@ impl DashboardNavigationState {
             // One word, the one the card and the row already use. This said
             // "graveyarding" while the card beside it said "removing".
             let action =
-                crate::dashboard_renderer::transient_state_label("graveyarding").to_lowercase();
+                crate::transient_state::transient_state_label("graveyarding").to_lowercase();
             return DashboardNavigationOutcome::Busy(format!(
                 "Worktree {} is {action}",
                 group.name

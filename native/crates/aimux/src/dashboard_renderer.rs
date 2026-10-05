@@ -1228,12 +1228,6 @@ fn agent_identity_column_width(session: &DashboardSession, identity: &str) -> us
     COL_IDENTITY
 }
 
-/// The word a transient state reads as, for the cross-surface check. Exported
-/// because the app has to answer the same question the same way.
-pub fn transient_state_label(value: &str) -> &str {
-    row_state_label(value)
-}
-
 fn row_state_label(value: &str) -> &str {
     match value {
         "working" => "Working",
@@ -1247,22 +1241,11 @@ fn row_state_label(value: &str) -> &str {
         "running" => "Running",
         "exited" => "Exited",
         "offline" => "Offline",
-        "starting" => "Starting",
-        "stopping" => "Stopping",
-        "graveyarding" => "Removing",
         "done" => "Done",
         "interrupted" => "Interrupted",
-        "creating" => "Creating",
-        "forking" => "Forking",
-        "migrating" => "Migrating",
-        "switching" => "Switching",
-        "renaming" => "Renaming",
-        "moving" => "Moving",
-        "resurrecting" => "Restoring",
-        "interrupting" => "Interrupting",
-        "removing" => "Removing",
-        "pending" => "Pending",
-        other => other,
+        // The lifecycle half lives in one place, because four surfaces answer
+        // this question and they were answering it four ways.
+        other => crate::transient_state::transient_state_label(other),
     }
 }
 
@@ -1690,6 +1673,7 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
         "interrupting",
         PROGRESS_TONE,
     );
+    append_count(&mut parts, &counts, "deleting", "deleting", PROGRESS_TONE);
     append_count(&mut parts, &counts, "pending", "pending", PROGRESS_TONE);
     parts
 }
@@ -1767,11 +1751,9 @@ fn session_state_rank(state: Option<&str>) -> (usize, Tone) {
         // reads this ranking and `card` paints the border with it, so a
         // checkout whose only agent was mid-create wore the same amber frame
         // as one with an agent asking for input.
-        Some(
-            "creating" | "forking" | "migrating" | "switching" | "starting" | "stopping"
-            | "graveyarding" | "resurrecting" | "renaming" | "moving" | "interrupting" | "removing"
-            | "pending",
-        ) => (3, PROGRESS_TONE),
+        // Named rather than caught, and read from one list so a new action
+        // cannot be added to the vocabulary without being added here too.
+        Some(action) if crate::transient_state::is_transient_state(action) => (3, PROGRESS_TONE),
         // And a state this build has not heard of stays loud. The vocabulary is
         // published by the project service; guessing that something new is
         // quiet is the worse way to be wrong about it.

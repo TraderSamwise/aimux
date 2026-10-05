@@ -2965,12 +2965,12 @@ impl DashboardController {
             || group.pending_action.as_deref() == Some("graveyarding")
         {
             let action =
-                crate::dashboard_renderer::transient_state_label("graveyarding").to_lowercase();
+                crate::transient_state::transient_state_label("graveyarding").to_lowercase();
             self.set_busy(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
         if group.pending {
-            let action = crate::dashboard_renderer::transient_state_label(
+            let action = crate::transient_state::transient_state_label(
                 group.pending_action.as_deref().unwrap_or("pending"),
             )
             .to_lowercase();

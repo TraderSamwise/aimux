@@ -82,7 +82,7 @@ fn cases() -> Vec<(String, String, String)> {
 fn every_transient_action_reads_as_the_same_word_on_both_surfaces() {
     for (action, _, label) in cases() {
         assert_eq!(
-            aimux::dashboard_renderer::transient_state_label(&action),
+            aimux::transient_state::transient_state_label(&action),
             label,
             "{action}"
         );
@@ -122,6 +122,34 @@ fn every_transient_action_is_counted_in_the_progress_tone() {
         assert!(
             !frame.contains(&format!("{ATTENTION_SGR}╭ ")),
             "{action} gives the checkout the frame that means a person must act"
+        );
+    }
+}
+
+/// The statusline and the Team overlay render `semantic.presentation.statusLabel`
+/// verbatim, and it was the raw action -- so killing a teammate made the tmux
+/// bar read `claude graveyarding` while the dashboard row for that same agent
+/// read `Removing`.
+#[test]
+fn the_published_status_label_says_the_same_word_as_the_row() {
+    for (action, _, label) in cases() {
+        let semantics = aimux::project_service::session_semantics::derive_session_semantics(
+            aimux::project_service::session_semantics::SessionSemanticsInput {
+                status: "running".to_owned(),
+                pending_action: Some(action.clone()),
+                ..Default::default()
+            },
+        );
+        let published = semantics["presentation"]["statusLabel"]
+            .as_str()
+            .unwrap_or_default();
+        if published.is_empty() {
+            continue;
+        }
+        assert_eq!(
+            published.to_lowercase(),
+            label.to_lowercase(),
+            "{action} is published as a different word than the row shows"
         );
     }
 }

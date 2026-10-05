@@ -321,8 +321,11 @@ function agentPendingAction(operation: ProjectLifecycleTransitionOperation): str
   switch (operation) {
     case "agent.spawn":
     case "agent.resume":
-    case "graveyard.agent.resurrect":
       return "starting";
+    // Not "starting": the project service calls this one `resurrecting`, so
+    // the app said "Starting" while the TUI said "Restoring" for the same key.
+    case "graveyard.agent.resurrect":
+      return "resurrecting";
     case "agent.fork":
       return "forking";
     case "agent.switchTool":
@@ -344,7 +347,9 @@ function agentPendingAction(operation: ProjectLifecycleTransitionOperation): str
 
 function servicePendingAction(operation: ProjectLifecycleTransitionOperation): string | null {
   switch (operation) {
+    // Likewise: the service calls a create a create.
     case "service.create":
+      return "creating";
     case "service.resume":
       return "starting";
     case "service.stop":

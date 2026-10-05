@@ -371,7 +371,9 @@ describe("project lifecycle transition projection", () => {
         label: "server",
         worktreePath: "/repo/worktree",
         status: "running",
-        pendingAction: "starting",
+        // The word the project service uses for this operation, so the
+        // optimistic row and the settled one read the same.
+        pendingAction: "creating",
         optimistic: true,
       },
     ]);

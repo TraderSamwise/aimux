@@ -212,6 +212,7 @@ export const TRANSIENT_ACTIONS = [
   "moving",
   "interrupting",
   "removing",
+  "deleting",
   "pending",
 ] as const;
 
@@ -239,6 +240,7 @@ const TRANSIENT_LABELS: Record<string, string> = {
   moving: "Moving",
   interrupting: "Interrupting",
   removing: "Removing",
+  deleting: "Deleting",
   pending: "Pending",
 };
 

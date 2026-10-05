@@ -79,6 +79,12 @@
       "family": "progress",
       "why": "the fallback when the service names no action",
       "label": "Pending"
+    },
+    {
+      "why": "the graveyard's permanent delete; emitted by dashboard_pending_actions and pinned by nothing until now",
+      "action": "deleting",
+      "family": "progress",
+      "label": "Deleting"
     }
   ],
   "attentionStates": {
