@@ -14,16 +14,19 @@ const DEFAULT_QUEUE_LIMIT: usize = 32;
 /// it stuck.
 ///
 /// The CLI gives a project mutation 120s (`CLI_PROJECT_MUTATION_TIMEOUT_MS`),
-/// and a worktree create doing a cold fetch is the longest legitimate holder
-/// there is, so past that nobody is still waiting for an answer and the holder
-/// is not coming back. Waiting silently forever is the alternative, and that
-/// is how the queue died: one stuck mutation and every later one hung with
-/// nothing said.
+/// so past that no caller is still listening for an answer. Waiting silently
+/// forever is the alternative, and that is how the queue died: one mutation
+/// that never finished and every later one hung with nothing said.
 ///
 /// This bounds the WAIT, never the work. A holder that legitimately runs
 /// longer than this keeps running and still finishes; only a caller queued
 /// behind it is told so. That is what makes the number safe to pick without
 /// knowing every operation's worst case.
+///
+/// It does not prove anything is broken. The semaphore is FIFO, so a deep
+/// enough queue of legitimate mutations reaches this bound too -- which is why
+/// the refusal reports what it waited behind and how deep the queue was,
+/// rather than declaring the holder dead.
 const WAIT_FOR_TURN_TIMEOUT: Duration = Duration::from_millis(150_000);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,12 +71,17 @@ impl LifecycleTransitionInput {
     /// refused codex with "lifecycle mutation already in progress for agent
     /// unknown", naming a target that was never involved.
     ///
-    /// The key stayed only because `begin` waited on a `Condvar` and the async
-    /// lifecycle routes awaited inside a connection task on a two-worker
-    /// runtime: a second and third spawn reaching that wait parked both workers
-    /// and left the holder's future unpollable. That wait is a semaphore now,
-    /// so an unnamed mutation can queue behind the one in front of it the way
-    /// it always should have.
+    /// **This diverges from Node deliberately.** `lifecycleTargetKey` in
+    /// `a9220736^:src/metadata-server/lifecycle-mutation-queue.ts` fabricated
+    /// the same key and Node refused the same way, so the behaviour was ported
+    /// faithfully and is wrong on both sides. Node's own signature says its
+    /// author saw it: the return type is `string | undefined` and the body
+    /// never returns `undefined`. Returning `None` is what that type was for.
+    ///
+    /// Safe to change only now. Waiting instead of refusing means an unnamed
+    /// mutation reaches the queue's wait, and that wait was a `Condvar` on a
+    /// two-worker runtime until this branch — a second and third spawn parked
+    /// both workers and left the holder's future unpollable.
     fn target_key(&self) -> Option<String> {
         let target = if self.target_kind == "worktree" {
             self.target_path
@@ -103,12 +111,13 @@ pub enum LifecycleMutationError {
         queued_count: usize,
         limit: usize,
     },
-    /// The mutation ahead of this one never finished. Named rather than
-    /// numbered, because the caller cannot act on "timed out" and can act on
-    /// which operation is stuck.
-    HolderStuck {
+    /// This mutation never reached the front of the queue. Described rather
+    /// than numbered, because the caller cannot act on "timed out" and can act
+    /// on what was running and how many were ahead.
+    WaitedTooLong {
         requested: Box<LifecycleTransitionInput>,
         holder: String,
+        queued_count: usize,
         waited_ms: u128,
     },
 }
@@ -117,7 +126,7 @@ impl LifecycleMutationError {
     pub fn status(&self) -> u16 {
         match self {
             Self::Conflict { .. } => 409,
-            Self::QueueFull { .. } | Self::HolderStuck { .. } => 429,
+            Self::QueueFull { .. } | Self::WaitedTooLong { .. } => 429,
         }
     }
 
@@ -141,10 +150,13 @@ impl LifecycleMutationError {
             } => format!(
                 "lifecycle mutation queue is full ({queued_count}/{limit}); wait for current operations to settle"
             ),
-            Self::HolderStuck {
-                holder, waited_ms, ..
+            Self::WaitedTooLong {
+                holder,
+                queued_count,
+                waited_ms,
+                ..
             } => format!(
-                "lifecycle mutation queue is stuck behind {holder}; waited {waited_ms}ms without it finishing"
+                "lifecycle mutation waited {waited_ms}ms without reaching the front of the queue; {holder}, {queued_count} queued"
             ),
         }
     }
@@ -329,9 +341,16 @@ impl LifecycleMutationQueue {
         .await;
         let permit = match acquired {
             Ok(permit) => permit.expect("lifecycle queue semaphore is never closed"),
-            // The reservation drops on the way out, so the target this gave up
-            // on is free for the next attempt.
-            Err(_) => return Err(self.holder_stuck(transition, queued_at)),
+            // One more look before refusing. The bound expiring and the permit
+            // coming free are independent, so without this a mutation could be
+            // turned away at the exact moment the queue opened -- and the
+            // refusal would have had nothing left to describe.
+            Err(_) => match Arc::clone(&self.inner.permits).try_acquire_owned() {
+                Ok(permit) => permit,
+                // The reservation drops on the way out, so the target this
+                // gave up on is free for the next attempt.
+                Err(_) => return Err(self.waited_too_long(transition, queued_at)),
+            },
         };
         let (target_key, tracked) = reservation.commit();
         {
@@ -358,26 +377,30 @@ impl LifecycleMutationQueue {
         })
     }
 
-    /// Refuse a wait that outlasted any client still listening, naming what it
-    /// was waiting on. A wait that just expires tells nobody anything.
-    fn holder_stuck(
+    /// Refuse a wait that outlasted any client still listening, describing what
+    /// it waited behind. A wait that just expires tells nobody anything.
+    fn waited_too_long(
         &self,
         transition: Option<LifecycleTransitionInput>,
         queued_at: Instant,
     ) -> LifecycleMutationError {
         let waited_ms = queued_at.elapsed().as_millis();
-        let holder = {
+        let (holder, queued_count) = {
             let mut state = self.lock_state();
             // Count the wait even though it never started. `maxQueuedMs` is the
-            // one number that says how bad the queue got, and a queue dying
-            // behind a stuck mutation is exactly when every waiter times out
-            // and records nothing -- so it would have read as healthy.
+            // one number that says how bad the queue got, and a queue nobody
+            // can enter is exactly when every waiter times out and records
+            // nothing -- so it would have read as healthy.
             state.telemetry.max_queued_ms = state.telemetry.max_queued_ms.max(waited_ms);
-            state
+            let holder = state
                 .holder
                 .as_ref()
                 .map(QueueHolder::describe)
-                .unwrap_or_else(|| "a mutation that left no record".to_owned())
+                // Reachable: the permit can come free between the bound
+                // expiring and this lock. Say so, rather than imply a holder
+                // this never saw.
+                .unwrap_or_else(|| "nothing was holding the queue by then".to_owned());
+            (holder, state.queued_count)
         };
         let requested = transition
             .unwrap_or_else(|| LifecycleTransitionInput::new("lifecycle.unknown", "project"));
@@ -391,12 +414,14 @@ impl LifecycleMutationQueue {
                 "targetId": requested.target_id,
                 "targetPath": requested.target_path,
                 "holder": holder,
+                "queuedCount": queued_count,
                 "waitedMs": waited_ms,
             })),
         );
-        LifecycleMutationError::HolderStuck {
+        LifecycleMutationError::WaitedTooLong {
             requested: Box::new(requested),
             holder,
+            queued_count,
             waited_ms,
         }
     }

@@ -107,6 +107,25 @@ impl LifecycleMutationProgress {
     }
 }
 
+/// The routes `route_lifecycle_request_unqueued_async` can actually serve.
+///
+/// This used to be decided from the transition's OPERATION, and the two
+/// surfaces disagreed: `agents/teammates/stop` and `agents/teammates/kill` map
+/// to `agent.stop` and `agent.kill`, so they were sent down the async path,
+/// where the async router has no arm for them and answers `None`. The caller
+/// then fell back to the SYNC router from inside the async task -- which takes
+/// the queue with `begin`, on a worker thread, where that now panics.
+///
+/// So both surfaces read this one list, and
+/// `the_async_path_serves_exactly_the_routes_it_claims` pins them against each
+/// other rather than one test each.
+pub(crate) fn is_async_lifecycle_route(pathname: &str) -> bool {
+    matches!(
+        pathname,
+        routes::agents::SPAWN | routes::agents::STOP | routes::agents::KILL
+    )
+}
+
 pub(crate) fn async_lifecycle_progress_for_request(
     method: &str,
     path: &str,
@@ -115,14 +134,12 @@ pub(crate) fn async_lifecycle_progress_for_request(
     if !method.eq_ignore_ascii_case("POST") {
         return None;
     }
-    let body = body.unwrap_or(&Value::Null);
-    let transition = lifecycle_transition_for_route(project_service_pathname(path), body)?;
-    if !matches!(
-        transition.operation.as_str(),
-        "agent.spawn" | "agent.stop" | "agent.kill"
-    ) {
+    let pathname = project_service_pathname(path);
+    if !is_async_lifecycle_route(pathname) {
         return None;
     }
+    let body = body.unwrap_or(&Value::Null);
+    let transition = lifecycle_transition_for_route(pathname, body)?;
     Some(LifecycleMutationProgress {
         operation: transition.operation,
         target_kind: transition.target_kind,
@@ -157,6 +174,9 @@ pub(crate) async fn route_lifecycle_request_async_with_runtime(
     }
     let pathname = project_service_pathname(path);
     let body = body.unwrap_or(&Value::Null);
+    // The `None` arm is defensive rather than live: `is_async_lifecycle_route`
+    // only sends the three served paths here and all three have a transition.
+    // The sync route is where a no-transition POST actually arrives.
     let mut permit = match lifecycle_transition_for_route(pathname, body) {
         None => None,
         Some(transition) => match context
@@ -386,4 +406,81 @@ fn lifecycle_queue_error_response(error: LifecycleMutationError) -> ProjectServi
         error.status(),
         serde_json::json!({ "ok": false, "error": error.message() }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The async path must claim exactly the routes it can serve.
+    ///
+    /// The gate used to read the transition's OPERATION, and `agent.stop` is
+    /// the operation of three different routes. So stopping a teammate was
+    /// sent down the async path, where the async router has no arm for it and
+    /// answers `None`; the caller then ran the SYNC router from inside the
+    /// async task, which takes the queue with `begin` on a worker thread.
+    /// Under a blocking `Condvar` that merely worked; under an awaited permit
+    /// it panics. One list read by both surfaces, pinned here against each
+    /// other rather than one test per surface.
+    #[test]
+    fn the_async_path_serves_exactly_the_routes_it_claims() {
+        let served = [
+            routes::agents::SPAWN,
+            routes::agents::STOP,
+            routes::agents::KILL,
+        ];
+        // Every other lifecycle route this router can reach, including the two
+        // that share an operation with a served one.
+        let not_served = [
+            routes::agents::STOP_TEAMMATE,
+            routes::agents::KILL_TEAMMATE,
+            routes::agents::FORK,
+            routes::agents::SWITCH_TOOL,
+            routes::agents::RENAME,
+            routes::agents::MIGRATE,
+            routes::agents::RESUME,
+            routes::agents::RESUME_TEAMMATE,
+            routes::agents::RESTORE_PREVIOUS,
+            routes::agents::DISMISS_RESTORE_PREVIOUS,
+            routes::agents::CREATE_TEAMMATE,
+            routes::agents::RESURRECT_TEAMMATE,
+            routes::agents::RECORD_BACKEND_SESSION,
+            routes::services::CREATE,
+            routes::services::RESUME,
+            routes::services::STOP,
+            routes::services::REMOVE,
+            routes::worktree_actions::CREATE,
+            routes::worktree_actions::CACHE_CLEANUP,
+            routes::worktree_actions::GRAVEYARD,
+            routes::worktree_actions::REMOVE,
+            routes::graveyard_actions::RESURRECT_AGENT,
+            routes::graveyard_actions::RESURRECT_WORKTREE,
+            routes::graveyard_actions::DELETE_WORKTREE,
+            routes::graveyard_actions::REAP_DEAD_AGENTS,
+            routes::graveyard_actions::CLEANUP,
+        ];
+
+        for path in served {
+            assert!(
+                is_async_lifecycle_route(path),
+                "{path} is served by the async router and must take the async path"
+            );
+            assert!(
+                async_lifecycle_progress_for_request("POST", path, Some(&json!({}))).is_some(),
+                "{path} must be given progress so its caller awaits the async route"
+            );
+        }
+        for path in not_served {
+            assert!(
+                !is_async_lifecycle_route(path),
+                "{path} has no arm in route_lifecycle_request_unqueued_async"
+            );
+            assert!(
+                async_lifecycle_progress_for_request("POST", path, Some(&json!({}))).is_none(),
+                "{path} must not take the async path: its caller would fall back to the sync \
+                 router from inside the async task, where taking the queue panics"
+            );
+        }
+    }
 }

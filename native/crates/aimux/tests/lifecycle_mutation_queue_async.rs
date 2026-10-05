@@ -305,12 +305,12 @@ fn a_mutation_that_never_finishes_refuses_the_next_one_by_name() {
         );
         let message = error.message();
         assert!(
-            message.contains("agent.stop on stuck"),
-            "the refusal must name what it waited on, not only that it gave up: {message}"
+            message.contains("agent.stop on stuck, running for"),
+            "the refusal must describe what it waited behind: {message}"
         );
         assert!(
-            message.contains("waited"),
-            "the refusal must say how long it waited: {message}"
+            message.contains("waited") && message.contains("queued"),
+            "the refusal must say how long it waited and how deep the queue was: {message}"
         );
 
         // Giving up released the claim, so the refused agent can be tried
@@ -491,10 +491,15 @@ fn a_queue_nobody_can_enter_reports_how_long_waiters_waited() {
             .begin_async(Some(agent_stop("stuck")))
             .await
             .expect("the stuck mutation takes the queue");
-        assert_eq!(
-            queue.diagnostics("/repo")["telemetry"]["maxQueuedMs"],
-            0,
-            "nothing has waited yet"
+        // Not an exact zero: the holder's own acquire records its (tiny) wait,
+        // and one millisecond of scheduling would fail an equality assertion on
+        // the very machine this test exists to protect.
+        let before = queue.diagnostics("/repo")["telemetry"]["maxQueuedMs"]
+            .as_u64()
+            .expect("maxQueuedMs is a number");
+        assert!(
+            before < 80,
+            "nothing has waited for the bound yet, only the holder's own acquire: {before}ms"
         );
 
         let Err(_) = queue.begin_async(Some(agent_stop("waiting"))).await else {
@@ -509,4 +514,43 @@ fn a_queue_nobody_can_enter_reports_how_long_waiters_waited() {
             "the refused wait must be counted, or the dying queue reads as healthy: {waited}ms"
         );
     });
+}
+
+/// The bound is on the wait, not on the work.
+///
+/// A holder that outruns it must still finish and still report success — a
+/// worktree create doing a cold fetch is exactly that, and refusing it would
+/// break work that used to succeed. The earlier version of this test ran a
+/// holder well INSIDE the bound, which would have passed even if the bound had
+/// been applied to the work.
+#[test]
+fn a_holder_that_outruns_the_bound_still_finishes() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(100));
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let mut holder = queue
+            .begin_async(Some(agent_stop("cold-fetch")))
+            .await
+            .expect("the long mutation takes the queue");
+        let started_at = std::time::Instant::now();
+
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(
+            started_at.elapsed() > Duration::from_millis(100),
+            "the holder has outrun the bound, which is the point of the test"
+        );
+
+        holder.succeed(started_at);
+    });
+
+    let diagnostics = queue.diagnostics("/repo");
+    assert_eq!(
+        diagnostics["telemetry"]["succeeded"], 1,
+        "the holder finished: {diagnostics}"
+    );
+    assert_eq!(diagnostics["telemetry"]["failed"], 0);
+    assert_eq!(diagnostics["queuedCount"], 0);
+    assert_eq!(diagnostics["activeTargets"], serde_json::json!([]));
 }
