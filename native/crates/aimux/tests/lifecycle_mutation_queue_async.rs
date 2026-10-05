@@ -762,3 +762,32 @@ fn a_create_from_a_pull_request_still_holds_the_worktree_it_makes() {
         1
     );
 }
+
+/// Only a worktree create reads `source`.
+///
+/// Agent routes send a `source` of their own — "human", "loop", "agent" — and
+/// the chain that derives a worktree name from one used to run for every
+/// route. It produced a value nothing read, which is wasted work on an agent
+/// POST and a trap for whoever next reaches for that field.
+#[test]
+fn an_agent_route_does_not_read_a_worktree_source() {
+    let input = lifecycle_transition_for_route(
+        routes::agents::INTERRUPT,
+        &serde_json::json!({ "sessionId": "codex-live", "source": "human" }),
+    );
+    assert!(
+        input.is_none_or(|input| input.target_path.is_none()),
+        "an agent route's own source is not a worktree name"
+    );
+
+    let stop = lifecycle_transition_for_route(
+        routes::agents::STOP,
+        &serde_json::json!({ "sessionId": "codex-live", "source": "human" }),
+    )
+    .expect("a stop transition");
+    assert_eq!(stop.target_id.as_deref(), Some("codex-live"));
+    assert_eq!(
+        stop.target_path, None,
+        "a stop keys on its session, never on a source meant for something else"
+    );
+}

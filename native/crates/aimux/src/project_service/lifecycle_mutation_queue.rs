@@ -134,6 +134,10 @@ impl LifecycleTransitionInput {
 /// - An operation on the main checkout reduces to the repository directory's
 ///   name, so naming a worktree after the repository makes those two share a
 ///   key.
+/// - A path whose last component is `/base/.` reduces to the base directory's
+///   own name, because `Path::components` normalizes a `.` away. Nothing sends
+///   the base directory as a worktree reference, and if it did, the cost is
+///   the extra refusal above rather than a missed one.
 /// - `worktree.cacheCleanup` reaches this with no target at all: its handler
 ///   reads only `dryRun` and `includeActive` and sweeps every worktree in the
 ///   topology, so there is no one worktree for it to hold. It is a
@@ -149,18 +153,11 @@ impl LifecycleTransitionInput {
 /// Both cost one spurious 409 between two worktrees nobody is likely to name
 /// that way, against a missing 409 that was reported.
 fn worktree_identity(target: &str) -> &str {
-    let path = std::path::Path::new(target);
-    // `file_name` normalizes a trailing `.` away, so `/base/.` would reduce to
-    // the base's own name and collide with a worktree legitimately called
-    // that. A target ending in a relative component is not a worktree
-    // reference; leave it exactly as it came.
-    if matches!(
-        path.components().next_back(),
-        Some(std::path::Component::CurDir) | Some(std::path::Component::ParentDir) | None
-    ) {
-        return target;
-    }
-    path.file_name()
+    // A target with no final name component -- `..`, `/`, the empty string --
+    // is not a worktree reference, and `file_name` returns `None` for exactly
+    // those, so the fallback leaves them as they came.
+    std::path::Path::new(target)
+        .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty())
         .unwrap_or(target)
@@ -714,19 +711,10 @@ pub fn lifecycle_transition_for_route(
 ) -> Option<LifecycleTransitionInput> {
     let session_id = trimmed_string(body.get("sessionId"));
     let service_id = trimmed_string(body.get("serviceId"));
-    // `source` last, and it matters: a create from a pull request or a branch
-    // may carry no name at all -- `aimux worktree create --pr 5` sends only
-    // `source` -- and without this the create holds nothing, so a remove of
-    // the worktree it is making is not refused. `route_worktree_create`
-    // derives the name the same way, from the same helper.
     let worktree_path = trimmed_string(body.get("path"))
         .or_else(|| trimmed_string(body.get("worktreePath")))
         .or_else(|| trimmed_string(body.get("targetPath")))
-        .or_else(|| trimmed_string(body.get("name")))
-        .or_else(|| {
-            trimmed_string(body.get("source"))
-                .and_then(|source| remote_worktree_name_from_source(&source).ok())
-        });
+        .or_else(|| trimmed_string(body.get("name")));
     match pathname {
         routes::agents::SPAWN => {
             Some(LifecycleTransitionInput::new("agent.spawn", "agent").with_target_id(session_id))
@@ -786,9 +774,26 @@ pub fn lifecycle_transition_for_route(
         routes::services::REMOVE => Some(
             LifecycleTransitionInput::new("service.remove", "service").with_target_id(service_id),
         ),
+        // A create from a pull request or a branch may carry no name at all --
+        // `aimux worktree create --pr 5` sends only `source` -- and without
+        // this it would hold nothing, so a remove of the worktree it is making
+        // would not be refused. `route_worktree_create` derives the name from
+        // the same helper, so the two agree by construction.
+        //
+        // Only this arm reads `source`. Agent routes send a `source` of their
+        // own -- "human", "loop", "agent" -- and running a branch parser over
+        // those on every agent POST would be wasted work and a trap for
+        // whoever next reaches for `worktree_path`.
         routes::worktree_actions::CREATE => Some(
-            LifecycleTransitionInput::new("worktree.create", "worktree")
-                .with_target_path(worktree_path),
+            LifecycleTransitionInput::new("worktree.create", "worktree").with_target_path(
+                worktree_path.or_else(|| {
+                    trimmed_string(body.get("source"))
+                        // A source this cannot parse is one the route itself
+                        // will refuse with a 400, so there is no mutation left
+                        // to hold a key for.
+                        .and_then(|source| remote_worktree_name_from_source(&source).ok())
+                }),
+            ),
         ),
         routes::worktree_actions::CACHE_CLEANUP => Some(
             LifecycleTransitionInput::new("worktree.cacheCleanup", "worktree")
