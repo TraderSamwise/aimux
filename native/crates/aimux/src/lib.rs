@@ -56,6 +56,7 @@ pub mod dashboard_ui_state;
 pub mod debug_logging;
 pub mod debug_state;
 pub mod desktop_notifier;
+pub mod diagnostics_ptrace;
 pub mod event_loop_budget;
 pub mod expose_pane_output_tap;
 pub mod expose_socket;
