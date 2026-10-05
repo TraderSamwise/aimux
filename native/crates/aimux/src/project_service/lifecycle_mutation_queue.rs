@@ -53,23 +53,23 @@ impl LifecycleTransitionInput {
         self
     }
 
-    /// What this mutation holds for its duration.
+    /// What this mutation holds for its duration, or `None` when it holds
+    /// nothing nameable.
     ///
-    /// A spawn, a teammate create and a restore say what they will make, not
-    /// what already exists, so there is nothing for them to contend over, and
-    /// they share one fabricated `<kind>:<operation>:__project__` key. The cost
-    /// is real — pick claude, then pick codex, and codex is refused with a 409
-    /// rather than queued behind it.
+    /// A spawn, a service create, a teammate create, a restore and a graveyard
+    /// sweep say what they will make, not what already exists. There is nothing
+    /// for them to contend over, and they used to share one fabricated
+    /// `<kind>:<operation>:__project__` key — so picking claude and then codex
+    /// refused codex with "lifecycle mutation already in progress for agent
+    /// unknown", naming a target that was never involved.
     ///
-    /// It stayed because `begin` waited on a `Condvar` and the async lifecycle
-    /// routes awaited inside a connection task on a two-worker runtime, so a
-    /// second and third spawn reaching that wait parked both workers and left
-    /// the holder's future unpollable. That wait is a semaphore now and costs
-    /// no thread, so the key protects nothing and only buys the 409. It goes
-    /// with the rest of its family, which has to be audited together because
-    /// `worktree.create` keys on a name while every other worktree operation
-    /// keys on an absolute path.
-    fn target_key(&self) -> String {
+    /// The key stayed only because `begin` waited on a `Condvar` and the async
+    /// lifecycle routes awaited inside a connection task on a two-worker
+    /// runtime: a second and third spawn reaching that wait parked both workers
+    /// and left the holder's future unpollable. That wait is a semaphore now,
+    /// so an unnamed mutation can queue behind the one in front of it the way
+    /// it always should have.
+    fn target_key(&self) -> Option<String> {
         let target = if self.target_kind == "worktree" {
             self.target_path
                 .as_deref()
@@ -81,10 +81,9 @@ impl LifecycleTransitionInput {
                 .or(self.target_path.as_deref())
                 .map(str::trim)
         };
-        match target.filter(|value| !value.is_empty()) {
-            Some(target) => format!("{}:{target}", self.target_kind),
-            None => format!("{}:{}:__project__", self.target_kind, self.operation),
-        }
+        target
+            .filter(|value| !value.is_empty())
+            .map(|target| format!("{}:{target}", self.target_kind))
     }
 }
 
@@ -387,7 +386,9 @@ impl LifecycleMutationQueue {
         };
         let target_key = transition.target_key();
         let mut state = self.inner.state.lock().expect("lifecycle queue lock");
-        if let Some(active) = state.active_targets.get(&target_key).cloned() {
+        if let Some(key) = target_key.as_ref()
+            && let Some(active) = state.active_targets.get(key).cloned()
+        {
             state.telemetry.rejected_conflicts += 1;
             return Err(LifecycleMutationError::Conflict {
                 requested: Box::new(transition.clone()),
@@ -402,15 +403,15 @@ impl LifecycleMutationQueue {
                 limit: self.inner.queue_limit,
             });
         }
-        state
-            .active_targets
-            .insert(target_key.clone(), transition.clone());
+        if let Some(key) = target_key.as_ref() {
+            state.active_targets.insert(key.clone(), transition.clone());
+        }
         state.queued_count += 1;
         state.telemetry.enqueued += 1;
         state.telemetry.max_queued_count = state.telemetry.max_queued_count.max(state.queued_count);
         Ok(QueueReservation {
             inner: Arc::clone(&self.inner),
-            target_key: Some(target_key),
+            target_key,
             tracked: true,
             committed: false,
         })
@@ -601,11 +602,9 @@ pub fn lifecycle_transition_for_route(
         }
         // The agent being forked is the one a fork contends for, and
         // `sourceSessionId` is what every fork dispatcher sends. Reading
-        // `sessionId` here left the target empty, so `target_key` fell back to
-        // `agent:agent.fork:__project__` and two forks of two different agents
-        // serialized against each other while a fork and a stop of the same
-        // agent did not. The response transition still names the new session:
-        // this one names what is held while the fork runs.
+        // `sessionId` here left the target empty, so a fork and a stop of the
+        // same agent did not contend. The response transition still names the
+        // new session: this one names what is held while the fork runs.
         routes::agents::FORK => Some(
             LifecycleTransitionInput::new("agent.fork", "agent")
                 .with_target_id(trimmed_string(body.get("sourceSessionId"))),

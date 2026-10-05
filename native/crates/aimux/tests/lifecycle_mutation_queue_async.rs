@@ -326,3 +326,56 @@ fn a_mutation_that_never_finishes_refuses_the_next_one_by_name() {
         assert_eq!(diagnostics["queuedCount"], 1);
     });
 }
+
+#[test]
+fn two_unnamed_mutations_queue_instead_of_refusing_each_other() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::new(32);
+    let (release_holder, holder_released) = oneshot::channel::<()>();
+    let unnamed = || LifecycleTransitionInput::new("service.create", "service");
+
+    let holder_queue = queue.clone();
+    let holder = runtime.spawn(async move {
+        let mut permit = holder_queue
+            .begin_async(Some(unnamed()))
+            .await
+            .expect("the first service create takes the queue");
+        let started_at = std::time::Instant::now();
+        holder_released.await.expect("holder is released");
+        permit.succeed(started_at);
+    });
+    wait_until(&queue, |diagnostics| {
+        diagnostics["telemetry"]["started"] == 1
+    });
+    assert_eq!(
+        queue.diagnostics("/repo")["activeTargets"],
+        serde_json::json!([]),
+        "a create names what it will make, not something to contend over"
+    );
+
+    let second_queue = queue.clone();
+    let second = runtime.spawn(async move {
+        let mut permit = second_queue
+            .begin_async(Some(unnamed()))
+            .await
+            .expect("the second service create is queued, not refused");
+        permit.succeed(std::time::Instant::now());
+    });
+    wait_until(&queue, |diagnostics| diagnostics["queuedCount"] == 2);
+
+    release_holder.send(()).expect("release the holder");
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            holder.await.expect("holder task");
+            second.await.expect("second task");
+        })
+        .await
+        .expect("both creates finish")
+    });
+
+    let diagnostics = queue.diagnostics("/repo");
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 2);
+    assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 0);
+    assert_eq!(diagnostics["queuedCount"], 0);
+}
