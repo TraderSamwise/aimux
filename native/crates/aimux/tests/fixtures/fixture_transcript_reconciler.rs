@@ -137,6 +137,10 @@ impl TranscriptReconcilerDeps for FixtureDeps {
         true
     }
 
+    fn report_abandoned_input_clear(&mut self, _: &str, _: u32, _: bool, _: bool) {
+        // The frozen corpus has no stranded control sessions, so this is never
+        // reached; recording it would add a key to every case's output.
+    }
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
         self.probe.push(json!([tool_config_key, path]));
 

@@ -34,6 +34,15 @@ pub trait TranscriptReconcilerDeps {
     /// `needs_input` (Part C); the name is the one the frozen reconciler
     /// contract emits, so it stays.
     fn clear_stale_response(&mut self, session_id: &str) -> bool;
+    /// Say that Part C has stopped retrying a session for a while. A back-off
+    /// nothing reports is a repair that silently stopped happening.
+    fn report_abandoned_input_clear(
+        &mut self,
+        session_id: &str,
+        attempts: u32,
+        settled_activity: bool,
+        cleared_attention: bool,
+    );
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe>;
     fn find_codex_path(&mut self, backend_session_id: &str) -> Option<String>;
 }
@@ -96,21 +105,32 @@ struct InputClearProgress {
     attempts: u32,
 }
 
-/// How many ticks Part C retries a write the service keeps rejecting.
+/// How many consecutive ticks Part C retries a write the service keeps
+/// rejecting before backing off.
 ///
-/// Without a bound a permanently failing clear POSTs every four seconds for the
-/// life of the process. Giving up is also the only outcome that gets SAID: a
-/// silent retry loop is invisible until it is a load average.
-///
-/// Giving up half-way leaves `activity: idle` with `attention: needs_input`,
-/// which is a shape no other part produces -- and it is worth saying that no
-/// consumer reads it worse than the state it replaced. `scribe_readiness` still
-/// refuses it, on the attention rather than the activity. And
-/// `session_semantics` words it identically: `runtime_lifecycle` returns `idle`
-/// instead of `running`, but `user_state` ranks attention above both, so the
-/// label is `needs_input` either way. The give-up degrades to exactly the
-/// pre-fix state, which is the right failure mode for a repair.
+/// This buys fewer POSTs and a line in the log. It does not improve the state
+/// it backs off from: the settle lands on the first attempt, so backing off
+/// freezes `activity: idle` with `attention: needs_input`. No consumer reads
+/// that worse than the state it replaced -- `scribe_readiness` still refuses
+/// it, on the attention rather than the activity, and `session_semantics` ranks
+/// attention above both so the label is `needs_input` either way -- but it is a
+/// pause, not a repair.
 const INPUT_CLEAR_ATTEMPTS: u32 = 5;
+
+/// How long that back-off lasts.
+///
+/// It HAS to expire. The first version of this never forgot a give-up unless
+/// the session stopped being stranded -- and Part C's whole premise is that
+/// nobody moves a stranded control session's attention, which is the deadlock.
+/// So the forget-path was unreachable for exactly the session it existed for:
+/// five rejected writes, which `clear_stale_response` returns for any metadata
+/// write or state-lock error, and Part C was off for that session for the life
+/// of the process. Twenty-four seconds of transient IO trouble would have
+/// reinstated the fifteen-hour deadlock with no way back.
+///
+/// Roughly ten minutes at the four-second tick: five attempts per ten minutes
+/// rather than one every four seconds, and it heals itself.
+const INPUT_CLEAR_RETRY_AFTER_TICKS: u64 = 150;
 
 #[derive(Default)]
 pub struct TranscriptReconciler {
@@ -136,15 +156,16 @@ pub struct TranscriptReconciler {
     /// settled the activity immediately: a scribe briefed and relabelled
     /// `ready` in the same breath, with no dwell of Part A's own.
     pending_input: HashMap<String, InputClearProgress>,
-    /// Sessions Part C has given up on. Dropping `pending_input` alone did not
-    /// stop the retrying: the session is still stranded on the next tick, so
-    /// the whole dwell-and-write cycle started again -- thirty-three attempts
-    /// over forty ticks rather than five. Giving up has to be remembered.
+    /// Sessions Part C has backed off from, and the tick it happened on.
     ///
-    /// Forgotten when the session stops being stranded, so a scribe that is
-    /// prompted and later strands again gets a fresh five, and when it leaves
-    /// the live set.
-    input_clear_abandoned: HashSet<String>,
+    /// Remembering is necessary: dropping `pending_input` alone did not stop the
+    /// retrying, because the session is still stranded on the next tick and the
+    /// whole dwell-and-write cycle started again -- thirty-three attempts over
+    /// forty ticks rather than five.
+    ///
+    /// Expiring is also necessary, and that is the part the first version got
+    /// wrong. See `INPUT_CLEAR_RETRY_AFTER_TICKS`.
+    input_clear_abandoned: HashMap<String, u64>,
     tick: u64,
 }
 
@@ -229,8 +250,11 @@ impl TranscriptReconciler {
             // trades one permanent deadlock for another.
             if !stranded_input {
                 self.input_clear_abandoned.remove(&session.id);
-            } else if self.input_clear_abandoned.contains(&session.id) {
-                continue;
+            } else if let Some(at) = self.input_clear_abandoned.get(&session.id).copied() {
+                if self.tick.saturating_sub(at) < INPUT_CLEAR_RETRY_AFTER_TICKS {
+                    continue;
+                }
+                self.input_clear_abandoned.remove(&session.id);
             }
 
             if !stuck_working && !stranded_input {
@@ -325,18 +349,15 @@ impl TranscriptReconciler {
                 self.pending_input.remove(&session.id);
             } else if progress.attempts >= INPUT_CLEAR_ATTEMPTS {
                 let abandoned = session.id.clone();
-                crate::debug_logging::log_lifecycle_always(
-                    "gave up clearing a stranded control-session attention",
-                    "transcript-reconciler",
-                    Some(serde_json::json!({
-                        "session": session.id,
-                        "attempts": progress.attempts,
-                        "settledActivity": progress.settled,
-                        "clearedAttention": progress.cleared,
-                    })),
-                );
+                let (settled, cleared) = (progress.settled, progress.cleared);
+                let attempts = progress.attempts;
                 self.pending_input.remove(&session.id);
-                self.input_clear_abandoned.insert(abandoned);
+                self.input_clear_abandoned.insert(abandoned, self.tick);
+                // Through the deps, so this module stays what its header says it
+                // is -- pure, with all I/O behind the trait -- and so the report
+                // lands in the same log as the task's other failures rather than
+                // splitting one event across two files.
+                deps.report_abandoned_input_clear(&session.id, attempts, settled, cleared);
             }
         }
 
@@ -345,7 +366,7 @@ impl TranscriptReconciler {
         self.codex_miss.retain(|id, _| live.contains(id));
         self.pending_clear.retain(|id| live.contains(id));
         self.pending_input.retain(|id, _| live.contains(id));
-        self.input_clear_abandoned.retain(|id| live.contains(id));
+        self.input_clear_abandoned.retain(|id, _| live.contains(id));
     }
 
     fn resolve_transcript_path(

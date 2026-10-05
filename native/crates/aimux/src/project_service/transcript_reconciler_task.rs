@@ -168,6 +168,29 @@ impl TranscriptReconcilerDeps for ServiceDeps {
         )
     }
 
+    fn report_abandoned_input_clear(
+        &mut self,
+        session_id: &str,
+        attempts: u32,
+        settled_activity: bool,
+        cleared_attention: bool,
+    ) {
+        // The same channel the task's other failures use, so one event is in
+        // one log. Backing off is temporary -- see
+        // `INPUT_CLEAR_RETRY_AFTER_TICKS` -- and this is the only place it is
+        // visible while it lasts.
+        record_transcript_reconciler_failure(
+            &self.context,
+            Some(session_id),
+            "clear-stranded-input",
+            "backing off from a stranded control-session attention",
+            format!(
+                "gave up for now after {attempts} attempts (settled activity: \
+                 {settled_activity}, cleared attention: {cleared_attention})"
+            ),
+        );
+    }
+
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
         if self.budget.spent() {
             return None;

@@ -14,6 +14,9 @@ struct TestDeps {
     /// can be seen being tried again rather than recorded as done.
     refuse_clears: bool,
     clear_attempts: usize,
+    /// Every back-off Part C reported, so it can be asserted rather than
+    /// inferred from a call count.
+    abandoned: Vec<(String, u32)>,
     probe_result: Option<TranscriptProbe>,
     probe_results: BTreeMap<String, Option<TranscriptProbe>>,
     codex_path: Option<String>,
@@ -38,6 +41,15 @@ impl TranscriptReconcilerDeps for TestDeps {
         }
         self.cleared.push(session_id.to_owned());
         true
+    }
+    fn report_abandoned_input_clear(
+        &mut self,
+        session_id: &str,
+        attempts: u32,
+        _settled_activity: bool,
+        _cleared_attention: bool,
+    ) {
+        self.abandoned.push((session_id.to_owned(), attempts));
     }
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
         self.probed
@@ -717,4 +729,72 @@ fn a_session_that_stops_being_stranded_gets_fresh_attempts_later() {
         !deps.cleared.is_empty(),
         "a strand after the give-up has to be tried again"
     );
+}
+
+/// Backing off expires, and it has to.
+///
+/// The first version of this forgot a give-up only when the session stopped
+/// being stranded -- and Part C's whole premise is that nobody moves a stranded
+/// control session's attention, which is the deadlock. So the forget-path was
+/// unreachable for exactly the session it existed for: five rejected writes,
+/// which `clear_stale_response` returns for any metadata-write or state-lock
+/// error, and Part C was off for that session for the life of the process.
+/// Twenty-four seconds of transient trouble would have reinstated the
+/// fifteen-hour deadlock with no way back.
+#[test]
+fn backing_off_expires_so_a_stranded_session_is_tried_again() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        refuse_clears: true,
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    // Transient trouble: five rejections, then it backs off and says so.
+    for _ in 0..10 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert_eq!(
+        deps.abandoned.len(),
+        1,
+        "backing off is reported once, not every tick: {:?}",
+        deps.abandoned
+    );
+    let attempts_at_backoff = deps.clear_attempts;
+
+    // The trouble passes, but nothing un-strands the session -- nobody reads a
+    // scribe's prompt, which is the whole point. Only expiry can save it.
+    deps.refuse_clears = false;
+    for _ in 0..200 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(
+        !deps.cleared.is_empty(),
+        "the back-off has to expire; {attempts_at_backoff} attempts and then nothing"
+    );
+}
+
+/// And it does not expire early, or the back-off buys nothing.
+#[test]
+fn backing_off_lasts_longer_than_the_attempts_that_earned_it() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        refuse_clears: true,
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..60 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(
+        deps.clear_attempts <= 6,
+        "sixty ticks must not be sixty attempts: {} attempts",
+        deps.clear_attempts
+    );
+    assert_eq!(deps.abandoned.len(), 1);
 }
