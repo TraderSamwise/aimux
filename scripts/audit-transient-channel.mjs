@@ -94,6 +94,20 @@ function findCalls(source, needles) {
   return hits;
 }
 
+/** The lifecycle verbs, from the one module that defines them. */
+function readTransientActions() {
+  const source = readFileSync(resolve(SCAN_ROOT, "transient_state.rs"), "utf8");
+  const block = source.match(/TRANSIENT_ACTIONS: &\[&str\] = &\[([^\]]*)\]/);
+  if (!block) {
+    throw new Error("transient_state.rs no longer declares TRANSIENT_ACTIONS as a literal list");
+  }
+  const actions = [...block[1].matchAll(/"([a-z]+)"/g)].map((match) => match[1]);
+  if (actions.length === 0) {
+    throw new Error("transient_state.rs declares an empty TRANSIENT_ACTIONS");
+  }
+  return actions;
+}
+
 /** Where the trailing `#[cfg(test)]` module starts, or the end of the file. */
 function lastTestModule(source) {
   const marker = "\n#[cfg(test)]\n";
@@ -153,10 +167,12 @@ for (const file of listRustFiles(SCAN_ROOT)) {
 // state must not be painted with the tone that means "a human must act" or the
 // one that means "it failed". `Tone::Attention` carried every one of these, so
 // a row the dashboard was busy with looked like a row waiting on the user.
+// Read from the crate's own list rather than copied, so a verb added there is
+// covered here without anyone remembering to add it twice.
 const TRANSIENT_LABELS = [
-  "creating", "forking", "migrating", "switching", "starting", "stopping",
-  "graveyarding", "resurrecting", "renaming", "moving", "removing",
-  "interrupting", "pending", "Loading", "Restoring",
+  ...readTransientActions(),
+  "Loading",
+  "Restoring",
 ];
 const WRONG_TONES = ["Tone::Attention", "Tone::Danger", "ChipTone::Danger", "ChipTone::Attention"];
 // The calls that put a tone on a label.
