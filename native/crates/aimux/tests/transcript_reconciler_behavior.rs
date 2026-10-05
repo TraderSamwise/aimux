@@ -59,6 +59,7 @@ fn session(tool: &str) -> SessionView {
         tool_config_key: tool.to_owned(),
         backend_session_id: Some("be-a".to_owned()),
         worktree_path: Some("/wt/a".to_owned()),
+        project_control: false,
     }
 }
 

@@ -211,6 +211,11 @@ fn session_for_tick(input: &Value, tick_value: &Value) -> Option<SessionView> {
         tool_config_key: if codex { "codex" } else { "claude" }.to_owned(),
         backend_session_id,
         worktree_path: Some("/wt/a".to_owned()),
+        // The frozen corpus predates Part C and its cases are all coders, so
+        // this stays false: a true here would send `needs_input` cases down the
+        // clearing path and change recorded output for cases that are not
+        // about it.
+        project_control: false,
     })
 }
 

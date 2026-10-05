@@ -29,7 +29,10 @@ pub trait TranscriptReconcilerDeps {
     fn has_pending_interaction(&mut self, session_id: &str) -> bool;
     /// Settle a stuck working agent to idle (label becomes "ready").
     fn settle_activity(&mut self, session_id: &str) -> bool;
-    /// Clear a stranded `needs_response` attention back to normal.
+    /// Put a session's attention back to `normal`. Used for a stranded
+    /// `needs_response` (Part B) and for a project-control session's stranded
+    /// `needs_input` (Part C); the name is the one the frozen reconciler
+    /// contract emits, so it stays.
     fn clear_stale_response(&mut self, session_id: &str) -> bool;
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe>;
     fn find_codex_path(&mut self, backend_session_id: &str) -> Option<String>;
@@ -41,6 +44,11 @@ pub struct SessionView {
     pub tool_config_key: String,
     pub backend_session_id: Option<String>,
     pub worktree_path: Option<String>,
+    /// Whether this is an overseer or a scribe. Carried because a stranded
+    /// `needs_input` on one of those is a deadlock and on a coder is not: see
+    /// Part C below. Read through `is_project_control_session`, so it keys on
+    /// the `projectControl` flag and the role, never on the id's spelling.
+    pub project_control: bool,
 }
 
 impl SessionView {
@@ -63,6 +71,7 @@ impl SessionView {
                 .get("worktreePath")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned),
+            project_control: crate::team_contract::is_project_control_session(Some(value)),
         })
     }
 }
@@ -80,6 +89,11 @@ pub struct TranscriptReconciler {
     /// Sessions seen needing a `needs_response` clear once, awaiting a second tick
     /// so a fast daemon restart can't clear a still-re-registering interaction.
     pending_clear: HashSet<String>,
+    /// The same, for a project-control session's stranded `needs_input`. Kept
+    /// separate from `pending_clear` so the two attentions cannot satisfy each
+    /// other's dwell: a session that flips between them would otherwise be
+    /// cleared on the first tick of the second one.
+    pending_input_clear: HashSet<String>,
     tick: u64,
 }
 
@@ -124,31 +138,82 @@ impl TranscriptReconciler {
             // Part A — settle a stuck "working" agent against transcript ground truth.
             let stuck_working =
                 matches!(activity, Some("running" | "waiting")) && attention == Some("normal");
-            if !stuck_working {
+
+            // Part C — clear a `needs_input` that nothing will ever answer.
+            //
+            // The event state machine strands `needs_input` the same way it
+            // strands `running`: the clearing event is dropped on a compact, an
+            // interrupt, a daemon restart or a resume. On a coder that is
+            // survivable, because a person reads the prompt and replies, which
+            // clears it. On an overseer or a scribe nobody reads the prompt --
+            // and the one thing that would talk to a scribe refuses to while it
+            // is waiting, because `scribe_readiness` requires activity
+            // idle-or-done AND attention normal. So a stranded `needs_input`
+            // there is not a stale label, it is a permanent deadlock: observed
+            // 2026-10-05 on tealstreet-next, where the scribe had finished its
+            // turn at 11:40 PM and had not been briefed in fifteen hours.
+            //
+            // Gated on the same transcript evidence as Part A, which is what
+            // keeps it from discarding a real question: an agent genuinely
+            // mid-request has a turn that is not complete. An agent that asked
+            // and then ended its turn does read as complete here, and clearing
+            // that is still right for a control session -- the alternative is
+            // waiting forever for a reader who does not exist. The briefing it
+            // then receives arrives as a prompt, which is also the event that
+            // clears attention, so a scribe that truly needs something will ask
+            // again rather than be silenced.
+            let stranded_input = session.project_control && attention == Some("needs_input");
+
+            if !stuck_working && !stranded_input {
                 self.pending.remove(&session.id);
+                self.pending_input_clear.remove(&session.id);
                 continue;
             }
 
             let Some(path) = self.resolve_transcript_path(session, metadata, deps) else {
                 self.pending.remove(&session.id);
+                self.pending_input_clear.remove(&session.id);
                 continue;
             };
             let Some(result) = deps.probe(&session.tool_config_key, &path) else {
                 self.pending.remove(&session.id);
+                self.pending_input_clear.remove(&session.id);
                 continue;
             };
             if result.turn != "complete" {
                 self.pending.remove(&session.id);
+                self.pending_input_clear.remove(&session.id);
                 continue;
             }
 
-            if self.pending.get(&session.id) == Some(&result) {
+            // Quiescent means the probe is byte-for-byte what the previous tick
+            // saw, because a working agent is still appending. Shared by both
+            // parts: the fact is about the file, not about which part wants it.
+            let quiescent = self.pending.get(&session.id) == Some(&result);
+            if !quiescent {
+                self.pending.insert(session.id.clone(), result);
+                continue;
+            }
+
+            if stuck_working {
                 // Complete and quiescent across a full tick — the turn is over.
                 if deps.settle_activity(&session.id) {
                     self.pending.remove(&session.id);
                 }
+                continue;
+            }
+
+            // A second dwell on top of quiescence, matching Part B rather than
+            // Part A, because this one discards an attention signal rather than
+            // downgrading an activity one. Its own set, so flipping between the
+            // two attentions cannot let one satisfy the other's dwell.
+            if self.pending_input_clear.contains(&session.id) {
+                if deps.clear_stale_response(&session.id) {
+                    self.pending_input_clear.remove(&session.id);
+                    self.pending.remove(&session.id);
+                }
             } else {
-                self.pending.insert(session.id.clone(), result);
+                self.pending_input_clear.insert(session.id.clone());
             }
         }
 
@@ -156,6 +221,7 @@ impl TranscriptReconciler {
         self.codex_path_cache.retain(|id, _| live.contains(id));
         self.codex_miss.retain(|id, _| live.contains(id));
         self.pending_clear.retain(|id| live.contains(id));
+        self.pending_input_clear.retain(|id| live.contains(id));
     }
 
     fn resolve_transcript_path(
