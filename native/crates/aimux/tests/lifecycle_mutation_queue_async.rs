@@ -474,3 +474,39 @@ fn a_slow_mutation_that_does_finish_is_not_called_stuck() {
     );
     assert_eq!(queue.diagnostics("/repo")["telemetry"]["succeeded"], 2);
 }
+
+/// A queue dying behind a stuck mutation must not read as a healthy one.
+///
+/// `maxQueuedMs` is the number that says how bad the waiting got, and it was
+/// only recorded when a mutation actually started — so a queue where every
+/// waiter timed out recorded nothing and looked fine.
+#[test]
+fn a_queue_nobody_can_enter_reports_how_long_waiters_waited() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(80));
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let _stuck = queue
+            .begin_async(Some(agent_stop("stuck")))
+            .await
+            .expect("the stuck mutation takes the queue");
+        assert_eq!(
+            queue.diagnostics("/repo")["telemetry"]["maxQueuedMs"],
+            0,
+            "nothing has waited yet"
+        );
+
+        let Err(_) = queue.begin_async(Some(agent_stop("waiting"))).await else {
+            panic!("the waiter must be refused");
+        };
+
+        let waited = queue.diagnostics("/repo")["telemetry"]["maxQueuedMs"]
+            .as_u64()
+            .expect("maxQueuedMs is a number");
+        assert!(
+            waited >= 80,
+            "the refused wait must be counted, or the dying queue reads as healthy: {waited}ms"
+        );
+    });
+}

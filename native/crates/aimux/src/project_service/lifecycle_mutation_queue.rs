@@ -365,15 +365,22 @@ impl LifecycleMutationQueue {
         transition: Option<LifecycleTransitionInput>,
         queued_at: Instant,
     ) -> LifecycleMutationError {
-        let holder = self
-            .lock_state()
-            .holder
-            .as_ref()
-            .map(QueueHolder::describe)
-            .unwrap_or_else(|| "a mutation that left no record".to_owned());
+        let waited_ms = queued_at.elapsed().as_millis();
+        let holder = {
+            let mut state = self.lock_state();
+            // Count the wait even though it never started. `maxQueuedMs` is the
+            // one number that says how bad the queue got, and a queue dying
+            // behind a stuck mutation is exactly when every waiter times out
+            // and records nothing -- so it would have read as healthy.
+            state.telemetry.max_queued_ms = state.telemetry.max_queued_ms.max(waited_ms);
+            state
+                .holder
+                .as_ref()
+                .map(QueueHolder::describe)
+                .unwrap_or_else(|| "a mutation that left no record".to_owned())
+        };
         let requested = transition
             .unwrap_or_else(|| LifecycleTransitionInput::new("lifecycle.unknown", "project"));
-        let waited_ms = queued_at.elapsed().as_millis();
         log_at(
             LogLevel::Error,
             "lifecycle mutation gave up waiting for the queue",
