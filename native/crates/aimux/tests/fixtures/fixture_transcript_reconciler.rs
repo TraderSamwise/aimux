@@ -215,7 +215,7 @@ fn session_for_tick(input: &Value, tick_value: &Value) -> Option<SessionView> {
         // this carries no role: a control session here would send `needs_input`
         // cases down the clearing path and move recorded output for cases that
         // are not about it.
-        value: json!({ "id": "a" }),
+        control_flags: json!({ "id": "a" }),
     })
 }
 

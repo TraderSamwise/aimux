@@ -83,7 +83,7 @@ fn complete_with_size(size: u64) -> Option<TranscriptProbe> {
 /// prompt, which is exactly what Part C turns on.
 fn control_session(tool: &str) -> SessionView {
     SessionView {
-        value: json!({ "id": "a", "role": "scribe", "scribe": true }),
+        control_flags: json!({ "id": "a", "role": "scribe", "scribe": true }),
         ..session(tool)
     }
 }
@@ -102,7 +102,7 @@ fn session(tool: &str) -> SessionView {
         tool_config_key: tool.to_owned(),
         backend_session_id: Some("be-a".to_owned()),
         worktree_path: Some("/wt/a".to_owned()),
-        value: json!({ "id": "a" }),
+        control_flags: json!({ "id": "a" }),
     }
 }
 

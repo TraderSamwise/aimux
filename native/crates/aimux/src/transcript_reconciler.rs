@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub use crate::transcript_turn_state::TranscriptProbe;
 
@@ -44,17 +44,21 @@ pub struct SessionView {
     pub tool_config_key: String,
     pub backend_session_id: Option<String>,
     pub worktree_path: Option<String>,
-    /// The session as the topology reports it, kept so Part C can decide
+    /// The control-flag keys as the topology reports them, so Part C can decide
     /// whether this is an overseer or a scribe.
     ///
-    /// The raw value is not the whole answer: metadata can DEMOTE a session
-    /// that the topology still describes by role, and
+    /// The topology's own answer is not the whole answer: metadata can DEMOTE a
+    /// session the topology still describes by role, and
     /// `session_with_stored_control_flags` is how every other caller resolves
-    /// that -- `scribe_watcher.rs:391` and `project_service/agents.rs:790`
-    /// both do it. Deciding from the topology alone would read a demoted coder
-    /// as control and clear its real prompt, so the merge happens in `scan`,
-    /// which has the metadata in hand.
-    pub value: Value,
+    /// that -- `scribe_watcher.rs:391` and `project_service/agents.rs:790` both
+    /// do. Deciding from the topology alone would read a demoted coder as
+    /// control and clear its real prompt, so the merge happens in `scan`, which
+    /// has the metadata in hand.
+    ///
+    /// Narrowed to the five keys that merge reads rather than holding the whole
+    /// session, because one of these is built for every live session on every
+    /// four-second tick.
+    pub control_flags: Value,
 }
 
 impl SessionView {
@@ -77,7 +81,7 @@ impl SessionView {
                 .get("worktreePath")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned),
-            value: value.clone(),
+            control_flags: control_flag_keys(value),
         })
     }
 }
@@ -186,7 +190,7 @@ impl TranscriptReconciler {
             let stranded_input = attention == Some("needs_input")
                 && crate::team_contract::is_project_control_session(Some(
                     &crate::team_contract::session_with_stored_control_flags(
-                        &session.value,
+                        &session.control_flags,
                         session_field_any(metadata, &session.id),
                     ),
                 ));
@@ -233,6 +237,16 @@ impl TranscriptReconciler {
                 continue;
             }
 
+            // One tick of quiescence, not two, and what makes that safe is
+            // what "complete" means rather than how long we waited: a turn
+            // between two tool calls reads `in_progress`, because the last
+            // assistant entry's stop_reason is `tool_use`. That is pinned in
+            // the frozen `transcript/turn-state.json` ("claude in_progress when
+            // last assistant entry is tool_use") and at the task level by
+            // `a_mid_turn_transcript_is_never_settled`. So a complete transcript
+            // is a finished turn, and a second tick would only wait longer for
+            // the same answer.
+            //
             // Likewise the other way: a stranded session is not
             // `stuck_working`, so Part A's probe is dropped rather than left
             // where Part A could inherit it later as a tick already served.
@@ -353,6 +367,20 @@ impl TranscriptReconciler {
                 .into_owned(),
         )
     }
+}
+
+/// Just the keys `session_with_stored_control_flags` and
+/// `is_project_control_session` read: the three flags, the lane that travels
+/// with them, and the legacy role. `id` comes along so a failure names the
+/// session it was about.
+fn control_flag_keys(session: &Value) -> Value {
+    let mut probe = Map::new();
+    for key in ["id", "overseer", "scribe", "projectControl", "lane", "role"] {
+        if let Some(value) = session.get(key) {
+            probe.insert(key.to_owned(), value.clone());
+        }
+    }
+    Value::Object(probe)
 }
 
 /// A session's whole metadata record, for the control-flag merge. `session_field`
