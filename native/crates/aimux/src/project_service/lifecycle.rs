@@ -157,15 +157,21 @@ pub(crate) async fn route_lifecycle_request_async_with_runtime(
     }
     let pathname = project_service_pathname(path);
     let body = body.unwrap_or(&Value::Null);
-    let transition = lifecycle_transition_for_route(pathname, body);
-    let mut permit = match context.lifecycle_mutations.begin_async(transition).await {
-        Ok(permit) => permit,
-        Err(error) => return Some(lifecycle_queue_error_response(error)),
+    let mut permit = match lifecycle_transition_for_route(pathname, body) {
+        None => None,
+        Some(transition) => match context
+            .lifecycle_mutations
+            .begin_async(Some(transition))
+            .await
+        {
+            Ok(permit) => Some(permit),
+            Err(error) => return Some(lifecycle_queue_error_response(error)),
+        },
     };
     let started_at = Instant::now();
     let response =
         route_lifecycle_request_unqueued_async(context, pathname, body, runtime, progress).await;
-    finish_lifecycle_permit(&mut permit, started_at, response.as_ref());
+    finish_lifecycle_permit(permit.as_mut(), started_at, response.as_ref());
     if lifecycle_mutation_changed_surfaces(pathname, response.as_ref()) {
         let refreshed =
             crate::project_service::statusline::refresh_project_statusline_with_tmux_refresh_async(
@@ -193,10 +199,12 @@ pub fn route_lifecycle_request_with_runtime(
     }
     let pathname = project_service_pathname(path);
     let body = body.unwrap_or(&Value::Null);
-    let transition = lifecycle_transition_for_route(pathname, body);
-    let mut permit = match context.lifecycle_mutations.begin(transition) {
-        Ok(permit) => permit,
-        Err(error) => return Some(lifecycle_queue_error_response(error)),
+    let mut permit = match lifecycle_transition_for_route(pathname, body) {
+        None => None,
+        Some(transition) => match context.lifecycle_mutations.begin(Some(transition)) {
+            Ok(permit) => Some(permit),
+            Err(error) => return Some(lifecycle_queue_error_response(error)),
+        },
     };
     let started_at = Instant::now();
     let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -204,7 +212,7 @@ pub fn route_lifecycle_request_with_runtime(
     }));
     match response {
         Ok(response) => {
-            finish_lifecycle_permit(&mut permit, started_at, response.as_ref());
+            finish_lifecycle_permit(permit.as_mut(), started_at, response.as_ref());
             if lifecycle_mutation_changed_surfaces(pathname, response.as_ref())
                 && let Err(error) =
                     crate::project_service::statusline::refresh_project_statusline_with_tmux_refresh(
@@ -218,7 +226,9 @@ pub fn route_lifecycle_request_with_runtime(
             response
         }
         Err(payload) => {
-            permit.fail(started_at, "lifecycle mutation panicked".into());
+            if let Some(permit) = permit.as_mut() {
+                permit.fail(started_at, "lifecycle mutation panicked".into());
+            }
             std::panic::resume_unwind(payload);
         }
     }
@@ -253,10 +263,13 @@ fn statusline_refresh_after_mutation() -> crate::project_service::statusline::St
 }
 
 fn finish_lifecycle_permit(
-    permit: &mut super::lifecycle_mutation_queue::LifecycleMutationPermit,
+    permit: Option<&mut super::lifecycle_mutation_queue::LifecycleMutationPermit>,
     started_at: Instant,
     response: Option<&ProjectServiceDispatchResponse>,
 ) {
+    let Some(permit) = permit else {
+        return;
+    };
     if let Some(response) = response
         && response.status >= 400
     {
@@ -265,6 +278,18 @@ fn finish_lifecycle_permit(
     }
     permit.succeed(started_at);
 }
+
+// A route takes the queue only when it is a queued mutation.
+//
+// `lifecycle_transition_for_route` returning `None` means two different things,
+// and neither of them wants the queue: a path this router does not handle,
+// which falls through to the next one, and a path it does handle but
+// deliberately does not serialize -- dismissing a restore offer, recording a
+// backend session id. Taking the permit anyway made every POST that reaches
+// this router -- hooks, interactions, plans, usage, coordination mutations --
+// wait behind whatever lifecycle mutation was running, which for a worktree
+// create is its whole git fetch. Node took the queue inside each route that
+// wanted it; the port wrapped the router instead.
 
 fn lifecycle_response_error(response: &ProjectServiceDispatchResponse) -> String {
     response
