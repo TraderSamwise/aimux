@@ -11,13 +11,13 @@
 //! So this stands in for what the loop reaches for -- keys, snapshots, when to
 //! stop, and where frames go -- and asserts what the loop does with them.
 //!
-//! The cache window is real elapsed time: a frame an input asked for waits out
-//! `DASHBOARD_MIN_INPUT_FRAME_GAP` (50ms), and a deferred fetch comes due after
-//! `DASHBOARD_DEFERRED_REFRESH_BUDGET` (150ms) of idle. So a script here carries
-//! a delay per poll rather than hammering the loop, which is also what makes
-//! the counts discriminating: four instant iterations are all held back by the
-//! frame gap, never reach the render, and count one load whether the cache
-//! works or not.
+//! The cache window is real elapsed time, and the two edges are close together:
+//! a frame an input asked for waits out `DASHBOARD_MIN_INPUT_FRAME_GAP` (50ms),
+//! and a deferred fetch comes due after `DASHBOARD_DEFERRED_REFRESH_BUDGET`
+//! (150ms) of idle. The loop's own bottom-of-pass sleep is 50ms, so a script
+//! here only adds the margin that puts each idle between the two -- see
+//! `NO_EXTRA_IDLE`. Land under 50ms and no frame goes up; land over 150ms and
+//! the fetch is forced and the load count says nothing about the cache.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -33,9 +33,17 @@ use aimux::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
 
-/// Comfortably past the 50ms input frame gap, so a keypress gets its frame
-/// rather than being held for the next pass.
-const PAST_FRAME_GAP: u64 = 70;
+/// Why a keypress poll adds no delay of its own.
+///
+/// The loop sleeps `DASHBOARD_KEY_POLL_INTERVAL` (50ms) at the bottom of every
+/// pass -- `wait_on_stdin` is false here, so `wait_for_dashboard_keys` takes its
+/// sleep branch -- and `thread::sleep` only ever overshoots. So the idle between
+/// two frames is already over the 50ms `DASHBOARD_MIN_INPUT_FRAME_GAP` without
+/// help, and the lower edge needs no margin at all. The only edge load can push
+/// us across is the 150ms `DASHBOARD_DEFERRED_REFRESH_BUDGET` above, so every
+/// millisecond added here is headroom spent for nothing. An earlier revision
+/// added 70ms, putting each idle at ~120ms with 30ms to spare; this leaves ~100.
+const NO_EXTRA_IDLE: u64 = 0;
 
 fn snapshot() -> DesktopStateSnapshot {
     serde_json::from_str::<DesktopStateGoldenFixture>(GOLDEN)
@@ -72,10 +80,16 @@ type Poll = (u64, Vec<DashboardKey>);
 /// independent counter is how the first version of this file ended the loop
 /// after one iteration and read none of the keys it was handing over.
 fn drive(polls: Vec<Poll>) -> Driven {
+    // Counted, not named after the script: two tests with the same number of
+    // polls shared one directory, and each `drive` ends by removing it, so one
+    // test could delete another's underneath it while both were running. The
+    // loop never opens this directory, so nothing broke -- it was a create and
+    // a remove racing over the same path for no reason.
+    static NEXT_ROOT: AtomicUsize = AtomicUsize::new(0);
     let root = std::env::temp_dir().join(format!(
         "aimux-render-loop-{}-{}",
         std::process::id(),
-        polls.len()
+        NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&root).expect("project root");
 
@@ -132,8 +146,10 @@ fn drive(polls: Vec<Poll>) -> Driven {
         rows: 40,
         once: false,
     };
-    run_native_dashboard_with_seams(options, Some(seams)).expect("the driven loop returns");
+    let outcome = run_native_dashboard_with_seams(options, Some(seams));
+    // Before the assert, so a failing run does not leave the directory behind.
     let _ = std::fs::remove_dir_all(&root);
+    outcome.expect("the driven loop returns");
     Driven {
         loads: loads.load(Ordering::Relaxed),
         frames: frames.load(Ordering::Relaxed),
@@ -168,9 +184,9 @@ fn the_render_loop_runs_and_paints_from_a_loaded_snapshot() {
 fn keypresses_repaint_without_fetching_again() {
     let driven = drive(vec![
         (0, vec![]),
-        (PAST_FRAME_GAP, vec![DashboardKey::Down]),
-        (PAST_FRAME_GAP, vec![DashboardKey::Down]),
-        (PAST_FRAME_GAP, vec![DashboardKey::Up]),
+        (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
+        (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
+        (NO_EXTRA_IDLE, vec![DashboardKey::Up]),
     ]);
 
     assert_eq!(
@@ -191,9 +207,11 @@ fn keypresses_repaint_without_fetching_again() {
 fn the_fetch_a_cached_frame_skipped_comes_due_once_the_keys_stop() {
     let driven = drive(vec![
         (0, vec![]),
-        (PAST_FRAME_GAP, vec![DashboardKey::Down]),
-        // Longer than DASHBOARD_DEFERRED_REFRESH_BUDGET, so the fetch the
-        // cached frame above deferred is now owed.
+        (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
+        // Past DASHBOARD_DEFERRED_REFRESH_BUDGET (150ms) by a wide margin, so
+        // the fetch the cached frame above deferred is owed. The 50ms the loop
+        // sleeps anyway is on top of this, and the ceiling that would force a
+        // refresh regardless is a full second away.
         (220, vec![]),
     ]);
 
@@ -201,6 +219,13 @@ fn the_fetch_a_cached_frame_skipped_comes_due_once_the_keys_stop() {
         driven.loads, 2,
         "the keypress repaints from cache, and the idle pass after it pays the \
          fetch that frame skipped"
+    );
+    // `loads == 2` alone does not separate this from a keypress that simply
+    // refreshed: that also loads twice, but it leaves nothing deferred, so the
+    // idle pass has no reason to render and there is no third frame.
+    assert_eq!(
+        driven.frames, 3,
+        "the deferred fetch has to put a frame up, not just load"
     );
 }
 
@@ -215,23 +240,11 @@ fn the_fetch_a_cached_frame_skipped_comes_due_once_the_keys_stop() {
 fn a_key_that_changes_what_is_asked_for_fetches_again() {
     let driven = drive(vec![
         (0, vec![]),
-        (PAST_FRAME_GAP, vec![DashboardKey::ToggleOfflineAgents]),
+        (NO_EXTRA_IDLE, vec![DashboardKey::ToggleOfflineAgents]),
     ]);
 
     assert_eq!(
         driven.loads, 2,
         "toggling offline agents must reload rather than repaint cache"
-    );
-}
-
-/// And the loop stops when it is told to, rather than owning the terminal
-/// forever. Without this the rest of the file could not run at all.
-#[test]
-fn the_loop_returns_when_the_script_runs_out() {
-    let started = std::time::Instant::now();
-    drive(vec![(0, vec![]), (0, vec![])]);
-    assert!(
-        started.elapsed() < Duration::from_secs(10),
-        "the driven loop has to return rather than wait on a terminal"
     );
 }

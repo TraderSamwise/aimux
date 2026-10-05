@@ -423,7 +423,13 @@ pub fn run_native_dashboard_with_seams(
         None => dashboard_output(options.once),
     };
     let mut stdin = io::stdin();
-    let _terminal = if options.once {
+    // Not entered for a driven loop: there is no terminal to put into raw mode,
+    // and the guard is not harmless on the way past. `enable_nonblocking_stdin`
+    // has no `is_terminal` check, so it sets `O_NONBLOCK` on the real fd 0
+    // whatever is on the other end, and two guards overlapping make the second
+    // record the first's modified flags as the originals to restore -- which
+    // leaves the invoking shell's stdin non-blocking after the process exits.
+    let _terminal = if options.once || driven {
         None
     } else {
         Some(DashboardTerminalGuard::enter(&mut *output).context("enter dashboard terminal")?)
