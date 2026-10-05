@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Easing,
@@ -21,6 +21,7 @@ import {
   Network,
   Repeat2,
 } from "lucide-react-native";
+import { useKeyboardHeight } from "@/lib/use-keyboard-visible";
 import { Text } from "@/components/ui/text";
 import { ProjectPicker } from "@/components/ProjectPicker";
 import { WorktreeList } from "@/components/WorktreeDashboard";
@@ -366,6 +367,16 @@ function SidebarPrimaryNav({
 
 export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boolean }) {
   const { width } = useWindowDimensions();
+  // With the keyboard up the list was cut off wherever the keyboard started --
+  // most of the agents unreachable without dismissing it first. Give the
+  // covered strip back as padding so the list scrolls past it.
+  //
+  // Snapped, not animated: AGENTS.md forbids animating a layout dimension in a
+  // touch-critical scroll surface, and padding is one. `useKeyboardInset` is
+  // the UI-thread value for chrome that MOVES with the keyboard; this is
+  // layout that has to be there when the finger arrives.
+  const keyboardHeight = useKeyboardHeight();
+  const listBottomInset = useMemo(() => ({ paddingBottom: keyboardHeight }), [keyboardHeight]);
   const projects = useAtomValue(projectsAtom);
   const projectListStatus = useAtomValue(projectListStatusAtom);
   const relayMachines = useAtomValue(relayMachinesAtom);
@@ -582,7 +593,11 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
           pointerEvents={pickerMode ? "auto" : "none"}
           style={{ width: SIDEBAR_WIDTH, height: "100%" }}
         >
-          <ScrollView className="flex-1">
+          <ScrollView
+            className="flex-1"
+            contentContainerStyle={listBottomInset}
+            keyboardShouldPersistTaps="handled"
+          >
             <ProjectPicker
               projects={projects}
               status={projectListStatus}
@@ -602,7 +617,16 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
           onTouchEnd={handleProjectPickerSwipeEnd}
           onTouchCancel={handleProjectPickerSwipeEnd}
         >
-          <ScrollView className="flex-1">
+          {/* `handled`, like every other scroll view in the app: the default
+              swallows the first tap to dismiss the keyboard, so a row made
+              reachable by the inset above would need two taps -- and the first
+              one collapses the inset, sliding a different row under the
+              second. */}
+          <ScrollView
+            className="flex-1"
+            contentContainerStyle={listBottomInset}
+            keyboardShouldPersistTaps="handled"
+          >
             {routeRelayUnavailable && !showPicker ? (
               <>
                 <View className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4">
