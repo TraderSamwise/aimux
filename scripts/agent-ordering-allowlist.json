@@ -140,6 +140,11 @@
       "file": "app/lib/for-you-feed.ts",
       "function": "buildForYouFeed",
       "reason": "The attention feed: security events, notifications and pending agent cards in one list, unread first then newest. It is a feed, not a roster of agents."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_controller.rs",
+      "function": "startable_overseer_session",
+      "reason": "Picks ONE overseer to start, it does not order a list anybody sees. Liveness first, then least-recently-used last so the most recent wins -- the same rule the service uses to choose a session to reuse (agent_launch_routes.rs). A canonical display order would pick by display position, which is not liveness."
     }
   ]
 }

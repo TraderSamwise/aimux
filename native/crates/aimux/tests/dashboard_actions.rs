@@ -201,9 +201,18 @@ fn enter_refuses_a_session_whose_restore_is_blocked() {
     assert_eq!(
         plan,
         DashboardActionPlan::Blocked(
-            "codex-offline cannot be resumed: missing exact resumable backend session id".into()
+            "codex cannot be resumed: missing exact resumable backend session id".into()
         ),
         "a refusal the user can read, not a resume that quietly relocates them"
+    );
+    // "codex", not "codex-offline": the refusal names the agent the way the
+    // row, the chips and the app name it, from the one shared rule. A fourth
+    // naming rule here is what `tests/agent_name_across_surfaces.rs` exists to
+    // catch.
+    assert_eq!(
+        aimux::dashboard_model::agent_display_name(session),
+        "codex",
+        "the refusal and the row must agree on what this agent is called"
     );
 }
 

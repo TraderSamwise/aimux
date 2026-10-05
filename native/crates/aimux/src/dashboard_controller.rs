@@ -1880,19 +1880,25 @@ impl DashboardController {
     }
 
     /// Enter on the overseer menu starts the overseer this project has, and
-    /// only makes one when it has none.
+    /// makes one only when there is none to start.
     ///
-    /// It looked for a LIVE overseer, so with the overseer merely offline --
-    /// the common case, since that is when you reach for this menu -- it fell
-    /// through to the create picker and made a SECOND one, demoting the
-    /// existing overseer to a plain coder. `plan_dashboard_action` already
-    /// resumes an offline session, so the existing one only had to be found.
+    /// It looked for a LIVE overseer, so an offline one -- which is when you
+    /// reach for this menu -- was invisible and it went straight to the create
+    /// picker. For a resumable overseer the service reuses the old session's
+    /// identity, so that cost a spawn where a resume would do; for one whose
+    /// restore is blocked the reuse scan rejects the candidate
+    /// (`agent_launch_routes.rs`), so a genuinely second overseer appears and
+    /// the old one is demoted. That second case is the one Sam reported.
+    ///
+    /// Making a replacement is still the only way out of it, so a blocked
+    /// overseer falls through to the picker rather than dead-ending -- but it
+    /// says why first, because a silent duplicate is how the report started.
     fn activate_or_create_overseer_from_overlay(
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> DashboardControllerEffect {
         self.overseer_overlay_open = false;
-        if let Some(overseer) = first_overseer_session(snapshot) {
+        if let Some(overseer) = startable_overseer_session(snapshot) {
             return match plan_dashboard_action(
                 Some(DashboardEntryRef::Session(overseer)),
                 DashboardActionKind::Enter,
@@ -1910,6 +1916,11 @@ impl DashboardController {
                 }
                 DashboardActionPlan::Ignored => DashboardControllerEffect::Render,
             };
+        }
+        if let Some(blocked) = first_overseer_session(snapshot)
+            .and_then(crate::dashboard_model::dashboard_restore_block)
+        {
+            self.footer_alert = Some(format!("{blocked}. Starting a replacement.").into());
         }
         DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::CreateOverseer)
     }
@@ -3487,6 +3498,28 @@ fn first_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardS
         .sessions
         .iter()
         .find(|session| is_overseer_session(session))
+}
+
+/// The overseer Enter should start, when more than one is flagged.
+///
+/// Array position is not liveness, and nothing enforces a single overseer, so
+/// picking the first would resume a stale record while a live one is sitting
+/// there. A running overseer wins; otherwise the most recently used, which is
+/// how the service picks a session to reuse.
+fn startable_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
+    let mut overseers = snapshot
+        .sessions
+        .iter()
+        .filter(|session| is_overseer_session(session))
+        .filter(|session| crate::dashboard_model::dashboard_restore_block(session).is_none())
+        .collect::<Vec<_>>();
+    overseers.sort_by(|left, right| {
+        is_live_session(left)
+            .cmp(&is_live_session(right))
+            .then_with(|| left.last_used_at.cmp(&right.last_used_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    overseers.pop()
 }
 
 fn is_overseer_session(session: &DashboardSession) -> bool {

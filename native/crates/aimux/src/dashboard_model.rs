@@ -174,16 +174,28 @@ pub fn is_dashboard_supervisor_plane_session(session: &DashboardSession) -> bool
     )
 }
 
-/// The restore state a client reports for this session, from the field or the
-/// passthrough an older service put in `extra`.
-pub fn dashboard_restore_state(session: &DashboardSession) -> Option<&str> {
-    session.restore_state.as_deref().or_else(|| {
-        session
-            .extra
-            .get("restoreState")
-            .and_then(serde_json::Value::as_str)
+/// The one rule for what an agent is called, shared with the app and the
+/// statusline.
+///
+/// The dashboard row, the chips, the footer and any refusal naming an agent
+/// must give the same answer. Reading `label` raw gives a different one for
+/// every label the shared rule counts as generated -- the session id itself,
+/// or the `tool-xxxxx` shape a spawn produces -- which is what
+/// `tests/agent_name_across_surfaces.rs` exists to catch.
+pub fn agent_display_name(session: &DashboardSession) -> String {
+    crate::agent_display::resolve_app_agent_display(&crate::agent_display::AgentDisplayInput {
+        id: Some(session.id.as_str()),
+        label: session.label.as_deref(),
+        command: Some(session.command.as_str()),
+        tool_config_key: session.tool_config_key.as_deref(),
+        ..Default::default()
     })
+    .short_name()
 }
+
+/// How much of a restore reason a surface shows. The row chip settled on this
+/// first; the refusal uses the same number so the two read alike.
+pub const RESTORE_REASON_WIDTH: usize = 42;
 
 /// Why Enter cannot resume this session, if it cannot.
 ///
@@ -206,10 +218,10 @@ pub fn dashboard_restore_block(session: &DashboardSession) -> Option<String> {
         // can be refused here.
         return None;
     }
-    if dashboard_restore_state(session) != Some("blocked") {
+    if session.restore_state.as_deref() != Some("blocked") {
         return None;
     }
-    let label = session.label.as_deref().unwrap_or(&session.id);
+    let label = agent_display_name(session);
     Some(
         match session
             .restore_blocked_reason
@@ -217,7 +229,10 @@ pub fn dashboard_restore_block(session: &DashboardSession) -> Option<String> {
             .map(str::trim)
             .filter(|reason| !reason.is_empty())
         {
-            Some(reason) => format!("{label} cannot be resumed: {reason}"),
+            Some(reason) => format!(
+                "{label} cannot be resumed: {}",
+                crate::tui_render::text::truncate(reason, RESTORE_REASON_WIDTH)
+            ),
             None => format!("{label} cannot be resumed"),
         },
     )
@@ -660,10 +675,17 @@ pub fn filter_dashboard_visible_model(
         .filter(|session| !is_project_control_session(session))
         .filter(|session| is_dashboard_session_offline(session))
         .count();
+    // Project-control sessions stay. The hidden count right above already
+    // exempts them, so dropping them here made the count under-report -- and
+    // it took the overseer out of the one menu whose job is to start it, which
+    // silently turned the toggle into "the overseer menu cannot find the
+    // overseer".
     let sessions = snapshot
         .sessions
         .iter()
-        .filter(|session| !is_dashboard_session_offline(session))
+        .filter(|session| {
+            is_project_control_session(session) || !is_dashboard_session_offline(session)
+        })
         .cloned()
         .collect::<Vec<_>>();
     let visible_session_worktrees = sessions
