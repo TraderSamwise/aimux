@@ -190,7 +190,7 @@ fn dashboard_visible_model_hides_offline_agents_and_keeps_related_services() {
 }
 
 #[test]
-fn dashboard_visible_model_does_not_count_hidden_project_control_sessions() {
+fn the_hidden_count_is_exactly_what_the_filter_removed() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_light;
@@ -215,5 +215,29 @@ fn dashboard_visible_model_does_not_count_hidden_project_control_sessions() {
 
     let visible = filter_dashboard_visible_model(&snapshot, true);
 
+    // The count and the list are two statements about one decision, and
+    // nothing tied them together: the count exempted project-control sessions
+    // while the filter dropped them, so the footer said "1 hidden" while two
+    // were gone.
+    let removed = snapshot.sessions.len() - visible.snapshot.sessions.len();
+    assert_eq!(
+        visible.hidden_offline_agent_count,
+        removed,
+        "the footer's count must be what was actually hidden: {:?}",
+        visible
+            .snapshot
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>()
+    );
     assert_eq!(visible.hidden_offline_agent_count, 1);
+    assert!(
+        visible
+            .snapshot
+            .sessions
+            .iter()
+            .any(|session| session.id == "claude-scribe-offline"),
+        "and the offline scribe is the one that stayed"
+    );
 }

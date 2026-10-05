@@ -182,6 +182,22 @@ pub fn is_dashboard_supervisor_plane_session(session: &DashboardSession) -> bool
 /// every label the shared rule counts as generated -- the session id itself,
 /// or the `tool-xxxxx` shape a spawn produces -- which is what
 /// `tests/agent_name_across_surfaces.rs` exists to catch.
+/// Whether a session is still shown once offline agents are hidden.
+///
+/// Project-control sessions stay. The hidden count already exempts them, so
+/// dropping them made the count under-report -- and it took the overseer out
+/// of the one menu whose job is to start it, turning the toggle into "the
+/// overseer menu cannot find the overseer".
+///
+/// One function because there are two filters. Exempting only the flat session
+/// list left the worktree-group filter dropping the same session, so its group
+/// vanished while its worktree stayed in `visible_session_worktrees` -- which
+/// kept that worktree's services alive with no group to hang them on, and
+/// navigation then invented a worktree row out of the orphans.
+fn dashboard_session_survives_hidden_offline(session: &DashboardSession) -> bool {
+    is_project_control_session(session) || !is_dashboard_session_offline(session)
+}
+
 pub fn agent_display_name(session: &DashboardSession) -> String {
     crate::agent_display::resolve_app_agent_display(&crate::agent_display::AgentDisplayInput {
         id: Some(session.id.as_str()),
@@ -675,17 +691,10 @@ pub fn filter_dashboard_visible_model(
         .filter(|session| !is_project_control_session(session))
         .filter(|session| is_dashboard_session_offline(session))
         .count();
-    // Project-control sessions stay. The hidden count right above already
-    // exempts them, so dropping them here made the count under-report -- and
-    // it took the overseer out of the one menu whose job is to start it, which
-    // silently turned the toggle into "the overseer menu cannot find the
-    // overseer".
     let sessions = snapshot
         .sessions
         .iter()
-        .filter(|session| {
-            is_project_control_session(session) || !is_dashboard_session_offline(session)
-        })
+        .filter(|session| dashboard_session_survives_hidden_offline(session))
         .cloned()
         .collect::<Vec<_>>();
     let visible_session_worktrees = sessions
@@ -702,7 +711,7 @@ pub fn filter_dashboard_visible_model(
             let group_sessions = group
                 .sessions
                 .iter()
-                .filter(|session| !is_dashboard_session_offline(session))
+                .filter(|session| dashboard_session_survives_hidden_offline(session))
                 .cloned()
                 .collect::<Vec<_>>();
             if group_sessions.is_empty() && !should_keep_operational_worktree(group) {

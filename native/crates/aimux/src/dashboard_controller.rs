@@ -1920,7 +1920,7 @@ impl DashboardController {
         if let Some(blocked) = first_overseer_session(snapshot)
             .and_then(crate::dashboard_model::dashboard_restore_block)
         {
-            self.footer_alert = Some(format!("{blocked}. Starting a replacement.").into());
+            self.footer_alert = Some(replacement_alert(&blocked).into());
         }
         DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::CreateOverseer)
     }
@@ -2285,7 +2285,7 @@ impl DashboardController {
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> DashboardControllerEffect {
-        if let Some(scribe) = live_scribe_session(snapshot) {
+        if let Some(scribe) = startable_scribe_session(snapshot) {
             self.work_outline_overlay = None;
             return match plan_dashboard_action(
                 Some(DashboardEntryRef::Session(scribe)),
@@ -2306,6 +2306,14 @@ impl DashboardController {
             };
         }
         self.work_outline_overlay = None;
+        // Same shape as the overseer menu: a scribe that cannot be resumed
+        // still needs a replacement, and the user still needs to know why one
+        // is appearing.
+        if let Some(blocked) =
+            first_scribe_session(snapshot).and_then(crate::dashboard_model::dashboard_restore_block)
+        {
+            self.footer_alert = Some(replacement_alert(&blocked).into());
+        }
         DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::CreateScribe)
     }
 
@@ -3500,26 +3508,54 @@ fn first_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardS
         .find(|session| is_overseer_session(session))
 }
 
-/// The overseer Enter should start, when more than one is flagged.
+/// The project-control session Enter should start, when more than one is
+/// flagged.
 ///
-/// Array position is not liveness, and nothing enforces a single overseer, so
-/// picking the first would resume a stale record while a live one is sitting
-/// there. A running overseer wins; otherwise the most recently used, which is
-/// how the service picks a session to reuse.
-fn startable_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
-    let mut overseers = snapshot
+/// Array position is not liveness, and nothing enforces a single overseer or
+/// scribe, so picking the first would resume a stale record while a live one
+/// sat there. A running one wins; otherwise the most recently used, and the id
+/// only to keep the choice from depending on array order. Sessions that cannot
+/// be resumed are skipped, so the caller's fallthrough is reached rather than a
+/// refusal it has no answer for.
+///
+/// Deliberately NOT the service's reuse rule: that sorts on `updatedAt` and
+/// filters by tool and worktree, because it is choosing a session to relaunch
+/// into. This is choosing which existing one to bring up.
+fn startable_project_control_session(
+    snapshot: &DesktopStateSnapshot,
+    is_role: impl Fn(&DashboardSession) -> bool,
+) -> Option<&DashboardSession> {
+    let mut candidates = snapshot
         .sessions
         .iter()
-        .filter(|session| is_overseer_session(session))
+        .filter(|session| is_role(session))
         .filter(|session| crate::dashboard_model::dashboard_restore_block(session).is_none())
         .collect::<Vec<_>>();
-    overseers.sort_by(|left, right| {
+    candidates.sort_by(|left, right| {
         is_live_session(left)
             .cmp(&is_live_session(right))
             .then_with(|| left.last_used_at.cmp(&right.last_used_at))
             .then_with(|| left.id.cmp(&right.id))
     });
-    overseers.pop()
+    candidates.pop()
+}
+
+/// Why a replacement is being offered, as one sentence.
+///
+/// The reason is truncated for the row chip's width and `truncate` ends it
+/// with an ellipsis, so appending a full stop produced "...was remov.... " --
+/// a sentence that reads like a typo rather than a report.
+fn replacement_alert(blocked: &str) -> String {
+    let blocked = blocked.trim_end_matches(['.', '…', ' ']);
+    format!("{blocked}. Starting a replacement.")
+}
+
+fn startable_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
+    startable_project_control_session(snapshot, is_overseer_session)
+}
+
+fn startable_scribe_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
+    startable_project_control_session(snapshot, is_scribe_session)
 }
 
 fn is_overseer_session(session: &DashboardSession) -> bool {

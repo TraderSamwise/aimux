@@ -143,8 +143,8 @@
     },
     {
       "file": "native/crates/aimux/src/dashboard_controller.rs",
-      "function": "startable_overseer_session",
-      "reason": "Picks ONE overseer to start, it does not order a list anybody sees. Liveness first, then least-recently-used last so the most recent wins -- the same rule the service uses to choose a session to reuse (agent_launch_routes.rs). A canonical display order would pick by display position, which is not liveness."
+      "function": "startable_project_control_session",
+      "reason": "Picks ONE overseer or scribe to bring up, it does not order a list anybody sees. Liveness first, then least-recently-used last so the most recent wins, then id only so the choice does not depend on array order. Deliberately NOT the service's reuse rule, which sorts on updatedAt and filters by tool and worktree because it is choosing a session to relaunch into; this chooses which existing one to bring up. A canonical display order would pick by display position, which is not liveness."
     }
   ]
 }

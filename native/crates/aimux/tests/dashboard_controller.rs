@@ -3763,7 +3763,36 @@ fn hiding_offline_agents_keeps_the_supervisor_lane() {
     overseer.restore_state = Some("ready".into());
     snapshot.sessions.insert(0, overseer);
 
+    // In a worktree group, which is where the two filters could disagree: the
+    // flat list exempted project-control sessions and the group filter did
+    // not, so the overseer survived in one and its group vanished from the
+    // other -- leaving that worktree's services alive with no group, and
+    // navigation inventing a worktree row out of them.
+    let mut grouped = snapshot.worktree_groups[1].sessions[0].clone();
+    grouped.id = "claude-group-scribe".into();
+    grouped.label = Some("Group Scribe".into());
+    grouped.scribe = Some(true);
+    grouped.project_control = Some(true);
+    grouped.status = SessionStatus::Offline;
+    grouped.tmux_window_id = None;
+    let group_path = snapshot.worktree_groups[1].path.clone();
+    grouped.worktree_path = group_path.clone();
+    snapshot.worktree_groups[1].sessions = vec![grouped];
+
     let visible = aimux::dashboard_model::filter_dashboard_visible_model(&snapshot, true);
+    let kept_group = visible
+        .snapshot
+        .worktree_groups
+        .iter()
+        .find(|group| group.path == group_path);
+    assert!(
+        kept_group.is_some_and(|group| group
+            .sessions
+            .iter()
+            .any(|session| session.id == "claude-group-scribe")),
+        "a worktree whose only agent is an offline project-control session keeps its group, \
+         or its services outlive the group they belong to"
+    );
     assert!(
         visible
             .snapshot
