@@ -840,18 +840,41 @@ fn parse_json_response(bytes: &[u8]) -> Result<DaemonJsonResponse, CoreCommandTr
 /// wrapper lying about a child's failure that AGENTS.md names outright.
 ///
 /// Both sides of the comparison: what came back, and what was looked for.
+///
+/// The preview is only ever the status line and part of the headers, because
+/// reaching here means `\r\n\r\n` never arrived and everything read is still
+/// header territory -- no body, so no agent output or session data. And it is
+/// shown only when the answer is recognisably HTTP: if something else is
+/// listening on that port, the useful fact is that it is not a daemon, not a
+/// transcript of whatever it said.
 fn unframed_response(bytes: &[u8]) -> String {
+    // "the service" rather than "the daemon": this parser also serves the
+    // daemon's proxy to a per-project service, so naming the daemon would
+    // assert which process died and be wrong half the time -- in the one
+    // change whose whole purpose is naming the right actor.
     if bytes.is_empty() {
-        return "daemon closed the connection without answering (no bytes read)".to_owned();
+        return "the service closed the connection without answering (no bytes read)".to_owned();
     }
-    let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(120)]);
+    let count = bytes.len();
+    if !bytes.starts_with(b"HTTP/") {
+        return format!(
+            "that port answered with {count} byte(s) that are not an HTTP response; \
+             something other than an aimux service is listening on it"
+        );
+    }
+    // `{:?}` rather than raw: a half-written header can carry control bytes,
+    // and this string goes to a terminal.
+    let preview = String::from_utf8_lossy(&bytes[..count.min(PREVIEW_BYTES)]);
     let preview = preview.trim_end();
     format!(
-        "daemon response ended after {} byte(s) without completing its headers; \
-         it began: {preview:?}",
-        bytes.len()
+        "the service's response ended after {count} byte(s) without completing its headers; \
+         it began: {preview:?}"
     )
 }
+
+/// Enough for the status line and a header or two, which is where the reason
+/// lives.
+const PREVIEW_BYTES: usize = 120;
 
 struct HttpResponseParts {
     status: u16,
@@ -1073,6 +1096,12 @@ mod tests {
         else {
             panic!("an empty read is not a parseable response");
         };
+        // "the service", not "the daemon": the same parser serves the daemon's
+        // proxy to a project service, so naming one asserts which process died.
+        assert!(
+            !message.contains("daemon closed"),
+            "it must not assert which process it was: {message}"
+        );
         assert!(
             message.contains("closed the connection without answering"),
             "the reader has to be sent to the process, not the protocol: {message}"
@@ -1080,6 +1109,30 @@ mod tests {
         assert!(
             !message.contains("header terminator"),
             "and not told the headers were malformed when none arrived: {message}"
+        );
+    }
+
+    /// Something else on the daemon's port is named for what it is, and not
+    /// quoted back.
+    ///
+    /// Reaching the preview means no `\r\n\r\n` arrived, so what was read is
+    /// still header territory -- but only if it is HTTP at all. A foreign
+    /// service's bytes say nothing a person can act on and are not ours to
+    /// print.
+    #[test]
+    fn a_non_http_answer_is_named_rather_than_quoted() {
+        let Err(CoreCommandTransportError::InvalidHttpResponse(message)) =
+            parse_response_parts(b"\x16\x03\x01 secret-looking-handshake")
+        else {
+            panic!("a non-HTTP answer is not parseable");
+        };
+        assert!(
+            message.contains("something other than an aimux service is listening"),
+            "the actionable fact is which process answered: {message}"
+        );
+        assert!(
+            !message.contains("secret-looking-handshake"),
+            "and its bytes are not ours to print: {message}"
         );
     }
 
