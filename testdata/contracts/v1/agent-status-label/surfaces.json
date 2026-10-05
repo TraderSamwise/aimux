@@ -1,0 +1,122 @@
+{
+  "description": "The word an agent row says about an agent's state, on every surface that says it. The project service derives it once in derive_session_semantics as presentation.statusLabel; the TUI renders that string verbatim and the Expo app renders it sentence-cased. The app used to compute its own word from `status` and said \"Running\" for an agent the service had already called `ready` -- an agent that had finished its turn and was sitting at an empty prompt. The status dot next to that word was right the whole time, which is what makes this a one-answer-many-surfaces failure rather than a wrong rule.",
+  "generatedBy": "hand, from native/crates/aimux/src/project_service/session_semantics.rs",
+  "cases": [
+    {
+      "why": "the case Sam reported: process alive, turn finished, sitting at an empty prompt",
+      "status": "running",
+      "activity": "idle",
+      "attention": "normal",
+      "userLabel": "ready",
+      "statusLabel": "ready",
+      "appLabel": "Ready",
+      "appPill": false
+    },
+    {
+      "why": "actually producing output",
+      "status": "running",
+      "activity": "running",
+      "attention": "normal",
+      "userLabel": "working",
+      "statusLabel": "working",
+      "appLabel": "Working",
+      "appPill": true
+    },
+    {
+      "why": "waiting on a tool, which is work and not an ask",
+      "status": "running",
+      "activity": "waiting",
+      "attention": "normal",
+      "userLabel": "working",
+      "statusLabel": "working",
+      "appLabel": "Working",
+      "appPill": true
+    },
+    {
+      "why": "asking the person a question",
+      "status": "running",
+      "activity": "waiting",
+      "attention": "needs_input",
+      "userLabel": "needs_input",
+      "statusLabel": "needs input",
+      "appLabel": "Needs input",
+      "appPill": true
+    },
+    {
+      "why": "waiting on a reply to something it sent; the app called this \"Needs reply\" while every other surface said \"needs answer\"",
+      "status": "running",
+      "activity": "waiting",
+      "attention": "needs_response",
+      "userLabel": "needs_response",
+      "statusLabel": "needs answer",
+      "appLabel": "Needs answer",
+      "appPill": true
+    },
+    {
+      "why": "blocked on something it cannot clear itself",
+      "status": "running",
+      "activity": "waiting",
+      "attention": "blocked",
+      "userLabel": "blocked",
+      "statusLabel": "blocked",
+      "appLabel": "Blocked",
+      "appPill": true
+    },
+    {
+      "why": "failed",
+      "status": "running",
+      "activity": "error",
+      "attention": "error",
+      "userLabel": "error",
+      "statusLabel": "error",
+      "appLabel": "Error",
+      "appPill": true
+    },
+    {
+      "why": "finished a turn and reported done, which is not the same as idle",
+      "status": "running",
+      "activity": "done",
+      "attention": "normal",
+      "userLabel": "done",
+      "statusLabel": "done",
+      "appLabel": "Done",
+      "appPill": false
+    },
+    {
+      "why": "interrupted mid-turn",
+      "status": "running",
+      "activity": "interrupted",
+      "attention": "normal",
+      "userLabel": "interrupted",
+      "statusLabel": "interrupted",
+      "appLabel": "Interrupted",
+      "appPill": false
+    },
+    {
+      "why": "the process is gone",
+      "status": "offline",
+      "activity": "idle",
+      "attention": "normal",
+      "userLabel": "offline",
+      "statusLabel": "offline",
+      "appLabel": "Offline",
+      "appPill": false
+    },
+    {
+      "why": "idle with no activity recorded at all",
+      "status": "idle",
+      "activity": null,
+      "attention": "normal",
+      "userLabel": "idle",
+      "statusLabel": "idle",
+      "appLabel": "Idle",
+      "appPill": false
+    }
+  ],
+  "exited": {
+    "why": "The one place the app shows detail the shared word drops. runtime_lifecycle folds `exited` into `offline`, so statusLabel says `offline`, while the TUI's own row still says \"Exited\". Pinned so that moving the distinction into the shared label is a deliberate change to this fixture rather than a silent divergence.",
+    "status": "exited",
+    "statusLabel": "offline",
+    "appLabel": "Exited"
+  }
+}

@@ -163,6 +163,11 @@ function mainCheckoutBucket(): WorktreeBucket {
 function session(input: Partial<DesktopSession> & Pick<DesktopSession, "id">): DesktopSession {
   return {
     status: "running",
+    // The project service attaches `semantic` to every session, and the row now
+    // reads its status word from there rather than recomputing one from
+    // `status`. A fixture without it is not a session the app can receive, and
+    // the row says "Unknown" for it on purpose.
+    semantic: { user: { label: "ready" }, presentation: { statusLabel: "ready" } },
     ...input,
   };
 }
@@ -289,6 +294,109 @@ describe("supervisor lane plane action", () => {
   });
 });
 
+// Sam runs the GUI at ~432px, where the card held a 600px floor and scrolled
+// sideways rather than letting the row restack -- and the first two attempts at
+// this were guesses, so his ruling is pinned rather than inferred: a two-line
+// row below 600px, the name on its own line, then time, status and actions.
+// Above it, nothing changes.
+describe("a narrow window restacks the row instead of scrolling the card", () => {
+  function cardAt(width: number) {
+    return renderNode(
+      React.createElement(WorktreeCard, {
+        bucket: mainCheckoutBucket(),
+        identityTone: "#78dce8",
+        compact: false,
+        contentWidth: width,
+        selectedSessionId: null,
+        onPickSession: vi.fn(),
+        onPickService: vi.fn(),
+        onKillSession: vi.fn(),
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+      }),
+    );
+  }
+
+  function sizedViews(tree: HostNode[]) {
+    return findNodes(tree, (node) => {
+      if (node.type !== "View") return false;
+      const style = node.props.style as { width?: unknown; minWidth?: unknown } | null;
+      return (
+        typeof style === "object" &&
+        style !== null &&
+        (typeof style.width === "number" || typeof style.minWidth === "number")
+      );
+    });
+  }
+
+  // The floor is the bug, not a safety net: holding 600px at 432px is exactly
+  // what produced the sideways scroll instead of a restack.
+  it("does not hold a 600px floor at the width he actually uses", () => {
+    const sized = sizedViews(cardAt(432));
+    expect(sized).toHaveLength(1);
+    const style = sized[0]!.props.style as { width?: number; minWidth?: number };
+    expect(style.width).toBe(432);
+    expect(style.minWidth).toBeUndefined();
+  });
+
+  it("keeps the floor once a single-line row fits", () => {
+    const style = sizedViews(cardAt(900))[0]!.props.style as { width?: number };
+    expect(style.width).toBe(900);
+  });
+
+  // Measured as "is the row a column", because that is the whole shape: a
+  // flex-row with the name capped at 55% is the layout that crushed it to "c.".
+  function rowAt(narrow: boolean) {
+    return renderNode(
+      React.createElement(AgentRow, {
+        session: session({ id: "claude-a-long-agent-name", label: "a-long-agent-name" }),
+        digit: 1,
+        selected: false,
+        narrow,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+  }
+
+  function classNames(tree: HostNode[]) {
+    return findNodes(tree, (node) => typeof node.props.className === "string").map(
+      (node) => node.props.className as string,
+    );
+  }
+
+  // Measured as "is the row a column", because that is the whole shape.
+  it("stacks the row into two lines when the card says the window is narrow", () => {
+    expect(classNames(rowAt(true)).some((name) => name.includes("flex-col items-stretch"))).toBe(
+      true,
+    );
+  });
+
+  it("leaves the row on one line otherwise", () => {
+    const names = classNames(rowAt(false));
+    expect(names.some((name) => name.includes("flex-col items-stretch"))).toBe(false);
+    expect(names.some((name) => name.includes("flex-row items-center"))).toBe(true);
+  });
+
+  // The name is the thing the restack exists to protect: capped at 55% of a
+  // line it also had to share, it shrank to "c." at 432px.
+  it("stops capping the name at 55% once it has its own line", () => {
+    expect(classNames(rowAt(true)).some((name) => name.includes("max-w-[55%]"))).toBe(false);
+    expect(classNames(rowAt(false)).some((name) => name.includes("max-w-[55%]"))).toBe(true);
+  });
+
+  // The left pad only exists to hold the trailing group off a name sharing its
+  // line. On its own line it would be a 12px indent for nothing.
+  it("drops the left pad from the trailing group once it has its own line", () => {
+    expect(classNames(rowAt(true)).some((name) => name.includes("shrink-0 pl-3"))).toBe(false);
+    expect(classNames(rowAt(false)).some((name) => name.includes("shrink-0 pl-3"))).toBe(true);
+  });
+});
+
 describe("AgentRow", () => {
   it("does not render non-coder roles as GUI badges", () => {
     const text = collectText(
@@ -310,7 +418,9 @@ describe("AgentRow", () => {
     );
 
     expect(text).toContain("boss");
-    expect(text).toContain("Running");
+    // The service's word, not one this row derived. It used to say "Running"
+    // here off `status` alone, for an agent the service calls `ready`.
+    expect(text).toContain("Ready");
     expect(text).not.toContain("overseer");
   });
 

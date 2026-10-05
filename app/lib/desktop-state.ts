@@ -37,6 +37,16 @@ export interface DesktopSessionSemanticState {
       createdAt?: string | null;
     } | null;
   } | null;
+  // The word the project service already decided this agent's row should say.
+  // Narrowing this type to `user.label` is how the agent row came to compute a
+  // label of its own instead: `deriveAgentState` read `status` and said
+  // "Running" for an agent the service had already called "ready".
+  presentation?: {
+    statusLabel?: string | null;
+  } | null;
+  runtime?: {
+    lifecycle?: string | null;
+  } | null;
 }
 
 export interface DesktopSession {
