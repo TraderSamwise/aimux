@@ -1136,6 +1136,35 @@ mod tests {
         );
     }
 
+    /// A long half-written header is cut at the preview bound, and the count
+    /// still reports everything that arrived.
+    ///
+    /// The two numbers answer different questions -- how much came back, and
+    /// how much of it is worth reading -- so a reader can tell a reply that
+    /// stopped early from one that was merely trimmed here.
+    #[test]
+    fn a_long_header_is_cut_without_hiding_how_much_arrived() {
+        let mut bytes = b"HTTP/1.1 500 Internal Server Error\r\nX-Why: ".to_vec();
+        bytes.extend(std::iter::repeat_n(b'x', 400));
+        let Err(CoreCommandTransportError::InvalidHttpResponse(message)) =
+            parse_response_parts(&bytes)
+        else {
+            panic!("a half-written response is not parseable");
+        };
+        assert!(
+            message.contains(&format!("{} byte(s)", bytes.len())),
+            "the count is everything that arrived: {message}"
+        );
+        assert!(
+            message.len() < bytes.len(),
+            "but the quote is bounded, so a runaway header cannot become the error"
+        );
+        assert!(
+            message.contains("500 Internal Server Error"),
+            "and the part that says why survives the cut: {message}"
+        );
+    }
+
     /// A truncated answer names both sides: how much arrived, and what it was.
     #[test]
     fn a_truncated_response_shows_what_did_arrive() {

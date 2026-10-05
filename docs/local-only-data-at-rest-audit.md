@@ -309,7 +309,9 @@ What is not yet proven:
   the network-surface workstream and was requested from `codex-v987zd`. An
   `aimux host agent-read` attempt failed with `invalid daemon HTTP response:
   missing header terminator`, so this document does not cite that workstream as
-  completed evidence.
+  completed evidence. That wording no longer exists: the transport now reports
+  what actually happened, so a repeat of this attempt would say whether the
+  service answered at all.
 - There is no mutation proof that adding an upload from `.aimux/context`,
   `.aimux/history`, `.aimux/attachments`, `~/.aimux/projects/*/metadata.json`,
   or logs would fail a data-exfiltration gate. The current local boundary would
