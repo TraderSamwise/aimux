@@ -731,18 +731,23 @@ fn a_session_that_stops_being_stranded_gets_fresh_attempts_later() {
     );
 }
 
-/// Backing off expires, and it has to.
+/// Backing off expires, and it has to -- after about the documented wait, not
+/// merely eventually.
 ///
-/// The first version of this forgot a give-up only when the session stopped
-/// being stranded -- and Part C's whole premise is that nobody moves a stranded
-/// control session's attention, which is the deadlock. So the forget-path was
+/// The first version of this never forgot a give-up unless the session stopped
+/// being stranded, and Part C's whole premise is that nobody moves a stranded
+/// control session's attention. That is the deadlock. So the forget-path was
 /// unreachable for exactly the session it existed for: five rejected writes,
 /// which `clear_stale_response` returns for any metadata-write or state-lock
 /// error, and Part C was off for that session for the life of the process.
-/// Twenty-four seconds of transient trouble would have reinstated the
-/// fifteen-hour deadlock with no way back.
+///
+/// Tied to the constant on both sides, because the first pair of tests here
+/// bounded it only loosely: any expiry from fifty-four to two hundred ticks
+/// passed both, so `150 -> 60` stayed green while the documented "roughly ten
+/// minutes" quietly became four.
 #[test]
-fn backing_off_expires_so_a_stranded_session_is_tried_again() {
+fn backing_off_expires_after_about_the_documented_wait() {
+    let expiry = aimux::transcript_reconciler::INPUT_CLEAR_RETRY_AFTER_TICKS;
     let mut reconciler = TranscriptReconciler::new();
     let mut deps = TestDeps {
         probe_result: complete(),
@@ -752,7 +757,7 @@ fn backing_off_expires_so_a_stranded_session_is_tried_again() {
     let sessions = [control_session("claude")];
     let metadata = metadata(needs_input(), json!({}));
 
-    // Transient trouble: five rejections, then it backs off and says so.
+    // Transient trouble: it backs off, once, and says so.
     for _ in 0..10 {
         reconciler.scan(&sessions, &metadata, &mut deps);
     }
@@ -762,21 +767,33 @@ fn backing_off_expires_so_a_stranded_session_is_tried_again() {
         "backing off is reported once, not every tick: {:?}",
         deps.abandoned
     );
-    let attempts_at_backoff = deps.clear_attempts;
 
     // The trouble passes, but nothing un-strands the session -- nobody reads a
     // scribe's prompt, which is the whole point. Only expiry can save it.
     deps.refuse_clears = false;
-    for _ in 0..200 {
+
+    // Just short of the wait: still held.
+    for _ in 0..(expiry - 20) {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(
+        deps.cleared.is_empty(),
+        "it expired early: {} ticks into a {expiry}-tick wait",
+        expiry - 20
+    );
+
+    // And just past it: tried again.
+    for _ in 0..40 {
         reconciler.scan(&sessions, &metadata, &mut deps);
     }
     assert!(
         !deps.cleared.is_empty(),
-        "the back-off has to expire; {attempts_at_backoff} attempts and then nothing"
+        "it never expired across {expiry} ticks plus a margin"
     );
 }
 
-/// And it does not expire early, or the back-off buys nothing.
+/// And the wait is long enough to be worth having: sixty ticks of a permanently
+/// failing clear is five attempts, not sixty.
 #[test]
 fn backing_off_lasts_longer_than_the_attempts_that_earned_it() {
     let mut reconciler = TranscriptReconciler::new();
@@ -797,4 +814,23 @@ fn backing_off_lasts_longer_than_the_attempts_that_earned_it() {
         deps.clear_attempts
     );
     assert_eq!(deps.abandoned.len(), 1);
+}
+
+/// The wait is about ten minutes, which is what the doc claims and what the
+/// behavioural tests above cannot check.
+///
+/// Those read the constant, so they scale with it: `150 -> 60` left them green
+/// while the documented "roughly ten minutes" quietly became four. What is
+/// actually being promised is a DURATION, so that is what is asserted --
+/// against the tick interval the task really runs at.
+#[test]
+fn the_back_off_is_about_ten_minutes_at_the_real_tick_interval() {
+    let ms = aimux::transcript_reconciler::INPUT_CLEAR_RETRY_AFTER_TICKS as i64
+        * aimux::transcript_reconciler::DEFAULT_INTERVAL_MS;
+    assert!(
+        (8 * 60_000..=12 * 60_000).contains(&ms),
+        "the back-off is {}s; the doc says roughly ten minutes, so change one or \
+         the other on purpose",
+        ms / 1_000
+    );
 }

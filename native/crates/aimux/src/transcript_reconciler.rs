@@ -130,7 +130,7 @@ const INPUT_CLEAR_ATTEMPTS: u32 = 5;
 ///
 /// Roughly ten minutes at the four-second tick: five attempts per ten minutes
 /// rather than one every four seconds, and it heals itself.
-const INPUT_CLEAR_RETRY_AFTER_TICKS: u64 = 150;
+pub const INPUT_CLEAR_RETRY_AFTER_TICKS: u64 = 150;
 
 #[derive(Default)]
 pub struct TranscriptReconciler {

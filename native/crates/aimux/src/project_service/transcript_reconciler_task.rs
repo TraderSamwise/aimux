@@ -175,19 +175,27 @@ impl TranscriptReconcilerDeps for ServiceDeps {
         settled_activity: bool,
         cleared_attention: bool,
     ) {
-        // The same channel the task's other failures use, so one event is in
-        // one log. Backing off is temporary -- see
-        // `INPUT_CLEAR_RETRY_AFTER_TICKS` -- and this is the only place it is
-        // visible while it lasts.
-        record_transcript_reconciler_failure(
-            &self.context,
-            Some(session_id),
-            "clear-stranded-input",
+        // The project log, and deliberately NOT
+        // `record_transcript_reconciler_failure`: that one also calls
+        // `add_dashboard_operation_failure`, which puts a banner on the user's
+        // dashboard for them to clear. A back-off is not that. It is temporary
+        // -- see `INPUT_CLEAR_RETRY_AFTER_TICKS` -- the system is still
+        // retrying, and nothing here clears the record it would have added, so
+        // a stuck scribe would have raised a fresh banner every ten minutes
+        // forever. A warning in the log is the right level: visible to anyone
+        // looking, and not a thing to act on.
+        log_at(
+            LogLevel::Warn,
             "backing off from a stranded control-session attention",
-            format!(
-                "gave up for now after {attempts} attempts (settled activity: \
-                 {settled_activity}, cleared attention: {cleared_attention})"
-            ),
+            "transcript-reconciler",
+            Some(json!({
+                "sessionId": session_id,
+                "operation": "clear-stranded-input",
+                "attempts": attempts,
+                "settledActivity": settled_activity,
+                "clearedAttention": cleared_attention,
+                "retryAfterTicks": crate::transcript_reconciler::INPUT_CLEAR_RETRY_AFTER_TICKS,
+            })),
         );
     }
 
