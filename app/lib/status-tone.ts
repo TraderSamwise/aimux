@@ -210,13 +210,11 @@ export const TRANSIENT_ACTIONS = [
   "pending",
 ] as const;
 
-// What an in-flight lifecycle action looks like. Work, not an ask.
-//
-// It takes the action so the cross-surface test asserts something per action
-// rather than thirteen copies of one constant -- and so an action nobody here
-// has heard of is still answered, since the vocabulary is published by the
-// project service and this is a client.
-export function pendingActionStatusKind(action: string): AppStatusKind {
+// What an in-flight lifecycle action looks like: work, not an ask. One answer
+// for every action in the vocabulary, which is why it takes none -- the
+// per-action facts are the word (`pendingActionLabel`) and what the two callers
+// below do with a whole session.
+export function pendingActionStatusKind(): AppStatusKind {
   return "working";
 }
 
@@ -257,7 +255,7 @@ export function agentStatusKind(session: {
   // user for anything, and painting the two alike is what this fixes.
   // Trimmed, so a blank action does not short-circuit the attention a running
   // agent is asking for.
-  if (session.pendingAction?.trim()) return pendingActionStatusKind(session.pendingAction);
+  if (session.pendingAction?.trim()) return pendingActionStatusKind();
   if (session.status === "offline" || session.status === "exited") return "offline";
   const attentionKind = normalizeAppStatusKind(session.attention);
   if (attentionKind) return attentionKind;
@@ -270,7 +268,7 @@ export function serviceStatusKind(service: {
   pendingAction?: string | null;
   status?: string | null;
 }): AppStatusKind {
-  if (service.pendingAction?.trim()) return pendingActionStatusKind(service.pendingAction);
+  if (service.pendingAction?.trim()) return pendingActionStatusKind();
   return service.status === "running" ? "service" : "serviceOff";
 }
 

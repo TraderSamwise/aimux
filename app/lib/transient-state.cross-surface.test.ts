@@ -53,9 +53,12 @@ describe("a transient state renders the same way on every surface", () => {
     expect(pendingActionLabel(action)).toBe(label);
   });
 
+  it("answers every action the same way", () => {
+    expect(pendingActionStatusKind()).toBe(APP_FAMILY.progress);
+  });
+
   it.each(cases)("$action is $family ($why)", ({ action, family }) => {
-    expect(pendingActionStatusKind(action)).toBe(APP_FAMILY[family]);
-    // Through the two callers as well, because an early return that bypasses
+    // Through the two callers, which take a whole session: an early return that bypasses
     // the shared rule is exactly how this surface drifted in the first place.
     expect(agentStatusKind({ pendingAction: action, status: "waiting" })).toBe(APP_FAMILY[family]);
     expect(serviceStatusKind({ pendingAction: action, status: "offline" })).toBe(
