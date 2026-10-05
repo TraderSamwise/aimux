@@ -440,6 +440,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 &mut event_stream,
                 &mut event_stream_retry_at,
                 &mut event_stream_down,
+                &mut event_stream_health,
             );
             thread::sleep(DASHBOARD_HIDDEN_POLL_INTERVAL);
             continue;
@@ -488,6 +489,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             &mut event_stream,
             &mut event_stream_retry_at,
             &mut event_stream_down,
+            &mut event_stream_health,
             latest_endpoint.as_ref(),
             options.once || options.desktop_state_file.is_some(),
         );
@@ -1079,6 +1081,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             &mut event_stream,
                             &mut event_stream_retry_at,
                             &mut event_stream_down,
+                            &mut event_stream_health,
                             latest_endpoint.as_ref(),
                             options.once || options.desktop_state_file.is_some(),
                         );
@@ -1150,6 +1153,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             &mut event_stream,
                             &mut event_stream_retry_at,
                             &mut event_stream_down,
+                            &mut event_stream_health,
                             latest_endpoint.as_ref(),
                             options.once || options.desktop_state_file.is_some(),
                         );
@@ -1354,14 +1358,17 @@ fn suspend_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
     down: &mut Option<String>,
+    health: &mut DashboardStreamHealth,
 ) {
     if event_stream.is_some() {
         *event_stream = None;
     }
     *retry_at = None;
     // Suspended on purpose, so "the stream is down" stops being a report about
-    // anything. Left standing it would outlive the project it was about.
+    // anything. Left standing it would outlive the project it was about, and so
+    // would a latch saying the last cycle was empty.
     *down = None;
+    *health = DashboardStreamHealth::default();
 }
 
 fn drain_dashboard_event_stream(
@@ -1428,6 +1435,10 @@ fn drain_dashboard_event_stream(
             DashboardEventStreamMessage::Error(error) => {
                 stream_closed = true;
                 stream_error = Some(error);
+                // Same bookkeeping as a clean close: a stream that accepted and
+                // then errored without delivering is not one whose next accept
+                // proves anything either.
+                stream_state.observe_close();
                 break;
             }
             DashboardEventStreamMessage::Ended => {
@@ -1501,6 +1512,7 @@ fn reconcile_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
     down: &mut Option<String>,
+    health: &mut DashboardStreamHealth,
     endpoint: Option<&ProjectServiceEndpoint>,
     disabled: bool,
 ) {
@@ -1510,6 +1522,7 @@ fn reconcile_dashboard_event_stream(
         // There is no stream to be down, so saying it is down would be a
         // standing untruth on a surface nobody can clear.
         *down = None;
+        *health = DashboardStreamHealth::default();
         return;
     }
     let Some(endpoint) = endpoint else {
@@ -1517,6 +1530,7 @@ fn reconcile_dashboard_event_stream(
         // report of the latter would otherwise be permanent and, being derived,
         // not dismissible either.
         *down = None;
+        *health = DashboardStreamHealth::default();
         return;
     };
     if event_stream
@@ -1524,6 +1538,11 @@ fn reconcile_dashboard_event_stream(
         .is_some_and(|stream| stream.endpoint() == endpoint)
     {
         return;
+    }
+    // A different project's stream tells us nothing about this one's.
+    if event_stream.is_some() {
+        *down = None;
+        *health = DashboardStreamHealth::default();
     }
     if let Some(retry_at) = retry_at.as_ref()
         && Instant::now() < *retry_at
@@ -3383,6 +3402,7 @@ mod tests {
             &mut event_stream,
             &mut retry_at,
             &mut down,
+            &mut DashboardStreamHealth::default(),
             Some(&endpoint),
             false,
         );
@@ -3429,6 +3449,14 @@ mod tests {
             health.accept_proves_recovery(),
             "a stream that worked and then closed is a reconnect, not a broken endpoint"
         );
+
+        // And the latch does not survive leaving: it is about one stream on one
+        // project, and carrying it to the next one makes it a claim about
+        // something it never saw.
+        health.observe_close();
+        assert!(!health.accept_proves_recovery());
+        let fresh = DashboardStreamHealth::default();
+        assert!(fresh.accept_proves_recovery());
     }
 
     /// A subscreen that silently stopped receiving events looked exactly like a
@@ -3497,6 +3525,7 @@ mod tests {
             &mut event_stream,
             &mut retry_at,
             &mut down,
+            &mut DashboardStreamHealth::default(),
             Some(&endpoint),
             false,
         );
@@ -3506,7 +3535,14 @@ mod tests {
             "a retry that has not delivered anything is not a reconnect"
         );
 
-        reconcile_dashboard_event_stream(&mut event_stream, &mut retry_at, &mut down, None, true);
+        reconcile_dashboard_event_stream(
+            &mut event_stream,
+            &mut retry_at,
+            &mut down,
+            &mut DashboardStreamHealth::default(),
+            None,
+            true,
+        );
         assert_eq!(down, None, "there is no stream to be down");
     }
 
