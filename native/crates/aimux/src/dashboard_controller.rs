@@ -34,11 +34,13 @@ pub struct DashboardController {
     /// Work under way, which outlives keypresses until its action settles.
     pub footer_progress: Option<DashboardProgressNote>,
     /// Every dispatched action still waiting for an outcome, one entry per
-    /// request. The note on screen comes down when the thing it names has no
-    /// entry left here, so a second press of the same create keeps it up and a
-    /// note replaced by a different create's does not take the first's count
-    /// with it.
-    progress_in_flight: Vec<DashboardActionIdentity>,
+    /// request, newest last.
+    ///
+    /// The footer has one row, so a second create replaces the first's
+    /// sentence -- but the first is still running, and when the second settles
+    /// first the row went blank rather than going back to it. Keeping the
+    /// sentence here lets the row return to whatever is still working.
+    progress_in_flight: Vec<DashboardProgressNote>,
     /// A failure, as opposed to a passing note.
     ///
     /// Separate from `footer_note` because the two want opposite
@@ -505,11 +507,12 @@ impl DashboardController {
     /// one identity and two requests. Both are counted: clearing on the first
     /// outcome ended the note while the second was still running.
     pub fn set_progress(&mut self, message: String, settled_by: DashboardActionIdentity) {
-        self.progress_in_flight.push(settled_by.clone());
-        self.footer_progress = Some(DashboardProgressNote {
+        let note = DashboardProgressNote {
             message,
             settled_by,
-        });
+        };
+        self.progress_in_flight.push(note.clone());
+        self.footer_progress = Some(note);
     }
 
     /// A dispatched action has settled, either way.
@@ -520,19 +523,19 @@ impl DashboardController {
         if let Some(index) = self
             .progress_in_flight
             .iter()
-            .position(|action| action == settled)
+            .position(|note| &note.settled_by == settled)
         {
             self.progress_in_flight.remove(index);
         }
-        // The note goes when the thing it names has nothing left outstanding --
-        // not when any one request comes back, and not because some other
-        // create replaced it on screen in the meantime.
+        // The row goes back to whatever is still working, and only empties when
+        // nothing is -- not when any one request comes back, and not because
+        // some other create happened to replace it on screen first.
         if self
             .footer_progress
             .as_ref()
-            .is_some_and(|progress| !self.progress_in_flight.contains(&progress.settled_by))
+            .is_some_and(|showing| &showing.settled_by == settled)
         {
-            self.footer_progress = None;
+            self.footer_progress = self.progress_in_flight.last().cloned();
         }
     }
 

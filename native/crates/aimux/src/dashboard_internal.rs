@@ -3520,6 +3520,60 @@ mod tests {
         assert_eq!(controller.footer_progress_message(), None);
     }
 
+    /// The row goes back to what is still running, rather than blank.
+    ///
+    /// The footer has one row, so a worktree create replaces a spawn's
+    /// sentence. A 1s worktree create settling first left the row empty for the
+    /// remaining 25s of the spawn -- the same silence this note exists to stop,
+    /// reached by replacement instead of by counting.
+    #[test]
+    fn a_settled_create_hands_the_row_back_to_the_one_still_running() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        let spawn = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::agents::SPAWN,
+            body: serde_json::json!({ "tool": "claude", "open": false }),
+        };
+        let worktree = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::worktree_actions::CREATE,
+            body: serde_json::json!({ "name": "feature-a" }),
+        };
+        for request in [&spawn, &worktree] {
+            controller.set_progress(
+                progress_for_request(request.path, &request.body).expect("a sentence"),
+                DashboardActionIdentity::of(request),
+            );
+        }
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        let mut pending_actions = DashboardPendingActions::default();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(DashboardActionIdentity::of(&worktree)),
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Creating claude agent"),
+            "the spawn is still running and the row is free again"
+        );
+
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(DashboardActionIdentity::of(&spawn)),
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        assert_eq!(controller.footer_progress_message(), None);
+    }
+
     /// Every request the controller asks for is sent, including one whose note
     /// the controller raised itself.
     ///

@@ -39,17 +39,23 @@ impl LifecycleTransitionInput {
         self
     }
 
-    /// What this mutation holds for its duration, or `None` when it names
-    /// nothing to hold.
+    /// What this mutation holds for its duration.
     ///
     /// A spawn, a teammate create and a restore say what they will make, not
-    /// what already exists, so there is no row for them to contend over. They
-    /// shared one fabricated `<kind>:<operation>:__project__` key, which made
-    /// every one of them reject every other with a 409 — pick claude, then pick
-    /// codex, and codex was refused outright rather than queued behind it.
-    /// Execution is serialized anyway, by the queue's own `running` flag, so
-    /// holding nothing costs nothing and the second one simply waits.
-    fn target_key(&self) -> Option<String> {
+    /// what already exists, so there is nothing for them to contend over, and
+    /// they share one fabricated `<kind>:<operation>:__project__` key. The cost
+    /// is real — pick claude, then pick codex, and codex is refused with a 409
+    /// rather than queued behind it.
+    ///
+    /// It stays anyway, because `begin` waits on a `Condvar` and the async
+    /// lifecycle routes await inside a connection task on a two-worker runtime.
+    /// Returning `None` here lets a second and third spawn reach that wait,
+    /// park both workers, and leave the first one's future unpollable — the
+    /// permit is never released and the project service is wedged for good.
+    /// The fabricated key is what refuses them before they get there. Making
+    /// the queue safe to wait on from async is the fix; until then this is
+    /// load-bearing.
+    fn target_key(&self) -> String {
         let target = if self.target_kind == "worktree" {
             self.target_path
                 .as_deref()
@@ -61,9 +67,10 @@ impl LifecycleTransitionInput {
                 .or(self.target_path.as_deref())
                 .map(str::trim)
         };
-        target
-            .filter(|value| !value.is_empty())
-            .map(|target| format!("{}:{target}", self.target_kind))
+        match target.filter(|value| !value.is_empty()) {
+            Some(target) => format!("{}:{target}", self.target_kind),
+            None => format!("{}:{}:__project__", self.target_kind, self.operation),
+        }
     }
 }
 
@@ -201,7 +208,7 @@ impl LifecycleMutationQueue {
     ) -> Result<LifecycleMutationPermit, LifecycleMutationError> {
         let target_key = transition
             .as_ref()
-            .and_then(LifecycleTransitionInput::target_key);
+            .map(LifecycleTransitionInput::target_key);
         let queued_at = Instant::now();
         if transition.is_some() {
             let mut state = self.inner.state.lock().expect("lifecycle queue lock");

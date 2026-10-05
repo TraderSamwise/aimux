@@ -738,8 +738,8 @@ fn desktop_worktree_item(project_root: &str, worktree: &Value, branch: &str) -> 
     insert_value(&mut item, "createdAt", worktree.get("createdAt").cloned());
     // `pending`, `removing` and `pendingAction` were copied here too, from a
     // record that cannot carry them: `topology_worktree_to_worktree_state`
-    // keeps eleven named keys and none of those three, and `coerce_worktree`
-    // strips anything else on the way in. The status is where the fact lives.
+    // keeps eleven named keys and `coerce_worktree` twelve, neither including
+    // any of those three. The status is where the fact actually lives.
     insert_pending_marks_for_status(&mut item, worktree);
     insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
     Value::Object(item)

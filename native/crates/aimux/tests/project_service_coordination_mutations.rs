@@ -1564,16 +1564,18 @@ fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
 }
 
-/// A mutation that names nothing to hold does not block every other one.
+/// A mutation that names no target holds one shared key, and the second is
+/// refused rather than queued.
 ///
-/// A spawn says what it will make, not what already exists, so there is no row
-/// for it to contend over. `target_key` fabricated one anyway — every spawn in
-/// a project shared `agent:agent.spawn:__project__` — so picking claude and
-/// then codex refused codex outright with a 409 instead of queueing it behind
-/// the first. Execution is serialized by the queue itself, so holding nothing
-/// costs nothing.
+/// That refusal is a real cost — pick claude, then pick codex, and codex is
+/// never created. Letting them queue instead wedges the project service: the
+/// async lifecycle routes await inside a connection task on a two-worker
+/// runtime, and `begin` waits on a `Condvar`, so a second and third spawn park
+/// both workers while the first one's future sits unpollable and its permit is
+/// never released. This pins the refusal until the queue is safe to wait on
+/// from async.
 #[test]
-fn a_mutation_with_nothing_to_hold_does_not_refuse_the_next_one() {
+fn a_mutation_that_names_no_target_refuses_the_next_one_rather_than_waiting() {
     use aimux::project_service::lifecycle_mutation_queue::{
         LifecycleMutationQueue, lifecycle_transition_for_route,
     };
@@ -1591,39 +1593,22 @@ fn a_mutation_with_nothing_to_hold_does_not_refuse_the_next_one() {
         "an unnamed spawn names nothing that already exists"
     );
 
-    let queue = std::sync::Arc::new(LifecycleMutationQueue::new(8));
+    let queue = LifecycleMutationQueue::new(8);
     let held = queue.begin(Some(spawn("claude"))).expect("the spawn runs");
-    assert!(
-        queue.diagnostics("/repo")["activeTargets"]
-            .as_array()
-            .is_some_and(|targets| targets.is_empty()),
-        "it holds nothing, so nothing collides with it"
+    assert_eq!(
+        queue.diagnostics("/repo")["activeTargets"][0]["key"],
+        json!("agent:agent.spawn:__project__"),
+        "it holds the shared key, which is what refuses the next one"
     );
 
-    // The second spawn queues behind the first rather than being refused. A
-    // refusal would come back immediately; waiting is the pass.
-    let (tx, rx) = std::sync::mpsc::channel();
-    let waiter = {
-        let queue = std::sync::Arc::clone(&queue);
-        std::thread::spawn(move || {
-            let outcome = queue.begin(Some(spawn("codex")));
-            let refused = outcome.is_err();
-            drop(outcome);
-            let _ = tx.send(refused);
-        })
-    };
+    // Refused, not parked: a wait here would be the deadlock.
+    let second = queue.begin(Some(spawn("codex")));
     assert!(
-        rx.recv_timeout(std::time::Duration::from_millis(250))
-            .is_err(),
-        "picking a second tool must queue, not 409"
+        second.is_err(),
+        "a second spawn must be refused rather than reach the queue's wait"
     );
+    drop(second);
     drop(held);
-    assert_eq!(
-        rx.recv_timeout(std::time::Duration::from_secs(5)),
-        Ok(false),
-        "and it runs once the first is done"
-    );
-    waiter.join().expect("waiter");
 }
 
 /// A fork contends for the agent it is forking, not for the whole project.

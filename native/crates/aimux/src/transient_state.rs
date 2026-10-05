@@ -43,8 +43,12 @@ pub fn is_transient_state(value: &str) -> bool {
 /// instead: the TUI keyed an optimistic overlay off the request body and
 /// painted the main checkout, and the app settled its own record the moment the
 /// row appeared. Derived rather than stored because the topology schema is a
-/// strict allowlist and, more to the point, a stored mark can be left behind by
-/// a service that dies mid-write while a derived one cannot.
+/// strict allowlist and nothing else would keep the two in step.
+///
+/// Deriving does not make it self-healing: the status is persisted, so a
+/// service killed between the two writes leaves `creating` on disk and the row
+/// reads as working for good. Nothing reaps that today, which is why `x` is
+/// deliberately still allowed on such a row.
 pub fn pending_action_for_status(status: Option<&str>) -> Option<&str> {
     status.filter(|status| is_transient_state(status))
 }
