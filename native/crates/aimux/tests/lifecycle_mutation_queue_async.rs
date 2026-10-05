@@ -617,7 +617,7 @@ fn removing_a_worktree_that_is_still_being_created_is_refused() {
 #[test]
 fn two_different_worktrees_do_not_contend() {
     let runtime = two_worker_runtime();
-    let queue = LifecycleMutationQueue::new(32);
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_secs(30));
     let graveyard = |path: &str| {
         lifecycle_transition_for_route(
             routes::worktree_actions::GRAVEYARD,
@@ -626,19 +626,52 @@ fn two_different_worktrees_do_not_contend() {
         .expect("a worktree graveyard transition")
     };
 
-    // aimux-async-seam: test - sync test drives the async queue on its own runtime
-    runtime.block_on(async {
-        let mut first = queue
+    // The first must still be HOLDING the queue when the second asks, or this
+    // passes just as happily with both keyed the same.
+    let (release_first, first_released) = oneshot::channel::<()>();
+    let holder_queue = queue.clone();
+    let holder = runtime.spawn(async move {
+        let mut permit = holder_queue
             .begin_async(Some(graveyard("/repo/.aimux/worktrees/one")))
             .await
             .expect("the first takes the queue");
-        first.succeed(std::time::Instant::now());
-        let mut second = queue
+        let started_at = std::time::Instant::now();
+        first_released.await.expect("holder is released");
+        permit.succeed(started_at);
+    });
+    wait_until(&queue, |diagnostics| {
+        diagnostics["telemetry"]["started"] == 1
+    });
+    assert_eq!(
+        queue.diagnostics("/repo")["activeTargets"][0]["key"],
+        serde_json::json!("worktree:one"),
+        "the first worktree is claimed while it runs"
+    );
+
+    let second_queue = queue.clone();
+    let second = runtime.spawn(async move {
+        second_queue
             .begin_async(Some(graveyard("/repo/.aimux/worktrees/two")))
             .await
-            .expect("a different worktree is not refused against the first");
-        second.succeed(std::time::Instant::now());
+            .map(|mut permit| permit.succeed(std::time::Instant::now()))
+            .map_err(|error| error.message())
     });
+    wait_until(&queue, |diagnostics| diagnostics["queuedCount"] == 2);
+    release_first.send(()).expect("release the first");
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    let outcome = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            holder.await.expect("holder task");
+            second.await.expect("second task")
+        })
+        .await
+        .expect("both finish")
+    });
+    assert!(
+        outcome.is_ok(),
+        "a different worktree must queue, not be refused: {outcome:?}"
+    );
 
     let diagnostics = queue.diagnostics("/repo");
     assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 0);
@@ -684,4 +717,48 @@ fn two_worktrees_sharing_a_last_name_segment_share_a_key() {
 
         first.succeed(std::time::Instant::now());
     });
+}
+
+/// A create from a pull request or a branch carries no name, only a source —
+/// `aimux worktree create --pr 5` sends exactly that — and it must still hold
+/// the worktree it is making.
+#[test]
+fn a_create_from_a_pull_request_still_holds_the_worktree_it_makes() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(50));
+    let create = lifecycle_transition_for_route(
+        routes::worktree_actions::CREATE,
+        &serde_json::json!({ "source": "https://github.com/owner/repo/pull/5" }),
+    )
+    .expect("a worktree create transition");
+    assert_eq!(
+        create.target_path.as_deref(),
+        Some("pr-5"),
+        "the body carries no name, so the key comes from the source the route derives from"
+    );
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let mut creating = queue
+            .begin_async(Some(create))
+            .await
+            .expect("the create takes the queue");
+
+        let remove = lifecycle_transition_for_route(
+            routes::worktree_actions::REMOVE,
+            &serde_json::json!({ "path": "/repo/.aimux/worktrees/pr-5" }),
+        )
+        .expect("a worktree remove transition");
+        let Err(error) = queue.begin_async(Some(remove)).await else {
+            panic!("removing the worktree a PR create is making must be refused");
+        };
+        assert_eq!(error.status(), 409);
+
+        creating.succeed(std::time::Instant::now());
+    });
+
+    assert_eq!(
+        queue.diagnostics("/repo")["telemetry"]["rejectedConflicts"],
+        1
+    );
 }

@@ -49,6 +49,7 @@ pub(crate) use restore_snapshot::{
 };
 #[cfg(test)]
 pub(crate) use runtime_adapter::AsyncProjectLifecycleRuntime;
+pub(crate) use runtime_adapter::remote_worktree_name_from_source;
 pub use runtime_adapter::{
     PreparedPullRequestWorktree, PreparedRemoteSourceWorktree, ProjectLifecycleRuntime,
     SystemProjectLifecycleRuntime,

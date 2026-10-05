@@ -7,6 +7,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use crate::async_runtime::block_on_named;
 use crate::debug_logging::{LogLevel, log_at};
 use crate::project_api_contract::routes;
+use crate::project_service::lifecycle::remote_worktree_name_from_source;
 
 const DEFAULT_QUEUE_LIMIT: usize = 32;
 
@@ -133,6 +134,11 @@ impl LifecycleTransitionInput {
 /// - An operation on the main checkout reduces to the repository directory's
 ///   name, so naming a worktree after the repository makes those two share a
 ///   key.
+/// - `worktree.cacheCleanup` reaches this with no target at all: its handler
+///   reads only `dryRun` and `includeActive` and sweeps every worktree in the
+///   topology, so there is no one worktree for it to hold. It is a
+///   project-wide operation and the global serialization is what protects it,
+///   which is the honest answer rather than inventing a key for it.
 /// - Nothing validates a worktree name, so `feat/login` is a legal name and
 ///   creates a nested directory. It and `fix/login` both reduce to `login`.
 ///   The product's own derivation cannot produce one —
@@ -143,8 +149,18 @@ impl LifecycleTransitionInput {
 /// Both cost one spurious 409 between two worktrees nobody is likely to name
 /// that way, against a missing 409 that was reported.
 fn worktree_identity(target: &str) -> &str {
-    std::path::Path::new(target)
-        .file_name()
+    let path = std::path::Path::new(target);
+    // `file_name` normalizes a trailing `.` away, so `/base/.` would reduce to
+    // the base's own name and collide with a worktree legitimately called
+    // that. A target ending in a relative component is not a worktree
+    // reference; leave it exactly as it came.
+    if matches!(
+        path.components().next_back(),
+        Some(std::path::Component::CurDir) | Some(std::path::Component::ParentDir) | None
+    ) {
+        return target;
+    }
+    path.file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty())
         .unwrap_or(target)
@@ -698,10 +714,19 @@ pub fn lifecycle_transition_for_route(
 ) -> Option<LifecycleTransitionInput> {
     let session_id = trimmed_string(body.get("sessionId"));
     let service_id = trimmed_string(body.get("serviceId"));
+    // `source` last, and it matters: a create from a pull request or a branch
+    // may carry no name at all -- `aimux worktree create --pr 5` sends only
+    // `source` -- and without this the create holds nothing, so a remove of
+    // the worktree it is making is not refused. `route_worktree_create`
+    // derives the name the same way, from the same helper.
     let worktree_path = trimmed_string(body.get("path"))
         .or_else(|| trimmed_string(body.get("worktreePath")))
         .or_else(|| trimmed_string(body.get("targetPath")))
-        .or_else(|| trimmed_string(body.get("name")));
+        .or_else(|| trimmed_string(body.get("name")))
+        .or_else(|| {
+            trimmed_string(body.get("source"))
+                .and_then(|source| remote_worktree_name_from_source(&source).ok())
+        });
     match pathname {
         routes::agents::SPAWN => {
             Some(LifecycleTransitionInput::new("agent.spawn", "agent").with_target_id(session_id))
