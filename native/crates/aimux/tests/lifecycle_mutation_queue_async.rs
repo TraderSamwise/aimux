@@ -15,8 +15,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle_mutation_queue::{
-    LifecycleMutationQueue, LifecycleTransitionInput,
+    LifecycleMutationQueue, LifecycleTransitionInput, lifecycle_transition_for_route,
 };
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
@@ -553,4 +554,93 @@ fn a_holder_that_outruns_the_bound_still_finishes() {
     assert_eq!(diagnostics["telemetry"]["failed"], 0);
     assert_eq!(diagnostics["queuedCount"], 0);
     assert_eq!(diagnostics["activeTargets"], serde_json::json!([]));
+}
+
+/// A worktree create and a remove of the same worktree must contend.
+///
+/// A create is given a name and everything else is given an absolute path, so
+/// the two used to produce different keys and a remove of a worktree still
+/// being created was not refused — it queued silently behind it instead of
+/// saying so.
+#[test]
+fn removing_a_worktree_that_is_still_being_created_is_refused() {
+    let runtime = two_worker_runtime();
+    // A short bound so the two refusals cannot be confused: without the key
+    // fix the remove is not refused at all, it waits on a permit the same task
+    // holds and comes back as a 429 rather than a 409. Asserting the status
+    // separates "refused because the worktree is busy" from "deadlocked and
+    // eventually gave up", and does it in milliseconds rather than 150s.
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(50));
+    let create = lifecycle_transition_for_route(
+        routes::worktree_actions::CREATE,
+        &serde_json::json!({ "name": "feature", "open": false }),
+    )
+    .expect("a worktree create transition");
+    let remove = lifecycle_transition_for_route(
+        routes::worktree_actions::REMOVE,
+        &serde_json::json!({ "path": "/repo/.aimux/worktrees/feature" }),
+    )
+    .expect("a worktree remove transition");
+    assert_eq!(create.target_path.as_deref(), Some("feature"));
+    assert_eq!(
+        remove.target_path.as_deref(),
+        Some("/repo/.aimux/worktrees/feature"),
+        "the two routes really are given different spellings of one worktree"
+    );
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let mut creating = queue
+            .begin_async(Some(create))
+            .await
+            .expect("the create takes the queue");
+
+        let Err(error) = queue.begin_async(Some(remove)).await else {
+            panic!("removing a worktree mid-create must be refused, not queued behind it");
+        };
+        assert_eq!(error.status(), 409);
+        assert!(
+            error.message().contains("worktree"),
+            "the refusal must name what is busy: {}",
+            error.message()
+        );
+
+        creating.succeed(std::time::Instant::now());
+    });
+
+    let diagnostics = queue.diagnostics("/repo");
+    assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 1);
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 1);
+}
+
+/// Two different worktrees must still be independent.
+#[test]
+fn two_different_worktrees_do_not_contend() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::new(32);
+    let graveyard = |path: &str| {
+        lifecycle_transition_for_route(
+            routes::worktree_actions::GRAVEYARD,
+            &serde_json::json!({ "path": path }),
+        )
+        .expect("a worktree graveyard transition")
+    };
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let mut first = queue
+            .begin_async(Some(graveyard("/repo/.aimux/worktrees/one")))
+            .await
+            .expect("the first takes the queue");
+        first.succeed(std::time::Instant::now());
+        let mut second = queue
+            .begin_async(Some(graveyard("/repo/.aimux/worktrees/two")))
+            .await
+            .expect("a different worktree is not refused against the first");
+        second.succeed(std::time::Instant::now());
+    });
+
+    let diagnostics = queue.diagnostics("/repo");
+    assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 0);
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 2);
 }

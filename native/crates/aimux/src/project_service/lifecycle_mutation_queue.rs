@@ -94,10 +94,45 @@ impl LifecycleTransitionInput {
                 .or(self.target_path.as_deref())
                 .map(str::trim)
         };
-        target
-            .filter(|value| !value.is_empty())
-            .map(|target| format!("{}:{target}", self.target_kind))
+        let target = target.filter(|value| !value.is_empty())?;
+        let target = if self.target_kind == "worktree" {
+            worktree_identity(target)
+        } else {
+            target
+        };
+        Some(format!("{}:{target}", self.target_kind))
     }
+}
+
+/// The part of a worktree's path that identifies it to the queue.
+///
+/// A create is given a name, because the directory does not exist yet; every
+/// other worktree operation is given the absolute path. So `worktree:feature`
+/// and `worktree:/repo/.aimux/worktrees/feature` were two keys for one
+/// worktree, and a create did not contend with a remove of the thing it was
+/// making. The global serialization kept that from being a race -- the remove
+/// ran after the create rather than during it -- so what was lost was the 409
+/// that should have said the worktree was still being created.
+///
+/// Both sides reduce to the last path component, which is the worktree's own
+/// name: the directory a create makes is named after it, wherever the
+/// configured base directory puts it. That takes no config read, no
+/// `git worktree list`, and no knowledge of the project root -- the three
+/// things that made deriving the create's full path the wrong trade at this
+/// layer.
+///
+/// Names are unique within a project and each is its own directory, so they
+/// cannot collide with each other. The one outside case is an operation on the
+/// main checkout, which reduces to the repository directory's name; if someone
+/// names a worktree after the repository, the two share a key and one
+/// legitimate pair serializes that need not. An extra refusal in a case nobody
+/// has hit, against a missing refusal in one Sam did.
+fn worktree_identity(target: &str) -> &str {
+    std::path::Path::new(target)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(target)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
