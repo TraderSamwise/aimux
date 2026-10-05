@@ -121,12 +121,27 @@ impl LifecycleTransitionInput {
 /// things that made deriving the create's full path the wrong trade at this
 /// layer.
 ///
-/// Names are unique within a project and each is its own directory, so they
-/// cannot collide with each other. The one outside case is an operation on the
-/// main checkout, which reduces to the repository directory's name; if someone
-/// names a worktree after the repository, the two share a key and one
-/// legitimate pair serializes that need not. An extra refusal in a case nobody
-/// has hit, against a missing refusal in one Sam did.
+/// The reduction is one-directional, which is what makes it safe: it can only
+/// make two keys EQUAL that should have differed, never make two keys DIFFER
+/// that should have matched. The same worktree always reduces the same way,
+/// because both spellings end in the name it was created with. So the bug
+/// being fixed cannot come back by this route, and the worst a collision costs
+/// is a refusal that was not needed.
+///
+/// Two such collisions exist, both narrow:
+///
+/// - An operation on the main checkout reduces to the repository directory's
+///   name, so naming a worktree after the repository makes those two share a
+///   key.
+/// - Nothing validates a worktree name, so `feat/login` is a legal name and
+///   creates a nested directory. It and `fix/login` both reduce to `login`.
+///   The product's own derivation cannot produce one —
+///   `sanitize_ref_component` turns every separator into a dash, so a
+///   PR-sourced create is `pr-123` and a branch `feat/login` becomes
+///   `feat-login` — so this needs a hand-typed name with a slash in it.
+///
+/// Both cost one spurious 409 between two worktrees nobody is likely to name
+/// that way, against a missing 409 that was reported.
 fn worktree_identity(target: &str) -> &str {
     std::path::Path::new(target)
         .file_name()

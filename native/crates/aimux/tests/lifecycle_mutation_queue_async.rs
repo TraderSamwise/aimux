@@ -644,3 +644,44 @@ fn two_different_worktrees_do_not_contend() {
     assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 0);
     assert_eq!(diagnostics["telemetry"]["succeeded"], 2);
 }
+
+/// What the reduction gets wrong, pinned so it is a known cost and not a
+/// surprise: two worktrees whose names share a last path segment share a key.
+///
+/// It is one-directional, which is the property that matters — the reduction
+/// can only add a refusal, never lose the one this fix exists to add. Nothing
+/// validates a worktree name, so a hand-typed `feat/login` is legal; the
+/// product's own derivation cannot produce one, because
+/// `sanitize_ref_component` turns every separator into a dash.
+#[test]
+fn two_worktrees_sharing_a_last_name_segment_share_a_key() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(50));
+    let create = |name: &str| {
+        lifecycle_transition_for_route(
+            routes::worktree_actions::CREATE,
+            &serde_json::json!({ "name": name, "open": false }),
+        )
+        .expect("a worktree create transition")
+    };
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let mut first = queue
+            .begin_async(Some(create("feat/login")))
+            .await
+            .expect("the first create takes the queue");
+
+        let Err(error) = queue.begin_async(Some(create("fix/login"))).await else {
+            panic!("a shared last segment shares a key, which is the documented cost");
+        };
+        assert_eq!(
+            error.status(),
+            409,
+            "and it costs a refusal, never a missed one: {}",
+            error.message()
+        );
+
+        first.succeed(std::time::Instant::now());
+    });
+}
