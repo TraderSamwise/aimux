@@ -223,6 +223,13 @@ fn dashboard_action_timeout_ms(path: &str) -> u64 {
         // took 12.4s on sam-strix, so the default budget expired a sixth of the
         // way in and a working restore reported itself as a transport timeout.
         routes::agents::RESTORE_PREVIOUS => 180_000,
+        // Making one of these launches a tmux window and a backend process, on
+        // a machine that is usually running a dozen agents already. At the 2s
+        // default the client gave up on work that was going fine and raised a
+        // durable failure nothing would ever answer -- and the dashboard now
+        // reports all three in the footer, so the lie was on screen until it
+        // was dismissed.
+        routes::agents::SPAWN | routes::agents::FORK | routes::services::CREATE => 30_000,
         _ => 2_000,
     }
 }

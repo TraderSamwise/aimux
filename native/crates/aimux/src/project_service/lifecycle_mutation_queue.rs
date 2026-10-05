@@ -39,6 +39,28 @@ impl LifecycleTransitionInput {
         self
     }
 
+    /// What this mutation holds for its duration.
+    ///
+    /// A spawn, a teammate create and a restore say what they will make, not
+    /// what already exists, so there is nothing for them to contend over, and
+    /// they share one fabricated `<kind>:<operation>:__project__` key. The cost
+    /// is real — pick claude, then pick codex, and codex is refused with a 409
+    /// rather than queued behind it.
+    ///
+    /// It stays anyway, and the reason is narrow: `begin` waits on a `Condvar`,
+    /// and the async lifecycle routes await inside a connection task on a
+    /// two-worker runtime. Returning `None` here lets a second and third spawn
+    /// reach that wait, park both workers, and leave the first one's future
+    /// unpollable — the permit is never released and the project service is
+    /// wedged for good.
+    ///
+    /// This is not protection, and it must not be read as any. Stop and kill
+    /// are on the same async transport and get real per-session keys, so
+    /// stopping three different agents reaches that wait and wedges the service
+    /// exactly the same way. All the fabricated key does is keep one more class
+    /// of mutation away from an edge that is already reachable. The fix is to
+    /// make the queue safe to wait on from async (947602-79); this goes with
+    /// it, and so does the 409 it costs.
     fn target_key(&self) -> String {
         let target = if self.target_kind == "worktree" {
             self.target_path
@@ -386,9 +408,17 @@ pub fn lifecycle_transition_for_route(
         routes::agents::SPAWN => {
             Some(LifecycleTransitionInput::new("agent.spawn", "agent").with_target_id(session_id))
         }
-        routes::agents::FORK => {
-            Some(LifecycleTransitionInput::new("agent.fork", "agent").with_target_id(session_id))
-        }
+        // The agent being forked is the one a fork contends for, and
+        // `sourceSessionId` is what every fork dispatcher sends. Reading
+        // `sessionId` here left the target empty, so `target_key` fell back to
+        // `agent:agent.fork:__project__` and two forks of two different agents
+        // serialized against each other while a fork and a stop of the same
+        // agent did not. The response transition still names the new session:
+        // this one names what is held while the fork runs.
+        routes::agents::FORK => Some(
+            LifecycleTransitionInput::new("agent.fork", "agent")
+                .with_target_id(trimmed_string(body.get("sourceSessionId"))),
+        ),
         routes::agents::SWITCH_TOOL => Some(
             LifecycleTransitionInput::new("agent.switchTool", "agent").with_target_id(session_id),
         ),

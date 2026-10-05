@@ -33,6 +33,14 @@ pub struct DashboardController {
     pub footer_note: Option<DashboardFooterNote>,
     /// Work under way, which outlives keypresses until its action settles.
     pub footer_progress: Option<DashboardProgressNote>,
+    /// Every dispatched action still waiting for an outcome, one entry per
+    /// request, newest last.
+    ///
+    /// The footer has one row, so a second create replaces the first's
+    /// sentence -- but the first is still running, and when the second settles
+    /// first the row went blank rather than going back to it. Keeping the
+    /// sentence here lets the row return to whatever is still working.
+    progress_in_flight: Vec<DashboardProgressNote>,
     /// A failure, as opposed to a passing note.
     ///
     /// Separate from `footer_note` because the two want opposite
@@ -338,10 +346,11 @@ impl DashboardOrchestrationInputState {
 ///
 /// The route alone is too coarse -- stopping one agent would answer a failure
 /// about another -- and a key picked out of the body is a guess that was wrong
-/// twice: `pending_action_for_request` keys fork on `sessionId` while the only
-/// fork dispatcher sends `sourceSessionId`, and it keys a worktree create on a
+/// twice: `pending_action_for_request` keyed fork on `sessionId` while the only
+/// fork dispatcher sends `sourceSessionId`, and keyed a worktree create on a
 /// `path` the dashboard never sends, so every create collapsed onto the main
-/// checkout's own key. The arguments are the identity: two attempts at the same
+/// checkout's own key. Both arms are gone; the whole request is the identity
+/// now. The arguments are the identity: two attempts at the same
 /// action against the same target are the same request, and no body carries a
 /// timestamp, nonce or generated id, so that equality is a real property.
 ///
@@ -361,6 +370,20 @@ impl DashboardOrchestrationInputState {
 pub struct DashboardActionIdentity {
     pub path: &'static str,
     pub body: Value,
+}
+
+impl DashboardActionIdentity {
+    /// The one way an identity is taken, so the site that raises a note and the
+    /// site that takes it down cannot drift apart. Both read the request before
+    /// it is sent: `execute_dashboard_controller_action` injects the caller's
+    /// tmux pane into the body on its way out, and an identity taken after that
+    /// carries whichever pane dispatched it.
+    pub fn of(request: &DashboardActionRequest) -> Self {
+        Self {
+            path: request.path,
+            body: request.body.clone(),
+        }
+    }
 }
 
 /// A failure on the footer, and which action it was about.
@@ -479,28 +502,41 @@ impl DashboardController {
 
     /// Work this dashboard just dispatched. Survives keypresses until the
     /// action named here settles.
+    ///
+    /// Two presses of the same create build byte-identical bodies, so they are
+    /// one identity and two requests. Both are counted: clearing on the first
+    /// outcome ended the note while the second was still running.
     pub fn set_progress(&mut self, message: String, settled_by: DashboardActionIdentity) {
-        self.footer_progress = Some(DashboardProgressNote {
+        let note = DashboardProgressNote {
             message,
             settled_by,
-        });
+        };
+        self.progress_in_flight.push(note.clone());
+        self.footer_progress = Some(note);
     }
 
     /// A dispatched action has settled, either way.
     pub fn clear_progress_for(&mut self, settled: Option<&DashboardActionIdentity>) {
+        let Some(settled) = settled else {
+            return;
+        };
+        if let Some(index) = self
+            .progress_in_flight
+            .iter()
+            .position(|note| &note.settled_by == settled)
+        {
+            self.progress_in_flight.remove(index);
+        }
+        // The row goes back to whatever is still working, and only empties when
+        // nothing is -- not when any one request comes back, and not because
+        // some other create happened to replace it on screen first.
         if self
             .footer_progress
             .as_ref()
-            .is_some_and(|progress| Some(&progress.settled_by) == settled)
+            .is_some_and(|showing| &showing.settled_by == settled)
         {
-            self.footer_progress = None;
+            self.footer_progress = self.progress_in_flight.last().cloned();
         }
-    }
-
-    /// Nothing is going to settle this one, so say so rather than leaving it
-    /// claiming work that may already be over.
-    pub fn abandon_progress(&mut self) {
-        self.footer_progress = None;
     }
 
     pub fn footer_progress_message(&self) -> Option<&str> {
@@ -524,6 +560,7 @@ impl DashboardController {
             navigation: DashboardNavigationState::new(snapshot),
             footer_note: None,
             footer_progress: None,
+            progress_in_flight: Vec::new(),
             footer_alert: None,
             tool_picker: None,
             service_input: None,
@@ -1737,10 +1774,7 @@ impl DashboardController {
                         .as_ref()
                         .map_or(0, |offer| offer.session_ids.len()),
                 ),
-                DashboardActionIdentity {
-                    path: request.path,
-                    body: request.body.clone(),
-                },
+                DashboardActionIdentity::of(&request),
             );
             return DashboardControllerEffect::Request(request);
         }
@@ -2969,7 +3003,20 @@ impl DashboardController {
             self.set_busy(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
-        if group.pending {
+        // A create is the one in-flight state `x` must still get through. The
+        // project service writes `creating` before the git work and rewrites the
+        // record after, and nothing reaps a record left behind by a service that
+        // died in between -- so refusing here would leave the row unremovable
+        // from the dashboard forever. Removing a half-made checkout is what the
+        // key is for, and `route_worktree_remove` already handles one.
+        //
+        // The cost is on the live case: `x` during a real create dispatches a
+        // graveyard that then waits out the rest of the create behind the
+        // lifecycle queue, where a refusal would have said so immediately. A
+        // stale record and a live one are indistinguishable from here -- the
+        // row carries no started-at -- and an unremovable row is the worse of
+        // the two to be wrong about.
+        if group.pending && group.pending_action.as_deref() != Some("creating") {
             let action = crate::transient_state::transient_state_label(
                 group.pending_action.as_deref().unwrap_or("pending"),
             )

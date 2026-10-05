@@ -276,13 +276,10 @@ impl DashboardNavigationState {
             self.clamp(snapshot);
             return DashboardNavigationOutcome::StepIn;
         }
-        if group.pending_action == Some("creating") || group.pending {
-            return DashboardNavigationOutcome::Busy(format!(
-                "Worktree {} is still {}",
-                group.name,
-                crate::transient_state::transient_state_label("creating").to_lowercase()
-            ));
-        }
+        // The removing branch comes first: a worktree being graveyarded is
+        // `pending` too, and testing `pending` ahead of it announced every
+        // in-flight state as "still creating" -- including a removal, and
+        // including the main checkout back when a create mis-keyed onto it.
         if group.pending_action == Some("removing")
             || group.pending_action == Some("graveyarding")
             || group.removing
@@ -291,6 +288,20 @@ impl DashboardNavigationState {
             // "graveyarding" while the card beside it said "removing".
             let action =
                 crate::transient_state::transient_state_label("graveyarding").to_lowercase();
+            return DashboardNavigationOutcome::Busy(format!(
+                "Worktree {} is {action}",
+                group.name
+            ));
+        }
+        if group.pending {
+            // The word the row and the card use for whatever this actually is,
+            // rather than one state's word standing in for all of them. And the
+            // same sentence `x` gives: two keys refused for one reason should
+            // not read as two different reasons.
+            let action = crate::transient_state::transient_state_label(
+                group.pending_action.unwrap_or("pending"),
+            )
+            .to_lowercase();
             return DashboardNavigationOutcome::Busy(format!(
                 "Worktree {} is {action}",
                 group.name

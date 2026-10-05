@@ -110,7 +110,9 @@ describe("project lifecycle transition projection", () => {
         toolConfigKey: "codex",
         worktreePath: "/repo/.aimux/worktrees/feature",
         status: "running",
-        pendingAction: "starting",
+        // "creating", not "starting": a spawn makes an agent, and the TUI
+        // footer reports the same key with the same word.
+        pendingAction: "creating",
         optimistic: true,
       },
     ]);

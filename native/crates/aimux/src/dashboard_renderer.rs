@@ -1666,7 +1666,7 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     }
     // Whatever the action is, not two spellings and a catch-all: a worktree
     // mid-rename summarised as "removing", and `dashboard_navigation` then
-    // refused Enter on it with "is still creating".
+    // refused Enter on it with "is creating".
     if let Some(action) = worktree.pending_action {
         // The same word the rows use, lowercased for the summary line: the card
         // said `graveyarding` while the row beside it said `Removing`. Bounded

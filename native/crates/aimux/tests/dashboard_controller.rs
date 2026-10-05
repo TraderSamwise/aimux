@@ -1196,6 +1196,7 @@ fn fork_key_blocks_offline_sessions_before_picker() {
 fn pending_worktree_enter_sets_footer_message_without_request() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[1].pending = true;
+    snapshot.worktree_groups[1].pending_action = Some("creating".into());
     snapshot.worktree_groups[1].name = "demo".into();
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.worktree_index = 1;
@@ -1206,9 +1207,44 @@ fn pending_worktree_enter_sets_footer_message_without_request() {
     );
     assert_eq!(
         controller.footer_note_message(),
-        Some("Worktree demo is still creating")
+        Some("Worktree demo is creating")
     );
     assert_eq!(controller.navigation.level, DashboardNavLevel::Worktrees);
+}
+
+/// Enter named whatever was in flight "creating", because it tested `pending`
+/// before the branch that knows about removals.
+#[test]
+fn enter_on_a_busy_worktree_names_what_it_is_actually_doing() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[1].name = "demo".into();
+    let cases = [
+        (Some("graveyarding"), "Worktree demo is removing"),
+        (Some("removing"), "Worktree demo is removing"),
+        (Some("resurrecting"), "Worktree demo is restoring"),
+        (Some("creating"), "Worktree demo is creating"),
+        // No action named at all: the generic word, not one state's word
+        // standing in for every state.
+        (None, "Worktree demo is pending"),
+    ];
+    for (action, expected) in cases {
+        snapshot.worktree_groups[1].pending = true;
+        snapshot.worktree_groups[1].pending_action = action.map(str::to_owned);
+        let mut controller = DashboardController::new(&snapshot);
+        controller.navigation.worktree_index = 1;
+
+        assert_eq!(
+            controller.handle_key(&snapshot, DashboardKey::Enter),
+            DashboardControllerEffect::Render,
+            "{action:?}"
+        );
+        assert_eq!(
+            controller.footer_note_message(),
+            Some(expected),
+            "{action:?}"
+        );
+        assert_eq!(controller.footer_alert_message(), None, "{action:?}");
+    }
 }
 
 #[test]
@@ -2673,6 +2709,49 @@ fn worktree_stop_key_confirms_then_dispatches_graveyard_request() {
     assert_eq!(request.body, json!({ "path": worktree_path }));
 }
 
+/// Every other in-flight state blocks `x`; a create must not.
+///
+/// The project service writes `creating` before the git work and rewrites the
+/// record once it finishes, and nothing reaps a record left behind by a service
+/// that died in between. Refusing here would leave that row unremovable from the
+/// dashboard for good, and removing a half-made checkout is what the key is for.
+#[test]
+fn worktree_stop_key_still_removes_a_checkout_stuck_mid_create() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+    snapshot.worktree_groups[1].pending = true;
+    snapshot.worktree_groups[1].pending_action = Some("creating".into());
+    // A half-made checkout has nothing attached, which is also the only case
+    // the confirm is offered in.
+    let worktree_path = snapshot.worktree_groups[1].path.as_ref().unwrap().clone();
+    snapshot
+        .sessions
+        .retain(|session| session.worktree_path.as_deref() != Some(worktree_path.as_str()));
+    snapshot
+        .teammates
+        .retain(|session| session.worktree_path.as_deref() != Some(worktree_path.as_str()));
+
+    controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+    assert_eq!(
+        controller.footer_note_message(),
+        Some("Graveyard worktree? Enter/y confirms, n/Esc cancels."),
+        "a create must not be refused: nothing reaps a record left mid-create"
+    );
+    assert!(
+        controller.worktree_remove_confirm.is_some(),
+        "it goes straight to the confirm"
+    );
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected worktree graveyard request, not a refusal");
+    };
+    assert_eq!(request.path, routes::worktree_actions::GRAVEYARD);
+    assert_eq!(request.body, json!({ "path": worktree_path }));
+}
+
 #[test]
 fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
     let mut snapshot = snapshot();
@@ -2694,7 +2773,7 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
 
     snapshot.worktree_groups[1].removing = false;
     snapshot.worktree_groups[1].pending = true;
-    snapshot.worktree_groups[1].pending_action = Some("creating".into());
+    snapshot.worktree_groups[1].pending_action = Some("resurrecting".into());
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Printable('x')),
@@ -2702,7 +2781,7 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
     );
     assert_eq!(
         controller.footer_note_message(),
-        Some("Worktree feature-a is creating"),
+        Some("Worktree feature-a is restoring"),
         "work in flight is progress, not a failure for the user to dismiss"
     );
     assert_eq!(controller.footer_alert_message(), None);
@@ -3456,7 +3535,7 @@ mod what_a_transient_footer_line_claims {
         let snapshot = snapshot();
         let mut controller = DashboardController::new(&snapshot);
 
-        controller.set_busy("Worktree demo is still creating".into());
+        controller.set_busy("Worktree demo is creating".into());
         controller.handle_key(&snapshot, DashboardKey::Down);
 
         assert_eq!(controller.footer_note_message(), None);

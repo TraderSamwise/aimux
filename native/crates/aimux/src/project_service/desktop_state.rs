@@ -702,30 +702,62 @@ async fn attach_desktop_state_previews_async(
     }
 }
 
+/// A checkout mid-create carries `status: "creating"` and nothing else, and the
+/// window is up to 180s wide. Said once, here, so the TUI row, the app and the
+/// statusline read one answer instead of each inferring from the request it
+/// happened to send -- which is how the TUI came to paint the main checkout.
+///
+/// Derived rather than stored: the topology schema is a strict allowlist, and a
+/// stored mark can be left behind by a service that dies mid-write.
+fn insert_pending_marks_for_status(item: &mut Map<String, Value>, worktree: &Value) {
+    let Some(action) =
+        crate::transient_state::pending_action_for_status(string_field(worktree, "status"))
+    else {
+        return;
+    };
+    item.insert("pending".into(), Value::Bool(true));
+    item.insert("pendingAction".into(), Value::String(action.to_owned()));
+}
+
+/// One worktree row, for both the sync and the async projection.
+///
+/// They were two copies differing only in how the branch is resolved, and a
+/// test against one proved nothing about the other — which is the whole reason
+/// the row carries derived state at all.
+fn desktop_worktree_item(project_root: &str, worktree: &Value, branch: &str) -> Value {
+    let mut item = Map::new();
+    let path = string_field(worktree, "path").unwrap_or(project_root);
+    insert_string(
+        &mut item,
+        "name",
+        string_field(worktree, "name").unwrap_or_else(|| path_basename(path).unwrap_or(path)),
+    );
+    insert_string(&mut item, "path", path);
+    insert_string(&mut item, "branch", branch);
+    item.insert("isBare".into(), Value::Bool(false));
+    insert_value(&mut item, "createdAt", worktree.get("createdAt").cloned());
+    // `pending`, `removing` and `pendingAction` were copied here too, from a
+    // record that cannot carry them: `topology_worktree_to_worktree_state`
+    // keeps eleven named keys and `coerce_worktree` twelve, neither including
+    // any of those three. The status is where the fact actually lives.
+    insert_pending_marks_for_status(&mut item, worktree);
+    insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
+    Value::Object(item)
+}
+
 fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
     let mut worktrees = list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES))
         .into_iter()
         .map(|worktree| {
-            let mut item = Map::new();
-            let path = string_field(&worktree, "path").unwrap_or(project_root);
-            insert_string(
-                &mut item,
-                "name",
-                string_field(&worktree, "name")
-                    .unwrap_or_else(|| path_basename(path).unwrap_or(path)),
-            );
-            insert_string(&mut item, "path", path);
-            insert_string(
-                &mut item,
-                "branch",
-                &worktree_branch_or_current(project_root, path, string_field(&worktree, "branch")),
-            );
-            item.insert("isBare".into(), Value::Bool(false));
-            for key in ["createdAt", "pending", "removing", "pendingAction"] {
-                insert_value(&mut item, key, worktree.get(key).cloned());
-            }
-            insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
-            Value::Object(item)
+            desktop_worktree_item(
+                project_root,
+                &worktree,
+                &worktree_branch_or_current(
+                    project_root,
+                    string_field(&worktree, "path").unwrap_or(project_root),
+                    string_field(&worktree, "branch"),
+                ),
+            )
         })
         .collect::<Vec<_>>();
     if !worktrees.iter().any(|worktree| {
@@ -772,31 +804,16 @@ async fn desktop_worktrees_async(
     let mut worktrees = topology_worktrees
         .into_iter()
         .map(|worktree| {
-            let mut item = Map::new();
-            let path = string_field(&worktree, "path").unwrap_or(project_root);
-            insert_string(
-                &mut item,
-                "name",
-                string_field(&worktree, "name")
-                    .unwrap_or_else(|| path_basename(path).unwrap_or(path)),
-            );
-            insert_string(&mut item, "path", path);
-            insert_string(
-                &mut item,
-                "branch",
+            desktop_worktree_item(
+                project_root,
+                &worktree,
                 &worktree_branch_or_current_from_probe(
                     project_root,
-                    path,
+                    string_field(&worktree, "path").unwrap_or(project_root),
                     string_field(&worktree, "branch"),
                     main_branch_probe.as_ref(),
                 ),
-            );
-            item.insert("isBare".into(), Value::Bool(false));
-            for key in ["createdAt", "pending", "removing", "pendingAction"] {
-                insert_value(&mut item, key, worktree.get(key).cloned());
-            }
-            insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
-            Value::Object(item)
+            )
         })
         .collect::<Vec<_>>();
     if !worktrees.iter().any(|worktree| {

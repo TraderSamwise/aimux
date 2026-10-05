@@ -1563,3 +1563,124 @@ fn temp_project(label: &str) -> PathBuf {
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
 }
+
+/// A mutation that names no target holds one shared key, and the second is
+/// refused rather than queued.
+///
+/// That refusal is a real cost — pick claude, then pick codex, and codex is
+/// never created. Letting them queue instead wedges the project service: the
+/// async lifecycle routes await inside a connection task on a two-worker
+/// runtime, and `begin` waits on a `Condvar`, so a second and third spawn park
+/// both workers while the first one's future sits unpollable and its permit is
+/// never released.
+///
+/// So this pins a workaround, not a rule. Stopping three different agents
+/// reaches the same wait with real per-session keys, so the edge is reachable
+/// regardless; the shared key only keeps one more class away from it. Whoever
+/// makes the queue safe to wait on from async should delete this test with the
+/// fallback it describes.
+#[test]
+fn a_mutation_that_names_no_target_refuses_the_next_one_rather_than_waiting() {
+    use aimux::project_service::lifecycle_mutation_queue::{
+        LifecycleMutationQueue, lifecycle_transition_for_route,
+    };
+
+    let spawn = |tool: &str| {
+        lifecycle_transition_for_route(
+            routes::agents::SPAWN,
+            &json!({ "tool": tool, "open": false }),
+        )
+        .expect("a spawn transition")
+    };
+    assert_eq!(
+        spawn("claude").target_id,
+        None,
+        "an unnamed spawn names nothing that already exists"
+    );
+
+    let queue = LifecycleMutationQueue::new(8);
+    let held = queue.begin(Some(spawn("claude"))).expect("the spawn runs");
+    assert_eq!(
+        queue.diagnostics("/repo")["activeTargets"][0]["key"],
+        json!("agent:agent.spawn:__project__"),
+        "it holds the shared key, which is what refuses the next one"
+    );
+
+    // Refused, not parked: a wait here would be the deadlock.
+    let second = queue.begin(Some(spawn("codex")));
+    assert!(
+        second.is_err(),
+        "a second spawn must be refused rather than reach the queue's wait"
+    );
+    drop(second);
+    drop(held);
+}
+
+/// A fork contends for the agent it is forking, not for the whole project.
+///
+/// `lifecycle_transition_for_route` read `sessionId`, which no fork dispatcher
+/// sends — they send `sourceSessionId` — so the target was empty and
+/// `target_key` fell back to a per-project key. Two forks of two different
+/// agents rejected each other with a 409, and a fork did not contend with a
+/// stop of the agent it was reading from.
+#[test]
+fn forking_two_different_agents_does_not_make_them_contend() {
+    use aimux::project_service::lifecycle_mutation_queue::{
+        LifecycleMutationQueue, lifecycle_transition_for_route,
+    };
+
+    let fork = |source: &str| {
+        lifecycle_transition_for_route(
+            routes::agents::FORK,
+            &json!({ "sourceSessionId": source, "tool": "claude", "open": false }),
+        )
+        .expect("a fork transition")
+    };
+
+    assert_eq!(fork("claude-a").target_id.as_deref(), Some("claude-a"));
+
+    let queue = std::sync::Arc::new(LifecycleMutationQueue::new(8));
+    let held = queue.begin(Some(fork("claude-a"))).expect("the fork runs");
+    assert_eq!(
+        queue.diagnostics("/repo")["activeTargets"][0]["key"],
+        json!("agent:claude-a"),
+        "the fork holds its source, not a key the whole project shares"
+    );
+
+    // The agent being forked is held: stopping it mid-fork is the conflict the
+    // key exists to catch, and a conflict is refused without waiting.
+    let stop = queue.begin(lifecycle_transition_for_route(
+        routes::agents::STOP,
+        &json!({ "sessionId": "claude-a" }),
+    ));
+    assert!(
+        stop.is_err(),
+        "stopping the source mid-fork must not be admitted"
+    );
+
+    // Forking a different agent is not a conflict. The queue still serializes
+    // execution, so this waits for the permit rather than being refused --
+    // waiting is the pass, and a 409 would come back immediately.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let waiter = {
+        let queue = std::sync::Arc::clone(&queue);
+        std::thread::spawn(move || {
+            let outcome = queue.begin(Some(fork("claude-b")));
+            let refused = outcome.is_err();
+            drop(outcome);
+            let _ = tx.send(refused);
+        })
+    };
+    assert!(
+        rx.recv_timeout(std::time::Duration::from_millis(250))
+            .is_err(),
+        "a fork of another agent must queue behind this one, not be refused"
+    );
+    drop(held);
+    assert_eq!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)),
+        Ok(false),
+        "and once the first finishes it is admitted"
+    );
+    waiter.join().expect("waiter");
+}
