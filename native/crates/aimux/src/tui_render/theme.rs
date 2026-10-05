@@ -381,6 +381,46 @@ pub fn status_dot(kind: StatusKind) -> String {
     style(glyph, status_tone(kind))
 }
 
+/// The tone for "the system is doing this now".
+///
+/// Transient states wore `Tone::Attention`, the same bold yellow as "needs
+/// input", so a row the dashboard was busy with looked like a row waiting on
+/// the user. Cyan is already what `StatusKind::Working` means.
+pub const PROGRESS_TONE: Tone = Tone::Work;
+
+/// One mark for work in flight, wherever it is said.
+pub const PROGRESS_MARK: &str = "\u{27f3}";
+
+/// A footer line for something under way: the mark carries the state, the
+/// message stays in the ordinary reading tone so it is read rather than
+/// skimmed past as chrome.
+pub fn progress_line(message: &str) -> String {
+    format!(
+        "{} {}",
+        style(PROGRESS_MARK, PROGRESS_TONE),
+        style(message, Tone::Text)
+    )
+}
+
+/// The same thing said inline, inside a row or a count.
+pub fn progress_label(label: &str) -> String {
+    format!(
+        "{} {}",
+        style(PROGRESS_MARK, PROGRESS_TONE),
+        style(label, PROGRESS_TONE)
+    )
+}
+
+/// A footer line for a neutral note: something happened, nothing is wrong and
+/// nothing is asked of you.
+pub fn note_line(message: &str) -> String {
+    format!(
+        "{} {}",
+        style("\u{203a}", Tone::Muted),
+        style(message, Tone::Muted)
+    )
+}
+
 fn tmux_color(tone: Tone) -> Option<&'static str> {
     match tone {
         Tone::Muted => Some("colour244"),

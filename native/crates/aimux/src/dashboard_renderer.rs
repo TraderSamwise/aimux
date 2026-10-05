@@ -23,8 +23,8 @@ use crate::tui_render::text::{
 };
 use crate::tui_render::theme::{
     CardSpec, ChipTone, Column, FooterHint, KeyTone, StatusKind, Tone, card, chip,
-    cols as grid_cols, footer_hints, keycap_hint, pad_visible, pill, render_footer_hints,
-    status_dot, style, visible_width,
+    cols as grid_cols, footer_hints, keycap_hint, note_line, pad_visible, pill, progress_line,
+    render_footer_hints, status_dot, style, visible_width,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -57,7 +57,7 @@ pub struct DashboardRenderInput<'a> {
     pub hide_offline_agents: bool,
     pub hidden_offline_agent_count: usize,
     pub scroll_offset: usize,
-    pub footer_message: Option<&'a str>,
+    pub footer_note: Option<DashboardFooterNoteView<'a>>,
     /// Failures to put in front of the user, each its own filled bar above the
     /// hints rather than replacing them.
     ///
@@ -224,18 +224,20 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
             input.cols.saturating_sub(2),
         ));
     }
-    if let Some(message) = input.footer_message {
-        footer_lines.push(format!(
-            "{} {}",
-            crate::tui_render::theme::footer_key("!", Some(KeyTone::Danger)),
-            style(message, Tone::Muted)
-        ));
-    } else {
-        footer_lines.extend(render_footer_hints(
-            &build_dashboard_footer_hints(input),
+    if let Some(note) = input.footer_note.as_ref() {
+        // Its own line above the hints, the way an alert gets one. Replacing
+        // the hint row was survivable while a note died on the next keypress;
+        // a progress note outlives one, and would hide every key for as long as
+        // the operation ran.
+        footer_lines.push(truncate_ansi(
+            &dashboard_note_line(note),
             input.cols.saturating_sub(2),
         ));
     }
+    footer_lines.extend(render_footer_hints(
+        &build_dashboard_footer_hints(input),
+        input.cols.saturating_sub(2),
+    ));
     let focus_line = find_focus_line(&content);
     let right_panel = if two_pane {
         let viewport_height = 1.max(
@@ -314,6 +316,35 @@ fn format_duration_hint(ms: i64) -> String {
         format!("{hours}h")
     } else {
         format!("{hours}h{rem}m")
+    }
+}
+
+/// What a transient footer line is claiming.
+///
+/// One untyped channel carried every one of these and painted them all with
+/// the danger bang, so "Restored 9 agents" read as a failure and so did
+/// "Restoring 36 agents".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardNoteKind {
+    /// Work is under way. Nothing is wrong and nothing is asked of the user.
+    Progress,
+    /// Something happened, or is now true. Spent on the next keypress.
+    Note,
+}
+
+/// A transient footer line, and which of the two it is.
+#[derive(Debug, Clone, Copy)]
+pub struct DashboardFooterNoteView<'a> {
+    pub message: &'a str,
+    pub kind: DashboardNoteKind,
+}
+
+/// The line a transient note gets. Neither kind is the danger bang, which
+/// belongs to `dashboard_alert_line` alone.
+pub fn dashboard_note_line(note: &DashboardFooterNoteView<'_>) -> String {
+    match note.kind {
+        DashboardNoteKind::Progress => progress_line(note.message),
+        DashboardNoteKind::Note => note_line(note.message),
     }
 }
 
@@ -2626,7 +2657,7 @@ pub struct DashboardSubscreenRenderInput<'a> {
     pub cols: usize,
     pub rows: usize,
     pub scroll_offset: usize,
-    pub footer_message: Option<&'a str>,
+    pub footer_note: Option<DashboardFooterNoteView<'a>>,
     pub footer_alerts: &'a [DashboardFooterAlert<'a>],
     pub details_sidebar_visible: bool,
     pub runtime_label: Option<&'a str>,
@@ -2675,8 +2706,8 @@ pub fn render_dashboard_subscreen_frame(
     for alert in input.footer_alerts {
         footer.push(dashboard_alert_line(alert));
     }
-    if let Some(message) = input.footer_message {
-        footer.push(style(message, Tone::Muted));
+    if let Some(note) = input.footer_note.as_ref() {
+        footer.push(dashboard_note_line(note));
     }
     let viewport_height = input
         .rows

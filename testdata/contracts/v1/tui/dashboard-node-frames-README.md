@@ -4,6 +4,20 @@ Captured from the Node dashboard renderer and used as literal parity gates.
 
 ## Recorded divergences
 
+`subscreen-node-library-frame-v1.txt` was re-recorded on 2026-10-05 so a
+transient footer note carries the same mark on a subscreen as it does on the
+dashboard.
+
+Node ran two footer channels that could disagree and painted the dashboard one
+with a danger `!` whatever it said, so "Restored 9 agents" and "Restoring 36
+agents" both read as errors, while the *same* string on a subscreen rendered as
+bare dim text with no mark at all. The channel is now typed -- progress, note,
+failure -- and each kind has one rendering on every screen.
+
+The frame differs by exactly the "› " mark now prefixing the `Path:` line.
+Nothing else changed. This is a deliberate divergence from the Node capture.
+
+
 `overlay-node-worktree-remove-frame-v1.txt` was re-recorded on 2026-10-04 to
 correct copy that described something the route never did.
 

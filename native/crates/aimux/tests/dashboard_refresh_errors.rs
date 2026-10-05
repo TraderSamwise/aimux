@@ -5,7 +5,10 @@ use aimux::dashboard_internal::{
     resolve_dashboard_snapshot_refresh,
 };
 use aimux::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
-use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
+use aimux::dashboard_renderer::{
+    DashboardFooterNoteView, DashboardNavLevel, DashboardNoteKind, DashboardRenderInput,
+    render_dashboard_frame,
+};
 use aimux::paths::PathResolver;
 use aimux::repair_events::{ACTION_DASHBOARD_REFRESH, STATUS_FAILED, STATUS_REPAIRED};
 use anyhow::{Context, Result, anyhow};
@@ -245,7 +248,10 @@ fn render_dashboard_with_footer(snapshot: &DesktopStateSnapshot, footer_message:
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: Some(footer_message),
+        footer_note: Some(DashboardFooterNoteView {
+            message: footer_message,
+            kind: DashboardNoteKind::Note,
+        }),
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "terminal",

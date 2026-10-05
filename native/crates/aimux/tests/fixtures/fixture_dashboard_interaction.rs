@@ -101,7 +101,7 @@ fn run_case(case: &Value) -> Value {
         "focusedWorktreePath": controller.navigation.focused_worktree_path(&snapshot),
         "sessionIndex": controller.navigation.item_index,
         "quickJumpDigits": controller.navigation.quick_jump_digits,
-        "footerFlash": controller.footer_message,
+        "footerFlash": controller.footer_note_message(),
         "renders": renders,
         "requests": requests,
     })

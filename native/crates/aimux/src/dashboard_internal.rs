@@ -582,7 +582,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             ) {
                                 Ok(true) => {
                                     controller.navigation.item_index = next_item_index;
-                                    controller.footer_message = Some(format!(
+                                    controller.set_note(format!(
                                         "Moved {} {}",
                                         kind.display_label(),
                                         direction.as_str()
@@ -595,15 +595,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     }
                                 }
                                 Ok(false) => {
-                                    controller.footer_message = Some("Already at edge".into());
+                                    controller.set_note("Already at edge".into());
                                 }
                                 Err(error) => {
-                                    controller.footer_message = Some(error.to_string());
+                                    controller.set_note(error.to_string());
                                 }
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard ordering unavailable".into());
+                            controller.set_note("Dashboard ordering unavailable".into());
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -618,12 +617,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     controller.worktree_cache_cleanup_confirm = Some(result);
                                 }
                                 Err(error) => {
-                                    controller.footer_message = Some(error.to_string());
+                                    controller.set_note(error.to_string());
                                 }
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
+                            controller.set_note(
+                                "Dashboard action requires a project-service endpoint".into(),
+                            );
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -635,16 +635,16 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 .and_then(cache_cleanup_result_from_response)
                             {
                                 Ok(result) => {
-                                    controller.footer_message =
-                                        Some(worktree_cache_cleanup_summary(&result));
+                                    controller.set_note(worktree_cache_cleanup_summary(&result));
                                 }
                                 Err(error) => {
-                                    controller.footer_message = Some(error.to_string());
+                                    controller.set_note(error.to_string());
                                 }
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
+                            controller.set_note(
+                                "Dashboard action requires a project-service endpoint".into(),
+                            );
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -660,14 +660,15 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     controller.set_orchestration_route_options(mode, options);
                                 }
                                 Err(error) => {
-                                    controller.footer_message = Some(format!(
+                                    controller.set_note(format!(
                                         "Failed to load orchestration targets: {error}"
                                     ));
                                 }
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
+                            controller.set_note(
+                                "Dashboard action requires a project-service endpoint".into(),
+                            );
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -678,11 +679,12 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             if let Err(error) =
                                 open_relevant_thread_for_session(endpoint, controller, &session_id)
                             {
-                                controller.footer_message = Some(error.to_string());
+                                controller.set_note(error.to_string());
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
+                            controller.set_note(
+                                "Dashboard action requires a project-service endpoint".into(),
+                            );
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -704,8 +706,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         match execute_overseer_watch_command(&options, controller, &request) {
                             Ok(()) => {}
                             Err(error) => {
-                                controller.footer_message =
-                                    Some(format!("Overseer update failed: {error}"));
+                                controller.set_note(format!("Overseer update failed: {error}"));
                             }
                         }
                         render_now = true;
@@ -1346,7 +1347,7 @@ fn drain_dashboard_event_stream(
                     && let Some(message) = dashboard_alert_footer_flash("dashboard", payload)
                     && let Some(controller) = controller.as_deref_mut()
                 {
-                    controller.footer_message = Some(message);
+                    controller.set_note(message);
                     render = true;
                 }
                 refresh_state.observe_for_screen(&event, active_screen);
@@ -1365,7 +1366,7 @@ fn drain_dashboard_event_stream(
     if let Some(error) = stream_error
         && let Some(controller) = controller
     {
-        controller.footer_message = Some(error);
+        controller.set_note(error);
         render = true;
     }
     if stream_closed {
@@ -1915,10 +1916,10 @@ fn execute_overseer_watch_command(
                 return Ok(());
             }
         }
-        controller.footer_message = Some("Overseer updated, but could not open overseer".into());
+        controller.set_note("Overseer updated, but could not open overseer".into());
         return Ok(());
     }
-    controller.footer_message = Some(format!("{} added to overseer loop", request.target_label));
+    controller.set_note(format!("{} added to overseer loop", request.target_label));
     Ok(())
 }
 
@@ -2015,7 +2016,7 @@ fn render_dashboard_snapshot(
         hide_offline_agents: controller.hide_offline_agents,
         hidden_offline_agent_count: context.hidden_offline_agent_count,
         scroll_offset: context.scroll_offset,
-        footer_message: controller.footer_message.as_deref(),
+        footer_note: controller.footer_note_view(),
         footer_alerts: &footer_alerts,
         details_sidebar_visible: controller.details_sidebar_visible,
         preview_source: &controller.preview_source,
@@ -2314,7 +2315,7 @@ fn render_dashboard_subscreen_snapshot(
         cols: viewport.cols,
         rows: viewport.rows,
         scroll_offset,
-        footer_message: controller.footer_message.as_deref(),
+        footer_note: controller.footer_note_view(),
         footer_alerts: &footer_alerts,
         details_sidebar_visible: controller.details_sidebar_visible,
         runtime_label: Some("tmux"),
@@ -2459,7 +2460,7 @@ fn open_relevant_thread_for_session(
         Some(&resource),
     ));
     let Some(selection) = preferred_thread_selection(&resource, session_id) else {
-        controller.footer_message = Some(format!("No thread for {session_id}"));
+        controller.set_note(format!("No thread for {session_id}"));
         return Ok(());
     };
     controller.screen = DashboardScreen::Coordination;
@@ -2841,6 +2842,11 @@ fn flush_deferred_dashboard_requests(
                 controller.footer_alert = Some(DashboardFailureAlert::local(
                     "Dashboard action requires a project-service endpoint",
                 ));
+                // The request never left, so no outcome will ever arrive to
+                // take down a progress note -- and a progress note outlives
+                // keypresses, so it would sit there claiming work that is not
+                // happening.
+                controller.clear_progress();
             }
             if let Some((target, id, token)) = pending.as_ref() {
                 pending_actions.clear_if_token(*target, id, *token);
@@ -2893,6 +2899,7 @@ fn drain_dashboard_request_outcomes(
         changed = true;
         if let Some(message) = outcome.failure {
             if let Some(controller) = controller.as_deref_mut() {
+                controller.clear_progress();
                 // A failed action is an alert, not a note: it outlives the next
                 // keypress and is dismissed deliberately. Tagged with the action
                 // it was about, so a later success for that same thing can take
@@ -2919,10 +2926,14 @@ fn drain_dashboard_request_outcomes(
                 // else would take it down.
                 controller.footer_alert = None;
             }
-            if let Some(message) = outcome.notice
-                && let Some(controller) = controller.as_deref_mut()
-            {
-                controller.footer_message = Some(message);
+            if let Some(controller) = controller.as_deref_mut() {
+                // Unconditionally, not only when there is a notice to replace
+                // it with: a 200 whose body is not an outcome leaves `notice`
+                // empty, and the progress note would outlive the work.
+                controller.clear_progress();
+                if let Some(message) = outcome.notice {
+                    controller.set_note(message);
+                }
             }
         }
     }
@@ -2986,9 +2997,98 @@ mod tests {
             "a different action's success is not an answer to this failure"
         );
         assert_eq!(
-            controller.footer_message.as_deref(),
+            controller.footer_note_message(),
             Some("Worktree other-tree moved to the graveyard"),
             "and the success still reports itself"
+        );
+    }
+
+    /// The one path that sets a progress note and then never sends the request
+    /// it was reporting. No outcome ever arrives, and a progress note outlives
+    /// keypresses, so without this it claims work that is not happening for as
+    /// long as the dashboard stays open.
+    #[test]
+    fn a_request_that_never_left_does_not_leave_its_progress_note_behind() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into());
+
+        let (tx, _rx) = mpsc::channel::<DashboardRequestOutcome>();
+        let mut deferred: Vec<DeferredDashboardRequest> = vec![(
+            DashboardActionRequest {
+                method: "POST",
+                path: crate::project_api_contract::routes::agents::RESTORE_PREVIOUS,
+                body: serde_json::json!({}),
+            },
+            None,
+        )];
+        let mut pending_actions = DashboardPendingActions::default();
+
+        flush_deferred_dashboard_requests(
+            &mut deferred,
+            None,
+            &mut pending_actions,
+            Some(&mut controller),
+            &tx,
+        );
+
+        assert_eq!(controller.footer_note_message(), None);
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("Dashboard action requires a project-service endpoint")
+        );
+    }
+
+    /// A progress note outlives keypresses, so the settling outcome is the only
+    /// thing that can take it down. A 200 whose body is not a restore outcome
+    /// produces no notice, and clearing only when there was one left the
+    /// footer claiming work that had finished.
+    #[test]
+    fn a_settled_request_takes_its_progress_note_down_even_with_nothing_to_say() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into());
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(stop_agent("claude-a")),
+            failure: None,
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(controller.footer_note_message(), None);
+    }
+
+    /// And a failed one, where the alert is what the user should be reading.
+    #[test]
+    fn a_failed_request_takes_its_progress_note_down_too() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into());
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(stop_agent("claude-a")),
+            failure: Some("project service refused".into()),
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(controller.footer_note_message(), None);
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("project service refused")
         );
     }
 
