@@ -22,9 +22,9 @@ use crate::tui_render::text::{
     center, js_len, truncate, truncate_ansi, truncate_plain, wrap_key_value, wrap_text,
 };
 use crate::tui_render::theme::{
-    CardSpec, ChipTone, Column, FooterHint, KeyTone, StatusKind, Tone, card, chip,
-    cols as grid_cols, footer_hints, keycap_hint, pad_visible, pill, render_footer_hints,
-    status_dot, style, visible_width,
+    CardSpec, ChipTone, Column, FooterHint, KeyTone, PROGRESS_MARK, PROGRESS_TONE, StatusKind,
+    Tone, card, chip, cols as grid_cols, footer_hints, keycap_hint, note_line, pad_visible, pill,
+    progress_label, progress_line, render_footer_hints, status_dot, style, visible_width,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -57,7 +57,9 @@ pub struct DashboardRenderInput<'a> {
     pub hide_offline_agents: bool,
     pub hidden_offline_agent_count: usize,
     pub scroll_offset: usize,
-    pub footer_message: Option<&'a str>,
+    /// Work under way, which outlives keypresses until it settles.
+    pub footer_progress: Option<DashboardFooterNoteView<'a>>,
+    pub footer_note: Option<DashboardFooterNoteView<'a>>,
     /// Failures to put in front of the user, each its own filled bar above the
     /// hints rather than replacing them.
     ///
@@ -224,18 +226,20 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
             input.cols.saturating_sub(2),
         ));
     }
-    if let Some(message) = input.footer_message {
-        footer_lines.push(format!(
-            "{} {}",
-            crate::tui_render::theme::footer_key("!", Some(KeyTone::Danger)),
-            style(message, Tone::Muted)
-        ));
-    } else {
-        footer_lines.extend(render_footer_hints(
-            &build_dashboard_footer_hints(input),
+    // Each on its own line above the hints, the way an alert gets one.
+    // Replacing the hint row was survivable while a note died on the next
+    // keypress; progress outlives one, and would hide every key for as long as
+    // the operation ran.
+    for line in input.footer_progress.iter().chain(input.footer_note.iter()) {
+        footer_lines.push(truncate_ansi(
+            &dashboard_note_line(line),
             input.cols.saturating_sub(2),
         ));
     }
+    footer_lines.extend(render_footer_hints(
+        &build_dashboard_footer_hints(input),
+        input.cols.saturating_sub(2),
+    ));
     let focus_line = find_focus_line(&content);
     let right_panel = if two_pane {
         let viewport_height = 1.max(
@@ -314,6 +318,35 @@ fn format_duration_hint(ms: i64) -> String {
         format!("{hours}h")
     } else {
         format!("{hours}h{rem}m")
+    }
+}
+
+/// What a transient footer line is claiming.
+///
+/// One untyped channel carried every one of these and painted them all with
+/// the danger bang, so "Restored 9 agents" read as a failure and so did
+/// "Restoring 36 agents".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardNoteKind {
+    /// Work is under way. Nothing is wrong and nothing is asked of the user.
+    Progress,
+    /// Something happened, or is now true. Spent on the next keypress.
+    Note,
+}
+
+/// A transient footer line, and which of the two it is.
+#[derive(Debug, Clone, Copy)]
+pub struct DashboardFooterNoteView<'a> {
+    pub message: &'a str,
+    pub kind: DashboardNoteKind,
+}
+
+/// The line a transient note gets. Neither kind is the danger bang, which
+/// belongs to `dashboard_alert_line` alone.
+pub fn dashboard_note_line(note: &DashboardFooterNoteView<'_>) -> String {
+    match note.kind {
+        DashboardNoteKind::Progress => progress_line(note.message),
+        DashboardNoteKind::Note => note_line(note.message),
     }
 }
 
@@ -1070,14 +1103,21 @@ fn service_row(service: &DashboardService, selected: bool, digit: Option<usize>)
         .as_deref()
         .or(service.command.as_deref())
         .unwrap_or("undefined");
-    let status_label = service
-        .pending_action
-        .as_deref()
-        .unwrap_or_else(|| service_status_str(&service.status));
-    let status_tone = match service.status {
-        ServiceStatus::Running => Tone::Done,
-        ServiceStatus::Exited => Tone::Danger,
-        _ => Tone::Muted,
+    // The label switched to the pending action and the tone did not, so a
+    // service being started while its last known status was Exited printed
+    // `[svc] starting` in red, and one being stopped while Running printed it
+    // in green. And it was the only pending-action site that skipped the shared
+    // word, so it said `graveyarding` where everything else says `removing`.
+    let (status_label, status_tone) = match service.pending_action.as_deref() {
+        Some(action) => (row_state_label(action).to_lowercase(), PROGRESS_TONE),
+        None => (
+            service_status_str(&service.status).to_owned(),
+            match service.status {
+                ServiceStatus::Running => Tone::Done,
+                ServiceStatus::Exited => Tone::Danger,
+                _ => Tone::Muted,
+            },
+        ),
     };
     let status = style(&format!("[svc] {status_label}"), status_tone);
     let time = service
@@ -1201,18 +1241,11 @@ fn row_state_label(value: &str) -> &str {
         "running" => "Running",
         "exited" => "Exited",
         "offline" => "Offline",
-        "starting" => "Starting",
-        "stopping" => "Stopping",
-        "graveyarding" => "Removing",
         "done" => "Done",
         "interrupted" => "Interrupted",
-        "creating" => "Creating",
-        "forking" => "Forking",
-        "migrating" => "Migrating",
-        "switching" => "Switching",
-        "renaming" => "Renaming",
-        "moving" => "Moving",
-        other => other,
+        // The lifecycle half lives in one place, because four surfaces answer
+        // this question and they were answering it four ways.
+        other => crate::transient_state::transient_state_label(other),
     }
 }
 
@@ -1261,10 +1294,7 @@ fn session_time_anchor(session: &DashboardSession) -> Option<(String, Option<&st
     let last_output_at = session.last_output_at.as_deref().or(last_event_output_at);
     if let Some(action) = session.pending_action.as_deref() {
         return Some((
-            match action {
-                "graveyarding" => "removing".to_owned(),
-                other => row_state_label(other).to_lowercase(),
-            },
+            row_state_label(action).to_lowercase(),
             session
                 .pending_started_at
                 .as_deref()
@@ -1436,7 +1466,8 @@ fn session_activity_chips(session: &DashboardSession) -> String {
     if thread_pending > 0 {
         chips.push(chip(
             &format!("{thread_pending} pending"),
-            tone(ChipTone::Danger),
+            // Undelivered is in flight, not failed.
+            tone(ChipTone::Work),
         ));
     }
     if session.workflow_on_me_count > 0 {
@@ -1473,7 +1504,7 @@ fn restore_blocked_chip(session: &DashboardSession) -> String {
 
 fn session_status_dot(session: &DashboardSession) -> String {
     if session.pending_action.is_some() {
-        return style("●", Tone::Attention);
+        return style(PROGRESS_MARK, PROGRESS_TONE);
     }
     let label = effective_session_row_state(session);
     let attention = session
@@ -1524,7 +1555,7 @@ fn session_status_cell(session: &DashboardSession, fallback: &str) -> String {
         return pill(&pill_label, pill_tone(row_state));
     }
     let tone = if session.pending_action.is_some() {
-        Tone::Attention
+        PROGRESS_TONE
     } else {
         match row_state {
             Some("ready") => Tone::Ready,
@@ -1558,6 +1589,14 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for session in &worktree.sessions {
         if let Some(label) = effective_session_row_state(session) {
+            // Services spell it `removing` and agents `graveyarding`, and a
+            // session can carry either; one word reaches the user, so one chip
+            // counts both rather than two chips both reading "removing".
+            let label = if label == "removing" {
+                "graveyarding"
+            } else {
+                label
+            };
             *counts.entry(label).or_default() += 1;
         }
     }
@@ -1590,26 +1629,22 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
     append_count(&mut parts, &counts, "idle", "idle", Tone::Muted);
     append_count(&mut parts, &counts, "done", "done", Tone::Done);
     append_count(&mut parts, &counts, "offline", "offline", Tone::Muted);
-    append_count(&mut parts, &counts, "creating", "creating", Tone::Attention);
-    append_count(&mut parts, &counts, "forking", "forking", Tone::Attention);
+    // Had no arm, so a checkout whose only agent was interrupted summarised
+    // blank -- the roll-up said nothing at all about it.
     append_count(
         &mut parts,
         &counts,
-        "migrating",
-        "migrating",
-        Tone::Attention,
+        "interrupted",
+        "interrupted",
+        Tone::Idle,
     );
-    append_count(&mut parts, &counts, "starting", "starting", Tone::Attention);
-    append_count(&mut parts, &counts, "stopping", "stopping", Tone::Attention);
-    append_count(
-        &mut parts,
-        &counts,
-        "graveyarding",
-        "removing",
-        Tone::Attention,
-    );
-    append_count(&mut parts, &counts, "renaming", "renaming", Tone::Attention);
-    append_count(&mut parts, &counts, "moving", "moving", Tone::Attention);
+    // Walked, not enumerated. Hand-writing one call per action is where the
+    // last disagreement lived: this list said `resurrecting` where the card
+    // beside it, the app and the contract all say `restoring`.
+    for action in crate::transient_state::TRANSIENT_ACTIONS {
+        let word = crate::transient_state::transient_state_label(action).to_lowercase();
+        append_count(&mut parts, &counts, action, &word, PROGRESS_TONE);
+    }
     parts
 }
 
@@ -1629,13 +1664,21 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     if worktree.operation_failure.is_some() {
         return style("failed", Tone::Danger);
     }
-    match worktree.pending_action {
-        Some("creating") => return style("(creating...)", Tone::Attention),
-        Some("graveyarding") => return style("(graveyarding...)", Tone::Attention),
-        _ => {}
+    // Whatever the action is, not two spellings and a catch-all: a worktree
+    // mid-rename summarised as "removing", and `dashboard_navigation` then
+    // refused Enter on it with "is still creating".
+    if let Some(action) = worktree.pending_action {
+        // The same word the rows use, lowercased for the summary line: the card
+        // said `graveyarding` while the row beside it said `Removing`. Bounded
+        // because this arrives over HTTP and the summary has a width budget
+        // that drops the whole thing before it overflows.
+        return progress_label(&truncate(&row_state_label(action).to_lowercase(), 16));
     }
-    if worktree.removing || worktree.pending {
-        return style("(removing...)", Tone::Attention);
+    if worktree.removing {
+        return progress_label("removing");
+    }
+    if worktree.pending {
+        return progress_label("pending");
     }
     let parts = semantic_count_parts(worktree);
     if !parts.is_empty() {
@@ -1673,6 +1716,17 @@ fn session_state_rank(state: Option<&str>) -> (usize, Tone) {
         Some("ready") => (1, Tone::Ready),
         Some("idle") => (1, Tone::Idle),
         Some("offline") | None => (0, Tone::Muted),
+        Some("interrupted") => (1, Tone::Idle),
+        // The lifecycle actions, named rather than caught: `worktree_tone`
+        // reads this ranking and `card` paints the border with it, so a
+        // checkout whose only agent was mid-create wore the same amber frame
+        // as one with an agent asking for input.
+        // Named rather than caught, and read from one list so a new action
+        // cannot be added to the vocabulary without being added here too.
+        Some(action) if crate::transient_state::is_transient_state(action) => (3, PROGRESS_TONE),
+        // And a state this build has not heard of stays loud. The vocabulary is
+        // published by the project service; guessing that something new is
+        // quiet is the worse way to be wrong about it.
         _ => (3, Tone::Attention),
     }
 }
@@ -2626,7 +2680,9 @@ pub struct DashboardSubscreenRenderInput<'a> {
     pub cols: usize,
     pub rows: usize,
     pub scroll_offset: usize,
-    pub footer_message: Option<&'a str>,
+    /// Work under way, which outlives keypresses until it settles.
+    pub footer_progress: Option<DashboardFooterNoteView<'a>>,
+    pub footer_note: Option<DashboardFooterNoteView<'a>>,
     pub footer_alerts: &'a [DashboardFooterAlert<'a>],
     pub details_sidebar_visible: bool,
     pub runtime_label: Option<&'a str>,
@@ -2667,17 +2723,28 @@ pub fn render_dashboard_subscreen_frame(
         content.insert(0, format!("  {}", style(error, Tone::Danger)));
         content.insert(1, String::new());
     }
-    let mut footer = vec![footer_hints(subscreen_footer(
+    // Above the hints and truncated, as on the dashboard. Appended after them
+    // and untruncated, a long message -- a plan path on an 80-column Library
+    // screen -- wrapped, pushed the frame past `rows`, and made the terminal
+    // scroll on every repaint.
+    let mut footer = Vec::new();
+    for alert in input.footer_alerts {
+        footer.push(truncate_ansi(
+            &dashboard_alert_line(alert),
+            input.cols.saturating_sub(2),
+        ));
+    }
+    for line in input.footer_progress.iter().chain(input.footer_note.iter()) {
+        footer.push(truncate_ansi(
+            &dashboard_note_line(line),
+            input.cols.saturating_sub(2),
+        ));
+    }
+    footer.push(footer_hints(subscreen_footer(
         input.screen,
         input.resource,
         input.selected_index,
-    ))];
-    for alert in input.footer_alerts {
-        footer.push(dashboard_alert_line(alert));
-    }
-    if let Some(message) = input.footer_message {
-        footer.push(style(message, Tone::Muted));
-    }
+    )));
     let viewport_height = input
         .rows
         .saturating_sub(header.len() + 1 + footer.len())
@@ -3481,10 +3548,7 @@ fn graveyard_pending_suffix(row: &Value) -> String {
     };
     format!(
         " {}",
-        style(
-            &format!("({}...)", row_state_label(action).to_lowercase()),
-            Tone::Attention
-        )
+        progress_label(&row_state_label(action).to_lowercase())
     )
 }
 
@@ -3552,7 +3616,7 @@ fn render_subscreen_details(
 fn loading_lines(screen: &str) -> Vec<String> {
     vec![format!(
         "  {}",
-        style(&format!("Loading {screen}..."), Tone::Muted)
+        progress_label(&format!("Loading {screen}"))
     )]
 }
 
@@ -4170,7 +4234,7 @@ fn worklist_tags(item: &Value) -> String {
         }
         let pending = number_at(entry, &["pendingDeliveries"]);
         if pending > 0 {
-            parts.push(style(&format!("⇢ {pending}"), Tone::Danger));
+            parts.push(style(&format!("⇢ {pending}"), PROGRESS_TONE));
         }
         parts.push(style(
             string_at(entry, &["stateLabel"])

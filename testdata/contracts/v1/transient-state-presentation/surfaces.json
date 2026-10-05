@@ -1,0 +1,98 @@
+{
+  "description": "One lifecycle action in flight, checked against every surface that renders it. `action` is the `pendingAction` the project service publishes; `family` is what both surfaces must say about it, and `label` is the word they must use. The TUI card said `graveyarding` while the row beside it said `Removing` and the app said `Graveyarding`, which is three answers to one question. Three families and they are not interchangeable: `progress` means the system is doing something and nothing is asked of the person, `attention` means a person must act, `failure` means it stopped. The TUI spelled progress as `Tone::Attention` (bold yellow) and the app as the `needs` token (amber) -- both the same colour they use for `attention` -- so a row the dashboard was busy with was painted exactly like a row waiting on a reply. The Rust half reads this file in native/crates/aimux/tests/transient_state_surfaces.rs and the app half in app/lib/transient-state.cross-surface.test.ts, so a surface that changes what it shows on its own fails here rather than drifting quietly. Scoped to the family rather than the exact colour, because the two surfaces render into a terminal and a browser and their palettes are not the same values; what has to agree is which of the three a state belongs to.",
+  "generatedBy": "hand-written; there is no capture script for this pair",
+  "cases": [
+    {
+      "why": "a worktree being made; it was amber beside 'needs input' on both surfaces",
+      "action": "creating",
+      "family": "progress",
+      "label": "Creating"
+    },
+    {
+      "why": "the fork that PR 387 found had no overlay at all",
+      "action": "forking",
+      "family": "progress",
+      "label": "Forking"
+    },
+    {
+      "action": "migrating",
+      "family": "progress",
+      "why": "moving an agent between checkouts",
+      "label": "Migrating"
+    },
+    {
+      "action": "switching",
+      "family": "progress",
+      "why": "switching an agent's tool",
+      "label": "Switching"
+    },
+    {
+      "action": "starting",
+      "family": "progress",
+      "why": "the app already mapped the STATUS 'starting' to working and then threw that away for the pending action",
+      "label": "Starting"
+    },
+    {
+      "action": "stopping",
+      "family": "progress",
+      "why": "stopping is not a failure to stop",
+      "label": "Stopping"
+    },
+    {
+      "action": "graveyarding",
+      "family": "progress",
+      "why": "the worktree Sam could not graveyard; the refusal is a failure, the removal in flight is not",
+      "label": "Removing"
+    },
+    {
+      "action": "resurrecting",
+      "family": "progress",
+      "why": "bringing a graveyarded row back",
+      "label": "Restoring"
+    },
+    {
+      "action": "renaming",
+      "family": "progress",
+      "why": "a rename round trip",
+      "label": "Renaming"
+    },
+    {
+      "action": "moving",
+      "family": "progress",
+      "why": "reordering a row",
+      "label": "Moving"
+    },
+    {
+      "action": "interrupting",
+      "family": "progress",
+      "why": "app-only today; pinned so the TUI cannot disagree when it grows one",
+      "label": "Interrupting"
+    },
+    {
+      "action": "removing",
+      "family": "progress",
+      "why": "a service being removed",
+      "label": "Removing"
+    },
+    {
+      "action": "pending",
+      "family": "progress",
+      "why": "the fallback when the service names no action",
+      "label": "Pending"
+    },
+    {
+      "why": "the graveyard's permanent delete; emitted by dashboard_pending_actions and pinned by nothing until now",
+      "action": "deleting",
+      "family": "progress",
+      "label": "Deleting"
+    }
+  ],
+  "attentionStates": {
+    "why": "The states that DO want the person, pinned beside the others so that making progress quieter cannot quietly make these quieter too.",
+    "states": [
+      "needs_input",
+      "needs_response",
+      "next_step"
+    ]
+  }
+}

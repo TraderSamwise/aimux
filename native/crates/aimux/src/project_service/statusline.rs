@@ -1567,7 +1567,12 @@ fn render_semantic_badge(semantic: Option<&Value>) -> Option<String> {
     match label {
         Some("done") => Some("\u{2713}".to_owned()),
         Some("working") => Some("\u{21bb}".to_owned()),
-        Some("starting") => Some("\u{2026}".to_owned()),
+        // Every action in flight, read from the one list: `stopping` and
+        // `graveyarding` had no badge at all, so an agent being stopped looked
+        // the same here as one sitting idle.
+        Some(action) if crate::transient_state::is_transient_state(action) => {
+            Some("\u{2026}".to_owned())
+        }
         _ => None,
     }
 }

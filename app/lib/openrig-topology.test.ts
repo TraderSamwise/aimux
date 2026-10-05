@@ -9,7 +9,10 @@ describe("openrig-inspired topology model", () => {
     expect(healthForStatus("waiting")).toBe("attention");
     expect(healthForStatus("idle")).toBe("idle");
     expect(healthForStatus("offline")).toBe("offline");
-    expect(healthForStatus("running", "needs approval")).toBe("attention");
+    // In flight, not asking: `pendingAction` carries a lifecycle verb, and the
+    // project service answers the same way for the same input.
+    expect(healthForStatus("running", "stopping")).toBe("active");
+    expect(healthForStatus("running", "resurrecting")).toBe("active");
   });
 
   it("builds a project/worktree/agent/service topology from desktop state", () => {
@@ -31,7 +34,15 @@ describe("openrig-inspired topology model", () => {
           status: "waiting",
           command: "claude",
           worktreePath: "/repo/aimux-feature",
-          pendingAction: "review",
+        },
+        // Split out from agent-2, which used to be waiting AND mid-action at
+        // once -- so the summary could not say which of the two it was counting.
+        {
+          id: "agent-3",
+          status: "running",
+          command: "codex",
+          worktreePath: "/repo/aimux-feature",
+          pendingAction: "stopping",
         },
       ],
       services: [
@@ -52,9 +63,9 @@ describe("openrig-inspired topology model", () => {
 
     expect(topology.summary).toEqual({
       worktrees: 2,
-      agents: 2,
+      agents: 3,
       services: 1,
-      active: 1,
+      active: 2,
       attention: 1,
       offline: 1,
     });

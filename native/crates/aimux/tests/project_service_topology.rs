@@ -18,10 +18,17 @@ fn health_for_status_maps_status_and_pending_action() {
     assert_eq!(health_for_status(Some("idle"), None), "idle");
     assert_eq!(health_for_status(Some("offline"), None), "offline");
     assert_eq!(health_for_status(Some("exited"), None), "offline");
+    // In flight, whatever it is spelled: the vocabulary is closed today, but an
+    // action nobody here has heard of is still an action under way.
     assert_eq!(
         health_for_status(Some("running"), Some("stopping")),
-        "attention"
+        "active"
     );
+    assert_eq!(
+        health_for_status(Some("running"), Some("resurrecting")),
+        "active"
+    );
+    assert_eq!(health_for_status(Some("waiting"), None), "attention");
     assert_eq!(health_for_status(None, None), "idle");
 }
 
@@ -110,8 +117,11 @@ fn treats_pending_and_removing_worktree_health_specially() {
             }),
         ],
     );
-    assert_eq!(topology["worktrees"][0]["health"], "attention");
-    assert_eq!(topology["worktrees"][1]["health"], "offline");
+    // Both are work in flight, not a checkout asking for the person and not one
+    // that is already gone: `offline` is what a removal leaves behind, not what
+    // it looks like while it runs.
+    assert_eq!(topology["worktrees"][0]["health"], "active");
+    assert_eq!(topology["worktrees"][1]["health"], "active");
 }
 
 #[test]

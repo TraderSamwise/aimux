@@ -638,10 +638,7 @@ fn shifted_up_at_edge_flashes_edge_message() {
         controller.handle_key(&snapshot, DashboardKey::ShiftUp),
         DashboardControllerEffect::Render
     );
-    assert_eq!(
-        controller.footer_message.as_deref(),
-        Some("Already at edge")
-    );
+    assert_eq!(controller.footer_note_message(), Some("Already at edge"));
 }
 
 #[test]
@@ -956,7 +953,7 @@ fn shifted_r_replies_only_when_selected_session_has_waiting_thread() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_note_message(),
         Some("Nothing waiting on you for label-claude-0")
     );
 }
@@ -1189,8 +1186,9 @@ fn fork_key_blocks_offline_sessions_before_picker() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_message.as_deref(),
-        Some("codex is offline. Resume it first, then fork it.")
+        controller.footer_alert_message(),
+        Some("codex is offline. Resume it first, then fork it."),
+        "a refusal outlives the next keypress; it is not a passing note"
     );
 }
 
@@ -1207,7 +1205,7 @@ fn pending_worktree_enter_sets_footer_message_without_request() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_note_message(),
         Some("Worktree demo is still creating")
     );
     assert_eq!(controller.navigation.level, DashboardNavLevel::Worktrees);
@@ -1264,7 +1262,8 @@ fn enter_from_worktree_level_renders_agent_details_rail() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: controller.details_sidebar_visible,
         preview_source: "output",
@@ -1325,7 +1324,7 @@ fn shifted_v_toggles_scribe_preview_only_when_live_scribe_exists() {
     );
     assert_eq!(controller.preview_source, "scribe");
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_note_message(),
         Some("Previewing scribe summaries")
     );
     assert_eq!(
@@ -1333,10 +1332,7 @@ fn shifted_v_toggles_scribe_preview_only_when_live_scribe_exists() {
         DashboardControllerEffect::Render
     );
     assert_eq!(controller.preview_source, "output");
-    assert_eq!(
-        controller.footer_message.as_deref(),
-        Some("Previewing output")
-    );
+    assert_eq!(controller.footer_note_message(), Some("Previewing output"));
 }
 
 #[test]
@@ -1520,7 +1516,7 @@ fn overseer_overlay_watch_requires_selected_agent() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_note_message(),
         Some("Select an agent first")
     );
     assert!(controller.overseer_overlay_open);
@@ -1656,7 +1652,7 @@ fn a_toggles_offline_agent_visibility() {
     );
     assert!(controller.hide_offline_agents);
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_note_message(),
         Some("Offline agents hidden")
     );
 
@@ -1666,7 +1662,7 @@ fn a_toggles_offline_agent_visibility() {
     );
     assert!(!controller.hide_offline_agents);
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_note_message(),
         Some("Offline agents shown")
     );
 }
@@ -1751,10 +1747,7 @@ fn library_enter_flashes_selected_path() {
         controller.handle_key(&snapshot, DashboardKey::Enter),
         DashboardControllerEffect::Render
     );
-    assert_eq!(
-        controller.footer_message.as_deref(),
-        Some("/repo/AGENTS.md")
-    );
+    assert_eq!(controller.footer_note_message(), Some("/repo/AGENTS.md"));
 }
 
 #[test]
@@ -2436,7 +2429,7 @@ fn teammate_picker_handles_missing_parent_and_empty_teammates() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_note_message(),
         Some("label-claude-0 has no teammates")
     );
 
@@ -2693,9 +2686,11 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_alert_message(),
-        Some("Worktree feature-a is removing")
+        controller.footer_note_message(),
+        Some("Worktree feature-a is removing"),
+        "work in flight is progress, not a failure for the user to dismiss"
     );
+    assert_eq!(controller.footer_alert_message(), None);
 
     snapshot.worktree_groups[1].removing = false;
     snapshot.worktree_groups[1].pending = true;
@@ -2706,9 +2701,11 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
         DashboardControllerEffect::Render
     );
     assert_eq!(
-        controller.footer_alert_message(),
-        Some("Worktree feature-a is creating")
+        controller.footer_note_message(),
+        Some("Worktree feature-a is creating"),
+        "work in flight is progress, not a failure for the user to dismiss"
     );
+    assert_eq!(controller.footer_alert_message(), None);
 
     snapshot.worktree_groups[1].pending = false;
     snapshot.worktree_groups[1].pending_action = None;
@@ -2724,7 +2721,7 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
         panic!("expected failure dismissal request");
     };
     assert_eq!(
-        controller.footer_message.as_deref(),
+        controller.footer_note_message(),
         Some("Dismissed failure for feature-a")
     );
     assert_eq!(request.path, routes::OPERATION_FAILURES_CLEAR);
@@ -3070,7 +3067,7 @@ fn a_failure_survives_the_next_keypress_and_a_note_does_not() {
     let mut controller = DashboardController::new(&snapshot);
 
     controller.footer_alert = Some("Cannot graveyard \"fix-chat\": agent attached".into());
-    controller.footer_message = Some("Offline agents hidden".into());
+    controller.set_note("Offline agents hidden".into());
 
     controller.handle_key(&snapshot, DashboardKey::Down);
 
@@ -3080,7 +3077,8 @@ fn a_failure_survives_the_next_keypress_and_a_note_does_not() {
         "a failure must outlive the keypress that follows it"
     );
     assert_eq!(
-        controller.footer_message, None,
+        controller.footer_note_message(),
+        None,
         "a passing note is spent as soon as the next key arrives"
     );
 }
@@ -3372,4 +3370,134 @@ fn a_teammate_attached_to_the_worktree_blocks_the_graveyard() {
         .map(str::to_owned)
         .expect("a refusal");
     assert!(alert.contains("helper"), "{alert}");
+}
+
+/// Sam pressed Enter on the restore offer and watched a 12s fleet restore
+/// report itself with a red `!`, then watched his next keypress erase the only
+/// sign it was running at all.
+mod what_a_transient_footer_line_claims {
+    use super::*;
+
+    use aimux::dashboard_controller::DashboardActionIdentity;
+
+    fn restore_previous() -> DashboardActionIdentity {
+        DashboardActionIdentity {
+            path: "/agents/restore-previous",
+            body: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn a_progress_note_survives_the_keypresses_its_operation_outlives() {
+        let snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
+        controller.handle_key(&snapshot, DashboardKey::Down);
+
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Restoring 36 agents"),
+            "the restore is still running; the key did not cancel it"
+        );
+    }
+
+    /// Progress and a note are different facts with different lifetimes, so
+    /// they get different slots. One slot meant hiding offline agents mid
+    /// restore threw the restore away.
+    #[test]
+    fn a_note_does_not_discard_the_work_already_under_way() {
+        let snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
+        controller.set_note("Offline agents hidden".into());
+
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Restoring 36 agents")
+        );
+        assert_eq!(
+            controller.footer_note_message(),
+            Some("Offline agents hidden")
+        );
+    }
+
+    /// `x` on a worktree that is already removing is not an attempt at
+    /// anything, so it must not take down the explanation of something else
+    /// that failed -- which is the whole job of the channel it was clearing.
+    #[test]
+    fn a_refused_key_does_not_discard_an_unrelated_failure() {
+        let mut snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.navigation.level = DashboardNavLevel::Worktrees;
+        controller.navigation.worktree_index = 1;
+        snapshot.worktree_groups[1].removing = true;
+        controller.footer_alert = Some("Could not stop agent claude-a".into());
+
+        controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("Could not stop agent claude-a"),
+            "nothing was attempted, so nothing superseded this"
+        );
+        assert_eq!(
+            controller.footer_note_message(),
+            Some("Worktree feature-a is removing")
+        );
+    }
+
+    /// A busy answer reads as progress, because that is what it reports, but
+    /// this dashboard dispatched nothing -- so nothing will ever settle it and
+    /// it has to be spent on the next key like any other note.
+    #[test]
+    fn a_busy_answer_to_a_key_is_spent_like_a_note() {
+        let snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        controller.set_busy("Worktree demo is still creating".into());
+        controller.handle_key(&snapshot, DashboardKey::Down);
+
+        assert_eq!(controller.footer_note_message(), None);
+    }
+
+    #[test]
+    fn a_note_is_still_spent_on_the_next_key() {
+        let snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        controller.set_note("Offline agents hidden".into());
+        controller.handle_key(&snapshot, DashboardKey::Down);
+
+        assert_eq!(controller.footer_note_message(), None);
+    }
+
+    #[test]
+    fn settling_the_work_takes_the_progress_note_down() {
+        let snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
+        controller.clear_progress_for(Some(&restore_previous()));
+
+        assert_eq!(
+            controller.footer_progress_message(),
+            None,
+            "a progress note outlives keypresses, so nothing else would clear it"
+        );
+    }
+
+    /// `clear_progress` runs on every settled request, including ones that were
+    /// reporting nothing. It must not take a note down with it.
+    #[test]
+    fn settling_the_work_leaves_a_plain_note_alone() {
+        let snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        controller.set_note("Moved agent up".into());
+        controller.clear_progress_for(Some(&restore_previous()));
+
+        assert_eq!(controller.footer_note_message(), Some("Moved agent up"));
+    }
 }

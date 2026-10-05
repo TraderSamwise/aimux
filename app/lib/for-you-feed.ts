@@ -1,4 +1,5 @@
 import type { NotificationRecord } from "@/lib/api";
+import { pendingActionLabel } from "@/lib/status-tone";
 import { agentCompactIdentity } from "@/lib/agent-display";
 import type { DesktopService, DesktopSession, DesktopState } from "@/lib/desktop-state";
 import type { SecurityInboxEvent } from "@/stores/security";
@@ -105,10 +106,17 @@ function pendingAgentCard(session: DesktopSession): ForYouCard | null {
   if (!session.pendingAction && session.status !== "waiting") return null;
   return {
     id: `agent:${session.id}:attention`,
-    kind: "action-required",
+    // A lifecycle action in flight is progress; only a genuinely waiting agent
+    // is asking for something. Both landed in the action-required feed, so
+    // stopping an agent put it on the list of things wanting the user.
+    kind: session.pendingAction ? "progress" : "action-required",
     source: "agent",
     title: agentCompactIdentity(session),
-    body: session.pendingAction || session.previewLine || session.headline || "Agent is waiting",
+    body:
+      (session.pendingAction && pendingActionLabel(session.pendingAction)) ||
+      session.previewLine ||
+      session.headline ||
+      "Agent is waiting",
     subtitle: [session.worktreeName, session.status].filter(Boolean).join(" · "),
     createdAt: new Date(0).toISOString(),
     unread: true,
@@ -120,10 +128,12 @@ function pendingServiceCard(service: DesktopService): ForYouCard | null {
   if (!service.pendingAction) return null;
   return {
     id: `service:${service.id}:attention`,
-    kind: "action-required",
+    // A service being started or removed is work under way, not a card on the
+    // list of things wanting the user.
+    kind: "progress",
     source: "service",
     title: service.label || service.id,
-    body: service.pendingAction,
+    body: pendingActionLabel(service.pendingAction),
     subtitle: [service.worktreeName, service.status].filter(Boolean).join(" · "),
     createdAt: new Date(0).toISOString(),
     unread: true,

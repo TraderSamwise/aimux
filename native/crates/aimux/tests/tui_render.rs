@@ -7,8 +7,8 @@ use aimux::tui_render::text::{
     wrap_text,
 };
 use aimux::tui_render::theme::{
-    ChipTone, Column, StatusKind, Tone, chip, cols, keycap, pad_visible, pill, status_dot, style,
-    visible_width,
+    ChipTone, Column, PROGRESS_MARK, StatusKind, Tone, chip, cols, keycap, note_line, pad_visible,
+    pill, progress_label, progress_line, status_dot, style, visible_width,
 };
 
 #[test]
@@ -269,4 +269,53 @@ fn positioned_rows(output: &str) -> Vec<&str> {
             &output[*content_start..content_end]
         })
         .collect()
+}
+
+/// The danger red (`31m`) and the danger keycap foreground (`203`) are the two
+/// spellings of "this failed". Progress and notes must carry neither, which is
+/// the whole of what Sam reported: `! Restored 9 agents`.
+mod a_transient_line_is_not_painted_as_a_failure {
+    use super::*;
+
+    const DANGER_SGR: &str = "\u{1b}[31m";
+    const DANGER_KEYCAP_FOREGROUND: &str = "38;5;203";
+
+    #[test]
+    fn progress_carries_the_working_tone_and_no_danger_spelling() {
+        let line = progress_line("Restoring 36 agents");
+        assert!(line.contains(PROGRESS_MARK), "{line:?}");
+        assert!(
+            line.contains(&style("", Tone::Work).replace("\u{1b}[0m", "")),
+            "progress must use the working tone: {line:?}"
+        );
+        assert!(!line.contains(DANGER_SGR), "{line:?}");
+        assert!(!line.contains(DANGER_KEYCAP_FOREGROUND), "{line:?}");
+        assert!(!line.contains('!'), "{line:?}");
+    }
+
+    #[test]
+    fn a_note_carries_no_danger_spelling_either() {
+        let line = note_line("Restored 9 agents");
+        assert!(!line.contains(DANGER_SGR), "{line:?}");
+        assert!(!line.contains(DANGER_KEYCAP_FOREGROUND), "{line:?}");
+        assert!(!line.contains('!'), "{line:?}");
+        assert!(strip_ansi(&line).ends_with("Restored 9 agents"), "{line:?}");
+    }
+
+    #[test]
+    fn progress_and_a_note_do_not_look_the_same() {
+        assert_ne!(
+            strip_ansi(&progress_line("Working")),
+            strip_ansi(&note_line("Working")),
+            "a mark that does not distinguish them is not a distinction"
+        );
+    }
+
+    /// Inline and footer progress say the same thing with the same mark, so a
+    /// row and the footer cannot disagree about what "in progress" looks like.
+    #[test]
+    fn inline_progress_uses_the_same_mark_as_the_footer() {
+        assert!(progress_label("creating").starts_with(&style(PROGRESS_MARK, Tone::Work)));
+        assert!(progress_line("creating").starts_with(&style(PROGRESS_MARK, Tone::Work)));
+    }
 }

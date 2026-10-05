@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { pendingActionLabel, serviceStatusKind } from "@/lib/status-tone";
 import { projectStateKey as projectStateKeyOf, type ProjectStateKey } from "@/lib/project-key";
 import { serviceEndpointKey } from "@/lib/daemon-url";
 import { Pressable, ScrollView, View } from "react-native";
@@ -181,8 +182,14 @@ function ServiceDetailBody({
 
       <Card className="p-5">
         <View className="flex-row items-center mb-3">
-          <StatusDot status={service.status} size="md" />
-          <Text className="text-[14px] font-semibold text-foreground ml-2.5">{service.status}</Text>
+          {/* Toned through the shared rule, which knows a pending action is
+              work; `service.status` alone is the settled state and does not. */}
+          <StatusDot status={serviceStatusKind(service)} size="md" />
+          <Text className="text-[14px] font-semibold text-foreground ml-2.5">
+            {service.pendingAction
+              ? pendingActionLabel(service.pendingAction).toLowerCase()
+              : service.status}
+          </Text>
         </View>
         {worktreeLine ? <Row label="Worktree" value={worktreeLine} /> : null}
         {service.command ? <Row label="Command" value={service.command} /> : null}

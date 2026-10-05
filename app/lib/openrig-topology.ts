@@ -60,7 +60,9 @@ function normalizeStatus(status?: string): string {
 }
 
 export function healthForStatus(status?: string, pendingAction?: string): TopologyHealth {
-  if (pendingAction?.trim()) return "attention";
+  // Active, not attention. An agent the daemon is starting is busy; it is not
+  // a node asking the person to come and look at it.
+  if (pendingAction?.trim()) return "active";
   const normalized = normalizeStatus(status);
   if (normalized === "running") return "active";
   if (normalized === "waiting") return "attention";

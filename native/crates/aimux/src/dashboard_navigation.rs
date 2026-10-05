@@ -91,7 +91,10 @@ pub enum DashboardNavigationOutcome<'a> {
     StepIn,
     Back,
     EntrySelected(DashboardEntryRef<'a>),
+    /// Refused, and it will stay refused until something changes.
     Blocked(String),
+    /// Refused only because work is already in flight on this worktree.
+    Busy(String),
     Ignored,
 }
 
@@ -274,21 +277,21 @@ impl DashboardNavigationState {
             return DashboardNavigationOutcome::StepIn;
         }
         if group.pending_action == Some("creating") || group.pending {
-            return DashboardNavigationOutcome::Blocked(format!(
-                "Worktree {} is still creating",
-                group.name
+            return DashboardNavigationOutcome::Busy(format!(
+                "Worktree {} is still {}",
+                group.name,
+                crate::transient_state::transient_state_label("creating").to_lowercase()
             ));
         }
         if group.pending_action == Some("removing")
             || group.pending_action == Some("graveyarding")
             || group.removing
         {
-            let action = if group.pending_action == Some("graveyarding") {
-                "graveyarding"
-            } else {
-                "removing"
-            };
-            return DashboardNavigationOutcome::Blocked(format!(
+            // One word, the one the card and the row already use. This said
+            // "graveyarding" while the card beside it said "removing".
+            let action =
+                crate::transient_state::transient_state_label("graveyarding").to_lowercase();
+            return DashboardNavigationOutcome::Busy(format!(
                 "Worktree {} is {action}",
                 group.name
             ));

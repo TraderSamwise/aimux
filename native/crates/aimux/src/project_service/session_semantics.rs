@@ -71,7 +71,18 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         has_active_task: input.has_active_task,
     });
     let presentation = json!({
-        "statusLabel": status_label_for(user.get("label").and_then(Value::as_str).unwrap_or("idle")),
+        // The action itself, not the bucket `user.label` coarsens it into:
+        // `creating`, `forking` and `migrating` all become `starting` there,
+        // and this string is rendered verbatim by the tmux bar and the Team
+        // overlay beside a row that says `Forking`. `user.label` is left alone
+        // -- ranking and the Exposé chip read it.
+        "statusLabel": status_label_for(
+            input
+                .pending_action
+                .as_deref()
+                .filter(|action| crate::transient_state::is_transient_state(action))
+                .unwrap_or_else(|| user.get("label").and_then(Value::as_str).unwrap_or("idle")),
+        ),
         "compactHint": compact_hint,
         "attentionScore": attention_score(&user, &notifications, activity_new_count, pending_delivery_count),
     });
@@ -215,6 +226,13 @@ fn status_label_for(label: &str) -> &str {
         "next_step" => "next step",
         "working" => "working",
         "ready" => "ready",
+        // This string is published and rendered verbatim by the tmux status
+        // bar and the Team overlay, which were reading the raw action -- so
+        // killing a teammate said `graveyarding` there and `Removing` on the
+        // row for the same agent.
+        other if crate::transient_state::is_transient_state(other) => {
+            crate::transient_state::transient_state_label(other)
+        }
         other => other,
     }
 }

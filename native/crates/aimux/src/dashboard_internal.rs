@@ -28,7 +28,8 @@ use crate::dashboard_pending_actions::{
     DashboardPendingActions, PendingTarget, pending_action_for_request,
 };
 use crate::dashboard_project_events::{
-    DashboardProjectEvent, DashboardProjectRefreshState, dashboard_alert_footer_flash,
+    DashboardProjectEvent, DashboardProjectRefreshState, dashboard_alert_flash_failed,
+    dashboard_alert_footer_flash,
 };
 use crate::dashboard_readiness::mark_native_dashboard_ready;
 use crate::dashboard_renderer::{
@@ -241,6 +242,8 @@ struct DashboardSnapshotRenderContext<'a> {
     scroll_offset: usize,
     runtime_guard: Option<&'a DashboardRuntimeGuardStatus>,
     refresh_error: Option<&'a str>,
+    /// Why the project event stream is down, while it is.
+    stream_error: Option<&'a str>,
     pending_now_ms: i64,
 }
 
@@ -323,6 +326,10 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     // narrow async seam and feeds this loop through a bounded channel.
     let mut event_stream = None;
     let mut event_stream_retry_at = None;
+    // Why the event stream is down, while it is. Derived rather than stored on
+    // the controller, so the reconnect that makes it false also removes it.
+    let mut event_stream_down: Option<String> = None;
+    let mut event_stream_health = DashboardStreamHealth::default();
     let mut refresh_state = DashboardProjectRefreshState::default();
     let mut visibility_state = DashboardTuiVisibilityState {
         started_in_dashboard: !options.once && options.desktop_state_file.is_none(),
@@ -429,7 +436,12 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             }
         }
         if !dashboard_visible {
-            suspend_dashboard_event_stream(&mut event_stream, &mut event_stream_retry_at);
+            suspend_dashboard_event_stream(
+                &mut event_stream,
+                &mut event_stream_retry_at,
+                &mut event_stream_down,
+                &mut event_stream_health,
+            );
             thread::sleep(DASHBOARD_HIDDEN_POLL_INTERVAL);
             continue;
         }
@@ -443,6 +455,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         if drain_dashboard_event_stream(
             &mut event_stream,
             &mut event_stream_retry_at,
+            &mut event_stream_down,
+            &mut event_stream_health,
             &mut refresh_state,
             controller
                 .as_ref()
@@ -474,6 +488,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         reconcile_dashboard_event_stream(
             &mut event_stream,
             &mut event_stream_retry_at,
+            &mut event_stream_down,
+            &mut event_stream_health,
             latest_endpoint.as_ref(),
             options.once || options.desktop_state_file.is_some(),
         );
@@ -582,7 +598,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             ) {
                                 Ok(true) => {
                                     controller.navigation.item_index = next_item_index;
-                                    controller.footer_message = Some(format!(
+                                    controller.set_note(format!(
                                         "Moved {} {}",
                                         kind.display_label(),
                                         direction.as_str()
@@ -595,15 +611,17 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     }
                                 }
                                 Ok(false) => {
-                                    controller.footer_message = Some("Already at edge".into());
+                                    controller.set_note("Already at edge".into());
                                 }
                                 Err(error) => {
-                                    controller.footer_message = Some(error.to_string());
+                                    controller.footer_alert =
+                                        Some(DashboardFailureAlert::local(error.to_string()));
                                 }
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard ordering unavailable".into());
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard ordering unavailable",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -618,12 +636,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     controller.worktree_cache_cleanup_confirm = Some(result);
                                 }
                                 Err(error) => {
-                                    controller.footer_message = Some(error.to_string());
+                                    controller.footer_alert =
+                                        Some(DashboardFailureAlert::local(error.to_string()));
                                 }
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard action requires a project-service endpoint",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -635,16 +655,23 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 .and_then(cache_cleanup_result_from_response)
                             {
                                 Ok(result) => {
-                                    controller.footer_message =
-                                        Some(worktree_cache_cleanup_summary(&result));
+                                    let (message, failed) = worktree_cache_cleanup_summary(&result);
+                                    if failed {
+                                        controller.footer_alert =
+                                            Some(DashboardFailureAlert::local(message));
+                                    } else {
+                                        controller.set_note(message);
+                                    }
                                 }
                                 Err(error) => {
-                                    controller.footer_message = Some(error.to_string());
+                                    controller.footer_alert =
+                                        Some(DashboardFailureAlert::local(error.to_string()));
                                 }
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard action requires a project-service endpoint",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -660,14 +687,15 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     controller.set_orchestration_route_options(mode, options);
                                 }
                                 Err(error) => {
-                                    controller.footer_message = Some(format!(
-                                        "Failed to load orchestration targets: {error}"
+                                    controller.footer_alert = Some(DashboardFailureAlert::local(
+                                        format!("Failed to load orchestration targets: {error}"),
                                     ));
                                 }
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard action requires a project-service endpoint",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -678,11 +706,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             if let Err(error) =
                                 open_relevant_thread_for_session(endpoint, controller, &session_id)
                             {
-                                controller.footer_message = Some(error.to_string());
+                                controller.footer_alert =
+                                    Some(DashboardFailureAlert::local(error.to_string()));
                             }
                         } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard action requires a project-service endpoint",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -704,8 +734,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         match execute_overseer_watch_command(&options, controller, &request) {
                             Ok(()) => {}
                             Err(error) => {
-                                controller.footer_message =
-                                    Some(format!("Overseer update failed: {error}"));
+                                controller.footer_alert = Some(DashboardFailureAlert::local(
+                                    format!("Overseer update failed: {error}"),
+                                ));
                             }
                         }
                         render_now = true;
@@ -805,6 +836,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         scroll_offset,
                         runtime_guard: Some(&runtime_guard),
                         refresh_error: cached_refresh_error.as_deref(),
+                        stream_error: event_stream_down.as_deref(),
                         pending_now_ms: pending_action_now_ms(clock_start),
                     },
                 );
@@ -988,6 +1020,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 scroll_offset,
                                 runtime_guard: Some(&runtime_guard),
                                 refresh_error: None,
+                                stream_error: event_stream_down.as_deref(),
                                 pending_now_ms: pending_action_now_ms(clock_start),
                             },
                         );
@@ -1047,6 +1080,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         reconcile_dashboard_event_stream(
                             &mut event_stream,
                             &mut event_stream_retry_at,
+                            &mut event_stream_down,
+                            &mut event_stream_health,
                             latest_endpoint.as_ref(),
                             options.once || options.desktop_state_file.is_some(),
                         );
@@ -1083,6 +1118,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 scroll_offset,
                                 runtime_guard: Some(&runtime_guard),
                                 refresh_error: Some(&footer_message),
+                                stream_error: event_stream_down.as_deref(),
                                 pending_now_ms: pending_action_now_ms(clock_start),
                             },
                         );
@@ -1116,6 +1152,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         reconcile_dashboard_event_stream(
                             &mut event_stream,
                             &mut event_stream_retry_at,
+                            &mut event_stream_down,
+                            &mut event_stream_health,
                             latest_endpoint.as_ref(),
                             options.once || options.desktop_state_file.is_some(),
                         );
@@ -1319,16 +1357,25 @@ fn is_terminal_output_hangup(error: &io::Error) -> bool {
 fn suspend_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
+    down: &mut Option<String>,
+    health: &mut DashboardStreamHealth,
 ) {
     if event_stream.is_some() {
         *event_stream = None;
     }
     *retry_at = None;
+    // Suspended on purpose, so "the stream is down" stops being a report about
+    // anything. Left standing it would outlive the project it was about, and so
+    // would a latch saying the last cycle was empty.
+    *down = None;
+    *health = DashboardStreamHealth::default();
 }
 
 fn drain_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
+    down: &mut Option<String>,
+    stream_state: &mut DashboardStreamHealth,
     refresh_state: &mut DashboardProjectRefreshState,
     active_screen: Option<&str>,
     mut controller: Option<&mut DashboardController>,
@@ -1341,12 +1388,46 @@ fn drain_dashboard_event_stream(
     let mut render = false;
     while let Ok(message) = stream.try_recv() {
         match message {
+            DashboardEventStreamMessage::Opened => {
+                // The subscription was accepted. Not the spawn, which says only
+                // that a connection was attempted, and not the first event,
+                // which on an idle project never comes.
+                //
+                // Unless the last stream opened and closed without delivering
+                // anything: a service that answers `/events` with a complete
+                // body does that every retry, and clearing here would flash the
+                // bar off and on every few seconds instead of saying plainly
+                // that the stream does not work.
+                if stream_state.accept_proves_recovery() && down.take().is_some() {
+                    render = true;
+                }
+                stream_state.delivered = false;
+            }
             DashboardEventStreamMessage::Event(event) => {
+                // Demonstrably working, whatever happened last time.
+                stream_state.observe_delivery();
+                if down.take().is_some() {
+                    render = true;
+                }
                 if let DashboardProjectEvent::Alert(payload) = &event
                     && let Some(message) = dashboard_alert_footer_flash("dashboard", payload)
                     && let Some(controller) = controller.as_deref_mut()
                 {
-                    controller.footer_message = Some(message);
+                    // `✗ {title}` is a failed task. Flattened into the note
+                    // channel it rendered in the same grey as `✓ {title}` and
+                    // was gone on the next keypress.
+                    if dashboard_alert_flash_failed(payload) {
+                        // Never over the top of one: this arrives unprompted
+                        // from the project service, and the alert slot holds
+                        // the answer to something the user just asked for.
+                        if controller.footer_alert.is_none() {
+                            controller.footer_alert = Some(DashboardFailureAlert::local(message));
+                        } else {
+                            controller.set_note(message);
+                        }
+                    } else {
+                        controller.set_note(message);
+                    }
                     render = true;
                 }
                 refresh_state.observe_for_screen(&event, active_screen);
@@ -1354,19 +1435,25 @@ fn drain_dashboard_event_stream(
             DashboardEventStreamMessage::Error(error) => {
                 stream_closed = true;
                 stream_error = Some(error);
+                // Same bookkeeping as a clean close: a stream that accepted and
+                // then errored without delivering is not one whose next accept
+                // proves anything either.
+                stream_state.observe_close();
                 break;
             }
             DashboardEventStreamMessage::Ended => {
+                // A clean close is still no stream. Silent here, the report
+                // raised when it died was cleared by the open that preceded it
+                // and nothing said it had gone again.
                 stream_closed = true;
+                render |= raise_stream_down(down, "project event stream ended");
+                stream_state.observe_close();
                 break;
             }
         }
     }
-    if let Some(error) = stream_error
-        && let Some(controller) = controller
-    {
-        controller.footer_message = Some(error);
-        render = true;
+    if let Some(error) = stream_error {
+        render |= raise_stream_down(down, &error);
     }
     if stream_closed {
         *event_stream = None;
@@ -1375,18 +1462,75 @@ fn drain_dashboard_event_stream(
     render
 }
 
+/// What the last stream cycle actually did.
+///
+/// A subscription being accepted is normally proof the stream is back, which is
+/// what an idle project needs -- it delivers nothing for minutes. But a service
+/// that answers `/events` with a complete body accepts and closes on every
+/// retry, and clearing on each accept would flash the report off and on rather
+/// than saying plainly that the stream does not work. So an accept clears it
+/// only when the last cycle was not one of those, and a delivered event clears
+/// it unconditionally.
+#[derive(Debug, Default)]
+struct DashboardStreamHealth {
+    delivered: bool,
+    closed_empty: bool,
+}
+
+impl DashboardStreamHealth {
+    /// Whether a subscription being accepted is proof the stream is back.
+    fn accept_proves_recovery(&self) -> bool {
+        !self.closed_empty
+    }
+
+    fn observe_delivery(&mut self) {
+        self.delivered = true;
+        self.closed_empty = false;
+    }
+
+    fn observe_close(&mut self) {
+        self.closed_empty = !self.delivered;
+        self.delivered = false;
+    }
+}
+
+/// Report that the event stream is down, and say whether that is news.
+///
+/// Derived rather than stored on the controller, and so not dismissible: the
+/// stream retries every few seconds, and an alert the user can clear would come
+/// straight back, while a stored one would outlive the reconnect that makes it
+/// false. `refresh_error` is the same shape for the same reason.
+fn raise_stream_down(down: &mut Option<String>, error: &str) -> bool {
+    if down.as_deref() == Some(error) {
+        return false;
+    }
+    *down = Some(error.to_owned());
+    true
+}
+
 fn reconcile_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
+    down: &mut Option<String>,
+    health: &mut DashboardStreamHealth,
     endpoint: Option<&ProjectServiceEndpoint>,
     disabled: bool,
 ) {
     if disabled {
         *event_stream = None;
         *retry_at = None;
+        // There is no stream to be down, so saying it is down would be a
+        // standing untruth on a surface nobody can clear.
+        *down = None;
+        *health = DashboardStreamHealth::default();
         return;
     }
     let Some(endpoint) = endpoint else {
+        // No endpoint is a different state from a stream that died, and the
+        // report of the latter would otherwise be permanent and, being derived,
+        // not dismissible either.
+        *down = None;
+        *health = DashboardStreamHealth::default();
         return;
     };
     if event_stream
@@ -1395,6 +1539,11 @@ fn reconcile_dashboard_event_stream(
     {
         return;
     }
+    // A different project's stream tells us nothing about this one's.
+    if event_stream.is_some() {
+        *down = None;
+        *health = DashboardStreamHealth::default();
+    }
     if let Some(retry_at) = retry_at.as_ref()
         && Instant::now() < *retry_at
     {
@@ -1402,6 +1551,9 @@ fn reconcile_dashboard_event_stream(
     }
     *event_stream = Some(spawn_dashboard_project_event_stream(endpoint.clone()));
     *retry_at = None;
+    // The report stays up until the new stream actually delivers something.
+    // Clearing it here made the bar blink off at every retry and back on when
+    // that retry failed, so a glance during the gap saw a healthy stream.
 }
 
 fn elapsed_millis(start: Instant) -> i64 {
@@ -1915,10 +2067,12 @@ fn execute_overseer_watch_command(
                 return Ok(());
             }
         }
-        controller.footer_message = Some("Overseer updated, but could not open overseer".into());
+        controller.footer_alert = Some(DashboardFailureAlert::local(
+            "Overseer updated, but could not open overseer",
+        ));
         return Ok(());
     }
-    controller.footer_message = Some(format!("{} added to overseer loop", request.target_label));
+    controller.set_note(format!("{} added to overseer loop", request.target_label));
     Ok(())
 }
 
@@ -1954,6 +2108,7 @@ fn render_dashboard_snapshot(
             context.scroll_offset,
             pending_actions,
             context.pending_now_ms,
+            context.stream_error,
         );
     }
     controller.navigation.clamp(snapshot);
@@ -1984,11 +2139,12 @@ fn render_dashboard_snapshot(
     // never shown, and `X` discarded it unseen.
     let footer_alerts: Vec<DashboardFooterAlert<'_>> = context
         .refresh_error
+        .into_iter()
+        .chain(context.stream_error)
         .map(|message| DashboardFooterAlert {
             message,
             dismissible: false,
         })
-        .into_iter()
         .chain(
             controller
                 .footer_alert
@@ -2015,7 +2171,8 @@ fn render_dashboard_snapshot(
         hide_offline_agents: controller.hide_offline_agents,
         hidden_offline_agent_count: context.hidden_offline_agent_count,
         scroll_offset: context.scroll_offset,
-        footer_message: controller.footer_message.as_deref(),
+        footer_progress: controller.footer_progress_view(),
+        footer_note: controller.footer_note_view(),
         footer_alerts: &footer_alerts,
         details_sidebar_visible: controller.details_sidebar_visible,
         preview_source: &controller.preview_source,
@@ -2234,13 +2391,23 @@ fn render_dashboard_runtime_guard_overlay(
         body.push(style("", Tone::Muted));
         body.push(style("Please wait.", Tone::Muted));
     }
+    // "Aimux is updating", "is reconnecting", "is repairing tmux": four of the
+    // six states are a wait that ends on its own, and all six wore the red
+    // modal with a warning triangle. The escalations flip `waiting` off, so a
+    // repair error is the only way a waiting state still needs the user.
+    let waiting = copy.waiting && runtime_guard.repair_error.is_none();
+    let (variant, icon) = if waiting {
+        (OverlayVariant::Progress, None)
+    } else {
+        (OverlayVariant::Red, Some("!"))
+    };
     Some(render_overlay_box(&OverlayBoxSpec {
         title: copy.title,
         body: &body,
         cols: viewport.cols,
         rows: viewport.rows,
-        variant: OverlayVariant::Red,
-        icon: Some("!"),
+        variant,
+        icon,
     }))
 }
 
@@ -2270,6 +2437,7 @@ fn render_dashboard_subscreen_snapshot(
     scroll_offset: usize,
     pending_actions: &mut DashboardPendingActions,
     pending_now_ms: i64,
+    stream_error: Option<&str>,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
     // A refresh that fails keeps the screen it already drew. Under load the
     // project service misses the 2s budget routinely, and throwing the rows
@@ -2297,14 +2465,23 @@ fn render_dashboard_subscreen_snapshot(
         controller.screen,
         resource.as_ref(),
     ));
-    let footer_alerts: Vec<DashboardFooterAlert<'_>> = controller
-        .footer_alert
-        .as_ref()
-        .map(|alert| DashboardFooterAlert {
-            message: alert.message.as_str(),
-            dismissible: true,
+    // The stream error reaches here too. A subscreen that silently stopped
+    // receiving events looked exactly like a subscreen with nothing happening.
+    let footer_alerts: Vec<DashboardFooterAlert<'_>> = stream_error
+        .map(|message| DashboardFooterAlert {
+            message,
+            dismissible: false,
         })
         .into_iter()
+        .chain(
+            controller
+                .footer_alert
+                .as_ref()
+                .map(|alert| DashboardFooterAlert {
+                    message: alert.message.as_str(),
+                    dismissible: true,
+                }),
+        )
         .collect();
     let frame = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
         screen: controller.screen,
@@ -2314,7 +2491,8 @@ fn render_dashboard_subscreen_snapshot(
         cols: viewport.cols,
         rows: viewport.rows,
         scroll_offset,
-        footer_message: controller.footer_message.as_deref(),
+        footer_progress: controller.footer_progress_view(),
+        footer_note: controller.footer_note_view(),
         footer_alerts: &footer_alerts,
         details_sidebar_visible: controller.details_sidebar_visible,
         runtime_label: Some("tmux"),
@@ -2459,7 +2637,7 @@ fn open_relevant_thread_for_session(
         Some(&resource),
     ));
     let Some(selection) = preferred_thread_selection(&resource, session_id) else {
-        controller.footer_message = Some(format!("No thread for {session_id}"));
+        controller.set_note(format!("No thread for {session_id}"));
         return Ok(());
     };
     controller.screen = DashboardScreen::Coordination;
@@ -2723,7 +2901,10 @@ fn cache_cleanup_result_from_response(response: serde_json::Value) -> Result<ser
     ))
 }
 
-fn worktree_cache_cleanup_summary(result: &serde_json::Value) -> String {
+/// The summary, and whether any of the deletions failed. A cleanup that could
+/// not remove three of four items is reporting three failures, and the note
+/// channel erases it on the next keypress.
+fn worktree_cache_cleanup_summary(result: &serde_json::Value) -> (String, bool) {
     let target_count = result
         .get("plan")
         .and_then(|plan| plan.get("targets"))
@@ -2741,10 +2922,11 @@ fn worktree_cache_cleanup_summary(result: &serde_json::Value) -> String {
         .flatten()
         .filter(|entry| entry.get("status").and_then(serde_json::Value::as_str) == Some("failed"))
         .count();
-    format!(
+    let message = format!(
         "Removed {} from {target_count} cache item(s); {failed} failed.",
         crate::dashboard_service_input::format_worktree_cache_bytes(reclaimed_bytes)
-    )
+    );
+    (message, failed > 0)
 }
 
 fn parse_desktop_state_snapshot(contents: &str) -> Result<DesktopStateSnapshot> {
@@ -2813,7 +2995,7 @@ struct DashboardRequestOutcome {
     failure: Option<String>,
     /// What a successful mutation did, for the routes where succeeding quietly
     /// is indistinguishable from doing nothing.
-    notice: Option<String>,
+    notice: Option<DashboardActionNotice>,
 }
 
 /// Send the mutations queued during key handling, now that the optimistic frame
@@ -2841,6 +3023,11 @@ fn flush_deferred_dashboard_requests(
                 controller.footer_alert = Some(DashboardFailureAlert::local(
                     "Dashboard action requires a project-service endpoint",
                 ));
+                // The request never left, so no outcome will ever arrive to
+                // take down a progress note -- and a progress note outlives
+                // keypresses, so it would sit there claiming work that is not
+                // happening.
+                controller.abandon_progress();
             }
             if let Some((target, id, token)) = pending.as_ref() {
                 pending_actions.clear_if_token(*target, id, *token);
@@ -2872,11 +3059,28 @@ fn flush_deferred_dashboard_requests(
     }
 }
 
+/// The sentence a finished mutation leaves in the footer, and whether it is
+/// reporting something that went wrong.
+///
+/// A 200 is not the same as a success: a restore that brought back 2 of 36
+/// answers OK and then names the 34 that did not come back, and that sentence
+/// is the only report of them there is.
+#[derive(Debug, Clone)]
+struct DashboardActionNotice {
+    message: String,
+    failed: bool,
+}
+
 /// The sentence a finished mutation leaves in the footer. Only routes whose
 /// success is otherwise invisible have one.
-fn dashboard_action_notice(path: &str, body: &Value) -> Option<String> {
+fn dashboard_action_notice(path: &str, body: &Value) -> Option<DashboardActionNotice> {
     if path == crate::project_api_contract::routes::agents::RESTORE_PREVIOUS {
-        return crate::agent_restore_outcome::restore_outcome_message(body);
+        return crate::agent_restore_outcome::restore_outcome_message(body).map(|message| {
+            DashboardActionNotice {
+                message,
+                failed: crate::agent_restore_outcome::restore_outcome_failed(body),
+            }
+        });
     }
     None
 }
@@ -2893,6 +3097,7 @@ fn drain_dashboard_request_outcomes(
         changed = true;
         if let Some(message) = outcome.failure {
             if let Some(controller) = controller.as_deref_mut() {
+                controller.clear_progress_for(outcome.action.as_ref());
                 // A failed action is an alert, not a note: it outlives the next
                 // keypress and is dismissed deliberately. Tagged with the action
                 // it was about, so a later success for that same thing can take
@@ -2919,10 +3124,29 @@ fn drain_dashboard_request_outcomes(
                 // else would take it down.
                 controller.footer_alert = None;
             }
-            if let Some(message) = outcome.notice
-                && let Some(controller) = controller.as_deref_mut()
-            {
-                controller.footer_message = Some(message);
+            if let Some(controller) = controller.as_deref_mut() {
+                // Whether or not there is a notice to replace it with: a 200
+                // whose body is not an outcome leaves `notice` empty, and the
+                // progress note would outlive the work. Keyed on the action, so
+                // an unrelated faster request cannot end this one's report.
+                controller.clear_progress_for(outcome.action.as_ref());
+                if let Some(notice) = outcome.notice {
+                    if notice.failed {
+                        // A 200 that names what did not work is a failure
+                        // report, and the note channel erases it on the next
+                        // key -- which for a 36-agent restore is immediately.
+                        // Tagged with the action, so a retry where everything
+                        // comes back answers it instead of stacking under it.
+                        controller.footer_alert = Some(match outcome.action.clone() {
+                            Some(action) => {
+                                DashboardFailureAlert::for_action(notice.message, action)
+                            }
+                            None => DashboardFailureAlert::local(notice.message),
+                        });
+                    } else {
+                        controller.set_note(notice.message);
+                    }
+                }
             }
         }
     }
@@ -2944,6 +3168,13 @@ mod tests {
         DashboardActionIdentity {
             path: crate::project_api_contract::routes::agents::STOP,
             body: serde_json::json!({ "sessionId": session_id }),
+        }
+    }
+
+    fn restore_previous() -> DashboardActionIdentity {
+        DashboardActionIdentity {
+            path: crate::project_api_contract::routes::agents::RESTORE_PREVIOUS,
+            body: serde_json::json!({}),
         }
     }
 
@@ -2972,7 +3203,10 @@ mod tests {
                 body: serde_json::json!({ "path": "/repo/.aimux/worktrees/other-tree" }),
             }),
             failure: None,
-            notice: Some("Worktree other-tree moved to the graveyard".into()),
+            notice: Some(DashboardActionNotice {
+                message: "Worktree other-tree moved to the graveyard".into(),
+                failed: false,
+            }),
         })
         .expect("queue outcome");
         drop(tx);
@@ -2986,9 +3220,410 @@ mod tests {
             "a different action's success is not an answer to this failure"
         );
         assert_eq!(
-            controller.footer_message.as_deref(),
+            controller.footer_note_message(),
             Some("Worktree other-tree moved to the graveyard"),
             "and the success still reports itself"
+        );
+    }
+
+    /// The one path that sets a progress note and then never sends the request
+    /// it was reporting. No outcome ever arrives, and a progress note outlives
+    /// keypresses, so without this it claims work that is not happening for as
+    /// long as the dashboard stays open.
+    #[test]
+    fn a_request_that_never_left_does_not_leave_its_progress_note_behind() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
+
+        let (tx, _rx) = mpsc::channel::<DashboardRequestOutcome>();
+        let mut deferred: Vec<DeferredDashboardRequest> = vec![(
+            DashboardActionRequest {
+                method: "POST",
+                path: crate::project_api_contract::routes::agents::RESTORE_PREVIOUS,
+                body: serde_json::json!({}),
+            },
+            None,
+        )];
+        let mut pending_actions = DashboardPendingActions::default();
+
+        flush_deferred_dashboard_requests(
+            &mut deferred,
+            None,
+            &mut pending_actions,
+            Some(&mut controller),
+            &tx,
+        );
+
+        assert_eq!(controller.footer_progress_message(), None);
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("Dashboard action requires a project-service endpoint")
+        );
+    }
+
+    /// "Aimux is updating", "is reconnecting", "is repairing tmux": four of the
+    /// six guard states are a wait that ends on its own, and all six wore the
+    /// red modal with a warning triangle.
+    #[test]
+    fn a_wait_that_ends_on_its_own_is_not_drawn_as_an_emergency() {
+        let viewport = DashboardViewport {
+            cols: 100,
+            rows: 30,
+        };
+        let waiting = DashboardRuntimeGuardStatus {
+            state: RuntimeGuardState::Disconnected,
+            entered_at: Some(Instant::now()),
+            ..DashboardRuntimeGuardStatus::default()
+        };
+        let overlay = render_dashboard_runtime_guard_overlay(Some(&waiting), viewport)
+            .expect("a waiting overlay");
+        assert!(overlay.contains("RECONNECTING"), "{overlay:?}");
+        assert!(
+            !overlay.contains('⚠'),
+            "a self-healing wait is not a warning"
+        );
+        assert!(
+            !overlay.contains("\u{1b}[31m"),
+            "nor is it painted in the failure tone"
+        );
+
+        let failing = DashboardRuntimeGuardStatus {
+            state: RuntimeGuardState::Disconnected,
+            entered_at: Some(Instant::now()),
+            repair_error: Some("tmux refused".into()),
+            ..DashboardRuntimeGuardStatus::default()
+        };
+        let overlay =
+            render_dashboard_runtime_guard_overlay(Some(&failing), viewport).expect("an overlay");
+        assert!(
+            overlay.contains("\u{1b}[31m"),
+            "a repair that failed is still a failure: {overlay:?}"
+        );
+    }
+
+    /// A 200 is not the same as a success. The restore route answers OK and
+    /// then names the agents that did not come back, and that sentence is the
+    /// only report of them there is -- so it cannot go in the channel the next
+    /// keypress clears.
+    #[test]
+    fn an_outcome_that_names_failures_outlives_the_next_keypress() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(restore_previous()),
+            failure: None,
+            notice: Some(DashboardActionNotice {
+                message: "Restored 2 of 36; 34 could not be restored: claude-7".into(),
+                failed: true,
+            }),
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        controller.handle_key(&snapshot, crate::dashboard_controller::DashboardKey::Down);
+
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("Restored 2 of 36; 34 could not be restored: claude-7")
+        );
+    }
+
+    /// And a clean one stays a note, so a restore that worked is not an alert
+    /// the user has to dismiss.
+    #[test]
+    fn an_outcome_with_nothing_wrong_stays_a_note() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(restore_previous()),
+            failure: None,
+            notice: Some(DashboardActionNotice {
+                message: "Restored 36 agents".into(),
+                failed: false,
+            }),
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(controller.footer_note_message(), Some("Restored 36 agents"));
+        assert_eq!(controller.footer_alert_message(), None);
+    }
+
+    /// The same shape in the other producer: a cleanup that could not remove
+    /// three of four items is reporting three failures.
+    #[test]
+    fn a_cleanup_that_failed_some_deletions_says_so_durably() {
+        let clean = serde_json::json!({
+            "plan": { "targets": [{}, {}] },
+            "reclaimedBytes": 1024.0,
+            "results": [{ "status": "removed" }, { "status": "removed" }],
+        });
+        let (_, failed) = worktree_cache_cleanup_summary(&clean);
+        assert!(!failed);
+
+        let partial = serde_json::json!({
+            "plan": { "targets": [{}, {}] },
+            "reclaimedBytes": 1024.0,
+            "results": [{ "status": "removed" }, { "status": "failed" }],
+        });
+        let (message, failed) = worktree_cache_cleanup_summary(&partial);
+        assert!(failed, "{message}");
+        assert!(message.contains("1 failed"), "{message}");
+    }
+
+    /// The report has to clear on the subscription being accepted, not on the
+    /// first event: a healthy stream on a quiet project delivers nothing for
+    /// minutes, and the bar would stand there saying it was down. Clearing on
+    /// the spawn instead made it blink off at every failed retry.
+    #[test]
+    fn an_accepted_subscription_is_what_takes_the_report_down() {
+        let mut down = Some("project service closed the stream".to_owned());
+        let mut event_stream = None;
+        let mut retry_at = None;
+        let endpoint = ProjectServiceEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: 1,
+        };
+
+        reconcile_dashboard_event_stream(
+            &mut event_stream,
+            &mut retry_at,
+            &mut down,
+            &mut DashboardStreamHealth::default(),
+            Some(&endpoint),
+            false,
+        );
+        assert_eq!(
+            down.as_deref(),
+            Some("project service closed the stream"),
+            "a connection attempt is not a reconnect"
+        );
+
+        // What `drain_dashboard_event_stream` does on `Opened`.
+        assert!(down.take().is_some());
+        assert_eq!(down, None);
+    }
+
+    /// A service that answers `/events` with a complete body accepts and closes
+    /// on every retry. Clearing on each accept flashed the report off and on
+    /// every couple of seconds; never clearing on an accept left a healthy but
+    /// idle project saying its stream was down, because it delivers nothing for
+    /// minutes.
+    #[test]
+    fn a_stream_that_opens_and_closes_without_delivering_keeps_saying_so() {
+        let mut health = DashboardStreamHealth::default();
+
+        // A healthy reconnect on an idle project: the accept is the proof,
+        // because the project delivers nothing for minutes.
+        assert!(health.accept_proves_recovery());
+
+        // The broken service: accepted, closed, nothing delivered.
+        health.observe_close();
+        assert!(
+            !health.accept_proves_recovery(),
+            "an accept from a stream that closed empty is not proof of anything"
+        );
+
+        // Still not, however many times it does the same thing.
+        health.observe_close();
+        assert!(!health.accept_proves_recovery());
+
+        // A delivered event is proof, and it is proof again afterwards.
+        health.observe_delivery();
+        assert!(health.accept_proves_recovery());
+        health.observe_close();
+        assert!(
+            health.accept_proves_recovery(),
+            "a stream that worked and then closed is a reconnect, not a broken endpoint"
+        );
+
+        // And the latch does not survive leaving: it is about one stream on one
+        // project, and carrying it to the next one makes it a claim about
+        // something it never saw.
+        health.observe_close();
+        assert!(!health.accept_proves_recovery());
+        let fresh = DashboardStreamHealth::default();
+        assert!(fresh.accept_proves_recovery());
+    }
+
+    /// A subscreen that silently stopped receiving events looked exactly like a
+    /// subscreen with nothing happening, because the stream error reached only
+    /// the dashboard's footer.
+    #[test]
+    fn a_dead_stream_is_said_on_a_subscreen_too() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.screen = DashboardScreen::Coordination;
+        let mut pending_actions = DashboardPendingActions::default();
+
+        let frame = render_dashboard_subscreen_snapshot(
+            DashboardViewport {
+                cols: 140,
+                rows: 36,
+            },
+            &mut controller,
+            None,
+            0,
+            &mut pending_actions,
+            0,
+            Some("project service closed the stream"),
+        );
+
+        assert!(
+            crate::tui_render::text::strip_ansi(&frame.frame)
+                .contains("project service closed the stream"),
+            "{}",
+            crate::tui_render::text::strip_ansi(&frame.frame)
+        );
+    }
+
+    /// A dead event stream retries every few seconds. Stored as a dismissible
+    /// alert it came straight back faster than the user could clear it, and it
+    /// outlived the reconnect that made it false -- so it is derived, and the
+    /// reconnect removes it.
+    #[test]
+    fn the_stream_being_down_is_said_once_and_unsaid_by_the_reconnect() {
+        let mut down: Option<String> = None;
+        let mut event_stream = None;
+        let mut retry_at = None;
+
+        assert!(
+            raise_stream_down(&mut down, "project service closed the stream"),
+            "the first report is news"
+        );
+        for _ in 0..3 {
+            assert!(
+                !raise_stream_down(&mut down, "project service closed the stream"),
+                "a retry that fails the same way is not news again"
+            );
+        }
+        assert!(
+            raise_stream_down(&mut down, "connection refused"),
+            "failing a different way is news"
+        );
+        down = Some("project service closed the stream".to_owned());
+        assert_eq!(down.as_deref(), Some("project service closed the stream"));
+
+        let endpoint = ProjectServiceEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: 1,
+        };
+        reconcile_dashboard_event_stream(
+            &mut event_stream,
+            &mut retry_at,
+            &mut down,
+            &mut DashboardStreamHealth::default(),
+            Some(&endpoint),
+            false,
+        );
+        assert_eq!(
+            down.as_deref(),
+            Some("project service closed the stream"),
+            "a retry that has not delivered anything is not a reconnect"
+        );
+
+        reconcile_dashboard_event_stream(
+            &mut event_stream,
+            &mut retry_at,
+            &mut down,
+            &mut DashboardStreamHealth::default(),
+            None,
+            true,
+        );
+        assert_eq!(down, None, "there is no stream to be down");
+    }
+
+    /// A progress note outlives keypresses, so the settling outcome is the only
+    /// thing that can take it down. A 200 whose body is not a restore outcome
+    /// produces no notice, and clearing only when there was one left the
+    /// footer claiming work that had finished.
+    #[test]
+    fn a_settled_request_takes_its_progress_note_down_even_with_nothing_to_say() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(restore_previous()),
+            failure: None,
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(controller.footer_progress_message(), None);
+    }
+
+    /// And the other direction, which is the whole reason the note carries the
+    /// action: a faster unrelated request settling first used to end the
+    /// restore's report while the restore was still running.
+    #[test]
+    fn another_action_settling_first_does_not_end_this_one_s_report() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(stop_agent("claude-a")),
+            failure: None,
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Restoring 36 agents")
+        );
+    }
+
+    /// And a failed one, where the alert is what the user should be reading.
+    #[test]
+    fn a_failed_request_takes_its_progress_note_down_too() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(restore_previous()),
+            failure: Some("project service refused".into()),
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(controller.footer_progress_message(), None);
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("project service refused")
         );
     }
 
@@ -3561,6 +4196,7 @@ mod tests {
             0,
             &mut pending_actions,
             0,
+            None,
         );
 
         let plain = crate::tui_render::text::strip_ansi(&frame.frame);
@@ -3586,10 +4222,14 @@ mod tests {
             &body,
         )
         .expect("a restore reports its outcome");
-        assert!(notice.contains("claude-b"), "{notice}");
-        assert_eq!(
-            dashboard_action_notice(crate::project_api_contract::routes::agents::KILL, &body),
-            None,
+        assert!(notice.message.contains("claude-b"), "{}", notice.message);
+        assert!(
+            notice.failed,
+            "a 200 that names what did not come back is a failure report"
+        );
+        assert!(
+            dashboard_action_notice(crate::project_api_contract::routes::agents::KILL, &body)
+                .is_none(),
             "only routes whose success is otherwise invisible speak up"
         );
     }
@@ -3993,6 +4633,7 @@ mod tests {
             scroll_offset: 0,
             runtime_guard: None,
             refresh_error: None,
+            stream_error: None,
             pending_now_ms: 0,
         };
         let mut pending_actions = DashboardPendingActions::new();

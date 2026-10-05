@@ -32,13 +32,6 @@ fn build_dashboard_footer_hints<'a>(
     input: &'a DashboardRenderInput<'_>,
     preview_source: &'a str,
 ) -> Vec<FooterHint<'a>> {
-    if let Some(message) = input.footer_message {
-        return vec![FooterHint {
-            key: "!",
-            label: message,
-            danger: true,
-        }];
-    }
     let selected_session = selected_session(input);
     let selected_service = selected_service(input);
     let enter_label = dashboard_enter_verb(selected_session, selected_service);

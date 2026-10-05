@@ -6,14 +6,15 @@ use aimux::dashboard_model::{
 };
 use aimux::dashboard_pending_actions::DashboardPendingActions;
 use aimux::dashboard_renderer::{
-    DashboardFooterAlert, DashboardNavLevel, DashboardRenderInput, DashboardSubscreenRenderInput,
-    render_dashboard_frame, render_dashboard_subscreen_frame,
+    DashboardFooterAlert, DashboardFooterNoteView, DashboardNavLevel, DashboardNoteKind,
+    DashboardRenderInput, DashboardSubscreenRenderInput, render_dashboard_frame,
+    render_dashboard_subscreen_frame,
 };
 use aimux::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
 };
 use aimux::tui_render::text::strip_ansi;
-use aimux::tui_render::theme::visible_width;
+use aimux::tui_render::theme::{PROGRESS_MARK, visible_width};
 use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
@@ -60,7 +61,8 @@ fn renders_empty_dashboard_with_create_hint() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -96,7 +98,8 @@ fn matches_node_dashboard_full_frame_for_populated_agent_selection() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -174,7 +177,8 @@ fn matches_node_dashboard_full_frame_with_project_controls_and_scribe_preview() 
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "scribe",
@@ -245,7 +249,8 @@ fn matches_node_coordination_subscreen_full_frame() {
         cols: 140,
         rows: 36,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
@@ -304,7 +309,8 @@ fn matches_node_topology_subscreen_full_frame() {
         cols: 140,
         rows: 36,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
@@ -443,7 +449,8 @@ fn matches_node_graveyard_subscreen_full_frame() {
         cols: 140,
         rows: 36,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
@@ -526,7 +533,8 @@ fn graveyard_subscreen_renders_pending_action_overlays_from_pending_model() {
         cols: 140,
         rows: 30,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         runtime_label: Some("tmux"),
@@ -535,9 +543,9 @@ fn graveyard_subscreen_renders_pending_action_overlays_from_pending_model() {
     let plain = strip_ansi(&result.frame);
 
     assert!(plain.contains("feature-a"));
-    assert!(plain.contains("(deleting...)"));
+    assert!(plain.contains(&format!("{PROGRESS_MARK} deleting")));
     assert!(plain.contains("codex:codex-orphan"));
-    assert!(plain.contains("(resurrecting...)"));
+    assert!(plain.contains(&format!("{PROGRESS_MARK} restoring")));
 }
 
 #[test]
@@ -591,7 +599,8 @@ fn matches_node_project_subscreen_full_frame() {
         cols: 140,
         rows: 36,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
@@ -633,7 +642,11 @@ fn matches_node_library_subscreen_full_frame() {
         cols: 140,
         rows: 36,
         scroll_offset: 0,
-        footer_message: Some("Path: /repo/.aimux/plans/codex-1.md"),
+        footer_progress: None,
+        footer_note: Some(DashboardFooterNoteView {
+            message: "Path: /repo/.aimux/plans/codex-1.md",
+            kind: DashboardNoteKind::Note,
+        }),
         footer_alerts: &[],
         details_sidebar_visible: true,
         runtime_label: Some("tmux"),
@@ -702,7 +715,8 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
         hide_offline_agents: true,
         hidden_offline_agent_count: 7,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -766,7 +780,8 @@ fn populated_dashboard_frame_fits_common_viewports() {
                 hide_offline_agents: true,
                 hidden_offline_agent_count: 7,
                 scroll_offset: 0,
-                footer_message: None,
+                footer_progress: None,
+                footer_note: None,
                 footer_alerts,
                 details_sidebar_visible: true,
                 preview_source: "output",
@@ -837,7 +852,8 @@ fn orphan_worktrees_keep_node_first_seen_order() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -901,7 +917,8 @@ fn a_session_naming_the_main_path_stays_in_the_main_checkout_card() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -962,7 +979,8 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1017,7 +1035,8 @@ fn row_dot_ignores_legacy_direct_attention_without_semantic_state() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1050,7 +1069,8 @@ fn renders_state_aware_footer_hints_for_session_actions() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1101,7 +1121,8 @@ fn flat_session_footer_keeps_team_hint_for_selected_parent() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1164,7 +1185,8 @@ fn renders_selected_session_details_sidebar_when_visible() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -1274,7 +1296,8 @@ fn renders_selected_teammates_in_tmux_window_order() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -1344,7 +1367,8 @@ fn renders_typed_scribe_preview_rows_for_selected_session() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "scribe",
@@ -1402,7 +1426,8 @@ fn explicit_scribe_sessions_drive_scribe_preview_like_node_view_model() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "scribe",
@@ -1452,7 +1477,8 @@ fn teammate_scribe_does_not_enable_project_scribe_preview() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "scribe",
@@ -1488,7 +1514,8 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -1510,7 +1537,8 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1575,7 +1603,8 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -1631,7 +1660,8 @@ fn selected_project_control_session_keeps_worktree_details_like_node() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -1688,7 +1718,8 @@ fn flat_session_rows_exclude_project_control_sessions_like_node() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1743,7 +1774,8 @@ fn supervisor_section_renders_project_control_sessions() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1789,7 +1821,8 @@ fn focused_supervisor_section_renders_cursor() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1845,7 +1878,8 @@ fn supervisor_section_does_not_change_main_session_membership() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1891,7 +1925,8 @@ fn flat_footer_uses_no_session_hints_when_only_project_control_sessions_exist() 
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -1940,7 +1975,8 @@ fn worktree_details_show_active_removal_status_and_progress() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -1984,7 +2020,8 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -2036,7 +2073,8 @@ fn renders_service_and_failure_footer_hints() {
         hide_offline_agents: true,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -2085,7 +2123,8 @@ fn renders_global_loop_alert_pause_chrome() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -2133,7 +2172,8 @@ fn unpaused_loop_alert_state_does_not_render_pause_chrome() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         preview_source: "output",
@@ -2155,7 +2195,8 @@ fn help_screen_names_global_loop_alert_pause_shortcut_path() {
         cols: 140,
         rows: 24,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         runtime_label: None,
@@ -2210,7 +2251,8 @@ fn renders_typed_operation_failures_in_banner_and_worktree_details() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -2259,7 +2301,8 @@ fn renders_control_plane_daemon_process_warning_banner() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: true,
         preview_source: "output",
@@ -2329,7 +2372,8 @@ fn a_topology_agent_row_says_which_agent_and_what_it_is_doing() {
         cols: 160,
         rows: 24,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[],
         details_sidebar_visible: false,
         runtime_label: Some("tmux"),
@@ -2389,7 +2433,8 @@ fn a_failure_renders_as_an_alert_without_hiding_the_hints() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[DashboardFooterAlert {
             message: "Cannot graveyard \"fix-chat\" while agent \"claude\" is attached",
             dismissible: true,
@@ -2455,7 +2500,8 @@ fn only_a_dismissible_alert_advertises_the_key_that_dismisses_it() {
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &alerts,
         details_sidebar_visible: false,
         preview_source: "output",
@@ -2500,7 +2546,8 @@ fn a_subscreen_renders_the_alert_and_how_to_dismiss_it() {
         cols: 140,
         rows: 36,
         scroll_offset: 0,
-        footer_message: None,
+        footer_progress: None,
+        footer_note: None,
         footer_alerts: &[DashboardFooterAlert {
             message: "Could not resurrect \"fix-chat\": the checkout is missing",
             dismissible: true,
@@ -2525,4 +2572,171 @@ fn a_subscreen_renders_the_alert_and_how_to_dismiss_it() {
     );
     // The screen's own footer survives alongside it.
     assert!(plain.contains("q quit"), "{plain}");
+}
+
+/// What Sam saw: `! Restored 9 agents`, in the red the dashboard uses for a
+/// failed operation, for an action that had just succeeded.
+mod how_a_transient_footer_line_renders {
+    use super::*;
+
+    fn frame_with_note(note: DashboardFooterNoteView<'_>) -> String {
+        let fixture: DesktopStateGoldenFixture =
+            serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+        render_dashboard_frame(&DashboardRenderInput {
+            snapshot: &fixture.runtime_light,
+            overseer_sessions: &[],
+            scribe_sessions: &[],
+            cols: 120,
+            rows: 50,
+            nav_level: DashboardNavLevel::Sessions,
+            selected_session_id: None,
+            selected_service_id: None,
+            focused_worktree_path: None,
+            focused_group_index: None,
+            runtime_label: Some("tmux"),
+            version: Some("local"),
+            hide_offline_agents: false,
+            hidden_offline_agent_count: 0,
+            scroll_offset: 0,
+            footer_progress: None,
+            footer_note: Some(note),
+            footer_alerts: &[],
+            details_sidebar_visible: false,
+            preview_source: "output",
+            scribe_preview_entries: &[],
+        })
+        .frame
+    }
+
+    fn note_line_of(frame: &str) -> String {
+        strip_ansi(frame)
+            .lines()
+            .find(|line| line.contains("Restored 9 agents") || line.contains("Restoring 36 agents"))
+            .unwrap_or_else(|| panic!("the note is not in the frame"))
+            .to_owned()
+    }
+
+    #[test]
+    fn a_finished_action_is_not_marked_as_a_failure() {
+        let frame = frame_with_note(DashboardFooterNoteView {
+            message: "Restored 9 agents",
+            kind: DashboardNoteKind::Note,
+        });
+        let line = note_line_of(&frame);
+
+        assert!(!line.contains('!'), "{line:?}");
+        assert!(
+            !frame.contains("\u{1b}[1;38;5;203m!"),
+            "the danger keycap belongs to a failure"
+        );
+    }
+
+    #[test]
+    fn work_under_way_is_marked_as_work_under_way() {
+        let frame = frame_with_note(DashboardFooterNoteView {
+            message: "Restoring 36 agents",
+            kind: DashboardNoteKind::Progress,
+        });
+        let line = note_line_of(&frame);
+
+        assert!(line.contains(PROGRESS_MARK), "{line:?}");
+        assert!(!line.contains('!'), "{line:?}");
+    }
+
+    /// A progress note outlives keypresses now, so taking the hint row away for
+    /// its duration would leave the user with no keys for the whole operation.
+    #[test]
+    fn the_note_does_not_take_the_keybindings_with_it() {
+        let frame = frame_with_note(DashboardFooterNoteView {
+            message: "Restoring 36 agents",
+            kind: DashboardNoteKind::Progress,
+        });
+        let plain = strip_ansi(&frame);
+
+        assert!(plain.contains("Restoring 36 agents"), "{plain}");
+        assert!(plain.contains("q quit"), "the hint row is gone: {plain}");
+        assert!(plain.contains("? help"), "the hint row is gone: {plain}");
+    }
+}
+
+/// Three tones, three meanings, and the dashboard used one of them for two of
+/// the meanings: every transient state wore `Tone::Attention`, the bold yellow
+/// that elsewhere means a human must act.
+mod what_a_row_in_progress_looks_like {
+    use super::*;
+
+    const ATTENTION: &str = "\u{1b}[1;33m";
+    const DANGER: &str = "\u{1b}[31m";
+    const WORK: &str = "\u{1b}[36m";
+
+    fn frame_with_pending(action: &str) -> String {
+        let fixture: DesktopStateGoldenFixture =
+            serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+        let mut snapshot = fixture.runtime_light.clone();
+        // The rendered rows come from the worktree groups, not `sessions`.
+        let group = snapshot.worktree_groups.first_mut().expect("a group");
+        let session = group.sessions.first_mut().expect("a session");
+        session.pending = true;
+        session.pending_action = Some(action.to_owned());
+        render_dashboard_frame(&DashboardRenderInput {
+            snapshot: &snapshot,
+            overseer_sessions: &[],
+            scribe_sessions: &[],
+            cols: 140,
+            rows: 50,
+            nav_level: DashboardNavLevel::Sessions,
+            selected_session_id: None,
+            selected_service_id: None,
+            focused_worktree_path: None,
+            focused_group_index: None,
+            runtime_label: Some("tmux"),
+            version: Some("local"),
+            hide_offline_agents: false,
+            hidden_offline_agent_count: 0,
+            scroll_offset: 0,
+            footer_progress: None,
+            footer_note: None,
+            footer_alerts: &[],
+            details_sidebar_visible: false,
+            preview_source: "output",
+            scribe_preview_entries: &[],
+        })
+        .frame
+    }
+
+    #[test]
+    fn a_row_being_worked_on_is_not_counted_as_one_waiting_on_you() {
+        for (action, counted) in [
+            ("creating", "creating"),
+            ("starting", "starting"),
+            ("stopping", "stopping"),
+            ("graveyarding", "removing"),
+        ] {
+            let frame = frame_with_pending(action);
+            assert!(
+                frame.contains(&format!("{WORK}1 {counted}")),
+                "{action} should be counted in the working tone"
+            );
+            assert!(
+                !frame.contains(&format!("{ATTENTION}1 {counted}")),
+                "{action} must not wear the tone that means a human must act"
+            );
+            assert!(
+                !frame.contains(&format!("{DANGER}1 {counted}")),
+                "{action} must not wear the tone that means it failed"
+            );
+        }
+    }
+
+    /// And the dot beside the row, which was the same bold yellow as an agent
+    /// asking for input.
+    #[test]
+    fn the_dot_beside_a_row_in_progress_is_the_progress_mark() {
+        let frame = frame_with_pending("creating");
+        assert!(
+            frame.contains(&format!("{WORK}{PROGRESS_MARK}")),
+            "{frame:?}"
+        );
+        assert!(!frame.contains(&format!("{ATTENTION}●")), "{frame:?}");
+    }
 }

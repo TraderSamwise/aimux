@@ -143,6 +143,7 @@ pub mod tool_hooks;
 pub mod tool_output_watchers;
 pub mod transcript_reconciler;
 pub mod transcript_turn_state;
+pub mod transient_state;
 pub mod translation_plan;
 pub mod tui_render;
 pub mod tui_screen_renderers;

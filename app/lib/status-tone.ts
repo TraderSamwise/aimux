@@ -159,10 +159,15 @@ export function normalizeAppStatusKind(value: string | null | undefined): AppSta
     case "waiting_on_peers":
       return "idle";
     case "exited":
-    case "graveyarding":
       return "offline";
-    case "interrupted":
+    // `graveyarding` and `stopping` are actions under way, not the states they
+    // leave behind. Mapping them to offline and idle here contradicted
+    // `TRANSIENT_ACTIONS` a few lines down and the TUI's answer for the same
+    // words.
+    case "graveyarding":
     case "stopping":
+      return "working";
+    case "interrupted":
       return "idle";
     default:
       return null;
@@ -191,13 +196,73 @@ export function appStatusColors(value: string | null | undefined): AppStatusColo
   };
 }
 
+// Every lifecycle action that is under way and finishes on its own. The TUI
+// paints all of these with its working tone; `needs` is reserved for a state
+// that is waiting on the person, which none of these are.
+export const TRANSIENT_ACTIONS = [
+  "creating",
+  "forking",
+  "migrating",
+  "switching",
+  "starting",
+  "stopping",
+  "graveyarding",
+  "resurrecting",
+  "renaming",
+  "moving",
+  "interrupting",
+  "removing",
+  "deleting",
+  "pending",
+] as const;
+
+// What an in-flight lifecycle action looks like: work, not an ask. One answer
+// for every action in the vocabulary, which is why it takes none -- the
+// per-action facts are the word (`pendingActionLabel`) and what the two callers
+// below do with a whole session.
+export function pendingActionStatusKind(): AppStatusKind {
+  return "working";
+}
+
+// The word every surface uses for an action in flight. Capitalising the raw
+// action gave "Graveyarding" here while the TUI row said "Removing" and its
+// card said "graveyarding" -- three answers to one question.
+const TRANSIENT_LABELS: Record<string, string> = {
+  creating: "Creating",
+  forking: "Forking",
+  migrating: "Migrating",
+  switching: "Switching",
+  starting: "Starting",
+  stopping: "Stopping",
+  graveyarding: "Removing",
+  resurrecting: "Restoring",
+  renaming: "Renaming",
+  moving: "Moving",
+  interrupting: "Interrupting",
+  removing: "Removing",
+  deleting: "Deleting",
+  pending: "Pending",
+};
+
+export function pendingActionLabel(action: string): string {
+  const known = TRANSIENT_LABELS[action];
+  if (known) return known;
+  // An action this build has not heard of is still shown, since the vocabulary
+  // is published by the project service and this is a client.
+  return action ? action.charAt(0).toUpperCase() + action.slice(1) : action;
+}
+
 export function agentStatusKind(session: {
   activity?: string | null;
   attention?: string | null;
   pendingAction?: string | null;
   status?: string | null;
 }): AppStatusKind {
-  if (session.pendingAction) return "needs";
+  // Not `needs`. An agent the daemon is starting is not an agent asking the
+  // user for anything, and painting the two alike is what this fixes.
+  // Trimmed, so a blank action does not short-circuit the attention a running
+  // agent is asking for.
+  if (session.pendingAction?.trim()) return pendingActionStatusKind();
   if (session.status === "offline" || session.status === "exited") return "offline";
   const attentionKind = normalizeAppStatusKind(session.attention);
   if (attentionKind) return attentionKind;
@@ -210,7 +275,7 @@ export function serviceStatusKind(service: {
   pendingAction?: string | null;
   status?: string | null;
 }): AppStatusKind {
-  if (service.pendingAction) return "needs";
+  if (service.pendingAction?.trim()) return pendingActionStatusKind();
   return service.status === "running" ? "service" : "serviceOff";
 }
 

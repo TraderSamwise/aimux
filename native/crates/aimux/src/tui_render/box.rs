@@ -1,10 +1,15 @@
-use super::theme::{BandTone, Tone, modal_band, pad_visible, style, visible_width};
+use super::theme::{
+    BandTone, PROGRESS_MARK, PROGRESS_TONE, Tone, modal_band, pad_visible, style, visible_width,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum OverlayVariant {
     #[default]
     Blue,
     Red,
+    /// Work under way that finishes on its own. Nothing is wrong and the user
+    /// is not being asked for anything.
+    Progress,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -21,6 +26,7 @@ pub fn render_overlay_box(spec: &OverlayBoxSpec<'_>) -> String {
     let (tone, band_tone, default_icon) = match spec.variant {
         OverlayVariant::Blue => (Tone::Info, BandTone::Info, None),
         OverlayVariant::Red => (Tone::Danger, BandTone::Danger, Some("⚠")),
+        OverlayVariant::Progress => (PROGRESS_TONE, BandTone::Progress, Some(PROGRESS_MARK)),
     };
     let band_icon = spec.icon.or(default_icon);
     let border = |segment: &str| style(segment, tone);

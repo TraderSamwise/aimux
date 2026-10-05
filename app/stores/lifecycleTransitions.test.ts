@@ -80,9 +80,12 @@ describe("project lifecycle transition projection", () => {
       },
     ]);
 
+    // Not "waiting": that status means an agent waiting on a person, and the
+    // topology, the For You feed and the loops screen all read it as attention.
+    // `pendingAction` is what says the row is mid-flight.
     expect(projected?.sessions[0]).toMatchObject({
       id: "agent-1",
-      status: "waiting",
+      status: "running",
       pendingAction: "starting",
       optimistic: true,
     });
@@ -106,7 +109,7 @@ describe("project lifecycle transition projection", () => {
         command: "codex",
         toolConfigKey: "codex",
         worktreePath: "/repo/.aimux/worktrees/feature",
-        status: "waiting",
+        status: "running",
         pendingAction: "starting",
         optimistic: true,
       },
@@ -132,7 +135,7 @@ describe("project lifecycle transition projection", () => {
 
     expect(store.get(desktopStateFamily(stateKey))?.sessions[0]).toMatchObject({
       id: "agent-1",
-      status: "waiting",
+      status: "running",
       pendingAction: "starting",
     });
 
@@ -368,7 +371,9 @@ describe("project lifecycle transition projection", () => {
         label: "server",
         worktreePath: "/repo/worktree",
         status: "running",
-        pendingAction: "starting",
+        // The word the project service uses for this operation, so the
+        // optimistic row and the settled one read the same.
+        pendingAction: "creating",
         optimistic: true,
       },
     ]);

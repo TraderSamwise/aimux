@@ -1988,16 +1988,27 @@ fn render_grid_expose(
     let mut rendered = "\x1b[?2026h\x1b[2J".to_owned();
     rendered.push_str(&format!("\x1b[{TITLE_ROW};{}H{title}", CONTENT_LEFT + 1));
     if visible_count == 0 {
+        // Centred on the visible width, and the styled form is built from the
+        // same text: a loading line carries the progress mark and its colour,
+        // and counting those bytes would push it off centre.
         let message = if loading {
-            "Loading sessions...".to_owned()
+            "Loading sessions".to_owned()
         } else {
             format!("No active agents in {}.", view.scope_label)
         };
-        let message_col = CONTENT_LEFT + ((cols - message.chars().count() as i64) / 2).max(0);
+        let styled = if loading {
+            crate::tui_render::theme::progress_label(&message)
+        } else {
+            format!("\x1b[2m{message}{RESET}")
+        };
+        let visible = if loading {
+            message.chars().count() + 2
+        } else {
+            message.chars().count()
+        };
+        let message_col = CONTENT_LEFT + ((cols - visible as i64) / 2).max(0);
         let message_row = (rows / 2).max(1);
-        rendered.push_str(&format!(
-            "\x1b[{message_row};{message_col}H\x1b[2m{message}{RESET}"
-        ));
+        rendered.push_str(&format!("\x1b[{message_row};{message_col}H{styled}"));
     } else {
         let tones = assign_value_worktree_tones(items, &options.project_root);
         for tile_index in 0..visible_count {

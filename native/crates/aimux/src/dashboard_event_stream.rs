@@ -17,6 +17,10 @@ const EVENT_CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DashboardEventStreamMessage {
+    /// The service accepted the subscription. Sent before any event, because a
+    /// healthy stream on an idle project delivers nothing for minutes and the
+    /// dashboard needs to know it is connected rather than still down.
+    Opened,
     Event(DashboardProjectEvent),
     Error(String),
     Ended,
@@ -131,6 +135,14 @@ async fn stream_project_events(
             "project event stream failed: {}",
             opened.status
         )));
+    }
+
+    if sender
+        .send(DashboardEventStreamMessage::Opened)
+        .await
+        .is_err()
+    {
+        return Ok(());
     }
 
     let mut body = opened.body;

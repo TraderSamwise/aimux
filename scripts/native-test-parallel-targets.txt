@@ -135,6 +135,7 @@ terminal_key_parser_contract
 tmux_expose
 transcript_reconciler_behavior
 transcript_reconciler_task
+transient_state_surfaces
 tui_render
 watcher_tick_loop_budget
 websocket_client

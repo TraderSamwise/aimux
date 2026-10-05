@@ -45,6 +45,22 @@ function resolveTopologyMode(value: string | null): TopologyViewMode {
   return value === "tree" || value === "table" ? value : "map";
 }
 
+// The status kind a health maps to, so a row is toned by the health -- which
+// knows about pending actions -- rather than by the raw runtime status, which
+// does not: a stopping agent is still `waiting`, and that painted it amber.
+function topologyHealthStatus(health: TopologyHealth): string {
+  switch (health) {
+    case "active":
+      return "working";
+    case "attention":
+      return "needs";
+    case "idle":
+      return "idle";
+    case "offline":
+      return "offline";
+  }
+}
+
 function healthColor(health: TopologyHealth): string {
   switch (health) {
     case "active":
@@ -116,7 +132,10 @@ function RowCard({
       )}
     >
       <View className="mr-3">
-        <StatusDot status={row.status ?? row.health} size="sm" />
+        {/* Toned by `health`, which already knows about `pendingAction`;
+            `status` is the raw runtime word and does not. A stopping agent is
+            still `waiting`, so this painted it amber. */}
+        <StatusDot status={topologyHealthStatus(row.health)} size="sm" />
       </View>
       <View className="min-w-0 flex-1">
         <View className="flex-row items-center">
@@ -135,7 +154,7 @@ function RowCard({
       </View>
       {row.status ? (
         <View className="ml-2">
-          <StatusPill status={row.status} />
+          <StatusPill status={topologyHealthStatus(row.health)} label={row.status} />
         </View>
       ) : null}
     </Pressable>

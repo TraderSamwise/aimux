@@ -125,17 +125,20 @@ describe("For You feed classifier", () => {
     const desktopState: DesktopState = {
       ok: true,
       sessions: [
+        // `pendingAction` carries a lifecycle verb the project service publishes,
+        // not prose: `session_semantics.rs` matches it against exactly this
+        // vocabulary.
         {
           id: "agent-1",
-          status: "waiting",
-          pendingAction: "Needs approval",
+          status: "running",
+          pendingAction: "stopping",
         },
       ],
       services: [
         {
           id: "web",
           status: "running",
-          pendingAction: "Restart required",
+          pendingAction: "removing",
         },
       ],
       worktrees: [],
@@ -154,7 +157,11 @@ describe("For You feed classifier", () => {
       desktopState,
     });
 
-    expect(feed.counts["action-required"]).toBe(3);
+    // The security event alone. An agent being stopped and a service being
+    // removed are both work in flight, and putting them here meant every
+    // lifecycle action added an item to the list of things wanting the user.
+    expect(feed.counts["action-required"]).toBe(1);
+    expect(feed.counts.progress).toBe(2);
     expect(feed.counts.shipped).toBe(1);
     expect(feed.cards.map((card) => card.id)).toEqual(
       expect.arrayContaining([

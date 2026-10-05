@@ -369,6 +369,18 @@ pub fn should_render_after_project_event_refresh(
     true
 }
 
+/// Whether a flashed alert is reporting something that went wrong.
+///
+/// `✗ {title}` is a failed task, and on the note channel it rendered in the
+/// same muted grey as `✓ {title}` and was gone on the next keypress.
+pub fn dashboard_alert_flash_failed(event: &Map<String, Value>) -> bool {
+    // `task_failed` only. `blocked` is its own family everywhere else in this
+    // renderer -- its own tone, its own count, its own rank -- so putting its
+    // flash in the failure channel would make it a fourth answer to a question
+    // the rest of the code already answers three ways.
+    event.get("kind").and_then(Value::as_str) == Some("task_failed")
+}
+
 pub fn dashboard_alert_footer_flash(mode: &str, event: &Map<String, Value>) -> Option<String> {
     if mode != "dashboard" {
         return None;

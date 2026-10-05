@@ -20,7 +20,10 @@ pub struct DashboardActionRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardActionPlan {
     Request(DashboardActionRequest),
+    /// Refused, and it will stay refused until something changes.
     Blocked(String),
+    /// Refused only because work is already in flight on this target.
+    Busy(String),
     Ignored,
 }
 
@@ -126,8 +129,11 @@ fn pending_block(
     pending_action: Option<&str>,
 ) -> Option<DashboardActionPlan> {
     pending.then(|| {
-        let action = pending_action.unwrap_or("pending");
-        DashboardActionPlan::Blocked(format!("{label} {id} is {action}"))
+        // The same word the row and the card use, rather than the raw action.
+        let action =
+            crate::transient_state::transient_state_label(pending_action.unwrap_or("pending"))
+                .to_lowercase();
+        DashboardActionPlan::Busy(format!("{label} {id} is {action}"))
     })
 }
 

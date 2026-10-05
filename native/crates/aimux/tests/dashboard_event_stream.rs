@@ -42,17 +42,21 @@ fn decodes_chunked_project_event_stream() {
     });
 
     let handle = spawn_dashboard_project_event_stream(endpoint);
-    let messages = collect_messages(&handle, 3);
+    let messages = collect_messages(&handle, 4);
     drop(handle);
     server.join().expect("server");
 
+    // The subscription is announced before anything it carries: an idle project
+    // delivers no events for minutes, and the dashboard has to be able to tell
+    // "connected and quiet" from "still down".
+    assert_eq!(messages.first(), Some(&DashboardEventStreamMessage::Opened));
     assert!(matches!(
-        messages.first(),
+        messages.get(1),
         Some(DashboardEventStreamMessage::Event(DashboardProjectEvent::Ready(payload)))
             if payload.get("ok").and_then(|value| value.as_bool()) == Some(true)
     ));
     assert!(matches!(
-        messages.get(1),
+        messages.get(2),
         Some(DashboardEventStreamMessage::Event(DashboardProjectEvent::ProjectUpdate(payload)))
             if payload
                 .get("views")
@@ -108,22 +112,23 @@ fn bounded_channel_preserves_fast_stream_events_for_slow_dashboard() {
 
     let handle = spawn_dashboard_project_event_stream_with_capacity(endpoint, 1);
     thread::sleep(Duration::from_millis(50));
-    let messages = collect_messages(&handle, 4);
+    let messages = collect_messages(&handle, 5);
     drop(handle);
     server.join().expect("server");
 
+    assert_eq!(messages.first(), Some(&DashboardEventStreamMessage::Opened));
     assert!(matches!(
-        messages.first(),
+        messages.get(1),
         Some(DashboardEventStreamMessage::Event(DashboardProjectEvent::Ready(payload)))
             if payload.get("sequence").and_then(|value| value.as_i64()) == Some(1)
     ));
     assert!(matches!(
-        messages.get(1),
+        messages.get(2),
         Some(DashboardEventStreamMessage::Event(DashboardProjectEvent::ProjectUpdate(payload)))
             if payload.get("sequence").and_then(|value| value.as_i64()) == Some(2)
     ));
     assert!(matches!(
-        messages.get(2),
+        messages.get(3),
         Some(DashboardEventStreamMessage::Event(DashboardProjectEvent::Alert(payload)))
             if payload.get("sequence").and_then(|value| value.as_i64()) == Some(3)
     ));
@@ -166,15 +171,16 @@ fn reports_stream_framing_errors_instead_of_ending_silently() {
     });
 
     let handle = spawn_dashboard_project_event_stream(endpoint);
-    let messages = collect_messages(&handle, 1);
+    let messages = collect_messages(&handle, 2);
     drop(handle);
     server.join().expect("server");
 
     assert_eq!(
         messages,
-        vec![DashboardEventStreamMessage::Error(
-            "invalid event stream chunk size: not-hex".into()
-        )]
+        vec![
+            DashboardEventStreamMessage::Opened,
+            DashboardEventStreamMessage::Error("invalid event stream chunk size: not-hex".into())
+        ]
     );
 }
 

@@ -328,12 +328,16 @@ pub fn render_footer_hints(hints: &[FooterHint<'_>], width: usize) -> Vec<String
 pub enum BandTone {
     Info,
     Danger,
+    /// Work under way. Teal, so it is neither the blue of a question nor the
+    /// red of a failure.
+    Progress,
 }
 
 pub fn modal_band(label: &str, tone: BandTone, width: usize) -> String {
     let sgr = match tone {
         BandTone::Info => "\x1b[1;48;5;24;38;5;195m",
         BandTone::Danger => "\x1b[1;48;5;52;38;5;224m",
+        BandTone::Progress => "\x1b[1;48;5;23;38;5;195m",
     };
     format!("{sgr}{}{RESET}", pad_visible(&format!(" {label}"), width))
 }
@@ -379,6 +383,46 @@ pub fn status_dot(kind: StatusKind) -> String {
         StatusKind::ServiceOff => "◇",
     };
     style(glyph, status_tone(kind))
+}
+
+/// The tone for "the system is doing this now".
+///
+/// Transient states wore `Tone::Attention`, the same bold yellow as "needs
+/// input", so a row the dashboard was busy with looked like a row waiting on
+/// the user. Cyan is already what `StatusKind::Working` means.
+pub const PROGRESS_TONE: Tone = Tone::Work;
+
+/// One mark for work in flight, wherever it is said.
+pub const PROGRESS_MARK: &str = "\u{27f3}";
+
+/// A footer line for something under way: the mark carries the state, the
+/// message stays in the ordinary reading tone so it is read rather than
+/// skimmed past as chrome.
+pub fn progress_line(message: &str) -> String {
+    format!(
+        "{} {}",
+        style(PROGRESS_MARK, PROGRESS_TONE),
+        style(message, Tone::Text)
+    )
+}
+
+/// The same thing said inline, inside a row or a count.
+pub fn progress_label(label: &str) -> String {
+    format!(
+        "{} {}",
+        style(PROGRESS_MARK, PROGRESS_TONE),
+        style(label, PROGRESS_TONE)
+    )
+}
+
+/// A footer line for a neutral note: something happened, nothing is wrong and
+/// nothing is asked of you.
+pub fn note_line(message: &str) -> String {
+    format!(
+        "{} {}",
+        style("\u{203a}", Tone::Muted),
+        style(message, Tone::Muted)
+    )
 }
 
 fn tmux_color(tone: Tone) -> Option<&'static str> {
