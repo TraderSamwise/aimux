@@ -1,11 +1,33 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+use crate::async_runtime::block_on_named;
+use crate::debug_logging::{LogLevel, log_at};
 use crate::project_api_contract::routes;
 
 const DEFAULT_QUEUE_LIMIT: usize = 32;
+
+/// How long a mutation will wait for its turn before calling the one ahead of
+/// it stuck.
+///
+/// The CLI gives a project mutation 120s (`CLI_PROJECT_MUTATION_TIMEOUT_MS`),
+/// so past that no caller is still listening for an answer. Waiting silently
+/// forever is the alternative, and that is how the queue died: one mutation
+/// that never finished and every later one hung with nothing said.
+///
+/// This bounds the WAIT, never the work. A holder that legitimately runs
+/// longer than this keeps running and still finishes; only a caller queued
+/// behind it is told so. That is what makes the number safe to pick without
+/// knowing every operation's worst case.
+///
+/// It does not prove anything is broken. The semaphore is FIFO, so a deep
+/// enough queue of legitimate mutations reaches this bound too -- which is why
+/// the refusal reports what it waited behind and how deep the queue was,
+/// rather than declaring the holder dead.
+const WAIT_FOR_TURN_TIMEOUT: Duration = Duration::from_millis(150_000);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LifecycleTransitionInput {
@@ -39,29 +61,28 @@ impl LifecycleTransitionInput {
         self
     }
 
-    /// What this mutation holds for its duration.
+    /// What this mutation holds for its duration, or `None` when it holds
+    /// nothing nameable.
     ///
-    /// A spawn, a teammate create and a restore say what they will make, not
-    /// what already exists, so there is nothing for them to contend over, and
-    /// they share one fabricated `<kind>:<operation>:__project__` key. The cost
-    /// is real — pick claude, then pick codex, and codex is refused with a 409
-    /// rather than queued behind it.
+    /// A spawn, a service create, a teammate create, a restore and a graveyard
+    /// sweep say what they will make, not what already exists. There is nothing
+    /// for them to contend over, and they used to share one fabricated
+    /// `<kind>:<operation>:__project__` key — so picking claude and then codex
+    /// refused codex with "lifecycle mutation already in progress for agent
+    /// unknown", naming a target that was never involved.
     ///
-    /// It stays anyway, and the reason is narrow: `begin` waits on a `Condvar`,
-    /// and the async lifecycle routes await inside a connection task on a
-    /// two-worker runtime. Returning `None` here lets a second and third spawn
-    /// reach that wait, park both workers, and leave the first one's future
-    /// unpollable — the permit is never released and the project service is
-    /// wedged for good.
+    /// **This diverges from Node deliberately.** `lifecycleTargetKey` in
+    /// `a9220736^:src/metadata-server/lifecycle-mutation-queue.ts` fabricated
+    /// the same key and Node refused the same way, so the behaviour was ported
+    /// faithfully and is wrong on both sides. Node's own signature says its
+    /// author saw it: the return type is `string | undefined` and the body
+    /// never returns `undefined`. Returning `None` is what that type was for.
     ///
-    /// This is not protection, and it must not be read as any. Stop and kill
-    /// are on the same async transport and get real per-session keys, so
-    /// stopping three different agents reaches that wait and wedges the service
-    /// exactly the same way. All the fabricated key does is keep one more class
-    /// of mutation away from an edge that is already reachable. The fix is to
-    /// make the queue safe to wait on from async (947602-79); this goes with
-    /// it, and so does the 409 it costs.
-    fn target_key(&self) -> String {
+    /// Safe to change only now. Waiting instead of refusing means an unnamed
+    /// mutation reaches the queue's wait, and that wait was a `Condvar` on a
+    /// two-worker runtime until this branch — a second and third spawn parked
+    /// both workers and left the holder's future unpollable.
+    fn target_key(&self) -> Option<String> {
         let target = if self.target_kind == "worktree" {
             self.target_path
                 .as_deref()
@@ -73,10 +94,9 @@ impl LifecycleTransitionInput {
                 .or(self.target_path.as_deref())
                 .map(str::trim)
         };
-        match target.filter(|value| !value.is_empty()) {
-            Some(target) => format!("{}:{target}", self.target_kind),
-            None => format!("{}:{}:__project__", self.target_kind, self.operation),
-        }
+        target
+            .filter(|value| !value.is_empty())
+            .map(|target| format!("{}:{target}", self.target_kind))
     }
 }
 
@@ -91,13 +111,22 @@ pub enum LifecycleMutationError {
         queued_count: usize,
         limit: usize,
     },
+    /// This mutation never reached the front of the queue. Described rather
+    /// than numbered, because the caller cannot act on "timed out" and can act
+    /// on what was running and how many were ahead.
+    WaitedTooLong {
+        requested: Box<LifecycleTransitionInput>,
+        holder: String,
+        queued_count: usize,
+        waited_ms: u128,
+    },
 }
 
 impl LifecycleMutationError {
     pub fn status(&self) -> u16 {
         match self {
             Self::Conflict { .. } => 409,
-            Self::QueueFull { .. } => 429,
+            Self::QueueFull { .. } | Self::WaitedTooLong { .. } => 429,
         }
     }
 
@@ -121,6 +150,14 @@ impl LifecycleMutationError {
             } => format!(
                 "lifecycle mutation queue is full ({queued_count}/{limit}); wait for current operations to settle"
             ),
+            Self::WaitedTooLong {
+                holder,
+                queued_count,
+                waited_ms,
+                ..
+            } => format!(
+                "lifecycle mutation waited {waited_ms}ms without reaching the front of the queue; {holder}, {queued_count} queued"
+            ),
         }
     }
 }
@@ -133,16 +170,52 @@ pub struct LifecycleMutationQueue {
 #[derive(Debug)]
 struct QueueInner {
     state: Mutex<QueueState>,
-    ready: Condvar,
+    /// One permit, so mutations run one at a time. The Node original this was
+    /// ported from serialized on a promise chain, where a waiter yields the
+    /// event loop; the port turned that into a `Condvar`, which on a two-worker
+    /// runtime parks a worker instead. A semaphore is the chain's real
+    /// equivalent: same serial order, and waiting costs no thread.
+    permits: Arc<Semaphore>,
     queue_limit: usize,
+    wait_for_turn: Duration,
 }
 
 #[derive(Debug, Default)]
 struct QueueState {
-    running: bool,
     queued_count: usize,
     active_targets: BTreeMap<String, LifecycleTransitionInput>,
+    /// What owns the queue right now, and since when. Kept out of
+    /// `diagnostics` on purpose: that JSON is pinned field for field against
+    /// the Node contract. This exists so a refusal can name the operation it
+    /// waited on rather than say only that it gave up.
+    holder: Option<QueueHolder>,
     telemetry: LifecycleMutationTelemetry,
+}
+
+#[derive(Debug, Clone)]
+struct QueueHolder {
+    transition: Option<LifecycleTransitionInput>,
+    since: Instant,
+}
+
+impl QueueHolder {
+    fn describe(&self) -> String {
+        let held_ms = self.since.elapsed().as_millis();
+        match &self.transition {
+            Some(transition) => {
+                let target = transition
+                    .target_id
+                    .as_deref()
+                    .or(transition.target_path.as_deref())
+                    .unwrap_or("an unnamed target");
+                format!(
+                    "{} on {target}, running for {held_ms}ms",
+                    transition.operation
+                )
+            }
+            None => format!("an untracked mutation, running for {held_ms}ms"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -168,13 +241,42 @@ impl Default for LifecycleMutationQueue {
     }
 }
 
+/// Take the queue's state, poisoned or not.
+///
+/// A panic while this lock is held would poison it, and the choice is between
+/// every later caller panicking and every later caller continuing. Continuing
+/// is right here, and uniformly: the state is three counters, a map of claimed
+/// targets and a telemetry struct, so there is no half-written invariant a
+/// panic could leave behind that makes carrying on worse than stopping. Two of
+/// these callers are `Drop` impls, where a panic during unwinding aborts the
+/// process instead of unwinding it, and one is `diagnostics` -- the route you
+/// would read to find out why the queue is stuck, which must not be the one
+/// that dies.
+fn lock_queue_state(inner: &QueueInner) -> std::sync::MutexGuard<'_, QueueState> {
+    inner
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 impl LifecycleMutationQueue {
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, QueueState> {
+        lock_queue_state(&self.inner)
+    }
+
     pub fn new(queue_limit: usize) -> Self {
+        Self::with_wait_for_turn(queue_limit, WAIT_FOR_TURN_TIMEOUT)
+    }
+
+    /// The same queue with a shorter patience, so a test can reach the refusal
+    /// without sitting through the real bound.
+    pub fn with_wait_for_turn(queue_limit: usize, wait_for_turn: Duration) -> Self {
         Self {
             inner: Arc::new(QueueInner {
                 state: Mutex::new(QueueState::default()),
-                ready: Condvar::new(),
+                permits: Arc::new(Semaphore::new(1)),
                 queue_limit,
+                wait_for_turn,
             }),
         }
     }
@@ -208,67 +310,171 @@ impl LifecycleMutationQueue {
         }
     }
 
+    /// Take the queue from a thread that may block: a plain thread, or the
+    /// blocking pool the sync router runs on.
+    ///
+    /// From an async worker this panics, naming the caller, which is
+    /// deliberate: the wait used to be a `Condvar` and parking two workers
+    /// wedged the whole project service with no error and no timeout. A panic
+    /// that says which route did it is the outcome `block_on_named` already
+    /// gives every other blocking seam in this crate; async callers want
+    /// [`Self::begin_async`].
     pub fn begin(
         &self,
         transition: Option<LifecycleTransitionInput>,
     ) -> Result<LifecycleMutationPermit, LifecycleMutationError> {
-        let target_key = transition
-            .as_ref()
-            .map(LifecycleTransitionInput::target_key);
-        let queued_at = Instant::now();
-        if transition.is_some() {
-            let mut state = self.inner.state.lock().expect("lifecycle queue lock");
-            if let (Some(key), Some(transition)) = (target_key.as_ref(), transition.as_ref())
-                && let Some(active) = state.active_targets.get(key).cloned()
-            {
-                state.telemetry.rejected_conflicts += 1;
-                return Err(LifecycleMutationError::Conflict {
-                    requested: Box::new(transition.clone()),
-                    active: Box::new(active),
-                });
-            }
-            if let Some(transition) = transition.as_ref()
-                && state.queued_count >= self.inner.queue_limit
-            {
-                state.telemetry.rejected_queue_full += 1;
-                return Err(LifecycleMutationError::QueueFull {
-                    requested: Box::new(transition.clone()),
-                    queued_count: state.queued_count,
-                    limit: self.inner.queue_limit,
-                });
-            }
-            if let (Some(key), Some(transition)) = (target_key.as_ref(), transition.as_ref()) {
-                state.active_targets.insert(key.clone(), transition.clone());
-            }
-            state.queued_count += 1;
-            state.telemetry.enqueued += 1;
-            state.telemetry.max_queued_count =
-                state.telemetry.max_queued_count.max(state.queued_count);
-        }
+        // aimux-async-seam: permanent - sync router and CLI callers take the queue from a blocking thread
+        block_on_named("lifecycle-queue:begin", self.begin_async(transition))
+    }
 
-        let mut state = self.inner.state.lock().expect("lifecycle queue lock");
-        while state.running {
-            state = self.inner.ready.wait(state).expect("lifecycle queue wait");
-        }
-        state.running = true;
-        if transition.is_some() {
-            state.telemetry.started += 1;
-            state.telemetry.max_queued_ms = state
-                .telemetry
-                .max_queued_ms
-                .max(queued_at.elapsed().as_millis());
-            state.telemetry.last_started_at = Some(now_iso());
+    /// Take the queue without occupying the thread while waiting.
+    pub async fn begin_async(
+        &self,
+        transition: Option<LifecycleTransitionInput>,
+    ) -> Result<LifecycleMutationPermit, LifecycleMutationError> {
+        let queued_at = Instant::now();
+        let reservation = self.reserve(transition.as_ref())?;
+        let acquired = tokio::time::timeout(
+            self.inner.wait_for_turn,
+            Arc::clone(&self.inner.permits).acquire_owned(),
+        )
+        .await;
+        let permit = match acquired {
+            Ok(permit) => permit.expect("lifecycle queue semaphore is never closed"),
+            // One more look before refusing. The bound expiring and the permit
+            // coming free are independent, so without this a mutation could be
+            // turned away at the exact moment the queue opened -- and the
+            // refusal would have had nothing left to describe.
+            Err(_) => match Arc::clone(&self.inner.permits).try_acquire_owned() {
+                Ok(permit) => permit,
+                // The reservation drops on the way out, so the target this
+                // gave up on is free for the next attempt.
+                Err(_) => return Err(self.waited_too_long(transition, queued_at)),
+            },
+        };
+        let (target_key, tracked) = reservation.commit();
+        {
+            let mut state = self.lock_state();
+            state.holder = Some(QueueHolder {
+                transition: transition.clone(),
+                since: Instant::now(),
+            });
+            if tracked {
+                state.telemetry.started += 1;
+                state.telemetry.max_queued_ms = state
+                    .telemetry
+                    .max_queued_ms
+                    .max(queued_at.elapsed().as_millis());
+                state.telemetry.last_started_at = Some(now_iso());
+            }
         }
         Ok(LifecycleMutationPermit {
             inner: Arc::clone(&self.inner),
+            permit: Some(permit),
             target_key,
-            tracked: transition.is_some(),
+            tracked,
             finished: false,
         })
     }
 
+    /// Refuse a wait that outlasted any client still listening, describing what
+    /// it waited behind. A wait that just expires tells nobody anything.
+    fn waited_too_long(
+        &self,
+        transition: Option<LifecycleTransitionInput>,
+        queued_at: Instant,
+    ) -> LifecycleMutationError {
+        let waited_ms = queued_at.elapsed().as_millis();
+        let (holder, queued_count) = {
+            let mut state = self.lock_state();
+            // Count the wait even though it never started. `maxQueuedMs` is the
+            // one number that says how bad the queue got, and a queue nobody
+            // can enter is exactly when every waiter times out and records
+            // nothing -- so it would have read as healthy.
+            state.telemetry.max_queued_ms = state.telemetry.max_queued_ms.max(waited_ms);
+            let holder = state
+                .holder
+                .as_ref()
+                .map(QueueHolder::describe)
+                // Reachable: the permit can come free between the bound
+                // expiring and this lock. Say so, rather than imply a holder
+                // this never saw.
+                .unwrap_or_else(|| "nothing was holding the queue by then".to_owned());
+            (holder, state.queued_count)
+        };
+        let requested = transition
+            .unwrap_or_else(|| LifecycleTransitionInput::new("lifecycle.unknown", "project"));
+        log_at(
+            LogLevel::Error,
+            "lifecycle mutation gave up waiting for the queue",
+            "project-service",
+            Some(json!({
+                "operation": requested.operation,
+                "targetKind": requested.target_kind,
+                "targetId": requested.target_id,
+                "targetPath": requested.target_path,
+                "holder": holder,
+                "queuedCount": queued_count,
+                "waitedMs": waited_ms,
+            })),
+        );
+        LifecycleMutationError::WaitedTooLong {
+            requested: Box::new(requested),
+            holder,
+            queued_count,
+            waited_ms,
+        }
+    }
+
+    /// Claim the target and the queue slot, which happens before the wait and
+    /// is what a second mutation of the same target is refused against.
+    fn reserve(
+        &self,
+        transition: Option<&LifecycleTransitionInput>,
+    ) -> Result<QueueReservation, LifecycleMutationError> {
+        let Some(transition) = transition else {
+            return Ok(QueueReservation {
+                inner: Arc::clone(&self.inner),
+                target_key: None,
+                tracked: false,
+                committed: false,
+            });
+        };
+        let target_key = transition.target_key();
+        let mut state = self.lock_state();
+        if let Some(key) = target_key.as_ref()
+            && let Some(active) = state.active_targets.get(key).cloned()
+        {
+            state.telemetry.rejected_conflicts += 1;
+            return Err(LifecycleMutationError::Conflict {
+                requested: Box::new(transition.clone()),
+                active: Box::new(active),
+            });
+        }
+        if state.queued_count >= self.inner.queue_limit {
+            state.telemetry.rejected_queue_full += 1;
+            return Err(LifecycleMutationError::QueueFull {
+                requested: Box::new(transition.clone()),
+                queued_count: state.queued_count,
+                limit: self.inner.queue_limit,
+            });
+        }
+        if let Some(key) = target_key.as_ref() {
+            state.active_targets.insert(key.clone(), transition.clone());
+        }
+        state.queued_count += 1;
+        state.telemetry.enqueued += 1;
+        state.telemetry.max_queued_count = state.telemetry.max_queued_count.max(state.queued_count);
+        Ok(QueueReservation {
+            inner: Arc::clone(&self.inner),
+            target_key,
+            tracked: true,
+            committed: false,
+        })
+    }
+
     pub fn diagnostics(&self, project_root: &str) -> Value {
-        let state = self.inner.state.lock().expect("lifecycle queue lock");
+        let state = self.lock_state();
         let active_targets = state
             .active_targets
             .iter()
@@ -318,8 +524,49 @@ impl LifecycleMutationQueue {
     }
 }
 
+/// The bookkeeping a mutation holds before it owns the queue, and gives back
+/// if it never gets there.
+///
+/// `begin_async` awaits between claiming the target and owning the queue, and
+/// the async lifecycle route races its future against the client's socket
+/// (`route_async_lifecycle_with_disconnect_and_route`), so a caller that hangs
+/// up while waiting drops that future mid-await. Rolling back by hand would
+/// miss exactly that case and leave the target claimed for the life of the
+/// process — every later mutation of it refused with a 409, and the queue
+/// depth creeping toward its limit until everything 429s.
+struct QueueReservation {
+    inner: Arc<QueueInner>,
+    target_key: Option<String>,
+    tracked: bool,
+    committed: bool,
+}
+
+impl QueueReservation {
+    fn commit(mut self) -> (Option<String>, bool) {
+        self.committed = true;
+        (self.target_key.clone(), self.tracked)
+    }
+}
+
+impl Drop for QueueReservation {
+    fn drop(&mut self) {
+        if self.committed || !self.tracked {
+            return;
+        }
+        let mut state = lock_queue_state(&self.inner);
+        state.queued_count = state.queued_count.saturating_sub(1);
+        if let Some(key) = self.target_key.take() {
+            state.active_targets.remove(&key);
+        }
+    }
+}
+
 pub struct LifecycleMutationPermit {
     inner: Arc<QueueInner>,
+    /// Taken on release rather than dropped with the struct: the async route
+    /// settles its permit and then awaits a statusline refresh, and the next
+    /// mutation must not wait for that.
+    permit: Option<OwnedSemaphorePermit>,
     target_key: Option<String>,
     tracked: bool,
     finished: bool,
@@ -346,6 +593,7 @@ impl LifecycleMutationPermit {
             started_at,
             error,
         );
+        drop(self.permit.take());
     }
 }
 
@@ -360,6 +608,7 @@ impl Drop for LifecycleMutationPermit {
                 Some("lifecycle mutation cancelled before completion".into()),
             );
         }
+        drop(self.permit.take());
     }
 }
 
@@ -370,8 +619,8 @@ fn release_lifecycle_mutation(
     started_at: Instant,
     error: Option<String>,
 ) {
-    let mut state = inner.state.lock().expect("lifecycle queue lock");
-    state.running = false;
+    let mut state = lock_queue_state(inner);
+    state.holder = None;
     if tracked {
         state.queued_count = state.queued_count.saturating_sub(1);
         state.telemetry.released += 1;
@@ -391,7 +640,6 @@ fn release_lifecycle_mutation(
             state.telemetry.last_error = None;
         }
     }
-    inner.ready.notify_one();
 }
 
 pub fn lifecycle_transition_for_route(
@@ -410,11 +658,9 @@ pub fn lifecycle_transition_for_route(
         }
         // The agent being forked is the one a fork contends for, and
         // `sourceSessionId` is what every fork dispatcher sends. Reading
-        // `sessionId` here left the target empty, so `target_key` fell back to
-        // `agent:agent.fork:__project__` and two forks of two different agents
-        // serialized against each other while a fork and a stop of the same
-        // agent did not. The response transition still names the new session:
-        // this one names what is held while the fork runs.
+        // `sessionId` here left the target empty, so a fork and a stop of the
+        // same agent did not contend. The response transition still names the
+        // new session: this one names what is held while the fork runs.
         routes::agents::FORK => Some(
             LifecycleTransitionInput::new("agent.fork", "agent")
                 .with_target_id(trimmed_string(body.get("sourceSessionId"))),

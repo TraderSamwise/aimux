@@ -1564,23 +1564,16 @@ fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
 }
 
-/// A mutation that names no target holds one shared key, and the second is
-/// refused rather than queued.
+/// A mutation that names no target contends with nothing, so it queues.
 ///
-/// That refusal is a real cost — pick claude, then pick codex, and codex is
-/// never created. Letting them queue instead wedges the project service: the
-/// async lifecycle routes await inside a connection task on a two-worker
-/// runtime, and `begin` waits on a `Condvar`, so a second and third spawn park
-/// both workers while the first one's future sits unpollable and its permit is
-/// never released.
-///
-/// So this pins a workaround, not a rule. Stopping three different agents
-/// reaches the same wait with real per-session keys, so the edge is reachable
-/// regardless; the shared key only keeps one more class away from it. Whoever
-/// makes the queue safe to wait on from async should delete this test with the
-/// fallback it describes.
+/// Picking claude and then codex used to refuse codex with "lifecycle mutation
+/// already in progress for agent unknown": both spawns fell back to one
+/// fabricated `agent:agent.spawn:__project__` key, naming a target that was
+/// never involved. The key existed because `begin` waited on a `Condvar` and
+/// the async routes awaited on a two-worker runtime, so letting the second
+/// spawn reach that wait wedged the service. The wait is a semaphore now.
 #[test]
-fn a_mutation_that_names_no_target_refuses_the_next_one_rather_than_waiting() {
+fn two_spawns_that_name_no_target_both_run() {
     use aimux::project_service::lifecycle_mutation_queue::{
         LifecycleMutationQueue, lifecycle_transition_for_route,
     };
@@ -1599,21 +1592,22 @@ fn a_mutation_that_names_no_target_refuses_the_next_one_rather_than_waiting() {
     );
 
     let queue = LifecycleMutationQueue::new(8);
-    let held = queue.begin(Some(spawn("claude"))).expect("the spawn runs");
+    let mut held = queue.begin(Some(spawn("claude"))).expect("the spawn runs");
     assert_eq!(
-        queue.diagnostics("/repo")["activeTargets"][0]["key"],
-        json!("agent:agent.spawn:__project__"),
-        "it holds the shared key, which is what refuses the next one"
+        queue.diagnostics("/repo")["activeTargets"],
+        json!([]),
+        "an unnamed spawn claims nothing, so nothing is refused against it"
     );
 
-    // Refused, not parked: a wait here would be the deadlock.
-    let second = queue.begin(Some(spawn("codex")));
-    assert!(
-        second.is_err(),
-        "a second spawn must be refused rather than reach the queue's wait"
-    );
-    drop(second);
-    drop(held);
+    held.succeed(std::time::Instant::now());
+    let mut second = queue
+        .begin(Some(spawn("codex")))
+        .expect("the second spawn is queued, not refused");
+    second.succeed(std::time::Instant::now());
+
+    let diagnostics = queue.diagnostics("/repo");
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 2);
+    assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 0);
 }
 
 /// A fork contends for the agent it is forking, not for the whole project.

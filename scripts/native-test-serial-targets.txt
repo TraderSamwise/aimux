@@ -1,6 +1,7 @@
 # Integration test targets that stay serial. Format:
 # target<TAB>reason
 http_sse_surface_contract	real daemon and project-service subprocesses with isolated sockets and async HTTP/SSE timing
+lifecycle_mutation_queue_async	builds its own two-worker runtime and asserts on thread scheduling, which a saturated machine would make flaky
 stream_proxy_surface_contract	async stream/proxy characterization over live TCP sockets and timing-sensitive disconnect paths
 context_history_cli	real aimux subprocess with project cwd and isolated daemon state
 core_cli	command classification route with resolver/env edge cases

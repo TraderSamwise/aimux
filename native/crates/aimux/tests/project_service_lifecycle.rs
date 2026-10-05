@@ -6264,3 +6264,65 @@ fn expected_shell_rc_path(state_dir: &Path) -> PathBuf {
     };
     state_dir.join("shell-integration").join(rc_name)
 }
+
+// A worktree create holds the lifecycle queue for its whole git fetch, and
+// every POST that reaches this router used to wait behind it -- hooks,
+// interactions, plans, usage, coordination mutations -- because the router took
+// the permit before it knew whether the path was a queued mutation at all. Node
+// took the queue inside each route that wanted it.
+#[test]
+fn a_post_that_is_not_a_lifecycle_mutation_does_not_wait_for_the_queue() {
+    let project = temp_project("lifecycle-non-mutation-no-queue");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let mut holder = context
+        .lifecycle_mutations
+        .begin(Some(
+            aimux::project_service::lifecycle_mutation_queue::LifecycleTransitionInput::new(
+                "worktree.create",
+                "worktree",
+            )
+            .with_target_path(Some("/repo/.aimux/worktrees/slow".to_owned())),
+        ))
+        .expect("the long mutation takes the queue");
+
+    // Not a lifecycle route at all: it must fall through to the next handler
+    // rather than block until the worktree create finishes.
+    let fell_through = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::hooks::CLAUDE,
+        Some(&json!({ "event": "PreToolUse" })),
+        &mut FakeLifecycleRuntime::default(),
+    );
+    assert!(
+        fell_through.is_none(),
+        "a hook POST is not a lifecycle mutation, so this router must pass it on"
+    );
+
+    // A lifecycle route that deliberately does not serialize must still answer
+    // while the queue is held.
+    let answered = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::DISMISS_RESTORE_PREVIOUS,
+        Some(&json!({})),
+        &mut FakeLifecycleRuntime::default(),
+    )
+    .expect("dismissing a restore offer is handled here");
+    assert_eq!(answered.status, 200);
+
+    let diagnostics = context
+        .lifecycle_mutations
+        .diagnostics(&project.to_string_lossy());
+    assert_eq!(
+        diagnostics["telemetry"]["enqueued"], 1,
+        "only the worktree create was enqueued: {diagnostics}"
+    );
+    assert_eq!(diagnostics["queuedCount"], 1);
+
+    holder.succeed(std::time::Instant::now());
+    cleanup(project);
+}
