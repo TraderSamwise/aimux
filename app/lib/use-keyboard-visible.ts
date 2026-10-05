@@ -44,14 +44,20 @@ export function useKeyboardHeight(): number {
   const [height, setHeight] = useState(0);
 
   useEffect(() => {
-    if (Platform.OS === "web") return;
+    // iOS only, the same restriction `useKeyboardInset` carries. There the
+    // window does not resize for the keyboard, so a view pinned to the bottom
+    // keeps its frame and the covered strip has to be given back as content.
+    // Under Android's edge-to-edge the window handles it, and adding padding
+    // on top would push the list up twice.
+    if (Platform.OS !== "ios") return;
 
-    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const showSub = Keyboard.addListener(showEvent, (event) => {
+    const showSub = Keyboard.addListener("keyboardWillChangeFrame", (event) => {
       setHeight(keyboardHeightFromEvent(event));
     });
-    const hideSub = Keyboard.addListener(hideEvent, () => setHeight(0));
+    // `keyboardWillChangeFrame` covers the interactive dismiss drag, which
+    // moves the keyboard without ever firing a show or a hide -- miss it and
+    // the padding stays behind a keyboard that is gone.
+    const hideSub = Keyboard.addListener("keyboardWillHide", () => setHeight(0));
 
     return () => {
       showSub.remove();
@@ -71,9 +77,14 @@ export function useKeyboardHeight(): number {
  * perfectly visible.
  */
 export function keyboardHeightFromEvent(event: {
-  endCoordinates?: { height?: number } | null;
+  endCoordinates?: { height?: number; screenY?: number } | null;
 }): number {
   const height = event.endCoordinates?.height;
   if (typeof height !== "number" || !Number.isFinite(height)) return 0;
+  // A frame change that puts the keyboard off the bottom of the screen is the
+  // keyboard leaving, and it still reports its full height. `screenY` is where
+  // the top of it sits; at or below zero it is not covering anything.
+  const screenY = event.endCoordinates?.screenY;
+  if (typeof screenY === "number" && Number.isFinite(screenY) && screenY <= 0) return 0;
   return Math.max(0, Math.round(height));
 }

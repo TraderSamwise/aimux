@@ -14,6 +14,15 @@ describe("keyboardHeightFromEvent", () => {
     expect(keyboardHeightFromEvent({ endCoordinates: { height: 335.6 } })).toBe(336);
   });
 
+  // A frame change that slides the keyboard off the bottom still reports its
+  // full height -- the interactive dismiss drag ends exactly there. Reading
+  // only `height` would leave the list padded for a keyboard that has gone.
+  it("covers nothing once the keyboard is off the bottom of the screen", () => {
+    expect(keyboardHeightFromEvent({ endCoordinates: { height: 336, screenY: 0 } })).toBe(0);
+    expect(keyboardHeightFromEvent({ endCoordinates: { height: 336, screenY: -40 } })).toBe(0);
+    expect(keyboardHeightFromEvent({ endCoordinates: { height: 336, screenY: 520 } })).toBe(336);
+  });
+
   it("covers nothing when the event says nothing", () => {
     expect(keyboardHeightFromEvent({})).toBe(0);
     expect(keyboardHeightFromEvent({ endCoordinates: null })).toBe(0);
@@ -32,9 +41,12 @@ describe("the sidebar gives the covered strip back", () => {
     expect(existsSync(path), `${path} is readable from the test cwd`).toBe(true);
     const source = readFileSync(path, "utf8");
 
-    const scrollViews = source.match(/<ScrollView[^>]*/g) ?? [];
-    expect(scrollViews.length, "the sidebar still scrolls something").toBeGreaterThan(0);
-    for (const tag of scrollViews) {
+    // `[\s\S]` not `[^>]`, so a tag prettier wrapped over several lines is
+    // still one match; and every scrolling primitive, not just ScrollView,
+    // because the next list added here is the one that forgets.
+    const tags = source.match(/<(ScrollView|FlatList|SectionList|FlashList)[\s\S]*?>/g) ?? [];
+    expect(tags.length, "the sidebar still scrolls something").toBeGreaterThan(0);
+    for (const tag of tags) {
       expect(tag, "every scrolled list must inset past the keyboard").toContain(
         "contentContainerStyle={listBottomInset}",
       );
