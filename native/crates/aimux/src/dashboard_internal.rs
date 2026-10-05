@@ -305,7 +305,62 @@ impl DashboardViewportState {
     }
 }
 
+/// Everything the render loop reaches for outside itself.
+///
+/// The loop owns real stdin and only returns under `--once`, where
+/// `rendered_once` is false and the cached-frame path is unreachable by
+/// construction. So every predicate in it was gated and none was ever executed
+/// by a test: setting `input_driven: false`, deleting the deferral arming, or
+/// deleting any of the ten `cacheable_input = false` lines all left the suite
+/// green -- and the first of those is the latency regression PR 388 fixed.
+///
+/// Standing in for these is enough to drive the whole loop: where keys come
+/// from, where snapshots come from, when to stop, where frames go, and that one
+/// went up.
+pub struct DashboardLoopSeams {
+    /// Keys available right now. An empty vec is an idle poll.
+    pub keys: Box<dyn FnMut() -> Vec<crate::dashboard_controller::DashboardKey> + Send>,
+    /// A snapshot load, counted by the caller to prove the cache was used.
+    pub snapshot: Box<dyn FnMut() -> Result<DashboardSnapshotLoad> + Send>,
+    /// Asked once per iteration, before anything else.
+    pub stop: Box<dyn FnMut() -> bool + Send>,
+    /// Where frames and terminal control go instead of the real terminal.
+    pub output: Box<dyn Write + Send>,
+    /// One call per frame written, at each of the three sites that write one.
+    /// Counted rather than parsed back out of `output`, because the terminal
+    /// guard writes there too and a frame carries no delimiter of its own.
+    pub frame: Box<dyn FnMut() + Send>,
+}
+
 pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<()> {
+    run_native_dashboard_with_seams(options, None)
+}
+
+/// The loop, with its outside edges optionally replaced.
+///
+/// `seams` is a test seam and nothing else: pass `None` and this is
+/// [`run_native_dashboard_internal`] exactly. A driven run deliberately does
+/// not enter raw mode or own stdin, so an external caller handing it seams
+/// would get a loop that never reads a real keyboard.
+pub fn run_native_dashboard_with_seams(
+    options: NativeDashboardOptions,
+    seams: Option<DashboardLoopSeams>,
+) -> Result<()> {
+    // Split rather than kept whole: the loop holds `output` across its body and
+    // calls the other seams inside it, which one `Option<DashboardLoopSeams>`
+    // would make two simultaneous mutable borrows of.
+    let (mut seam_keys, mut seam_snapshot, mut seam_stop, seam_output, mut seam_frame) = match seams
+    {
+        Some(seams) => (
+            Some(seams.keys),
+            Some(seams.snapshot),
+            Some(seams.stop),
+            Some(seams.output),
+            Some(seams.frame),
+        ),
+        None => (None, None, None, None, None),
+    };
+    let driven = seam_keys.is_some();
     let mut controller: Option<DashboardController> = None;
     let mut focus_state = DashboardFocusState::default();
     let mut ready_marked = false;
@@ -369,9 +424,18 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut last_render_viewport_check = Instant::now() - DASHBOARD_KEY_POLL_INTERVAL;
     let mut last_render = Instant::now();
     let clock_start = Instant::now();
-    let mut output = dashboard_output(options.once);
+    let mut output: Box<dyn Write> = match seam_output {
+        Some(output) => output,
+        None => dashboard_output(options.once),
+    };
     let mut stdin = io::stdin();
-    let _terminal = if options.once {
+    // Not entered for a driven loop: there is no terminal to put into raw mode,
+    // and the guard is not harmless on the way past. `enable_nonblocking_stdin`
+    // has no `is_terminal` check, so it sets `O_NONBLOCK` on the real fd 0
+    // whatever is on the other end, and two guards overlapping make the second
+    // record the first's modified flags as the originals to restore -- which
+    // leaves the invoking shell's stdin non-blocking after the process exits.
+    let _terminal = if options.once || driven {
         None
     } else {
         Some(DashboardTerminalGuard::enter(&mut *output).context("enter dashboard terminal")?)
@@ -404,8 +468,18 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         } else {
             true
         };
-        ensure_dashboard_stdin_nonblocking().context("keep dashboard stdin nonblocking")?;
-        let keys = read_dashboard_keys(&mut stdin).context("read dashboard key")?;
+        if let Some(stop) = seam_stop.as_mut()
+            && stop()
+        {
+            return Ok(());
+        }
+        let keys = match seam_keys.as_mut() {
+            Some(keys) => keys(),
+            None => {
+                ensure_dashboard_stdin_nonblocking().context("keep dashboard stdin nonblocking")?;
+                read_dashboard_keys(&mut stdin).context("read dashboard key")?
+            }
+        };
         if !keys.is_empty() {
             mark_dashboard_tui_visible(&mut visibility_state, now, None);
             dashboard_visible = true;
@@ -518,7 +592,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             mark_dashboard_tui_visible(&mut visibility_state, elapsed_millis(clock_start), None);
             let Some(snapshot) = latest_snapshot.as_ref() else {
                 render_now = true;
-                wait_for_dashboard_keys(wait_on_stdin);
+                wait_for_dashboard_keys(wait_on_stdin && !driven);
                 continue;
             };
             let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
@@ -819,6 +893,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     },
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
+                if let Some(observe) = seam_frame.as_mut() {
+                    observe();
+                }
                 rendered_once = true;
                 // Written by the frame rather than left to the refresh behind
                 // it, because attaching hides this dashboard: the loop then
@@ -904,11 +981,15 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     &request_outcomes_tx,
                 );
             } else {
+                let loaded = match seam_snapshot.as_mut() {
+                    Some(snapshot) => snapshot(),
+                    None => load_dashboard_snapshot(&options),
+                };
                 let refresh = resolve_dashboard_snapshot_refresh(
                     latest_snapshot.as_ref(),
                     latest_endpoint.as_ref(),
                     &mut refresh_failure,
-                    load_dashboard_snapshot(&options),
+                    loaded,
                     |event| {
                         record_dashboard_snapshot_refresh_repair_event(
                             &PathResolver::from_env(),
@@ -1003,6 +1084,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             },
                         );
                         write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
+                        if let Some(observe) = seam_frame.as_mut() {
+                            observe();
+                        }
                         rendered_once = true;
                         flush_deferred_dashboard_requests(
                             &mut deferred_requests,
@@ -1101,6 +1185,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             },
                         );
                         write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
+                        if let Some(observe) = seam_frame.as_mut() {
+                            observe();
+                        }
                         rendered_once = true;
                         flush_deferred_dashboard_requests(
                             &mut deferred_requests,
@@ -1141,7 +1228,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 }
             }
         }
-        wait_for_dashboard_keys(wait_on_stdin);
+        wait_for_dashboard_keys(wait_on_stdin && !driven);
     }
 }
 

@@ -81,38 +81,6 @@ impl DashboardUiStatePersistence {
         })
     }
 
-    pub fn persist_render_state(
-        &mut self,
-        screen: DashboardScreen,
-        preview_source: &str,
-    ) -> Result<bool> {
-        let preview_source =
-            normalize_preview_source(Some(&Value::String(preview_source.to_owned())));
-        if self.last_screen == Some(screen)
-            && self.last_preview_source.as_deref() == Some(preview_source.as_str())
-        {
-            return Ok(false);
-        }
-        let mut client = read_dashboard_state_snapshot(&self.path)
-            .unwrap_or_else(|| Value::Object(Default::default()));
-        let mut shared = read_dashboard_state_snapshot(&self.shared_path())
-            .unwrap_or_else(|| Value::Object(Default::default()));
-        client["screen"] = Value::String(screen.as_str().to_owned());
-        shared["previewSource"] = Value::String(preview_source.clone());
-        let changed = read_dashboard_state_snapshot(&self.path).as_ref() != Some(&client)
-            || read_dashboard_state_snapshot(&self.shared_path()).as_ref() != Some(&shared);
-        if changed {
-            write_json_atomic(&self.path, &client)
-                .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
-            write_json_atomic(self.shared_path(), &shared).with_context(|| {
-                format!("write dashboard ui state {}", self.shared_path().display())
-            })?;
-        }
-        self.last_screen = Some(screen);
-        self.last_preview_source = Some(preview_source);
-        Ok(changed)
-    }
-
     pub fn restore_navigation(
         &self,
         navigation: &mut DashboardNavigationState,

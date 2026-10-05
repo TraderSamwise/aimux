@@ -22,39 +22,6 @@ fn sanitizes_client_session_like_typescript_control_path() {
 }
 
 #[test]
-fn persists_preview_source_with_render_state() {
-    let root = temp_dir("dashboard-ui-state-preview-source");
-    fs::create_dir_all(&root).expect("create temp dir");
-    let client_path = root.join("dashboard-ui-client-client.json");
-    let shared_path = root.join("dashboard-ui.json");
-    fs::write(&shared_path, r#"{"previewSource":"scribe"}"#).expect("seed shared state");
-    fs::write(
-        &client_path,
-        r#"{"screen":"dashboard","selectedEntryId":"codex-1"}"#,
-    )
-    .expect("seed client state");
-
-    let mut state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
-    assert_eq!(state.load_preview_source(), Some("scribe"));
-    let changed = state
-        .persist_render_state(DashboardScreen::Dashboard, "output")
-        .expect("persist render state");
-    assert!(changed);
-
-    let client: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&client_path).expect("read client state"))
-            .expect("json");
-    let shared: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&shared_path).expect("read shared state"))
-            .expect("json");
-    assert_eq!(client["screen"], "dashboard");
-    assert!(client.get("previewSource").is_none());
-    assert_eq!(client["selectedEntryId"], "codex-1");
-    assert_eq!(shared["previewSource"], "output");
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
 fn moves_and_applies_shared_worktree_session_order() {
     let root = temp_dir("dashboard-ui-state-order");
     fs::create_dir_all(&root).expect("create temp dir");

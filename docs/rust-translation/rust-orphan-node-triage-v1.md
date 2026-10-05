@@ -154,10 +154,15 @@ Triaged after `f7c8b4d8` from `scripts/audit-rust-orphans.mjs` rows marked
 | --- | --- | --- |
 | `DashboardController::set_work_outline_overlay` | Yes for the behavior. Node `showWorkOutlineOverlay()` set session id, zeroed offset, loaded entries, opened the `work-outline` overlay, and rendered it. | Rust production reaches the same behavior through `DashboardControllerEffect::LoadWorkOutlineOverlay` and `dashboard_internal` calling `set_work_outline_overlay_with_offset`. The unreferenced `set_work_outline_overlay` method is the zero-offset convenience wrapper used by tests. |
 | `dashboard_controller::parse_dashboard_key` | Yes for dashboard key parsing. Node dashboard input handlers used `parseKeys()` plus `commandKey()` on real terminal bytes. | Rust production calls `parse_dashboard_keys` from `dashboard_terminal::read_dashboard_keys`. The single-key `parse_dashboard_key` wrapper is a test/helper seam; the parser behavior is wired through the multi-key function. |
-| `DashboardUiStatePersistence::persist_render_state` | Yes for UI render-state persistence. Node `persistDashboardUiState()` wrote screen, preview source, sidebar visibility, selection, and order state through `DashboardUiStateStore.persist()`. | Rust production calls the richer `persist_controller_state` after dashboard renders. The unreferenced `persist_render_state` method is an older narrow screen+preview helper retained for tests. |
 | `ExposePaneOutputTap::track_items` | Yes. Node `ProjectOutputPreviewCoordinator.attachExposePreviewSnapshots()` called `exposePaneOutputTap.trackItems(rawItems)` on project-service preview routes. | Rust reaches the visible `previewSnapshot` behavior through `project_service::preview_snapshots::capture_preview_snapshot`, hot expose snapshots, and direct tmux capture from the desktop-state and switchable-agent routes. The tap-stream implementation remains a dormant optimization path, not the active production preview source after cutover. |
 | `tmux_expose::run_tmux_expose_with_client` | Yes for the Expose runner. Node production called `runTmuxExpose()` from the project-service expose socket and popup entrypoint. | Rust production calls `run_tmux_expose` from the real binary entrypoint, which then runs through the same driver pipeline. `run_tmux_expose_with_client` is the dependency-injection wrapper used by tests. |
 | `tmux_expose::load_expose_scope_items` | Yes. Node `runTmuxExpose()` called `loadExposeScopeItems()` during initial load, reload, and scope changes. | Rust production calls `load_expose_scope_items_with` from the Expose runner so tests can inject the HTTP client. The public no-client wrapper is unused, but the scope-load behavior is wired. |
+
+`DashboardUiStatePersistence::persist_render_state` was listed in the table
+above as "retained for tests". Its only caller was its own test, so it was
+retained for nothing; both were deleted in PR #398. Rust production reaches UI
+render-state persistence through the richer `persist_controller_state`, which
+is unaffected.
 
 ### Node No, Dead Or Contract-Only
 
