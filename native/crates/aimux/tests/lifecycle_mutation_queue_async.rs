@@ -621,10 +621,15 @@ fn removing_a_worktree_that_is_still_being_created_is_refused() {
         let Err(error) = queue.begin_async(Some(remove)).await else {
             panic!("removing a worktree mid-create must be refused, not queued behind it");
         };
-        assert_eq!(error.status(), 409);
+        assert_eq!(
+            error.status(),
+            409,
+            "refused because the worktree is busy, not because the wait expired: {}",
+            error.message()
+        );
         assert!(
-            error.message().contains("worktree"),
-            "the refusal must name what is busy: {}",
+            error.message().contains("already in progress for worktree"),
+            "the refusal must say the worktree is busy, not merely mention one: {}",
             error.message()
         );
 
