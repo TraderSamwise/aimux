@@ -63,23 +63,37 @@ describe("a transient state renders the same way on every surface", () => {
     // return that bypasses the shared rule is exactly how this surface drifted
     // in the first place.
     //
-    // `deriveAgentState` rather than a tone helper in isolation, because the
-    // agent row's tone comes from the project service's `user.label` now, and
-    // the pending action is the one thing that label does not encode. Giving
-    // the session a `user.label` the service really would send for an agent
-    // mid-action is what makes this assert the guard rather than the fallback:
-    // `ready` is what `user_state` returns for every action it does not name.
+    // The agent session carries a `pendingAction` and NO `semantic`, which is
+    // what `stores/lifecycleTransitions.ts` really pushes for an action it
+    // started. An earlier revision of this test handed it a `user.label` of
+    // `ready` for all fourteen actions, which is only true for the eight the
+    // service does not name -- `creating` and `forking` really come back as
+    // `starting`, `graveyarding` as `graveyarding` -- so it was asserting a
+    // payload the overlay never sends alongside one it sometimes does.
     expect(
       deriveAgentState({
         id: "claude-1",
         status: "running",
         pendingAction: action,
-        semantic: { user: { label: "ready" }, presentation: { statusLabel: action } },
       } as DesktopSession).kind,
     ).toBe(APP_FAMILY[family]);
     expect(serviceStatusKind({ pendingAction: action, status: "offline" })).toBe(
       APP_FAMILY[family],
     );
+  });
+
+  // And the word, which is the half the row lost when it started reading
+  // `statusLabel`: an optimistic session has no `statusLabel` for the action,
+  // so taking the word from the payload rendered "Unknown" while an agent was
+  // being created.
+  it.each(cases)("$action is still worded $label ($why)", ({ action, label }) => {
+    expect(
+      deriveAgentState({
+        id: "claude-1",
+        status: "running",
+        pendingAction: action,
+      } as DesktopSession).label,
+    ).toBe(label);
   });
 
   // Pinned beside the others so that making progress quieter cannot quietly

@@ -2,6 +2,7 @@ import type { DesktopSession } from "@/lib/desktop-state";
 import {
   type AppStatusKind,
   normalizeAppStatusKind,
+  pendingActionLabel,
   pendingActionStatusKind,
 } from "@/lib/status-tone";
 
@@ -50,9 +51,21 @@ function sentenceCase(value: string): string {
 // agent with a task still assigned (`next_step`, an ask, which no combination
 // of status, activity and attention can see).
 export function deriveAgentState(session: DesktopSession): AgentState {
-  const kind = session.pendingAction?.trim()
-    ? pendingActionStatusKind()
-    : (normalizeAppStatusKind(session.semantic?.user?.label) ?? "offline");
+  // An action in flight is answered from the action, word and tone both, and
+  // not from the payload. It is the one fact the client knows first: the
+  // optimistic overlay in `stores/lifecycleTransitions.ts` pushes a brand-new
+  // session with a `pendingAction` and NO `semantic` at all, and spreads an
+  // existing one keeping the `semantic` it had before the action started. An
+  // earlier revision took only the tone from here and left the word to
+  // `statusLabel`, so creating an agent read "Unknown" and renaming one read
+  // "Ready" while it was being renamed.
+  const action = session.pendingAction?.trim();
+  if (action) {
+    // Quiet, as it was. The word is already the loud part.
+    return { label: pendingActionLabel(action), kind: pendingActionStatusKind(), pill: false };
+  }
+
+  const kind = normalizeAppStatusKind(session.semantic?.user?.label) ?? "offline";
   const served = session.semantic?.presentation?.statusLabel?.trim();
   // No carve-out for `exited`. An earlier revision had one, on the theory that
   // the service folds `exited` into `offline` while the TUI row says "Exited" --
@@ -65,9 +78,7 @@ export function deriveAgentState(session: DesktopSession): AgentState {
   // `semantic` to every session unconditionally, so an absent word is a broken
   // payload and should be visible as one.
   const label = sentenceCase(served || "unknown");
-  // A pending action stays a quiet word, as it was. It is already loud: the row
-  // carries the action's own text, and the tone is the working cyan.
-  return { label, kind, pill: !session.pendingAction && PILL_KINDS.has(kind) };
+  return { label, kind, pill: PILL_KINDS.has(kind) };
 }
 
 /// The service's word for a session, lowercase as it arrives.
@@ -77,5 +88,10 @@ export function deriveAgentState(session: DesktopSession): AgentState {
 /// state, not the agent's, and reading it is how "running" ended up beside an
 /// agent that had finished its turn.
 export function servedStatusWord(session: DesktopSession): string {
+  // The action first, for the same reason the row answers it first: an
+  // optimistically created session has a `pendingAction` and no `semantic`, and
+  // "unknown" in a feed subtitle is worse than the word for what is happening.
+  const action = session.pendingAction?.trim();
+  if (action) return pendingActionLabel(action);
   return session.semantic?.presentation?.statusLabel?.trim() || "unknown";
 }

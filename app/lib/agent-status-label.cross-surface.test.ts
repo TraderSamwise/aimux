@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { deriveAgentState } from "@/lib/agent-status-label";
+import { deriveAgentState, servedStatusWord } from "@/lib/agent-status-label";
 import { normalizeAppStatusKind } from "@/lib/status-tone";
 import type { DesktopSession, DesktopSessionStatus } from "@/lib/desktop-state";
 
@@ -34,7 +34,6 @@ interface LabelCase {
   status: DesktopSessionStatus;
   activity: string | null;
   attention: string;
-  pendingAction?: string;
   hasActiveTask?: boolean;
   userLabel: string;
   statusLabel: string;
@@ -51,7 +50,6 @@ function sessionFor(entry: {
   status: DesktopSessionStatus;
   activity?: string | null;
   attention?: string;
-  pendingAction?: string;
   userLabel?: string;
   statusLabel: string;
 }): DesktopSession {
@@ -60,7 +58,6 @@ function sessionFor(entry: {
     status: entry.status,
     activity: entry.activity ?? undefined,
     attention: entry.attention,
-    pendingAction: entry.pendingAction,
     semantic: {
       user: { label: entry.userLabel ?? null },
       presentation: { statusLabel: entry.statusLabel },
@@ -117,6 +114,46 @@ describe("an agent's state is worded the same on every surface", () => {
       expect(state.kind).not.toBe("offline");
     }
     expect(normalizeAppStatusKind(label)).not.toBeNull();
+  });
+
+  // An action in flight, in the shape the optimistic overlay really sends: a
+  // session with a `pendingAction` and no `semantic` whatsoever. Pinning this
+  // with a hand-fed `statusLabel` is what let an earlier revision agree with a
+  // path that rendered "Unknown".
+  it("words an action in flight from the action, with no payload at all", () => {
+    const { pendingAction, appLabel, appKind, appPill } = fixture.optimisticAction;
+    const state = deriveAgentState({
+      id: "claude-1",
+      status: "running",
+      pendingAction,
+    } as DesktopSession);
+    expect(state.label).toBe(appLabel);
+    expect(state.kind).toBe(appKind);
+    expect(state.pill).toBe(appPill);
+  });
+
+  // And the stale-payload half: the overlay also spreads an existing session,
+  // keeping whatever `semantic` it had before the action started.
+  it("does not read a stale word while an action is in flight", () => {
+    const state = deriveAgentState({
+      id: "claude-1",
+      status: "running",
+      pendingAction: "renaming",
+      semantic: { user: { label: "ready" }, presentation: { statusLabel: "ready" } },
+    } as DesktopSession);
+    expect(state.label).toBe("Renaming");
+    expect(state.label).not.toBe("Ready");
+  });
+
+  // A feed subtitle has the same problem and the same answer.
+  it("gives a feed subtitle the action rather than the word unknown", () => {
+    expect(
+      servedStatusWord({
+        id: "claude-1",
+        status: "running",
+        pendingAction: "renaming",
+      } as DesktopSession),
+    ).toBe("Renaming");
   });
 
   // A broken payload has to be visible. The service attaches `semantic` to

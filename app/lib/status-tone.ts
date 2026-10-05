@@ -289,20 +289,6 @@ export function aggregateStatusKind(
   return best;
 }
 
-export const AGENT_STATUS_TONE: Record<string, string> = {
-  running: APP_STATUS_CLASSES.working.text,
-  idle: APP_STATUS_CLASSES.idle.text,
-  waiting: APP_STATUS_CLASSES.needs.text,
-  exited: APP_STATUS_CLASSES.offline.text,
-  offline: APP_STATUS_CLASSES.offline.text,
-};
-
-export const SERVICE_STATUS_TONE: Record<string, string> = {
-  running: APP_STATUS_CLASSES.service.text,
-  exited: APP_STATUS_CLASSES.serviceOff.text,
-  offline: APP_STATUS_CLASSES.serviceOff.text,
-};
-
 export function firstTokenOf(command: string | undefined): string {
   if (!command) return "";
   return command.trim().split(/\s+/, 1)[0] ?? "";
