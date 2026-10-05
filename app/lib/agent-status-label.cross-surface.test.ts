@@ -145,15 +145,23 @@ describe("an agent's state is worded the same on every surface", () => {
     expect(state.label).not.toBe("Ready");
   });
 
-  // A feed subtitle has the same problem and the same answer.
-  it("gives a feed subtitle the action rather than the word unknown", () => {
-    expect(
-      servedStatusWord({
-        id: "claude-1",
-        status: "running",
-        pendingAction: "renaming",
-      } as DesktopSession),
-    ).toBe("Renaming");
+  // A feed subtitle has the same problem and the same answer, lowercase to
+  // match the served words it shares a column with -- the loops list read
+  // "wt · ready" above "wt · Renaming".
+  it("gives a feed subtitle the action, lowercase, rather than the word unknown", () => {
+    const word = servedStatusWord({
+      id: "claude-1",
+      status: "running",
+      pendingAction: "renaming",
+    } as DesktopSession);
+    expect(word).toBe("renaming");
+  });
+
+  // And every served word it sits beside is lowercase too, so the column is
+  // consistent whichever branch produced the entry.
+  it.each(cases)("$statusLabel is served lowercase ($why)", (entry) => {
+    const word = servedStatusWord(sessionFor(entry));
+    expect(word).toBe(word.toLowerCase());
   });
 
   // A broken payload has to be visible. The service attaches `semantic` to

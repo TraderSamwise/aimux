@@ -33,10 +33,10 @@ fn semantics(case: &Value) -> Value {
         status: case["status"].as_str().expect("status").to_owned(),
         activity: case["activity"].as_str().map(str::to_owned),
         attention: case["attention"].as_str().map(str::to_owned),
-        // Both absent from most cases, and both decide one of them: a pending
-        // action is what `statusLabel` prefers over the user label, and an
-        // assigned task is the only way to reach `next_step`.
-        pending_action: case["pendingAction"].as_str().map(str::to_owned),
+        // No case in `cases` carries a pending action -- the row answers one
+        // from the action rather than the payload, so it lives in
+        // `optimisticAction` and has its own test. An assigned task is the only
+        // way to reach `next_step`, so that one stays.
         has_active_task: case["hasActiveTask"].as_bool().unwrap_or(false),
         ..SessionSemanticsInput::default()
     })
@@ -103,11 +103,6 @@ fn an_agent_idle_at_its_prompt_is_ready_and_never_running() {
 fn every_surface_words_a_state_the_same_way() {
     let fixture = fixture();
     for case in fixture["cases"].as_array().expect("cases") {
-        // The pending-action case is the row's own guard, not a user label the
-        // other two surfaces map, so it is left to the app half.
-        if case["pendingAction"].is_string() {
-            continue;
-        }
         let user_label = case["userLabel"].as_str().expect("userLabel");
         let served = string_at(&semantics(case), ["presentation", "statusLabel"]);
         let row = aimux::dashboard_renderer::row_state_label(user_label);

@@ -91,7 +91,11 @@ export function servedStatusWord(session: DesktopSession): string {
   // The action first, for the same reason the row answers it first: an
   // optimistically created session has a `pendingAction` and no `semantic`, and
   // "unknown" in a feed subtitle is worse than the word for what is happening.
+  //
+  // Lowercased, because `pendingActionLabel` is Title case and this function's
+  // callers put it in the same column as the served word -- the loops list read
+  // "wt · ready" above "wt · Renaming".
   const action = session.pendingAction?.trim();
-  if (action) return pendingActionLabel(action);
+  if (action) return pendingActionLabel(action).toLowerCase();
   return session.semantic?.presentation?.statusLabel?.trim() || "unknown";
 }
