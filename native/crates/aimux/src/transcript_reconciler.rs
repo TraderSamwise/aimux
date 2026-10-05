@@ -44,11 +44,17 @@ pub struct SessionView {
     pub tool_config_key: String,
     pub backend_session_id: Option<String>,
     pub worktree_path: Option<String>,
-    /// Whether this is an overseer or a scribe. Carried because a stranded
-    /// `needs_input` on one of those is a deadlock and on a coder is not: see
-    /// Part C below. Read through `is_project_control_session`, so it keys on
-    /// the `projectControl` flag and the role, never on the id's spelling.
-    pub project_control: bool,
+    /// The session as the topology reports it, kept so Part C can decide
+    /// whether this is an overseer or a scribe.
+    ///
+    /// The raw value is not the whole answer: metadata can DEMOTE a session
+    /// that the topology still describes by role, and
+    /// `session_with_stored_control_flags` is how every other caller resolves
+    /// that -- `scribe_watcher.rs:391` and `project_service/agents.rs:790`
+    /// both do it. Deciding from the topology alone would read a demoted coder
+    /// as control and clear its real prompt, so the merge happens in `scan`,
+    /// which has the metadata in hand.
+    pub value: Value,
 }
 
 impl SessionView {
@@ -71,9 +77,18 @@ impl SessionView {
                 .get("worktreePath")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned),
-            project_control: crate::team_contract::is_project_control_session(Some(value)),
+            value: value.clone(),
         })
     }
+}
+
+/// What a stranded `needs_input` still needs written, and the probe its dwell
+/// is counted against.
+#[derive(Debug, Default)]
+struct InputClearProgress {
+    probe: Option<TranscriptProbe>,
+    settled: bool,
+    cleared: bool,
 }
 
 #[derive(Default)]
@@ -89,11 +104,17 @@ pub struct TranscriptReconciler {
     /// Sessions seen needing a `needs_response` clear once, awaiting a second tick
     /// so a fast daemon restart can't clear a still-re-registering interaction.
     pending_clear: HashSet<String>,
-    /// The same, for a project-control session's stranded `needs_input`. Kept
-    /// separate from `pending_clear` so the two attentions cannot satisfy each
-    /// other's dwell: a session that flips between them would otherwise be
-    /// cleared on the first tick of the second one.
-    pending_input_clear: HashSet<String>,
+    /// Part C's own "seen complete once", and which of its two writes still
+    /// need making.
+    ///
+    /// Separate from `pending` rather than sharing it, because a dwell is not a
+    /// fact about the file -- it is how long THIS part has been watching.
+    /// Sharing one map let a control session bank quiescence while stranded at
+    /// `needs_input` and then, on the tick its attention went back to normal
+    /// with the agent working again, hand that banked tick to Part A, which
+    /// settled the activity immediately: a scribe briefed and relabelled
+    /// `ready` in the same breath, with no dwell of Part A's own.
+    pending_input: HashMap<String, InputClearProgress>,
     tick: u64,
 }
 
@@ -162,40 +183,49 @@ impl TranscriptReconciler {
             // then receives arrives as a prompt, which is also the event that
             // clears attention, so a scribe that truly needs something will ask
             // again rather than be silenced.
-            let stranded_input = session.project_control && attention == Some("needs_input");
+            let stranded_input = attention == Some("needs_input")
+                && crate::team_contract::is_project_control_session(Some(
+                    &crate::team_contract::session_with_stored_control_flags(
+                        &session.value,
+                        session_field_any(metadata, &session.id),
+                    ),
+                ));
 
             if !stuck_working && !stranded_input {
                 self.pending.remove(&session.id);
-                self.pending_input_clear.remove(&session.id);
+                self.pending_input.remove(&session.id);
                 continue;
             }
 
             let Some(path) = self.resolve_transcript_path(session, metadata, deps) else {
                 self.pending.remove(&session.id);
-                self.pending_input_clear.remove(&session.id);
+                self.pending_input.remove(&session.id);
                 continue;
             };
             let Some(result) = deps.probe(&session.tool_config_key, &path) else {
                 self.pending.remove(&session.id);
-                self.pending_input_clear.remove(&session.id);
+                self.pending_input.remove(&session.id);
                 continue;
             };
             if result.turn != "complete" {
                 self.pending.remove(&session.id);
-                self.pending_input_clear.remove(&session.id);
+                self.pending_input.remove(&session.id);
                 continue;
             }
 
-            // Quiescent means the probe is byte-for-byte what the previous tick
-            // saw, because a working agent is still appending. Shared by both
-            // parts: the fact is about the file, not about which part wants it.
-            let quiescent = self.pending.get(&session.id) == Some(&result);
-            if !quiescent {
-                self.pending.insert(session.id.clone(), result);
-                continue;
-            }
-
+            // Quiescence means the probe is byte-for-byte what the previous
+            // tick saw, because a working agent is still appending. Each part
+            // compares against its OWN memory: the file fact is shared, the
+            // dwell is not.
             if stuck_working {
+                // Part C's state is dropped rather than carried, so a control
+                // session that has stopped being stranded does not leave a
+                // half-finished clear alive behind Part A's back.
+                self.pending_input.remove(&session.id);
+                if self.pending.get(&session.id) != Some(&result) {
+                    self.pending.insert(session.id.clone(), result);
+                    continue;
+                }
                 // Complete and quiescent across a full tick — the turn is over.
                 if deps.settle_activity(&session.id) {
                     self.pending.remove(&session.id);
@@ -203,30 +233,37 @@ impl TranscriptReconciler {
                 continue;
             }
 
-            // A second dwell on top of quiescence, matching Part B rather than
-            // Part A, because this one discards an attention signal rather than
-            // downgrading an activity one. Its own set, so flipping between the
-            // two attentions cannot let one satisfy the other's dwell.
-            if !self.pending_input_clear.contains(&session.id) {
-                self.pending_input_clear.insert(session.id.clone());
+            // Likewise the other way: a stranded session is not
+            // `stuck_working`, so Part A's probe is dropped rather than left
+            // where Part A could inherit it later as a tick already served.
+            self.pending.remove(&session.id);
+            let progress = self.pending_input.entry(session.id.clone()).or_default();
+            if progress.probe.as_ref() != Some(&result) {
+                *progress = InputClearProgress {
+                    probe: Some(result),
+                    ..InputClearProgress::default()
+                };
                 continue;
             }
 
             // BOTH fields, not just the attention. `scribe_readiness` requires
             // activity idle-or-done AND attention normal, and a scribe stranded
-            // this way has `activity: "waiting"` -- so clearing the attention
-            // alone leaves it still unready, waiting for Part A to settle the
-            // activity on some later tick, after a service round-trip, with the
-            // dwell restarted because this part removed the pending probe.
+            // this way has `activity: "waiting"`, so clearing the attention
+            // alone leaves it still unready.
             //
             // There is no extra assumption in doing both: complete-and-quiescent
-            // is exactly the evidence Part A settles an activity on. The same
-            // conclusion applies to both fields, so it is applied to both here.
-            let settled = deps.settle_activity(&session.id);
-            let cleared = deps.clear_stale_response(&session.id);
-            if settled && cleared {
-                self.pending_input_clear.remove(&session.id);
-                self.pending.remove(&session.id);
+            // is exactly the evidence Part A settles an activity on, so the same
+            // conclusion is applied to both fields here. Each half is remembered
+            // so a write that landed is not re-POSTed every tick because the
+            // other one failed.
+            if !progress.settled {
+                progress.settled = deps.settle_activity(&session.id);
+            }
+            if !progress.cleared {
+                progress.cleared = deps.clear_stale_response(&session.id);
+            }
+            if progress.settled && progress.cleared {
+                self.pending_input.remove(&session.id);
             }
         }
 
@@ -234,7 +271,7 @@ impl TranscriptReconciler {
         self.codex_path_cache.retain(|id, _| live.contains(id));
         self.codex_miss.retain(|id, _| live.contains(id));
         self.pending_clear.retain(|id| live.contains(id));
-        self.pending_input_clear.retain(|id| live.contains(id));
+        self.pending_input.retain(|id, _| live.contains(id));
     }
 
     fn resolve_transcript_path(
@@ -316,6 +353,15 @@ impl TranscriptReconciler {
                 .into_owned(),
         )
     }
+}
+
+/// A session's whole metadata record, for the control-flag merge. `session_field`
+/// reaches one object inside it; this is the record itself.
+fn session_field_any<'a>(metadata: &'a Value, session_id: &str) -> Option<&'a Value> {
+    metadata
+        .get("sessions")
+        .and_then(|sessions| sessions.get(session_id))
+        .filter(|value| value.is_object())
 }
 
 fn session_field<'a>(metadata: &'a Value, session_id: &str, field: &str) -> Option<&'a Value> {

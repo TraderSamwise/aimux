@@ -316,14 +316,26 @@ fn a_scribe_stranded_at_needs_input_is_never_briefed() {
         );
     }
 
-    // And the moment the attention is back to normal -- which is what the
-    // reconciler's Part C does for a project-control session whose transcript
-    // says the turn is over -- the same scan briefs it.
+    // Clearing the attention is not enough on its own, which is why Part C
+    // writes both fields. `one_changed_agent()` sets activity `idle` AND
+    // attention `normal`, so asserting readiness with it would have proved
+    // nothing about which write mattered.
+    let mut attention_only = one_changed_agent();
+    attention_only["metadata"]["sessions"]["scribe"]["derived"] =
+        json!({ "activity": "waiting", "attention": "normal" });
+    assert!(
+        watcher
+            .scan(&attention_only, NOW + 600_000, &mut read, &mut ok)
+            .is_none(),
+        "readiness is an AND; a waiting scribe is still refused"
+    );
+
+    // Both fields, which is the state Part C leaves behind.
     let settled = one_changed_agent();
     assert!(
         watcher
-            .scan(&settled, NOW + 600_000, &mut read, &mut ok)
+            .scan(&settled, NOW + 1_200_000, &mut read, &mut ok)
             .is_some(),
-        "clearing the attention is the whole unblock"
+        "activity idle and attention normal together are the unblock"
     );
 }

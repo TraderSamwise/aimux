@@ -83,7 +83,7 @@ fn complete_with_size(size: u64) -> Option<TranscriptProbe> {
 /// prompt, which is exactly what Part C turns on.
 fn control_session(tool: &str) -> SessionView {
     SessionView {
-        project_control: true,
+        value: json!({ "id": "a", "role": "scribe", "scribe": true }),
         ..session(tool)
     }
 }
@@ -102,7 +102,7 @@ fn session(tool: &str) -> SessionView {
         tool_config_key: tool.to_owned(),
         backend_session_id: Some("be-a".to_owned()),
         worktree_path: Some("/wt/a".to_owned()),
-        project_control: false,
+        value: json!({ "id": "a" }),
     }
 }
 
@@ -329,15 +329,14 @@ fn a_control_session_stranded_at_needs_input_is_cleared() {
     let sessions = [control_session("claude")];
     let metadata = metadata(needs_input(), json!({}));
 
+    // One tick to bank the probe, a second to find the file unchanged. The same
+    // bar as Part A, and deliberately not Part B's extra dwell: Part B waits
+    // twice because its signal is an in-memory interaction registry that can be
+    // mid-rebuild after a restart, and this one's signal is the transcript.
     reconciler.scan(&sessions, &metadata, &mut deps);
     assert!(
         deps.cleared.is_empty(),
         "not on the tick that first saw the transcript"
-    );
-    reconciler.scan(&sessions, &metadata, &mut deps);
-    assert!(
-        deps.cleared.is_empty(),
-        "nor on the one that found it unchanged"
     );
     reconciler.scan(&sessions, &metadata, &mut deps);
     assert_eq!(deps.cleared, vec!["a".to_owned()]);
@@ -456,13 +455,16 @@ fn an_appending_transcript_restarts_the_dwell() {
     );
 }
 
-/// The two attentions do not share a dwell.
+/// Part B's dwell is not spent by Part C, in the direction that can tell.
 ///
-/// Part B clears a stranded `needs_response` and Part C a stranded
-/// `needs_input`, each with its own set, so a session that flips between them
-/// cannot have one attention's first tick pay for the other's second.
+/// An earlier version of this test ran `needs_input` twice and then
+/// `needs_response` once, and passed on master -- Part B's dwell lives in its
+/// own set, which Part C never touched, and one `needs_response` tick can never
+/// clear anyway. The discriminating direction is the other one: bank a tick of
+/// Part B's dwell first, then strand the session at `needs_input` and check
+/// Part C does not spend it.
 #[test]
-fn flipping_between_the_two_attentions_does_not_shortcut_either_dwell() {
+fn part_b_s_dwell_is_not_spent_by_part_c() {
     let mut reconciler = TranscriptReconciler::new();
     let mut deps = TestDeps {
         probe_result: complete(),
@@ -470,20 +472,61 @@ fn flipping_between_the_two_attentions_does_not_shortcut_either_dwell() {
     };
     let sessions = [control_session("claude")];
 
-    reconciler.scan(&sessions, &metadata(needs_input(), json!({})), &mut deps);
-    reconciler.scan(&sessions, &metadata(needs_input(), json!({})), &mut deps);
-    // Now it is `needs_response`. Part B's dwell starts here, from nothing,
-    // however many ticks Part C had banked.
+    // One unbacked `needs_response` tick: Part B records it and waits.
     reconciler.scan(&sessions, &metadata(needs_response(), json!({})), &mut deps);
+    assert!(deps.cleared.is_empty());
+
+    // Now it is `needs_input` instead. Part C starts from nothing; if it read
+    // Part B's banked tick it would write on this one.
+    reconciler.scan(&sessions, &metadata(needs_input(), json!({})), &mut deps);
     assert!(
         deps.cleared.is_empty(),
-        "Part C's ticks must not pay for Part B's dwell"
+        "Part B's tick must not pay for Part C's dwell"
     );
+    assert!(deps.settled.is_empty());
 }
 
-/// A clear the service rejected is tried again rather than recorded as done.
+/// And Part A's dwell is not spent by Part C, which is the direction that was
+/// actually broken.
+///
+/// Sharing one `pending` map let a control session bank quiescence while it was
+/// stranded at `needs_input`, and then hand that banked tick to Part A the
+/// moment its attention went back to normal with the agent working again. The
+/// result was a scribe briefed and relabelled `ready` in the same breath, with
+/// no dwell of Part A's own -- so the agent would read idle while it worked.
 #[test]
-fn a_clear_that_does_not_land_is_tried_again() {
+fn part_a_s_dwell_is_not_spent_by_part_c() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+
+    // Stranded, and banking quiescence.
+    reconciler.scan(&sessions, &metadata(needs_input(), json!({})), &mut deps);
+
+    // Briefed: the attention is normal and it is working again. Part A must pay
+    // a tick of its own before calling the turn over.
+    reconciler.scan(&sessions, &metadata(running(), json!({})), &mut deps);
+    assert!(
+        deps.settled.is_empty(),
+        "Part C's banked tick must not settle a working agent on sight"
+    );
+
+    // On its own second tick, with the file still unchanged, it may.
+    reconciler.scan(&sessions, &metadata(running(), json!({})), &mut deps);
+    assert_eq!(deps.settled, vec!["a".to_owned()]);
+}
+
+/// A clear the service rejected is tried again rather than recorded as done --
+/// and the write that DID land is not tried again with it.
+///
+/// Part C makes two writes. Retrying the pair wholesale would re-POST the
+/// settle on every tick for as long as the clear kept failing, which is the
+/// same spam the delivery path keeps per-recipient state to avoid.
+#[test]
+fn a_clear_that_does_not_land_is_retried_without_repeating_the_settle() {
     let mut reconciler = TranscriptReconciler::new();
     let mut deps = TestDeps {
         probe_result: complete(),
@@ -502,4 +545,41 @@ fn a_clear_that_does_not_land_is_tried_again() {
         deps.clear_attempts
     );
     assert!(deps.cleared.is_empty());
+    assert_eq!(
+        deps.settled,
+        vec!["a".to_owned()],
+        "the settle landed on the first try, so it is not sent again"
+    );
+}
+
+/// A session the metadata has DEMOTED is a coder, whatever the topology says.
+///
+/// `agents.rs` models a stored `{"scribe": false}` over a topology that still
+/// describes the session by role, and every other caller resolves that through
+/// `session_with_stored_control_flags`. Deciding from the topology value alone
+/// would read a demoted coder as control and clear its real prompt -- which is
+/// the one thing Part C's role gate exists to prevent.
+#[test]
+fn a_metadata_demotion_beats_a_topology_role() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let demoted = json!({ "sessions": { "a": {
+        "scribe": false,
+        "overseer": false,
+        "derived": { "activity": "waiting", "attention": "needs_input" },
+        "context": {}
+    }}});
+
+    for _ in 0..5 {
+        reconciler.scan(&sessions, &demoted, &mut deps);
+    }
+    assert!(
+        deps.cleared.is_empty(),
+        "a demoted session's prompt is a person's to answer"
+    );
+    assert!(deps.settled.is_empty());
 }
