@@ -1,6 +1,5 @@
 mod footer;
 
-use crate::agent_display::{AgentDisplayInput, resolve_app_agent_display};
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
     DashboardService, DashboardSession, DesktopStateSnapshot, ServiceStatus, SessionStatus,
@@ -1186,24 +1185,8 @@ fn service_row(service: &DashboardService, selected: bool, digit: Option<usize>)
     }
 }
 
-/// What this agent is called, from the helper the chips and the app already
-/// ask. Reading `label` raw here made the row disagree with both of them for
-/// any label the shared rule counts as generated -- the session id itself, or
-/// the `tool-xxxxx` shape a spawn produces. The short id after the name is
-/// this surface's own affordance, not part of the name.
-fn agent_display_name(session: &DashboardSession) -> String {
-    resolve_app_agent_display(&AgentDisplayInput {
-        id: Some(session.id.as_str()),
-        label: session.label.as_deref(),
-        command: Some(session.command.as_str()),
-        tool_config_key: session.tool_config_key.as_deref(),
-        ..AgentDisplayInput::default()
-    })
-    .short_name()
-}
-
 fn agent_identity(session: &DashboardSession) -> String {
-    let label = agent_display_name(session);
+    let label = crate::dashboard_model::agent_display_name(session);
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
     let suffix = if !short_id.is_empty() && short_id != label {
@@ -1215,7 +1198,7 @@ fn agent_identity(session: &DashboardSession) -> String {
 }
 
 fn agent_identity_column_width(session: &DashboardSession, identity: &str) -> usize {
-    let label = agent_display_name(session);
+    let label = crate::dashboard_model::agent_display_name(session);
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
     if session.label.is_none()
@@ -1497,7 +1480,10 @@ fn restore_blocked_chip(session: &DashboardSession) -> String {
         return String::new();
     };
     chip(
-        &format!("restore blocked: {}", truncate(reason, 42)),
+        &format!(
+            "restore blocked: {}",
+            truncate(reason, crate::dashboard_model::RESTORE_REASON_WIDTH)
+        ),
         ChipTone::Danger,
     )
 }
@@ -2568,27 +2554,17 @@ fn dashboard_enter_verb(
     let Some(session) = session else {
         return "focus";
     };
+    if crate::dashboard_model::dashboard_restore_block(session).is_some() {
+        return "unavailable";
+    }
     if matches!(
         session.status,
         SessionStatus::Offline | SessionStatus::Exited
     ) {
-        if restore_state(session) == Some("blocked") {
-            "unavailable"
-        } else {
-            "resume"
-        }
+        "resume"
     } else {
         "focus"
     }
-}
-
-fn restore_state(session: &DashboardSession) -> Option<&str> {
-    session.restore_state.as_deref().or_else(|| {
-        session
-            .extra
-            .get("restoreState")
-            .and_then(serde_json::Value::as_str)
-    })
 }
 
 fn worktree_name_branch(name: Option<&str>, branch: Option<&str>) -> String {

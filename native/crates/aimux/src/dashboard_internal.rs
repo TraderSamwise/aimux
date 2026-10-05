@@ -2037,12 +2037,24 @@ fn execute_overseer_watch_command(
             find_dashboard_session(&visible_model.snapshot, overseer_session_id),
         ) {
             controller.focus_session_by_id(&visible_model.snapshot, overseer_session_id);
-            if let DashboardActionPlan::Request(focus_request) = plan_dashboard_action(
+            match plan_dashboard_action(
                 Some(DashboardEntryRef::Session(session)),
                 DashboardActionKind::Enter,
-            ) && execute_dashboard_controller_action(endpoint, &focus_request).is_ok()
-            {
-                return Ok(());
+            ) {
+                DashboardActionPlan::Request(focus_request) => {
+                    if execute_dashboard_controller_action(endpoint, &focus_request).is_ok() {
+                        return Ok(());
+                    }
+                }
+                // The plan knows why and used to be thrown away here, leaving
+                // the user with "could not open overseer" and no reason.
+                DashboardActionPlan::Blocked(reason) | DashboardActionPlan::Busy(reason) => {
+                    controller.footer_alert = Some(DashboardFailureAlert::local(format!(
+                        "Overseer updated, but {reason}"
+                    )));
+                    return Ok(());
+                }
+                DashboardActionPlan::Ignored => {}
             }
         }
         controller.footer_alert = Some(DashboardFailureAlert::local(

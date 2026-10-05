@@ -713,6 +713,11 @@ fn split_help_hint(text: &str) -> Option<(&str, &str)> {
 fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> String {
     let overseers = dashboard_overseer_sessions(ctx);
     let live_overseer = overseers.iter().find(|session| is_live_session(session));
+    // The menu described the project as having no overseer whenever the one it
+    // has is down -- which is exactly when you open it. `d` was hidden on the
+    // same test while `unset_overseer_from_overlay` has always worked on an
+    // offline overseer, so it was a key that did something and said nothing.
+    let any_overseer = live_overseer.or_else(|| overseers.first());
     let watched = watched_dashboard_sessions(ctx);
     let selected = watched.first();
     let max_watched_rows = rows.saturating_sub(15).max(2);
@@ -766,8 +771,8 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
             )
         },
     );
-    let overseer_line = live_overseer.map_or_else(
-        || style("none running", Tone::Muted),
+    let overseer_line = any_overseer.map_or_else(
+        || style("none configured", Tone::Muted),
         |entry| {
             format!(
                 "{} {}",
@@ -786,8 +791,10 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
             style("Status:", Tone::Muted),
             if live_overseer.is_some() {
                 style("Active", Tone::Done)
-            } else {
+            } else if any_overseer.is_some() {
                 style("Off", Tone::Muted)
+            } else {
+                style("None", Tone::Muted)
             }
         ),
         format!("  {} {overseer_line}", style("Overseer:", Tone::Muted)),
@@ -833,6 +840,9 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
     ];
     if live_overseer.is_some() {
         hints.push(("x", "stop overseer"));
+    }
+    // Shown whenever there is one to unset, because that is when the key works.
+    if any_overseer.is_some() {
         hints.push(("d", "unset overseer"));
     }
     hints.push(("Esc", "back"));

@@ -30,12 +30,17 @@ fn enter_focuses_live_session_window() {
 #[test]
 fn enter_resumes_offline_session_and_service() {
     let snapshot = snapshot();
-    let session = &snapshot.worktree_groups[1].sessions[1];
     let service = &snapshot.worktree_groups[1].services[0];
+    // The fixture's own offline agent is restore-blocked, which is the case
+    // Enter must refuse -- `enter_refuses_a_session_whose_restore_is_blocked`
+    // covers that. Resuming is what a RESUMABLE offline agent does.
+    let mut session = snapshot.worktree_groups[1].sessions[1].clone();
+    session.restore_state = Some("ready".into());
+    session.restore_blocked_reason = None;
 
     assert_eq!(
         plan_dashboard_action(
-            Some(DashboardEntryRef::Session(session)),
+            Some(DashboardEntryRef::Session(&session)),
             DashboardActionKind::Enter
         ),
         DashboardActionPlan::Request(DashboardActionRequest {
@@ -169,5 +174,68 @@ fn enter_resumes_live_session_whose_window_is_gone() {
             path: routes::agents::RESUME,
             body: json!({ "sessionId": session.id }),
         })
+    );
+}
+
+/// Enter on an agent that cannot be resumed must say so, not dispatch a resume
+/// that fails.
+///
+/// The footer already rendered `unavailable` for exactly this session while
+/// Enter sent `POST /agents/resume` anyway. The resume failed, nothing
+/// reported it, and the window-open path fell back to window index 0 of the
+/// project's shared tmux session — so the user was moved off their own
+/// dashboard onto another one. Both surfaces read one decision now, so this
+/// test and the footer cannot disagree.
+#[test]
+fn enter_refuses_a_session_whose_restore_is_blocked() {
+    // Straight from the golden fixture: its offline agent is restore-blocked
+    // with the reason Sam hit, so this is the real shape, not a built one.
+    let snapshot = snapshot();
+    let session = &snapshot.worktree_groups[1].sessions[1];
+    assert_eq!(session.restore_state.as_deref(), Some("blocked"));
+
+    let plan = plan_dashboard_action(
+        Some(DashboardEntryRef::Session(session)),
+        DashboardActionKind::Enter,
+    );
+    assert_eq!(
+        plan,
+        DashboardActionPlan::Blocked(
+            "codex cannot be resumed: missing exact resumable backend session id".into()
+        ),
+        "a refusal the user can read, not a resume that quietly relocates them"
+    );
+    // "codex", not "codex-offline": the refusal names the agent the way the
+    // row, the chips and the app name it, from the one shared rule. A fourth
+    // naming rule here is what `tests/agent_name_across_surfaces.rs` exists to
+    // catch.
+    assert_eq!(
+        aimux::dashboard_model::agent_display_name(session),
+        "codex",
+        "the refusal and the row must agree on what this agent is called"
+    );
+}
+
+/// A live-looking session with no tmux window is a stale record, and resuming
+/// it is the recovery — a blocked restore state must not take that away.
+#[test]
+fn enter_still_resumes_a_live_record_with_no_window() {
+    let snapshot = snapshot();
+    let mut session = snapshot.sessions[0].clone();
+    session.tmux_window_id = None;
+    session.restore_state = Some("blocked".into());
+    session.restore_blocked_reason = Some("no recorded backend session".into());
+
+    assert_eq!(
+        plan_dashboard_action(
+            Some(DashboardEntryRef::Session(&session)),
+            DashboardActionKind::Enter
+        ),
+        DashboardActionPlan::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::RESUME,
+            body: json!({ "sessionId": session.id }),
+        }),
+        "only a session that is actually down can be refused here"
     );
 }

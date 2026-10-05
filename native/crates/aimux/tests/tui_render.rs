@@ -319,3 +319,41 @@ mod a_transient_line_is_not_painted_as_a_failure {
         assert!(progress_line("creating").starts_with(&style(PROGRESS_MARK, Tone::Work)));
     }
 }
+
+/// An overlay never covers the footer, so a refusal stays readable while a
+/// picker is open over it.
+///
+/// This is load-bearing rather than cosmetic: the overseer menu reports why it
+/// is offering a replacement and then opens the tool picker in the same
+/// keypress. If the box reached the footer rows, that sentence would be
+/// written and never seen — the silent-create this change exists to stop,
+/// wearing a different hat.
+#[test]
+fn an_overlay_box_never_reaches_the_footer_rows() {
+    for rows in [10_usize, 20, 24, 40, 60] {
+        // More body than can fit, so the box is as tall as it can ever be.
+        let body = (0..rows + 10)
+            .map(|row| format!("line {row}"))
+            .collect::<Vec<_>>();
+        let rendered = aimux::tui_render::render_overlay_box(&aimux::tui_render::OverlayBoxSpec {
+            title: "Overseer",
+            body: &body,
+            cols: 120,
+            rows,
+            variant: aimux::tui_render::OverlayVariant::Blue,
+            icon: None,
+        });
+
+        let lowest = rendered
+            .split('\u{1b}')
+            .filter_map(|chunk| chunk.strip_prefix('['))
+            .filter_map(|chunk| chunk.split_once(';'))
+            .filter_map(|(row, _)| row.parse::<usize>().ok())
+            .max()
+            .expect("the box positions its rows");
+        assert!(
+            lowest <= rows.saturating_sub(2),
+            "a {rows}-row viewport put the box at row {lowest}, which is where the footer lives"
+        );
+    }
+}

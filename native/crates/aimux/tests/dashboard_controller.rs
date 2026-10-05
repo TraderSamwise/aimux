@@ -433,7 +433,7 @@ fn shifted_arrows_parse_as_reorder_keys() {
 }
 
 #[test]
-fn quick_jump_second_digit_requests_selected_entry_activation() {
+fn quick_jump_second_digit_activates_the_selected_entry() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
 
@@ -443,14 +443,50 @@ fn quick_jump_second_digit_requests_selected_entry_activation() {
     );
     let effect = controller.handle_key(&snapshot, DashboardKey::Digit('2'));
 
+    // The fixture's `codex-offline` is restore-blocked, so activating it
+    // reports why rather than dispatching a resume that cannot work -- quick
+    // jump goes through `plan_dashboard_action` like Enter does, which is the
+    // point of deciding that once.
+    assert_eq!(
+        effect,
+        DashboardControllerEffect::Render,
+        "the refusal renders rather than dispatching"
+    );
+    assert_eq!(
+        controller.footer_alert_message(),
+        Some("codex cannot be resumed: missing exact resumable backend session id")
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+    assert_eq!(controller.navigation.item_index, 1);
+}
+
+#[test]
+fn quick_jump_activates_a_resumable_agent() {
+    let mut snapshot = snapshot();
+    // By id, not index: the same agent appears in more than one collection and
+    // quick jump does not read the one the index would suggest.
+    for session in snapshot.sessions.iter_mut().chain(
+        snapshot
+            .worktree_groups
+            .iter_mut()
+            .flat_map(|group| group.sessions.iter_mut()),
+    ) {
+        if session.id == "codex-offline" {
+            session.restore_state = Some("ready".into());
+            session.restore_blocked_reason = None;
+        }
+    }
+    let mut controller = DashboardController::new(&snapshot);
+
+    controller.handle_key(&snapshot, DashboardKey::Digit('2'));
+    let effect = controller.handle_key(&snapshot, DashboardKey::Digit('2'));
+
     let DashboardControllerEffect::Request(request) = effect else {
-        panic!("expected request");
+        panic!("expected request, got {effect:?}");
     };
     assert_eq!(request.method, "POST");
     assert_eq!(request.path, routes::agents::RESUME);
     assert_eq!(request.body, json!({ "sessionId": "codex-offline" }));
-    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
-    assert_eq!(controller.navigation.item_index, 1);
 }
 
 #[test]
@@ -3579,4 +3615,198 @@ mod what_a_transient_footer_line_claims {
 
         assert_eq!(controller.footer_note_message(), Some("Moved agent up"));
     }
+}
+
+/// Enter on the overseer menu starts the overseer this project already has,
+/// even when it is offline.
+///
+/// It looked for a LIVE overseer, so an offline one — which is exactly when
+/// you reach for this menu — was invisible to it and Enter fell through to the
+/// create picker, making a SECOND overseer and demoting the existing one to a
+/// plain coder.
+#[test]
+fn overseer_menu_enter_resumes_an_offline_overseer_instead_of_making_another() {
+    let mut snapshot = snapshot();
+    let mut overseer = snapshot.sessions[0].clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+    overseer.status = SessionStatus::Offline;
+    overseer.tmux_window_id = None;
+    overseer.restore_state = Some("ready".into());
+    overseer.restore_blocked_reason = None;
+    snapshot.sessions.insert(0, overseer);
+
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    let effect = controller.handle_key(&snapshot, DashboardKey::Enter);
+
+    let DashboardControllerEffect::Request(request) = effect else {
+        panic!("expected the existing overseer to be resumed, got {effect:?}");
+    };
+    assert_eq!(request.path, routes::agents::RESUME);
+    assert_eq!(request.body["sessionId"], "claude-overseer");
+}
+
+/// And with no overseer at all, Enter still offers to make one.
+#[test]
+fn overseer_menu_enter_still_creates_when_the_project_has_none() {
+    let snapshot = snapshot();
+    assert!(
+        !snapshot
+            .sessions
+            .iter()
+            .any(|session| session.overseer == Some(true)),
+        "this fixture has no overseer, which is the case under test"
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    let effect = controller.handle_key(&snapshot, DashboardKey::Enter);
+
+    assert!(
+        matches!(effect, DashboardControllerEffect::OpenAgentToolPicker(_)),
+        "with no overseer to start, Enter offers to create one: {effect:?}"
+    );
+}
+
+/// An overseer that cannot be resumed must not become unstartable.
+///
+/// Finding the existing overseer and refusing a blocked restore are each
+/// right; together they left Enter doing nothing on the one menu whose job is
+/// to start an overseer, with no other key on it that would. The service
+/// rejects a restore-blocked candidate for reuse, so a replacement really is
+/// the only way out — it just has to say so first.
+#[test]
+fn overseer_menu_enter_offers_a_replacement_when_the_overseer_cannot_be_resumed() {
+    let mut snapshot = snapshot();
+    let mut overseer = snapshot.sessions[0].clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+    overseer.status = SessionStatus::Offline;
+    overseer.tmux_window_id = None;
+    overseer.restore_state = Some("blocked".into());
+    overseer.restore_blocked_reason = Some("missing exact resumable backend session id".into());
+    snapshot.sessions.insert(0, overseer);
+
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    let effect = controller.handle_key(&snapshot, DashboardKey::Enter);
+
+    assert!(
+        matches!(effect, DashboardControllerEffect::OpenAgentToolPicker(_)),
+        "a replacement is the only way out, so Enter must still offer one: {effect:?}"
+    );
+    assert_eq!(
+        controller.footer_alert_message(),
+        Some(
+            "Project Overseer cannot be resumed: missing exact resumable backend session id. Starting a replacement."
+        ),
+        "and it must say why, because a silent duplicate is how this was reported"
+    );
+}
+
+/// With two overseers flagged, Enter starts the live one — array position is
+/// not liveness, and nothing enforces a single overseer.
+#[test]
+fn overseer_menu_enter_prefers_a_running_overseer_over_a_stale_one() {
+    let mut snapshot = snapshot();
+    let mut stale = snapshot.sessions[0].clone();
+    stale.id = "claude-overseer-stale".into();
+    stale.label = Some("Stale Overseer".into());
+    stale.overseer = Some(true);
+    stale.project_control = Some(true);
+    stale.status = SessionStatus::Offline;
+    stale.tmux_window_id = None;
+    stale.restore_state = Some("ready".into());
+
+    let mut live = stale.clone();
+    live.id = "claude-overseer-live".into();
+    live.label = Some("Live Overseer".into());
+    live.status = SessionStatus::Running;
+    live.tmux_window_id = Some("@overseer".into());
+
+    // Stale first, so taking the first match would pick the wrong one.
+    snapshot.sessions.insert(0, live);
+    snapshot.sessions.insert(0, stale);
+
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    let effect = controller.handle_key(&snapshot, DashboardKey::Enter);
+
+    let DashboardControllerEffect::Request(request) = effect else {
+        panic!("expected the live overseer to be focused, got {effect:?}");
+    };
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(request.body["windowId"], "@overseer");
+}
+
+/// Hiding offline agents must not hide the overseer from the overseer menu.
+///
+/// The filter dropped every offline session while the hidden count right above
+/// it exempted project-control ones — so the count under-reported, and with
+/// the toggle on the overseer menu could not find the overseer it exists to
+/// start, falling through to making another.
+#[test]
+fn hiding_offline_agents_keeps_the_supervisor_lane() {
+    let mut snapshot = snapshot();
+    let mut overseer = snapshot.sessions[0].clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+    overseer.status = SessionStatus::Offline;
+    overseer.tmux_window_id = None;
+    overseer.restore_state = Some("ready".into());
+    snapshot.sessions.insert(0, overseer);
+
+    // In a worktree group, which is where the two filters could disagree: the
+    // flat list exempted project-control sessions and the group filter did
+    // not, so the overseer survived in one and its group vanished from the
+    // other -- leaving that worktree's services alive with no group, and
+    // navigation inventing a worktree row out of them.
+    let mut grouped = snapshot.worktree_groups[1].sessions[0].clone();
+    grouped.id = "claude-group-scribe".into();
+    grouped.label = Some("Group Scribe".into());
+    grouped.scribe = Some(true);
+    grouped.project_control = Some(true);
+    grouped.status = SessionStatus::Offline;
+    grouped.tmux_window_id = None;
+    let group_path = snapshot.worktree_groups[1].path.clone();
+    grouped.worktree_path = group_path.clone();
+    snapshot.worktree_groups[1].sessions = vec![grouped];
+
+    let visible = aimux::dashboard_model::filter_dashboard_visible_model(&snapshot, true);
+    let kept_group = visible
+        .snapshot
+        .worktree_groups
+        .iter()
+        .find(|group| group.path == group_path);
+    assert!(
+        kept_group.is_some_and(|group| group
+            .sessions
+            .iter()
+            .any(|session| session.id == "claude-group-scribe")),
+        "a worktree whose only agent is an offline project-control session keeps its group, \
+         or its services outlive the group they belong to"
+    );
+    assert!(
+        visible
+            .snapshot
+            .sessions
+            .iter()
+            .any(|session| session.id == "claude-overseer"),
+        "the overseer stays visible, or the menu that starts it cannot see it"
+    );
+    assert!(
+        !visible
+            .snapshot
+            .sessions
+            .iter()
+            .any(|session| session.id == "codex-offline"),
+        "an ordinary offline agent is still hidden, which is what the toggle is for"
+    );
 }

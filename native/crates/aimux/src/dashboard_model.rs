@@ -174,6 +174,86 @@ pub fn is_dashboard_supervisor_plane_session(session: &DashboardSession) -> bool
     )
 }
 
+/// The one rule for what an agent is called, shared with the app and the
+/// statusline.
+///
+/// The dashboard row, the chips, the footer and any refusal naming an agent
+/// must give the same answer. Reading `label` raw gives a different one for
+/// every label the shared rule counts as generated -- the session id itself,
+/// or the `tool-xxxxx` shape a spawn produces -- which is what
+/// `tests/agent_name_across_surfaces.rs` exists to catch.
+/// Whether a session is still shown once offline agents are hidden.
+///
+/// Project-control sessions stay. The hidden count already exempts them, so
+/// dropping them made the count under-report -- and it took the overseer out
+/// of the one menu whose job is to start it, turning the toggle into "the
+/// overseer menu cannot find the overseer".
+///
+/// One function because there are two filters. Exempting only the flat session
+/// list left the worktree-group filter dropping the same session, so its group
+/// vanished while its worktree stayed in `visible_session_worktrees` -- which
+/// kept that worktree's services alive with no group to hang them on, and
+/// navigation then invented a worktree row out of the orphans.
+fn dashboard_session_survives_hidden_offline(session: &DashboardSession) -> bool {
+    is_project_control_session(session) || !is_dashboard_session_offline(session)
+}
+
+pub fn agent_display_name(session: &DashboardSession) -> String {
+    crate::agent_display::resolve_app_agent_display(&crate::agent_display::AgentDisplayInput {
+        id: Some(session.id.as_str()),
+        label: session.label.as_deref(),
+        command: Some(session.command.as_str()),
+        tool_config_key: session.tool_config_key.as_deref(),
+        ..Default::default()
+    })
+    .short_name()
+}
+
+/// How much of a restore reason a surface shows. The row chip settled on this
+/// first; the refusal uses the same number so the two read alike.
+pub const RESTORE_REASON_WIDTH: usize = 42;
+
+/// Why Enter cannot resume this session, if it cannot.
+///
+/// Both the footer hint and the action plan need this answer, and only the
+/// footer had it: it rendered `unavailable` from a blocked restore state while
+/// Enter dispatched the resume anyway. The resume then failed, nothing said
+/// so, and the window-open path fell back to window index 0 of the project's
+/// shared tmux session -- so pressing Enter on an agent that could not be
+/// resumed silently moved the user off their own dashboard onto another one.
+///
+/// Derived once here rather than re-decided next to each renderer, per
+/// AGENTS.md "One Answer, Many Surfaces".
+pub fn dashboard_restore_block(session: &DashboardSession) -> Option<String> {
+    if !matches!(
+        session.status,
+        SessionStatus::Offline | SessionStatus::Exited
+    ) {
+        // A live-looking session with no tmux window is a stale record, and
+        // resuming it is the recovery. Only a session that is actually down
+        // can be refused here.
+        return None;
+    }
+    if session.restore_state.as_deref() != Some("blocked") {
+        return None;
+    }
+    let label = agent_display_name(session);
+    Some(
+        match session
+            .restore_blocked_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+        {
+            Some(reason) => format!(
+                "{label} cannot be resumed: {}",
+                crate::tui_render::text::truncate(reason, RESTORE_REASON_WIDTH)
+            ),
+            None => format!("{label} cannot be resumed"),
+        },
+    )
+}
+
 pub fn is_dashboard_overseer_session(session: &DashboardSession) -> bool {
     crate::team_contract::is_overseer_session(Some(&dashboard_session_classifier_probe(session)))
 }
@@ -614,7 +694,7 @@ pub fn filter_dashboard_visible_model(
     let sessions = snapshot
         .sessions
         .iter()
-        .filter(|session| !is_dashboard_session_offline(session))
+        .filter(|session| dashboard_session_survives_hidden_offline(session))
         .cloned()
         .collect::<Vec<_>>();
     let visible_session_worktrees = sessions
@@ -631,7 +711,7 @@ pub fn filter_dashboard_visible_model(
             let group_sessions = group
                 .sessions
                 .iter()
-                .filter(|session| !is_dashboard_session_offline(session))
+                .filter(|session| dashboard_session_survives_hidden_offline(session))
                 .cloned()
                 .collect::<Vec<_>>();
             if group_sessions.is_empty() && !should_keep_operational_worktree(group) {
