@@ -151,11 +151,19 @@ export function normalizeAppStatusKind(value: string | null | undefined): AppSta
     case "running":
     case "starting":
       return "working";
-    case "waiting":
     case "needs_input":
     case "needs_response":
     case "next_step":
       return "needs";
+    // `waiting` is work, not an ask, on both the fields that carry it:
+    // `dashboard_session_status` emits it for a raw `starting`, and an
+    // `activity` of `waiting` is an agent waiting on a tool. Neither is a
+    // person being asked for anything -- which is what the comment three
+    // functions down already said about `starting` -- and the project service
+    // agrees: `user_state` maps both to `working`. It used to return `needs`
+    // here, so the row said "Working" beside an amber needs-the-user dot.
+    case "waiting":
+      return "working";
     case "waiting_on_peers":
       return "idle";
     case "exited":
@@ -252,24 +260,15 @@ export function pendingActionLabel(action: string): string {
   return action ? action.charAt(0).toUpperCase() + action.slice(1) : action;
 }
 
-export function agentStatusKind(session: {
-  activity?: string | null;
-  attention?: string | null;
-  pendingAction?: string | null;
-  status?: string | null;
-}): AppStatusKind {
-  // Not `needs`. An agent the daemon is starting is not an agent asking the
-  // user for anything, and painting the two alike is what this fixes.
-  // Trimmed, so a blank action does not short-circuit the attention a running
-  // agent is asking for.
-  if (session.pendingAction?.trim()) return pendingActionStatusKind();
-  if (session.status === "offline" || session.status === "exited") return "offline";
-  const attentionKind = normalizeAppStatusKind(session.attention);
-  if (attentionKind) return attentionKind;
-  const activityKind = normalizeAppStatusKind(session.activity);
-  if (activityKind) return activityKind;
-  return normalizeAppStatusKind(session.status) ?? "offline";
-}
+// There is deliberately no `agentStatusKind` here any more. It ranked an
+// agent's raw `status`, `activity` and `attention` into a tone, which is a
+// decision the project service already makes and publishes as
+// `semantic.user.label` -- and the app's copy could not see two of the answers,
+// because `status: "waiting"` came out `needs` where the service says `working`,
+// and an idle agent with a task still assigned came out `idle` where the service
+// says `next_step`. `deriveAgentState` in `agent-status-label.ts` reads the
+// service's label now, answering a pending action ahead of it because that is
+// the one thing `user.label` does not encode.
 
 export function serviceStatusKind(service: {
   pendingAction?: string | null;

@@ -33,9 +33,12 @@ interface LabelCase {
   status: DesktopSessionStatus;
   activity: string | null;
   attention: string;
+  pendingAction?: string;
+  hasActiveTask?: boolean;
   userLabel: string;
   statusLabel: string;
   appLabel: string;
+  appKind: string;
   appPill: boolean;
 }
 
@@ -46,6 +49,7 @@ function sessionFor(entry: {
   status: DesktopSessionStatus;
   activity?: string | null;
   attention?: string;
+  pendingAction?: string;
   userLabel?: string;
   statusLabel: string;
 }): DesktopSession {
@@ -54,6 +58,7 @@ function sessionFor(entry: {
     status: entry.status,
     activity: entry.activity ?? undefined,
     attention: entry.attention,
+    pendingAction: entry.pendingAction,
     semantic: {
       user: { label: entry.userLabel ?? null },
       presentation: { statusLabel: entry.statusLabel },
@@ -64,6 +69,14 @@ function sessionFor(entry: {
 describe("an agent's state is worded the same on every surface", () => {
   it.each(cases)("$statusLabel reads as $appLabel ($why)", (entry) => {
     expect(deriveAgentState(sessionFor(entry)).label).toBe(entry.appLabel);
+  });
+
+  // The tone, pinned beside the word in the same case rather than in a test of
+  // its own. The first pass at this fix moved the word and left two states where
+  // the two disagreed -- "Working" beside an amber needs-the-user dot for an
+  // agent the daemon was starting, and an idle dot beside "Next step".
+  it.each(cases)("$statusLabel is toned $appKind ($why)", (entry) => {
+    expect(deriveAgentState(sessionFor(entry)).kind).toBe(entry.appKind);
   });
 
   it.each(cases)("$statusLabel is $appPill as a pill ($why)", (entry) => {
@@ -86,14 +99,6 @@ describe("an agent's state is worded the same on every surface", () => {
     expect(state.pill).toBe(false);
   });
 
-  // The one place this surface shows more than the shared word, pinned so that
-  // moving the distinction into the service is a deliberate edit to the fixture.
-  it("still distinguishes an exited agent, which the shared word folds into offline", () => {
-    const { status, statusLabel, appLabel } = fixture.exited;
-    expect(deriveAgentState(sessionFor({ status, statusLabel })).label).toBe(appLabel);
-    expect(statusLabel).toBe("offline");
-  });
-
   // A broken payload has to be visible. The service attaches `semantic` to
   // every session unconditionally, so an absent word is not a state -- and a
   // blank cell would read as one.
@@ -104,17 +109,43 @@ describe("an agent's state is worded the same on every surface", () => {
 
   // The precedence that used to live in this file now lives in the service, so
   // what is checked here is that the row defers to it: an attention state the
-  // old chain would have ranked itself is rendered from the served word.
-  it("defers to the served word even when the raw fields would rank differently", () => {
+  // old chain would have ranked itself is rendered from the served answer, word
+  // and tone both.
+  it("defers to the served answer even when the raw fields would rank differently", () => {
     const state = deriveAgentState(
       sessionFor({
         status: "running",
         activity: "running",
         attention: "needs_input",
         // The service decided this is work, whatever the raw attention says.
+        userLabel: "working",
         statusLabel: "working",
       }),
     );
     expect(state.label).toBe("Working");
+    expect(state.kind).toBe("working");
+  });
+
+  // The two states the old raw-field ranking could not see, named so a
+  // regression reports which one rather than one row of a loop.
+  it("tones a starting agent as work, not as an ask", () => {
+    const state = deriveAgentState(
+      sessionFor({ status: "waiting", userLabel: "working", statusLabel: "working" }),
+    );
+    expect(state.label).toBe("Working");
+    expect(state.kind).toBe("working");
+  });
+
+  it("tones an idle agent with a task still assigned as an ask", () => {
+    const state = deriveAgentState(
+      sessionFor({
+        status: "running",
+        activity: "idle",
+        userLabel: "next_step",
+        statusLabel: "next step",
+      }),
+    );
+    expect(state.label).toBe("Next step");
+    expect(state.kind).toBe("needs");
   });
 });

@@ -36,13 +36,14 @@
         "userAttention": "needs_response",
         "orchestrationPressure": "none",
         "orchestrationCanBeAssignedWork": true,
-        "statusLabel": "needs answer",
+        "statusLabel": "needs reply",
         "compactHint": "answer",
         "attentionScore": 4,
         "notificationUnreadCount": 0,
         "notificationHasLatestUnread": false
       },
-      "inputSha256": "0f29adc199999dd5489e546845f4324b4f056276cabeec73aca613811a55fd4b"
+      "inputSha256": "0f29adc199999dd5489e546845f4324b4f056276cabeec73aca613811a55fd4b",
+      "divergesFromNode": "Node's statusLabelFor said \"needs answer\" for needs_response. One state had three words in this codebase: that one, the TUI row's \"Needs response\", and Expose's chip \"Needs reply\" -- and the Expo agent row, which now reads this label instead of computing its own, said \"Needs reply\" too. Rust uses the majority spelling so the four surfaces agree. compactHint is unchanged: it is derived from the user state, not from this word."
     },
     {
       "id": "runtime-state-session-semantics-003",

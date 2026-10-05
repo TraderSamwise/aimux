@@ -596,7 +596,13 @@ level/category gating, secret redaction, rotation, and lifecycle records.
   `session-restorability`.
 - `runtime-state/session-semantics.json`: session semantic labels, attention
   scores, compact hints, notification projection, and display-label precedence
-  captured by running TypeScript `session-semantics`.
+  captured by running TypeScript `session-semantics`. One case,
+  `runtime-state-session-semantics-002`, carries a `divergesFromNode` note:
+  Node said "needs answer" for `needs_response`, and this one state had three
+  words in the codebase -- that one, the TUI row's "Needs response", and
+  Exposé's chip "Needs reply". Rust uses the majority spelling so the four
+  surfaces that render it agree. `tmux/statusline-node-frame-v1.json` carries
+  the same word in its embedded `statusLabel` fields for the same reason.
 - `runtime-state/tool-output-watchers.json`: tool pane prompt, active error,
   interrupted, and update-prompt classification captured by running TypeScript
   `classifyToolPane`.

@@ -29,6 +29,11 @@ fn semantics(case: &Value) -> Value {
         status: case["status"].as_str().expect("status").to_owned(),
         activity: case["activity"].as_str().map(str::to_owned),
         attention: case["attention"].as_str().map(str::to_owned),
+        // Both absent from most cases, and both decide one of them: a pending
+        // action is what `statusLabel` prefers over the user label, and an
+        // assigned task is the only way to reach `next_step`.
+        pending_action: case["pendingAction"].as_str().map(str::to_owned),
+        has_active_task: case["hasActiveTask"].as_bool().unwrap_or(false),
         ..SessionSemanticsInput::default()
     })
 }
@@ -82,21 +87,39 @@ fn an_agent_idle_at_its_prompt_is_ready_and_never_running() {
     );
 }
 
-/// `exited` is the one state where the app shows more than the shared word. The
-/// fixture records that on purpose, so folding the distinction into the shared
-/// label later is a deliberate edit here rather than a silent divergence.
+/// One state, one word, across every surface that renders it.
+///
+/// `needs_response` had three: this service said "needs answer", the TUI row
+/// said "Needs response", and Exposé's chip said "Needs reply". Nothing
+/// compared them, so the app row moving onto the served word changed what a
+/// user sees for that one state. They agree now, and this is what keeps them
+/// agreeing -- a per-surface test passes happily while the surfaces disagree,
+/// which is the whole reason this file is shaped the way it is.
 #[test]
-fn exited_is_worded_as_offline_by_the_service() {
+fn every_surface_words_a_state_the_same_way() {
     let fixture = fixture();
-    let exited = &fixture["exited"];
-    let semantic = derive_session_semantics(SessionSemanticsInput {
-        status: exited["status"].as_str().expect("status").to_owned(),
-        attention: Some("normal".to_owned()),
-        ..SessionSemanticsInput::default()
-    });
+    for case in fixture["cases"].as_array().expect("cases") {
+        // The pending-action case is the row's own guard, not a user label the
+        // other two surfaces map, so it is left to the app half.
+        if case["pendingAction"].is_string() {
+            continue;
+        }
+        let user_label = case["userLabel"].as_str().expect("userLabel");
+        let served = string_at(&semantics(case), ["presentation", "statusLabel"]);
+        let row = aimux::dashboard_renderer::row_state_label(user_label);
+        let chip = aimux::project_service::switchable_agents::user_label_chip(user_label);
 
-    assert_eq!(
-        string_at(&semantic, ["presentation", "statusLabel"]),
-        exited["statusLabel"].as_str().expect("statusLabel")
-    );
+        assert_eq!(
+            served.to_lowercase(),
+            row.to_lowercase(),
+            "{user_label}: the service says {served:?} and the TUI row says {row:?}"
+        );
+        if let Some((_, chip)) = chip {
+            assert_eq!(
+                served.to_lowercase(),
+                chip.to_lowercase(),
+                "{user_label}: the service says {served:?} and Exposé's chip says {chip:?}"
+            );
+        }
+    }
 }

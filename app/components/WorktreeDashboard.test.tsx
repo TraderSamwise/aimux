@@ -371,15 +371,19 @@ describe("a narrow window restacks the row instead of scrolling the card", () =>
 
   // Measured as "is the row a column", because that is the whole shape.
   it("stacks the row into two lines when the card says the window is narrow", () => {
-    expect(classNames(rowAt(true)).some((name) => name.includes("flex-col items-stretch"))).toBe(
-      true,
-    );
+    const outer = classNames(rowAt(true)).find((name) => name.includes("rounded-md px-2.5 py-2"));
+    expect(outer).toContain("flex-col items-stretch");
   });
 
   it("leaves the row on one line otherwise", () => {
     const names = classNames(rowAt(false));
     expect(names.some((name) => name.includes("flex-col items-stretch"))).toBe(false);
-    expect(names.some((name) => name.includes("flex-row items-center"))).toBe(true);
+    // The OUTER row, found by the class only it carries. Matching
+    // "flex-row items-center" alone also matched the trailing group's own
+    // className, so it passed whichever direction the row had.
+    expect(names.some((name) => name.includes("rounded-md px-2.5 py-2"))).toBe(true);
+    const outer = names.find((name) => name.includes("rounded-md px-2.5 py-2"));
+    expect(outer).toContain("flex-row items-center");
   });
 
   // The name is the thing the restack exists to protect: capped at 55% of a

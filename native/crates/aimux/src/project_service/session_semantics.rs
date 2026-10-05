@@ -222,7 +222,13 @@ fn notifications_state(
 fn status_label_for(label: &str) -> &str {
     match label {
         "needs_input" => "needs input",
-        "needs_response" => "needs answer",
+        // "needs reply", not "needs answer". One state had three words:
+        // this said "needs answer", the TUI row said "Needs response", and
+        // Exposé's chip said "Needs reply" -- and the app row, which now reads
+        // this one, used to say "Needs reply" too. The majority spelling wins
+        // so that moving the row onto this word is not a visible change for
+        // the one state where the three disagreed.
+        "needs_response" => "needs reply",
         "next_step" => "next step",
         "working" => "working",
         "ready" => "ready",

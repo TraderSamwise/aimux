@@ -1,5 +1,5 @@
 {
-  "description": "The word an agent row says about an agent's state, on every surface that says it. The project service derives it once in derive_session_semantics as presentation.statusLabel; the TUI renders that string verbatim and the Expo app renders it sentence-cased. The app used to compute its own word from `status` and said \"Running\" for an agent the service had already called `ready` -- an agent that had finished its turn and was sitting at an empty prompt. The status dot next to that word was right the whole time, which is what makes this a one-answer-many-surfaces failure rather than a wrong rule.",
+  "description": "The word an agent row says about an agent's state, on every surface that says it. The project service derives it once in derive_session_semantics as presentation.statusLabel; the TUI renders that string verbatim and the Expo app renders it sentence-cased. The app used to compute its own word from `status` and said \"Running\" for an agent the service had already called `ready` -- an agent that had finished its turn and was sitting at an empty prompt. The status dot next to that word was right the whole time, which is what makes this a one-answer-many-surfaces failure rather than a wrong rule. Every case here also pins that the word and the dot agree, because the first pass at this fix moved the word and left one state where they did not.",
   "generatedBy": "hand, from native/crates/aimux/src/project_service/session_semantics.rs",
   "cases": [
     {
@@ -10,7 +10,8 @@
       "userLabel": "ready",
       "statusLabel": "ready",
       "appLabel": "Ready",
-      "appPill": false
+      "appPill": false,
+      "appKind": "ready"
     },
     {
       "why": "actually producing output",
@@ -20,7 +21,8 @@
       "userLabel": "working",
       "statusLabel": "working",
       "appLabel": "Working",
-      "appPill": true
+      "appPill": true,
+      "appKind": "working"
     },
     {
       "why": "waiting on a tool, which is work and not an ask",
@@ -30,7 +32,8 @@
       "userLabel": "working",
       "statusLabel": "working",
       "appLabel": "Working",
-      "appPill": true
+      "appPill": true,
+      "appKind": "working"
     },
     {
       "why": "asking the person a question",
@@ -40,17 +43,19 @@
       "userLabel": "needs_input",
       "statusLabel": "needs input",
       "appLabel": "Needs input",
-      "appPill": true
+      "appPill": true,
+      "appKind": "needs"
     },
     {
-      "why": "waiting on a reply to something it sent; the app called this \"Needs reply\" while every other surface said \"needs answer\"",
+      "why": "waiting on a reply to something it sent. This one state had three words: the service said \"needs answer\", the TUI row said \"Needs response\", and Expose's chip said \"Needs reply\". All four surfaces say the majority spelling now, so moving the row onto the served word is not a visible change here",
       "status": "running",
       "activity": "waiting",
       "attention": "needs_response",
       "userLabel": "needs_response",
-      "statusLabel": "needs answer",
-      "appLabel": "Needs answer",
-      "appPill": true
+      "statusLabel": "needs reply",
+      "appLabel": "Needs reply",
+      "appPill": true,
+      "appKind": "needs"
     },
     {
       "why": "blocked on something it cannot clear itself",
@@ -60,7 +65,8 @@
       "userLabel": "blocked",
       "statusLabel": "blocked",
       "appLabel": "Blocked",
-      "appPill": true
+      "appPill": true,
+      "appKind": "blocked"
     },
     {
       "why": "failed",
@@ -70,7 +76,8 @@
       "userLabel": "error",
       "statusLabel": "error",
       "appLabel": "Error",
-      "appPill": true
+      "appPill": true,
+      "appKind": "error"
     },
     {
       "why": "finished a turn and reported done, which is not the same as idle",
@@ -80,7 +87,8 @@
       "userLabel": "done",
       "statusLabel": "done",
       "appLabel": "Done",
-      "appPill": false
+      "appPill": false,
+      "appKind": "done"
     },
     {
       "why": "interrupted mid-turn",
@@ -90,7 +98,8 @@
       "userLabel": "interrupted",
       "statusLabel": "interrupted",
       "appLabel": "Interrupted",
-      "appPill": false
+      "appPill": false,
+      "appKind": "idle"
     },
     {
       "why": "the process is gone",
@@ -100,7 +109,8 @@
       "userLabel": "offline",
       "statusLabel": "offline",
       "appLabel": "Offline",
-      "appPill": false
+      "appPill": false,
+      "appKind": "offline"
     },
     {
       "why": "idle with no activity recorded at all",
@@ -110,13 +120,43 @@
       "userLabel": "idle",
       "statusLabel": "idle",
       "appLabel": "Idle",
+      "appPill": false,
+      "appKind": "idle"
+    },
+    {
+      "why": "the daemon is starting the agent: dashboard_session_status emits `waiting` for a raw `starting`, and that is work, not an ask. The app's own normalizeAppStatusKind used to call it `needs`, so the row said \"Working\" beside an amber needs-the-user dot",
+      "status": "waiting",
+      "activity": null,
+      "attention": "normal",
+      "userLabel": "working",
+      "statusLabel": "working",
+      "appLabel": "Working",
+      "appPill": true,
+      "appKind": "working"
+    },
+    {
+      "why": "an idle agent that still has a task assigned, which is an ask: it has somewhere to go next",
+      "status": "running",
+      "activity": "idle",
+      "attention": "normal",
+      "hasActiveTask": true,
+      "userLabel": "next_step",
+      "statusLabel": "next step",
+      "appLabel": "Next step",
+      "appPill": true,
+      "appKind": "needs"
+    },
+    {
+      "why": "an action in flight. The service's word already prefers the action, but its user.label does not: `renaming` is not one of the four lifecycles runtime_lifecycle names, so it falls through to `ready`. The row has to answer the action ahead of the label or a renaming agent is toned as settled",
+      "status": "running",
+      "activity": "idle",
+      "attention": "normal",
+      "pendingAction": "renaming",
+      "userLabel": "ready",
+      "statusLabel": "Renaming",
+      "appLabel": "Renaming",
+      "appKind": "working",
       "appPill": false
     }
-  ],
-  "exited": {
-    "why": "The one place the app shows detail the shared word drops. runtime_lifecycle folds `exited` into `offline`, so statusLabel says `offline`, while the TUI's own row still says \"Exited\". Pinned so that moving the distinction into the shared label is a deliberate change to this fixture rather than a silent divergence.",
-    "status": "exited",
-    "statusLabel": "offline",
-    "appLabel": "Exited"
-  }
+  ]
 }

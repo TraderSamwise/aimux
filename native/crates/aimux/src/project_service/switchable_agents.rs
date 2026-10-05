@@ -1293,7 +1293,12 @@ fn path_clean(path: &Path) -> PathBuf {
     output
 }
 
-fn user_label_chip(value: &str) -> Option<(&'static str, &'static str)> {
+/// Exposé's tone and word for a user state.
+///
+/// `pub` for the same reason as `row_state_label`: it is one of the four
+/// surfaces that word the same state, and the cross-surface test compares the
+/// word against the project service's `statusLabel`.
+pub fn user_label_chip(value: &str) -> Option<(&'static str, &'static str)> {
     match value {
         "working" => Some(("working", "Working")),
         "ready" => Some(("ready", "Ready")),
