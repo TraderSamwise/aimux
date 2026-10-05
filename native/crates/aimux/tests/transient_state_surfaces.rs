@@ -80,7 +80,10 @@ fn cases() -> Vec<(String, String)> {
 #[test]
 fn every_transient_action_is_counted_in_the_progress_tone() {
     for (action, family) in cases() {
-        assert_eq!(family, "progress", "{action}");
+        assert_eq!(
+            family, "progress",
+            "{action}: this test only knows how to check the progress family;              teach it the others before adding one"
+        );
         let frame = frame_with_pending(&action);
         // `graveyarding` is counted under the word the user reads.
         let counted = if action == "graveyarding" {
@@ -151,9 +154,17 @@ fn the_states_that_do_want_the_person_still_do() {
             scribe_preview_entries: &[],
         })
         .frame;
+        // Scoped to this state's own count, not the frame: a frame-wide search
+        // for the attention colour passes as soon as the selected-row marker
+        // or the loop-alert banner uses it, which is always.
+        let counted = state.replace('_', " ");
         assert!(
-            frame.contains(ATTENTION_SGR),
+            frame.contains(&format!("{ATTENTION_SGR}1 {counted}")),
             "{state} no longer asks for the person"
+        );
+        assert!(
+            !frame.contains(&format!("{PROGRESS_SGR}1 {counted}")),
+            "{state} was made as quiet as work in flight"
         );
     }
 }

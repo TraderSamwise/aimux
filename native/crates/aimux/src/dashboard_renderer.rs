@@ -1684,13 +1684,17 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     if worktree.operation_failure.is_some() {
         return style("failed", Tone::Danger);
     }
-    match worktree.pending_action {
-        Some("creating") => return progress_label("creating"),
-        Some("graveyarding") => return progress_label("graveyarding"),
-        _ => {}
+    // Whatever the action is, not two spellings and a catch-all: a worktree
+    // mid-rename summarised as "removing", and `dashboard_navigation` then
+    // refused Enter on it with "is still creating".
+    if let Some(action) = worktree.pending_action {
+        return progress_label(action);
     }
-    if worktree.removing || worktree.pending {
+    if worktree.removing {
         return progress_label("removing");
+    }
+    if worktree.pending {
+        return progress_label("pending");
     }
     let parts = semantic_count_parts(worktree);
     if !parts.is_empty() {
@@ -2724,17 +2728,28 @@ pub fn render_dashboard_subscreen_frame(
         content.insert(0, format!("  {}", style(error, Tone::Danger)));
         content.insert(1, String::new());
     }
-    let mut footer = vec![footer_hints(subscreen_footer(
+    // Above the hints and truncated, as on the dashboard. Appended after them
+    // and untruncated, a long message -- a plan path on an 80-column Library
+    // screen -- wrapped, pushed the frame past `rows`, and made the terminal
+    // scroll on every repaint.
+    let mut footer = Vec::new();
+    for alert in input.footer_alerts {
+        footer.push(truncate_ansi(
+            &dashboard_alert_line(alert),
+            input.cols.saturating_sub(2),
+        ));
+    }
+    for line in input.footer_progress.iter().chain(input.footer_note.iter()) {
+        footer.push(truncate_ansi(
+            &dashboard_note_line(line),
+            input.cols.saturating_sub(2),
+        ));
+    }
+    footer.push(footer_hints(subscreen_footer(
         input.screen,
         input.resource,
         input.selected_index,
-    ))];
-    for alert in input.footer_alerts {
-        footer.push(dashboard_alert_line(alert));
-    }
-    for line in input.footer_progress.iter().chain(input.footer_note.iter()) {
-        footer.push(dashboard_note_line(line));
-    }
+    )));
     let viewport_height = input
         .rows
         .saturating_sub(header.len() + 1 + footer.len())

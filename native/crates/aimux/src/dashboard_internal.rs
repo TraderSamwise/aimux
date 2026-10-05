@@ -28,7 +28,8 @@ use crate::dashboard_pending_actions::{
     DashboardPendingActions, PendingTarget, pending_action_for_request,
 };
 use crate::dashboard_project_events::{
-    DashboardProjectEvent, DashboardProjectRefreshState, dashboard_alert_footer_flash,
+    DashboardProjectEvent, DashboardProjectRefreshState, dashboard_alert_flash_failed,
+    dashboard_alert_footer_flash,
 };
 use crate::dashboard_readiness::mark_native_dashboard_ready;
 use crate::dashboard_renderer::{
@@ -650,7 +651,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 .and_then(cache_cleanup_result_from_response)
                             {
                                 Ok(result) => {
-                                    controller.set_note(worktree_cache_cleanup_summary(&result));
+                                    let (message, failed) = worktree_cache_cleanup_summary(&result);
+                                    if failed {
+                                        controller.footer_alert =
+                                            Some(DashboardFailureAlert::local(message));
+                                    } else {
+                                        controller.set_note(message);
+                                    }
                                 }
                                 Err(error) => {
                                     controller.footer_alert =
@@ -1372,11 +1379,22 @@ fn drain_dashboard_event_stream(
     while let Ok(message) = stream.try_recv() {
         match message {
             DashboardEventStreamMessage::Event(event) => {
+                // Something arrived, so the stream is genuinely back.
+                if down.take().is_some() {
+                    render = true;
+                }
                 if let DashboardProjectEvent::Alert(payload) = &event
                     && let Some(message) = dashboard_alert_footer_flash("dashboard", payload)
                     && let Some(controller) = controller.as_deref_mut()
                 {
-                    controller.set_note(message);
+                    // `✗ {title}` is a failed task. Flattened into the note
+                    // channel it rendered in the same grey as `✓ {title}` and
+                    // was gone on the next keypress.
+                    if dashboard_alert_flash_failed(payload) {
+                        controller.footer_alert = Some(DashboardFailureAlert::local(message));
+                    } else {
+                        controller.set_note(message);
+                    }
                     render = true;
                 }
                 refresh_state.observe_for_screen(&event, active_screen);
@@ -1451,8 +1469,9 @@ fn reconcile_dashboard_event_stream(
     }
     *event_stream = Some(spawn_dashboard_project_event_stream(endpoint.clone()));
     *retry_at = None;
-    // The stream is back, so the report that it was down stops being true.
-    *down = None;
+    // The report stays up until the new stream actually delivers something.
+    // Clearing it here made the bar blink off at every retry and back on when
+    // that retry failed, so a glance during the gap saw a healthy stream.
 }
 
 fn elapsed_millis(start: Instant) -> i64 {
@@ -2007,6 +2026,7 @@ fn render_dashboard_snapshot(
             context.scroll_offset,
             pending_actions,
             context.pending_now_ms,
+            context.stream_error,
         );
     }
     controller.navigation.clamp(snapshot);
@@ -2335,6 +2355,7 @@ fn render_dashboard_subscreen_snapshot(
     scroll_offset: usize,
     pending_actions: &mut DashboardPendingActions,
     pending_now_ms: i64,
+    stream_error: Option<&str>,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
     // A refresh that fails keeps the screen it already drew. Under load the
     // project service misses the 2s budget routinely, and throwing the rows
@@ -2362,14 +2383,23 @@ fn render_dashboard_subscreen_snapshot(
         controller.screen,
         resource.as_ref(),
     ));
-    let footer_alerts: Vec<DashboardFooterAlert<'_>> = controller
-        .footer_alert
-        .as_ref()
-        .map(|alert| DashboardFooterAlert {
-            message: alert.message.as_str(),
-            dismissible: true,
+    // The stream error reaches here too. A subscreen that silently stopped
+    // receiving events looked exactly like a subscreen with nothing happening.
+    let footer_alerts: Vec<DashboardFooterAlert<'_>> = stream_error
+        .map(|message| DashboardFooterAlert {
+            message,
+            dismissible: false,
         })
         .into_iter()
+        .chain(
+            controller
+                .footer_alert
+                .as_ref()
+                .map(|alert| DashboardFooterAlert {
+                    message: alert.message.as_str(),
+                    dismissible: true,
+                }),
+        )
         .collect();
     let frame = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
         screen: controller.screen,
@@ -2789,7 +2819,10 @@ fn cache_cleanup_result_from_response(response: serde_json::Value) -> Result<ser
     ))
 }
 
-fn worktree_cache_cleanup_summary(result: &serde_json::Value) -> String {
+/// The summary, and whether any of the deletions failed. A cleanup that could
+/// not remove three of four items is reporting three failures, and the note
+/// channel erases it on the next keypress.
+fn worktree_cache_cleanup_summary(result: &serde_json::Value) -> (String, bool) {
     let target_count = result
         .get("plan")
         .and_then(|plan| plan.get("targets"))
@@ -2807,10 +2840,11 @@ fn worktree_cache_cleanup_summary(result: &serde_json::Value) -> String {
         .flatten()
         .filter(|entry| entry.get("status").and_then(serde_json::Value::as_str) == Some("failed"))
         .count();
-    format!(
+    let message = format!(
         "Removed {} from {target_count} cache item(s); {failed} failed.",
         crate::dashboard_service_input::format_worktree_cache_bytes(reclaimed_bytes)
-    )
+    );
+    (message, failed > 0)
 }
 
 fn parse_desktop_state_snapshot(contents: &str) -> Result<DesktopStateSnapshot> {
@@ -2879,7 +2913,7 @@ struct DashboardRequestOutcome {
     failure: Option<String>,
     /// What a successful mutation did, for the routes where succeeding quietly
     /// is indistinguishable from doing nothing.
-    notice: Option<String>,
+    notice: Option<DashboardActionNotice>,
 }
 
 /// Send the mutations queued during key handling, now that the optimistic frame
@@ -2943,11 +2977,28 @@ fn flush_deferred_dashboard_requests(
     }
 }
 
+/// The sentence a finished mutation leaves in the footer, and whether it is
+/// reporting something that went wrong.
+///
+/// A 200 is not the same as a success: a restore that brought back 2 of 36
+/// answers OK and then names the 34 that did not come back, and that sentence
+/// is the only report of them there is.
+#[derive(Debug, Clone)]
+struct DashboardActionNotice {
+    message: String,
+    failed: bool,
+}
+
 /// The sentence a finished mutation leaves in the footer. Only routes whose
 /// success is otherwise invisible have one.
-fn dashboard_action_notice(path: &str, body: &Value) -> Option<String> {
+fn dashboard_action_notice(path: &str, body: &Value) -> Option<DashboardActionNotice> {
     if path == crate::project_api_contract::routes::agents::RESTORE_PREVIOUS {
-        return crate::agent_restore_outcome::restore_outcome_message(body);
+        return crate::agent_restore_outcome::restore_outcome_message(body).map(|message| {
+            DashboardActionNotice {
+                message,
+                failed: crate::agent_restore_outcome::restore_outcome_failed(body),
+            }
+        });
     }
     None
 }
@@ -2997,8 +3048,16 @@ fn drain_dashboard_request_outcomes(
                 // progress note would outlive the work. Keyed on the action, so
                 // an unrelated faster request cannot end this one's report.
                 controller.clear_progress_for(outcome.action.as_ref());
-                if let Some(message) = outcome.notice {
-                    controller.set_note(message);
+                if let Some(notice) = outcome.notice {
+                    if notice.failed {
+                        // A 200 that names what did not work is a failure
+                        // report, and the note channel erases it on the next
+                        // key -- which for a 36-agent restore is immediately.
+                        controller.footer_alert =
+                            Some(DashboardFailureAlert::local(notice.message));
+                    } else {
+                        controller.set_note(notice.message);
+                    }
                 }
             }
         }
@@ -3056,7 +3115,10 @@ mod tests {
                 body: serde_json::json!({ "path": "/repo/.aimux/worktrees/other-tree" }),
             }),
             failure: None,
-            notice: Some("Worktree other-tree moved to the graveyard".into()),
+            notice: Some(DashboardActionNotice {
+                message: "Worktree other-tree moved to the graveyard".into(),
+                failed: false,
+            }),
         })
         .expect("queue outcome");
         drop(tx);
@@ -3152,6 +3214,119 @@ mod tests {
         );
     }
 
+    /// A 200 is not the same as a success. The restore route answers OK and
+    /// then names the agents that did not come back, and that sentence is the
+    /// only report of them there is -- so it cannot go in the channel the next
+    /// keypress clears.
+    #[test]
+    fn an_outcome_that_names_failures_outlives_the_next_keypress() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(restore_previous()),
+            failure: None,
+            notice: Some(DashboardActionNotice {
+                message: "Restored 2 of 36; 34 could not be restored: claude-7".into(),
+                failed: true,
+            }),
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        controller.handle_key(&snapshot, crate::dashboard_controller::DashboardKey::Down);
+
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("Restored 2 of 36; 34 could not be restored: claude-7")
+        );
+    }
+
+    /// And a clean one stays a note, so a restore that worked is not an alert
+    /// the user has to dismiss.
+    #[test]
+    fn an_outcome_with_nothing_wrong_stays_a_note() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(restore_previous()),
+            failure: None,
+            notice: Some(DashboardActionNotice {
+                message: "Restored 36 agents".into(),
+                failed: false,
+            }),
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(controller.footer_note_message(), Some("Restored 36 agents"));
+        assert_eq!(controller.footer_alert_message(), None);
+    }
+
+    /// The same shape in the other producer: a cleanup that could not remove
+    /// three of four items is reporting three failures.
+    #[test]
+    fn a_cleanup_that_failed_some_deletions_says_so_durably() {
+        let clean = serde_json::json!({
+            "plan": { "targets": [{}, {}] },
+            "reclaimedBytes": 1024.0,
+            "results": [{ "status": "removed" }, { "status": "removed" }],
+        });
+        let (_, failed) = worktree_cache_cleanup_summary(&clean);
+        assert!(!failed);
+
+        let partial = serde_json::json!({
+            "plan": { "targets": [{}, {}] },
+            "reclaimedBytes": 1024.0,
+            "results": [{ "status": "removed" }, { "status": "failed" }],
+        });
+        let (message, failed) = worktree_cache_cleanup_summary(&partial);
+        assert!(failed, "{message}");
+        assert!(message.contains("1 failed"), "{message}");
+    }
+
+    /// A subscreen that silently stopped receiving events looked exactly like a
+    /// subscreen with nothing happening, because the stream error reached only
+    /// the dashboard's footer.
+    #[test]
+    fn a_dead_stream_is_said_on_a_subscreen_too() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.screen = DashboardScreen::Coordination;
+        let mut pending_actions = DashboardPendingActions::default();
+
+        let frame = render_dashboard_subscreen_snapshot(
+            DashboardViewport {
+                cols: 140,
+                rows: 36,
+            },
+            &mut controller,
+            None,
+            0,
+            &mut pending_actions,
+            0,
+            Some("project service closed the stream"),
+        );
+
+        assert!(
+            crate::tui_render::text::strip_ansi(&frame.frame)
+                .contains("project service closed the stream"),
+            "{}",
+            crate::tui_render::text::strip_ansi(&frame.frame)
+        );
+    }
+
     /// A dead event stream retries every few seconds. Stored as a dismissible
     /// alert it came straight back faster than the user could clear it, and it
     /// outlived the reconnect that made it false -- so it is derived, and the
@@ -3190,8 +3365,14 @@ mod tests {
             Some(&endpoint),
             false,
         );
+        assert_eq!(
+            down.as_deref(),
+            Some("project service closed the stream"),
+            "a retry that has not delivered anything is not a reconnect"
+        );
 
-        assert_eq!(down, None, "the stream is back, so it is no longer down");
+        reconcile_dashboard_event_stream(&mut event_stream, &mut retry_at, &mut down, None, true);
+        assert_eq!(down, None, "there is no stream to be down");
     }
 
     /// A progress note outlives keypresses, so the settling outcome is the only
@@ -3844,6 +4025,7 @@ mod tests {
             0,
             &mut pending_actions,
             0,
+            None,
         );
 
         let plain = crate::tui_render::text::strip_ansi(&frame.frame);
@@ -3869,10 +4051,14 @@ mod tests {
             &body,
         )
         .expect("a restore reports its outcome");
-        assert!(notice.contains("claude-b"), "{notice}");
-        assert_eq!(
-            dashboard_action_notice(crate::project_api_contract::routes::agents::KILL, &body),
-            None,
+        assert!(notice.message.contains("claude-b"), "{}", notice.message);
+        assert!(
+            notice.failed,
+            "a 200 that names what did not come back is a failure report"
+        );
+        assert!(
+            dashboard_action_notice(crate::project_api_contract::routes::agents::KILL, &body)
+                .is_none(),
             "only routes whose success is otherwise invisible speak up"
         );
     }

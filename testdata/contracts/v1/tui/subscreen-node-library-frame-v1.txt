@@ -32,5 +32,5 @@
                                                                                                                                            
                                                                                                                                            
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  [1;38;5;255m↑↓[0m [2mselect[0m  [1;38;5;255mTab[0m [2mdetails[0m  [1;38;5;255md/c/p/L/t/g[0m [2mscreens[0m  [1;38;5;255mEnter[0m [2mshow path[0m  [1;38;5;255mr[0m [2mrefresh[0m  [1;38;5;255mEsc[0m [2mdashboard[0m  [1;38;5;255mq[0m [2mquit[0m[0m
-  [2m›[0m [2mPath: /repo/.aimux/plans/codex-1.md[0m[0m[?2026l
+  [2m›[0m [2mPath: /repo/.aimux/plans/codex-1.md[0m[0m[0m
+  [1;38;5;255m↑↓[0m [2mselect[0m  [1;38;5;255mTab[0m [2mdetails[0m  [1;38;5;255md/c/p/L/t/g[0m [2mscreens[0m  [1;38;5;255mEnter[0m [2mshow path[0m  [1;38;5;255mr[0m [2mrefresh[0m  [1;38;5;255mEsc[0m [2mdashboard[0m  [1;38;5;255mq[0m [2mquit[0m[0m[?2026l

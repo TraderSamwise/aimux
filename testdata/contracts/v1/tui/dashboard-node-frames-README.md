@@ -27,8 +27,12 @@ agents" both read as errors, while the *same* string on a subscreen rendered as
 bare dim text with no mark at all. The channel is now typed -- progress, note,
 failure -- and each kind has one rendering on every screen.
 
-The frame differs by exactly the "› " mark now prefixing the `Path:` line.
-Nothing else changed. This is a deliberate divergence from the Node capture.
+The frame differs by the "› " mark now prefixing the `Path:` line, and by that
+line moving above the hint row. Node appended it after the hints, untruncated,
+so a long message -- a plan path on an 80-column screen -- wrapped and pushed
+the frame past its own row budget. The dashboard already put these above the
+hints and truncated them; the subscreen now does the same. This is a deliberate
+divergence from the Node capture.
 
 
 `overlay-node-worktree-remove-frame-v1.txt` was re-recorded on 2026-10-04 to

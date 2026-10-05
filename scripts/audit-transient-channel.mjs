@@ -54,6 +54,9 @@ const ALERT_CALLS = [
   "DashboardActionPlan::Blocked(",
   "DashboardNavigationOutcome::Blocked(",
 ];
+// `self.footer_alert = Some(x.into())` reaches the same channel without naming
+// the constructor, and twenty sites are spelled that way.
+const ALERT_ASSIGNMENT = /footer_alert\s*=\s*Some\(/g;
 
 function listRustFiles(directory) {
   const found = [];
@@ -116,7 +119,15 @@ for (const file of listRustFiles(SCAN_ROOT)) {
       `${path}:${hit.line}  ${hit.call} carries ${JSON.stringify(word)} -- a failure a keypress erases. Use footer_alert, or classify it in ${relative(repoRoot, allowlistPath)}.`,
     );
   }
-  for (const hit of findCalls(body, ALERT_CALLS)) {
+  const alertHits = findCalls(body, ALERT_CALLS);
+  for (const match of body.matchAll(ALERT_ASSIGNMENT)) {
+    alertHits.push({
+      line: body.slice(0, match.index).split("\n").length,
+      call: "footer_alert =",
+      argument: argumentAt(body, match.index + match[0].length),
+    });
+  }
+  for (const hit of alertHits) {
     const word = PROGRESS_WORDS.find((candidate) => hit.argument.includes(candidate));
     if (!word) continue;
     classified += 1;
@@ -137,22 +148,28 @@ const TRANSIENT_LABELS = [
   "pending", "Loading", "Restoring",
 ];
 const WRONG_TONES = ["Tone::Attention", "Tone::Danger", "ChipTone::Danger", "ChipTone::Attention"];
+// The calls that put a tone on a label.
+const TONE_CALLS = ["style(", "chip(", "pill(", "append_count("];
 
 for (const file of listRustFiles(SCAN_ROOT)) {
   const source = readFileSync(file, "utf8");
   const body = source.split("\n#[cfg(test)]\n")[0];
   const path = relative(repoRoot, file);
-  body.split("\n").forEach((line, index) => {
-    const tone = WRONG_TONES.find((candidate) => line.includes(candidate));
-    if (!tone) return;
-    const label = TRANSIENT_LABELS.find((candidate) => line.includes(`"${candidate}"`));
-    if (!label) return;
+  // One styling call at a time, not one line and not one statement. A line
+  // cannot see a call rustfmt wrapped over five of them; a statement reads a
+  // multi-part `format!` as one thing and pairs "pending" with the `Danger`
+  // that belongs to "failed" four arguments later.
+  for (const hit of findCalls(body, TONE_CALLS)) {
+    const tone = WRONG_TONES.find((candidate) => hit.argument.includes(candidate));
+    if (!tone) continue;
+    const label = TRANSIENT_LABELS.find((candidate) => hit.argument.includes(`"${candidate}`));
+    if (!label) continue;
     classified += 1;
-    if (isAllowed(path, line)) return;
+    if (isAllowed(path, hit.argument)) continue;
     violations.push(
-      `${path}:${index + 1}  ${JSON.stringify(label)} painted ${tone} -- that is "act" or "failed", not "in progress". Use PROGRESS_TONE, or classify it.`,
+      `${path}:${hit.line}  ${JSON.stringify(label)} painted ${tone} -- that is "act" or "failed", not "in progress". Use PROGRESS_TONE, or classify it.`,
     );
-  });
+  }
 }
 
 if (violations.length > 0) {

@@ -20,6 +20,17 @@ pub fn restore_started_message(agent_count: usize) -> String {
     )
 }
 
+/// Whether a restore outcome is something that went wrong.
+///
+/// "Restored 2 of 36; 34 could not be restored" is a report of 34 failures, and
+/// it is the only one the user gets. On the note channel a single keypress
+/// erased it.
+pub fn restore_outcome_failed(body: &Value) -> bool {
+    body.get("failed")
+        .and_then(Value::as_array)
+        .is_some_and(|failed| !failed.is_empty())
+}
+
 /// `None` when the response is not a restore outcome, so a caller can fall back
 /// to saying nothing rather than inventing a result.
 pub fn restore_outcome_message(body: &Value) -> Option<String> {
