@@ -93,7 +93,17 @@ struct InputClearProgress {
     probe: Option<TranscriptProbe>,
     settled: bool,
     cleared: bool,
+    attempts: u32,
 }
+
+/// How many ticks Part C retries a write the service keeps rejecting.
+///
+/// Without a bound a permanently failing clear POSTs every four seconds for the
+/// life of the process, and leaves the session at `settled: true` with the
+/// attention still saying `needs_input` -- a shape no other part produces.
+/// Giving up is also the only outcome that gets SAID: a silent retry loop is
+/// invisible until it is a load average.
+const INPUT_CLEAR_ATTEMPTS: u32 = 5;
 
 #[derive(Default)]
 pub struct TranscriptReconciler {
@@ -119,6 +129,15 @@ pub struct TranscriptReconciler {
     /// settled the activity immediately: a scribe briefed and relabelled
     /// `ready` in the same breath, with no dwell of Part A's own.
     pending_input: HashMap<String, InputClearProgress>,
+    /// Sessions Part C has given up on. Dropping `pending_input` alone did not
+    /// stop the retrying: the session is still stranded on the next tick, so
+    /// the whole dwell-and-write cycle started again -- thirty-three attempts
+    /// over forty ticks rather than five. Giving up has to be remembered.
+    ///
+    /// Forgotten when the session stops being stranded, so a scribe that is
+    /// prompted and later strands again gets a fresh five, and when it leaves
+    /// the live set.
+    input_clear_abandoned: HashSet<String>,
     tick: u64,
 }
 
@@ -195,6 +214,18 @@ impl TranscriptReconciler {
                     ),
                 ));
 
+            // Forgotten the moment it is not stranded, on every path and not
+            // just the one that bails out early -- a session that is working
+            // again has stopped being this problem, so a later strand is a new
+            // one and gets its own attempts. Putting this only in the bail-out
+            // branch meant a prompted scribe kept its give-up forever, which
+            // trades one permanent deadlock for another.
+            if !stranded_input {
+                self.input_clear_abandoned.remove(&session.id);
+            } else if self.input_clear_abandoned.contains(&session.id) {
+                continue;
+            }
+
             if !stuck_working && !stranded_input {
                 self.pending.remove(&session.id);
                 self.pending_input.remove(&session.id);
@@ -250,6 +281,12 @@ impl TranscriptReconciler {
             // Likewise the other way: a stranded session is not
             // `stuck_working`, so Part A's probe is dropped rather than left
             // where Part A could inherit it later as a tick already served.
+            //
+            // The consequence, stated because it is a choice: a session that
+            // alternates between the two every tick never completes either
+            // dwell, so neither part acts. That is the right way round -- both
+            // parts are claims that nothing has moved, and a session flipping
+            // states every four seconds is moving.
             self.pending.remove(&session.id);
             let progress = self.pending_input.entry(session.id.clone()).or_default();
             if progress.probe.as_ref() != Some(&result) {
@@ -270,6 +307,7 @@ impl TranscriptReconciler {
             // conclusion is applied to both fields here. Each half is remembered
             // so a write that landed is not re-POSTed every tick because the
             // other one failed.
+            progress.attempts += 1;
             if !progress.settled {
                 progress.settled = deps.settle_activity(&session.id);
             }
@@ -278,6 +316,20 @@ impl TranscriptReconciler {
             }
             if progress.settled && progress.cleared {
                 self.pending_input.remove(&session.id);
+            } else if progress.attempts >= INPUT_CLEAR_ATTEMPTS {
+                let abandoned = session.id.clone();
+                crate::debug_logging::log_lifecycle_always(
+                    "gave up clearing a stranded control-session attention",
+                    "transcript-reconciler",
+                    Some(serde_json::json!({
+                        "session": session.id,
+                        "attempts": progress.attempts,
+                        "settledActivity": progress.settled,
+                        "clearedAttention": progress.cleared,
+                    })),
+                );
+                self.pending_input.remove(&session.id);
+                self.input_clear_abandoned.insert(abandoned);
             }
         }
 
@@ -286,6 +338,7 @@ impl TranscriptReconciler {
         self.codex_miss.retain(|id, _| live.contains(id));
         self.pending_clear.retain(|id| live.contains(id));
         self.pending_input.retain(|id, _| live.contains(id));
+        self.input_clear_abandoned.retain(|id| live.contains(id));
     }
 
     fn resolve_transcript_path(
@@ -371,11 +424,28 @@ impl TranscriptReconciler {
 
 /// Just the keys `session_with_stored_control_flags` and
 /// `is_project_control_session` read: the three flags, the lane that travels
-/// with them, and the legacy role. `id` comes along so a failure names the
-/// session it was about.
+/// with them, and BOTH places a legacy role can live. `id` comes along so a
+/// failure names the session it was about.
+///
+/// `team` is in that list because `legacy_role` reads `role` or `team.role`,
+/// and `agent_topology` deliberately keeps `team: {"role": "scribe"}` on a
+/// session that carries no explicit flag -- its own test
+/// `topology_session_team_keeps_legacy_scribe_role_without_flags` pins that.
+/// Leaving it out made the merged probe carry no role marker at all for
+/// exactly that shape, so Part C never fired and the deadlock this change
+/// exists to end stayed in place for a legacy scribe. Adding keys here is
+/// cheap; forgetting one is silent.
 fn control_flag_keys(session: &Value) -> Value {
     let mut probe = Map::new();
-    for key in ["id", "overseer", "scribe", "projectControl", "lane", "role"] {
+    for key in [
+        "id",
+        "overseer",
+        "scribe",
+        "projectControl",
+        "lane",
+        "role",
+        "team",
+    ] {
         if let Some(value) = session.get(key) {
             probe.insert(key.to_owned(), value.clone());
         }
