@@ -760,7 +760,16 @@ impl LoopWatcher {
         }
         let overseer_id = overseer_id.filter(|id| session_can_receive_loop_send(input, id))?;
         self.paused_summary_ticks = self.paused_summary_ticks.saturating_add(1);
-        let signature = format!("paused:{}", candidate_signature(paused_candidates));
+        // Keyed on what defines a PAUSE, not on everything about the candidate.
+        //
+        // `candidate_signature` includes the goal, and PR 396 decided that only
+        // `since` defines a pause -- editing a paused agent's goal must not
+        // un-pause it, because `since` is the deliberate re-add signal. That
+        // fixed `extract_paused_candidates` and left this signature behind: a
+        // goal edit still flipped it, `due_by_change` fired, and the overseer
+        // got an immediate summary about a set that had not changed. The same
+        // noise the pause was supposed to stop, arriving through the other door.
+        let signature = paused_summary_signature(paused_candidates);
         let due_by_cadence = self.paused_summary_ticks >= PAUSED_SUMMARY_TICK_CADENCE;
         let due_by_change = self.last_paused_summary_signature.as_deref() != Some(&signature)
             && self.last_paused_summary_signature.is_some();
@@ -1177,7 +1186,9 @@ impl PersistentLoopWatcherState {
             delivery_records: self.delivery_records,
             paused_loop_alerts: migrate_pause_keys(self.paused_loop_alerts),
             paused_summary_ticks: self.paused_summary_ticks,
-            last_paused_summary_signature: self.last_paused_summary_signature,
+            last_paused_summary_signature: self
+                .last_paused_summary_signature
+                .filter(|signature| signature.starts_with(PAUSED_SUMMARY_SIGNATURE_PREFIX)),
             global_pause: self.global_pause,
             buffered_sends: self.buffered_sends,
             global_pause_reminder_ticks: self.global_pause_reminder_ticks,
@@ -2110,6 +2121,55 @@ fn stopped_candidate_due(
 fn instruction_cadence_signature(candidate: &Value) -> Option<String> {
     let action = candidate.get("loopLastAction")?;
     serde_json::to_string(action).ok()
+}
+
+/// The prefix that marks a paused-summary signature as being in the current
+/// format.
+///
+/// It is persisted, so changing what goes into the signature changes what a
+/// stored one means. Without a marker, the first scan after an upgrade compares
+/// an old-format signature against a new-format one, finds them different, and
+/// fires `due_by_change` -- one spurious prompt to the overseer, which is
+/// exactly the noise this change exists to remove, arriving at upgrade time.
+/// `into_watcher` drops a stored signature that does not carry this prefix, so
+/// an upgrade reads as "no previous signature" and says nothing.
+///
+/// This is the same trap PR 396's own review caught in the pause keys: a format
+/// change is a migration whether or not it is called one.
+/// The unit separator is deliberate: it is the field separator the signature
+/// itself uses, so no session id can contain one. A plain `paused:v2:` prefix
+/// would be forgeable by an id that happened to start `v2:`, which is
+/// implausible but free to rule out.
+const PAUSED_SUMMARY_SIGNATURE_PREFIX: &str = "paused:v2\u{1f}";
+
+fn paused_summary_signature(candidates: &[Value]) -> String {
+    format!(
+        "{PAUSED_SUMMARY_SIGNATURE_PREFIX}{}",
+        paused_pause_signature(candidates)
+    )
+}
+
+/// Which agents are paused, and against which pause.
+///
+/// Deliberately not `candidate_signature`: that one answers "has anything about
+/// these candidates changed", which is the right question for a briefing and
+/// the wrong one for a paused set. A pause is identified by `loopSince` alone
+/// -- see `loop_pause_key` -- so that is what this reads, and a goal edit is
+/// not a change to the paused set.
+fn paused_pause_signature(candidates: &[Value]) -> String {
+    let mut parts = candidates
+        .iter()
+        .map(|candidate| {
+            [
+                str_field(candidate, "id"),
+                str_field(candidate, "condition"),
+                loop_pause_key(candidate).unwrap_or_default().as_str(),
+            ]
+            .join("\u{1f}")
+        })
+        .collect::<Vec<_>>();
+    parts.sort();
+    parts.join("\u{1e}")
 }
 
 fn candidate_signature(candidates: &[Value]) -> String {

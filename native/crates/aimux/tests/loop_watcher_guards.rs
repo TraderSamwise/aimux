@@ -2295,3 +2295,194 @@ fn the_two_pause_keys_agree_for_an_active_loop() {
     inactive["active"] = json!(false);
     assert_eq!(loop_pause_key_from_loop_metadata(&inactive), None);
 }
+
+/// Editing a paused agent's goal does not prompt the overseer.
+///
+/// PR 396 decided that only `loopSince` defines a pause -- editing a paused
+/// agent's goal must not un-pause it, because `since` is the deliberate re-add
+/// signal. That fixed `extract_paused_candidates` and left the paused-summary
+/// signature behind: it was built from `candidate_signature`, which includes
+/// the goal, so a goal edit flipped it, `due_by_change` fired, and the overseer
+/// got an immediate summary about a set that had not changed. The same noise
+/// the pause was supposed to stop, arriving through the other door.
+///
+/// The ten scans first are load-bearing. `due_by_change` requires a PREVIOUS
+/// signature, and the early return on the first scans never records one -- only
+/// a cadence send does. A version of this test without them passed with the fix
+/// removed, because nothing could have fired either way.
+#[test]
+fn editing_a_paused_agents_goal_does_not_prompt_the_overseer() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let pause_key =
+        loop_pause_key_from_loop_metadata(&worker_meta["loop"]).expect("active loop pause key");
+    watcher.pause_loop_alerts(
+        "worker",
+        pause_key,
+        NOW,
+        LoopAlertPauseProvenance::default(),
+    );
+
+    // Ten scans so the cadence summary goes out once and records the signature
+    // that `due_by_change` compares against.
+    let mut cadence_sends = 0;
+    for tick in 0..10 {
+        cadence_sends += watcher.scan(&input, NOW + tick, &mut ok).len();
+    }
+    assert_eq!(
+        cadence_sends, 1,
+        "the cadence summary has to have gone out, or there is no signature to change"
+    );
+
+    // Now the goal is edited. The pause stands -- that is PR 396 -- so the set
+    // of paused agents has not changed and the overseer has nothing to hear.
+    worker_meta["loop"]["goal"] = json!("ship something else entirely");
+    input["metadata"]["sessions"]["worker"] = worker_meta;
+    assert!(
+        watcher.scan(&input, NOW + 11, &mut ok).is_empty(),
+        "a goal edit on a paused agent must not summon the overseer"
+    );
+}
+
+/// But a change to WHICH agents are paused still does.
+///
+/// The signature is narrowed, not removed: the summary exists so the overseer
+/// learns when the paused set moves, and taking one of two off the hold is
+/// exactly that.
+#[test]
+fn a_change_to_the_paused_set_still_reaches_the_overseer() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (a, a_meta) = looping_session("agent-a", "idle");
+    let (b, b_meta) = looping_session("agent-b", "idle");
+    let (c, c_meta) = looping_session("agent-c", "idle");
+    let (a_kept, b_kept, c_kept) = (a_meta.clone(), b_meta.clone(), c_meta.clone());
+    let input = input_with_config(
+        vec![boss, a, b, c],
+        json!({ "sessions": {
+            "boss": boss_meta,
+            "agent-a": a_meta,
+            "agent-b": b_meta,
+            "agent-c": c_meta,
+        }}),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    for (id, meta) in [("agent-a", &a_kept), ("agent-b", &b_kept)] {
+        let _ = &c_kept;
+        let pause_key =
+            loop_pause_key_from_loop_metadata(&meta["loop"]).expect("active loop pause key");
+        watcher.pause_loop_alerts(id, pause_key, NOW, LoopAlertPauseProvenance::default());
+    }
+    // The same guard test one carries: without it, a cadence that stopped
+    // firing here would leave ticks at eleven on the final scan, which passes
+    // via `due_by_cadence` and proves nothing about the signature.
+    // Counting only the paused summary: `agent-c` is a live stopped candidate
+    // during the warm-up, so it draws briefings of its own.
+    let mut cadence_summaries = 0;
+    for tick in 0..10 {
+        cadence_summaries += watcher
+            .scan(&input, NOW + tick, &mut ok)
+            .iter()
+            .filter(|send| send.kind == LoopSendKind::PausedSummary)
+            .count();
+    }
+    assert_eq!(
+        cadence_summaries, 1,
+        "the cadence summary has to have gone out, or there is no signature to change"
+    );
+
+    // The hold MOVES rather than shrinking: b comes off, c goes on. Same number
+    // of paused agents, different agents -- which is the case that tells whether
+    // the signature knows who is paused or only how many. A signature built
+    // without the id passes a shrinking set and fails this.
+    watcher.unpause_loop_alerts("agent-b");
+    let pause_key =
+        loop_pause_key_from_loop_metadata(&c_kept["loop"]).expect("active loop pause key");
+    watcher.pause_loop_alerts(
+        "agent-c",
+        pause_key,
+        NOW,
+        LoopAlertPauseProvenance::default(),
+    );
+    let sends = watcher.scan(&input, NOW + 11, &mut ok);
+    assert!(
+        sends
+            .iter()
+            .any(|send| send.kind == LoopSendKind::PausedSummary),
+        "the overseer has to hear that the hold moved: {sends:?}"
+    );
+}
+
+/// An upgrade does not fire one spurious paused summary.
+///
+/// `last_paused_summary_signature` is persisted, so narrowing what goes into
+/// the signature changes what a stored one means. Without a format marker the
+/// first scan after an upgrade compares an old-format signature against a new
+/// one, finds them different, fires `due_by_change`, and prompts the overseer
+/// about a set that has not changed -- exactly the noise this change removes,
+/// arriving at upgrade time. The same trap PR 396's own review caught in the
+/// pause keys.
+#[test]
+fn an_old_format_paused_signature_does_not_fire_on_upgrade() {
+    let state_dir = temp_state_dir("paused-signature-upgrade");
+    let path = loop_watcher_state_path(&state_dir);
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    // A state file written by the previous build: the signature carries the old
+    // `paused:` shape, with the goal in it.
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        &path,
+        serde_json::to_string(&json!({
+            "version": 1,
+            "lastNudgeAt": {},
+            "lastOverseerWakeAt": 0,
+            "stoppedSince": [],
+            "pendingSendKeys": {},
+            "pausedLoopAlerts": {
+                "worker": {
+                    "pausedAtMs": NOW,
+                    "loopKey": "2026-09-09T00:00:00.000Z",
+                }
+            },
+            // Zero, so the CADENCE cannot fire on the scan below and
+            // `due_by_change` is the only thing that could -- which is what
+            // this test is about. Nine made the cadence fire and proved nothing.
+            "pausedSummaryTicks": 0,
+            "lastPausedSummarySignature":
+                "paused:worker\u{1f}\u{1f}2026-09-09T00:00:00.000Z\u{1f}\u{1f}ship it\u{1f}",
+        }))
+        .expect("serialize legacy state"),
+    )
+    .expect("write legacy state");
+
+    let mut restarted = load_loop_watcher_state(&path).expect("load legacy state");
+    let mut ok = |_: &LoopSend| true;
+
+    // The stored signature is dropped as unreadable rather than compared, so
+    // this reads as "no previous signature" and says nothing. Kept and compared,
+    // it differs from the new format and `due_by_change` fires.
+    assert!(
+        restarted.scan(&input, NOW + 1, &mut ok).is_empty(),
+        "an upgrade must not prompt the overseer about an unchanged paused set"
+    );
+}
