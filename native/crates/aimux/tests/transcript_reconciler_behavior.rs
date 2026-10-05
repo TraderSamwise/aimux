@@ -10,6 +10,13 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 struct TestDeps {
     pending_interaction: bool,
+    /// Make `clear_stale_response` report failure, so a clear that did not land
+    /// can be seen being tried again rather than recorded as done.
+    refuse_clears: bool,
+    clear_attempts: usize,
+    /// Every back-off Part C reported, so it can be asserted rather than
+    /// inferred from a call count.
+    abandoned: Vec<(String, u32)>,
     probe_result: Option<TranscriptProbe>,
     probe_results: BTreeMap<String, Option<TranscriptProbe>>,
     codex_path: Option<String>,
@@ -28,8 +35,21 @@ impl TranscriptReconcilerDeps for TestDeps {
         true
     }
     fn clear_stale_response(&mut self, session_id: &str) -> bool {
+        self.clear_attempts += 1;
+        if self.refuse_clears {
+            return false;
+        }
         self.cleared.push(session_id.to_owned());
         true
+    }
+    fn report_abandoned_input_clear(
+        &mut self,
+        session_id: &str,
+        attempts: u32,
+        _settled_activity: bool,
+        _cleared_attention: bool,
+    ) {
+        self.abandoned.push((session_id.to_owned(), attempts));
     }
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
         self.probed
@@ -53,12 +73,44 @@ fn complete() -> Option<TranscriptProbe> {
     })
 }
 
+fn in_progress() -> Option<TranscriptProbe> {
+    Some(TranscriptProbe {
+        turn: "in_progress".to_owned(),
+        size: 10,
+        mtime_ms: 1,
+    })
+}
+
+/// A transcript that has grown since the last probe, which is what a working
+/// agent looks like and what stops the dwell from accumulating.
+fn complete_with_size(size: u64) -> Option<TranscriptProbe> {
+    Some(TranscriptProbe {
+        turn: "complete".to_owned(),
+        size,
+        mtime_ms: 1,
+    })
+}
+
+/// An overseer or a scribe. The only thing that differs is who reads its
+/// prompt, which is exactly what Part C turns on.
+fn control_session(tool: &str) -> SessionView {
+    SessionView {
+        control_flags: json!({ "id": "a", "role": "scribe", "scribe": true }),
+        ..session(tool)
+    }
+}
+
+fn needs_input() -> Value {
+    json!({ "activity": "waiting", "attention": "needs_input" })
+}
+
 fn session(tool: &str) -> SessionView {
     SessionView {
         id: "a".to_owned(),
         tool_config_key: tool.to_owned(),
         backend_session_id: Some("be-a".to_owned()),
         worktree_path: Some("/wt/a".to_owned()),
+        control_flags: json!({ "id": "a" }),
     }
 }
 
@@ -265,5 +317,520 @@ fn a_re_registered_interaction_resets_the_clear_confirmation() {
         deps.cleared.is_empty(),
         "cleared despite the interaction re-registering: {:?}",
         deps.cleared
+    );
+}
+
+/// A scribe stranded at `needs_input` is cleared so something can talk to it
+/// again.
+///
+/// The case observed on tealstreet-next 2026-10-05: the scribe finished its
+/// turn at 11:40 PM and had not been briefed in fifteen hours, because
+/// `scribe_readiness` refuses a scribe whose attention is not normal and
+/// nothing in the system clears a stranded `needs_input`.
+#[test]
+fn a_control_session_stranded_at_needs_input_is_cleared() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    // One tick to bank the probe, a second to find the file unchanged. The same
+    // bar as Part A, and deliberately not Part B's extra dwell: Part B waits
+    // twice because its signal is an in-memory interaction registry that can be
+    // mid-rebuild after a restart, and this one's signal is the transcript.
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    assert!(
+        deps.cleared.is_empty(),
+        "not on the tick that first saw the transcript"
+    );
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    assert_eq!(deps.cleared, vec!["a".to_owned()]);
+    // And the activity, because clearing the attention alone does not make a
+    // scribe ready: `scribe_readiness` wants activity idle-or-done AND
+    // attention normal, and a scribe stranded this way is `waiting`.
+    assert_eq!(deps.settled, vec!["a".to_owned()]);
+}
+
+/// Clearing the attention alone would not have been enough.
+///
+/// `scribe_readiness` is an AND of two fields, and a stranded scribe fails
+/// both: `activity: "waiting"`, `attention: "needs_input"`. This asserts the
+/// state Part C leaves behind actually satisfies it, through the real
+/// predicate, rather than trusting that the two halves meet.
+#[test]
+fn the_state_part_c_leaves_behind_is_one_the_scribe_watcher_accepts() {
+    let before = json!({
+        "sessions": [{ "id": "a", "status": "running" }],
+        "metadata": { "sessions": { "a": {
+            "scribe": true,
+            "derived": { "activity": "waiting", "attention": "needs_input" }
+        }}}
+    });
+    assert!(
+        !aimux::scribe_watcher::scribe_readiness(&before, Some("a")),
+        "the stranded state is the one that was being refused"
+    );
+
+    // Exactly what Part C posts: `settle_activity` writes `idle`,
+    // `clear_stale_response` writes `normal`.
+    let after = json!({
+        "sessions": [{ "id": "a", "status": "running" }],
+        "metadata": { "sessions": { "a": {
+            "scribe": true,
+            "derived": { "activity": "idle", "attention": "normal" }
+        }}}
+    });
+    assert!(aimux::scribe_watcher::scribe_readiness(&after, Some("a")));
+
+    // And the half-fix, to say out loud why both writes are needed.
+    let attention_only = json!({
+        "sessions": [{ "id": "a", "status": "running" }],
+        "metadata": { "sessions": { "a": {
+            "scribe": true,
+            "derived": { "activity": "waiting", "attention": "normal" }
+        }}}
+    });
+    assert!(
+        !aimux::scribe_watcher::scribe_readiness(&attention_only, Some("a")),
+        "clearing only the attention leaves the scribe still unready"
+    );
+}
+
+/// A coder's `needs_input` is left alone, which is the whole reason Part C is
+/// gated on the role: a person reads a coder's prompt, and the reply is what
+/// clears it.
+#[test]
+fn a_coders_needs_input_is_never_cleared() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..6 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(deps.cleared.is_empty());
+    assert!(deps.settled.is_empty());
+}
+
+/// A control session genuinely mid-request keeps its `needs_input`.
+///
+/// The transcript is the discriminator, and it is why this cannot be a timer:
+/// an agent waiting on a permission prompt has a turn that is not complete, so
+/// no amount of dwelling clears it.
+#[test]
+fn a_control_session_still_mid_turn_keeps_its_needs_input() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: in_progress(),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..6 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(deps.cleared.is_empty());
+}
+
+/// A transcript still being appended to is not quiescent, so the dwell restarts
+/// rather than accumulating across probes that disagree.
+#[test]
+fn an_appending_transcript_restarts_the_dwell() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete_with_size(10),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    deps.probe_result = complete_with_size(11);
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    deps.probe_result = complete_with_size(12);
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    assert!(
+        deps.cleared.is_empty(),
+        "three ticks, but no two agreed, so it was never quiescent"
+    );
+}
+
+// There is deliberately no test that Part B's dwell is not spent by Part C.
+//
+// Two were written and both proved nothing. Part B's `else` arm removes the id
+// from `pending_clear` on any tick the attention is not `needs_response` --
+// which includes every tick Part C runs -- so the mutant it would catch, Part C
+// reading `pending_clear` as its own dwell set, still finds that set empty.
+// The guarantee comes from Part B's reset, not from the separate map, and that
+// reset is already pinned by
+// `needs_response_clears_only_after_a_second_unbacked_tick` and
+// `a_re_registered_interaction_resets_the_clear_confirmation`.
+//
+// Part A is the direction that was actually broken, and it is tested below.
+
+/// And Part A's dwell is not spent by Part C, which is the direction that was
+/// actually broken.
+///
+/// Sharing one `pending` map let a control session bank quiescence while it was
+/// stranded at `needs_input`, and then hand that banked tick to Part A the
+/// moment its attention went back to normal with the agent working again. The
+/// result was a scribe briefed and relabelled `ready` in the same breath, with
+/// no dwell of Part A's own -- so the agent would read idle while it worked.
+#[test]
+fn part_a_s_dwell_is_not_spent_by_part_c() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+
+    // Stranded, and banking quiescence.
+    reconciler.scan(&sessions, &metadata(needs_input(), json!({})), &mut deps);
+
+    // Briefed: the attention is normal and it is working again. Part A must pay
+    // a tick of its own before calling the turn over.
+    reconciler.scan(&sessions, &metadata(running(), json!({})), &mut deps);
+    assert!(
+        deps.settled.is_empty(),
+        "Part C's banked tick must not settle a working agent on sight"
+    );
+
+    // On its own second tick, with the file still unchanged, it may.
+    reconciler.scan(&sessions, &metadata(running(), json!({})), &mut deps);
+    assert_eq!(deps.settled, vec!["a".to_owned()]);
+}
+
+/// A clear the service rejected is tried again rather than recorded as done --
+/// and the write that DID land is not tried again with it.
+///
+/// Part C makes two writes. Retrying the pair wholesale would re-POST the
+/// settle on every tick for as long as the clear kept failing, which is the
+/// same spam the delivery path keeps per-recipient state to avoid.
+#[test]
+fn a_clear_that_does_not_land_is_retried_without_repeating_the_settle() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        refuse_clears: true,
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..5 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(
+        deps.clear_attempts >= 2,
+        "a rejected clear has to be attempted again: {} attempts",
+        deps.clear_attempts
+    );
+    assert!(deps.cleared.is_empty());
+    assert_eq!(
+        deps.settled,
+        vec!["a".to_owned()],
+        "the settle landed on the first try, so it is not sent again"
+    );
+}
+
+/// A session the metadata has DEMOTED is a coder, whatever the topology says.
+///
+/// `agents.rs` models a stored `{"scribe": false}` over a topology that still
+/// describes the session by role, and every other caller resolves that through
+/// `session_with_stored_control_flags`. Deciding from the topology value alone
+/// would read a demoted coder as control and clear its real prompt -- which is
+/// the one thing Part C's role gate exists to prevent.
+#[test]
+fn a_metadata_demotion_beats_a_topology_role() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let demoted = json!({ "sessions": { "a": {
+        "scribe": false,
+        "overseer": false,
+        "derived": { "activity": "waiting", "attention": "needs_input" },
+        "context": {}
+    }}});
+
+    for _ in 0..5 {
+        reconciler.scan(&sessions, &demoted, &mut deps);
+    }
+    assert!(
+        deps.cleared.is_empty(),
+        "a demoted session's prompt is a person's to answer"
+    );
+    assert!(deps.settled.is_empty());
+}
+
+/// A scribe known only by its legacy `team.role` is still a control session.
+///
+/// `legacy_role` reads `role` or `team.role`, and `agent_topology` keeps
+/// `team: {"role": "scribe"}` on a session carrying no explicit flag. Narrowing
+/// the control-flag projection to a fixed key list dropped `team`, which made
+/// the merged probe carry no role marker for that shape -- so Part C never
+/// fired and the fifteen-hour deadlock stayed in place for exactly the legacy
+/// scribe.
+///
+/// Built through `SessionView::from_value`, which is the projection itself. An
+/// earlier version of this test set `control_flags` by hand and so asserted
+/// `is_project_control_session`, not the key list -- it passed with `team`
+/// dropped, which is the bug it was written for.
+#[test]
+fn every_spelling_of_a_control_session_survives_the_projection() {
+    for topology in [
+        json!({ "id": "a", "team": { "role": "scribe" } }),
+        json!({ "id": "a", "team": { "role": "overseer" } }),
+        json!({ "id": "a", "role": "scribe" }),
+        json!({ "id": "a", "scribe": true }),
+        json!({ "id": "a", "overseer": true }),
+        json!({ "id": "a", "projectControl": true }),
+    ] {
+        let mut reconciler = TranscriptReconciler::new();
+        let mut deps = TestDeps {
+            probe_result: complete(),
+            ..Default::default()
+        };
+        let view = SessionView {
+            // The projection under test; the rest is what `session()` sets so
+            // the transcript path resolves.
+            ..SessionView::from_value(&topology).expect("a session with an id")
+        };
+        let sessions = [SessionView {
+            tool_config_key: "claude".to_owned(),
+            backend_session_id: Some("be-a".to_owned()),
+            worktree_path: Some("/wt/a".to_owned()),
+            ..view
+        }];
+        let metadata = metadata(needs_input(), json!({}));
+
+        reconciler.scan(&sessions, &metadata, &mut deps);
+        reconciler.scan(&sessions, &metadata, &mut deps);
+        assert_eq!(
+            deps.cleared,
+            vec!["a".to_owned()],
+            "a control session spelt {topology} was not recognised"
+        );
+    }
+}
+
+/// And a coder still is not one, through the same projection.
+#[test]
+fn a_coder_does_not_become_control_through_the_projection() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [SessionView {
+        tool_config_key: "claude".to_owned(),
+        backend_session_id: Some("be-a".to_owned()),
+        worktree_path: Some("/wt/a".to_owned()),
+        ..SessionView::from_value(&json!({ "id": "a", "team": { "role": "coder" } }))
+            .expect("a session with an id")
+    }];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..4 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(deps.cleared.is_empty());
+}
+
+/// A write the service keeps rejecting is given up on, out loud.
+///
+/// Without a bound Part C POSTs every four seconds for the life of the process
+/// and leaves the session at `settled: true` with the attention still saying
+/// `needs_input` -- a shape no other part produces. The give-up is logged,
+/// because a silent retry loop is invisible until it is a load average.
+#[test]
+fn a_permanently_failing_clear_is_given_up_on_rather_than_retried_forever() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        refuse_clears: true,
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..40 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+
+    assert!(
+        deps.clear_attempts >= 2,
+        "it has to try more than once: {} attempts",
+        deps.clear_attempts
+    );
+    // Tight against the constant, not merely under forty: `<= 10` would have
+    // passed a bound of ten as happily as a bound of five.
+    assert!(
+        deps.clear_attempts <= 6,
+        "five attempts plus the tick that banked the probe, not forty: {} attempts",
+        deps.clear_attempts
+    );
+    assert_eq!(
+        deps.settled,
+        vec!["a".to_owned()],
+        "and the settle that landed is never sent again"
+    );
+}
+
+/// Giving up is forgotten once the session stops being stranded.
+///
+/// Otherwise a scribe whose clear failed five times in a row is never looked at
+/// again for the life of the process, which trades one permanent deadlock for
+/// another.
+#[test]
+fn a_session_that_stops_being_stranded_gets_fresh_attempts_later() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        refuse_clears: true,
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let stranded = metadata(needs_input(), json!({}));
+
+    for _ in 0..20 {
+        reconciler.scan(&sessions, &stranded, &mut deps);
+    }
+    let given_up_after = deps.clear_attempts;
+    assert!(
+        given_up_after <= 6,
+        "it must have given up well inside twenty ticks: {given_up_after} attempts"
+    );
+
+    // Prompted: not stranded any more, so the give-up is forgotten.
+    reconciler.scan(&sessions, &metadata(running(), json!({})), &mut deps);
+
+    // Stranded again, and the service is answering now.
+    deps.refuse_clears = false;
+    for _ in 0..4 {
+        reconciler.scan(&sessions, &stranded, &mut deps);
+    }
+    // At least once, not exactly once: these fake deps never write the
+    // metadata back, so the session reads as stranded on every tick and Part C
+    // keeps acting. In production `clear_stale_response` routes synchronously,
+    // so the next tick sees `normal` and the branch is not taken again.
+    assert!(
+        !deps.cleared.is_empty(),
+        "a strand after the give-up has to be tried again"
+    );
+}
+
+/// Backing off expires, and it has to -- after about the documented wait, not
+/// merely eventually.
+///
+/// The first version of this never forgot a give-up unless the session stopped
+/// being stranded, and Part C's whole premise is that nobody moves a stranded
+/// control session's attention. That is the deadlock. So the forget-path was
+/// unreachable for exactly the session it existed for: five rejected writes,
+/// which `clear_stale_response` returns for any metadata-write or state-lock
+/// error, and Part C was off for that session for the life of the process.
+///
+/// Tied to the constant on both sides, because the first pair of tests here
+/// bounded it only loosely: any expiry from fifty-four to two hundred ticks
+/// passed both, so `150 -> 60` stayed green while the documented "roughly ten
+/// minutes" quietly became four.
+#[test]
+fn backing_off_expires_after_about_the_documented_wait() {
+    let expiry = aimux::transcript_reconciler::INPUT_CLEAR_RETRY_AFTER_TICKS;
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        refuse_clears: true,
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    // Transient trouble: it backs off, once, and says so.
+    for _ in 0..10 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert_eq!(
+        deps.abandoned.len(),
+        1,
+        "backing off is reported once, not every tick: {:?}",
+        deps.abandoned
+    );
+
+    // The trouble passes, but nothing un-strands the session -- nobody reads a
+    // scribe's prompt, which is the whole point. Only expiry can save it.
+    deps.refuse_clears = false;
+
+    // Just short of the wait: still held.
+    for _ in 0..(expiry - 20) {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(
+        deps.cleared.is_empty(),
+        "it expired early: {} ticks into a {expiry}-tick wait",
+        expiry - 20
+    );
+
+    // And just past it: tried again.
+    for _ in 0..40 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(
+        !deps.cleared.is_empty(),
+        "it never expired across {expiry} ticks plus a margin"
+    );
+}
+
+/// And the wait is long enough to be worth having: sixty ticks of a permanently
+/// failing clear is five attempts, not sixty.
+#[test]
+fn backing_off_lasts_longer_than_the_attempts_that_earned_it() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        refuse_clears: true,
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(needs_input(), json!({}));
+
+    for _ in 0..60 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(
+        deps.clear_attempts <= 6,
+        "sixty ticks must not be sixty attempts: {} attempts",
+        deps.clear_attempts
+    );
+    assert_eq!(deps.abandoned.len(), 1);
+}
+
+/// The wait is about ten minutes, which is what the doc claims and what the
+/// behavioural tests above cannot check.
+///
+/// Those read the constant, so they scale with it: `150 -> 60` left them green
+/// while the documented "roughly ten minutes" quietly became four. What is
+/// actually being promised is a DURATION, so that is what is asserted --
+/// against the tick interval the task really runs at.
+#[test]
+fn the_back_off_is_about_ten_minutes_at_the_real_tick_interval() {
+    let ms = aimux::transcript_reconciler::INPUT_CLEAR_RETRY_AFTER_TICKS as i64
+        * aimux::transcript_reconciler::DEFAULT_INTERVAL_MS;
+    assert!(
+        (8 * 60_000..=12 * 60_000).contains(&ms),
+        "the back-off is {}s; the doc says roughly ten minutes, so change one or \
+         the other on purpose",
+        ms / 1_000
     );
 }

@@ -168,6 +168,37 @@ impl TranscriptReconcilerDeps for ServiceDeps {
         )
     }
 
+    fn report_abandoned_input_clear(
+        &mut self,
+        session_id: &str,
+        attempts: u32,
+        settled_activity: bool,
+        cleared_attention: bool,
+    ) {
+        // The project log, and deliberately NOT
+        // `record_transcript_reconciler_failure`: that one also calls
+        // `add_dashboard_operation_failure`, which puts a banner on the user's
+        // dashboard for them to clear. A back-off is not that. It is temporary
+        // -- see `INPUT_CLEAR_RETRY_AFTER_TICKS` -- the system is still
+        // retrying, and nothing here clears the record it would have added, so
+        // a stuck scribe would have raised a fresh banner every ten minutes
+        // forever. A warning in the log is the right level: visible to anyone
+        // looking, and not a thing to act on.
+        log_at(
+            LogLevel::Warn,
+            "backing off from a stranded control-session attention",
+            "transcript-reconciler",
+            Some(json!({
+                "sessionId": session_id,
+                "operation": "clear-stranded-input",
+                "attempts": attempts,
+                "settledActivity": settled_activity,
+                "clearedAttention": cleared_attention,
+                "retryAfterTicks": crate::transcript_reconciler::INPUT_CLEAR_RETRY_AFTER_TICKS,
+            })),
+        );
+    }
+
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
         if self.budget.spent() {
             return None;

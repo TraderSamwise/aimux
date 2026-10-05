@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub use crate::transcript_turn_state::TranscriptProbe;
 
@@ -29,8 +29,20 @@ pub trait TranscriptReconcilerDeps {
     fn has_pending_interaction(&mut self, session_id: &str) -> bool;
     /// Settle a stuck working agent to idle (label becomes "ready").
     fn settle_activity(&mut self, session_id: &str) -> bool;
-    /// Clear a stranded `needs_response` attention back to normal.
+    /// Put a session's attention back to `normal`. Used for a stranded
+    /// `needs_response` (Part B) and for a project-control session's stranded
+    /// `needs_input` (Part C); the name is the one the frozen reconciler
+    /// contract emits, so it stays.
     fn clear_stale_response(&mut self, session_id: &str) -> bool;
+    /// Say that Part C has stopped retrying a session for a while. A back-off
+    /// nothing reports is a repair that silently stopped happening.
+    fn report_abandoned_input_clear(
+        &mut self,
+        session_id: &str,
+        attempts: u32,
+        settled_activity: bool,
+        cleared_attention: bool,
+    );
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe>;
     fn find_codex_path(&mut self, backend_session_id: &str) -> Option<String>;
 }
@@ -41,6 +53,21 @@ pub struct SessionView {
     pub tool_config_key: String,
     pub backend_session_id: Option<String>,
     pub worktree_path: Option<String>,
+    /// The control-flag keys as the topology reports them, so Part C can decide
+    /// whether this is an overseer or a scribe.
+    ///
+    /// The topology's own answer is not the whole answer: metadata can DEMOTE a
+    /// session the topology still describes by role, and
+    /// `session_with_stored_control_flags` is how every other caller resolves
+    /// that -- `scribe_watcher.rs:391` and `project_service/agents.rs:790` both
+    /// do. Deciding from the topology alone would read a demoted coder as
+    /// control and clear its real prompt, so the merge happens in `scan`, which
+    /// has the metadata in hand.
+    ///
+    /// Narrowed to the five keys that merge reads rather than holding the whole
+    /// session, because one of these is built for every live session on every
+    /// four-second tick.
+    pub control_flags: Value,
 }
 
 impl SessionView {
@@ -63,9 +90,47 @@ impl SessionView {
                 .get("worktreePath")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned),
+            control_flags: control_flag_keys(value),
         })
     }
 }
+
+/// What a stranded `needs_input` still needs written, and the probe its dwell
+/// is counted against.
+#[derive(Debug, Default)]
+struct InputClearProgress {
+    probe: Option<TranscriptProbe>,
+    settled: bool,
+    cleared: bool,
+    attempts: u32,
+}
+
+/// How many consecutive ticks Part C retries a write the service keeps
+/// rejecting before backing off.
+///
+/// This buys fewer POSTs and a line in the log. It does not improve the state
+/// it backs off from: the settle lands on the first attempt, so backing off
+/// freezes `activity: idle` with `attention: needs_input`. No consumer reads
+/// that worse than the state it replaced -- `scribe_readiness` still refuses
+/// it, on the attention rather than the activity, and `session_semantics` ranks
+/// attention above both so the label is `needs_input` either way -- but it is a
+/// pause, not a repair.
+const INPUT_CLEAR_ATTEMPTS: u32 = 5;
+
+/// How long that back-off lasts.
+///
+/// It HAS to expire. The first version of this never forgot a give-up unless
+/// the session stopped being stranded -- and Part C's whole premise is that
+/// nobody moves a stranded control session's attention, which is the deadlock.
+/// So the forget-path was unreachable for exactly the session it existed for:
+/// five rejected writes, which `clear_stale_response` returns for any metadata
+/// write or state-lock error, and Part C was off for that session for the life
+/// of the process. Twenty-four seconds of transient IO trouble would have
+/// reinstated the fifteen-hour deadlock with no way back.
+///
+/// Roughly ten minutes at the four-second tick: five attempts per ten minutes
+/// rather than one every four seconds, and it heals itself.
+pub const INPUT_CLEAR_RETRY_AFTER_TICKS: u64 = 150;
 
 #[derive(Default)]
 pub struct TranscriptReconciler {
@@ -80,6 +145,27 @@ pub struct TranscriptReconciler {
     /// Sessions seen needing a `needs_response` clear once, awaiting a second tick
     /// so a fast daemon restart can't clear a still-re-registering interaction.
     pending_clear: HashSet<String>,
+    /// Part C's own "seen complete once", and which of its two writes still
+    /// need making.
+    ///
+    /// Separate from `pending` rather than sharing it, because a dwell is not a
+    /// fact about the file -- it is how long THIS part has been watching.
+    /// Sharing one map let a control session bank quiescence while stranded at
+    /// `needs_input` and then, on the tick its attention went back to normal
+    /// with the agent working again, hand that banked tick to Part A, which
+    /// settled the activity immediately: a scribe briefed and relabelled
+    /// `ready` in the same breath, with no dwell of Part A's own.
+    pending_input: HashMap<String, InputClearProgress>,
+    /// Sessions Part C has backed off from, and the tick it happened on.
+    ///
+    /// Remembering is necessary: dropping `pending_input` alone did not stop the
+    /// retrying, because the session is still stranded on the next tick and the
+    /// whole dwell-and-write cycle started again -- thirty-three attempts over
+    /// forty ticks rather than five.
+    ///
+    /// Expiring is also necessary, and that is the part the first version got
+    /// wrong. See `INPUT_CLEAR_RETRY_AFTER_TICKS`.
+    input_clear_abandoned: HashMap<String, u64>,
     tick: u64,
 }
 
@@ -124,31 +210,154 @@ impl TranscriptReconciler {
             // Part A — settle a stuck "working" agent against transcript ground truth.
             let stuck_working =
                 matches!(activity, Some("running" | "waiting")) && attention == Some("normal");
-            if !stuck_working {
+
+            // Part C — clear a `needs_input` that nothing will ever answer.
+            //
+            // The event state machine strands `needs_input` the same way it
+            // strands `running`: the clearing event is dropped on a compact, an
+            // interrupt, a daemon restart or a resume. On a coder that is
+            // survivable, because a person reads the prompt and replies, which
+            // clears it. On an overseer or a scribe nobody reads the prompt --
+            // and the one thing that would talk to a scribe refuses to while it
+            // is waiting, because `scribe_readiness` requires activity
+            // idle-or-done AND attention normal. So a stranded `needs_input`
+            // there is not a stale label, it is a permanent deadlock: observed
+            // 2026-10-05 on tealstreet-next, where the scribe had finished its
+            // turn at 11:40 PM and had not been briefed in fifteen hours.
+            //
+            // Gated on the same transcript evidence as Part A, which is what
+            // keeps it from discarding a real question: an agent genuinely
+            // mid-request has a turn that is not complete. An agent that asked
+            // and then ended its turn does read as complete here, and clearing
+            // that is still right for a control session -- the alternative is
+            // waiting forever for a reader who does not exist. The briefing it
+            // then receives arrives as a prompt, which is also the event that
+            // clears attention, so a scribe that truly needs something will ask
+            // again rather than be silenced.
+            let stranded_input = attention == Some("needs_input")
+                && crate::team_contract::is_project_control_session(Some(
+                    &crate::team_contract::session_with_stored_control_flags(
+                        &session.control_flags,
+                        session_field_any(metadata, &session.id),
+                    ),
+                ));
+
+            // Forgotten the moment it is not stranded, on every path and not
+            // just the one that bails out early -- a session that is working
+            // again has stopped being this problem, so a later strand is a new
+            // one and gets its own attempts. Putting this only in the bail-out
+            // branch meant a prompted scribe kept its give-up forever, which
+            // trades one permanent deadlock for another.
+            if !stranded_input {
+                self.input_clear_abandoned.remove(&session.id);
+            } else if let Some(at) = self.input_clear_abandoned.get(&session.id).copied() {
+                if self.tick.saturating_sub(at) < INPUT_CLEAR_RETRY_AFTER_TICKS {
+                    continue;
+                }
+                self.input_clear_abandoned.remove(&session.id);
+            }
+
+            if !stuck_working && !stranded_input {
                 self.pending.remove(&session.id);
+                self.pending_input.remove(&session.id);
                 continue;
             }
 
             let Some(path) = self.resolve_transcript_path(session, metadata, deps) else {
                 self.pending.remove(&session.id);
+                self.pending_input.remove(&session.id);
                 continue;
             };
             let Some(result) = deps.probe(&session.tool_config_key, &path) else {
                 self.pending.remove(&session.id);
+                self.pending_input.remove(&session.id);
                 continue;
             };
             if result.turn != "complete" {
                 self.pending.remove(&session.id);
+                self.pending_input.remove(&session.id);
                 continue;
             }
 
-            if self.pending.get(&session.id) == Some(&result) {
+            // Quiescence means the probe is byte-for-byte what the previous
+            // tick saw, because a working agent is still appending. Each part
+            // compares against its OWN memory: the file fact is shared, the
+            // dwell is not.
+            if stuck_working {
+                // Part C's state is dropped rather than carried, so a control
+                // session that has stopped being stranded does not leave a
+                // half-finished clear alive behind Part A's back.
+                self.pending_input.remove(&session.id);
+                if self.pending.get(&session.id) != Some(&result) {
+                    self.pending.insert(session.id.clone(), result);
+                    continue;
+                }
                 // Complete and quiescent across a full tick — the turn is over.
                 if deps.settle_activity(&session.id) {
                     self.pending.remove(&session.id);
                 }
-            } else {
-                self.pending.insert(session.id.clone(), result);
+                continue;
+            }
+
+            // One tick of quiescence, not two, and what makes that safe is
+            // what "complete" means rather than how long we waited: a turn
+            // between two tool calls reads `in_progress`, because the last
+            // assistant entry's stop_reason is `tool_use`. That is pinned in
+            // the frozen `transcript/turn-state.json` ("claude in_progress when
+            // last assistant entry is tool_use") and at the task level by
+            // `a_mid_turn_transcript_is_never_settled`. So a complete transcript
+            // is a finished turn, and a second tick would only wait longer for
+            // the same answer.
+            //
+            // Likewise the other way: a stranded session is not
+            // `stuck_working`, so Part A's probe is dropped rather than left
+            // where Part A could inherit it later as a tick already served.
+            //
+            // The consequence, stated because it is a choice: a session that
+            // alternates between the two every tick never completes either
+            // dwell, so neither part acts. That is the right way round -- both
+            // parts are claims that nothing has moved, and a session flipping
+            // states every four seconds is moving.
+            self.pending.remove(&session.id);
+            let progress = self.pending_input.entry(session.id.clone()).or_default();
+            if progress.probe.as_ref() != Some(&result) {
+                *progress = InputClearProgress {
+                    probe: Some(result),
+                    ..InputClearProgress::default()
+                };
+                continue;
+            }
+
+            // BOTH fields, not just the attention. `scribe_readiness` requires
+            // activity idle-or-done AND attention normal, and a scribe stranded
+            // this way has `activity: "waiting"`, so clearing the attention
+            // alone leaves it still unready.
+            //
+            // There is no extra assumption in doing both: complete-and-quiescent
+            // is exactly the evidence Part A settles an activity on, so the same
+            // conclusion is applied to both fields here. Each half is remembered
+            // so a write that landed is not re-POSTed every tick because the
+            // other one failed.
+            progress.attempts += 1;
+            if !progress.settled {
+                progress.settled = deps.settle_activity(&session.id);
+            }
+            if !progress.cleared {
+                progress.cleared = deps.clear_stale_response(&session.id);
+            }
+            if progress.settled && progress.cleared {
+                self.pending_input.remove(&session.id);
+            } else if progress.attempts >= INPUT_CLEAR_ATTEMPTS {
+                let abandoned = session.id.clone();
+                let (settled, cleared) = (progress.settled, progress.cleared);
+                let attempts = progress.attempts;
+                self.pending_input.remove(&session.id);
+                self.input_clear_abandoned.insert(abandoned, self.tick);
+                // Through the deps, so this module stays what its header says it
+                // is -- pure, with all I/O behind the trait -- and so the report
+                // lands in the same log as the task's other failures rather than
+                // splitting one event across two files.
+                deps.report_abandoned_input_clear(&session.id, attempts, settled, cleared);
             }
         }
 
@@ -156,6 +365,8 @@ impl TranscriptReconciler {
         self.codex_path_cache.retain(|id, _| live.contains(id));
         self.codex_miss.retain(|id, _| live.contains(id));
         self.pending_clear.retain(|id| live.contains(id));
+        self.pending_input.retain(|id, _| live.contains(id));
+        self.input_clear_abandoned.retain(|id, _| live.contains(id));
     }
 
     fn resolve_transcript_path(
@@ -237,6 +448,46 @@ impl TranscriptReconciler {
                 .into_owned(),
         )
     }
+}
+
+/// Just the keys `session_with_stored_control_flags` and
+/// `is_project_control_session` read: the three flags, the lane that travels
+/// with them, and BOTH places a legacy role can live. `id` comes along so a
+/// failure names the session it was about.
+///
+/// `team` is in that list because `legacy_role` reads `role` or `team.role`,
+/// and `agent_topology` deliberately keeps `team: {"role": "scribe"}` on a
+/// session that carries no explicit flag -- its own test
+/// `topology_session_team_keeps_legacy_scribe_role_without_flags` pins that.
+/// Leaving it out made the merged probe carry no role marker at all for
+/// exactly that shape, so Part C never fired and the deadlock this change
+/// exists to end stayed in place for a legacy scribe. Adding keys here is
+/// cheap; forgetting one is silent.
+fn control_flag_keys(session: &Value) -> Value {
+    let mut probe = Map::new();
+    for key in [
+        "id",
+        "overseer",
+        "scribe",
+        "projectControl",
+        "lane",
+        "role",
+        "team",
+    ] {
+        if let Some(value) = session.get(key) {
+            probe.insert(key.to_owned(), value.clone());
+        }
+    }
+    Value::Object(probe)
+}
+
+/// A session's whole metadata record, for the control-flag merge. `session_field`
+/// reaches one object inside it; this is the record itself.
+fn session_field_any<'a>(metadata: &'a Value, session_id: &str) -> Option<&'a Value> {
+    metadata
+        .get("sessions")
+        .and_then(|sessions| sessions.get(session_id))
+        .filter(|value| value.is_object())
 }
 
 fn session_field<'a>(metadata: &'a Value, session_id: &str, field: &str) -> Option<&'a Value> {

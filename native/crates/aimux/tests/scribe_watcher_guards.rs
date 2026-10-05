@@ -285,3 +285,57 @@ fn a_wide_character_pane_still_produces_a_briefing() {
         "and must respect the budget"
     );
 }
+
+/// Why a stranded `needs_input` on the scribe is a deadlock and not a label.
+///
+/// `scribe_readiness` refuses a scribe whose attention is not normal, and
+/// nothing used to clear a stranded `needs_input` -- so the scribe watcher
+/// returned `None` on every scan, forever. Observed on tealstreet-next
+/// 2026-10-05: the scribe had finished its turn at 11:40 PM and had not been
+/// briefed in fifteen hours.
+///
+/// Pinned here beside the watcher it silences, because the fix is in the
+/// transcript reconciler and this is the consequence that makes it worth
+/// making. Both halves have to hold for the scribe to be briefed again.
+#[test]
+fn a_scribe_stranded_at_needs_input_is_never_briefed() {
+    let mut waiting = one_changed_agent();
+    waiting["metadata"]["sessions"]["scribe"]["derived"] =
+        json!({ "activity": "waiting", "attention": "needs_input" });
+
+    let mut watcher = ScribeWatcher::new();
+    let mut read = |_: &str, _: i64| Some(String::from("some real work happened here"));
+    let mut ok = |_: &ScribeBriefing| true;
+
+    for tick in 0..5 {
+        assert!(
+            watcher
+                .scan(&waiting, NOW + tick * 120_000, &mut read, &mut ok)
+                .is_none(),
+            "tick {tick}: the watcher refuses a scribe that is not ready, however long it waits"
+        );
+    }
+
+    // Clearing the attention is not enough on its own, which is why Part C
+    // writes both fields. `one_changed_agent()` sets activity `idle` AND
+    // attention `normal`, so asserting readiness with it would have proved
+    // nothing about which write mattered.
+    let mut attention_only = one_changed_agent();
+    attention_only["metadata"]["sessions"]["scribe"]["derived"] =
+        json!({ "activity": "waiting", "attention": "normal" });
+    assert!(
+        watcher
+            .scan(&attention_only, NOW + 600_000, &mut read, &mut ok)
+            .is_none(),
+        "readiness is an AND; a waiting scribe is still refused"
+    );
+
+    // Both fields, which is the state Part C leaves behind.
+    let settled = one_changed_agent();
+    assert!(
+        watcher
+            .scan(&settled, NOW + 1_200_000, &mut read, &mut ok)
+            .is_some(),
+        "activity idle and attention normal together are the unblock"
+    );
+}

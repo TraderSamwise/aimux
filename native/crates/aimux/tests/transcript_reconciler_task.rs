@@ -356,3 +356,48 @@ fn unreadable_topology_is_reported_not_treated_as_empty() {
         "topology failure did not name the read failure: {message}"
     );
 }
+
+/// Backing off from a stranded control session does not put a banner on the
+/// user's dashboard.
+///
+/// It was reported through `record_transcript_reconciler_failure`, which also
+/// calls `add_dashboard_operation_failure` -- so a scribe whose clear kept
+/// failing would have raised a fresh banner every ten minutes, forever, with
+/// nothing clearing it. A back-off is temporary and the system is still
+/// retrying; a warning in the log is the right level, and the dashboard is for
+/// things to act on.
+#[test]
+fn backing_off_from_a_stranded_control_session_raises_no_dashboard_failure() {
+    let project = TempProject::new("strandedbackoff");
+    let transcript = project.write_transcript("end_turn");
+    project.write_topology("running");
+    fs::write(
+        metadata_state_path(project.state_dir()),
+        serde_json::to_string(&json!({
+            "version": 1,
+            "sessions": {
+                "s1": {
+                    "scribe": true,
+                    "derived": { "activity": "waiting", "attention": "needs_input" },
+                    "context": { "transcriptPath": transcript.to_string_lossy() },
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    // The metadata lock is held, so every write the reconciler attempts fails
+    // -- which is the transient class the back-off exists for.
+    let _lock = project.hold_metadata_update_lock();
+    let mut tick_loop = TickLoop::new(&project);
+    tick_loop.tick(12);
+
+    let failures = project.operation_failures();
+    assert!(
+        failures
+            .iter()
+            .all(|failure| failure["operation"] != "clear-stranded-input"),
+        "a back-off must not raise a dashboard failure: {failures:?}"
+    );
+}

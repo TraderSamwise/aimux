@@ -137,6 +137,10 @@ impl TranscriptReconcilerDeps for FixtureDeps {
         true
     }
 
+    fn report_abandoned_input_clear(&mut self, _: &str, _: u32, _: bool, _: bool) {
+        // The frozen corpus has no stranded control sessions, so this is never
+        // reached; recording it would add a key to every case's output.
+    }
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
         self.probe.push(json!([tool_config_key, path]));
 
@@ -211,6 +215,11 @@ fn session_for_tick(input: &Value, tick_value: &Value) -> Option<SessionView> {
         tool_config_key: if codex { "codex" } else { "claude" }.to_owned(),
         backend_session_id,
         worktree_path: Some("/wt/a".to_owned()),
+        // The frozen corpus predates Part C and its cases are all coders, so
+        // this carries no role: a control session here would send `needs_input`
+        // cases down the clearing path and move recorded output for cases that
+        // are not about it.
+        control_flags: json!({ "id": "a" }),
     })
 }
 
