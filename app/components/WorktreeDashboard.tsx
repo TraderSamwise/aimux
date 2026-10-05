@@ -22,12 +22,12 @@ import {
   summarizeOperationFailures,
 } from "@/lib/unavailable-state";
 import {
-  agentStatusKind,
   pendingActionLabel,
   appStatusClasses,
   serviceStatusKind,
   type AppStatusKind,
 } from "@/lib/status-tone";
+import { type AgentState, deriveAgentState } from "@/lib/agent-status-label";
 import { cn } from "@/lib/utils";
 import { useRecencyClock } from "@/lib/recency-clock";
 import { useRouteProject } from "@/lib/use-route-project";
@@ -57,40 +57,6 @@ const WORKTREE_CARD_MIN_WIDTH = 600;
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
-}
-
-interface AgentState {
-  label: string;
-  kind: AppStatusKind;
-  pill: boolean;
-}
-
-// Precedence mirrors the TUI: a transient pending action (stopping/forking/…)
-// shows first, then attention signals that need the user, then the runtime
-// status. Pill states read as active; the rest are quiet words.
-function deriveAgentState(session: DesktopSession): AgentState {
-  if (session.pendingAction)
-    return {
-      label: pendingActionLabel(session.pendingAction),
-      kind: agentStatusKind(session),
-      pill: false,
-    };
-  if (session.status === "offline") return { label: "Offline", kind: "offline", pill: false };
-  if (session.status === "exited") return { label: "Exited", kind: "offline", pill: false };
-  switch (session.attention) {
-    case "error":
-      return { label: "Error", kind: "error", pill: true };
-    case "blocked":
-      return { label: "Blocked", kind: "blocked", pill: true };
-    case "needs_input":
-      return { label: "Needs input", kind: "needs", pill: true };
-    case "needs_response":
-      return { label: "Needs reply", kind: "needs", pill: true };
-  }
-  if (session.status === "running") return { label: "Running", kind: "working", pill: true };
-  if (session.status === "waiting") return { label: "Waiting", kind: "needs", pill: true };
-  if (session.status === "idle") return { label: "Idle", kind: "idle", pill: false };
-  return { label: "Offline", kind: "offline", pill: false };
 }
 
 // A fixed column. The label runs from "Offline" to "NEEDS INPUT", and letting it
@@ -233,6 +199,7 @@ function AgentRowImpl({
   digit,
   selected,
   compact,
+  narrow,
   supervisorLane,
   projectStateKey,
   endpoint,
@@ -246,6 +213,11 @@ function AgentRowImpl({
   digit: number;
   selected: boolean;
   compact?: boolean;
+  // Below the width a single-line row needs, the row stacks: the name on its own
+  // line, then time, status and actions on the next. Sam's call, over dropping a
+  // column, because dropping hides something he was already looking at. Decided
+  // by the card, not measured here, so every row in a card agrees.
+  narrow?: boolean;
   supervisorLane?: boolean;
   projectStateKey: ProjectStateKey;
   endpoint: ServiceEndpoint | null;
@@ -283,7 +255,12 @@ function AgentRowImpl({
       <View
         className={cn(
           "min-w-0 flex-row items-baseline gap-2",
-          compact ? "flex-1" : "max-w-[55%] shrink",
+          // `max-w-[55%] shrink` is what crushed the name to "c." at 432px: on a
+          // row that must also hold three columns, 55% of the line is 238px and
+          // the name shrank from there. A stacked row gives the name its own
+          // line, so it claims that line, and the hint beside it -- already
+          // `shrink` with a 220px cap -- is what yields instead.
+          compact || narrow ? "flex-1" : "max-w-[55%] shrink",
         )}
       >
         <Text
@@ -316,17 +293,30 @@ function AgentRowImpl({
   return (
     <View
       className={cn(
-        "flex-row items-center gap-2 rounded-md px-2.5 py-2",
+        "gap-2 rounded-md px-2.5 py-2",
+        narrow ? "flex-col items-stretch" : "flex-row items-center",
         selected ? "bg-[#232733]" : PRESS,
       )}
     >
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
+        className={cn(
+          "min-w-0 flex-row items-center gap-2 active:opacity-70",
+          // Not `flex-1` when stacked: the name owns its whole line, and a flex
+          // child in a column stretches vertically instead.
+          narrow ? "w-full" : "flex-1",
+        )}
       >
         {identity}
       </Pressable>
-      <View className="shrink-0 flex-row items-center gap-3 pl-3">
+      <View
+        className={cn(
+          "flex-row items-center gap-3",
+          // The second line starts at the row's left edge; the left pad exists
+          // only to separate the group from a name sharing its line.
+          narrow ? "shrink-0" : "shrink-0 pl-3",
+        )}
+      >
         <RecencyCell text={recency} />
         <StatusCell state={state} />
         <AgentActions
@@ -553,6 +543,20 @@ export function WorktreeCard({
   onKillSession: (sessionId: string) => void;
 }) {
   const containsSelected = bucket.sessions.some((s) => s.id === selectedSessionId);
+  // Below the width a single-line row needs, the row restacks instead of the
+  // card scrolling. Decided here, once, from the width the list already
+  // measured, so every row in the card agrees -- and so the floor below and the
+  // two-line row stay one decision rather than two that can disagree.
+  // `compact` rows are the sidebar and are identity-only already.
+  //
+  // False until the list has measured itself, so the very first frame at a
+  // narrow width is the unstacked row. That is one frame and it is the same
+  // frame the width floor already had -- `contentWidth` is
+  // `listWidth || undefined`, so before `onLayout` the card falls back to
+  // `minWidth`. Reading the window width instead would remove the flash and
+  // introduce a second measurement for one decision, which is the drift this
+  // file is otherwise getting rid of.
+  const narrow = !compact && contentWidth !== undefined && contentWidth < WORKTREE_CARD_MIN_WIDTH;
   const barColor = identityTone;
   const chips = worktreeCountChips(bucket);
   const content = (
@@ -603,6 +607,7 @@ export function WorktreeCard({
               digit={i + 1}
               selected={session.id === selectedSessionId}
               compact={compact}
+              narrow={narrow}
               supervisorLane={bucket.isSupervisorLane}
               projectStateKey={projectStateKey}
               endpoint={endpoint}
@@ -656,9 +661,15 @@ export function WorktreeCard({
           <View
             className="flex-1"
             style={
-              contentWidth
-                ? { width: Math.max(contentWidth, WORKTREE_CARD_MIN_WIDTH) }
-                : { minWidth: WORKTREE_CARD_MIN_WIDTH }
+              narrow
+                ? // No floor when the window is narrower than a single-line row
+                  // needs. Holding 600px here is what made the card scroll
+                  // sideways instead of the row restacking, which is the whole
+                  // complaint: the floor and the two-line row are one decision.
+                  { width: contentWidth }
+                : contentWidth
+                  ? { width: Math.max(contentWidth, WORKTREE_CARD_MIN_WIDTH) }
+                  : { minWidth: WORKTREE_CARD_MIN_WIDTH }
             }
           >
             {content}

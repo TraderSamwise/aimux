@@ -1,0 +1,177 @@
+{
+  "description": "The word an agent row says about an agent's state, on every surface that says it. The project service derives it once in derive_session_semantics as presentation.statusLabel; the TUI renders that string verbatim and the Expo app renders it sentence-cased. The app used to compute its own word from `status` and said \"Running\" for an agent the service had already called `ready` -- an agent that had finished its turn and was sitting at an empty prompt. The status dot next to that word was right the whole time, which is what makes this a one-answer-many-surfaces failure rather than a wrong rule. Every case here also pins that the word and the dot agree, because the first pass at this fix moved the word and left one state where they did not.",
+  "generatedBy": "hand, from native/crates/aimux/src/project_service/session_semantics.rs",
+  "cases": [
+    {
+      "why": "the case Sam reported: process alive, turn finished, sitting at an empty prompt",
+      "status": "running",
+      "activity": "idle",
+      "attention": "normal",
+      "userLabel": "ready",
+      "statusLabel": "ready",
+      "appLabel": "Ready",
+      "appPill": false,
+      "appKind": "ready"
+    },
+    {
+      "why": "actually producing output",
+      "status": "running",
+      "activity": "running",
+      "attention": "normal",
+      "userLabel": "working",
+      "statusLabel": "working",
+      "appLabel": "Working",
+      "appPill": true,
+      "appKind": "working"
+    },
+    {
+      "why": "waiting on a tool, which is work and not an ask",
+      "status": "running",
+      "activity": "waiting",
+      "attention": "normal",
+      "userLabel": "working",
+      "statusLabel": "working",
+      "appLabel": "Working",
+      "appPill": true,
+      "appKind": "working"
+    },
+    {
+      "why": "asking the person a question",
+      "status": "running",
+      "activity": "waiting",
+      "attention": "needs_input",
+      "userLabel": "needs_input",
+      "statusLabel": "needs input",
+      "appLabel": "Needs input",
+      "appPill": true,
+      "appKind": "needs"
+    },
+    {
+      "why": "waiting on a reply to something it sent. This one state had three words: the service said \"needs answer\", the TUI row said \"Needs response\", and Expose's chip said \"Needs reply\". All four surfaces say the majority spelling now, so moving the row onto the served word is not a visible change here",
+      "status": "running",
+      "activity": "waiting",
+      "attention": "needs_response",
+      "userLabel": "needs_response",
+      "statusLabel": "needs reply",
+      "appLabel": "Needs reply",
+      "appPill": true,
+      "appKind": "needs"
+    },
+    {
+      "why": "blocked on something it cannot clear itself",
+      "status": "running",
+      "activity": "waiting",
+      "attention": "blocked",
+      "userLabel": "blocked",
+      "statusLabel": "blocked",
+      "appLabel": "Blocked",
+      "appPill": true,
+      "appKind": "blocked"
+    },
+    {
+      "why": "failed",
+      "status": "running",
+      "activity": "error",
+      "attention": "error",
+      "userLabel": "error",
+      "statusLabel": "error",
+      "appLabel": "Error",
+      "appPill": true,
+      "appKind": "error"
+    },
+    {
+      "why": "finished a turn and reported done, which is not the same as idle",
+      "status": "running",
+      "activity": "done",
+      "attention": "normal",
+      "userLabel": "done",
+      "statusLabel": "done",
+      "appLabel": "Done",
+      "appPill": false,
+      "appKind": "done"
+    },
+    {
+      "why": "interrupted mid-turn",
+      "status": "running",
+      "activity": "interrupted",
+      "attention": "normal",
+      "userLabel": "interrupted",
+      "statusLabel": "interrupted",
+      "appLabel": "Interrupted",
+      "appPill": false,
+      "appKind": "idle"
+    },
+    {
+      "why": "the process is gone",
+      "status": "offline",
+      "activity": "idle",
+      "attention": "normal",
+      "userLabel": "offline",
+      "statusLabel": "offline",
+      "appLabel": "Offline",
+      "appPill": false,
+      "appKind": "offline"
+    },
+    {
+      "why": "idle with no activity recorded at all",
+      "status": "idle",
+      "activity": null,
+      "attention": "normal",
+      "userLabel": "idle",
+      "statusLabel": "idle",
+      "appLabel": "Idle",
+      "appPill": false,
+      "appKind": "idle"
+    },
+    {
+      "why": "the daemon is starting the agent: dashboard_session_status emits `waiting` for a raw `starting`, and that is work, not an ask. The app's own normalizeAppStatusKind used to call it `needs`, so the row said \"Working\" beside an amber needs-the-user dot",
+      "status": "waiting",
+      "activity": null,
+      "attention": "normal",
+      "userLabel": "working",
+      "statusLabel": "working",
+      "appLabel": "Working",
+      "appPill": true,
+      "appKind": "working"
+    },
+    {
+      "why": "an idle agent that still has a task assigned, which is an ask: it has somewhere to go next",
+      "status": "running",
+      "activity": "idle",
+      "attention": "normal",
+      "hasActiveTask": true,
+      "userLabel": "next_step",
+      "statusLabel": "next step",
+      "appLabel": "Next step",
+      "appPill": true,
+      "appKind": "needs"
+    }
+  ],
+  "userLabels": {
+    "why": "Every label user_state can put in `user.label`. The app turns this into the row's tone through normalizeAppStatusKind, which returns null for a word it does not know -- and the row then falls back to `offline`, which would paint a live agent grey. So the set is pinned on both sides: Rust asserts it is still exactly what the function emits, the app asserts every one of them maps to something.",
+    "labels": [
+      "blocked",
+      "done",
+      "error",
+      "graveyarding",
+      "idle",
+      "interrupted",
+      "needs_input",
+      "needs_response",
+      "next_step",
+      "offline",
+      "ready",
+      "starting",
+      "stopping",
+      "working"
+    ]
+  },
+  "optimisticAction": {
+    "why": "An action in flight is a client-side fact. stores/lifecycleTransitions.ts pushes a brand-new session with a pendingAction and NO semantic, and spreads an existing one keeping the semantic it had before the action started -- so neither carries a statusLabel for the action. The row therefore answers the action from the action, word and tone both. An earlier revision took only the tone from there and pinned the word with a hand-fed statusLabel the optimistic path never sends, which made the fixture agree with a path that was broken.",
+    "pendingAction": "renaming",
+    "semantic": null,
+    "appLabel": "Renaming",
+    "appKind": "working",
+    "appPill": false
+  }
+}

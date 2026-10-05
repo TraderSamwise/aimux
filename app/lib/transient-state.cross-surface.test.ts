@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { deriveAgentState } from "@/lib/agent-status-label";
+import type { DesktopSession } from "@/lib/desktop-state";
 import {
   TRANSIENT_ACTIONS,
-  agentStatusKind,
   pendingActionLabel,
   pendingActionStatusKind,
   serviceStatusKind,
@@ -58,17 +59,68 @@ describe("a transient state renders the same way on every surface", () => {
   });
 
   it.each(cases)("$action is $family ($why)", ({ action, family }) => {
-    // Through the two callers, which take a whole session: an early return that bypasses
-    // the shared rule is exactly how this surface drifted in the first place.
-    expect(agentStatusKind({ pendingAction: action, status: "waiting" })).toBe(APP_FAMILY[family]);
+    // Through the two production callers, which take a whole session: an early
+    // return that bypasses the shared rule is exactly how this surface drifted
+    // in the first place.
+    //
+    // The agent session carries a `pendingAction` and NO `semantic`, which is
+    // what `stores/lifecycleTransitions.ts` really pushes for an action it
+    // started. An earlier revision of this test handed it a `user.label` of
+    // `ready` for all fourteen actions, which is only true for the eight the
+    // service does not name -- `creating` and `forking` really come back as
+    // `starting`, `graveyarding` as `graveyarding` -- so it was asserting a
+    // payload the overlay never sends alongside one it sometimes does.
+    expect(
+      deriveAgentState({
+        id: "claude-1",
+        status: "running",
+        pendingAction: action,
+      } as DesktopSession).kind,
+    ).toBe(APP_FAMILY[family]);
     expect(serviceStatusKind({ pendingAction: action, status: "offline" })).toBe(
       APP_FAMILY[family],
     );
   });
 
+  // And the word, which is the half the row lost when it started reading
+  // `statusLabel`: an optimistic session has no `statusLabel` for the action,
+  // so taking the word from the payload rendered "Unknown" while an agent was
+  // being created.
+  it.each(cases)("$action is still worded $label ($why)", ({ action, label }) => {
+    expect(
+      deriveAgentState({
+        id: "claude-1",
+        status: "running",
+        pendingAction: action,
+      } as DesktopSession).label,
+    ).toBe(label);
+  });
+
   // Pinned beside the others so that making progress quieter cannot quietly
   // make these quieter too.
   it.each(attentionStates)("%s still asks for the person", (state) => {
-    expect(agentStatusKind({ status: "running", attention: state })).toBe(APP_FAMILY.attention);
+    expect(
+      deriveAgentState({
+        id: "claude-1",
+        status: "running",
+        semantic: { user: { label: state }, presentation: { statusLabel: state } },
+      } as DesktopSession).kind,
+    ).toBe(APP_FAMILY.attention);
+  });
+
+  // A blank action is not an action. It used to short-circuit the attention a
+  // running agent was asking for.
+  it("does not let a blank action borrow the progress tone", () => {
+    expect(
+      deriveAgentState({
+        id: "claude-1",
+        status: "running",
+        pendingAction: "  ",
+        semantic: {
+          user: { label: "needs_input" },
+          presentation: { statusLabel: "needs input" },
+        },
+      } as DesktopSession).kind,
+    ).toBe(APP_FAMILY.attention);
   });
 });

@@ -1,4 +1,5 @@
 import type { NotificationRecord } from "@/lib/api";
+import { servedStatusWord } from "@/lib/agent-status-label";
 import { pendingActionLabel } from "@/lib/status-tone";
 import { agentCompactIdentity } from "@/lib/agent-display";
 import type { DesktopService, DesktopSession, DesktopState } from "@/lib/desktop-state";
@@ -117,7 +118,14 @@ function pendingAgentCard(session: DesktopSession): ForYouCard | null {
       session.previewLine ||
       session.headline ||
       "Agent is waiting",
-    subtitle: [session.worktreeName, session.status].filter(Boolean).join(" · "),
+    // The service's word, not `session.status`: that is whether the process is
+    // alive, and it read "running" for an agent sitting at an empty prompt.
+    //
+    // Omitted entirely when the body above is already the action's word, or the
+    // card says "Renaming" and then "worktree · Renaming" underneath it.
+    subtitle: [session.worktreeName, session.pendingAction ? null : servedStatusWord(session)]
+      .filter(Boolean)
+      .join(" · "),
     createdAt: new Date(0).toISOString(),
     unread: true,
     sessionId: session.id,

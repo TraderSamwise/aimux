@@ -163,6 +163,14 @@ describe("For You feed classifier", () => {
     expect(feed.counts["action-required"]).toBe(1);
     expect(feed.counts.progress).toBe(2);
     expect(feed.counts.shipped).toBe(1);
+
+    // The subtitle does not repeat the body. The subtitle carries the project
+    // service's word for the agent's state, but an optimistically-created
+    // session has no `semantic` to take one from -- so it takes the action's
+    // word, which the body already is, and the card said "Stopping" twice.
+    const stopping = feed.cards.find((card) => card.sessionId === "agent-1");
+    expect(stopping?.body).toBe("Stopping");
+    expect(stopping?.subtitle ?? "").not.toContain("Stopping");
     expect(feed.cards.map((card) => card.id)).toEqual(
       expect.arrayContaining([
         "security:sec-1",

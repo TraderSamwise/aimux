@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { servedStatusWord } from "@/lib/agent-status-label";
 import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
@@ -465,7 +466,10 @@ function AgentRow({
               </Text>
             </View>
             <Text className="mt-0.5 text-xs text-muted-foreground" numberOfLines={1}>
-              {[entry.worktree.name, entry.session.status].filter(Boolean).join(" · ")}
+              {/* The service's word, not `entry.session.status`: that is whether
+                  the process is alive, and it read "running" for an agent that
+                  had finished its turn and was sitting at an empty prompt. */}
+              {[entry.worktree.name, servedStatusWord(entry.session)].filter(Boolean).join(" · ")}
             </Text>
             {detail ? (
               <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={2}>

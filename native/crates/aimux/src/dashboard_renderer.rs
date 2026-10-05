@@ -1211,12 +1211,18 @@ fn agent_identity_column_width(session: &DashboardSession, identity: &str) -> us
     COL_IDENTITY
 }
 
-fn row_state_label(value: &str) -> &str {
+/// The TUI row's word for a user state.
+///
+/// `pub` because it is one of four surfaces that word the same state, and
+/// `agent_status_label_surfaces.rs` compares it against the project service's
+/// `statusLabel` -- `needs_response` had three different words before anything
+/// compared them.
+pub fn row_state_label(value: &str) -> &str {
     match value {
         "working" => "Working",
         "ready" => "Ready",
         "needs_input" => "Needs input",
-        "needs_response" => "Needs response",
+        "needs_response" => "Needs reply",
         "next_step" => "Next step",
         "blocked" => "Blocked",
         "error" => "Error",

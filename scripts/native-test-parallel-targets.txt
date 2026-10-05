@@ -140,3 +140,4 @@ transient_state_surfaces
 tui_render
 watcher_tick_loop_budget
 websocket_client
+agent_status_label_surfaces
