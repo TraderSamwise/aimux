@@ -158,5 +158,24 @@
       "appKind": "working",
       "appPill": false
     }
-  ]
+  ],
+  "userLabels": {
+    "why": "Every label user_state can put in `user.label`. The app turns this into the row's tone through normalizeAppStatusKind, which returns null for a word it does not know -- and the row then falls back to `offline`, which would paint a live agent grey. So the set is pinned on both sides: Rust asserts it is still exactly what the function emits, the app asserts every one of them maps to something.",
+    "labels": [
+      "blocked",
+      "done",
+      "error",
+      "graveyarding",
+      "idle",
+      "interrupted",
+      "needs_input",
+      "needs_response",
+      "next_step",
+      "offline",
+      "ready",
+      "starting",
+      "stopping",
+      "working"
+    ]
+  }
 }

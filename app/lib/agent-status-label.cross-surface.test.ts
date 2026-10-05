@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { deriveAgentState } from "@/lib/agent-status-label";
+import { normalizeAppStatusKind } from "@/lib/status-tone";
 import type { DesktopSession, DesktopSessionStatus } from "@/lib/desktop-state";
 
 // The app half of the cross-surface agent-status-label check. AGENTS.md "One
@@ -44,6 +45,7 @@ interface LabelCase {
 
 const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8"));
 const cases: LabelCase[] = fixture.cases;
+const userLabels: string[] = fixture.userLabels.labels;
 
 function sessionFor(entry: {
   status: DesktopSessionStatus;
@@ -97,6 +99,24 @@ describe("an agent's state is worded the same on every surface", () => {
     expect(state.label).toBe("Ready");
     expect(state.label).not.toBe("Running");
     expect(state.pill).toBe(false);
+  });
+
+  // Every label the service can send has to map to a tone. `deriveAgentState`
+  // falls back to `offline` for one it does not know, which paints a live agent
+  // grey -- a wrong answer rather than a failure, so nothing would report it.
+  // The Rust half asserts this list is still exactly what `user_state` emits.
+  it.each(userLabels)("%s maps to a tone rather than falling back to offline", (label) => {
+    const state = deriveAgentState({
+      id: "claude-1",
+      status: "running",
+      semantic: { user: { label }, presentation: { statusLabel: label } },
+    } as DesktopSession);
+    // `offline` is a real answer for the `offline` label and a fallback for
+    // everything else, so only the others can be asserted this way.
+    if (label !== "offline") {
+      expect(state.kind).not.toBe("offline");
+    }
+    expect(normalizeAppStatusKind(label)).not.toBeNull();
   });
 
   // A broken payload has to be visible. The service attaches `semantic` to

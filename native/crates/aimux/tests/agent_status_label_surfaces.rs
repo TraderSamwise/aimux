@@ -19,6 +19,10 @@ use serde_json::Value;
 
 const SURFACES: &str =
     include_str!("../../../../testdata/contracts/v1/agent-status-label/surfaces.json");
+/// Read as text so the set of labels can be compared against the arms that
+/// produce them. Asserting one input per label would prove each arm reachable
+/// and still miss a fifteenth.
+const SEMANTICS_SOURCE: &str = include_str!("../src/project_service/session_semantics.rs");
 
 fn fixture() -> Value {
     serde_json::from_str(SURFACES).expect("valid agent-status-label fixture")
@@ -122,4 +126,52 @@ fn every_surface_words_a_state_the_same_way() {
             );
         }
     }
+}
+
+/// The fixture's list of user labels is still every label `user_state` emits.
+///
+/// The app turns this label into the row's tone, and `normalizeAppStatusKind`
+/// returns null for a word it does not know -- after which the row falls back
+/// to `offline` and paints a live agent grey. A fifteenth label added without
+/// teaching the app about it is therefore a silent wrong answer, not a crash,
+/// so the set is pinned here and mapped on the app side.
+#[test]
+fn the_pinned_user_labels_are_still_the_ones_the_service_emits() {
+    let body = {
+        let start = SEMANTICS_SOURCE
+            .find("fn user_state(")
+            .expect("user_state is still in this file");
+        let rest = &SEMANTICS_SOURCE[start..];
+        let end = rest
+            .find("\nfn user(")
+            .expect("user_state is followed by user");
+        &rest[..end]
+    };
+
+    let mut emitted = body
+        .match_indices("user(\"")
+        .map(|(at, _)| {
+            let after = &body[at + "user(\"".len()..];
+            after[..after.find('"').expect("a closed label literal")].to_owned()
+        })
+        .collect::<Vec<_>>();
+    emitted.sort();
+    emitted.dedup();
+    assert!(
+        !emitted.is_empty(),
+        "found no labels; the scan is matching nothing rather than passing"
+    );
+
+    let pinned = fixture()["userLabels"]["labels"]
+        .as_array()
+        .expect("userLabels.labels")
+        .iter()
+        .map(|label| label.as_str().expect("a string label").to_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        emitted, pinned,
+        "user_state's labels and the pinned set have drifted; add the new one to \
+         the fixture and teach normalizeAppStatusKind about it"
+    );
 }
