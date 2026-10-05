@@ -363,7 +363,11 @@ function servicePendingStatus(
 }
 
 function agentPendingStatus(): DesktopSession["status"] {
-  return "waiting";
+  // Not "waiting": that is the status for an agent waiting on a person, and it
+  // is read as attention by the topology, the for-you feed and the loops
+  // screen -- so every optimistic stop put the agent on the list of things
+  // wanting the user.
+  return "running";
 }
 
 function shouldCreateOptimisticAgent(operation: ProjectLifecycleTransitionOperation): boolean {

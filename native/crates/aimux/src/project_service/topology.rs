@@ -39,8 +39,11 @@ pub fn route_topology_request(
 }
 
 pub fn health_for_status(status: Option<&str>, pending_action: Option<&str>) -> &'static str {
+    // Active, not attention. A node the daemon is starting or stopping is busy;
+    // it is not asking the person to come and look at it, and this is the
+    // surface the app's topology mirrors.
     if pending_action.is_some_and(|value| !value.is_empty()) {
-        return "attention";
+        return "active";
     }
     match status {
         Some("running") => "active",

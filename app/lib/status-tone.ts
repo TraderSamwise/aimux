@@ -191,13 +191,39 @@ export function appStatusColors(value: string | null | undefined): AppStatusColo
   };
 }
 
+// Every lifecycle action that is under way and finishes on its own. The TUI
+// paints all of these with its working tone; `needs` is reserved for a state
+// that is waiting on the person, which none of these are.
+export const TRANSIENT_ACTIONS = [
+  "creating",
+  "forking",
+  "migrating",
+  "switching",
+  "starting",
+  "stopping",
+  "graveyarding",
+  "resurrecting",
+  "renaming",
+  "moving",
+  "interrupting",
+  "removing",
+  "pending",
+] as const;
+
+// What an in-flight lifecycle action looks like. Work, not an ask.
+export function pendingActionStatusKind(): AppStatusKind {
+  return "working";
+}
+
 export function agentStatusKind(session: {
   activity?: string | null;
   attention?: string | null;
   pendingAction?: string | null;
   status?: string | null;
 }): AppStatusKind {
-  if (session.pendingAction) return "needs";
+  // Not `needs`. An agent the daemon is starting is not an agent asking the
+  // user for anything, and painting the two alike is what this fixes.
+  if (session.pendingAction) return pendingActionStatusKind();
   if (session.status === "offline" || session.status === "exited") return "offline";
   const attentionKind = normalizeAppStatusKind(session.attention);
   if (attentionKind) return attentionKind;
@@ -210,7 +236,7 @@ export function serviceStatusKind(service: {
   pendingAction?: string | null;
   status?: string | null;
 }): AppStatusKind {
-  if (service.pendingAction) return "needs";
+  if (service.pendingAction) return pendingActionStatusKind();
   return service.status === "running" ? "service" : "serviceOff";
 }
 

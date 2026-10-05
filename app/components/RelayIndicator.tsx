@@ -24,7 +24,9 @@ import type { RelayStatus } from "@/lib/relay-transport";
 
 const STATUS_META: Record<RelayStatus, { label: string; dot: string; text: string }> = {
   connected: { label: "Remote", dot: "bg-emerald-500", text: "text-emerald-400" },
-  connecting: { label: "Connecting", dot: "bg-amber-500", text: "text-amber-400" },
+  // Connecting is work under way, not a warning. It sat one row from
+  // device_pending, which genuinely wants the user, in the same amber.
+  connecting: { label: "Connecting", dot: "bg-cyan-400", text: "text-cyan-300" },
   device_pending: { label: "Approval needed", dot: "bg-amber-500", text: "text-amber-300" },
   daemon_offline: { label: "Host offline", dot: "bg-zinc-500", text: "text-zinc-400" },
   relay_unavailable: { label: "Remote unavailable", dot: "bg-zinc-600", text: "text-zinc-400" },

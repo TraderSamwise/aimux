@@ -1592,6 +1592,14 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for session in &worktree.sessions {
         if let Some(label) = effective_session_row_state(session) {
+            // Services spell it `removing` and agents `graveyarding`; one word
+            // reaches the user, so one chip counts both rather than two chips
+            // both reading "removing".
+            let label = if label == "removing" {
+                "graveyarding"
+            } else {
+                label
+            };
             *counts.entry(label).or_default() += 1;
         }
     }
@@ -1638,6 +1646,25 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
     );
     append_count(&mut parts, &counts, "renaming", "renaming", PROGRESS_TONE);
     append_count(&mut parts, &counts, "moving", "moving", PROGRESS_TONE);
+    append_count(&mut parts, &counts, "switching", "switching", PROGRESS_TONE);
+    // The rest of the published vocabulary, which the roll-up simply did not
+    // have: a worktree whose only agent was mid-switch summarised as empty.
+
+    append_count(
+        &mut parts,
+        &counts,
+        "resurrecting",
+        "resurrecting",
+        PROGRESS_TONE,
+    );
+    append_count(
+        &mut parts,
+        &counts,
+        "interrupting",
+        "interrupting",
+        PROGRESS_TONE,
+    );
+    append_count(&mut parts, &counts, "pending", "pending", PROGRESS_TONE);
     parts
 }
 

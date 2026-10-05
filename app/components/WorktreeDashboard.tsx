@@ -464,7 +464,15 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   let done = 0;
   let idle = 0;
   let offline = 0;
+  // Counted by the action rather than rolled into "running", the way the TUI
+  // lists them: an agent being stopped is in flight, but calling it running is
+  // the opposite of what it is doing.
+  const inFlight = new Map<string, number>();
   for (const session of bucket.sessions) {
+    if (session.pendingAction) {
+      inFlight.set(session.pendingAction, (inFlight.get(session.pendingAction) ?? 0) + 1);
+      continue;
+    }
     const kind = deriveAgentState(session).kind;
     if (kind === "working") working++;
     else if (kind === "needs") needs++;
@@ -476,6 +484,10 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
     else offline++;
   }
   for (const service of bucket.services) {
+    if (service.pendingAction) {
+      inFlight.set(service.pendingAction, (inFlight.get(service.pendingAction) ?? 0) + 1);
+      continue;
+    }
     const kind = serviceStatusKind(service);
     if (kind === "service") working++;
     else offline++;
@@ -489,8 +501,13 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   if (done > 0) chips.push({ label: `${done} done`, kind: "done" });
   if (idle > 0) chips.push({ label: `${idle} idle`, kind: "idle" });
   if (offline > 0) chips.push({ label: `${offline} offline`, kind: "offline" });
-  if (bucket.pending) chips.push({ label: "pending", kind: "needs" });
-  if (bucket.removing) chips.push({ label: "removing", kind: "needs" });
+  for (const [action, count] of [...inFlight].sort(([a], [b]) => a.localeCompare(b))) {
+    chips.push({ label: `${count} ${action}`, kind: "working" });
+  }
+  // Work in flight, not an attention chip: these sat beside "N needs" and
+  // "N error" wearing the same amber.
+  if (bucket.pending) chips.push({ label: "pending", kind: "working" });
+  if (bucket.removing) chips.push({ label: "removing", kind: "working" });
   return chips;
 }
 
