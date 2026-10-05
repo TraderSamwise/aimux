@@ -698,6 +698,10 @@ level/category gating, secret redaction, rotation, and lifecycle records.
   captured by running TypeScript `buildDashboardFooterHints`.
 - `tui/screen-overlays.json`: dashboard overlay raw ANSI output and visible
   text captured by running TypeScript `tui/screens/overlay-renderers` helpers.
+  One case, `tui-screen-overlay-010`, carries a `divergesFromNode` note: Node
+  read only LIVE overseers, so it had two states where there are three, and
+  said "none running" both for a project with no overseer and for one whose
+  overseer was merely down. Rust tells those apart.
 - `tui/subscreen-renderers.json`: dashboard subscreen raw ANSI output and
   visible text captured by running TypeScript `tui/screens/subscreen-renderers`
   helpers.
