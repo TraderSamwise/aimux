@@ -126,6 +126,31 @@ fn every_transient_action_is_counted_in_the_progress_tone() {
     }
 }
 
+/// The chip the project service publishes for Exposé tiles, which is a third
+/// surface and had the same contradiction the app's map did: `starting` was
+/// work, `stopping` was idle and `graveyarding` was offline -- the states a stop
+/// and a removal leave behind rather than what they look like while they run.
+#[test]
+fn the_published_chip_calls_an_action_in_flight_work() {
+    let labels: std::collections::HashMap<String, String> = cases()
+        .into_iter()
+        .map(|(action, _, label)| (action, label))
+        .collect();
+
+    for action in ["starting", "stopping", "graveyarding"] {
+        let chip = aimux::project_service::switchable_agents::agent_status_chip(
+            &serde_json::json!({ "userLabel": action }),
+        )
+        .unwrap_or_else(|| panic!("{action} has no chip"));
+        assert_eq!(chip["kind"], "working", "{action}");
+        assert_eq!(
+            chip["label"],
+            labels[action].as_str(),
+            "{action} says a different word here than the other surfaces"
+        );
+    }
+}
+
 /// Services, which had the bug in its purest form: the label switched to the
 /// pending action and the tone did not, so a service being started while its
 /// last known status was Exited printed `[svc] starting` in red.
