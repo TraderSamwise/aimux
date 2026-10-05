@@ -385,7 +385,12 @@ fn two_unnamed_mutations_queue_instead_of_refusing_each_other() {
 #[test]
 fn two_mutations_of_the_same_agent_are_still_refused() {
     let runtime = two_worker_runtime();
-    let queue = LifecycleMutationQueue::new(32);
+    // A short bound so the two refusals cannot be confused. Without the
+    // conflict check the second call reaches the semaphore instead, waits on a
+    // permit its own task holds, and comes back as HolderStuck -- so asserting
+    // 409 here separates "refused for the right reason" from "deadlocked and
+    // eventually gave up", and does it in milliseconds rather than 150s.
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(50));
 
     // aimux-async-seam: test - sync test drives the async queue on its own runtime
     runtime.block_on(async {
@@ -420,7 +425,11 @@ fn two_mutations_of_the_same_agent_are_still_refused() {
 #[test]
 fn a_slow_mutation_that_does_finish_is_not_called_stuck() {
     let runtime = two_worker_runtime();
-    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(2_000));
+    // Generously above anything load can cause: the holder is released as soon
+    // as the test sees the waiter queued, so the only way to exceed this is a
+    // 30s stall between two spins of `wait_until`. A tight bound here would
+    // make the test flake on the very machine it is meant to protect.
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_secs(30));
     let (release_holder, holder_released) = oneshot::channel::<()>();
 
     let holder_queue = queue.clone();
@@ -447,8 +456,6 @@ fn a_slow_mutation_that_does_finish_is_not_called_stuck() {
     });
     wait_until(&queue, |diagnostics| diagnostics["queuedCount"] == 2);
 
-    // Well inside the 2s bound.
-    std::thread::sleep(Duration::from_millis(100));
     release_holder.send(()).expect("release the holder");
 
     // aimux-async-seam: test - sync test drives the async queue on its own runtime

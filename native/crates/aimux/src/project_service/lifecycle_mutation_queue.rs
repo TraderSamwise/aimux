@@ -229,7 +229,29 @@ impl Default for LifecycleMutationQueue {
     }
 }
 
+/// Take the queue's state, poisoned or not.
+///
+/// A panic while this lock is held would poison it, and the choice is between
+/// every later caller panicking and every later caller continuing. Continuing
+/// is right here, and uniformly: the state is three counters, a map of claimed
+/// targets and a telemetry struct, so there is no half-written invariant a
+/// panic could leave behind that makes carrying on worse than stopping. Two of
+/// these callers are `Drop` impls, where a panic during unwinding aborts the
+/// process instead of unwinding it, and one is `diagnostics` -- the route you
+/// would read to find out why the queue is stuck, which must not be the one
+/// that dies.
+fn lock_queue_state(inner: &QueueInner) -> std::sync::MutexGuard<'_, QueueState> {
+    inner
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 impl LifecycleMutationQueue {
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, QueueState> {
+        lock_queue_state(&self.inner)
+    }
+
     pub fn new(queue_limit: usize) -> Self {
         Self::with_wait_for_turn(queue_limit, WAIT_FOR_TURN_TIMEOUT)
     }
@@ -313,7 +335,7 @@ impl LifecycleMutationQueue {
         };
         let (target_key, tracked) = reservation.commit();
         {
-            let mut state = self.inner.state.lock().expect("lifecycle queue lock");
+            let mut state = self.lock_state();
             state.holder = Some(QueueHolder {
                 transition: transition.clone(),
                 since: Instant::now(),
@@ -344,10 +366,7 @@ impl LifecycleMutationQueue {
         queued_at: Instant,
     ) -> LifecycleMutationError {
         let holder = self
-            .inner
-            .state
-            .lock()
-            .expect("lifecycle queue lock")
+            .lock_state()
             .holder
             .as_ref()
             .map(QueueHolder::describe)
@@ -390,7 +409,7 @@ impl LifecycleMutationQueue {
             });
         };
         let target_key = transition.target_key();
-        let mut state = self.inner.state.lock().expect("lifecycle queue lock");
+        let mut state = self.lock_state();
         if let Some(key) = target_key.as_ref()
             && let Some(active) = state.active_targets.get(key).cloned()
         {
@@ -423,7 +442,7 @@ impl LifecycleMutationQueue {
     }
 
     pub fn diagnostics(&self, project_root: &str) -> Value {
-        let state = self.inner.state.lock().expect("lifecycle queue lock");
+        let state = self.lock_state();
         let active_targets = state
             .active_targets
             .iter()
@@ -502,14 +521,7 @@ impl Drop for QueueReservation {
         if self.committed || !self.tracked {
             return;
         }
-        // Tolerate a poisoned lock rather than panic: this runs during
-        // unwinding, and a panic in a drop aborts the process. Giving the claim
-        // back matters more than the lock's history.
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let mut state = lock_queue_state(&self.inner);
         state.queued_count = state.queued_count.saturating_sub(1);
         if let Some(key) = self.target_key.take() {
             state.active_targets.remove(&key);
@@ -575,12 +587,7 @@ fn release_lifecycle_mutation(
     started_at: Instant,
     error: Option<String>,
 ) {
-    // Reached from `Drop for LifecycleMutationPermit` too, so the same rule
-    // applies: releasing the queue must not be the thing that aborts.
-    let mut state = inner
-        .state
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let mut state = lock_queue_state(inner);
     state.holder = None;
     if tracked {
         state.queued_count = state.queued_count.saturating_sub(1);
