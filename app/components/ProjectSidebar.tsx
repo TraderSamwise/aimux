@@ -593,7 +593,11 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
           pointerEvents={pickerMode ? "auto" : "none"}
           style={{ width: SIDEBAR_WIDTH, height: "100%" }}
         >
-          <ScrollView className="flex-1" contentContainerStyle={listBottomInset}>
+          <ScrollView
+            className="flex-1"
+            contentContainerStyle={listBottomInset}
+            keyboardShouldPersistTaps="handled"
+          >
             <ProjectPicker
               projects={projects}
               status={projectListStatus}
@@ -613,7 +617,16 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
           onTouchEnd={handleProjectPickerSwipeEnd}
           onTouchCancel={handleProjectPickerSwipeEnd}
         >
-          <ScrollView className="flex-1" contentContainerStyle={listBottomInset}>
+          {/* `handled`, like every other scroll view in the app: the default
+              swallows the first tap to dismiss the keyboard, so a row made
+              reachable by the inset above would need two taps -- and the first
+              one collapses the inset, sliding a different row under the
+              second. */}
+          <ScrollView
+            className="flex-1"
+            contentContainerStyle={listBottomInset}
+            keyboardShouldPersistTaps="handled"
+          >
             {routeRelayUnavailable && !showPicker ? (
               <>
                 <View className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4">

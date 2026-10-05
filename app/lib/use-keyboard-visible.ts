@@ -41,7 +41,12 @@ export function useKeyboardVisible(enabled = true): boolean {
  * that eases is exactly that.
  */
 export function useKeyboardHeight(): number {
-  const [height, setHeight] = useState(0);
+  const [height, setHeight] = useState(() =>
+    // Mounting while the keyboard is already up is reachable -- the shell
+    // swaps which sidebar it renders -- and waiting for the next event would
+    // leave that mount a keyboard's worth of rows short.
+    Platform.OS === "ios" ? keyboardHeightFromEvent({ endCoordinates: Keyboard.metrics() }) : 0,
+  );
 
   useEffect(() => {
     // iOS only, the same restriction `useKeyboardInset` carries. There the
@@ -54,9 +59,11 @@ export function useKeyboardHeight(): number {
     const showSub = Keyboard.addListener("keyboardWillChangeFrame", (event) => {
       setHeight(keyboardHeightFromEvent(event));
     });
-    // `keyboardWillChangeFrame` covers the interactive dismiss drag, which
-    // moves the keyboard without ever firing a show or a hide -- miss it and
-    // the padding stays behind a keyboard that is gone.
+    // `keyboardWillChangeFrame` rather than `keyboardWillShow`, matching
+    // `useKeyboardInset`: it is the one event that reports every position the
+    // keyboard takes, including a resize or a hardware keyboard attaching.
+    // `willHide` alone does settle the interactive dismiss drag, so this is
+    // coverage rather than a fix for it.
     const hideSub = Keyboard.addListener("keyboardWillHide", () => setHeight(0));
 
     return () => {
@@ -71,10 +78,12 @@ export function useKeyboardHeight(): number {
 /**
  * How much of the screen a keyboard event says is covered.
  *
- * `endCoordinates.height` rather than a window subtraction: a split or floating
- * iPad keyboard sits away from the bottom edge, so the window maths reports a
- * strip that is not covered and the list would scroll past content that is
- * perfectly visible.
+ * `endCoordinates.height` rather than a window subtraction, which reports a
+ * strip that is not covered whenever the keyboard is not flush with the bottom
+ * edge. Neither is right for a FLOATING iPad keyboard, which covers nothing at
+ * the bottom and still reports its full height: that pads dead space. The
+ * window maths is worse there and wrong elsewhere too, so this is the better
+ * of two, not a correct answer for every keyboard.
  */
 export function keyboardHeightFromEvent(event: {
   endCoordinates?: { height?: number; screenY?: number } | null;

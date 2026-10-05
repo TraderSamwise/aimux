@@ -50,6 +50,12 @@ describe("the sidebar gives the covered strip back", () => {
       expect(tag, "every scrolled list must inset past the keyboard").toContain(
         "contentContainerStyle={listBottomInset}",
       );
+      // The default swallows the first tap to dismiss the keyboard, so a row
+      // the inset just made reachable would need two -- and the first collapses
+      // the inset, sliding a different row under the second.
+      expect(tag, "and must not swallow the tap that reaches a row").toContain(
+        'keyboardShouldPersistTaps="handled"',
+      );
     }
     expect(source, "and the inset must come from the keyboard, not a constant").toContain(
       "useKeyboardHeight()",
