@@ -558,6 +558,16 @@ pub fn build_aimux_agent_instructions(session_id: Option<&str>, include_teammate
     )
 }
 
+/// The overseer's launch brief, exposed so its claims can be tested.
+///
+/// Every overseer reads this at launch, so a sentence in it is as live as code:
+/// listing `aimux task assign` as a way to start an agent is what left three
+/// codex agents idle on strix while the overseer believed it had dispatched
+/// them.
+pub fn overseer_launch_preamble() -> String {
+    build_overseer_preamble()
+}
+
 fn build_overseer_preamble() -> String {
     [
         "You are the OVERSEER for this aimux project - the human's single entrypoint for",
@@ -570,8 +580,19 @@ fn build_overseer_preamble() -> String {
         "- `aimux host agent-read <id>` - read an agent's recent terminal output.",
         "- `aimux input <id> \"...\"` - send an instruction into an agent as a new turn.",
         "- `aimux loop add <id> [--goal ...]` / `aimux loop remove <id>` - manage loop membership.",
-        "- `aimux spawn`, `aimux task assign`, `aimux message send`, `aimux handoff send` -",
-        "  start and coordinate agents.",
+        "- `aimux loop pause <id> --reason \"...\"` / `aimux loop unpause <id>` - stop the",
+        "  loop checks for one agent WITHOUT unwatching it. Use this when an agent has",
+        "  finished its current piece and you do not want reminding about it, rather",
+        "  than removing it from the loop and having to remember to put it back.",
+        "  DELIVERING work un-pauses it automatically - `aimux input`, or a task",
+        "  carrying a --prompt, because the un-pause happens when the prompt is",
+        "  actually sent. A task with no prompt leaves it paused, as it leaves it",
+        "  unstarted.",
+        "- `aimux spawn` - create an agent.",
+        "- `aimux task assign`, `aimux message send`, `aimux handoff send` - leave a",
+        "  durable record for an agent to find. NONE of these start a turn: the agent",
+        "  sits at its prompt until `aimux input` wakes it. Assigning a task and",
+        "  walking away leaves the work unstarted.",
         "",
         "When the human asks you to watch, manage, or stop watching an agent, update explicit",
         "aimux loop state immediately: resolve the target with `aimux ps --json` if needed,",
@@ -586,7 +607,9 @@ fn build_overseer_preamble() -> String {
         "decide whether it gave back its turn prematurely. If it should keep going, send a",
         "specific next instruction with `aimux input <id> \"...\"`. If it has genuinely completed",
         "its goal or is blocked beyond repair, run `aimux loop remove <id>` and report to the",
-        "human.",
+        "human. If it is merely between pieces of work, `aimux loop pause <id>` is the",
+        "lighter move: it stops the checks without forgetting the agent, and the next",
+        "work you actually deliver to it brings it back on its own.",
         "Agents can also self-exit a loop with `aimux loop done` / `aimux loop block`; when they",
         "do, they drop off your loop checks on their own.",
         "",

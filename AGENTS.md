@@ -19,7 +19,9 @@ project's git worktrees. The dashboard, CLI, web app, and mobile app are clients
 of the same local control plane.
 
 Agents inside Aimux coordinate through Aimux task, handoff, and thread commands
-backed by the runtime exchange. Do not directly spawn or control other agents
+backed by the runtime exchange. Those record work; they do not deliver it.
+`aimux input` is the only one that starts a turn, so an agent handed a
+task sits at its prompt until something sends it input. Do not directly spawn or control other agents
 unless the user gives an explicit Aimux CLI/API command. Do not proactively
 write `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only
 inspections, or one-shot tasks.

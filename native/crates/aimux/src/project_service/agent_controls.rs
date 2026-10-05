@@ -112,9 +112,22 @@ fn route_loop_alerts(
             );
         };
         let Some(loop_key) = loop_pause_key_from_loop_metadata(loop_meta) else {
+            // Two different refusals wore one sentence. A pause is pinned to
+            // the loop's `since`, so a loop that is active but has no `since`
+            // cannot be paused -- and saying "not active" about an active loop
+            // sends the reader looking in the wrong place.
+            let active = loop_meta
+                .get("active")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let reason = if active {
+                "loop has no start time to pin the pause to"
+            } else {
+                "loop is not active"
+            };
             return json_error(
                 409,
-                format!("cannot pause loop alerts for {session_id}: loop is not active"),
+                format!("cannot pause loop alerts for {session_id}: {reason}"),
             );
         };
         let pause = watcher.pause_loop_alerts(
