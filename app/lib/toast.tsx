@@ -2,7 +2,15 @@ import React from "react";
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react-native";
 import { Toaster, toast } from "sonner-native";
 
-import { type AppToastOptions, toastPalette, type ToastTheme } from "@/lib/toast-theme";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import {
+  type AppToastOptions,
+  TOAST_POSITION,
+  toastPalette,
+  type ToastTheme,
+  toastTopOffset,
+} from "@/lib/toast-theme";
 
 export const appToast = {
   success(title: string, options?: AppToastOptions) {
@@ -24,15 +32,17 @@ export const appToast = {
 
 export function AppToaster({ theme }: { theme: ToastTheme }) {
   const palette = toastPalette(theme);
+  const insets = useSafeAreaInsets();
   return (
     <Toaster
       theme={theme}
-      // Top, not bottom: at the bottom these sit over the agent transcript
-      // you are reading, and an error about a project list covered the
-      // sentence you were mid-way through. Nothing at the top is content.
-      position="top-center"
-      offset={28}
+      position={TOAST_POSITION}
+      offset={toastTopOffset(insets.top)}
       visibleToasts={3}
+      // An error shows for eight seconds and can land over a screen's top bar,
+      // so it has to be dismissible rather than something to wait out. Web
+      // already had this.
+      closeButton
       toastOptions={{
         style: {
           backgroundColor: palette.background,
