@@ -2289,13 +2289,23 @@ fn render_dashboard_runtime_guard_overlay(
         body.push(style("", Tone::Muted));
         body.push(style("Please wait.", Tone::Muted));
     }
+    // "Aimux is updating", "is reconnecting", "is repairing tmux": four of the
+    // six states are a wait that ends on its own, and all six wore the red
+    // modal with a warning triangle. The escalations flip `waiting` off, so a
+    // repair error is the only way a waiting state still needs the user.
+    let waiting = copy.waiting && runtime_guard.repair_error.is_none();
+    let (variant, icon) = if waiting {
+        (OverlayVariant::Progress, None)
+    } else {
+        (OverlayVariant::Red, Some("!"))
+    };
     Some(render_overlay_box(&OverlayBoxSpec {
         title: copy.title,
         body: &body,
         cols: viewport.cols,
         rows: viewport.rows,
-        variant: OverlayVariant::Red,
-        icon: Some("!"),
+        variant,
+        icon,
     }))
 }
 
@@ -3099,6 +3109,46 @@ mod tests {
         assert_eq!(
             controller.footer_alert_message(),
             Some("Dashboard action requires a project-service endpoint")
+        );
+    }
+
+    /// "Aimux is updating", "is reconnecting", "is repairing tmux": four of the
+    /// six guard states are a wait that ends on its own, and all six wore the
+    /// red modal with a warning triangle.
+    #[test]
+    fn a_wait_that_ends_on_its_own_is_not_drawn_as_an_emergency() {
+        let viewport = DashboardViewport {
+            cols: 100,
+            rows: 30,
+        };
+        let waiting = DashboardRuntimeGuardStatus {
+            state: RuntimeGuardState::Disconnected,
+            entered_at: Some(Instant::now()),
+            ..DashboardRuntimeGuardStatus::default()
+        };
+        let overlay = render_dashboard_runtime_guard_overlay(Some(&waiting), viewport)
+            .expect("a waiting overlay");
+        assert!(overlay.contains("RECONNECTING"), "{overlay:?}");
+        assert!(
+            !overlay.contains('⚠'),
+            "a self-healing wait is not a warning"
+        );
+        assert!(
+            !overlay.contains("\u{1b}[31m"),
+            "nor is it painted in the failure tone"
+        );
+
+        let failing = DashboardRuntimeGuardStatus {
+            state: RuntimeGuardState::Disconnected,
+            entered_at: Some(Instant::now()),
+            repair_error: Some("tmux refused".into()),
+            ..DashboardRuntimeGuardStatus::default()
+        };
+        let overlay =
+            render_dashboard_runtime_guard_overlay(Some(&failing), viewport).expect("an overlay");
+        assert!(
+            overlay.contains("\u{1b}[31m"),
+            "a repair that failed is still a failure: {overlay:?}"
         );
     }
 

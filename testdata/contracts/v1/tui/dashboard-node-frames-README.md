@@ -4,6 +4,19 @@ Captured from the Node dashboard renderer and used as literal parity gates.
 
 ## Recorded divergences
 
+`dashboard-node-full-frame-v1.txt` and `dashboard-node-control-scribe-frame-v1.txt`
+were re-recorded on 2026-10-05 so the "8 pending" chip stops being red.
+
+`pendingDeliveries` counts thread messages that have not arrived yet. Node drew
+that chip in the danger colour (`38;5;174`), beside the chips for things that
+genuinely went wrong, so a thread that was merely mid-delivery read as a thread
+that had failed. It is now the working colour (`38;5;80`), which is what the
+rest of this change gives every transient state.
+
+Both frames differ by exactly those two chips. Nothing else changed, and this
+is a deliberate divergence from the Node capture.
+
+
 `subscreen-node-library-frame-v1.txt` was re-recorded on 2026-10-05 so a
 transient footer note carries the same mark on a subscreen as it does on the
 dashboard.

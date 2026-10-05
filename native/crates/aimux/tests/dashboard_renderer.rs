@@ -543,9 +543,9 @@ fn graveyard_subscreen_renders_pending_action_overlays_from_pending_model() {
     let plain = strip_ansi(&result.frame);
 
     assert!(plain.contains("feature-a"));
-    assert!(plain.contains("(deleting...)"));
+    assert!(plain.contains(&format!("{PROGRESS_MARK} deleting")));
     assert!(plain.contains("codex:codex-orphan"));
-    assert!(plain.contains("(resurrecting...)"));
+    assert!(plain.contains(&format!("{PROGRESS_MARK} resurrecting")));
 }
 
 #[test]
@@ -2656,5 +2656,87 @@ mod how_a_transient_footer_line_renders {
         assert!(plain.contains("Restoring 36 agents"), "{plain}");
         assert!(plain.contains("q quit"), "the hint row is gone: {plain}");
         assert!(plain.contains("? help"), "the hint row is gone: {plain}");
+    }
+}
+
+/// Three tones, three meanings, and the dashboard used one of them for two of
+/// the meanings: every transient state wore `Tone::Attention`, the bold yellow
+/// that elsewhere means a human must act.
+mod what_a_row_in_progress_looks_like {
+    use super::*;
+
+    const ATTENTION: &str = "\u{1b}[1;33m";
+    const DANGER: &str = "\u{1b}[31m";
+    const WORK: &str = "\u{1b}[36m";
+
+    fn frame_with_pending(action: &str) -> String {
+        let fixture: DesktopStateGoldenFixture =
+            serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+        let mut snapshot = fixture.runtime_light.clone();
+        // The rendered rows come from the worktree groups, not `sessions`.
+        let group = snapshot.worktree_groups.first_mut().expect("a group");
+        let session = group.sessions.first_mut().expect("a session");
+        session.pending = true;
+        session.pending_action = Some(action.to_owned());
+        render_dashboard_frame(&DashboardRenderInput {
+            snapshot: &snapshot,
+            overseer_sessions: &[],
+            scribe_sessions: &[],
+            cols: 140,
+            rows: 50,
+            nav_level: DashboardNavLevel::Sessions,
+            selected_session_id: None,
+            selected_service_id: None,
+            focused_worktree_path: None,
+            focused_group_index: None,
+            runtime_label: Some("tmux"),
+            version: Some("local"),
+            hide_offline_agents: false,
+            hidden_offline_agent_count: 0,
+            scroll_offset: 0,
+            footer_progress: None,
+            footer_note: None,
+            footer_alerts: &[],
+            details_sidebar_visible: false,
+            preview_source: "output",
+            scribe_preview_entries: &[],
+        })
+        .frame
+    }
+
+    #[test]
+    fn a_row_being_worked_on_is_not_counted_as_one_waiting_on_you() {
+        for (action, counted) in [
+            ("creating", "creating"),
+            ("starting", "starting"),
+            ("stopping", "stopping"),
+            ("graveyarding", "removing"),
+        ] {
+            let frame = frame_with_pending(action);
+            assert!(
+                frame.contains(&format!("{WORK}1 {counted}")),
+                "{action} should be counted in the working tone"
+            );
+            assert!(
+                !frame.contains(&format!("{ATTENTION}1 {counted}")),
+                "{action} must not wear the tone that means a human must act"
+            );
+            assert!(
+                !frame.contains(&format!("{DANGER}1 {counted}")),
+                "{action} must not wear the tone that means it failed"
+            );
+        }
+    }
+
+    /// And the dot beside the row, which was the same bold yellow as an agent
+    /// asking for input.
+    #[test]
+    fn the_dot_beside_a_row_in_progress_is_the_progress_mark() {
+        let frame = frame_with_pending("creating");
+        assert!(
+            frame.contains(&format!("{WORK}{PROGRESS_MARK}")),
+            "{frame:?}"
+        );
+        assert!(!frame.contains(&format!("{ATTENTION}●")), "{frame:?}");
     }
 }

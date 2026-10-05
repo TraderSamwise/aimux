@@ -22,9 +22,9 @@ use crate::tui_render::text::{
     center, js_len, truncate, truncate_ansi, truncate_plain, wrap_key_value, wrap_text,
 };
 use crate::tui_render::theme::{
-    CardSpec, ChipTone, Column, FooterHint, KeyTone, StatusKind, Tone, card, chip,
-    cols as grid_cols, footer_hints, keycap_hint, note_line, pad_visible, pill, progress_line,
-    render_footer_hints, status_dot, style, visible_width,
+    CardSpec, ChipTone, Column, FooterHint, KeyTone, PROGRESS_MARK, PROGRESS_TONE, StatusKind,
+    Tone, card, chip, cols as grid_cols, footer_hints, keycap_hint, note_line, pad_visible, pill,
+    progress_label, progress_line, render_footer_hints, status_dot, style, visible_width,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -1469,7 +1469,8 @@ fn session_activity_chips(session: &DashboardSession) -> String {
     if thread_pending > 0 {
         chips.push(chip(
             &format!("{thread_pending} pending"),
-            tone(ChipTone::Danger),
+            // Undelivered is in flight, not failed.
+            tone(ChipTone::Work),
         ));
     }
     if session.workflow_on_me_count > 0 {
@@ -1506,7 +1507,7 @@ fn restore_blocked_chip(session: &DashboardSession) -> String {
 
 fn session_status_dot(session: &DashboardSession) -> String {
     if session.pending_action.is_some() {
-        return style("●", Tone::Attention);
+        return style(PROGRESS_MARK, PROGRESS_TONE);
     }
     let label = effective_session_row_state(session);
     let attention = session
@@ -1557,7 +1558,7 @@ fn session_status_cell(session: &DashboardSession, fallback: &str) -> String {
         return pill(&pill_label, pill_tone(row_state));
     }
     let tone = if session.pending_action.is_some() {
-        Tone::Attention
+        PROGRESS_TONE
     } else {
         match row_state {
             Some("ready") => Tone::Ready,
@@ -1623,26 +1624,20 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
     append_count(&mut parts, &counts, "idle", "idle", Tone::Muted);
     append_count(&mut parts, &counts, "done", "done", Tone::Done);
     append_count(&mut parts, &counts, "offline", "offline", Tone::Muted);
-    append_count(&mut parts, &counts, "creating", "creating", Tone::Attention);
-    append_count(&mut parts, &counts, "forking", "forking", Tone::Attention);
-    append_count(
-        &mut parts,
-        &counts,
-        "migrating",
-        "migrating",
-        Tone::Attention,
-    );
-    append_count(&mut parts, &counts, "starting", "starting", Tone::Attention);
-    append_count(&mut parts, &counts, "stopping", "stopping", Tone::Attention);
+    append_count(&mut parts, &counts, "creating", "creating", PROGRESS_TONE);
+    append_count(&mut parts, &counts, "forking", "forking", PROGRESS_TONE);
+    append_count(&mut parts, &counts, "migrating", "migrating", PROGRESS_TONE);
+    append_count(&mut parts, &counts, "starting", "starting", PROGRESS_TONE);
+    append_count(&mut parts, &counts, "stopping", "stopping", PROGRESS_TONE);
     append_count(
         &mut parts,
         &counts,
         "graveyarding",
         "removing",
-        Tone::Attention,
+        PROGRESS_TONE,
     );
-    append_count(&mut parts, &counts, "renaming", "renaming", Tone::Attention);
-    append_count(&mut parts, &counts, "moving", "moving", Tone::Attention);
+    append_count(&mut parts, &counts, "renaming", "renaming", PROGRESS_TONE);
+    append_count(&mut parts, &counts, "moving", "moving", PROGRESS_TONE);
     parts
 }
 
@@ -1663,12 +1658,12 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
         return style("failed", Tone::Danger);
     }
     match worktree.pending_action {
-        Some("creating") => return style("(creating...)", Tone::Attention),
-        Some("graveyarding") => return style("(graveyarding...)", Tone::Attention),
+        Some("creating") => return progress_label("creating"),
+        Some("graveyarding") => return progress_label("graveyarding"),
         _ => {}
     }
     if worktree.removing || worktree.pending {
-        return style("(removing...)", Tone::Attention);
+        return progress_label("removing");
     }
     let parts = semantic_count_parts(worktree);
     if !parts.is_empty() {
@@ -3516,10 +3511,7 @@ fn graveyard_pending_suffix(row: &Value) -> String {
     };
     format!(
         " {}",
-        style(
-            &format!("({}...)", row_state_label(action).to_lowercase()),
-            Tone::Attention
-        )
+        progress_label(&row_state_label(action).to_lowercase())
     )
 }
 
@@ -3587,7 +3579,7 @@ fn render_subscreen_details(
 fn loading_lines(screen: &str) -> Vec<String> {
     vec![format!(
         "  {}",
-        style(&format!("Loading {screen}..."), Tone::Muted)
+        progress_label(&format!("Loading {screen}"))
     )]
 }
 
@@ -4205,7 +4197,7 @@ fn worklist_tags(item: &Value) -> String {
         }
         let pending = number_at(entry, &["pendingDeliveries"]);
         if pending > 0 {
-            parts.push(style(&format!("⇢ {pending}"), Tone::Danger));
+            parts.push(style(&format!("⇢ {pending}"), PROGRESS_TONE));
         }
         parts.push(style(
             string_at(entry, &["stateLabel"])

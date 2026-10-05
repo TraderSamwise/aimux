@@ -1091,7 +1091,7 @@ fn runner_renders_loading_frame_before_initial_item_discovery() {
     let rendered = String::from_utf8(output).expect("utf8 output");
     let first_frame = first_synchronized_frame(&rendered);
     let last_frame = last_synchronized_frame(&rendered);
-    assert!(first_frame.contains("Loading sessions..."));
+    assert!(first_frame.contains("Loading sessions"));
     assert!(!first_frame.contains("loaded preview line"));
     assert!(last_frame.contains("loaded preview line"));
     assert_eq!(client.requests.len(), 1);
@@ -1134,7 +1134,7 @@ fn runner_retries_initial_item_discovery_failure_instead_of_rendering_empty() {
     let rendered = String::from_utf8(output).expect("utf8 output");
     let first_frame = first_synchronized_frame(&rendered);
     let last_frame = last_synchronized_frame(&rendered);
-    assert!(first_frame.contains("Loading sessions..."));
+    assert!(first_frame.contains("Loading sessions"));
     assert!(!first_frame.contains("No active agents"));
     assert!(last_frame.contains("retry loaded preview line"));
     assert_eq!(client.requests.len(), 2);

@@ -127,6 +127,34 @@ for (const file of listRustFiles(SCAN_ROOT)) {
   }
 }
 
+// The second half of the rule, in the rows rather than the footer: a transient
+// state must not be painted with the tone that means "a human must act" or the
+// one that means "it failed". `Tone::Attention` carried every one of these, so
+// a row the dashboard was busy with looked like a row waiting on the user.
+const TRANSIENT_LABELS = [
+  "creating", "forking", "migrating", "switching", "starting", "stopping",
+  "graveyarding", "resurrecting", "renaming", "moving", "removing", "deleting",
+  "pending", "Loading", "Restoring",
+];
+const WRONG_TONES = ["Tone::Attention", "Tone::Danger", "ChipTone::Danger", "ChipTone::Attention"];
+
+for (const file of listRustFiles(SCAN_ROOT)) {
+  const source = readFileSync(file, "utf8");
+  const body = source.split("\n#[cfg(test)]\n")[0];
+  const path = relative(repoRoot, file);
+  body.split("\n").forEach((line, index) => {
+    const tone = WRONG_TONES.find((candidate) => line.includes(candidate));
+    if (!tone) return;
+    const label = TRANSIENT_LABELS.find((candidate) => line.includes(`"${candidate}"`));
+    if (!label) return;
+    classified += 1;
+    if (isAllowed(path, line)) return;
+    violations.push(
+      `${path}:${index + 1}  ${JSON.stringify(label)} painted ${tone} -- that is "act" or "failed", not "in progress". Use PROGRESS_TONE, or classify it.`,
+    );
+  });
+}
+
 if (violations.length > 0) {
   console.error("transient footer channel audit failed:\n");
   for (const violation of violations) console.error(`  ${violation}`);
