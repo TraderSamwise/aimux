@@ -429,14 +429,10 @@ pub struct DashboardFooterNote {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardProgressNote {
     pub message: String,
-    pub settled_by: Option<DashboardActionIdentity>,
-}
-
-impl DashboardProgressNote {
-    /// Whether a settled action is the end of this work.
-    pub fn settled_by(&self, settled: &DashboardActionIdentity) -> bool {
-        self.settled_by.as_ref() == Some(settled)
-    }
+    /// Not optional: a progress note with nothing to settle it is a note, and
+    /// an `Option` here would have to be cleared by the first outcome that
+    /// arrived -- which is the uncorrelated clear this field exists to stop.
+    pub settled_by: DashboardActionIdentity,
 }
 
 impl DashboardController {
@@ -483,7 +479,7 @@ impl DashboardController {
 
     /// Work this dashboard just dispatched. Survives keypresses until the
     /// action named here settles.
-    pub fn set_progress(&mut self, message: String, settled_by: Option<DashboardActionIdentity>) {
+    pub fn set_progress(&mut self, message: String, settled_by: DashboardActionIdentity) {
         self.footer_progress = Some(DashboardProgressNote {
             message,
             settled_by,
@@ -492,15 +488,11 @@ impl DashboardController {
 
     /// A dispatched action has settled, either way.
     pub fn clear_progress_for(&mut self, settled: Option<&DashboardActionIdentity>) {
-        let takes_it_down = match (self.footer_progress.as_ref(), settled) {
-            (None, _) => false,
-            // Nothing can answer a progress note with no action behind it, so
-            // the first settled outcome is as good an end as any.
-            (Some(progress), _) if progress.settled_by.is_none() => true,
-            (Some(progress), Some(settled)) => progress.settled_by(settled),
-            (Some(_), None) => false,
-        };
-        if takes_it_down {
+        if self
+            .footer_progress
+            .as_ref()
+            .is_some_and(|progress| Some(&progress.settled_by) == settled)
+        {
             self.footer_progress = None;
         }
     }
@@ -1745,10 +1737,10 @@ impl DashboardController {
                         .as_ref()
                         .map_or(0, |offer| offer.session_ids.len()),
                 ),
-                Some(DashboardActionIdentity {
+                DashboardActionIdentity {
                     path: request.path,
                     body: request.body.clone(),
-                }),
+                },
             );
             return DashboardControllerEffect::Request(request);
         }
@@ -2964,9 +2956,10 @@ impl DashboardController {
     ) -> Option<DashboardControllerEffect> {
         let group = self.navigation.focused_worktree_group(snapshot)?;
         let path = group.path.as_ref()?;
-        // A fresh attempt supersedes the last one's refusal, so a refusal for
-        // one worktree cannot sit under a confirm prompt for another.
-        self.footer_alert = None;
+        // The busy checks come first, and the alert is cleared only once this
+        // is a real attempt. Clearing it up here meant `x` on a worktree that
+        // was already removing threw away an unrelated failure and replaced it
+        // with a note the next key erases.
         if group.removing
             || group.pending_action.as_deref() == Some("removing")
             || group.pending_action.as_deref() == Some("graveyarding")
@@ -2984,6 +2977,9 @@ impl DashboardController {
             self.set_busy(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
+        // A fresh attempt supersedes the last one's refusal, so a refusal for
+        // one worktree cannot sit under a confirm prompt for another.
+        self.footer_alert = None;
         if let Some(failure) = group.operation_failure.as_ref() {
             self.set_note(format!("Dismissed failure for {}", group.name));
             let mut body = Map::new();

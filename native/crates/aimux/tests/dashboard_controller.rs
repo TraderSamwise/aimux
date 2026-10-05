@@ -3392,7 +3392,7 @@ mod what_a_transient_footer_line_claims {
         let snapshot = snapshot();
         let mut controller = DashboardController::new(&snapshot);
 
-        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
         controller.handle_key(&snapshot, DashboardKey::Down);
 
         assert_eq!(
@@ -3410,7 +3410,7 @@ mod what_a_transient_footer_line_claims {
         let snapshot = snapshot();
         let mut controller = DashboardController::new(&snapshot);
 
-        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
         controller.set_note("Offline agents hidden".into());
 
         assert_eq!(
@@ -3420,6 +3420,31 @@ mod what_a_transient_footer_line_claims {
         assert_eq!(
             controller.footer_note_message(),
             Some("Offline agents hidden")
+        );
+    }
+
+    /// `x` on a worktree that is already removing is not an attempt at
+    /// anything, so it must not take down the explanation of something else
+    /// that failed -- which is the whole job of the channel it was clearing.
+    #[test]
+    fn a_refused_key_does_not_discard_an_unrelated_failure() {
+        let mut snapshot = snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.navigation.level = DashboardNavLevel::Worktrees;
+        controller.navigation.worktree_index = 1;
+        snapshot.worktree_groups[1].removing = true;
+        controller.footer_alert = Some("Could not stop agent claude-a".into());
+
+        controller.handle_key(&snapshot, DashboardKey::Printable('x'));
+
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("Could not stop agent claude-a"),
+            "nothing was attempted, so nothing superseded this"
+        );
+        assert_eq!(
+            controller.footer_note_message(),
+            Some("Worktree feature-a is removing")
         );
     }
 
@@ -3453,7 +3478,7 @@ mod what_a_transient_footer_line_claims {
         let snapshot = snapshot();
         let mut controller = DashboardController::new(&snapshot);
 
-        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
         controller.clear_progress_for(Some(&restore_previous()));
 
         assert_eq!(

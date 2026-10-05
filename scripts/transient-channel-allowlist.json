@@ -5,6 +5,41 @@
       "file": "native/crates/aimux/src/dashboard_controller.rs",
       "message": "Dismissed failure for",
       "reason": "The confirmation that a failure was cleared, not a failure. A note is right: the next key supersedes it."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_controller.rs",
+      "message": "No running overseer",
+      "reason": "A key answered with nothing to act on, not an operation that failed. There is nothing to explain later, and the next key is a better answer than a bar the user must dismiss."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_controller.rs",
+      "message": "No overseer configured",
+      "reason": "As above: a statement about what exists, not a failed attempt."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_controller.rs",
+      "message": "No running scribe",
+      "reason": "As above."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_controller.rs",
+      "message": "No scribe configured",
+      "reason": "As above."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_controller.rs",
+      "message": "has no teammates",
+      "reason": "As above: the agent simply has none."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_controller.rs",
+      "message": "No orchestration targets available",
+      "reason": "As above."
+    },
+    {
+      "file": "native/crates/aimux/src/dashboard_internal.rs",
+      "message": "No thread for",
+      "reason": "As above: the session has no thread, which is a fact rather than a failure."
     }
   ]
 }

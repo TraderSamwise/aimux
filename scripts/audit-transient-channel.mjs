@@ -23,6 +23,9 @@ const FAILURE_WORDS = [
   "error", "Error", "failed", "Failed", "failure", "Failure",
   "could not", "Could not", "Cannot", "cannot", "unavailable",
   "refused", "Refused", "requires",
+  // "No running overseer", "No thread for X": a key answered with nothing to
+  // act on. Mostly these are notes, but the gate makes that a decision.
+  "No ", "has no ", "is offline",
 ];
 // What only appears while something is still happening. Half of these are
 // source idioms rather than prose, because the message is usually interpolated
@@ -36,8 +39,21 @@ const PROGRESS_WORDS = [
   "{action}", "pending_action", "restore_started_message",
 ];
 
-const NOTE_CALLS = ["set_note(", "set_busy("];
-const ALERT_CALLS = ["DashboardFailureAlert::local(", "DashboardFailureAlert::for_action("];
+// Every spelling that puts a message in a channel. The constructors matter as
+// much as the setters: a `Blocked` that should be `Busy` never reaches a
+// setter at all, it just arrives at the wrong arm.
+const NOTE_CALLS = [
+  "set_note(",
+  "set_busy(",
+  "DashboardActionPlan::Busy(",
+  "DashboardNavigationOutcome::Busy(",
+];
+const ALERT_CALLS = [
+  "DashboardFailureAlert::local(",
+  "DashboardFailureAlert::for_action(",
+  "DashboardActionPlan::Blocked(",
+  "DashboardNavigationOutcome::Blocked(",
+];
 
 function listRustFiles(directory) {
   const found = [];

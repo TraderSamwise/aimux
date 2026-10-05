@@ -434,7 +434,11 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             }
         }
         if !dashboard_visible {
-            suspend_dashboard_event_stream(&mut event_stream, &mut event_stream_retry_at);
+            suspend_dashboard_event_stream(
+                &mut event_stream,
+                &mut event_stream_retry_at,
+                &mut event_stream_down,
+            );
             thread::sleep(DASHBOARD_HIDDEN_POLL_INTERVAL);
             continue;
         }
@@ -1340,11 +1344,15 @@ fn is_terminal_output_hangup(error: &io::Error) -> bool {
 fn suspend_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
+    down: &mut Option<String>,
 ) {
     if event_stream.is_some() {
         *event_stream = None;
     }
     *retry_at = None;
+    // Suspended on purpose, so "the stream is down" stops being a report about
+    // anything. Left standing it would outlive the project it was about.
+    *down = None;
 }
 
 fn drain_dashboard_event_stream(
@@ -1424,6 +1432,10 @@ fn reconcile_dashboard_event_stream(
         return;
     }
     let Some(endpoint) = endpoint else {
+        // No endpoint is a different state from a stream that died, and the
+        // report of the latter would otherwise be permanent and, being derived,
+        // not dismissible either.
+        *down = None;
         return;
     };
     if event_stream
@@ -3062,7 +3074,7 @@ mod tests {
     fn a_request_that_never_left_does_not_leave_its_progress_note_behind() {
         let snapshot = test_snapshot();
         let mut controller = DashboardController::new(&snapshot);
-        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
 
         let (tx, _rx) = mpsc::channel::<DashboardRequestOutcome>();
         let mut deferred: Vec<DeferredDashboardRequest> = vec![(
@@ -3140,7 +3152,7 @@ mod tests {
     fn a_settled_request_takes_its_progress_note_down_even_with_nothing_to_say() {
         let snapshot = test_snapshot();
         let mut controller = DashboardController::new(&snapshot);
-        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
@@ -3165,7 +3177,7 @@ mod tests {
     fn another_action_settling_first_does_not_end_this_one_s_report() {
         let snapshot = test_snapshot();
         let mut controller = DashboardController::new(&snapshot);
-        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
@@ -3191,7 +3203,7 @@ mod tests {
     fn a_failed_request_takes_its_progress_note_down_too() {
         let snapshot = test_snapshot();
         let mut controller = DashboardController::new(&snapshot);
-        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
+        controller.set_progress("Restoring 36 agents".into(), restore_previous());
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {

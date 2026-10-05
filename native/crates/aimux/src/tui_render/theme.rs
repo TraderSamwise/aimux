@@ -328,12 +328,16 @@ pub fn render_footer_hints(hints: &[FooterHint<'_>], width: usize) -> Vec<String
 pub enum BandTone {
     Info,
     Danger,
+    /// Work under way. Teal, so it is neither the blue of a question nor the
+    /// red of a failure.
+    Progress,
 }
 
 pub fn modal_band(label: &str, tone: BandTone, width: usize) -> String {
     let sgr = match tone {
         BandTone::Info => "\x1b[1;48;5;24;38;5;195m",
         BandTone::Danger => "\x1b[1;48;5;52;38;5;224m",
+        BandTone::Progress => "\x1b[1;48;5;23;38;5;195m",
     };
     format!("{sgr}{}{RESET}", pad_visible(&format!(" {label}"), width))
 }
