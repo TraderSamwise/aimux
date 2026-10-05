@@ -3,7 +3,13 @@ import { AlertTriangle, CheckCircle2, Info } from "lucide-react-native";
 import { Toaster, toast } from "sonner";
 import "sonner/dist/styles.css";
 
-import { type AppToastOptions, toastPalette, type ToastTheme } from "@/lib/toast-theme";
+import {
+  type AppToastOptions,
+  TOAST_POSITION,
+  toastPalette,
+  type ToastTheme,
+  TOAST_WEB_TOP_OFFSET,
+} from "@/lib/toast-theme";
 
 export const appToast = {
   success(title: string, options?: AppToastOptions) {
@@ -28,8 +34,8 @@ export function AppToaster({ theme }: { theme: ToastTheme }) {
   return (
     <Toaster
       theme={theme}
-      position="bottom-center"
-      offset={28}
+      position={TOAST_POSITION}
+      offset={TOAST_WEB_TOP_OFFSET}
       visibleToasts={3}
       closeButton
       toastOptions={{

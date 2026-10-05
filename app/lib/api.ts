@@ -185,11 +185,27 @@ export interface ApiOpts {
   machineId?: string;
 }
 
+/// A request the app abandoned, as opposed to one that failed.
+///
+/// `cancelled` is the app's own doing — a superseded poll, a screen that
+/// unmounted, a navigation away — so nothing failed and nobody needs told.
+/// It used to be recognised by matching the sentence this file writes, from a
+/// module that does not write it, and the two drifted apart: the filter looks
+/// for "aborted" while this says "Request was cancelled". So it reached the
+/// user as a red banner for something that had already healed.
+///
+/// A TIMEOUT deliberately has no kind. It is a real failure — the request did
+/// not complete — and the same filter guards user-initiated actions, where
+/// swallowing it would leave a stop button that spins, stops, and says
+/// nothing.
+export type ApiFailureKind = "cancelled";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
     public body: unknown,
     message: string,
+    public readonly kind?: ApiFailureKind,
   ) {
     super(message);
     this.name = "ApiError";
@@ -248,12 +264,17 @@ function requestSignal(opts?: ApiOpts): { signal: AbortSignal; cleanup: () => vo
   };
 }
 
-function abortedRequestMessage(signal: AbortSignal, url: string): string {
+function abortedRequest(
+  signal: AbortSignal,
+  url: string,
+): { message: string; kind: ApiFailureKind | undefined } {
   const reason = signal.reason;
   const reasonMessage = reason instanceof Error ? reason.message : String(reason ?? "");
   const timeout = reasonMessage.match(/^request timed out after (\d+)ms$/);
-  if (timeout) return `Request timed out after ${timeout[1]}ms (${url})`;
-  return `Request was cancelled (${url})`;
+  if (timeout) {
+    return { message: `Request timed out after ${timeout[1]}ms (${url})`, kind: undefined };
+  }
+  return { message: `Request was cancelled (${url})`, kind: "cancelled" };
 }
 
 async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Promise<T> {
@@ -283,11 +304,12 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
     return body as T;
   } catch (err) {
     if (err instanceof ApiError) throw err;
+    if (signal.aborted) {
+      const aborted = abortedRequest(signal, url);
+      throw new ApiError(0, null, aborted.message, aborted.kind);
+    }
     const reason = err instanceof Error ? err.message : String(err);
-    const message = signal.aborted
-      ? abortedRequestMessage(signal, url)
-      : `Network request failed (${url}): ${reason}`;
-    throw new ApiError(0, null, message);
+    throw new ApiError(0, null, `Network request failed (${url}): ${reason}`);
   } finally {
     cleanup();
   }
@@ -306,7 +328,7 @@ async function withRelayRequestTimeout<T>(
       reject(new ApiError(0, null, `Request timed out after ${timeoutMs}ms (${path})`));
     };
     const rejectCancelled = () => {
-      reject(new ApiError(0, null, `Request was cancelled (${path})`));
+      reject(new ApiError(0, null, `Request was cancelled (${path})`, "cancelled"));
     };
     timeout = setTimeout(rejectTimedOut, timeoutMs);
     abortListener = rejectCancelled;

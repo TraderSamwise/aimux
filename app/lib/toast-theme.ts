@@ -1,7 +1,17 @@
-// Colours for both toast renderers. sonner and sonner-native take inline style
-// objects rather than classes, so the palette has to be concrete rather than a
-// tailwind token.
+// Colours and placement for both toast renderers. sonner and sonner-native
+// take inline style objects rather than classes, so the palette has to be
+// concrete rather than a tailwind token.
 export type ToastTheme = "light" | "dark";
+
+/// Which edge banners sit on, once rather than once per platform file.
+///
+/// At the bottom they sat over the agent transcript you are reading, and an
+/// error about a project list covered the sentence you were mid-way through.
+export const TOAST_POSITION = "top-center" as const;
+
+/// How far below the top of the window a banner sits on web, where there is no
+/// notch to clear.
+export const TOAST_WEB_TOP_OFFSET = 28;
 
 export type { AppToastOptions } from "@/lib/toast-shared";
 

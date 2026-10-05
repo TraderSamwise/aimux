@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { getErrorMessage, isTransientRequestError } from "./request-errors";
 
+/// Shaped like `ApiError` rather than imported: `api.ts` pulls React Native in,
+/// and what matters here is the field, not the class.
+function apiError(status: number, message: string, kind?: string): Error {
+  return Object.assign(new Error(message), { name: "ApiError", status, body: null, kind });
+}
+
 describe("getErrorMessage", () => {
   it("returns Error messages and stringifies non-errors", () => {
     expect(getErrorMessage(new Error("nope"))).toBe("nope");
@@ -19,6 +25,47 @@ describe("isTransientRequestError", () => {
     expect(
       isTransientRequestError(Object.assign(new Error("socket closed"), { code: "ECONNRESET" })),
     ).toBe(true);
+  });
+
+  // The two banners Sam screenshotted. The filter existed to catch exactly
+  // these and matched text `api.ts` had stopped writing: it looked for
+  // "aborted" while the message says "Request was cancelled", and for an
+  // unanchored "request timed out after Nms" while the message appends the
+  // path. Both reached the user as a red banner for something already healed.
+  it("treats a request the app itself cancelled as transient", () => {
+    const cancelled = apiError(
+      0,
+      "Request was cancelled (https://relay.aimux.app/shares)",
+      "cancelled",
+    );
+    expect(isTransientRequestError(cancelled)).toBe(true);
+    expect(
+      isTransientRequestError(new Error("Request was cancelled (https://relay.aimux.app/shares)")),
+      // Without the kind there is nothing structural to read, which is the
+      // state that produced the banner.
+    ).toBe(false);
+  });
+
+  // The same filter guards user-initiated actions -- stopping an agent,
+  // creating one -- where a swallowed timeout leaves a button that spins,
+  // stops and says nothing. A timeout is a real failure; only the app
+  // abandoning its own request is not.
+  it("still reports a request timeout, because nothing was abandoned", () => {
+    expect(
+      isTransientRequestError(apiError(0, "Request timed out after 10000ms (/projects)")),
+    ).toBe(false);
+    // Explicitly kinded too, so widening the filter to cover timeouts fails
+    // here rather than silently reaching the actions that depend on seeing one.
+    expect(
+      isTransientRequestError(
+        apiError(0, "Request timed out after 10000ms (/projects)", "timeout"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not hide a server error that merely mentions cancelling", () => {
+    const refused = apiError(409, "The run was cancelled by the operator (/runs/7)");
+    expect(isTransientRequestError(refused)).toBe(false);
   });
 
   it("does not hide unexpected errors", () => {
@@ -51,5 +98,17 @@ describe("an error that enumerates what failed", () => {
         Object.assign(new Error("failed to fetch"), { body: { failures: [] } }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("the kind survives the path that carries it", () => {
+  // The render-time filters in the action panels re-ran this check on a
+  // FLATTENED string, where `kind` cannot exist -- so the second pass answered
+  // "not transient" for every cancellation while looking like a live guard.
+  // The panels drop that pass now; this pins why it could never have worked.
+  it("cannot recognise a cancellation once the error is a string", () => {
+    const cancelled = apiError(0, "Request was cancelled (/projects)", "cancelled");
+    expect(isTransientRequestError(cancelled)).toBe(true);
+    expect(isTransientRequestError(cancelled.message)).toBe(false);
   });
 });
