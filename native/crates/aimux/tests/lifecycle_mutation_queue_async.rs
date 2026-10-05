@@ -379,3 +379,91 @@ fn two_unnamed_mutations_queue_instead_of_refusing_each_other() {
     assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 0);
     assert_eq!(diagnostics["queuedCount"], 0);
 }
+
+/// The inverse of the unnamed case: two mutations of the SAME agent must still
+/// be refused, because that is what the conflict map is for.
+#[test]
+fn two_mutations_of_the_same_agent_are_still_refused() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::new(32);
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let mut held = queue
+            .begin_async(Some(agent_stop("codex-live")))
+            .await
+            .expect("the first stop takes the queue");
+
+        let Err(error) = queue.begin_async(Some(agent_stop("codex-live"))).await else {
+            panic!("a second mutation of the same agent must be refused");
+        };
+        assert_eq!(error.status(), 409);
+        assert!(
+            error.message().contains("codex-live"),
+            "the refusal must name the agent: {}",
+            error.message()
+        );
+
+        held.succeed(std::time::Instant::now());
+    });
+
+    let diagnostics = queue.diagnostics("/repo");
+    assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 1);
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 1);
+    assert_eq!(diagnostics["queuedCount"], 0);
+}
+
+/// The inverse of the bounded wait: a holder that finishes inside the bound
+/// must not be called stuck. A worktree create doing a cold fetch is the
+/// longest legitimate one, so a refusal here would be a regression against
+/// work that used to succeed.
+#[test]
+fn a_slow_mutation_that_does_finish_is_not_called_stuck() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(2_000));
+    let (release_holder, holder_released) = oneshot::channel::<()>();
+
+    let holder_queue = queue.clone();
+    let holder = runtime.spawn(async move {
+        let mut permit = holder_queue
+            .begin_async(Some(agent_stop("slow")))
+            .await
+            .expect("the slow mutation takes the queue");
+        let started_at = std::time::Instant::now();
+        holder_released.await.expect("holder is released");
+        permit.succeed(started_at);
+    });
+    wait_until(&queue, |diagnostics| {
+        diagnostics["telemetry"]["started"] == 1
+    });
+
+    let waiter_queue = queue.clone();
+    let waiter = runtime.spawn(async move {
+        waiter_queue
+            .begin_async(Some(agent_stop("waiting")))
+            .await
+            .map(|mut permit| permit.succeed(std::time::Instant::now()))
+            .map_err(|error| error.message())
+    });
+    wait_until(&queue, |diagnostics| diagnostics["queuedCount"] == 2);
+
+    // Well inside the 2s bound.
+    std::thread::sleep(Duration::from_millis(100));
+    release_holder.send(()).expect("release the holder");
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    let outcome = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            holder.await.expect("holder task");
+            waiter.await.expect("waiter task")
+        })
+        .await
+        .expect("both finish")
+    });
+
+    assert!(
+        outcome.is_ok(),
+        "a holder that finished inside the bound must not refuse its waiter: {outcome:?}"
+    );
+    assert_eq!(queue.diagnostics("/repo")["telemetry"]["succeeded"], 2);
+}

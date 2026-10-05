@@ -3413,9 +3413,11 @@ mod tests {
     ///
     /// Two unnamed spawns of one tool build byte-identical bodies, so they are
     /// one identity and two requests. Clearing on the first outcome ended the
-    /// note while the second was still running -- and the first outcome is
-    /// usually the lifecycle queue's 409 for the duplicate, so the report that
-    /// replaced it was a failure for work that was going fine.
+    /// note while the second was still running, so a failure returned by either
+    /// one replaced a report for work that was going fine. (When this was
+    /// written the first outcome was reliably the lifecycle queue's 409 for a
+    /// fabricated shared key; those two spawns queue now, but a refusal from
+    /// one of a pair must still not end the other's note.)
     ///
     /// Suppressing the second press instead was worse: `c`, claude, `c`, claude
     /// is two different agents, and the second produced no request, no note and

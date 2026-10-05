@@ -19,6 +19,11 @@ const DEFAULT_QUEUE_LIMIT: usize = 32;
 /// is not coming back. Waiting silently forever is the alternative, and that
 /// is how the queue died: one stuck mutation and every later one hung with
 /// nothing said.
+///
+/// This bounds the WAIT, never the work. A holder that legitimately runs
+/// longer than this keeps running and still finishes; only a caller queued
+/// behind it is told so. That is what makes the number safe to pick without
+/// knowing every operation's worst case.
 const WAIT_FOR_TURN_TIMEOUT: Duration = Duration::from_millis(150_000);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -497,7 +502,14 @@ impl Drop for QueueReservation {
         if self.committed || !self.tracked {
             return;
         }
-        let mut state = self.inner.state.lock().expect("lifecycle queue lock");
+        // Tolerate a poisoned lock rather than panic: this runs during
+        // unwinding, and a panic in a drop aborts the process. Giving the claim
+        // back matters more than the lock's history.
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         state.queued_count = state.queued_count.saturating_sub(1);
         if let Some(key) = self.target_key.take() {
             state.active_targets.remove(&key);
@@ -563,7 +575,12 @@ fn release_lifecycle_mutation(
     started_at: Instant,
     error: Option<String>,
 ) {
-    let mut state = inner.state.lock().expect("lifecycle queue lock");
+    // Reached from `Drop for LifecycleMutationPermit` too, so the same rule
+    // applies: releasing the queue must not be the thing that aborts.
+    let mut state = inner
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     state.holder = None;
     if tracked {
         state.queued_count = state.queued_count.saturating_sub(1);
