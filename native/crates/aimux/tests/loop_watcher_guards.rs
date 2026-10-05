@@ -2104,6 +2104,8 @@ fn editing_a_paused_agents_goal_does_not_erase_the_pause() {
         json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
     );
 
+    // Nine, not ten: the paused-summary cadence fires on the tenth tick and
+    // that send is the pause working, not a regression.
     let mut ok = |_: &LoopSend| true;
     for offset in 0..9 {
         assert!(
@@ -2190,7 +2192,106 @@ fn the_overseer_brief_offers_pausing_instead_of_forgetting() {
         "and say what makes it different from removing: {brief}"
     );
     assert!(
-        brief.contains("un-pauses it automatically"),
-        "and that the next piece of work brings it back on its own: {brief}"
+        brief.contains("DELIVERING work un-pauses it automatically"),
+        "and that delivered work brings it back on its own: {brief}"
     );
+    // `clear_loop_alert_pause_for_work` is called from
+    // `deliver_prompt_to_recipients`, so a task with no prompt never reaches
+    // it. The brief has to say that rather than imply any task will do -- a
+    // brief that overclaims is the defect this change is fixing.
+    assert!(
+        brief.contains("A task with no prompt leaves it paused"),
+        "and must not promise an un-pause the delivery path does not do: {brief}"
+    );
+}
+
+/// A pause written before the key shrank still holds after the upgrade.
+///
+/// `gc_stale_pauses` DELETES a pause whose key no longer matches, and every
+/// pause already on disk is `since\ngoal\nsource`. Without the migration,
+/// upgrading would silently drop every live pause on the first scan — alerts
+/// returning for agents somebody deliberately quieted, which is the bug this
+/// change exists to fix, caused by the fix.
+#[test]
+fn a_pause_written_before_the_key_shrank_survives_the_upgrade() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let since = worker_meta["loop"]["since"].as_str().expect("a loop since");
+
+    let directory =
+        std::env::temp_dir().join(format!("aimux-pause-migration-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("state dir");
+    let path = aimux::loop_watcher::loop_watcher_state_path(&directory);
+
+    let mut watcher = LoopWatcher::new();
+    // The old shape, exactly as it sits in a file written by the last build.
+    watcher.pause_loop_alerts(
+        "worker",
+        format!("{since}\nship the Y4 run\noverseer"),
+        NOW,
+        LoopAlertPauseProvenance::default(),
+    );
+    aimux::loop_watcher::save_loop_watcher_state(&path, &watcher).expect("save");
+
+    let mut reloaded = load_loop_watcher_state(&path).expect("load");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+    // Nine for the same reason as above: the tenth tick is the paused summary.
+    let mut ok = |_: &LoopSend| true;
+    for offset in 0..9 {
+        assert!(
+            reloaded.scan(&input, NOW + offset, &mut ok).is_empty(),
+            "a pause from the previous build must not be dropped by the upgrade"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// The two pause keys are one decision spelled twice, so they are pinned
+/// against each other rather than one test each.
+///
+/// They drifted apart once already — both carried `goal` and `source`, and the
+/// doc for one of them cited this test before it existed.
+#[test]
+fn the_two_pause_keys_agree_for_an_active_loop() {
+    let (_, meta) = looping_session("worker", "idle");
+    let from_metadata =
+        loop_pause_key_from_loop_metadata(&meta["loop"]).expect("an active loop has a key");
+
+    // What a scan candidate carries for the same agent.
+    let candidate = json!({
+        "id": "worker",
+        "loopSince": meta["loop"]["since"],
+        "goal": meta["loop"]["goal"],
+        "loopSource": "overseer",
+    });
+    assert_eq!(
+        aimux::loop_watcher::loop_pause_key_from_candidate(&candidate),
+        Some(from_metadata.clone()),
+        "a candidate and its metadata must name the same pause"
+    );
+
+    // A goal or a source the candidate does not share must not change it.
+    let other_goal = json!({
+        "id": "worker",
+        "loopSince": meta["loop"]["since"],
+        "goal": "something else entirely",
+        "loopSource": "human",
+    });
+    assert_eq!(
+        aimux::loop_watcher::loop_pause_key_from_candidate(&other_goal),
+        Some(from_metadata),
+        "only the re-add signal is part of the key"
+    );
+
+    // Where they deliberately differ: the metadata side also refuses an
+    // inactive loop, which a candidate has no way to say.
+    let mut inactive = meta["loop"].clone();
+    inactive["active"] = json!(false);
+    assert_eq!(loop_pause_key_from_loop_metadata(&inactive), None);
 }

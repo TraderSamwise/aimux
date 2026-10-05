@@ -1175,7 +1175,7 @@ impl PersistentLoopWatcherState {
                 .collect(),
             pending_send_keys: BTreeMap::new(),
             delivery_records: self.delivery_records,
-            paused_loop_alerts: self.paused_loop_alerts,
+            paused_loop_alerts: migrate_pause_keys(self.paused_loop_alerts),
             paused_summary_ticks: self.paused_summary_ticks,
             last_paused_summary_signature: self.last_paused_summary_signature,
             global_pause: self.global_pause,
@@ -1259,6 +1259,30 @@ fn loop_send_kind_from_name(value: &str) -> Option<LoopSendKind> {
         "idleFleet" => Some(LoopSendKind::IdleFleet),
         _ => None,
     }
+}
+
+/// Bring pauses written before the key shrank forward.
+///
+/// `gc_stale_pauses` DELETES a pause whose key does not match, and every pause
+/// already on disk is `since\ngoal\nsource`. Without this, upgrading would
+/// silently drop every live pause on the first scan -- alerts returning for
+/// agents somebody deliberately quieted, which is the bug this change exists to
+/// fix, caused by the fix.
+///
+/// The old key's first line IS the `since`, so the migration is a truncation
+/// and needs no version bump: a key with no newline is already the new shape.
+fn migrate_pause_keys(
+    pauses: BTreeMap<String, LoopAlertPause>,
+) -> BTreeMap<String, LoopAlertPause> {
+    pauses
+        .into_iter()
+        .map(|(session_id, mut pause)| {
+            if let Some((since, _)) = pause.loop_key.split_once('\n') {
+                pause.loop_key = since.to_owned();
+            }
+            (session_id, pause)
+        })
+        .collect()
 }
 
 /// What a pause is pinned to, so it survives everything except the one event
@@ -2133,7 +2157,13 @@ fn loop_exit_candidate_signature(candidate: &Value) -> String {
 /// The same rule read off a scan candidate rather than the metadata.
 ///
 /// Two spellings of one decision is how they drifted apart in the first place,
-/// so `the_two_pause_keys_agree` pins them against each other.
+/// so `the_two_pause_keys_agree_for_an_active_loop` pins them against each
+/// other. They are not interchangeable: the metadata side also refuses an
+/// inactive loop, which a candidate cannot express.
+pub fn loop_pause_key_from_candidate(candidate: &Value) -> Option<String> {
+    loop_pause_key(candidate)
+}
+
 fn loop_pause_key(candidate: &Value) -> Option<String> {
     let since = optional_str(candidate, "loopSince").unwrap_or_default();
     if since.is_empty() {
