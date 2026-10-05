@@ -160,7 +160,7 @@ Triaged after `f7c8b4d8` from `scripts/audit-rust-orphans.mjs` rows marked
 
 `DashboardUiStatePersistence::persist_render_state` was listed in the table
 above as "retained for tests". Its only caller was its own test, so it was
-retained for nothing; both were deleted in f28addd9. Rust production reaches UI
+retained for nothing; both were deleted in PR #398. Rust production reaches UI
 render-state persistence through the richer `persist_controller_state`, which
 is unaffected.
 

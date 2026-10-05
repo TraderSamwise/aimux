@@ -336,6 +336,12 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     run_native_dashboard_with_seams(options, None)
 }
 
+/// The loop, with its outside edges optionally replaced.
+///
+/// `seams` is a test seam and nothing else: pass `None` and this is
+/// [`run_native_dashboard_internal`] exactly. A driven run deliberately does
+/// not enter raw mode or own stdin, so an external caller handing it seams
+/// would get a loop that never reads a real keyboard.
 pub fn run_native_dashboard_with_seams(
     options: NativeDashboardOptions,
     seams: Option<DashboardLoopSeams>,

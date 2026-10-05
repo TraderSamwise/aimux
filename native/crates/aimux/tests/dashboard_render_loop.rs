@@ -80,11 +80,11 @@ type Poll = (u64, Vec<DashboardKey>);
 /// independent counter is how the first version of this file ended the loop
 /// after one iteration and read none of the keys it was handing over.
 fn drive(polls: Vec<Poll>) -> Driven {
-    // Counted, not named after the script: two tests with the same number of
-    // polls shared one directory, and each `drive` ends by removing it, so one
-    // test could delete another's underneath it while both were running. The
-    // loop never opens this directory, so nothing broke -- it was a create and
-    // a remove racing over the same path for no reason.
+    // Counted, not named after the script length. Integration binaries do not
+    // get `--test-threads=1` -- `native-test-runner.py` adds it only for unit
+    // tests -- so these run as concurrent threads, and two scripts of the same
+    // length shared a directory that each `drive` removes. The poll counts
+    // happen to be distinct today; the counter is what makes that not matter.
     static NEXT_ROOT: AtomicUsize = AtomicUsize::new(0);
     let root = std::env::temp_dir().join(format!(
         "aimux-render-loop-{}-{}",
@@ -246,5 +246,35 @@ fn a_key_that_changes_what_is_asked_for_fetches_again() {
     assert_eq!(
         driven.loads, 2,
         "toggling offline agents must reload rather than repaint cache"
+    );
+}
+
+/// The loop returns when it is told to, and promptly.
+///
+/// This replaces an assertion that read `elapsed < 10s` on the calling thread,
+/// which a loop that never returned would hang before ever reaching. Run on its
+/// own thread against a receive deadline, the same claim fails instead -- which
+/// matters because nothing else bounds this loop's runtime and
+/// `native-test-runner.py` runs each test binary without a timeout, so a `stop`
+/// seam that stopped being consulted would take the whole suite down with it
+/// rather than one test.
+#[test]
+fn the_loop_returns_promptly_when_told_to_stop() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(drive(vec![(0, vec![]), (0, vec![])]).frames);
+    });
+
+    // Two passes at the loop's own 50ms cadence is ~100ms of work, so this is a
+    // fiftyfold margin that still reports rather than hangs.
+    let frames = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the driven loop has to return, not own the terminal until killed");
+
+    // And the second pass is not a free repaint: nothing asked for a frame and
+    // nothing was deferred, so an idle poll on a fresh snapshot paints nothing.
+    assert_eq!(
+        frames, 1,
+        "two idle passes should produce the first frame and no more"
     );
 }
