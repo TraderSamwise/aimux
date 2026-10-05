@@ -175,3 +175,39 @@ fn the_pinned_user_labels_are_still_the_ones_the_service_emits() {
          the fixture and teach normalizeAppStatusKind about it"
     );
 }
+
+/// What the service says while an action is in flight, which is NOT what the
+/// row shows.
+///
+/// The row answers an action from the action, because the optimistic overlay
+/// invents the session before the service has seen it. That is only correct if
+/// the two agree once the service does see it, so this pins the service half:
+/// `statusLabel` prefers the action, and `user.label` does not know about it at
+/// all for an action `runtime_lifecycle` does not name -- which is exactly why
+/// the row cannot take its tone from the label.
+#[test]
+fn the_service_prefers_the_action_in_its_word_but_not_in_its_label() {
+    let fixture = fixture();
+    let action = fixture["optimisticAction"]["pendingAction"]
+        .as_str()
+        .expect("pendingAction");
+    let semantic = derive_session_semantics(SessionSemanticsInput {
+        status: "running".to_owned(),
+        activity: Some("idle".to_owned()),
+        attention: Some("normal".to_owned()),
+        pending_action: Some(action.to_owned()),
+        ..SessionSemanticsInput::default()
+    });
+
+    assert_eq!(
+        string_at(&semantic, ["presentation", "statusLabel"]),
+        aimux::transient_state::transient_state_label(action),
+        "the word prefers the action"
+    );
+    assert_eq!(
+        string_at(&semantic, ["user", "label"]),
+        "ready",
+        "and the label does not know about it, which is why the row's tone \
+         cannot come from here"
+    );
+}

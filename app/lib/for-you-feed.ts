@@ -120,7 +120,12 @@ function pendingAgentCard(session: DesktopSession): ForYouCard | null {
       "Agent is waiting",
     // The service's word, not `session.status`: that is whether the process is
     // alive, and it read "running" for an agent sitting at an empty prompt.
-    subtitle: [session.worktreeName, servedStatusWord(session)].filter(Boolean).join(" · "),
+    //
+    // Omitted entirely when the body above is already the action's word, or the
+    // card says "Renaming" and then "worktree · Renaming" underneath it.
+    subtitle: [session.worktreeName, session.pendingAction ? null : servedStatusWord(session)]
+      .filter(Boolean)
+      .join(" · "),
     createdAt: new Date(0).toISOString(),
     unread: true,
     sessionId: session.id,
