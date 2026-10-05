@@ -93,18 +93,16 @@ fn every_transient_action_reads_as_the_same_word_on_both_surfaces() {
 /// the vocabulary is named on screen.
 #[test]
 fn every_transient_action_is_counted_in_the_progress_tone() {
-    for (action, family, _) in cases() {
+    for (action, family, label) in cases() {
         assert_eq!(
             family, "progress",
             "{action}: this test only knows how to check the progress family;              teach it the others before adding one"
         );
         let frame = frame_with_pending(&action);
-        // `graveyarding` is counted under the word the user reads.
-        let counted = if action == "graveyarding" {
-            "removing".to_owned()
-        } else {
-            action.clone()
-        };
+        // The agreed word, from the fixture. Asserting the raw action with one
+        // special case for `graveyarding` is what pinned `resurrecting` to a
+        // word no other surface used.
+        let counted = label.to_lowercase();
         assert!(
             frame.contains(&format!("{PROGRESS_SGR}1 {counted}")),
             "{action} is not counted in the progress tone"

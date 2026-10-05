@@ -1641,40 +1641,13 @@ fn semantic_count_parts(worktree: &DashboardNavigationGroup<'_>) -> Vec<String> 
         "interrupted",
         Tone::Idle,
     );
-    append_count(&mut parts, &counts, "creating", "creating", PROGRESS_TONE);
-    append_count(&mut parts, &counts, "forking", "forking", PROGRESS_TONE);
-    append_count(&mut parts, &counts, "migrating", "migrating", PROGRESS_TONE);
-    append_count(&mut parts, &counts, "starting", "starting", PROGRESS_TONE);
-    append_count(&mut parts, &counts, "stopping", "stopping", PROGRESS_TONE);
-    append_count(
-        &mut parts,
-        &counts,
-        "graveyarding",
-        "removing",
-        PROGRESS_TONE,
-    );
-    append_count(&mut parts, &counts, "renaming", "renaming", PROGRESS_TONE);
-    append_count(&mut parts, &counts, "moving", "moving", PROGRESS_TONE);
-    append_count(&mut parts, &counts, "switching", "switching", PROGRESS_TONE);
-    // The rest of the published vocabulary, which the roll-up simply did not
-    // have: a worktree whose only agent was mid-switch summarised as empty.
-
-    append_count(
-        &mut parts,
-        &counts,
-        "resurrecting",
-        "resurrecting",
-        PROGRESS_TONE,
-    );
-    append_count(
-        &mut parts,
-        &counts,
-        "interrupting",
-        "interrupting",
-        PROGRESS_TONE,
-    );
-    append_count(&mut parts, &counts, "deleting", "deleting", PROGRESS_TONE);
-    append_count(&mut parts, &counts, "pending", "pending", PROGRESS_TONE);
+    // Walked, not enumerated. Hand-writing one call per action is where the
+    // last disagreement lived: this list said `resurrecting` where the card
+    // beside it, the app and the contract all say `restoring`.
+    for action in crate::transient_state::TRANSIENT_ACTIONS {
+        let word = crate::transient_state::transient_state_label(action).to_lowercase();
+        append_count(&mut parts, &counts, action, &word, PROGRESS_TONE);
+    }
     parts
 }
 
