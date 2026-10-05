@@ -1378,11 +1378,15 @@ fn drain_dashboard_event_stream(
     let mut render = false;
     while let Ok(message) = stream.try_recv() {
         match message {
-            DashboardEventStreamMessage::Event(event) => {
-                // Something arrived, so the stream is genuinely back.
+            DashboardEventStreamMessage::Opened => {
+                // The subscription was accepted. Not the spawn, which says only
+                // that a connection was attempted, and not the first event,
+                // which on an idle project never comes.
                 if down.take().is_some() {
                     render = true;
                 }
+            }
+            DashboardEventStreamMessage::Event(event) => {
                 if let DashboardProjectEvent::Alert(payload) = &event
                     && let Some(message) = dashboard_alert_footer_flash("dashboard", payload)
                     && let Some(controller) = controller.as_deref_mut()
@@ -3294,6 +3298,38 @@ mod tests {
         let (message, failed) = worktree_cache_cleanup_summary(&partial);
         assert!(failed, "{message}");
         assert!(message.contains("1 failed"), "{message}");
+    }
+
+    /// The report has to clear on the subscription being accepted, not on the
+    /// first event: a healthy stream on a quiet project delivers nothing for
+    /// minutes, and the bar would stand there saying it was down. Clearing on
+    /// the spawn instead made it blink off at every failed retry.
+    #[test]
+    fn an_accepted_subscription_is_what_takes_the_report_down() {
+        let mut down = Some("project service closed the stream".to_owned());
+        let mut event_stream = None;
+        let mut retry_at = None;
+        let endpoint = ProjectServiceEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: 1,
+        };
+
+        reconcile_dashboard_event_stream(
+            &mut event_stream,
+            &mut retry_at,
+            &mut down,
+            Some(&endpoint),
+            false,
+        );
+        assert_eq!(
+            down.as_deref(),
+            Some("project service closed the stream"),
+            "a connection attempt is not a reconnect"
+        );
+
+        // What `drain_dashboard_event_stream` does on `Opened`.
+        assert!(down.take().is_some());
+        assert_eq!(down, None);
     }
 
     /// A subscreen that silently stopped receiving events looked exactly like a

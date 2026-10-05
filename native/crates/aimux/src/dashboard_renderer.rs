@@ -1688,7 +1688,9 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     // mid-rename summarised as "removing", and `dashboard_navigation` then
     // refused Enter on it with "is still creating".
     if let Some(action) = worktree.pending_action {
-        return progress_label(action);
+        // Bounded: this is a string the project service sends, and the card
+        // summary has a width budget that drops the title before it overflows.
+        return progress_label(&truncate(action, 16));
     }
     if worktree.removing {
         return progress_label("removing");
