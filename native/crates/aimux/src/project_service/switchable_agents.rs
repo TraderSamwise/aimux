@@ -1306,13 +1306,11 @@ fn user_label_chip(value: &str) -> Option<(&'static str, &'static str)> {
         "offline" => Some(("offline", "Offline")),
         "done" => Some(("done", "Done")),
         "interrupted" => Some(("idle", "Interrupted")),
-        // Work in flight, all three. `idle` and `offline` are the states a stop
-        // and a removal leave behind, not what they look like while they run --
-        // and this chip is what Exposé tiles are toned by.
-        "starting" => Some(("working", "Starting")),
-        "stopping" => Some(("working", "Stopping")),
-        "graveyarding" => Some(("working", "Removing")),
-        _ => None,
+        // Read, not written out again: `idle` and `offline` are the states a
+        // stop and a removal leave behind, not what they look like while they
+        // run, and this chip is what Exposé tiles are toned by.
+        other => crate::transient_state::static_transient_state_label(other)
+            .map(|label| ("working", label)),
     }
 }
 

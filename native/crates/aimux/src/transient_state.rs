@@ -38,7 +38,13 @@ pub fn is_transient_state(value: &str) -> bool {
 /// vocabulary is published by the project service, and a client inventing a
 /// word for something it has not heard of is worse than echoing it.
 pub fn transient_state_label(value: &str) -> &str {
-    match value {
+    static_transient_state_label(value).unwrap_or(value)
+}
+
+/// The same word, borrowed for the program's lifetime, for callers that must
+/// return `&'static str`. `None` for a value this build has not heard of.
+pub fn static_transient_state_label(value: &str) -> Option<&'static str> {
+    Some(match value {
         "creating" => "Creating",
         "forking" => "Forking",
         "migrating" => "Migrating",
@@ -53,6 +59,6 @@ pub fn transient_state_label(value: &str) -> &str {
         "removing" => "Removing",
         "deleting" => "Deleting",
         "pending" => "Pending",
-        other => other,
-    }
+        _ => return None,
+    })
 }

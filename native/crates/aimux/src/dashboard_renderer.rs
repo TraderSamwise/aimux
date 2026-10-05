@@ -1294,10 +1294,7 @@ fn session_time_anchor(session: &DashboardSession) -> Option<(String, Option<&st
     let last_output_at = session.last_output_at.as_deref().or(last_event_output_at);
     if let Some(action) = session.pending_action.as_deref() {
         return Some((
-            match action {
-                "graveyarding" => "removing".to_owned(),
-                other => row_state_label(other).to_lowercase(),
-            },
+            row_state_label(action).to_lowercase(),
             session
                 .pending_started_at
                 .as_deref()
