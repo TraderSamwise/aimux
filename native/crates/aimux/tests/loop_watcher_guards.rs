@@ -2070,3 +2070,78 @@ mod scribe_spellings {
         );
     }
 }
+
+/// A pause survives an edit to the agent's goal.
+///
+/// The key was `since\ngoal\nsource`, and `gc_stale_pauses` DELETES a pause
+/// whose key no longer matches — so editing a paused agent's goal did not just
+/// stop the pause applying, it erased the record, and the alerts came back with
+/// nothing left to say why. `since` is the deliberate re-add, which is the only
+/// thing that should end a pause.
+#[test]
+fn editing_a_paused_agents_goal_does_not_erase_the_pause() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let pause_key =
+        loop_pause_key_from_loop_metadata(&worker_meta["loop"]).expect("active loop pause key");
+
+    let mut watcher = LoopWatcher::new();
+    watcher.pause_loop_alerts(
+        "worker",
+        pause_key,
+        NOW,
+        LoopAlertPauseProvenance::default(),
+    );
+
+    // The overseer gives the same loop a new goal. Same `since`: nobody re-added
+    // the agent, the work it is doing was just described differently.
+    let mut edited_meta = worker_meta.clone();
+    edited_meta["loop"]["goal"] = json!("Y4 quiet run");
+    let input = input_with_config(
+        vec![boss.clone(), worker.clone()],
+        json!({ "sessions": { "boss": boss_meta.clone(), "worker": edited_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut ok = |_: &LoopSend| true;
+    for offset in 0..9 {
+        assert!(
+            watcher.scan(&input, NOW + offset, &mut ok).is_empty(),
+            "a goal edit is not a re-add, so the pause must still hold"
+        );
+    }
+}
+
+/// And a genuine re-add does end it.
+#[test]
+fn re_adding_a_paused_agent_to_the_loop_ends_the_pause() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let pause_key =
+        loop_pause_key_from_loop_metadata(&worker_meta["loop"]).expect("active loop pause key");
+
+    let mut watcher = LoopWatcher::new();
+    watcher.pause_loop_alerts(
+        "worker",
+        pause_key,
+        NOW,
+        LoopAlertPauseProvenance::default(),
+    );
+
+    let mut readded_meta = worker_meta.clone();
+    readded_meta["loop"]["since"] = json!("2099-01-01T00:00:00.000Z");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": readded_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut ok = |_: &LoopSend| true;
+    let sends = watcher.scan(&input, NOW, &mut ok);
+    assert!(
+        sends.iter().any(|send| send.text.contains("worker")),
+        "putting the agent back on the loop is the one thing that ends its pause: {sends:#?}"
+    );
+}

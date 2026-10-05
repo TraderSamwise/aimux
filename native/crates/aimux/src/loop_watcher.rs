@@ -1261,6 +1261,17 @@ fn loop_send_kind_from_name(value: &str) -> Option<LoopSendKind> {
     }
 }
 
+/// What a pause is pinned to, so it survives everything except the one event
+/// that should end it.
+///
+/// `since` alone, because that is the deliberate re-add: the overseer's own
+/// launch brief says a `loop.since` newer than a removal you remember means the
+/// agent was put back on purpose. A goal edit or a source change is not that.
+///
+/// It used to be `since\ngoal\nsource`, and `gc_stale_pauses` DELETES a pause
+/// whose key no longer matches -- so editing a paused agent's goal did not
+/// merely stop the pause applying, it erased the record. The alerts came back
+/// with nothing left to say why.
 pub fn loop_pause_key_from_loop_metadata(loop_meta: &Value) -> Option<String> {
     let loop_meta = loop_meta.as_object()?;
     if !loop_meta
@@ -1271,9 +1282,10 @@ pub fn loop_pause_key_from_loop_metadata(loop_meta: &Value) -> Option<String> {
         return None;
     }
     let since = optional_str_value(loop_meta.get("since"));
-    let goal = optional_str_value(loop_meta.get("goal"));
-    let source = optional_str_value(loop_meta.get("source"));
-    Some(format!("{since}\n{goal}\n{source}"))
+    if since.is_empty() {
+        return None;
+    }
+    Some(since)
 }
 
 pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
@@ -2118,14 +2130,16 @@ fn loop_exit_candidate_signature(candidate: &Value) -> String {
     )
 }
 
+/// The same rule read off a scan candidate rather than the metadata.
+///
+/// Two spellings of one decision is how they drifted apart in the first place,
+/// so `the_two_pause_keys_agree` pins them against each other.
 fn loop_pause_key(candidate: &Value) -> Option<String> {
     let since = optional_str(candidate, "loopSince").unwrap_or_default();
     if since.is_empty() {
         return None;
     }
-    let goal = optional_str(candidate, "goal").unwrap_or_default();
-    let source = optional_str(candidate, "loopSource").unwrap_or_default();
-    Some(format!("{since}\n{goal}\n{source}"))
+    Some(since.to_owned())
 }
 
 fn dwell_key(candidate: &Value) -> Option<LoopDwellKey> {
