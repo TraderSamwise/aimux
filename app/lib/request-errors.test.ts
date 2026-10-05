@@ -4,7 +4,7 @@ import { getErrorMessage, isTransientRequestError } from "./request-errors";
 
 /// Shaped like `ApiError` rather than imported: `api.ts` pulls React Native in,
 /// and what matters here is the field, not the class.
-function apiError(status: number, message: string, kind?: "cancelled" | "timeout"): Error {
+function apiError(status: number, message: string, kind?: string): Error {
   return Object.assign(new Error(message), { name: "ApiError", status, body: null, kind });
 }
 
@@ -46,9 +46,21 @@ describe("isTransientRequestError", () => {
     ).toBe(false);
   });
 
-  it("treats a request timeout as transient even with the path appended", () => {
-    const timedOut = apiError(0, "Request timed out after 10000ms (/projects)", "timeout");
-    expect(isTransientRequestError(timedOut)).toBe(true);
+  // The same filter guards user-initiated actions -- stopping an agent,
+  // creating one -- where a swallowed timeout leaves a button that spins,
+  // stops and says nothing. A timeout is a real failure; only the app
+  // abandoning its own request is not.
+  it("still reports a request timeout, because nothing was abandoned", () => {
+    expect(
+      isTransientRequestError(apiError(0, "Request timed out after 10000ms (/projects)")),
+    ).toBe(false);
+    // Explicitly kinded too, so widening the filter to cover timeouts fails
+    // here rather than silently reaching the actions that depend on seeing one.
+    expect(
+      isTransientRequestError(
+        apiError(0, "Request timed out after 10000ms (/projects)", "timeout"),
+      ),
+    ).toBe(false);
   });
 
   it("does not hide a server error that merely mentions cancelling", () => {

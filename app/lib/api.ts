@@ -185,17 +185,20 @@ export interface ApiOpts {
   machineId?: string;
 }
 
-/// Why a request produced no answer, when the reason is not the server's.
+/// A request the app abandoned, as opposed to one that failed.
 ///
-/// `cancelled` is the app's own doing — a superseded fetch, a screen that
-/// unmounted, a navigation away — and is not a failure anyone needs told
-/// about. `timeout` is a poll that will try again in ten seconds. Both used to
-/// be recognised by matching the sentence this file writes, from a module that
-/// does not write it, and the sentences drifted: the filter looked for
-/// "aborted" while this says "Request was cancelled", and for an unanchored
-/// "request timed out after Nms" while this appends the path. So both of them
-/// reached the user as red banners for things that had already healed.
-export type ApiFailureKind = "cancelled" | "timeout";
+/// `cancelled` is the app's own doing — a superseded poll, a screen that
+/// unmounted, a navigation away — so nothing failed and nobody needs told.
+/// It used to be recognised by matching the sentence this file writes, from a
+/// module that does not write it, and the two drifted apart: the filter looks
+/// for "aborted" while this says "Request was cancelled". So it reached the
+/// user as a red banner for something that had already healed.
+///
+/// A TIMEOUT deliberately has no kind. It is a real failure — the request did
+/// not complete — and the same filter guards user-initiated actions, where
+/// swallowing it would leave a stop button that spins, stops, and says
+/// nothing.
+export type ApiFailureKind = "cancelled";
 
 export class ApiError extends Error {
   constructor(
@@ -264,12 +267,12 @@ function requestSignal(opts?: ApiOpts): { signal: AbortSignal; cleanup: () => vo
 function abortedRequest(
   signal: AbortSignal,
   url: string,
-): { message: string; kind: ApiFailureKind } {
+): { message: string; kind: ApiFailureKind | undefined } {
   const reason = signal.reason;
   const reasonMessage = reason instanceof Error ? reason.message : String(reason ?? "");
   const timeout = reasonMessage.match(/^request timed out after (\d+)ms$/);
   if (timeout) {
-    return { message: `Request timed out after ${timeout[1]}ms (${url})`, kind: "timeout" };
+    return { message: `Request timed out after ${timeout[1]}ms (${url})`, kind: undefined };
   }
   return { message: `Request was cancelled (${url})`, kind: "cancelled" };
 }
@@ -322,7 +325,7 @@ async function withRelayRequestTimeout<T>(
   let abortListener: (() => void) | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     const rejectTimedOut = () => {
-      reject(new ApiError(0, null, `Request timed out after ${timeoutMs}ms (${path})`, "timeout"));
+      reject(new ApiError(0, null, `Request timed out after ${timeoutMs}ms (${path})`));
     };
     const rejectCancelled = () => {
       reject(new ApiError(0, null, `Request was cancelled (${path})`, "cancelled"));
