@@ -84,14 +84,21 @@ fn a_kernel_refusal_is_reported_with_its_errno() {
     assert_eq!(ptrace_opt_in_outcome(0, 0), PtraceOptInOutcome::Allowed);
     // `EPERM`, which is what a denied `PR_SET_PTRACER` returns.
     assert_eq!(
-        ptrace_opt_in_outcome(-1, 1),
-        PtraceOptInOutcome::Failed { errno: 1 }
+        ptrace_opt_in_outcome(-1, libc::EPERM),
+        PtraceOptInOutcome::Failed { errno: libc::EPERM }
     );
     // And a non-zero that is not -1 is still a failure: the contract is
     // "zero is success", not "minus one is failure".
     assert_eq!(
-        ptrace_opt_in_outcome(22, 22),
-        PtraceOptInOutcome::Failed { errno: 22 }
+        ptrace_opt_in_outcome(7, libc::EPERM),
+        PtraceOptInOutcome::Failed { errno: libc::EPERM }
+    );
+    // `EINVAL` is the other answer and not a refusal: the kernel does not know
+    // this option, which means Yama is not built in. Reporting it as "refused"
+    // would send someone looking for a policy that is not there.
+    assert_eq!(
+        ptrace_opt_in_outcome(-1, libc::EINVAL),
+        PtraceOptInOutcome::NotNeededOnThisPlatform
     );
 }
 
@@ -118,9 +125,25 @@ fn the_daemon_and_the_project_service_both_ask() {
             include_str!("../src/project_service/process.rs"),
         ),
     ] {
-        assert!(
-            source.contains("diagnostics_ptrace::allow_debugger_attach"),
-            "{path} has to ask for itself; the opt-in does not survive exec"
+        // Before any `#[cfg(test)]`, so a call that only exists in that file's
+        // own test module does not satisfy this. A plain `contains` would also
+        // have been satisfied by the call appearing in a comment, which is how
+        // a source check quietly stops checking.
+        let production = source
+            .split_once("#[cfg(test)]")
+            .map(|(before, _)| before)
+            .unwrap_or(source);
+        let calls = production
+            .lines()
+            .filter(|line| {
+                let line = line.trim_start();
+                !line.starts_with("//") && line.contains("allow_debugger_attach(")
+            })
+            .count();
+        assert_eq!(
+            calls, 1,
+            "{path} has to ask for itself, once, outside its tests: a child does \
+             not inherit the opt-in"
         );
     }
 }

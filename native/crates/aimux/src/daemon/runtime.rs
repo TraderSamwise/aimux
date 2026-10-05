@@ -2630,6 +2630,28 @@ fn process_list_json(processes: Vec<ProcessArgsEntry>) -> Vec<Value> {
 }
 
 pub fn run_daemon_internal() -> Result<()> {
+    // First, before the permission repair and registry load below -- those walk
+    // the filesystem and are exactly the kind of work that can hang, so they
+    // are work someone might need to attach to. Off unless
+    // `AIMUX_ALLOW_PTRACE=1`, and the outcome is logged rather than discarded:
+    // not asked for, not needed on this platform, applied, and the kernel
+    // refused are four different answers, and a silent one is the reason the
+    // last two wedges told us nothing.
+    //
+    // A daemon that is about to refuse to start therefore loosens this briefly.
+    // That is the right way round: it exits immediately, and the alternative is
+    // not covering the startup path at all.
+    match crate::diagnostics_ptrace::allow_debugger_attach(|key| std::env::var(key).ok()) {
+        crate::diagnostics_ptrace::PtraceOptInOutcome::NotRequested => {}
+        outcome => log_lifecycle_always(
+            "daemon debugger-attach opt-in",
+            "daemon",
+            Some(json!({
+                "outcome": format!("{outcome:?}"),
+                "env": crate::diagnostics_ptrace::ALLOW_PTRACE_ENV,
+            })),
+        ),
+    }
     let resolver = PathResolver::from_env();
     secure_permissions::repair_global_aimux_home(resolver.global_aimux_dir())
         .context("repair global .aimux permissions")?;
@@ -2643,21 +2665,6 @@ pub fn run_daemon_internal() -> Result<()> {
             .map(|project| project.repo_root.as_str()),
     )
     .context("repair registered project .aimux permissions")?;
-    // Before anything can wedge. Off unless `AIMUX_ALLOW_PTRACE=1`, and the
-    // outcome is logged rather than discarded: "not asked for", "not needed on
-    // this platform" and "the kernel refused" are three different answers and a
-    // silent one is the reason the last two wedges told us nothing.
-    match crate::diagnostics_ptrace::allow_debugger_attach(|key| std::env::var(key).ok()) {
-        crate::diagnostics_ptrace::PtraceOptInOutcome::NotRequested => {}
-        outcome => log_lifecycle_always(
-            "daemon debugger-attach opt-in",
-            "daemon",
-            Some(json!({
-                "outcome": format!("{outcome:?}"),
-                "env": crate::diagnostics_ptrace::ALLOW_PTRACE_ENV,
-            })),
-        ),
-    }
     let host = get_daemon_host().map_err(anyhow::Error::msg)?;
     let port = get_daemon_port().map_err(anyhow::Error::msg)?;
     if let Some(reason) = crate::runtime_safety_guard::default_daemon_run_refusal_reason(port) {

@@ -27,9 +27,18 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # copy is used even when nothing is installed.
 EU_ROOT="${AIMUX_EU_ROOT:-$HOME/.local/eu-root}"
 EU_STACK=""
+EU_LIBS=""
 if [ -x "$EU_ROOT/usr/bin/eu-stack" ]; then
   EU_STACK="$EU_ROOT/usr/bin/eu-stack"
-  export LD_LIBRARY_PATH="$EU_ROOT/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+  # Found rather than hardcoded: `x86_64-linux-gnu` is wrong on aarch64, where
+  # the unpacked binary would then fail to load its own libdw. And scoped to the
+  # one call rather than exported, because an unpacked glibc tree on
+  # LD_LIBRARY_PATH can break `ss`, `lsof` and `gdb` run later in this script.
+  for libs in "$EU_ROOT"/usr/lib/*-linux-gnu*; do
+    [ -d "$libs" ] || continue
+    EU_LIBS="$libs"
+    break
+  done
 elif have eu-stack; then
   EU_STACK="$(command -v eu-stack)"
 fi
@@ -80,7 +89,8 @@ capture_linux() {
     echo "## userspace stacks"
     local frames=""
     if [ -n "$EU_STACK" ]; then
-      frames="$("$EU_STACK" -p "$pid" 2>&1)"
+      frames="$(LD_LIBRARY_PATH="${EU_LIBS}${EU_LIBS:+:}${LD_LIBRARY_PATH:-}" \
+        "$EU_STACK" -p "$pid" 2>&1)"
       echo "$frames"
     elif have gdb; then
       frames="$(gdb -p "$pid" -batch -ex 'thread apply all bt' 2>&1)"
@@ -131,6 +141,21 @@ capture_macos() {
 rc=0
 for pid in "${pids[@]}"; do
   [ -n "$pid" ] || continue
+  # Digits only. A typo otherwise reached the capture, produced nothing, and
+  # reported "produced nothing" -- which reads like the process was unreadable
+  # rather than like the argument was wrong.
+  case "$pid" in
+    *[!0-9]*)
+      echo "not a pid: $pid" >&2
+      rc=1
+      continue
+      ;;
+  esac
+  if [ ! -d "/proc/$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+    echo "no such process: $pid" >&2
+    rc=1
+    continue
+  fi
   out="$OUT_DIR/wedge-$STAMP-pid$pid.txt"
   case "$(uname -s)" in
     Linux) capture_linux "$pid" "$out" ;;

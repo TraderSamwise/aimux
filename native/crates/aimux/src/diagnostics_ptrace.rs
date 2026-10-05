@@ -24,12 +24,23 @@
 //! symbolised per-thread stacks with no privileges, which is why this is a
 //! Linux-only concern.
 //!
-//! `PR_SET_PTRACER` does NOT survive `exec`, so it is not something the daemon
-//! can set once on behalf of the processes it spawns. Every process that could
-//! wedge has to ask for itself, which is why both the daemon and the per-project
-//! service call this -- the project service is the other one that has pinned
-//! this machine, and covering only the daemon would have left half the fleet
-//! un-attachable while reading as fixed.
+//! A CHILD does not inherit this, so it is not something the daemon can set once
+//! on behalf of the processes it spawns: every process that could wedge has to
+//! ask for itself. That is why both the daemon and the per-project service call
+//! it -- the project service is the other one that has pinned this machine, and
+//! covering only the daemon would have left half the fleet un-attachable while
+//! reading as fixed.
+//!
+//! An earlier version of this comment said the setting does not survive `exec`.
+//! That is doubtful -- Yama keys its relations on the `task_struct` and
+//! registers only `task_free` -- and it was never the load-bearing claim. The
+//! load-bearing claim is the one above, about children.
+//!
+//! What is NOT covered: the tmux server and the agent panes under it. They do
+//! inherit `AIMUX_ALLOW_PTRACE`, since the launch path strips only `TMUX` and
+//! `TMUX_PANE`, but they are `claude` and `codex` processes rather than aimux
+//! ones and nothing calls this for them. Attaching to a wedged agent still needs
+//! root or a sysctl.
 
 /// The env var that opts in.
 pub const ALLOW_PTRACE_ENV: &str = "AIMUX_ALLOW_PTRACE";
@@ -82,10 +93,15 @@ where
 /// whole suite, which is the failure this exists to stop.
 pub fn ptrace_opt_in_outcome(prctl_result: i32, errno: i32) -> PtraceOptInOutcome {
     if prctl_result == 0 {
-        PtraceOptInOutcome::Allowed
-    } else {
-        PtraceOptInOutcome::Failed { errno }
+        return PtraceOptInOutcome::Allowed;
     }
+    // `EINVAL` from this option means the kernel does not know it -- Yama is not
+    // built in -- which is a different answer from Yama saying no. Logging both
+    // as "refused" would send someone looking for a policy that is not there.
+    if errno == libc::EINVAL {
+        return PtraceOptInOutcome::NotNeededOnThisPlatform;
+    }
+    PtraceOptInOutcome::Failed { errno }
 }
 
 #[cfg(target_os = "linux")]
@@ -96,8 +112,12 @@ fn apply_ptrace_opt_in() -> PtraceOptInOutcome {
     // but a hand-maintained ABI value next to a crate that already publishes it
     // is a value that can drift while still compiling.
     //
-    // SAFETY: `prctl` is variadic and this option takes one unsigned-long
-    // argument; the remaining three are required to be zero.
+    // SAFETY: `prctl` is variadic. This option reads one `unsigned long`
+    // argument and Yama's handler ignores the rest, but they are passed as
+    // `c_ulong` rather than as `i32` literals because the callee reads that
+    // width -- an `i32` in a variadic slot is only saved by 32-bit writes
+    // zero-extending, which holds on x86_64 and aarch64 and is not a guarantee
+    // worth resting on.
     let result = unsafe { libc::prctl(libc::PR_SET_PTRACER, libc::PR_SET_PTRACER_ANY, 0, 0, 0) };
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     ptrace_opt_in_outcome(result, errno)
