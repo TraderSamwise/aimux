@@ -377,7 +377,8 @@ fn row_object_insert(row: &mut Value, key: &str, value: Value) {
 /// the response, and the key the body does carry belongs to something else —
 /// keying a worktree create on `path` collapsed every create onto the main
 /// checkout, which then painted it pending and refused Enter into it with
-/// "Worktree Main Checkout is still creating".
+/// "Worktree Main Checkout is creating" (it read "is still creating" then, and
+/// one state's word stood in for every state).
 /// Those four report themselves through the footer's progress channel instead;
 /// see `crate::dashboard_action_progress`.
 pub fn pending_action_for_request(

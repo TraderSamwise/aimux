@@ -1207,7 +1207,7 @@ fn pending_worktree_enter_sets_footer_message_without_request() {
     );
     assert_eq!(
         controller.footer_note_message(),
-        Some("Worktree demo is still creating")
+        Some("Worktree demo is creating")
     );
     assert_eq!(controller.navigation.level, DashboardNavLevel::Worktrees);
 }
@@ -1221,11 +1221,11 @@ fn enter_on_a_busy_worktree_names_what_it_is_actually_doing() {
     let cases = [
         (Some("graveyarding"), "Worktree demo is removing"),
         (Some("removing"), "Worktree demo is removing"),
-        (Some("resurrecting"), "Worktree demo is still restoring"),
-        (Some("creating"), "Worktree demo is still creating"),
+        (Some("resurrecting"), "Worktree demo is restoring"),
+        (Some("creating"), "Worktree demo is creating"),
         // No action named at all: the generic word, not one state's word
         // standing in for every state.
-        (None, "Worktree demo is still pending"),
+        (None, "Worktree demo is pending"),
     ];
     for (action, expected) in cases {
         snapshot.worktree_groups[1].pending = true;

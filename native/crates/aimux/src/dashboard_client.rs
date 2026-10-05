@@ -226,8 +226,10 @@ fn dashboard_action_timeout_ms(path: &str) -> u64 {
         // Making one of these launches a tmux window and a backend process, on
         // a machine that is usually running a dozen agents already. At the 2s
         // default the client gave up on work that was going fine and raised a
-        // durable failure nothing would ever answer -- and the dashboard now
-        // reports these in the footer, so the lie was on screen until dismissed.
+        // durable failure nothing would ever answer. For the three the
+        // dashboard now reports in the footer that lie was on screen until
+        // dismissed; the teammate routes are here because they do the same
+        // work, not because they have a sentence.
         routes::agents::SPAWN
         | routes::agents::FORK
         | routes::agents::CREATE_TEAMMATE

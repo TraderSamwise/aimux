@@ -448,6 +448,15 @@ pub struct DashboardProgressNote {
     /// an `Option` here would have to be cleared by the first outcome that
     /// arrived -- which is the uncorrelated clear this field exists to stop.
     pub settled_by: DashboardActionIdentity,
+    /// How many requests this note is reporting.
+    ///
+    /// Two presses of the same create build byte-identical bodies, so they are
+    /// one identity and two requests. Clearing on the first outcome ended the
+    /// note while the second was still running -- and when the first outcome
+    /// was the lifecycle queue's 409 for the duplicate, it reported a failure
+    /// for work that was going fine. The refusal still reaches the alert; the
+    /// note stays up until the last of them is back.
+    in_flight: usize,
 }
 
 impl DashboardController {
@@ -494,37 +503,35 @@ impl DashboardController {
 
     /// Work this dashboard just dispatched. Survives keypresses until the
     /// action named here settles.
+    ///
+    /// Dispatching the same action again adds to the note rather than
+    /// replacing it, so both requests have to come back before it goes.
     pub fn set_progress(&mut self, message: String, settled_by: DashboardActionIdentity) {
+        if let Some(progress) = self.footer_progress.as_mut()
+            && progress.settled_by == settled_by
+        {
+            progress.in_flight += 1;
+            return;
+        }
         self.footer_progress = Some(DashboardProgressNote {
             message,
             settled_by,
+            in_flight: 1,
         });
     }
 
     /// A dispatched action has settled, either way.
     pub fn clear_progress_for(&mut self, settled: Option<&DashboardActionIdentity>) {
-        if self
-            .footer_progress
-            .as_ref()
-            .is_some_and(|progress| Some(&progress.settled_by) == settled)
-        {
+        let Some(progress) = self.footer_progress.as_mut() else {
+            return;
+        };
+        if Some(&progress.settled_by) != settled {
+            return;
+        }
+        progress.in_flight = progress.in_flight.saturating_sub(1);
+        if progress.in_flight == 0 {
             self.footer_progress = None;
         }
-    }
-
-    /// Whether a request identical to the one being reported is already in
-    /// flight, so a second press is a repeat rather than a new action.
-    ///
-    /// Two presses produce byte-identical bodies -- an unnamed spawn carries
-    /// only its tool -- so the second is the same action by every measure the
-    /// dashboard has. Sending it anyway earns a 409 from the lifecycle queue,
-    /// and that refusal arrives tagged with the identity of the work still
-    /// running: it takes down the note and reports a failure for something
-    /// that is going fine.
-    pub fn progress_already_reports(&self, action: &DashboardActionIdentity) -> bool {
-        self.footer_progress
-            .as_ref()
-            .is_some_and(|progress| &progress.settled_by == action)
     }
 
     pub fn footer_progress_message(&self) -> Option<&str> {

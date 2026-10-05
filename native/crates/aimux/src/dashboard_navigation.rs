@@ -295,13 +295,15 @@ impl DashboardNavigationState {
         }
         if group.pending {
             // The word the row and the card use for whatever this actually is,
-            // rather than one state's word standing in for all of them.
+            // rather than one state's word standing in for all of them. And the
+            // same sentence `x` gives: two keys refused for one reason should
+            // not read as two different reasons.
             let action = crate::transient_state::transient_state_label(
                 group.pending_action.unwrap_or("pending"),
             )
             .to_lowercase();
             return DashboardNavigationOutcome::Busy(format!(
-                "Worktree {} is still {action}",
+                "Worktree {} is {action}",
                 group.name
             ));
         }
