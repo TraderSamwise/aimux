@@ -158,7 +158,7 @@ pub(crate) async fn route_lifecycle_request_async_with_runtime(
     let pathname = project_service_pathname(path);
     let body = body.unwrap_or(&Value::Null);
     let transition = lifecycle_transition_for_route(pathname, body);
-    let mut permit = match context.lifecycle_mutations.begin(transition) {
+    let mut permit = match context.lifecycle_mutations.begin_async(transition).await {
         Ok(permit) => permit,
         Err(error) => return Some(lifecycle_queue_error_response(error)),
     };
