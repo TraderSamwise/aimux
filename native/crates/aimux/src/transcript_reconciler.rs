@@ -207,13 +207,26 @@ impl TranscriptReconciler {
             // Part A, because this one discards an attention signal rather than
             // downgrading an activity one. Its own set, so flipping between the
             // two attentions cannot let one satisfy the other's dwell.
-            if self.pending_input_clear.contains(&session.id) {
-                if deps.clear_stale_response(&session.id) {
-                    self.pending_input_clear.remove(&session.id);
-                    self.pending.remove(&session.id);
-                }
-            } else {
+            if !self.pending_input_clear.contains(&session.id) {
                 self.pending_input_clear.insert(session.id.clone());
+                continue;
+            }
+
+            // BOTH fields, not just the attention. `scribe_readiness` requires
+            // activity idle-or-done AND attention normal, and a scribe stranded
+            // this way has `activity: "waiting"` -- so clearing the attention
+            // alone leaves it still unready, waiting for Part A to settle the
+            // activity on some later tick, after a service round-trip, with the
+            // dwell restarted because this part removed the pending probe.
+            //
+            // There is no extra assumption in doing both: complete-and-quiescent
+            // is exactly the evidence Part A settles an activity on. The same
+            // conclusion applies to both fields, so it is applied to both here.
+            let settled = deps.settle_activity(&session.id);
+            let cleared = deps.clear_stale_response(&session.id);
+            if settled && cleared {
+                self.pending_input_clear.remove(&session.id);
+                self.pending.remove(&session.id);
             }
         }
 

@@ -341,9 +341,54 @@ fn a_control_session_stranded_at_needs_input_is_cleared() {
     );
     reconciler.scan(&sessions, &metadata, &mut deps);
     assert_eq!(deps.cleared, vec!["a".to_owned()]);
+    // And the activity, because clearing the attention alone does not make a
+    // scribe ready: `scribe_readiness` wants activity idle-or-done AND
+    // attention normal, and a scribe stranded this way is `waiting`.
+    assert_eq!(deps.settled, vec!["a".to_owned()]);
+}
+
+/// Clearing the attention alone would not have been enough.
+///
+/// `scribe_readiness` is an AND of two fields, and a stranded scribe fails
+/// both: `activity: "waiting"`, `attention: "needs_input"`. This asserts the
+/// state Part C leaves behind actually satisfies it, through the real
+/// predicate, rather than trusting that the two halves meet.
+#[test]
+fn the_state_part_c_leaves_behind_is_one_the_scribe_watcher_accepts() {
+    let before = json!({
+        "sessions": [{ "id": "a", "status": "running" }],
+        "metadata": { "sessions": { "a": {
+            "scribe": true,
+            "derived": { "activity": "waiting", "attention": "needs_input" }
+        }}}
+    });
     assert!(
-        deps.settled.is_empty(),
-        "the activity is not touched; only the attention was stranded"
+        !aimux::scribe_watcher::scribe_readiness(&before, Some("a")),
+        "the stranded state is the one that was being refused"
+    );
+
+    // Exactly what Part C posts: `settle_activity` writes `idle`,
+    // `clear_stale_response` writes `normal`.
+    let after = json!({
+        "sessions": [{ "id": "a", "status": "running" }],
+        "metadata": { "sessions": { "a": {
+            "scribe": true,
+            "derived": { "activity": "idle", "attention": "normal" }
+        }}}
+    });
+    assert!(aimux::scribe_watcher::scribe_readiness(&after, Some("a")));
+
+    // And the half-fix, to say out loud why both writes are needed.
+    let attention_only = json!({
+        "sessions": [{ "id": "a", "status": "running" }],
+        "metadata": { "sessions": { "a": {
+            "scribe": true,
+            "derived": { "activity": "waiting", "attention": "normal" }
+        }}}
+    });
+    assert!(
+        !aimux::scribe_watcher::scribe_readiness(&attention_only, Some("a")),
+        "clearing only the attention leaves the scribe still unready"
     );
 }
 
