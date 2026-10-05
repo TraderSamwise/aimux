@@ -386,9 +386,17 @@ pub fn lifecycle_transition_for_route(
         routes::agents::SPAWN => {
             Some(LifecycleTransitionInput::new("agent.spawn", "agent").with_target_id(session_id))
         }
-        routes::agents::FORK => {
-            Some(LifecycleTransitionInput::new("agent.fork", "agent").with_target_id(session_id))
-        }
+        // The agent being forked is the one a fork contends for, and
+        // `sourceSessionId` is what every fork dispatcher sends. Reading
+        // `sessionId` here left the target empty, so `target_key` fell back to
+        // `agent:agent.fork:__project__` and two forks of two different agents
+        // serialized against each other while a fork and a stop of the same
+        // agent did not. The response transition still names the new session:
+        // this one names what is held while the fork runs.
+        routes::agents::FORK => Some(
+            LifecycleTransitionInput::new("agent.fork", "agent")
+                .with_target_id(trimmed_string(body.get("sourceSessionId"))),
+        ),
         routes::agents::SWITCH_TOOL => Some(
             LifecycleTransitionInput::new("agent.switchTool", "agent").with_target_id(session_id),
         ),
