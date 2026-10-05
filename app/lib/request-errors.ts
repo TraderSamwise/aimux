@@ -8,6 +8,14 @@ export function isTransientRequestError(error: unknown): boolean {
   // one of those can contain "failed to fetch" -- so matching on the text
   // would file a whole fleet being unreachable as something to ignore.
   if (enumeratesPerTargetFailures(error)) return false;
+  // Our own requests say what happened rather than leaving it to be read out
+  // of a sentence. The patterns below are for errors from outside `api.ts` --
+  // fetch's own AbortError, a socket reset -- and they were the only check
+  // there was, so when `api.ts` started writing "Request was cancelled (url)"
+  // and appending the path to the timeout, both stopped matching and both
+  // reached the user as a red banner for something already healed.
+  const kind = (error as { kind?: unknown })?.kind;
+  if (kind === "cancelled" || kind === "timeout") return true;
   const code =
     typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
   const name = error instanceof Error ? error.name : "";

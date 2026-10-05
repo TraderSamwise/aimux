@@ -27,7 +27,10 @@ export function AppToaster({ theme }: { theme: ToastTheme }) {
   return (
     <Toaster
       theme={theme}
-      position="bottom-center"
+      // Top, not bottom: at the bottom these sit over the agent transcript
+      // you are reading, and an error about a project list covered the
+      // sentence you were mid-way through. Nothing at the top is content.
+      position="top-center"
       offset={28}
       visibleToasts={3}
       toastOptions={{

@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { getErrorMessage, isTransientRequestError } from "./request-errors";
 
+/// Shaped like `ApiError` rather than imported: `api.ts` pulls React Native in,
+/// and what matters here is the field, not the class.
+function apiError(status: number, message: string, kind?: "cancelled" | "timeout"): Error {
+  return Object.assign(new Error(message), { name: "ApiError", status, body: null, kind });
+}
+
 describe("getErrorMessage", () => {
   it("returns Error messages and stringifies non-errors", () => {
     expect(getErrorMessage(new Error("nope"))).toBe("nope");
@@ -19,6 +25,35 @@ describe("isTransientRequestError", () => {
     expect(
       isTransientRequestError(Object.assign(new Error("socket closed"), { code: "ECONNRESET" })),
     ).toBe(true);
+  });
+
+  // The two banners Sam screenshotted. The filter existed to catch exactly
+  // these and matched text `api.ts` had stopped writing: it looked for
+  // "aborted" while the message says "Request was cancelled", and for an
+  // unanchored "request timed out after Nms" while the message appends the
+  // path. Both reached the user as a red banner for something already healed.
+  it("treats a request the app itself cancelled as transient", () => {
+    const cancelled = apiError(
+      0,
+      "Request was cancelled (https://relay.aimux.app/shares)",
+      "cancelled",
+    );
+    expect(isTransientRequestError(cancelled)).toBe(true);
+    expect(
+      isTransientRequestError(new Error("Request was cancelled (https://relay.aimux.app/shares)")),
+      // Without the kind there is nothing structural to read, which is the
+      // state that produced the banner.
+    ).toBe(false);
+  });
+
+  it("treats a request timeout as transient even with the path appended", () => {
+    const timedOut = apiError(0, "Request timed out after 10000ms (/projects)", "timeout");
+    expect(isTransientRequestError(timedOut)).toBe(true);
+  });
+
+  it("does not hide a server error that merely mentions cancelling", () => {
+    const refused = apiError(409, "The run was cancelled by the operator (/runs/7)");
+    expect(isTransientRequestError(refused)).toBe(false);
   });
 
   it("does not hide unexpected errors", () => {
