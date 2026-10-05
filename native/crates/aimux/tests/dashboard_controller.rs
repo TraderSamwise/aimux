@@ -3531,7 +3531,7 @@ mod what_a_transient_footer_line_claims {
         let snapshot = snapshot();
         let mut controller = DashboardController::new(&snapshot);
 
-        controller.set_busy("Worktree demo is still creating".into());
+        controller.set_busy("Worktree demo is creating".into());
         controller.handle_key(&snapshot, DashboardKey::Down);
 
         assert_eq!(controller.footer_note_message(), None);

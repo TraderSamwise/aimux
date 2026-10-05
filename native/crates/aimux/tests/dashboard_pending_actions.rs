@@ -459,7 +459,7 @@ fn a_route_that_makes_something_paints_no_row() {
 
 /// The main checkout's key is what a worktree create used to collapse onto, and
 /// a pending main checkout is not cosmetic: Enter into it was refused with
-/// "Worktree Main Checkout is still creating" for as long as the overlay held.
+/// "Worktree Main Checkout is creating" for as long as the overlay held.
 #[test]
 fn a_worktree_create_leaves_the_main_checkout_steppable() {
     let mut pending = DashboardPendingActions::new();

@@ -16,10 +16,10 @@ use crate::transient_state::transient_state_label;
 /// whose progress the row overlay already shows.
 ///
 /// The footer holds one progress note, so a second create replaces the first's
-/// sentence. Two creates with byte-identical bodies are also one action as far
-/// as `DashboardActionIdentity` is concerned, and the first outcome back takes
-/// the note down while the second is still running. Both are accepted: the
-/// alternative is a list of sentences in a one-line footer.
+/// sentence -- the alternative is a list of sentences in a one-line footer. The
+/// replaced one is still tracked: the controller counts outstanding requests,
+/// so a note comes down only when the thing it names has nothing left running,
+/// and two presses of one create keep it up until both are back.
 pub fn progress_for_request(path: &str, body: &Value) -> Option<String> {
     let field = |key: &str| {
         body.get(key)

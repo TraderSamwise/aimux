@@ -39,7 +39,17 @@ impl LifecycleTransitionInput {
         self
     }
 
-    fn target_key(&self) -> String {
+    /// What this mutation holds for its duration, or `None` when it names
+    /// nothing to hold.
+    ///
+    /// A spawn, a teammate create and a restore say what they will make, not
+    /// what already exists, so there is no row for them to contend over. They
+    /// shared one fabricated `<kind>:<operation>:__project__` key, which made
+    /// every one of them reject every other with a 409 — pick claude, then pick
+    /// codex, and codex was refused outright rather than queued behind it.
+    /// Execution is serialized anyway, by the queue's own `running` flag, so
+    /// holding nothing costs nothing and the second one simply waits.
+    fn target_key(&self) -> Option<String> {
         let target = if self.target_kind == "worktree" {
             self.target_path
                 .as_deref()
@@ -51,10 +61,9 @@ impl LifecycleTransitionInput {
                 .or(self.target_path.as_deref())
                 .map(str::trim)
         };
-        match target.filter(|value| !value.is_empty()) {
-            Some(target) => format!("{}:{target}", self.target_kind),
-            None => format!("{}:{}:__project__", self.target_kind, self.operation),
-        }
+        target
+            .filter(|value| !value.is_empty())
+            .map(|target| format!("{}:{target}", self.target_kind))
     }
 }
 
@@ -192,7 +201,7 @@ impl LifecycleMutationQueue {
     ) -> Result<LifecycleMutationPermit, LifecycleMutationError> {
         let target_key = transition
             .as_ref()
-            .map(LifecycleTransitionInput::target_key);
+            .and_then(LifecycleTransitionInput::target_key);
         let queued_at = Instant::now();
         if transition.is_some() {
             let mut state = self.inner.state.lock().expect("lifecycle queue lock");

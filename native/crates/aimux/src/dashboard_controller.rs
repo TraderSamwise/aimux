@@ -33,6 +33,12 @@ pub struct DashboardController {
     pub footer_note: Option<DashboardFooterNote>,
     /// Work under way, which outlives keypresses until its action settles.
     pub footer_progress: Option<DashboardProgressNote>,
+    /// Every dispatched action still waiting for an outcome, one entry per
+    /// request. The note on screen comes down when the thing it names has no
+    /// entry left here, so a second press of the same create keeps it up and a
+    /// note replaced by a different create's does not take the first's count
+    /// with it.
+    progress_in_flight: Vec<DashboardActionIdentity>,
     /// A failure, as opposed to a passing note.
     ///
     /// Separate from `footer_note` because the two want opposite
@@ -448,15 +454,6 @@ pub struct DashboardProgressNote {
     /// an `Option` here would have to be cleared by the first outcome that
     /// arrived -- which is the uncorrelated clear this field exists to stop.
     pub settled_by: DashboardActionIdentity,
-    /// How many requests this note is reporting.
-    ///
-    /// Two presses of the same create build byte-identical bodies, so they are
-    /// one identity and two requests. Clearing on the first outcome ended the
-    /// note while the second was still running -- and when the first outcome
-    /// was the lifecycle queue's 409 for the duplicate, it reported a failure
-    /// for work that was going fine. The refusal still reaches the alert; the
-    /// note stays up until the last of them is back.
-    in_flight: usize,
 }
 
 impl DashboardController {
@@ -504,32 +501,37 @@ impl DashboardController {
     /// Work this dashboard just dispatched. Survives keypresses until the
     /// action named here settles.
     ///
-    /// Dispatching the same action again adds to the note rather than
-    /// replacing it, so both requests have to come back before it goes.
+    /// Two presses of the same create build byte-identical bodies, so they are
+    /// one identity and two requests. Both are counted: clearing on the first
+    /// outcome ended the note while the second was still running.
     pub fn set_progress(&mut self, message: String, settled_by: DashboardActionIdentity) {
-        if let Some(progress) = self.footer_progress.as_mut()
-            && progress.settled_by == settled_by
-        {
-            progress.in_flight += 1;
-            return;
-        }
+        self.progress_in_flight.push(settled_by.clone());
         self.footer_progress = Some(DashboardProgressNote {
             message,
             settled_by,
-            in_flight: 1,
         });
     }
 
     /// A dispatched action has settled, either way.
     pub fn clear_progress_for(&mut self, settled: Option<&DashboardActionIdentity>) {
-        let Some(progress) = self.footer_progress.as_mut() else {
+        let Some(settled) = settled else {
             return;
         };
-        if Some(&progress.settled_by) != settled {
-            return;
+        if let Some(index) = self
+            .progress_in_flight
+            .iter()
+            .position(|action| action == settled)
+        {
+            self.progress_in_flight.remove(index);
         }
-        progress.in_flight = progress.in_flight.saturating_sub(1);
-        if progress.in_flight == 0 {
+        // The note goes when the thing it names has nothing left outstanding --
+        // not when any one request comes back, and not because some other
+        // create replaced it on screen in the meantime.
+        if self
+            .footer_progress
+            .as_ref()
+            .is_some_and(|progress| !self.progress_in_flight.contains(&progress.settled_by))
+        {
             self.footer_progress = None;
         }
     }
@@ -555,6 +557,7 @@ impl DashboardController {
             navigation: DashboardNavigationState::new(snapshot),
             footer_note: None,
             footer_progress: None,
+            progress_in_flight: Vec::new(),
             footer_alert: None,
             tool_picker: None,
             service_input: None,

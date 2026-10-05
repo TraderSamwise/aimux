@@ -539,54 +539,20 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 match effect {
                     DashboardControllerEffect::Quit => return Ok(()),
                     DashboardControllerEffect::Request(request) => {
-                        let action = DashboardActionIdentity::of(&request);
-                        // Record the overlay now but send the request after the
-                        // frame is written: the round trip blocks, and the first
-                        // refresh after it already reports the settled state, so
-                        // sending first means the overlay never reaches a frame.
-                        let pending = pending_action_for_request(request.path, &request.body).map(
-                            |(target, id, kind)| {
-                                let token = match target {
-                                    PendingTarget::Session => pending_actions.set_session_action(
-                                        &id,
-                                        &kind,
-                                        pending_action_now_ms(clock_start),
-                                    ),
-                                    PendingTarget::Service => pending_actions.set_service_action(
-                                        &id,
-                                        &kind,
-                                        pending_action_now_ms(clock_start),
-                                    ),
-                                    PendingTarget::Worktree => pending_actions.set_worktree_action(
-                                        Some(id.as_str()),
-                                        &kind,
-                                        pending_action_now_ms(clock_start),
-                                    ),
-                                };
-                                (target, id, token)
-                            },
+                        let recorded = record_dashboard_request(
+                            controller,
+                            &mut pending_actions,
+                            request,
+                            pending_action_now_ms(clock_start),
                         );
-                        // A route that makes something has no row to paint, so
-                        // its only report is the footer. Built from the same
-                        // path and body `flush_deferred_dashboard_requests`
-                        // identifies the action by, so this note is taken down
-                        // by its own outcome and by nobody else's.
-                        if let Some(message) = progress_for_request(request.path, &request.body) {
-                            controller.set_progress(message, action);
-                            // The row this makes does not exist yet, so the
-                            // frame that shows it has to be a fresh one: the
-                            // server publishes the new row as pending, and the
-                            // cached snapshot predates it.
+                        // An optimistic overlay and a footer note both have to
+                        // reach a frame, and only a freshly loaded snapshot
+                        // carries one. A request with neither -- attaching to an
+                        // agent is the common one -- keeps the fast path.
+                        if recorded.showed_something() {
                             cacheable_input = false;
                         }
-                        // An overlay has to reach a frame, and only a freshly
-                        // loaded snapshot carries one. A request without an
-                        // overlay -- attaching to an agent is the common one --
-                        // has nothing to show and keeps the fast path.
-                        if pending.is_some() {
-                            cacheable_input = false;
-                        }
-                        deferred_requests.push((request, pending));
+                        deferred_requests.push(recorded.deferred);
                         render_now = true;
                         render_requested_by_input = true;
                     }
@@ -2996,6 +2962,65 @@ fn pending_action_now_ms(clock_start: Instant) -> i64 {
 /// the overlay to drop if the request never leaves.
 type DeferredDashboardRequest = (DashboardActionRequest, Option<(PendingTarget, String, u64)>);
 
+/// What the render loop did with a request on its way to being sent.
+struct RecordedDashboardRequest {
+    deferred: DeferredDashboardRequest,
+    reported: bool,
+}
+
+impl RecordedDashboardRequest {
+    /// Whether this keypress put anything on screen that a cached frame would
+    /// not already carry.
+    fn showed_something(&self) -> bool {
+        self.reported || self.deferred.1.is_some()
+    }
+}
+
+/// Record what a mutation is doing, before it is sent.
+///
+/// Separated from the loop because the loop itself is unreachable from a test,
+/// and the decision made here is the one that went wrong: a guard that skipped
+/// dispatch for a request the footer was already reporting silently killed
+/// restore-previous, which raises its own note inside `handle_key` and then
+/// returns the request. Every request is sent; the note counts them.
+fn record_dashboard_request(
+    controller: &mut DashboardController,
+    pending_actions: &mut DashboardPendingActions,
+    request: DashboardActionRequest,
+    now_ms: i64,
+) -> RecordedDashboardRequest {
+    let action = DashboardActionIdentity::of(&request);
+    // Record the overlay now but send the request after the frame is written:
+    // the round trip blocks, and the first refresh after it already reports the
+    // settled state, so sending first means the overlay never reaches a frame.
+    let pending =
+        pending_action_for_request(request.path, &request.body).map(|(target, id, kind)| {
+            let token = match target {
+                PendingTarget::Session => pending_actions.set_session_action(&id, &kind, now_ms),
+                PendingTarget::Service => pending_actions.set_service_action(&id, &kind, now_ms),
+                PendingTarget::Worktree => {
+                    pending_actions.set_worktree_action(Some(id.as_str()), &kind, now_ms)
+                }
+            };
+            (target, id, token)
+        });
+    // A route that makes something has no row to paint, so its only report is
+    // the footer. Built from the same path and body that
+    // `flush_deferred_dashboard_requests` identifies the action by, so this
+    // note is taken down by its own outcome and by nobody else's.
+    let reported = match progress_for_request(request.path, &request.body) {
+        Some(message) => {
+            controller.set_progress(message, action);
+            true
+        }
+        None => false,
+    };
+    RecordedDashboardRequest {
+        deferred: (request, pending),
+        reported,
+    }
+}
+
 /// Send the mutations queued during key handling, now that the optimistic frame
 /// has been written. Clears the overlay for any request that never left.
 /// The outcome of a mutation that ran off the render thread.
@@ -3423,9 +3448,10 @@ mod tests {
             Some("Creating claude agent"),
             "the other one is still running"
         );
-        assert!(
-            controller.footer_alert_message().is_some(),
-            "and the refusal is still reported rather than swallowed"
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("dashboard action failed: lifecycle mutation already in progress"),
+            "and the refusal is reported rather than swallowed"
         );
 
         tx.send(DashboardRequestOutcome {
@@ -3439,9 +3465,127 @@ mod tests {
         assert_eq!(controller.footer_progress_message(), None);
     }
 
+    /// A different create's outcome is not an answer to this one, and replacing
+    /// the note on screen does not forget the request it replaced.
+    #[test]
+    fn one_create_s_outcome_does_not_settle_another_s() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        let claude = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::agents::SPAWN,
+            body: serde_json::json!({ "tool": "claude", "open": false }),
+        };
+        let worktree = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::worktree_actions::CREATE,
+            body: serde_json::json!({ "name": "feature-a" }),
+        };
+        for request in [&claude, &worktree] {
+            controller.set_progress(
+                progress_for_request(request.path, &request.body).expect("a sentence"),
+                DashboardActionIdentity::of(request),
+            );
+        }
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Creating worktree feature-a"),
+            "the newer one is what the single footer row shows"
+        );
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        let mut pending_actions = DashboardPendingActions::default();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(DashboardActionIdentity::of(&claude)),
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Creating worktree feature-a"),
+            "the spawn finishing says nothing about the worktree"
+        );
+
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(DashboardActionIdentity::of(&worktree)),
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        assert_eq!(controller.footer_progress_message(), None);
+    }
+
+    /// Every request the controller asks for is sent, including one whose note
+    /// the controller raised itself.
+    ///
+    /// The restore prompt raises its own progress note inside `handle_key` and
+    /// then returns the request. A guard in the loop that refused to send what
+    /// the footer already reported therefore saw that note on the FIRST press
+    /// and dropped the restore: prompt dismissed, nothing sent, nothing to
+    /// settle the note. This asserts the loop's own decision, not the
+    /// controller's -- the first version of this test called `handle_key` and
+    /// would have passed with the guard still in place.
+    #[test]
+    fn every_request_the_controller_asks_for_is_dispatched() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        let mut pending_actions = DashboardPendingActions::default();
+        let restore = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::agents::RESTORE_PREVIOUS,
+            body: serde_json::json!({}),
+        };
+        // As the prompt leaves it: note already up, request about to be handed
+        // to the loop.
+        controller.set_progress(
+            "Restoring 2 agents…".into(),
+            DashboardActionIdentity::of(&restore),
+        );
+
+        let recorded = record_dashboard_request(&mut controller, &mut pending_actions, restore, 0);
+
+        assert_eq!(
+            recorded.deferred.0.path,
+            crate::project_api_contract::routes::agents::RESTORE_PREVIOUS,
+            "the restore has to reach the wire, note or no note"
+        );
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Restoring 2 agents…")
+        );
+
+        // And the same for a create pressed while its own note is up: two
+        // presses of `c` are two agents, not one key pressed twice.
+        let spawn = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::agents::SPAWN,
+            body: serde_json::json!({ "tool": "claude", "open": false }),
+        };
+        let first =
+            record_dashboard_request(&mut controller, &mut pending_actions, spawn.clone(), 0);
+        let second = record_dashboard_request(&mut controller, &mut pending_actions, spawn, 0);
+        assert_eq!(
+            first.deferred.0.path,
+            crate::project_api_contract::routes::agents::SPAWN
+        );
+        assert_eq!(
+            second.deferred.0.path,
+            crate::project_api_contract::routes::agents::SPAWN,
+            "the second press is a second agent"
+        );
+        assert!(
+            first.showed_something() && second.showed_something(),
+            "a create has no row, so its frame cannot come from the cache"
+        );
+    }
+
     /// The restore prompt raises its own progress note and then returns the
-    /// request, so a guard that refused to send what the footer already
-    /// reported would never send it at all.
+    /// request.
     #[test]
     fn the_restore_prompt_still_dispatches_the_request_it_reports() {
         let mut snapshot = test_snapshot();
