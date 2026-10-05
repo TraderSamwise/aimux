@@ -1,13 +1,25 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::async_runtime::block_on_named;
+use crate::debug_logging::{LogLevel, log_at};
 use crate::project_api_contract::routes;
 
 const DEFAULT_QUEUE_LIMIT: usize = 32;
+
+/// How long a mutation will wait for its turn before calling the one ahead of
+/// it stuck.
+///
+/// The CLI gives a project mutation 120s (`CLI_PROJECT_MUTATION_TIMEOUT_MS`),
+/// and a worktree create doing a cold fetch is the longest legitimate holder
+/// there is, so past that nobody is still waiting for an answer and the holder
+/// is not coming back. Waiting silently forever is the alternative, and that
+/// is how the queue died: one stuck mutation and every later one hung with
+/// nothing said.
+const WAIT_FOR_TURN_TIMEOUT: Duration = Duration::from_millis(150_000);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LifecycleTransitionInput {
@@ -87,13 +99,21 @@ pub enum LifecycleMutationError {
         queued_count: usize,
         limit: usize,
     },
+    /// The mutation ahead of this one never finished. Named rather than
+    /// numbered, because the caller cannot act on "timed out" and can act on
+    /// which operation is stuck.
+    HolderStuck {
+        requested: Box<LifecycleTransitionInput>,
+        holder: String,
+        waited_ms: u128,
+    },
 }
 
 impl LifecycleMutationError {
     pub fn status(&self) -> u16 {
         match self {
             Self::Conflict { .. } => 409,
-            Self::QueueFull { .. } => 429,
+            Self::QueueFull { .. } | Self::HolderStuck { .. } => 429,
         }
     }
 
@@ -117,6 +137,11 @@ impl LifecycleMutationError {
             } => format!(
                 "lifecycle mutation queue is full ({queued_count}/{limit}); wait for current operations to settle"
             ),
+            Self::HolderStuck {
+                holder, waited_ms, ..
+            } => format!(
+                "lifecycle mutation queue is stuck behind {holder}; waited {waited_ms}ms without it finishing"
+            ),
         }
     }
 }
@@ -136,13 +161,45 @@ struct QueueInner {
     /// equivalent: same serial order, and waiting costs no thread.
     permits: Arc<Semaphore>,
     queue_limit: usize,
+    wait_for_turn: Duration,
 }
 
 #[derive(Debug, Default)]
 struct QueueState {
     queued_count: usize,
     active_targets: BTreeMap<String, LifecycleTransitionInput>,
+    /// What owns the queue right now, and since when. Kept out of
+    /// `diagnostics` on purpose: that JSON is pinned field for field against
+    /// the Node contract. This exists so a refusal can name the operation it
+    /// waited on rather than say only that it gave up.
+    holder: Option<QueueHolder>,
     telemetry: LifecycleMutationTelemetry,
+}
+
+#[derive(Debug, Clone)]
+struct QueueHolder {
+    transition: Option<LifecycleTransitionInput>,
+    since: Instant,
+}
+
+impl QueueHolder {
+    fn describe(&self) -> String {
+        let held_ms = self.since.elapsed().as_millis();
+        match &self.transition {
+            Some(transition) => {
+                let target = transition
+                    .target_id
+                    .as_deref()
+                    .or(transition.target_path.as_deref())
+                    .unwrap_or("an unnamed target");
+                format!(
+                    "{} on {target}, running for {held_ms}ms",
+                    transition.operation
+                )
+            }
+            None => format!("an untracked mutation, running for {held_ms}ms"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -170,11 +227,18 @@ impl Default for LifecycleMutationQueue {
 
 impl LifecycleMutationQueue {
     pub fn new(queue_limit: usize) -> Self {
+        Self::with_wait_for_turn(queue_limit, WAIT_FOR_TURN_TIMEOUT)
+    }
+
+    /// The same queue with a shorter patience, so a test can reach the refusal
+    /// without sitting through the real bound.
+    pub fn with_wait_for_turn(queue_limit: usize, wait_for_turn: Duration) -> Self {
         Self {
             inner: Arc::new(QueueInner {
                 state: Mutex::new(QueueState::default()),
                 permits: Arc::new(Semaphore::new(1)),
                 queue_limit,
+                wait_for_turn,
             }),
         }
     }
@@ -232,19 +296,32 @@ impl LifecycleMutationQueue {
     ) -> Result<LifecycleMutationPermit, LifecycleMutationError> {
         let queued_at = Instant::now();
         let reservation = self.reserve(transition.as_ref())?;
-        let permit = Arc::clone(&self.inner.permits)
-            .acquire_owned()
-            .await
-            .expect("lifecycle queue semaphore is never closed");
+        let acquired = tokio::time::timeout(
+            self.inner.wait_for_turn,
+            Arc::clone(&self.inner.permits).acquire_owned(),
+        )
+        .await;
+        let permit = match acquired {
+            Ok(permit) => permit.expect("lifecycle queue semaphore is never closed"),
+            // The reservation drops on the way out, so the target this gave up
+            // on is free for the next attempt.
+            Err(_) => return Err(self.holder_stuck(transition, queued_at)),
+        };
         let (target_key, tracked) = reservation.commit();
-        if tracked {
+        {
             let mut state = self.inner.state.lock().expect("lifecycle queue lock");
-            state.telemetry.started += 1;
-            state.telemetry.max_queued_ms = state
-                .telemetry
-                .max_queued_ms
-                .max(queued_at.elapsed().as_millis());
-            state.telemetry.last_started_at = Some(now_iso());
+            state.holder = Some(QueueHolder {
+                transition: transition.clone(),
+                since: Instant::now(),
+            });
+            if tracked {
+                state.telemetry.started += 1;
+                state.telemetry.max_queued_ms = state
+                    .telemetry
+                    .max_queued_ms
+                    .max(queued_at.elapsed().as_millis());
+                state.telemetry.last_started_at = Some(now_iso());
+            }
         }
         Ok(LifecycleMutationPermit {
             inner: Arc::clone(&self.inner),
@@ -253,6 +330,45 @@ impl LifecycleMutationQueue {
             tracked,
             finished: false,
         })
+    }
+
+    /// Refuse a wait that outlasted any client still listening, naming what it
+    /// was waiting on. A wait that just expires tells nobody anything.
+    fn holder_stuck(
+        &self,
+        transition: Option<LifecycleTransitionInput>,
+        queued_at: Instant,
+    ) -> LifecycleMutationError {
+        let holder = self
+            .inner
+            .state
+            .lock()
+            .expect("lifecycle queue lock")
+            .holder
+            .as_ref()
+            .map(QueueHolder::describe)
+            .unwrap_or_else(|| "a mutation that left no record".to_owned());
+        let requested = transition
+            .unwrap_or_else(|| LifecycleTransitionInput::new("lifecycle.unknown", "project"));
+        let waited_ms = queued_at.elapsed().as_millis();
+        log_at(
+            LogLevel::Error,
+            "lifecycle mutation gave up waiting for the queue",
+            "project-service",
+            Some(json!({
+                "operation": requested.operation,
+                "targetKind": requested.target_kind,
+                "targetId": requested.target_id,
+                "targetPath": requested.target_path,
+                "holder": holder,
+                "waitedMs": waited_ms,
+            })),
+        );
+        LifecycleMutationError::HolderStuck {
+            requested: Box::new(requested),
+            holder,
+            waited_ms,
+        }
     }
 
     /// Claim the target and the queue slot, which happens before the wait and
@@ -447,6 +563,7 @@ fn release_lifecycle_mutation(
     error: Option<String>,
 ) {
     let mut state = inner.state.lock().expect("lifecycle queue lock");
+    state.holder = None;
     if tracked {
         state.queued_count = state.queued_count.saturating_sub(1);
         state.telemetry.released += 1;

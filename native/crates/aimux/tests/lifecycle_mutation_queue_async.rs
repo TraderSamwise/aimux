@@ -281,3 +281,48 @@ fn settling_a_mutation_admits_the_next_one_before_its_caller_returns() {
     assert_eq!(diagnostics["queuedCount"], 0);
     assert_eq!(diagnostics["telemetry"]["succeeded"], 2);
 }
+
+#[test]
+fn a_mutation_that_never_finishes_refuses_the_next_one_by_name() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(50));
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let _stuck = queue
+            .begin_async(Some(agent_stop("stuck")))
+            .await
+            .expect("the stuck mutation takes the queue");
+
+        let Err(error) = queue.begin_async(Some(agent_stop("waiting"))).await else {
+            panic!("the next mutation must not wait forever");
+        };
+
+        assert_eq!(
+            error.status(),
+            429,
+            "a queue that cannot be entered is a retry, not a conflict"
+        );
+        let message = error.message();
+        assert!(
+            message.contains("agent.stop on stuck"),
+            "the refusal must name what it waited on, not only that it gave up: {message}"
+        );
+        assert!(
+            message.contains("waited"),
+            "the refusal must say how long it waited: {message}"
+        );
+
+        // Giving up released the claim, so the refused agent can be tried
+        // again rather than 409ing for the life of the process.
+        let diagnostics = queue.diagnostics("/repo");
+        let claimed = diagnostics["activeTargets"]
+            .as_array()
+            .expect("activeTargets")
+            .iter()
+            .filter_map(|target| target["key"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(claimed, vec!["agent:stuck"]);
+        assert_eq!(diagnostics["queuedCount"], 1);
+    });
+}
