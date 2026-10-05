@@ -2145,3 +2145,52 @@ fn re_adding_a_paused_agent_to_the_loop_ends_the_pause() {
         "putting the agent back on the loop is the one thing that ends its pause: {sends:#?}"
     );
 }
+
+/// The overseer's launch brief has to name the channel that starts a turn.
+///
+/// It listed `aimux task assign` beside `aimux spawn` under "start and
+/// coordinate agents", which reads like delivery. It is not: the task is a
+/// durable record and the agent sits at its prompt until something sends it
+/// input. That wording is what left three codex agents idle on strix while the
+/// overseer believed it had dispatched them.
+#[test]
+fn the_overseer_brief_says_which_command_starts_a_turn() {
+    let brief = aimux::session_bootstrap::overseer_launch_preamble();
+
+    assert!(
+        brief.contains("NONE of these start a turn"),
+        "the brief must say a task record is not delivery: {brief}"
+    );
+    assert!(
+        brief.contains("`aimux input`"),
+        "and must name the command that is: {brief}"
+    );
+    assert!(
+        !brief
+            .contains("`aimux task assign`, `aimux message send`, `aimux handoff send` -\n  start"),
+        "task assign must not be listed as a way to start an agent"
+    );
+}
+
+/// And it has to offer the lighter alternative to forgetting the agent.
+///
+/// `aimux loop pause` shipped months ago and the brief never mentioned it, so
+/// the only move an overseer knew for "stop telling me about this one" was
+/// `loop remove`, which forgets the agent entirely.
+#[test]
+fn the_overseer_brief_offers_pausing_instead_of_forgetting() {
+    let brief = aimux::session_bootstrap::overseer_launch_preamble();
+
+    assert!(
+        brief.contains("aimux loop pause"),
+        "the brief must mention pausing: {brief}"
+    );
+    assert!(
+        brief.contains("WITHOUT unwatching"),
+        "and say what makes it different from removing: {brief}"
+    );
+    assert!(
+        brief.contains("un-pauses it automatically"),
+        "and that the next piece of work brings it back on its own: {brief}"
+    );
+}
