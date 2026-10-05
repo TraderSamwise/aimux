@@ -1196,6 +1196,7 @@ fn fork_key_blocks_offline_sessions_before_picker() {
 fn pending_worktree_enter_sets_footer_message_without_request() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[1].pending = true;
+    snapshot.worktree_groups[1].pending_action = Some("creating".into());
     snapshot.worktree_groups[1].name = "demo".into();
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.worktree_index = 1;
@@ -1209,6 +1210,41 @@ fn pending_worktree_enter_sets_footer_message_without_request() {
         Some("Worktree demo is still creating")
     );
     assert_eq!(controller.navigation.level, DashboardNavLevel::Worktrees);
+}
+
+/// Enter named whatever was in flight "creating", because it tested `pending`
+/// before the branch that knows about removals.
+#[test]
+fn enter_on_a_busy_worktree_names_what_it_is_actually_doing() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[1].name = "demo".into();
+    let cases = [
+        (Some("graveyarding"), "Worktree demo is removing"),
+        (Some("removing"), "Worktree demo is removing"),
+        (Some("resurrecting"), "Worktree demo is still restoring"),
+        (Some("creating"), "Worktree demo is still creating"),
+        // No action named at all: the generic word, not one state's word
+        // standing in for every state.
+        (None, "Worktree demo is still pending"),
+    ];
+    for (action, expected) in cases {
+        snapshot.worktree_groups[1].pending = true;
+        snapshot.worktree_groups[1].pending_action = action.map(str::to_owned);
+        let mut controller = DashboardController::new(&snapshot);
+        controller.navigation.worktree_index = 1;
+
+        assert_eq!(
+            controller.handle_key(&snapshot, DashboardKey::Enter),
+            DashboardControllerEffect::Render,
+            "{action:?}"
+        );
+        assert_eq!(
+            controller.footer_note_message(),
+            Some(expected),
+            "{action:?}"
+        );
+        assert_eq!(controller.footer_alert_message(), None, "{action:?}");
+    }
 }
 
 #[test]

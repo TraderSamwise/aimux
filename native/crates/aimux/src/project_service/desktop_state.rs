@@ -735,12 +735,12 @@ fn desktop_worktree_item(project_root: &str, worktree: &Value, branch: &str) -> 
     insert_string(&mut item, "path", path);
     insert_string(&mut item, "branch", branch);
     item.insert("isBare".into(), Value::Bool(false));
-    // Inferred from the record's own status first, then any explicit field:
-    // a stored mark is a deliberate statement and outranks the inference.
+    insert_value(&mut item, "createdAt", worktree.get("createdAt").cloned());
+    // `pending`, `removing` and `pendingAction` were copied here too, from a
+    // record that cannot carry them: `topology_worktree_to_state` keeps ten
+    // named keys and none of those three, and the topology schema itself
+    // strips them. The status is where the fact actually lives.
     insert_pending_marks_for_status(&mut item, worktree);
-    for key in ["createdAt", "pending", "removing", "pendingAction"] {
-        insert_value(&mut item, key, worktree.get(key).cloned());
-    }
     insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
     Value::Object(item)
 }

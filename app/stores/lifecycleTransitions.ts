@@ -319,7 +319,11 @@ function isWorktreeTransitionSettled(
 
 function agentPendingAction(operation: ProjectLifecycleTransitionOperation): string | null {
   switch (operation) {
+    // A spawn makes an agent and a resume restarts one that already exists;
+    // both said "starting", so the app had one word for two facts while the
+    // TUI footer reported a spawn as "Creating".
     case "agent.spawn":
+      return "creating";
     case "agent.resume":
       return "starting";
     // Not "starting": the project service calls this one `resurrecting`, so

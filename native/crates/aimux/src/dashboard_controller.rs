@@ -512,10 +512,19 @@ impl DashboardController {
         }
     }
 
-    /// Nothing is going to settle this one, so say so rather than leaving it
-    /// claiming work that may already be over.
-    pub fn abandon_progress(&mut self) {
-        self.footer_progress = None;
+    /// Whether a request identical to the one being reported is already in
+    /// flight, so a second press is a repeat rather than a new action.
+    ///
+    /// Two presses produce byte-identical bodies -- an unnamed spawn carries
+    /// only its tool -- so the second is the same action by every measure the
+    /// dashboard has. Sending it anyway earns a 409 from the lifecycle queue,
+    /// and that refusal arrives tagged with the identity of the work still
+    /// running: it takes down the note and reports a failure for something
+    /// that is going fine.
+    pub fn progress_already_reports(&self, action: &DashboardActionIdentity) -> bool {
+        self.footer_progress
+            .as_ref()
+            .is_some_and(|progress| &progress.settled_by == action)
     }
 
     pub fn footer_progress_message(&self) -> Option<&str> {

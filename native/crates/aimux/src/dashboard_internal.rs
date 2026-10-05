@@ -539,12 +539,22 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 match effect {
                     DashboardControllerEffect::Quit => return Ok(()),
                     DashboardControllerEffect::Request(request) => {
+                        let action = DashboardActionIdentity::of(&request);
+                        // Pressed twice: identical bodies are the same action by
+                        // every measure the dashboard has, and the note already
+                        // on screen is the answer. Sending again only earns a
+                        // 409 from the lifecycle queue, tagged with the identity
+                        // of the work still running, which would take that note
+                        // down and report a failure for something going fine.
+                        let repeat = controller.progress_already_reports(&action);
                         // Record the overlay now but send the request after the
                         // frame is written: the round trip blocks, and the first
                         // refresh after it already reports the settled state, so
                         // sending first means the overlay never reaches a frame.
-                        let pending = pending_action_for_request(request.path, &request.body).map(
-                            |(target, id, kind)| {
+                        let pending = (!repeat)
+                            .then(|| pending_action_for_request(request.path, &request.body))
+                            .flatten()
+                            .map(|(target, id, kind)| {
                                 let token = match target {
                                     PendingTarget::Session => pending_actions.set_session_action(
                                         &id,
@@ -563,15 +573,21 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     ),
                                 };
                                 (target, id, token)
-                            },
-                        );
+                            });
                         // A route that makes something has no row to paint, so
                         // its only report is the footer. Built from the same
                         // path and body `flush_deferred_dashboard_requests`
                         // identifies the action by, so this note is taken down
                         // by its own outcome and by nobody else's.
-                        if let Some(message) = progress_for_request(request.path, &request.body) {
-                            controller.set_progress(message, DashboardActionIdentity::of(&request));
+                        if !repeat
+                            && let Some(message) = progress_for_request(request.path, &request.body)
+                        {
+                            controller.set_progress(message, action);
+                            // The row this makes does not exist yet, so the
+                            // frame that shows it has to be a fresh one: the
+                            // server publishes the new row as pending, and the
+                            // cached snapshot predates it.
+                            cacheable_input = false;
                         }
                         // An overlay has to reach a frame, and only a freshly
                         // loaded snapshot carries one. A request without an
@@ -580,7 +596,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         if pending.is_some() {
                             cacheable_input = false;
                         }
-                        deferred_requests.push((request, pending));
+                        if !repeat {
+                            deferred_requests.push((request, pending));
+                        }
                         render_now = true;
                         render_requested_by_input = true;
                     }
@@ -3032,8 +3050,10 @@ fn flush_deferred_dashboard_requests(
                 // The request never left, so no outcome will ever arrive to
                 // take down a progress note -- and a progress note outlives
                 // keypresses, so it would sit there claiming work that is not
-                // happening.
-                controller.abandon_progress();
+                // happening. Only this request's note: an unrelated action
+                // failing to send is not news about a worktree create that is
+                // still running.
+                controller.clear_progress_for(Some(&DashboardActionIdentity::of(&request)));
             }
             if let Some((target, id, token)) = pending.as_ref() {
                 pending_actions.clear_if_token(*target, id, *token);
@@ -3324,6 +3344,96 @@ mod tests {
         .expect("send");
         drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
         assert_eq!(controller.footer_progress_message(), None);
+    }
+
+    /// A different action failing to send does not take down this one's note.
+    ///
+    /// The no-endpoint path used to clear whatever note was live. Press `n`,
+    /// name a worktree, and while its 180s of git work runs press `s` on an
+    /// agent: that second request takes the no-endpoint arm and erased the
+    /// create's report, leaving an alert about something else entirely.
+    #[test]
+    fn a_different_action_that_never_left_keeps_this_one_s_report() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        let create = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::worktree_actions::CREATE,
+            body: serde_json::json!({ "name": "feature-a" }),
+        };
+        controller.set_progress(
+            progress_for_request(create.path, &create.body).expect("a sentence"),
+            DashboardActionIdentity::of(&create),
+        );
+
+        let (tx, _rx) = mpsc::channel::<DashboardRequestOutcome>();
+        let mut deferred: Vec<DeferredDashboardRequest> = vec![(
+            DashboardActionRequest {
+                method: "POST",
+                path: crate::project_api_contract::routes::agents::STOP,
+                body: serde_json::json!({ "sessionId": "claude-a" }),
+            },
+            None,
+        )];
+        let mut pending_actions = DashboardPendingActions::default();
+
+        flush_deferred_dashboard_requests(
+            &mut deferred,
+            None,
+            &mut pending_actions,
+            Some(&mut controller),
+            &tx,
+        );
+
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Creating worktree feature-a"),
+            "the create is still running; the stop is what could not be sent"
+        );
+        assert_eq!(
+            controller.footer_alert_message(),
+            Some("Dashboard action requires a project-service endpoint")
+        );
+    }
+
+    /// A second press of the same create is the same action, and the note
+    /// already on screen is the answer.
+    ///
+    /// Two unnamed spawns of one tool build byte-identical bodies, so the
+    /// second's 409 from the lifecycle queue arrives tagged with the identity
+    /// of the work still running -- taking the note down and reporting a
+    /// failure for something going fine.
+    #[test]
+    fn a_second_press_of_the_same_create_is_not_a_second_action() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        let fork = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::agents::FORK,
+            body: serde_json::json!({ "sourceSessionId": "claude-a", "tool": "claude" }),
+        };
+        assert!(
+            !controller.progress_already_reports(&DashboardActionIdentity::of(&fork)),
+            "nothing is in flight yet"
+        );
+        controller.set_progress(
+            progress_for_request(fork.path, &fork.body).expect("a sentence"),
+            DashboardActionIdentity::of(&fork),
+        );
+
+        assert!(
+            controller.progress_already_reports(&DashboardActionIdentity::of(&fork)),
+            "the same fork, pressed again"
+        );
+        let other = DashboardActionRequest {
+            method: "POST",
+            path: crate::project_api_contract::routes::agents::FORK,
+            body: serde_json::json!({ "sourceSessionId": "claude-b", "tool": "claude" }),
+        };
+        assert!(
+            !controller.progress_already_reports(&DashboardActionIdentity::of(&other)),
+            "forking a different agent is a different action"
+        );
     }
 
     /// "Aimux is updating", "is reconnecting", "is repairing tmux": four of the
