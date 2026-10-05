@@ -15,8 +15,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle_mutation_queue::{
-    LifecycleMutationQueue, LifecycleTransitionInput,
+    LifecycleMutationQueue, LifecycleTransitionInput, lifecycle_transition_for_route,
 };
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
@@ -39,19 +40,42 @@ fn agent_stop(session_id: &str) -> LifecycleTransitionInput {
 /// Spin on the queue's own diagnostics rather than a sleep: the assertion is
 /// about what the queue reports, and a sleep long enough to be reliable is long
 /// enough to hide the thing being measured.
-fn wait_until(queue: &LifecycleMutationQueue, mut ready: impl FnMut(&serde_json::Value) -> bool) {
-    let started = std::time::Instant::now();
-    while started.elapsed() < Duration::from_secs(5) {
-        let diagnostics = queue.diagnostics("/repo");
-        if ready(&diagnostics) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(5));
+/// The same spin, with a sentence that says what the queue failing to reach
+/// that state would mean. A generic "never reached the expected state" leaves
+/// the reader to work out which assertion regressed.
+fn wait_until_or(
+    queue: &LifecycleMutationQueue,
+    ready: impl FnMut(&serde_json::Value) -> bool,
+    meaning: impl FnOnce() -> &'static str,
+) {
+    if spin_until(queue, ready) {
+        return;
+    }
+    panic!("{}: {}", meaning(), queue.diagnostics("/repo")["telemetry"]);
+}
+
+fn wait_until(queue: &LifecycleMutationQueue, ready: impl FnMut(&serde_json::Value) -> bool) {
+    if spin_until(queue, ready) {
+        return;
     }
     panic!(
         "queue never reached the expected state: {}",
         queue.diagnostics("/repo")
     );
+}
+
+fn spin_until(
+    queue: &LifecycleMutationQueue,
+    mut ready: impl FnMut(&serde_json::Value) -> bool,
+) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
+        if ready(&queue.diagnostics("/repo")) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    false
 }
 
 #[test]
@@ -553,4 +577,249 @@ fn a_holder_that_outruns_the_bound_still_finishes() {
     assert_eq!(diagnostics["telemetry"]["failed"], 0);
     assert_eq!(diagnostics["queuedCount"], 0);
     assert_eq!(diagnostics["activeTargets"], serde_json::json!([]));
+}
+
+/// A worktree create and a remove of the same worktree must contend.
+///
+/// A create is given a name and everything else is given an absolute path, so
+/// the two used to produce different keys and a remove of a worktree still
+/// being created was not refused — it queued silently behind it instead of
+/// saying so.
+#[test]
+fn removing_a_worktree_that_is_still_being_created_is_refused() {
+    let runtime = two_worker_runtime();
+    // A short bound so the two refusals cannot be confused: without the key
+    // fix the remove is not refused at all, it waits on a permit the same task
+    // holds and comes back as a 429 rather than a 409. Asserting the status
+    // separates "refused because the worktree is busy" from "deadlocked and
+    // eventually gave up", and does it in milliseconds rather than 150s.
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(50));
+    let create = lifecycle_transition_for_route(
+        routes::worktree_actions::CREATE,
+        &serde_json::json!({ "name": "feature", "open": false }),
+    )
+    .expect("a worktree create transition");
+    let remove = lifecycle_transition_for_route(
+        routes::worktree_actions::REMOVE,
+        &serde_json::json!({ "path": "/repo/.aimux/worktrees/feature" }),
+    )
+    .expect("a worktree remove transition");
+    assert_eq!(create.target_path.as_deref(), Some("feature"));
+    assert_eq!(
+        remove.target_path.as_deref(),
+        Some("/repo/.aimux/worktrees/feature"),
+        "the two routes really are given different spellings of one worktree"
+    );
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let mut creating = queue
+            .begin_async(Some(create))
+            .await
+            .expect("the create takes the queue");
+
+        let Err(error) = queue.begin_async(Some(remove)).await else {
+            panic!("removing a worktree mid-create must be refused, not queued behind it");
+        };
+        assert_eq!(
+            error.status(),
+            409,
+            "refused because the worktree is busy, not because the wait expired: {}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("already in progress for worktree"),
+            "the refusal must say the worktree is busy, not merely mention one: {}",
+            error.message()
+        );
+
+        creating.succeed(std::time::Instant::now());
+    });
+
+    let diagnostics = queue.diagnostics("/repo");
+    assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 1);
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 1);
+}
+
+/// Two different worktrees must still be independent.
+#[test]
+fn two_different_worktrees_do_not_contend() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_secs(30));
+    let graveyard = |path: &str| {
+        lifecycle_transition_for_route(
+            routes::worktree_actions::GRAVEYARD,
+            &serde_json::json!({ "path": path }),
+        )
+        .expect("a worktree graveyard transition")
+    };
+
+    // The first must still be HOLDING the queue when the second asks, or this
+    // passes just as happily with both keyed the same.
+    let (release_first, first_released) = oneshot::channel::<()>();
+    let holder_queue = queue.clone();
+    let holder = runtime.spawn(async move {
+        let mut permit = holder_queue
+            .begin_async(Some(graveyard("/repo/.aimux/worktrees/one")))
+            .await
+            .expect("the first takes the queue");
+        let started_at = std::time::Instant::now();
+        first_released.await.expect("holder is released");
+        permit.succeed(started_at);
+    });
+    wait_until(&queue, |diagnostics| {
+        diagnostics["telemetry"]["started"] == 1
+    });
+    assert_eq!(
+        queue.diagnostics("/repo")["activeTargets"][0]["key"],
+        serde_json::json!("worktree:one"),
+        "the first worktree is claimed while it runs"
+    );
+
+    let second_queue = queue.clone();
+    let second = runtime.spawn(async move {
+        second_queue
+            .begin_async(Some(graveyard("/repo/.aimux/worktrees/two")))
+            .await
+            .map(|mut permit| permit.succeed(std::time::Instant::now()))
+            .map_err(|error| error.message())
+    });
+    wait_until_or(
+        &queue,
+        |diagnostics| diagnostics["queuedCount"] == 2,
+        || "the second worktree never reached the queue, so it was refused against the first",
+    );
+    release_first.send(()).expect("release the first");
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    let outcome = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            holder.await.expect("holder task");
+            second.await.expect("second task")
+        })
+        .await
+        .expect("both finish")
+    });
+    assert!(
+        outcome.is_ok(),
+        "a different worktree must queue, not be refused: {outcome:?}"
+    );
+
+    let diagnostics = queue.diagnostics("/repo");
+    assert_eq!(diagnostics["telemetry"]["rejectedConflicts"], 0);
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 2);
+}
+
+/// What the reduction gets wrong, pinned so it is a known cost and not a
+/// surprise: two worktrees whose names share a last path segment share a key.
+///
+/// It is one-directional, which is the property that matters — the reduction
+/// can only add a refusal, never lose the one this fix exists to add. Nothing
+/// validates a worktree name, so a hand-typed `feat/login` is legal; the
+/// product's own derivation cannot produce one, because
+/// `sanitize_ref_component` turns every separator into a dash.
+#[test]
+fn two_worktrees_sharing_a_last_name_segment_share_a_key() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(50));
+    let create = |name: &str| {
+        lifecycle_transition_for_route(
+            routes::worktree_actions::CREATE,
+            &serde_json::json!({ "name": name, "open": false }),
+        )
+        .expect("a worktree create transition")
+    };
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let mut first = queue
+            .begin_async(Some(create("feat/login")))
+            .await
+            .expect("the first create takes the queue");
+
+        let Err(error) = queue.begin_async(Some(create("fix/login"))).await else {
+            panic!("a shared last segment shares a key, which is the documented cost");
+        };
+        assert_eq!(
+            error.status(),
+            409,
+            "and it costs a refusal, never a missed one: {}",
+            error.message()
+        );
+
+        first.succeed(std::time::Instant::now());
+    });
+}
+
+/// A create from a pull request or a branch carries no name, only a source —
+/// `aimux worktree create --pr 5` sends exactly that — and it must still hold
+/// the worktree it is making.
+#[test]
+fn a_create_from_a_pull_request_still_holds_the_worktree_it_makes() {
+    let runtime = two_worker_runtime();
+    let queue = LifecycleMutationQueue::with_wait_for_turn(32, Duration::from_millis(50));
+    let create = lifecycle_transition_for_route(
+        routes::worktree_actions::CREATE,
+        &serde_json::json!({ "source": "https://github.com/owner/repo/pull/5" }),
+    )
+    .expect("a worktree create transition");
+    assert_eq!(
+        create.target_path.as_deref(),
+        Some("pr-5"),
+        "the body carries no name, so the key comes from the source the route derives from"
+    );
+
+    // aimux-async-seam: test - sync test drives the async queue on its own runtime
+    runtime.block_on(async {
+        let mut creating = queue
+            .begin_async(Some(create))
+            .await
+            .expect("the create takes the queue");
+
+        let remove = lifecycle_transition_for_route(
+            routes::worktree_actions::REMOVE,
+            &serde_json::json!({ "path": "/repo/.aimux/worktrees/pr-5" }),
+        )
+        .expect("a worktree remove transition");
+        let Err(error) = queue.begin_async(Some(remove)).await else {
+            panic!("removing the worktree a PR create is making must be refused");
+        };
+        assert_eq!(error.status(), 409);
+
+        creating.succeed(std::time::Instant::now());
+    });
+
+    assert_eq!(
+        queue.diagnostics("/repo")["telemetry"]["rejectedConflicts"],
+        1
+    );
+}
+
+/// Only a worktree create reads `source`.
+///
+/// Agent routes send a `source` of their own — "human", "loop", "agent" — and
+/// the chain that derives a worktree name from one used to run for every
+/// route. It produced a value nothing read, which is wasted work on an agent
+/// POST and a trap for whoever next reaches for that field.
+#[test]
+fn an_agent_route_does_not_read_a_worktree_source() {
+    let input = lifecycle_transition_for_route(
+        routes::agents::INTERRUPT,
+        &serde_json::json!({ "sessionId": "codex-live", "source": "human" }),
+    );
+    assert!(
+        input.is_none_or(|input| input.target_path.is_none()),
+        "an agent route's own source is not a worktree name"
+    );
+
+    let stop = lifecycle_transition_for_route(
+        routes::agents::STOP,
+        &serde_json::json!({ "sessionId": "codex-live", "source": "human" }),
+    )
+    .expect("a stop transition");
+    assert_eq!(stop.target_id.as_deref(), Some("codex-live"));
+    assert_eq!(
+        stop.target_path, None,
+        "a stop keys on its session, never on a source meant for something else"
+    );
 }

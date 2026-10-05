@@ -7,6 +7,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use crate::async_runtime::block_on_named;
 use crate::debug_logging::{LogLevel, log_at};
 use crate::project_api_contract::routes;
+use crate::project_service::lifecycle::remote_worktree_name_from_source;
 
 const DEFAULT_QUEUE_LIMIT: usize = 32;
 
@@ -94,10 +95,71 @@ impl LifecycleTransitionInput {
                 .or(self.target_path.as_deref())
                 .map(str::trim)
         };
-        target
-            .filter(|value| !value.is_empty())
-            .map(|target| format!("{}:{target}", self.target_kind))
+        let target = target.filter(|value| !value.is_empty())?;
+        let target = if self.target_kind == "worktree" {
+            worktree_identity(target)
+        } else {
+            target
+        };
+        Some(format!("{}:{target}", self.target_kind))
     }
+}
+
+/// The part of a worktree's path that identifies it to the queue.
+///
+/// A create is given a name, because the directory does not exist yet; every
+/// other worktree operation is given the absolute path. So `worktree:feature`
+/// and `worktree:/repo/.aimux/worktrees/feature` were two keys for one
+/// worktree, and a create did not contend with a remove of the thing it was
+/// making. The global serialization kept that from being a race -- the remove
+/// ran after the create rather than during it -- so what was lost was the 409
+/// that should have said the worktree was still being created.
+///
+/// Both sides reduce to the last path component, which is the worktree's own
+/// name: the directory a create makes is named after it, wherever the
+/// configured base directory puts it. That takes no config read, no
+/// `git worktree list`, and no knowledge of the project root -- the three
+/// things that made deriving the create's full path the wrong trade at this
+/// layer.
+///
+/// The reduction is one-directional, which is what makes it safe: it can only
+/// make two keys EQUAL that should have differed, never make two keys DIFFER
+/// that should have matched. The same worktree always reduces the same way,
+/// because both spellings end in the name it was created with. So the bug
+/// being fixed cannot come back by this route, and the worst a collision costs
+/// is a refusal that was not needed.
+///
+/// Two such collisions exist, both narrow:
+///
+/// - An operation on the main checkout reduces to the repository directory's
+///   name, so naming a worktree after the repository makes those two share a
+///   key.
+/// - A path whose last component is `/base/.` reduces to the base directory's
+///   own name, because `Path::components` normalizes a `.` away. Nothing sends
+///   the base directory as a worktree reference, and if it did, the cost is
+///   the extra refusal above rather than a missed one.
+/// - `worktree.cacheCleanup` holds nothing, because it sweeps every worktree
+///   in the topology rather than naming one. It is a project-wide operation
+///   and the global serialization is what protects it, which is the honest
+///   answer rather than inventing a key for it.
+/// - Nothing validates a worktree name, so `feat/login` is a legal name and
+///   creates a nested directory. It and `fix/login` both reduce to `login`.
+///   The product's own derivation cannot produce one —
+///   `sanitize_ref_component` turns every separator into a dash, so a
+///   PR-sourced create is `pr-123` and a branch `feat/login` becomes
+///   `feat-login` — so this needs a hand-typed name with a slash in it.
+///
+/// Both cost one spurious 409 between two worktrees nobody is likely to name
+/// that way, against a missing 409 that was reported.
+fn worktree_identity(target: &str) -> &str {
+    // A target with no final name component -- `..`, `/`, the empty string --
+    // is not a worktree reference, and `file_name` returns `None` for exactly
+    // those, so the fallback leaves them as they came.
+    std::path::Path::new(target)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(target)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -711,14 +773,43 @@ pub fn lifecycle_transition_for_route(
         routes::services::REMOVE => Some(
             LifecycleTransitionInput::new("service.remove", "service").with_target_id(service_id),
         ),
+        // A create from a remote source carries no name:
+        // `aimux worktree create --source <pull-request-url>` sends only
+        // `source`, and the CLI accepts that because the route derives the
+        // name itself. Without this the create would hold nothing, so a remove
+        // of the worktree it is making would not be refused.
+        // `route_worktree_create` derives from the same helper, so the two
+        // agree by construction.
+        //
+        // The chain above prefers a path over a name, while the route reads
+        // `name` then `source`. No client sends a path on create today, so the
+        // orders cannot disagree -- one that started to would reintroduce the
+        // mismatch this whole change removes.
+        //
+        // Only this arm reads `source`. Agent routes send a `source` of their
+        // own -- "human", "loop", "agent" -- and running a branch parser over
+        // those on every agent POST would be wasted work and a trap for
+        // whoever next reaches for `worktree_path`.
         routes::worktree_actions::CREATE => Some(
-            LifecycleTransitionInput::new("worktree.create", "worktree")
-                .with_target_path(worktree_path),
+            LifecycleTransitionInput::new("worktree.create", "worktree").with_target_path(
+                worktree_path.or_else(|| {
+                    trimmed_string(body.get("source"))
+                        // A source this cannot parse is one the route itself
+                        // will refuse with a 400, so there is no mutation left
+                        // to hold a key for.
+                        .and_then(|source| remote_worktree_name_from_source(&source).ok())
+                }),
+            ),
         ),
-        routes::worktree_actions::CACHE_CLEANUP => Some(
-            LifecycleTransitionInput::new("worktree.cacheCleanup", "worktree")
-                .with_target_path(worktree_path),
-        ),
+        // No target on purpose: the handler reads only `dryRun` and
+        // `includeActive` and sweeps every worktree in the topology, so there
+        // is no one worktree for it to hold. Taking `worktree_path` anyway
+        // would key a project-wide sweep to a single worktree the moment some
+        // future body carried a path.
+        routes::worktree_actions::CACHE_CLEANUP => Some(LifecycleTransitionInput::new(
+            "worktree.cacheCleanup",
+            "worktree",
+        )),
         routes::worktree_actions::GRAVEYARD => Some(
             LifecycleTransitionInput::new("worktree.graveyard", "worktree")
                 .with_target_path(worktree_path),
