@@ -1,0 +1,10 @@
+{
+  "$comment": "Call sites whose message trips the failure or progress word list but is in the right channel anyway. Keyed on the message rather than a line, so an edit above cannot move the exemption onto a different call site. Every entry needs a reason.",
+  "entries": [
+    {
+      "file": "native/crates/aimux/src/dashboard_controller.rs",
+      "message": "Dismissed failure for",
+      "reason": "The confirmation that a failure was cleared, not a failure. A note is right: the next key supersedes it."
+    }
+  ]
+}

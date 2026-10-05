@@ -248,6 +248,7 @@ fn render_dashboard_with_footer(snapshot: &DesktopStateSnapshot, footer_message:
         hide_offline_agents: false,
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
+        footer_progress: None,
         footer_note: Some(DashboardFooterNoteView {
             message: footer_message,
             kind: DashboardNoteKind::Note,

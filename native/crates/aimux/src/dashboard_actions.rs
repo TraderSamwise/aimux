@@ -20,7 +20,10 @@ pub struct DashboardActionRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardActionPlan {
     Request(DashboardActionRequest),
+    /// Refused, and it will stay refused until something changes.
     Blocked(String),
+    /// Refused only because work is already in flight on this target.
+    Busy(String),
     Ignored,
 }
 
@@ -127,7 +130,7 @@ fn pending_block(
 ) -> Option<DashboardActionPlan> {
     pending.then(|| {
         let action = pending_action.unwrap_or("pending");
-        DashboardActionPlan::Blocked(format!("{label} {id} is {action}"))
+        DashboardActionPlan::Busy(format!("{label} {id} is {action}"))
     })
 }
 

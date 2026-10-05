@@ -63,6 +63,7 @@ fn the_cli_card_shows_the_shared_title_and_target() {
             hide_offline_agents: false,
             hidden_offline_agent_count: 0,
             scroll_offset: 0,
+            footer_progress: None,
             footer_note: None,
             footer_alerts: &[],
             details_sidebar_visible: false,

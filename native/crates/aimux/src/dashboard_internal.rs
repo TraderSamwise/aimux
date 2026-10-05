@@ -241,6 +241,8 @@ struct DashboardSnapshotRenderContext<'a> {
     scroll_offset: usize,
     runtime_guard: Option<&'a DashboardRuntimeGuardStatus>,
     refresh_error: Option<&'a str>,
+    /// Why the project event stream is down, while it is.
+    stream_error: Option<&'a str>,
     pending_now_ms: i64,
 }
 
@@ -323,6 +325,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     // narrow async seam and feeds this loop through a bounded channel.
     let mut event_stream = None;
     let mut event_stream_retry_at = None;
+    // Why the event stream is down, while it is. Derived rather than stored on
+    // the controller, so the reconnect that makes it false also removes it.
+    let mut event_stream_down: Option<String> = None;
     let mut refresh_state = DashboardProjectRefreshState::default();
     let mut visibility_state = DashboardTuiVisibilityState {
         started_in_dashboard: !options.once && options.desktop_state_file.is_none(),
@@ -443,6 +448,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         if drain_dashboard_event_stream(
             &mut event_stream,
             &mut event_stream_retry_at,
+            &mut event_stream_down,
             &mut refresh_state,
             controller
                 .as_ref()
@@ -474,6 +480,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         reconcile_dashboard_event_stream(
             &mut event_stream,
             &mut event_stream_retry_at,
+            &mut event_stream_down,
             latest_endpoint.as_ref(),
             options.once || options.desktop_state_file.is_some(),
         );
@@ -598,11 +605,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     controller.set_note("Already at edge".into());
                                 }
                                 Err(error) => {
-                                    controller.set_note(error.to_string());
+                                    controller.footer_alert =
+                                        Some(DashboardFailureAlert::local(error.to_string()));
                                 }
                             }
                         } else {
-                            controller.set_note("Dashboard ordering unavailable".into());
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard ordering unavailable",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -617,13 +627,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     controller.worktree_cache_cleanup_confirm = Some(result);
                                 }
                                 Err(error) => {
-                                    controller.set_note(error.to_string());
+                                    controller.footer_alert =
+                                        Some(DashboardFailureAlert::local(error.to_string()));
                                 }
                             }
                         } else {
-                            controller.set_note(
-                                "Dashboard action requires a project-service endpoint".into(),
-                            );
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard action requires a project-service endpoint",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -638,13 +649,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     controller.set_note(worktree_cache_cleanup_summary(&result));
                                 }
                                 Err(error) => {
-                                    controller.set_note(error.to_string());
+                                    controller.footer_alert =
+                                        Some(DashboardFailureAlert::local(error.to_string()));
                                 }
                             }
                         } else {
-                            controller.set_note(
-                                "Dashboard action requires a project-service endpoint".into(),
-                            );
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard action requires a project-service endpoint",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -660,15 +672,15 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                     controller.set_orchestration_route_options(mode, options);
                                 }
                                 Err(error) => {
-                                    controller.set_note(format!(
-                                        "Failed to load orchestration targets: {error}"
+                                    controller.footer_alert = Some(DashboardFailureAlert::local(
+                                        format!("Failed to load orchestration targets: {error}"),
                                     ));
                                 }
                             }
                         } else {
-                            controller.set_note(
-                                "Dashboard action requires a project-service endpoint".into(),
-                            );
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard action requires a project-service endpoint",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -679,12 +691,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             if let Err(error) =
                                 open_relevant_thread_for_session(endpoint, controller, &session_id)
                             {
-                                controller.set_note(error.to_string());
+                                controller.footer_alert =
+                                    Some(DashboardFailureAlert::local(error.to_string()));
                             }
                         } else {
-                            controller.set_note(
-                                "Dashboard action requires a project-service endpoint".into(),
-                            );
+                            controller.footer_alert = Some(DashboardFailureAlert::local(
+                                "Dashboard action requires a project-service endpoint",
+                            ));
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -706,7 +719,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         match execute_overseer_watch_command(&options, controller, &request) {
                             Ok(()) => {}
                             Err(error) => {
-                                controller.set_note(format!("Overseer update failed: {error}"));
+                                controller.footer_alert = Some(DashboardFailureAlert::local(
+                                    format!("Overseer update failed: {error}"),
+                                ));
                             }
                         }
                         render_now = true;
@@ -806,6 +821,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         scroll_offset,
                         runtime_guard: Some(&runtime_guard),
                         refresh_error: cached_refresh_error.as_deref(),
+                        stream_error: event_stream_down.as_deref(),
                         pending_now_ms: pending_action_now_ms(clock_start),
                     },
                 );
@@ -989,6 +1005,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 scroll_offset,
                                 runtime_guard: Some(&runtime_guard),
                                 refresh_error: None,
+                                stream_error: event_stream_down.as_deref(),
                                 pending_now_ms: pending_action_now_ms(clock_start),
                             },
                         );
@@ -1048,6 +1065,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         reconcile_dashboard_event_stream(
                             &mut event_stream,
                             &mut event_stream_retry_at,
+                            &mut event_stream_down,
                             latest_endpoint.as_ref(),
                             options.once || options.desktop_state_file.is_some(),
                         );
@@ -1084,6 +1102,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 scroll_offset,
                                 runtime_guard: Some(&runtime_guard),
                                 refresh_error: Some(&footer_message),
+                                stream_error: event_stream_down.as_deref(),
                                 pending_now_ms: pending_action_now_ms(clock_start),
                             },
                         );
@@ -1117,6 +1136,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         reconcile_dashboard_event_stream(
                             &mut event_stream,
                             &mut event_stream_retry_at,
+                            &mut event_stream_down,
                             latest_endpoint.as_ref(),
                             options.once || options.desktop_state_file.is_some(),
                         );
@@ -1330,6 +1350,7 @@ fn suspend_dashboard_event_stream(
 fn drain_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
+    down: &mut Option<String>,
     refresh_state: &mut DashboardProjectRefreshState,
     active_screen: Option<&str>,
     mut controller: Option<&mut DashboardController>,
@@ -1363,11 +1384,8 @@ fn drain_dashboard_event_stream(
             }
         }
     }
-    if let Some(error) = stream_error
-        && let Some(controller) = controller
-    {
-        controller.set_note(error);
-        render = true;
+    if let Some(error) = stream_error {
+        render |= raise_stream_down(down, &error);
     }
     if stream_closed {
         *event_stream = None;
@@ -1376,15 +1394,33 @@ fn drain_dashboard_event_stream(
     render
 }
 
+/// Report that the event stream is down, and say whether that is news.
+///
+/// Derived rather than stored on the controller, and so not dismissible: the
+/// stream retries every few seconds, and an alert the user can clear would come
+/// straight back, while a stored one would outlive the reconnect that makes it
+/// false. `refresh_error` is the same shape for the same reason.
+fn raise_stream_down(down: &mut Option<String>, error: &str) -> bool {
+    if down.as_deref() == Some(error) {
+        return false;
+    }
+    *down = Some(error.to_owned());
+    true
+}
+
 fn reconcile_dashboard_event_stream(
     event_stream: &mut Option<DashboardEventStreamHandle>,
     retry_at: &mut Option<Instant>,
+    down: &mut Option<String>,
     endpoint: Option<&ProjectServiceEndpoint>,
     disabled: bool,
 ) {
     if disabled {
         *event_stream = None;
         *retry_at = None;
+        // There is no stream to be down, so saying it is down would be a
+        // standing untruth on a surface nobody can clear.
+        *down = None;
         return;
     }
     let Some(endpoint) = endpoint else {
@@ -1403,6 +1439,8 @@ fn reconcile_dashboard_event_stream(
     }
     *event_stream = Some(spawn_dashboard_project_event_stream(endpoint.clone()));
     *retry_at = None;
+    // The stream is back, so the report that it was down stops being true.
+    *down = None;
 }
 
 fn elapsed_millis(start: Instant) -> i64 {
@@ -1916,7 +1954,9 @@ fn execute_overseer_watch_command(
                 return Ok(());
             }
         }
-        controller.set_note("Overseer updated, but could not open overseer".into());
+        controller.footer_alert = Some(DashboardFailureAlert::local(
+            "Overseer updated, but could not open overseer",
+        ));
         return Ok(());
     }
     controller.set_note(format!("{} added to overseer loop", request.target_label));
@@ -1985,11 +2025,12 @@ fn render_dashboard_snapshot(
     // never shown, and `X` discarded it unseen.
     let footer_alerts: Vec<DashboardFooterAlert<'_>> = context
         .refresh_error
+        .into_iter()
+        .chain(context.stream_error)
         .map(|message| DashboardFooterAlert {
             message,
             dismissible: false,
         })
-        .into_iter()
         .chain(
             controller
                 .footer_alert
@@ -2016,6 +2057,7 @@ fn render_dashboard_snapshot(
         hide_offline_agents: controller.hide_offline_agents,
         hidden_offline_agent_count: context.hidden_offline_agent_count,
         scroll_offset: context.scroll_offset,
+        footer_progress: controller.footer_progress_view(),
         footer_note: controller.footer_note_view(),
         footer_alerts: &footer_alerts,
         details_sidebar_visible: controller.details_sidebar_visible,
@@ -2315,6 +2357,7 @@ fn render_dashboard_subscreen_snapshot(
         cols: viewport.cols,
         rows: viewport.rows,
         scroll_offset,
+        footer_progress: controller.footer_progress_view(),
         footer_note: controller.footer_note_view(),
         footer_alerts: &footer_alerts,
         details_sidebar_visible: controller.details_sidebar_visible,
@@ -2846,7 +2889,7 @@ fn flush_deferred_dashboard_requests(
                 // take down a progress note -- and a progress note outlives
                 // keypresses, so it would sit there claiming work that is not
                 // happening.
-                controller.clear_progress();
+                controller.abandon_progress();
             }
             if let Some((target, id, token)) = pending.as_ref() {
                 pending_actions.clear_if_token(*target, id, *token);
@@ -2899,7 +2942,7 @@ fn drain_dashboard_request_outcomes(
         changed = true;
         if let Some(message) = outcome.failure {
             if let Some(controller) = controller.as_deref_mut() {
-                controller.clear_progress();
+                controller.clear_progress_for(outcome.action.as_ref());
                 // A failed action is an alert, not a note: it outlives the next
                 // keypress and is dismissed deliberately. Tagged with the action
                 // it was about, so a later success for that same thing can take
@@ -2927,10 +2970,11 @@ fn drain_dashboard_request_outcomes(
                 controller.footer_alert = None;
             }
             if let Some(controller) = controller.as_deref_mut() {
-                // Unconditionally, not only when there is a notice to replace
-                // it with: a 200 whose body is not an outcome leaves `notice`
-                // empty, and the progress note would outlive the work.
-                controller.clear_progress();
+                // Whether or not there is a notice to replace it with: a 200
+                // whose body is not an outcome leaves `notice` empty, and the
+                // progress note would outlive the work. Keyed on the action, so
+                // an unrelated faster request cannot end this one's report.
+                controller.clear_progress_for(outcome.action.as_ref());
                 if let Some(message) = outcome.notice {
                     controller.set_note(message);
                 }
@@ -2955,6 +2999,13 @@ mod tests {
         DashboardActionIdentity {
             path: crate::project_api_contract::routes::agents::STOP,
             body: serde_json::json!({ "sessionId": session_id }),
+        }
+    }
+
+    fn restore_previous() -> DashboardActionIdentity {
+        DashboardActionIdentity {
+            path: crate::project_api_contract::routes::agents::RESTORE_PREVIOUS,
+            body: serde_json::json!({}),
         }
     }
 
@@ -3011,7 +3062,7 @@ mod tests {
     fn a_request_that_never_left_does_not_leave_its_progress_note_behind() {
         let snapshot = test_snapshot();
         let mut controller = DashboardController::new(&snapshot);
-        controller.set_progress("Restoring 36 agents".into());
+        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
 
         let (tx, _rx) = mpsc::channel::<DashboardRequestOutcome>();
         let mut deferred: Vec<DeferredDashboardRequest> = vec![(
@@ -3032,11 +3083,53 @@ mod tests {
             &tx,
         );
 
-        assert_eq!(controller.footer_note_message(), None);
+        assert_eq!(controller.footer_progress_message(), None);
         assert_eq!(
             controller.footer_alert_message(),
             Some("Dashboard action requires a project-service endpoint")
         );
+    }
+
+    /// A dead event stream retries every few seconds. Stored as a dismissible
+    /// alert it came straight back faster than the user could clear it, and it
+    /// outlived the reconnect that made it false -- so it is derived, and the
+    /// reconnect removes it.
+    #[test]
+    fn the_stream_being_down_is_said_once_and_unsaid_by_the_reconnect() {
+        let mut down: Option<String> = None;
+        let mut event_stream = None;
+        let mut retry_at = None;
+
+        assert!(
+            raise_stream_down(&mut down, "project service closed the stream"),
+            "the first report is news"
+        );
+        for _ in 0..3 {
+            assert!(
+                !raise_stream_down(&mut down, "project service closed the stream"),
+                "a retry that fails the same way is not news again"
+            );
+        }
+        assert!(
+            raise_stream_down(&mut down, "connection refused"),
+            "failing a different way is news"
+        );
+        down = Some("project service closed the stream".to_owned());
+        assert_eq!(down.as_deref(), Some("project service closed the stream"));
+
+        let endpoint = ProjectServiceEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: 1,
+        };
+        reconcile_dashboard_event_stream(
+            &mut event_stream,
+            &mut retry_at,
+            &mut down,
+            Some(&endpoint),
+            false,
+        );
+
+        assert_eq!(down, None, "the stream is back, so it is no longer down");
     }
 
     /// A progress note outlives keypresses, so the settling outcome is the only
@@ -3047,7 +3140,32 @@ mod tests {
     fn a_settled_request_takes_its_progress_note_down_even_with_nothing_to_say() {
         let snapshot = test_snapshot();
         let mut controller = DashboardController::new(&snapshot);
-        controller.set_progress("Restoring 36 agents".into());
+        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
+
+        let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(restore_previous()),
+            failure: None,
+            notice: None,
+        })
+        .expect("queue outcome");
+        drop(tx);
+
+        let mut pending_actions = DashboardPendingActions::default();
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+
+        assert_eq!(controller.footer_progress_message(), None);
+    }
+
+    /// And the other direction, which is the whole reason the note carries the
+    /// action: a faster unrelated request settling first used to end the
+    /// restore's report while the restore was still running.
+    #[test]
+    fn another_action_settling_first_does_not_end_this_one_s_report() {
+        let snapshot = test_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
@@ -3062,7 +3180,10 @@ mod tests {
         let mut pending_actions = DashboardPendingActions::default();
         drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
 
-        assert_eq!(controller.footer_note_message(), None);
+        assert_eq!(
+            controller.footer_progress_message(),
+            Some("Restoring 36 agents")
+        );
     }
 
     /// And a failed one, where the alert is what the user should be reading.
@@ -3070,12 +3191,12 @@ mod tests {
     fn a_failed_request_takes_its_progress_note_down_too() {
         let snapshot = test_snapshot();
         let mut controller = DashboardController::new(&snapshot);
-        controller.set_progress("Restoring 36 agents".into());
+        controller.set_progress("Restoring 36 agents".into(), Some(restore_previous()));
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
             pending: None,
-            action: Some(stop_agent("claude-a")),
+            action: Some(restore_previous()),
             failure: Some("project service refused".into()),
             notice: None,
         })
@@ -3085,7 +3206,7 @@ mod tests {
         let mut pending_actions = DashboardPendingActions::default();
         drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
 
-        assert_eq!(controller.footer_note_message(), None);
+        assert_eq!(controller.footer_progress_message(), None);
         assert_eq!(
             controller.footer_alert_message(),
             Some("project service refused")
@@ -4093,6 +4214,7 @@ mod tests {
             scroll_offset: 0,
             runtime_guard: None,
             refresh_error: None,
+            stream_error: None,
             pending_now_ms: 0,
         };
         let mut pending_actions = DashboardPendingActions::new();

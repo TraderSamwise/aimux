@@ -68,6 +68,7 @@ fn run_case(case: &Value) -> Value {
                 .unwrap_or(false),
             hidden_offline_agent_count: 0,
             scroll_offset: 0,
+            footer_progress: None,
             footer_note: None,
             footer_alerts: &[],
             details_sidebar_visible: false,

@@ -91,7 +91,10 @@ pub enum DashboardNavigationOutcome<'a> {
     StepIn,
     Back,
     EntrySelected(DashboardEntryRef<'a>),
+    /// Refused, and it will stay refused until something changes.
     Blocked(String),
+    /// Refused only because work is already in flight on this worktree.
+    Busy(String),
     Ignored,
 }
 
@@ -274,7 +277,7 @@ impl DashboardNavigationState {
             return DashboardNavigationOutcome::StepIn;
         }
         if group.pending_action == Some("creating") || group.pending {
-            return DashboardNavigationOutcome::Blocked(format!(
+            return DashboardNavigationOutcome::Busy(format!(
                 "Worktree {} is still creating",
                 group.name
             ));
@@ -288,7 +291,7 @@ impl DashboardNavigationState {
             } else {
                 "removing"
             };
-            return DashboardNavigationOutcome::Blocked(format!(
+            return DashboardNavigationOutcome::Busy(format!(
                 "Worktree {} is {action}",
                 group.name
             ));

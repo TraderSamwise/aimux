@@ -57,6 +57,8 @@ pub struct DashboardRenderInput<'a> {
     pub hide_offline_agents: bool,
     pub hidden_offline_agent_count: usize,
     pub scroll_offset: usize,
+    /// Work under way, which outlives keypresses until it settles.
+    pub footer_progress: Option<DashboardFooterNoteView<'a>>,
     pub footer_note: Option<DashboardFooterNoteView<'a>>,
     /// Failures to put in front of the user, each its own filled bar above the
     /// hints rather than replacing them.
@@ -224,13 +226,13 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
             input.cols.saturating_sub(2),
         ));
     }
-    if let Some(note) = input.footer_note.as_ref() {
-        // Its own line above the hints, the way an alert gets one. Replacing
-        // the hint row was survivable while a note died on the next keypress;
-        // a progress note outlives one, and would hide every key for as long as
-        // the operation ran.
+    // Each on its own line above the hints, the way an alert gets one.
+    // Replacing the hint row was survivable while a note died on the next
+    // keypress; progress outlives one, and would hide every key for as long as
+    // the operation ran.
+    for line in input.footer_progress.iter().chain(input.footer_note.iter()) {
         footer_lines.push(truncate_ansi(
-            &dashboard_note_line(note),
+            &dashboard_note_line(line),
             input.cols.saturating_sub(2),
         ));
     }
@@ -2657,6 +2659,8 @@ pub struct DashboardSubscreenRenderInput<'a> {
     pub cols: usize,
     pub rows: usize,
     pub scroll_offset: usize,
+    /// Work under way, which outlives keypresses until it settles.
+    pub footer_progress: Option<DashboardFooterNoteView<'a>>,
     pub footer_note: Option<DashboardFooterNoteView<'a>>,
     pub footer_alerts: &'a [DashboardFooterAlert<'a>],
     pub details_sidebar_visible: bool,
@@ -2706,8 +2710,8 @@ pub fn render_dashboard_subscreen_frame(
     for alert in input.footer_alerts {
         footer.push(dashboard_alert_line(alert));
     }
-    if let Some(note) = input.footer_note.as_ref() {
-        footer.push(dashboard_note_line(note));
+    for line in input.footer_progress.iter().chain(input.footer_note.iter()) {
+        footer.push(dashboard_note_line(line));
     }
     let viewport_height = input
         .rows

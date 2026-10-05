@@ -125,6 +125,9 @@ fn clear_operation_failures_posts_global_clear_request() {
     );
 }
 
+/// Busy, not blocked: the session is mid-stop, which is a reason to wait and
+/// not a reason the action will keep failing. The two were one variant, so a
+/// row the dashboard was working on reported itself as a refusal.
 #[test]
 fn pending_entries_block_actions() {
     let snapshot = snapshot();
@@ -137,7 +140,7 @@ fn pending_entries_block_actions() {
             Some(DashboardEntryRef::Session(&session)),
             DashboardActionKind::Enter
         ),
-        DashboardActionPlan::Blocked("Session claude-0 is stopping".into())
+        DashboardActionPlan::Busy("Session claude-0 is stopping".into())
     );
 }
 

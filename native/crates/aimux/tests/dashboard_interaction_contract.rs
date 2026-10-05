@@ -93,7 +93,13 @@ fn run_case(case: &Value) -> Value {
         "focusedWorktreePath": controller.navigation.focused_worktree_path(&snapshot),
         "sessionIndex": controller.navigation.item_index,
         "quickJumpDigits": controller.navigation.quick_jump_digits,
-        "footerFlash": controller.footer_note_message(),
+        // The one line the footer shows, whichever channel is carrying it.
+        // Node had a single slot; this build splits it into work under way, a
+        // spent note, and a failure that outlives the key.
+        "footerFlash": controller
+            .footer_progress_message()
+            .or_else(|| controller.footer_note_message())
+            .or_else(|| controller.footer_alert_message()),
         "renders": renders,
         "requests": requests,
     })

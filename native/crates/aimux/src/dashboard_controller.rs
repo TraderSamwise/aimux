@@ -28,9 +28,11 @@ use serde_json::{Map, Value, json};
 pub struct DashboardController {
     pub screen: DashboardScreen,
     pub navigation: DashboardNavigationState,
-    /// A transient line: work under way, or a note that is spent on the next
-    /// keypress. Never a failure -- see `footer_alert`.
+    /// A transient line, spent on the next keypress. Never a failure -- see
+    /// `footer_alert` -- and never dispatched work -- see `footer_progress`.
     pub footer_note: Option<DashboardFooterNote>,
+    /// Work under way, which outlives keypresses until its action settles.
+    pub footer_progress: Option<DashboardProgressNote>,
     /// A failure, as opposed to a passing note.
     ///
     /// Separate from `footer_note` because the two want opposite
@@ -409,11 +411,32 @@ impl DashboardFailureAlert {
     }
 }
 
-/// A transient footer line and what it is claiming.
+/// A transient footer line and what it is claiming. Spent on the next key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardFooterNote {
     pub message: String,
     pub kind: DashboardNoteKind,
+}
+
+/// Work this dashboard dispatched and is waiting on.
+///
+/// Its own slot rather than a kind of note, because the two have nothing in
+/// common but the row they sit near: a note is spent on the next key, and
+/// sharing one slot meant toggling offline agents mid-restore threw the restore
+/// away. `settled_by` is the action that takes it down, for the same reason
+/// `DashboardFailureAlert` carries one -- clearing on any settled outcome let
+/// an unrelated faster request end the restore's report early.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardProgressNote {
+    pub message: String,
+    pub settled_by: Option<DashboardActionIdentity>,
+}
+
+impl DashboardProgressNote {
+    /// Whether a settled action is the end of this work.
+    pub fn settled_by(&self, settled: &DashboardActionIdentity) -> bool {
+        self.settled_by.as_ref() == Some(settled)
+    }
 }
 
 impl DashboardController {
@@ -446,19 +469,61 @@ impl DashboardController {
         });
     }
 
-    /// Work is under way. Survives keypresses; cleared when the work settles.
-    pub fn set_progress(&mut self, message: String) {
+    /// Something the user asked for is waiting on work already in flight.
+    ///
+    /// It reads as progress because that is what it is reporting, but it is
+    /// spent on the next key like any other note: this dashboard dispatched
+    /// nothing, so no outcome will ever arrive to take it down.
+    pub fn set_busy(&mut self, message: String) {
         self.footer_note = Some(DashboardFooterNote {
             message,
             kind: DashboardNoteKind::Progress,
         });
     }
 
-    /// The work a progress note was reporting has settled, either way.
-    pub fn clear_progress(&mut self) {
-        if self.footer_note.as_ref().map(|note| note.kind) == Some(DashboardNoteKind::Progress) {
-            self.footer_note = None;
+    /// Work this dashboard just dispatched. Survives keypresses until the
+    /// action named here settles.
+    pub fn set_progress(&mut self, message: String, settled_by: Option<DashboardActionIdentity>) {
+        self.footer_progress = Some(DashboardProgressNote {
+            message,
+            settled_by,
+        });
+    }
+
+    /// A dispatched action has settled, either way.
+    pub fn clear_progress_for(&mut self, settled: Option<&DashboardActionIdentity>) {
+        let takes_it_down = match (self.footer_progress.as_ref(), settled) {
+            (None, _) => false,
+            // Nothing can answer a progress note with no action behind it, so
+            // the first settled outcome is as good an end as any.
+            (Some(progress), _) if progress.settled_by.is_none() => true,
+            (Some(progress), Some(settled)) => progress.settled_by(settled),
+            (Some(_), None) => false,
+        };
+        if takes_it_down {
+            self.footer_progress = None;
         }
+    }
+
+    /// Nothing is going to settle this one, so say so rather than leaving it
+    /// claiming work that may already be over.
+    pub fn abandon_progress(&mut self) {
+        self.footer_progress = None;
+    }
+
+    pub fn footer_progress_message(&self) -> Option<&str> {
+        self.footer_progress
+            .as_ref()
+            .map(|progress| progress.message.as_str())
+    }
+
+    pub fn footer_progress_view(&self) -> Option<DashboardFooterNoteView<'_>> {
+        self.footer_progress
+            .as_ref()
+            .map(|progress| DashboardFooterNoteView {
+                message: progress.message.as_str(),
+                kind: DashboardNoteKind::Progress,
+            })
     }
 
     pub fn new(snapshot: &DesktopStateSnapshot) -> Self {
@@ -466,6 +531,7 @@ impl DashboardController {
             screen: DashboardScreen::Dashboard,
             navigation: DashboardNavigationState::new(snapshot),
             footer_note: None,
+            footer_progress: None,
             footer_alert: None,
             tool_picker: None,
             service_input: None,
@@ -511,12 +577,10 @@ impl DashboardController {
         key: DashboardKey,
     ) -> DashboardControllerEffect {
         self.navigation.clamp(snapshot);
-        // A note is spent the moment the next key arrives. Progress is not: the
-        // operation it reports is still running, and the keypress that erased
-        // it was how a 12s fleet restore came to look like nothing happened.
-        if self.footer_note.as_ref().map(|note| note.kind) == Some(DashboardNoteKind::Note) {
-            self.footer_note = None;
-        }
+        // A note is spent the moment the next key arrives. Dispatched work is
+        // not: it is still running, and the keypress that erased it was how a
+        // 12s fleet restore came to look like nothing happened.
+        self.footer_note = None;
         if self.launch_options.is_some() {
             return self.handle_launch_options_key(snapshot, key);
         }
@@ -675,8 +739,12 @@ impl DashboardController {
                         DashboardActionPlan::Request(request) => {
                             DashboardControllerEffect::Request(request)
                         }
+                        DashboardActionPlan::Busy(message) => {
+                            self.set_busy(message);
+                            DashboardControllerEffect::Render
+                        }
                         DashboardActionPlan::Blocked(message) => {
-                            self.set_note(message);
+                            self.footer_alert = Some(message.into());
                             DashboardControllerEffect::Render
                         }
                         DashboardActionPlan::Ignored => DashboardControllerEffect::Render,
@@ -1073,8 +1141,12 @@ impl DashboardController {
                     DashboardActionPlan::Request(request) => {
                         DashboardControllerEffect::Request(request)
                     }
+                    DashboardActionPlan::Busy(message) => {
+                        self.set_busy(message);
+                        DashboardControllerEffect::Render
+                    }
                     DashboardActionPlan::Blocked(message) => {
-                        self.set_note(message);
+                        self.footer_alert = Some(message.into());
                         DashboardControllerEffect::Render
                     }
                     DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
@@ -1091,8 +1163,12 @@ impl DashboardController {
                     DashboardActionPlan::Request(request) => {
                         DashboardControllerEffect::Request(request)
                     }
+                    DashboardActionPlan::Busy(message) => {
+                        self.set_busy(message);
+                        DashboardControllerEffect::Render
+                    }
                     DashboardActionPlan::Blocked(message) => {
-                        self.set_note(message);
+                        self.footer_alert = Some(message.into());
                         DashboardControllerEffect::Render
                     }
                     DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
@@ -1124,8 +1200,12 @@ impl DashboardController {
                     DashboardActionPlan::Request(request) => {
                         DashboardControllerEffect::Request(request)
                     }
+                    DashboardActionPlan::Busy(message) => {
+                        self.set_busy(message);
+                        DashboardControllerEffect::Render
+                    }
                     DashboardActionPlan::Blocked(message) => {
-                        self.set_note(message);
+                        self.footer_alert = Some(message.into());
                         DashboardControllerEffect::Render
                     }
                     DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
@@ -1145,8 +1225,12 @@ impl DashboardController {
                     DashboardActionPlan::Request(request) => {
                         DashboardControllerEffect::Request(request)
                     }
+                    DashboardActionPlan::Busy(message) => {
+                        self.set_busy(message);
+                        DashboardControllerEffect::Render
+                    }
                     DashboardActionPlan::Blocked(message) => {
-                        self.set_note(message);
+                        self.footer_alert = Some(message.into());
                         DashboardControllerEffect::Render
                     }
                     DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
@@ -1649,17 +1733,24 @@ impl DashboardController {
             // Launching the fleet takes seconds per handful of agents, and the
             // reply lands long after the keystroke. Without this the dashboard
             // is silent for the whole restore and looks like it ignored Enter.
-            self.set_progress(crate::agent_restore_outcome::restore_started_message(
-                snapshot
-                    .agent_restore_offer
-                    .as_ref()
-                    .map_or(0, |offer| offer.session_ids.len()),
-            ));
-            return DashboardControllerEffect::Request(DashboardActionRequest {
+            let request = DashboardActionRequest {
                 method: "POST",
                 path: routes::agents::RESTORE_PREVIOUS,
                 body: json!({}),
-            });
+            };
+            self.set_progress(
+                crate::agent_restore_outcome::restore_started_message(
+                    snapshot
+                        .agent_restore_offer
+                        .as_ref()
+                        .map_or(0, |offer| offer.session_ids.len()),
+                ),
+                Some(DashboardActionIdentity {
+                    path: request.path,
+                    body: request.body.clone(),
+                }),
+            );
+            return DashboardControllerEffect::Request(request);
         }
         if matches!(key, DashboardKey::Back | DashboardKey::Printable('n')) {
             self.agent_restore_prompt_dismissed = true;
@@ -1775,8 +1866,12 @@ impl DashboardController {
                 DashboardActionPlan::Request(request) => {
                     DashboardControllerEffect::Request(request)
                 }
+                DashboardActionPlan::Busy(message) => {
+                    self.set_busy(message);
+                    DashboardControllerEffect::Render
+                }
                 DashboardActionPlan::Blocked(message) => {
-                    self.set_note(message);
+                    self.footer_alert = Some(message.into());
                     DashboardControllerEffect::Render
                 }
                 DashboardActionPlan::Ignored => DashboardControllerEffect::Render,
@@ -1798,8 +1893,12 @@ impl DashboardController {
             DashboardActionKind::Stop,
         ) {
             DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Busy(message) => {
+                self.set_busy(message);
+                DashboardControllerEffect::Render
+            }
             DashboardActionPlan::Blocked(message) => {
-                self.set_note(message);
+                self.footer_alert = Some(message.into());
                 DashboardControllerEffect::Render
             }
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
@@ -2150,8 +2249,12 @@ impl DashboardController {
                 DashboardActionPlan::Request(request) => {
                     DashboardControllerEffect::Request(request)
                 }
+                DashboardActionPlan::Busy(message) => {
+                    self.set_busy(message);
+                    DashboardControllerEffect::Render
+                }
                 DashboardActionPlan::Blocked(message) => {
-                    self.set_note(message);
+                    self.footer_alert = Some(message.into());
                     DashboardControllerEffect::Render
                 }
                 DashboardActionPlan::Ignored => DashboardControllerEffect::Render,
@@ -2174,8 +2277,12 @@ impl DashboardController {
             DashboardActionKind::Stop,
         ) {
             DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Busy(message) => {
+                self.set_busy(message);
+                DashboardControllerEffect::Render
+            }
             DashboardActionPlan::Blocked(message) => {
-                self.set_note(message);
+                self.footer_alert = Some(message.into());
                 DashboardControllerEffect::Render
             }
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
@@ -2281,8 +2388,12 @@ impl DashboardController {
             DashboardActionKind::Enter,
         ) {
             DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Busy(message) => {
+                self.set_busy(message);
+                DashboardControllerEffect::Render
+            }
             DashboardActionPlan::Blocked(message) => {
-                self.set_note(message);
+                self.footer_alert = Some(message.into());
                 DashboardControllerEffect::Render
             }
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
@@ -2588,10 +2699,10 @@ impl DashboardController {
             return DashboardControllerEffect::Render;
         };
         if !is_live_session(session) {
-            self.set_note(format!(
+            self.footer_alert = Some(DashboardFailureAlert::local(format!(
                 "{} is offline. Resume it first, then fork it.",
                 session_label(session)
-            ));
+            )));
             return DashboardControllerEffect::Render;
         }
         DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Fork {
@@ -2608,10 +2719,10 @@ impl DashboardController {
             return DashboardControllerEffect::Render;
         };
         if !is_live_session(session) {
-            self.set_note(format!(
+            self.footer_alert = Some(DashboardFailureAlert::local(format!(
                 "{} is offline. Resume it first, then switch tools.",
                 session_label(session)
-            ));
+            )));
             return DashboardControllerEffect::Render;
         }
         DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::SwitchTool {
@@ -2664,8 +2775,12 @@ impl DashboardController {
         if self.navigation.level == DashboardNavLevel::Worktrees {
             return match self.navigation.step_in(snapshot) {
                 DashboardNavigationOutcome::StepIn => DashboardControllerEffect::Render,
+                DashboardNavigationOutcome::Busy(message) => {
+                    self.set_busy(message);
+                    DashboardControllerEffect::Render
+                }
                 DashboardNavigationOutcome::Blocked(message) => {
-                    self.set_note(message);
+                    self.footer_alert = Some(message.into());
                     DashboardControllerEffect::Render
                 }
                 _ => DashboardControllerEffect::Ignored,
@@ -2796,8 +2911,12 @@ impl DashboardController {
         }
         match plan_dashboard_action(self.navigation.selected_entry(snapshot), action) {
             DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Busy(message) => {
+                self.set_busy(message);
+                DashboardControllerEffect::Render
+            }
             DashboardActionPlan::Blocked(message) => {
-                self.set_note(message);
+                self.footer_alert = Some(message.into());
                 DashboardControllerEffect::Render
             }
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
@@ -2857,18 +2976,12 @@ impl DashboardController {
             } else {
                 "removing"
             };
-            self.footer_alert = Some(DashboardFailureAlert::local(format!(
-                "Worktree {} is {action}",
-                group.name
-            )));
+            self.set_busy(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
         if group.pending {
             let action = group.pending_action.as_deref().unwrap_or("pending");
-            self.footer_alert = Some(DashboardFailureAlert::local(format!(
-                "Worktree {} is {action}",
-                group.name
-            )));
+            self.set_busy(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
         if let Some(failure) = group.operation_failure.as_ref() {
@@ -2930,9 +3043,14 @@ impl DashboardController {
             // does not even repaint, which is the silence this whole change is
             // about. The assertion fails the suite rather than the user if that
             // ever becomes reachable.
+            DashboardActionPlan::Busy(message) => {
+                debug_assert!(false, "clearing failures became blockable: {message}");
+                self.set_busy(message);
+                DashboardControllerEffect::Render
+            }
             DashboardActionPlan::Blocked(message) => {
                 debug_assert!(false, "clearing failures became blockable: {message}");
-                self.set_note(message);
+                self.footer_alert = Some(message.into());
                 DashboardControllerEffect::Render
             }
             DashboardActionPlan::Ignored => {
