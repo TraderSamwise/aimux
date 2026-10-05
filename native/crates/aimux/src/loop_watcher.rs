@@ -2136,7 +2136,11 @@ fn instruction_cadence_signature(candidate: &Value) -> Option<String> {
 ///
 /// This is the same trap PR 396's own review caught in the pause keys: a format
 /// change is a migration whether or not it is called one.
-const PAUSED_SUMMARY_SIGNATURE_PREFIX: &str = "paused:v2:";
+/// The unit separator is deliberate: it is the field separator the signature
+/// itself uses, so no session id can contain one. A plain `paused:v2:` prefix
+/// would be forgeable by an id that happened to start `v2:`, which is
+/// implausible but free to rule out.
+const PAUSED_SUMMARY_SIGNATURE_PREFIX: &str = "paused:v2\u{1f}";
 
 fn paused_summary_signature(candidates: &[Value]) -> String {
     format!(

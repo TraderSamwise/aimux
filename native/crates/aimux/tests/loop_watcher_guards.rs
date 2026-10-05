@@ -2385,9 +2385,23 @@ fn a_change_to_the_paused_set_still_reaches_the_overseer() {
             loop_pause_key_from_loop_metadata(&meta["loop"]).expect("active loop pause key");
         watcher.pause_loop_alerts(id, pause_key, NOW, LoopAlertPauseProvenance::default());
     }
+    // The same guard test one carries: without it, a cadence that stopped
+    // firing here would leave ticks at eleven on the final scan, which passes
+    // via `due_by_cadence` and proves nothing about the signature.
+    // Counting only the paused summary: `agent-c` is a live stopped candidate
+    // during the warm-up, so it draws briefings of its own.
+    let mut cadence_summaries = 0;
     for tick in 0..10 {
-        watcher.scan(&input, NOW + tick, &mut ok);
+        cadence_summaries += watcher
+            .scan(&input, NOW + tick, &mut ok)
+            .iter()
+            .filter(|send| send.kind == LoopSendKind::PausedSummary)
+            .count();
     }
+    assert_eq!(
+        cadence_summaries, 1,
+        "the cadence summary has to have gone out, or there is no signature to change"
+    );
 
     // The hold MOVES rather than shrinking: b comes off, c goes on. Same number
     // of paused agents, different agents -- which is the case that tells whether
