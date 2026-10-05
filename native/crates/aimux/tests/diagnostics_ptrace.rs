@@ -193,16 +193,24 @@ fn logging_is_configured_before_either_entry_point_is_called() {
             "run_project_service_internal(",
         ),
     ] {
-        let configured = source
-            .find(configure)
-            .unwrap_or_else(|| panic!("{configure} is still called"));
         let called = source
             .find(run)
             .unwrap_or_else(|| panic!("{run} is still called"));
+        // The configure call belonging to THIS arm: the last one before the
+        // run, not the first in the file. `configure_process_logging` is also
+        // called on the generic CLI path far above, so searching forwards found
+        // that one and the check stayed green with this arm's call deleted --
+        // the only regression it exists to catch.
+        let configured = source[..called]
+            .rfind(configure)
+            .unwrap_or_else(|| panic!("{configure} is still called before {run}"));
+        // And close enough to be the same arm, not many lines of unrelated
+        // matching away.
+        let between = source[configured..called].lines().count();
         assert!(
-            configured < called,
-            "{configure} has to come before {run}, or the opt-in's answer is \
-             dropped on the floor"
+            between < 12,
+            "{configure} is {between} lines above {run}; anchor this on the \
+             right call"
         );
     }
 }

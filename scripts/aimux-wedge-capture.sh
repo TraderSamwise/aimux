@@ -160,15 +160,16 @@ for pid in "${pids[@]}"; do
       rc=1
       continue
       ;;
-    0)
-      # `kill -0 0` is a permission probe against the whole process group, so a
-      # literal zero would otherwise pass the liveness check below and then
-      # capture nothing.
-      echo "not a pid: 0" >&2
-      rc=1
-      continue
-      ;;
   esac
+  # Numerically, not as the literal `0`: `00` passes the digit filter, and
+  # `kill -0 00` succeeds, so it reached the capture and wrote a file with
+  # nothing but section headers. `kill -0` on zero is a permission probe against
+  # the whole process group.
+  if [ "$pid" -eq 0 ] 2>/dev/null; then
+    echo "not a pid: $pid" >&2
+    rc=1
+    continue
+  fi
   # `/proc` first because it is the honest test where it exists; `kill -0` is
   # the macOS fallback. It returns EPERM rather than success for a process owned
   # by another user, so a root-owned aimux would read as absent -- said here

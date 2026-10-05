@@ -112,11 +112,14 @@ pub struct ProjectServiceStartup {
 }
 
 pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> Result<()> {
-    // Its own call, because `PR_SET_PTRACER` does not survive `exec`: the
+    // Its own call, because a CHILD does not inherit `PR_SET_PTRACER`: the
     // daemon cannot set it on behalf of a process it spawns. The project
     // service is the other one that has pinned this machine, so covering only
     // the daemon would have left half the fleet un-attachable while reading as
     // fixed.
+    //
+    // Not "does not survive exec" -- that is doubtful, and saying it here as
+    // well as in the module header is how a corrected claim comes back.
     match crate::diagnostics_ptrace::allow_debugger_attach(|key| std::env::var(key).ok()) {
         crate::diagnostics_ptrace::PtraceOptInOutcome::NotRequested => {}
         outcome => log_lifecycle_always(
