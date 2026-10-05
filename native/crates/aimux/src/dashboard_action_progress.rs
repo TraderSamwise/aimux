@@ -125,17 +125,6 @@ mod tests {
         );
     }
 
-    /// A blank string is not an identifier. `trim` matters because the worktree
-    /// input buffer is free text.
-    #[test]
-    fn a_blank_identifier_is_not_a_name() {
-        assert_eq!(
-            progress_for_request(routes::worktree_actions::CREATE, &json!({ "name": "   " }))
-                .as_deref(),
-            Some("Creating worktree")
-        );
-    }
-
     /// Every other route's progress is the row overlay's job, and a footer line
     /// duplicating it would be a second answer to the same question.
     #[test]

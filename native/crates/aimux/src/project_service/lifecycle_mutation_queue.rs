@@ -47,14 +47,20 @@ impl LifecycleTransitionInput {
     /// is real — pick claude, then pick codex, and codex is refused with a 409
     /// rather than queued behind it.
     ///
-    /// It stays anyway, because `begin` waits on a `Condvar` and the async
-    /// lifecycle routes await inside a connection task on a two-worker runtime.
-    /// Returning `None` here lets a second and third spawn reach that wait,
-    /// park both workers, and leave the first one's future unpollable — the
-    /// permit is never released and the project service is wedged for good.
-    /// The fabricated key is what refuses them before they get there. Making
-    /// the queue safe to wait on from async is the fix; until then this is
-    /// load-bearing.
+    /// It stays anyway, and the reason is narrow: `begin` waits on a `Condvar`,
+    /// and the async lifecycle routes await inside a connection task on a
+    /// two-worker runtime. Returning `None` here lets a second and third spawn
+    /// reach that wait, park both workers, and leave the first one's future
+    /// unpollable — the permit is never released and the project service is
+    /// wedged for good.
+    ///
+    /// This is not protection, and it must not be read as any. Stop and kill
+    /// are on the same async transport and get real per-session keys, so
+    /// stopping three different agents reaches that wait and wedges the service
+    /// exactly the same way. All the fabricated key does is keep one more class
+    /// of mutation away from an edge that is already reachable. The fix is to
+    /// make the queue safe to wait on from async (947602-79); this goes with
+    /// it, and so does the 409 it costs.
     fn target_key(&self) -> String {
         let target = if self.target_kind == "worktree" {
             self.target_path

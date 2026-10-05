@@ -3009,6 +3009,13 @@ impl DashboardController {
         // died in between -- so refusing here would leave the row unremovable
         // from the dashboard forever. Removing a half-made checkout is what the
         // key is for, and `route_worktree_remove` already handles one.
+        //
+        // The cost is on the live case: `x` during a real create dispatches a
+        // graveyard that then waits out the rest of the create behind the
+        // lifecycle queue, where a refusal would have said so immediately. A
+        // stale record and a live one are indistinguishable from here -- the
+        // row carries no started-at -- and an unremovable row is the worse of
+        // the two to be wrong about.
         if group.pending && group.pending_action.as_deref() != Some("creating") {
             let action = crate::transient_state::transient_state_label(
                 group.pending_action.as_deref().unwrap_or("pending"),

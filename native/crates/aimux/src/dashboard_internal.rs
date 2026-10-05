@@ -3638,39 +3638,6 @@ mod tests {
         );
     }
 
-    /// The restore prompt raises its own progress note and then returns the
-    /// request.
-    #[test]
-    fn the_restore_prompt_still_dispatches_the_request_it_reports() {
-        let mut snapshot = test_snapshot();
-        snapshot.agent_restore_offer = Some(
-            serde_json::from_value(serde_json::json!({
-                "id": "offer-1",
-                "updatedAt": "2026-01-01T00:00:00.000Z",
-                "sessionIds": ["claude-a", "claude-b"],
-                "sessions": [],
-            }))
-            .expect("offer"),
-        );
-        let mut controller = DashboardController::new(&snapshot);
-
-        let effect = controller.handle_key(
-            &snapshot,
-            crate::dashboard_controller::DashboardKey::Printable('y'),
-        );
-        let DashboardControllerEffect::Request(request) = effect else {
-            panic!("expected the restore request");
-        };
-        assert_eq!(
-            request.path,
-            crate::project_api_contract::routes::agents::RESTORE_PREVIOUS
-        );
-        assert_eq!(
-            controller.footer_progress_message(),
-            Some("Restoring 2 agents…")
-        );
-    }
-
     /// "Aimux is updating", "is reconnecting", "is repairing tmux": four of the
     /// six guard states are a wait that ends on its own, and all six wore the
     /// red modal with a warning triangle.

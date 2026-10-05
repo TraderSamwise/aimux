@@ -2734,10 +2734,14 @@ fn worktree_stop_key_still_removes_a_checkout_stuck_mid_create() {
         .retain(|session| session.worktree_path.as_deref() != Some(worktree_path.as_str()));
 
     controller.handle_key(&snapshot, DashboardKey::Printable('x'));
-    assert_ne!(
+    assert_eq!(
         controller.footer_note_message(),
-        Some("Worktree feature-a is creating"),
+        Some("Graveyard worktree? Enter/y confirms, n/Esc cancels."),
         "a create must not be refused: nothing reaps a record left mid-create"
+    );
+    assert!(
+        controller.worktree_remove_confirm.is_some(),
+        "it goes straight to the confirm"
     );
     let DashboardControllerEffect::Request(request) =
         controller.handle_key(&snapshot, DashboardKey::Enter)

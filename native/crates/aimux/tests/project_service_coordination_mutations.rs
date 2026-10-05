@@ -1572,8 +1572,13 @@ fn cleanup(path: PathBuf) {
 /// async lifecycle routes await inside a connection task on a two-worker
 /// runtime, and `begin` waits on a `Condvar`, so a second and third spawn park
 /// both workers while the first one's future sits unpollable and its permit is
-/// never released. This pins the refusal until the queue is safe to wait on
-/// from async.
+/// never released.
+///
+/// So this pins a workaround, not a rule. Stopping three different agents
+/// reaches the same wait with real per-session keys, so the edge is reachable
+/// regardless; the shared key only keeps one more class away from it. Whoever
+/// makes the queue safe to wait on from async should delete this test with the
+/// fallback it describes.
 #[test]
 fn a_mutation_that_names_no_target_refuses_the_next_one_rather_than_waiting() {
     use aimux::project_service::lifecycle_mutation_queue::{
