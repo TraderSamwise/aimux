@@ -174,6 +174,55 @@ pub fn is_dashboard_supervisor_plane_session(session: &DashboardSession) -> bool
     )
 }
 
+/// The restore state a client reports for this session, from the field or the
+/// passthrough an older service put in `extra`.
+pub fn dashboard_restore_state(session: &DashboardSession) -> Option<&str> {
+    session.restore_state.as_deref().or_else(|| {
+        session
+            .extra
+            .get("restoreState")
+            .and_then(serde_json::Value::as_str)
+    })
+}
+
+/// Why Enter cannot resume this session, if it cannot.
+///
+/// Both the footer hint and the action plan need this answer, and only the
+/// footer had it: it rendered `unavailable` from a blocked restore state while
+/// Enter dispatched the resume anyway. The resume then failed, nothing said
+/// so, and the window-open path fell back to window index 0 of the project's
+/// shared tmux session -- so pressing Enter on an agent that could not be
+/// resumed silently moved the user off their own dashboard onto another one.
+///
+/// Derived once here rather than re-decided next to each renderer, per
+/// AGENTS.md "One Answer, Many Surfaces".
+pub fn dashboard_restore_block(session: &DashboardSession) -> Option<String> {
+    if !matches!(
+        session.status,
+        SessionStatus::Offline | SessionStatus::Exited
+    ) {
+        // A live-looking session with no tmux window is a stale record, and
+        // resuming it is the recovery. Only a session that is actually down
+        // can be refused here.
+        return None;
+    }
+    if dashboard_restore_state(session) != Some("blocked") {
+        return None;
+    }
+    let label = session.label.as_deref().unwrap_or(&session.id);
+    Some(
+        match session
+            .restore_blocked_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+        {
+            Some(reason) => format!("{label} cannot be resumed: {reason}"),
+            None => format!("{label} cannot be resumed"),
+        },
+    )
+}
+
 pub fn is_dashboard_overseer_session(session: &DashboardSession) -> bool {
     crate::team_contract::is_overseer_session(Some(&dashboard_session_classifier_probe(session)))
 }

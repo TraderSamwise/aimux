@@ -57,6 +57,14 @@ fn plan_session_enter(session: &DashboardSession) -> DashboardActionPlan {
     ) {
         return blocked;
     }
+    // The footer already says "unavailable" for this; dispatching the resume
+    // anyway was the half that lied. The resume fails, nothing reports it, and
+    // the window-open path falls back to window index 0 of the project's
+    // shared tmux session -- so the user is moved off their own dashboard onto
+    // another one with no explanation.
+    if let Some(reason) = crate::dashboard_model::dashboard_restore_block(session) {
+        return DashboardActionPlan::Blocked(reason);
+    }
     // A live-looking session with no tmux window is a stale record, not an
     // error: focusing it 404s. Fall through and resume it instead.
     if matches!(

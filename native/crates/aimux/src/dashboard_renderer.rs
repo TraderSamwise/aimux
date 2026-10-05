@@ -2568,27 +2568,17 @@ fn dashboard_enter_verb(
     let Some(session) = session else {
         return "focus";
     };
+    if crate::dashboard_model::dashboard_restore_block(session).is_some() {
+        return "unavailable";
+    }
     if matches!(
         session.status,
         SessionStatus::Offline | SessionStatus::Exited
     ) {
-        if restore_state(session) == Some("blocked") {
-            "unavailable"
-        } else {
-            "resume"
-        }
+        "resume"
     } else {
         "focus"
     }
-}
-
-fn restore_state(session: &DashboardSession) -> Option<&str> {
-    session.restore_state.as_deref().or_else(|| {
-        session
-            .extra
-            .get("restoreState")
-            .and_then(serde_json::Value::as_str)
-    })
 }
 
 fn worktree_name_branch(name: Option<&str>, branch: Option<&str>) -> String {

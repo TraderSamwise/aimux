@@ -1879,12 +1879,20 @@ impl DashboardController {
         })
     }
 
+    /// Enter on the overseer menu starts the overseer this project has, and
+    /// only makes one when it has none.
+    ///
+    /// It looked for a LIVE overseer, so with the overseer merely offline --
+    /// the common case, since that is when you reach for this menu -- it fell
+    /// through to the create picker and made a SECOND one, demoting the
+    /// existing overseer to a plain coder. `plan_dashboard_action` already
+    /// resumes an offline session, so the existing one only had to be found.
     fn activate_or_create_overseer_from_overlay(
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> DashboardControllerEffect {
         self.overseer_overlay_open = false;
-        if let Some(overseer) = live_overseer_session(snapshot) {
+        if let Some(overseer) = first_overseer_session(snapshot) {
             return match plan_dashboard_action(
                 Some(DashboardEntryRef::Session(overseer)),
                 DashboardActionKind::Enter,

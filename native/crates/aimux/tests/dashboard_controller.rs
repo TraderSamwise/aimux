@@ -443,14 +443,50 @@ fn quick_jump_second_digit_requests_selected_entry_activation() {
     );
     let effect = controller.handle_key(&snapshot, DashboardKey::Digit('2'));
 
+    // The fixture's `codex-offline` is restore-blocked, so activating it
+    // reports why rather than dispatching a resume that cannot work -- quick
+    // jump goes through `plan_dashboard_action` like Enter does, which is the
+    // point of deciding that once.
+    assert_eq!(
+        effect,
+        DashboardControllerEffect::Render,
+        "the refusal renders rather than dispatching"
+    );
+    assert_eq!(
+        controller.footer_alert_message(),
+        Some("codex-offline cannot be resumed: missing exact resumable backend session id")
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+    assert_eq!(controller.navigation.item_index, 1);
+}
+
+#[test]
+fn quick_jump_activates_a_resumable_agent() {
+    let mut snapshot = snapshot();
+    // By id, not index: the same agent appears in more than one collection and
+    // quick jump does not read the one the index would suggest.
+    for session in snapshot.sessions.iter_mut().chain(
+        snapshot
+            .worktree_groups
+            .iter_mut()
+            .flat_map(|group| group.sessions.iter_mut()),
+    ) {
+        if session.id == "codex-offline" {
+            session.restore_state = Some("ready".into());
+            session.restore_blocked_reason = None;
+        }
+    }
+    let mut controller = DashboardController::new(&snapshot);
+
+    controller.handle_key(&snapshot, DashboardKey::Digit('2'));
+    let effect = controller.handle_key(&snapshot, DashboardKey::Digit('2'));
+
     let DashboardControllerEffect::Request(request) = effect else {
-        panic!("expected request");
+        panic!("expected request, got {effect:?}");
     };
     assert_eq!(request.method, "POST");
     assert_eq!(request.path, routes::agents::RESUME);
     assert_eq!(request.body, json!({ "sessionId": "codex-offline" }));
-    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
-    assert_eq!(controller.navigation.item_index, 1);
 }
 
 #[test]
@@ -3579,4 +3615,58 @@ mod what_a_transient_footer_line_claims {
 
         assert_eq!(controller.footer_note_message(), Some("Moved agent up"));
     }
+}
+
+/// Enter on the overseer menu starts the overseer this project already has,
+/// even when it is offline.
+///
+/// It looked for a LIVE overseer, so an offline one — which is exactly when
+/// you reach for this menu — was invisible to it and Enter fell through to the
+/// create picker, making a SECOND overseer and demoting the existing one to a
+/// plain coder.
+#[test]
+fn overseer_menu_enter_resumes_an_offline_overseer_instead_of_making_another() {
+    let mut snapshot = snapshot();
+    let mut overseer = snapshot.sessions[0].clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+    overseer.status = SessionStatus::Offline;
+    overseer.tmux_window_id = None;
+    overseer.restore_state = Some("ready".into());
+    overseer.restore_blocked_reason = None;
+    snapshot.sessions.insert(0, overseer);
+
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    let effect = controller.handle_key(&snapshot, DashboardKey::Enter);
+
+    let DashboardControllerEffect::Request(request) = effect else {
+        panic!("expected the existing overseer to be resumed, got {effect:?}");
+    };
+    assert_eq!(request.path, routes::agents::RESUME);
+    assert_eq!(request.body["sessionId"], "claude-overseer");
+}
+
+/// And with no overseer at all, Enter still offers to make one.
+#[test]
+fn overseer_menu_enter_still_creates_when_the_project_has_none() {
+    let snapshot = snapshot();
+    assert!(
+        !snapshot
+            .sessions
+            .iter()
+            .any(|session| session.overseer == Some(true)),
+        "this fixture has no overseer, which is the case under test"
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    let effect = controller.handle_key(&snapshot, DashboardKey::Enter);
+
+    assert!(
+        matches!(effect, DashboardControllerEffect::OpenAgentToolPicker(_)),
+        "with no overseer to start, Enter offers to create one: {effect:?}"
+    );
 }
