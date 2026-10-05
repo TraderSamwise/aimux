@@ -164,9 +164,7 @@ export function AgentCreatePanel({
           </Text>
         </Button>
       </View>
-      {error && !isTransientRequestError(error) ? (
-        <Text className="mt-2 text-xs text-destructive">{error}</Text>
-      ) : null}
+      {error ? <Text className="mt-2 text-xs text-destructive">{error}</Text> : null}
     </Card>
   );
 }

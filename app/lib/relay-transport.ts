@@ -518,10 +518,18 @@ export class RelayTransport {
     return url.toString();
   }
 
+  /// Abandon every request still waiting on this socket.
+  ///
+  /// Branded `cancelled`, because that is what happened: the transport went
+  /// away -- the app backgrounded, the network flipped, `disconnect()` was
+  /// called -- and these requests were dropped rather than answered. The
+  /// relay reconnects and the caller polls again, so a red banner per
+  /// in-flight request is noise about something already healed. Connection
+  /// state has its own surface.
   private rejectAllPending(reason: string): void {
     for (const [id, entry] of this.pending) {
       clearTimeout(entry.timer);
-      entry.reject(new Error(reason));
+      entry.reject(Object.assign(new Error(reason), { kind: "cancelled" as const }));
       this.pending.delete(id);
     }
   }

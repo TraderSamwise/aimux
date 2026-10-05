@@ -153,7 +153,12 @@ export function AgentActions({
 
   const sizeClass = compact ? "h-7 w-7" : "h-9 w-9";
   const iconSize = compact ? 13 : 15;
-  const visibleError = error && !isTransientRequestError(error) ? error : null;
+  // No second filter: `error` only ever holds something the catch site
+  // already judged worth showing, and by then it is a string -- so re-asking
+  // `isTransientRequestError` here reads a message with no `kind` on it and
+  // silently answers "not transient" for every cancellation. A dead guard that
+  // looks like a live one.
+  const visibleError = error;
 
   return (
     <View>

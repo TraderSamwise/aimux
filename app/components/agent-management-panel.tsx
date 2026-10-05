@@ -153,7 +153,7 @@ export function AgentManagementPanel({
   const canSaveLoop = canAct && (!loopActive || trimmedGoal !== currentLoopGoal);
   const canClearOverseer = canAct && overseerActive;
   const fieldIdPrefix = `agent-${session.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
-  const visibleError = error && !isTransientRequestError(error) ? error : null;
+  const visibleError = error;
 
   if (!endpoint) {
     return null;

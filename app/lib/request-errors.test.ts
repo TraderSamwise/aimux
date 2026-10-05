@@ -100,3 +100,15 @@ describe("an error that enumerates what failed", () => {
     ).toBe(true);
   });
 });
+
+describe("the kind survives the path that carries it", () => {
+  // The render-time filters in the action panels re-ran this check on a
+  // FLATTENED string, where `kind` cannot exist -- so the second pass answered
+  // "not transient" for every cancellation while looking like a live guard.
+  // The panels drop that pass now; this pins why it could never have worked.
+  it("cannot recognise a cancellation once the error is a string", () => {
+    const cancelled = apiError(0, "Request was cancelled (/projects)", "cancelled");
+    expect(isTransientRequestError(cancelled)).toBe(true);
+    expect(isTransientRequestError(cancelled.message)).toBe(false);
+  });
+});

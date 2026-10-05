@@ -63,7 +63,19 @@ describe("toast placement", () => {
   });
 
   it("does not reserve a notch on web, where there is none", () => {
-    expect(TOAST_WEB_TOP_OFFSET).toBeLessThan(resolveToastTopOffset(0));
+    // Under the iOS mock this compared 28 against an iOS offset and proved
+    // nothing about web at all. On web `resolveChromeTopInset` returns 0, so
+    // the native rule would put a banner 12px down with no chrome to clear --
+    // which is why web has its own constant rather than sharing the function.
+    (Platform as { OS: typeof Platform.OS }).OS = "web";
+    expect(resolveToastTopOffset(0)).toBeLessThan(TOAST_WEB_TOP_OFFSET);
+  });
+
+  it("leaves a readable gap below the chrome, not a hairline", () => {
+    (Platform as { OS: typeof Platform.OS }).OS = "ios";
+    // `+ 1` would satisfy every other assertion here while putting the banner
+    // flush against the island.
+    expect(resolveToastTopOffset(IOS_MIN_TOP_INSET)).toBeGreaterThanOrEqual(IOS_MIN_TOP_INSET + 8);
   });
 
   it("gives an error a way out on both platforms", () => {

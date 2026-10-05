@@ -407,9 +407,7 @@ export function TeammatePanel({
           </View>
         </View>
       </View>
-      {error && !isTransientRequestError(error) ? (
-        <Text className="mt-3 text-xs text-destructive">{error}</Text>
-      ) : null}
+      {error ? <Text className="mt-3 text-xs text-destructive">{error}</Text> : null}
       {status ? <Text className="mt-3 text-xs text-muted-foreground">{status}</Text> : null}
     </Card>
   );

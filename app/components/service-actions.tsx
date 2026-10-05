@@ -98,7 +98,7 @@ export function ServiceActions({
   const sizeClass = compact ? "h-7 w-7" : "h-9 w-9";
   const iconSize = compact ? 13 : 15;
   const gap = compact ? "ml-1" : "ml-1.5";
-  const visibleError = error && !isTransientRequestError(error) ? error : null;
+  const visibleError = error;
 
   return (
     <View>

@@ -83,7 +83,7 @@ export function WorktreeManagementPanel({
 
   const trimmedName = name.trim();
   const canAct = Boolean(endpoint) && !busyAction;
-  const visibleError = error && !isTransientRequestError(error) ? error : null;
+  const visibleError = error;
 
   if (!endpoint) {
     return null;

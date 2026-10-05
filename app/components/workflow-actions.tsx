@@ -76,7 +76,7 @@ export function TaskWorkflowActions({
   }
 
   if (!endpoint) return null;
-  const visibleError = error && !isTransientRequestError(error) ? error : null;
+  const visibleError = error;
 
   return (
     <View className="mt-3">
@@ -233,7 +233,7 @@ export function ThreadWorkflowActions({
   }
 
   if (!endpoint) return null;
-  const visibleError = error && !isTransientRequestError(error) ? error : null;
+  const visibleError = error;
 
   return (
     <View className="mt-3 border-t border-border pt-3">
