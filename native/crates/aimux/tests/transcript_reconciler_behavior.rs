@@ -662,9 +662,11 @@ fn a_permanently_failing_clear_is_given_up_on_rather_than_retried_forever() {
         "it has to try more than once: {} attempts",
         deps.clear_attempts
     );
+    // Tight against the constant, not merely under forty: `<= 10` would have
+    // passed a bound of ten as happily as a bound of five.
     assert!(
-        deps.clear_attempts <= 10,
-        "but not forty times over forty ticks: {} attempts",
+        deps.clear_attempts <= 6,
+        "five attempts plus the tick that banked the probe, not forty: {} attempts",
         deps.clear_attempts
     );
     assert_eq!(
@@ -694,7 +696,10 @@ fn a_session_that_stops_being_stranded_gets_fresh_attempts_later() {
         reconciler.scan(&sessions, &stranded, &mut deps);
     }
     let given_up_after = deps.clear_attempts;
-    assert!(given_up_after <= 10, "{given_up_after} attempts");
+    assert!(
+        given_up_after <= 6,
+        "it must have given up well inside twenty ticks: {given_up_after} attempts"
+    );
 
     // Prompted: not stranded any more, so the give-up is forgotten.
     reconciler.scan(&sessions, &metadata(running(), json!({})), &mut deps);

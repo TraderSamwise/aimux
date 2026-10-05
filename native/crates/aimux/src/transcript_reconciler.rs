@@ -99,10 +99,17 @@ struct InputClearProgress {
 /// How many ticks Part C retries a write the service keeps rejecting.
 ///
 /// Without a bound a permanently failing clear POSTs every four seconds for the
-/// life of the process, and leaves the session at `settled: true` with the
-/// attention still saying `needs_input` -- a shape no other part produces.
-/// Giving up is also the only outcome that gets SAID: a silent retry loop is
-/// invisible until it is a load average.
+/// life of the process. Giving up is also the only outcome that gets SAID: a
+/// silent retry loop is invisible until it is a load average.
+///
+/// Giving up half-way leaves `activity: idle` with `attention: needs_input`,
+/// which is a shape no other part produces -- and it is worth saying that no
+/// consumer reads it worse than the state it replaced. `scribe_readiness` still
+/// refuses it, on the attention rather than the activity. And
+/// `session_semantics` words it identically: `runtime_lifecycle` returns `idle`
+/// instead of `running`, but `user_state` ranks attention above both, so the
+/// label is `needs_input` either way. The give-up degrades to exactly the
+/// pre-fix state, which is the right failure mode for a repair.
 const INPUT_CLEAR_ATTEMPTS: u32 = 5;
 
 #[derive(Default)]
