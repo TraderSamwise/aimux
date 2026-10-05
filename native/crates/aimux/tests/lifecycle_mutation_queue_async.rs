@@ -40,19 +40,42 @@ fn agent_stop(session_id: &str) -> LifecycleTransitionInput {
 /// Spin on the queue's own diagnostics rather than a sleep: the assertion is
 /// about what the queue reports, and a sleep long enough to be reliable is long
 /// enough to hide the thing being measured.
-fn wait_until(queue: &LifecycleMutationQueue, mut ready: impl FnMut(&serde_json::Value) -> bool) {
-    let started = std::time::Instant::now();
-    while started.elapsed() < Duration::from_secs(5) {
-        let diagnostics = queue.diagnostics("/repo");
-        if ready(&diagnostics) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(5));
+/// The same spin, with a sentence that says what the queue failing to reach
+/// that state would mean. A generic "never reached the expected state" leaves
+/// the reader to work out which assertion regressed.
+fn wait_until_or(
+    queue: &LifecycleMutationQueue,
+    ready: impl FnMut(&serde_json::Value) -> bool,
+    meaning: impl FnOnce() -> &'static str,
+) {
+    if spin_until(queue, ready) {
+        return;
+    }
+    panic!("{}: {}", meaning(), queue.diagnostics("/repo")["telemetry"]);
+}
+
+fn wait_until(queue: &LifecycleMutationQueue, ready: impl FnMut(&serde_json::Value) -> bool) {
+    if spin_until(queue, ready) {
+        return;
     }
     panic!(
         "queue never reached the expected state: {}",
         queue.diagnostics("/repo")
     );
+}
+
+fn spin_until(
+    queue: &LifecycleMutationQueue,
+    mut ready: impl FnMut(&serde_json::Value) -> bool,
+) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
+        if ready(&queue.diagnostics("/repo")) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    false
 }
 
 #[test]
@@ -656,7 +679,11 @@ fn two_different_worktrees_do_not_contend() {
             .map(|mut permit| permit.succeed(std::time::Instant::now()))
             .map_err(|error| error.message())
     });
-    wait_until(&queue, |diagnostics| diagnostics["queuedCount"] == 2);
+    wait_until_or(
+        &queue,
+        |diagnostics| diagnostics["queuedCount"] == 2,
+        || "the second worktree never reached the queue, so it was refused against the first",
+    );
     release_first.send(()).expect("release the first");
 
     // aimux-async-seam: test - sync test drives the async queue on its own runtime

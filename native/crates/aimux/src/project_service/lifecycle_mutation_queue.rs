@@ -138,11 +138,10 @@ impl LifecycleTransitionInput {
 ///   own name, because `Path::components` normalizes a `.` away. Nothing sends
 ///   the base directory as a worktree reference, and if it did, the cost is
 ///   the extra refusal above rather than a missed one.
-/// - `worktree.cacheCleanup` reaches this with no target at all: its handler
-///   reads only `dryRun` and `includeActive` and sweeps every worktree in the
-///   topology, so there is no one worktree for it to hold. It is a
-///   project-wide operation and the global serialization is what protects it,
-///   which is the honest answer rather than inventing a key for it.
+/// - `worktree.cacheCleanup` holds nothing, because it sweeps every worktree
+///   in the topology rather than naming one. It is a project-wide operation
+///   and the global serialization is what protects it, which is the honest
+///   answer rather than inventing a key for it.
 /// - Nothing validates a worktree name, so `feat/login` is a legal name and
 ///   creates a nested directory. It and `fix/login` both reduce to `login`.
 ///   The product's own derivation cannot produce one —
@@ -774,11 +773,18 @@ pub fn lifecycle_transition_for_route(
         routes::services::REMOVE => Some(
             LifecycleTransitionInput::new("service.remove", "service").with_target_id(service_id),
         ),
-        // A create from a pull request or a branch may carry no name at all --
-        // `aimux worktree create --pr 5` sends only `source` -- and without
-        // this it would hold nothing, so a remove of the worktree it is making
-        // would not be refused. `route_worktree_create` derives the name from
-        // the same helper, so the two agree by construction.
+        // A create from a remote source carries no name:
+        // `aimux worktree create --source <pull-request-url>` sends only
+        // `source`, and the CLI accepts that because the route derives the
+        // name itself. Without this the create would hold nothing, so a remove
+        // of the worktree it is making would not be refused.
+        // `route_worktree_create` derives from the same helper, so the two
+        // agree by construction.
+        //
+        // The chain above prefers a path over a name, while the route reads
+        // `name` then `source`. No client sends a path on create today, so the
+        // orders cannot disagree -- one that started to would reintroduce the
+        // mismatch this whole change removes.
         //
         // Only this arm reads `source`. Agent routes send a `source` of their
         // own -- "human", "loop", "agent" -- and running a branch parser over
@@ -795,10 +801,15 @@ pub fn lifecycle_transition_for_route(
                 }),
             ),
         ),
-        routes::worktree_actions::CACHE_CLEANUP => Some(
-            LifecycleTransitionInput::new("worktree.cacheCleanup", "worktree")
-                .with_target_path(worktree_path),
-        ),
+        // No target on purpose: the handler reads only `dryRun` and
+        // `includeActive` and sweeps every worktree in the topology, so there
+        // is no one worktree for it to hold. Taking `worktree_path` anyway
+        // would key a project-wide sweep to a single worktree the moment some
+        // future body carried a path.
+        routes::worktree_actions::CACHE_CLEANUP => Some(LifecycleTransitionInput::new(
+            "worktree.cacheCleanup",
+            "worktree",
+        )),
         routes::worktree_actions::GRAVEYARD => Some(
             LifecycleTransitionInput::new("worktree.graveyard", "worktree")
                 .with_target_path(worktree_path),
