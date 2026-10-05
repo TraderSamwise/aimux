@@ -57,6 +57,10 @@ struct FakeLifecycleRuntime {
     create_worktree_from_branch_error: Option<String>,
     create_worktree_error: Option<String>,
     create_window_error: Option<String>,
+    /// Read while the git work is still running, which is the only moment the
+    /// in-flight record exists.
+    topology_probe_path: Option<PathBuf>,
+    topology_during_create: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +119,9 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             name: name.to_owned(),
             target_path: target_path.to_owned(),
         });
+        if let Some(path) = self.topology_probe_path.as_ref() {
+            self.topology_during_create = read_runtime_topology(path).ok();
+        }
         match &self.create_worktree_error {
             Some(error) => Err(error.clone()),
             None => Ok(()),
@@ -3915,6 +3922,89 @@ fn worktree_create_returns_creating_for_existing_pending_entry() {
     cleanup(project);
 }
 
+/// The record written before the git work says the checkout is mid-flight, in
+/// the two fields every client already renders.
+///
+/// It used to say only `status: "creating"`, which no client reads, so each
+/// surface guessed instead: the TUI keyed the overlay off the request body and
+/// painted the main checkout, the app kept its own transition record and
+/// settled it the moment the row appeared. A worktree create is allowed 180s.
+#[test]
+fn worktree_create_publishes_the_checkout_as_pending_until_it_settles() {
+    let project = temp_project("worktree-create-pending");
+    let state_dir = project.join("state");
+    write_worktree_create_topology(&state_dir, json!([]));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project.to_string_lossy().into_owned()),
+        topology_probe_path: Some(runtime_topology_path(&state_dir)),
+        create_worktree_error: Some("held open".into()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "demo" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 500, "the create did not finish");
+
+    let in_flight = runtime
+        .topology_during_create
+        .as_ref()
+        .expect("the topology as it stood mid-create")
+        .clone();
+    assert_eq!(in_flight["worktrees"][0]["status"], "creating");
+    let group = published_worktree_group(&project, &in_flight);
+    assert_eq!(group["pending"], json!(true));
+    assert_eq!(group["pendingAction"], json!("creating"));
+
+    // And a create that did not finish publishes neither: `error` is a settled
+    // state, and a row left claiming to be working is the thing nothing reaps.
+    let settled = read_topology(&state_dir);
+    assert_eq!(settled["worktrees"][0]["status"], "error");
+    let group = published_worktree_group(&project, &settled);
+    assert_eq!(group.get("pending"), None);
+    assert_eq!(group.get("pendingAction"), None);
+    cleanup(project);
+}
+
+#[test]
+fn worktree_create_clears_the_pending_marks_once_the_checkout_is_active() {
+    let project = temp_project("worktree-create-active");
+    let state_dir = project.join("state");
+    write_worktree_create_topology(&state_dir, json!([]));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "demo" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 200);
+
+    let settled = read_topology(&state_dir);
+    assert_eq!(settled["worktrees"][0]["status"], "active");
+    let group = published_worktree_group(&project, &settled);
+    assert_eq!(
+        group.get("pending"),
+        None,
+        "a finished create must not leave the row claiming to be working"
+    );
+    assert_eq!(group.get("pendingAction"), None);
+    cleanup(project);
+}
+
 #[test]
 fn worktree_create_failure_persists_error_topology_entry() {
     let project = temp_project("worktree-create-failure");
@@ -5941,6 +6031,32 @@ fn write_project_scribe_config(project: &Path) {
         .unwrap(),
     )
     .unwrap();
+}
+
+/// The worktree group as a client actually receives it, built from a topology.
+///
+/// The assertion belongs here rather than on the stored record: the in-flight
+/// marks are derived from the record's own status, so reading the record back
+/// would only restate what was written.
+fn published_worktree_group(project: &Path, topology: &Value) -> Value {
+    let state = aimux::project_service::desktop_state::build_desktop_state_with_live_window_ids(
+        aimux::project_service::desktop_state::DesktopStateInput {
+            project_root: project.to_string_lossy().into_owned(),
+            topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &json!({}),
+        },
+        Some(&aimux::tmux::LiveWindowIndex::default()),
+    );
+    state["worktreeGroups"]
+        .as_array()
+        .and_then(|groups| {
+            groups
+                .iter()
+                .find(|group| group.get("path").is_some())
+                .cloned()
+        })
+        .expect("a worktree group for the created checkout")
 }
 
 fn read_topology(state_dir: &PathBuf) -> Value {

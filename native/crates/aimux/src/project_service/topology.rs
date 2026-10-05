@@ -238,6 +238,10 @@ fn worktree_health(worktree: &Value, child_healths: &[&str]) -> &'static str {
     if bool_field(worktree, "pending")
         || bool_field(worktree, "removing")
         || string_field(worktree, "pendingAction").is_some_and(|value| !value.is_empty())
+        // A checkout mid-create carries only `status: "creating"`; the same
+        // derivation the published worktree group uses, so the two agree.
+        || crate::transient_state::pending_action_for_status(string_field(worktree, "status"))
+            .is_some()
     {
         return "active";
     }

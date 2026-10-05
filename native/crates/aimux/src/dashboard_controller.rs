@@ -2981,7 +2981,13 @@ impl DashboardController {
             self.set_busy(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
-        if group.pending {
+        // A create is the one in-flight state `x` must still get through. The
+        // project service writes `creating` before the git work and rewrites the
+        // record after, and nothing reaps a record left behind by a service that
+        // died in between -- so refusing here would leave the row unremovable
+        // from the dashboard forever. Removing a half-made checkout is what the
+        // key is for, and `route_worktree_remove` already handles one.
+        if group.pending && group.pending_action.as_deref() != Some("creating") {
             let action = crate::transient_state::transient_state_label(
                 group.pending_action.as_deref().unwrap_or("pending"),
             )
