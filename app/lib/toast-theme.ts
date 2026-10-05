@@ -1,7 +1,6 @@
 // Colours and placement for both toast renderers. sonner and sonner-native
 // take inline style objects rather than classes, so the palette has to be
 // concrete rather than a tailwind token.
-import { resolveChromeTopInset } from "@/lib/native-safe-area";
 export type ToastTheme = "light" | "dark";
 
 /// Which edge banners sit on, once rather than once per platform file.
@@ -13,17 +12,6 @@ export const TOAST_POSITION = "top-center" as const;
 /// How far below the top of the window a banner sits on web, where there is no
 /// notch to clear.
 export const TOAST_WEB_TOP_OFFSET = 28;
-
-/// The same gap on device, measured from whatever the safe area turns out to
-/// be.
-///
-/// `sonner-native`'s positioner computes `top: offset || top || 40`, so an
-/// explicit offset REPLACES the safe-area inset instead of adding to it. A
-/// flat 28 therefore put the banner under the Dynamic Island -- this repo's
-/// own floor for clearing it is `IOS_MIN_TOP_INSET = 54`.
-export function toastTopOffset(topInset: number): number {
-  return resolveChromeTopInset(topInset) + 12;
-}
 
 export type { AppToastOptions } from "@/lib/toast-shared";
 

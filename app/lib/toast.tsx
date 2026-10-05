@@ -4,12 +4,12 @@ import { Toaster, toast } from "sonner-native";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { resolveToastTopOffset } from "@/lib/native-safe-area";
 import {
   type AppToastOptions,
   TOAST_POSITION,
   toastPalette,
   type ToastTheme,
-  toastTopOffset,
 } from "@/lib/toast-theme";
 
 export const appToast = {
@@ -37,7 +37,7 @@ export function AppToaster({ theme }: { theme: ToastTheme }) {
     <Toaster
       theme={theme}
       position={TOAST_POSITION}
-      offset={toastTopOffset(insets.top)}
+      offset={resolveToastTopOffset(insets.top)}
       visibleToasts={3}
       // An error shows for eight seconds and can land over a screen's top bar,
       // so it has to be dismissible rather than something to wait out. Web

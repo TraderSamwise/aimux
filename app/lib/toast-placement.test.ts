@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { Platform } from "react-native";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { IOS_MIN_TOP_INSET } from "@/lib/native-safe-area";
-import { TOAST_POSITION, TOAST_WEB_TOP_OFFSET, toastTopOffset } from "@/lib/toast-theme";
+import { IOS_MIN_TOP_INSET, resolveToastTopOffset } from "@/lib/native-safe-area";
+import { TOAST_POSITION, TOAST_WEB_TOP_OFFSET } from "@/lib/toast-theme";
 
 // The same stand-in `native-safe-area.test.ts` uses: the placement rule is
 // arithmetic over an inset, and pulling the real React Native in to assert it
@@ -41,9 +41,9 @@ describe("toast placement", () => {
   // explicit offset REPLACES the safe-area inset rather than adding to it. A
   // flat 28 put the banner under the Dynamic Island -- the same complaint that
   // moved it off the bottom, arriving at the other end of the screen.
-  it("clears the notch on device, at every inset the device may report", () => {
+  it("clears the island on iOS, at every inset the device may report", () => {
     for (const reported of [0, 20, 47, 54, 59, 62]) {
-      const offset = toastTopOffset(reported);
+      const offset = resolveToastTopOffset(reported);
       expect(
         offset,
         `an inset of ${reported} must still clear the island floor of ${IOS_MIN_TOP_INSET}`,
@@ -52,15 +52,27 @@ describe("toast placement", () => {
     }
   });
 
+  // Android has no floor, because its reported inset is the status bar and is
+  // trustworthy. The guarantee there is weaker and worth saying out loud: the
+  // banner sits below whatever the platform reports, never on top of it.
+  it("sits below the reported inset on Android, which has no floor of its own", () => {
+    (Platform as { OS: typeof Platform.OS }).OS = "android";
+    for (const reported of [0, 24, 48]) {
+      expect(resolveToastTopOffset(reported)).toBeGreaterThan(reported);
+    }
+  });
+
   it("does not reserve a notch on web, where there is none", () => {
-    expect(TOAST_WEB_TOP_OFFSET).toBeLessThan(toastTopOffset(0));
+    expect(TOAST_WEB_TOP_OFFSET).toBeLessThan(resolveToastTopOffset(0));
   });
 
   it("gives an error a way out on both platforms", () => {
     for (const surface of SURFACES) {
       const source = readFileSync(surface, "utf8");
       // An error shows for eight seconds and can land over a screen's top bar.
-      expect(source, `${surface} must let an error be dismissed`).toContain("closeButton");
+      expect(source, `${surface} must let an error be dismissed`).toMatch(
+        /(?<!\w)closeButton(?!\s*=\s*\{false\})/,
+      );
     }
   });
 });
