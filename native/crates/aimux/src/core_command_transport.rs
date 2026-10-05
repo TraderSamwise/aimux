@@ -830,6 +830,52 @@ fn parse_json_response(bytes: &[u8]) -> Result<DaemonJsonResponse, CoreCommandTr
     })
 }
 
+/// What to say when the daemon's answer has no header terminator.
+///
+/// It all used to say "invalid daemon HTTP response: missing header
+/// terminator", which is a claim about FRAMING -- and the commonest way to get
+/// here is a daemon that accepted the connection and then died or closed
+/// without writing a byte. Reporting that as a framing problem sends the
+/// reader looking at the protocol instead of at the process, which is the
+/// wrapper lying about a child's failure that AGENTS.md names outright.
+///
+/// Both sides of the comparison: what came back, and what was looked for.
+///
+/// The preview is only ever the status line and part of the headers, because
+/// reaching here means `\r\n\r\n` never arrived and everything read is still
+/// header territory -- no body, so no agent output or session data. And it is
+/// shown only when the answer is recognisably HTTP: if something else is
+/// listening on that port, the useful fact is that it is not a daemon, not a
+/// transcript of whatever it said.
+fn unframed_response(bytes: &[u8]) -> String {
+    // "the service" rather than "the daemon": this parser also serves the
+    // daemon's proxy to a per-project service, so naming the daemon would
+    // assert which process died and be wrong half the time -- in the one
+    // change whose whole purpose is naming the right actor.
+    if bytes.is_empty() {
+        return "the service closed the connection without answering (no bytes read)".to_owned();
+    }
+    let count = bytes.len();
+    if !bytes.starts_with(b"HTTP/") {
+        return format!(
+            "that port answered with {count} byte(s) that are not an HTTP response; \
+             something other than an aimux service is listening on it"
+        );
+    }
+    // `{:?}` rather than raw: a half-written header can carry control bytes,
+    // and this string goes to a terminal.
+    let preview = String::from_utf8_lossy(&bytes[..count.min(PREVIEW_BYTES)]);
+    let preview = preview.trim_end();
+    format!(
+        "the service's response ended after {count} byte(s) without completing its headers; \
+         it began: {preview:?}"
+    )
+}
+
+/// Enough for the status line and a header or two, which is where the reason
+/// lives.
+const PREVIEW_BYTES: usize = 120;
+
 struct HttpResponseParts {
     status: u16,
     headers: BTreeMap<String, String>,
@@ -837,11 +883,8 @@ struct HttpResponseParts {
 }
 
 fn parse_response_parts(bytes: &[u8]) -> Result<HttpResponseParts, CoreCommandTransportError> {
-    let header_end = find_bytes(bytes, b"\r\n\r\n").ok_or_else(|| {
-        CoreCommandTransportError::InvalidHttpResponse(
-            "invalid daemon HTTP response: missing header terminator".to_owned(),
-        )
-    })?;
+    let header_end = find_bytes(bytes, b"\r\n\r\n")
+        .ok_or_else(|| CoreCommandTransportError::InvalidHttpResponse(unframed_response(bytes)))?;
     let headers = std::str::from_utf8(&bytes[..header_end]).map_err(|error| {
         CoreCommandTransportError::InvalidHttpResponse(format!(
             "invalid daemon HTTP response headers: {error}"
@@ -1038,6 +1081,107 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A daemon that closes without answering must say so, not blame framing.
+    ///
+    /// `aimux` in a project reported "invalid daemon HTTP response: missing
+    /// header terminator" after waiting 70 seconds -- a claim about the
+    /// protocol for what is almost always a process that died or hung up.
+    /// AGENTS.md: a wrapper must report the child error, not convert it into a
+    /// framing claim.
+    #[test]
+    fn an_unanswered_request_names_the_silence_not_the_framing() {
+        let Err(CoreCommandTransportError::InvalidHttpResponse(message)) =
+            parse_response_parts(b"")
+        else {
+            panic!("an empty read is not a parseable response");
+        };
+        // "the service", not "the daemon": the same parser serves the daemon's
+        // proxy to a project service, so naming one asserts which process died.
+        assert!(
+            !message.contains("daemon closed"),
+            "it must not assert which process it was: {message}"
+        );
+        assert!(
+            message.contains("closed the connection without answering"),
+            "the reader has to be sent to the process, not the protocol: {message}"
+        );
+        assert!(
+            !message.contains("header terminator"),
+            "and not told the headers were malformed when none arrived: {message}"
+        );
+    }
+
+    /// Something else on the daemon's port is named for what it is, and not
+    /// quoted back.
+    ///
+    /// Reaching the preview means no `\r\n\r\n` arrived, so what was read is
+    /// still header territory -- but only if it is HTTP at all. A foreign
+    /// service's bytes say nothing a person can act on and are not ours to
+    /// print.
+    #[test]
+    fn a_non_http_answer_is_named_rather_than_quoted() {
+        let Err(CoreCommandTransportError::InvalidHttpResponse(message)) =
+            parse_response_parts(b"\x16\x03\x01 secret-looking-handshake")
+        else {
+            panic!("a non-HTTP answer is not parseable");
+        };
+        assert!(
+            message.contains("something other than an aimux service is listening"),
+            "the actionable fact is which process answered: {message}"
+        );
+        assert!(
+            !message.contains("secret-looking-handshake"),
+            "and its bytes are not ours to print: {message}"
+        );
+    }
+
+    /// A long half-written header is cut at the preview bound, and the count
+    /// still reports everything that arrived.
+    ///
+    /// The two numbers answer different questions -- how much came back, and
+    /// how much of it is worth reading -- so a reader can tell a reply that
+    /// stopped early from one that was merely trimmed here.
+    #[test]
+    fn a_long_header_is_cut_without_hiding_how_much_arrived() {
+        let mut bytes = b"HTTP/1.1 500 Internal Server Error\r\nX-Why: ".to_vec();
+        bytes.extend(std::iter::repeat_n(b'x', 400));
+        let Err(CoreCommandTransportError::InvalidHttpResponse(message)) =
+            parse_response_parts(&bytes)
+        else {
+            panic!("a half-written response is not parseable");
+        };
+        assert!(
+            message.contains(&format!("{} byte(s)", bytes.len())),
+            "the count is everything that arrived: {message}"
+        );
+        assert!(
+            message.len() < bytes.len(),
+            "but the quote is bounded, so a runaway header cannot become the error"
+        );
+        assert!(
+            message.contains("500 Internal Server Error"),
+            "and the part that says why survives the cut: {message}"
+        );
+    }
+
+    /// A truncated answer names both sides: how much arrived, and what it was.
+    #[test]
+    fn a_truncated_response_shows_what_did_arrive() {
+        let Err(CoreCommandTransportError::InvalidHttpResponse(message)) =
+            parse_response_parts(b"HTTP/1.1 500 Internal Server Error\r\nX-Repair: pending")
+        else {
+            panic!("a half-written response is not parseable");
+        };
+        assert!(
+            message.contains("53 byte(s)"),
+            "how much arrived: {message}"
+        );
+        assert!(
+            message.contains("500 Internal Server Error"),
+            "and what it was, which is the part that says why: {message}"
+        );
+    }
 
     #[test]
     fn loopback_retry_treats_eagain_as_transient_until_success() {
