@@ -548,6 +548,14 @@ export function WorktreeCard({
   // measured, so every row in the card agrees -- and so the floor below and the
   // two-line row stay one decision rather than two that can disagree.
   // `compact` rows are the sidebar and are identity-only already.
+  //
+  // False until the list has measured itself, so the very first frame at a
+  // narrow width is the unstacked row. That is one frame and it is the same
+  // frame the width floor already had -- `contentWidth` is
+  // `listWidth || undefined`, so before `onLayout` the card falls back to
+  // `minWidth`. Reading the window width instead would remove the flash and
+  // introduce a second measurement for one decision, which is the drift this
+  // file is otherwise getting rid of.
   const narrow = !compact && contentWidth !== undefined && contentWidth < WORKTREE_CARD_MIN_WIDTH;
   const barColor = identityTone;
   const chips = worktreeCountChips(bucket);
