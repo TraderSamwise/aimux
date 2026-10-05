@@ -59,10 +59,6 @@ function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
 }
 
-function cap(value: string): string {
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
-}
-
 interface AgentState {
   label: string;
   kind: AppStatusKind;
@@ -441,7 +437,9 @@ function ServiceRow({
           style={{ color: tone.hex }}
           numberOfLines={1}
         >
-          {service.pendingAction ?? service.status}
+          {service.pendingAction
+            ? pendingActionLabel(service.pendingAction).toLowerCase()
+            : service.status}
         </Text>
         <ServiceActions
           service={service}
@@ -475,7 +473,8 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   const inFlight = new Map<string, number>();
   for (const session of bucket.sessions) {
     if (session.pendingAction) {
-      inFlight.set(session.pendingAction, (inFlight.get(session.pendingAction) ?? 0) + 1);
+      const word = pendingActionLabel(session.pendingAction).toLowerCase();
+      inFlight.set(word, (inFlight.get(word) ?? 0) + 1);
       continue;
     }
     const kind = deriveAgentState(session).kind;
@@ -490,7 +489,8 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   }
   for (const service of bucket.services) {
     if (service.pendingAction) {
-      inFlight.set(service.pendingAction, (inFlight.get(service.pendingAction) ?? 0) + 1);
+      const word = pendingActionLabel(service.pendingAction).toLowerCase();
+      inFlight.set(word, (inFlight.get(word) ?? 0) + 1);
       continue;
     }
     const kind = serviceStatusKind(service);

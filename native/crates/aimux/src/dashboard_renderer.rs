@@ -1746,11 +1746,20 @@ fn session_state_rank(state: Option<&str>) -> (usize, Tone) {
         Some("ready") => (1, Tone::Ready),
         Some("idle") => (1, Tone::Idle),
         Some("offline") | None => (0, Tone::Muted),
-        // Everything else here is a lifecycle action in flight. The catch-all
-        // took `Tone::Attention`, and `worktree_tone` paints the card border
-        // with it -- so a checkout whose only agent was mid-create wore the
-        // same amber frame as one with an agent asking for input.
-        _ => (3, PROGRESS_TONE),
+        Some("interrupted") => (1, Tone::Idle),
+        // The lifecycle actions, named rather than caught: `worktree_tone`
+        // reads this ranking and `card` paints the border with it, so a
+        // checkout whose only agent was mid-create wore the same amber frame
+        // as one with an agent asking for input.
+        Some(
+            "creating" | "forking" | "migrating" | "switching" | "starting" | "stopping"
+            | "graveyarding" | "resurrecting" | "renaming" | "moving" | "interrupting" | "removing"
+            | "pending",
+        ) => (3, PROGRESS_TONE),
+        // And a state this build has not heard of stays loud. The vocabulary is
+        // published by the project service; guessing that something new is
+        // quiet is the worse way to be wrong about it.
+        _ => (3, Tone::Attention),
     }
 }
 

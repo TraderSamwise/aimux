@@ -126,6 +126,22 @@ fn every_transient_action_is_counted_in_the_progress_tone() {
     }
 }
 
+/// A state this build has not heard of must stay loud. The vocabulary is
+/// published by the project service, and the catch-all that used to paint every
+/// lifecycle action amber was also the arm that caught anything new -- so
+/// making it quiet would have traded one wrong answer for a worse one.
+#[test]
+fn a_state_nobody_here_recognises_is_not_assumed_to_be_quiet() {
+    let frame = frame_with_pending("something-this-build-has-never-heard-of");
+    // The card border, which is where the ranking lands and the one thing an
+    // unknown state still paints. A frame-wide search for the colour would pass
+    // on the selected-row marker whatever the ranking said.
+    assert!(
+        frame.contains(&format!("{ATTENTION_SGR}╭ ")),
+        "an unrecognised state was assumed to be work in flight"
+    );
+}
+
 /// Pinned beside the others so that making progress quieter cannot quietly make
 /// these quieter too.
 #[test]
