@@ -81,13 +81,19 @@ fn root_for(label: &str) -> String {
 
 /// What a build asks the operating system for, as the project grows.
 ///
-/// One test, not four. `CANONICALIZE_CALLS` and `GIT_BRANCH_PROBES` are global
-/// to the process and `cargo test` runs a file's tests on parallel threads, so
-/// two tests reading a delta read each other's calls -- which is not a
-/// hypothetical: splitting these counts at 40 worktrees from 649 to 862 and
-/// failed for a reason that had nothing to do with the code. The serial-targets
-/// entry does not help, because integration binaries are already separate
-/// processes and the contention is inside this file.
+/// ONE test, and that is the whole protection. `CANONICALIZE_CALLS` and
+/// `GIT_BRANCH_PROBES` are global to the process and `cargo test` runs a file's
+/// tests on parallel threads, so two tests reading a delta read each other's
+/// calls -- not a hypothetical: splitting these counts took 40 worktrees from
+/// 773 to 862 and failed for a reason that had nothing to do with the code.
+///
+/// So do not add a second test to this file. It cannot be made safe by listing
+/// the target as serial, which is where this started: `native-test-runner.py`
+/// passes `--test-threads=1` only to unit targets, and `run_serial` serializes
+/// BINARIES, which are separate processes and cannot share a per-process
+/// static. The entry was removed rather than left as false reassurance, and the
+/// target runs in the parallel pool where it belongs. A second claim about
+/// these counters goes in this function, or behind a lock of its own.
 ///
 /// Every gate here is a COUNT, and the two that matter are MARGINALS between
 /// two scales rather than tuned constants. A duration says nothing on a loaded

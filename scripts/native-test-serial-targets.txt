@@ -62,4 +62,3 @@ tmux_expose_signal_shutdown	real expose subprocess signal/cursor teardown
 tmux_open_hyperlink	shell script subprocess and tmux hyperlink command behavior
 tmux_runtime_manager	real tmux runtime manager and socket/session operations
 dashboard_render_loop	drives the real render loop, which owns terminal state and timing
-desktop_state_scale	reads a process-global canonicalize counter, so a parallel test would be counted against it

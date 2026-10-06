@@ -144,3 +144,4 @@ agent_status_label_surfaces
 diagnostics_ptrace
 runtime_topology_lock
 worktree_checkout_missing
+desktop_state_scale
