@@ -1,21 +1,33 @@
 //! What a desktop-state build costs as a project grows.
 //!
-//! Measured on a developer Mac on 2026-10-06, steady state, with a realistic
-//! topology (a row for the main checkout, one per worktree, agents spread
-//! across them):
+//! Measured on sam-strix -- the machine with the problem -- on 2026-10-06,
+//! release profile, idle at load 0.6, with the worktree directories actually
+//! present on disk so `canonicalize` succeeds rather than taking its lexical
+//! fallback. Best of seven runs, same fixture both sides:
 //!
-//! |            scale | before | after |
-//! |------------------|--------|-------|
-//! |  10 wt x  20 ag  |   31ms |  12ms |
-//! |  25 wt x  50 ag  |   47ms |  18ms |
-//! |  50 wt x 100 ag  |   93ms |  26ms |
-//! | 100 wt x 200 ag  |  273ms |  45ms |
+//! |            scale | before | after | desktop-state JSON |
+//! |------------------|--------|-------|--------------------|
+//! |  10 wt x  20 ag  |   17ms |  14ms |               68KB |
+//! |  25 wt x  50 ag  |   27ms |  15ms |              169KB |
+//! |  50 wt x 100 ag  |   57ms |  18ms |              339KB |
+//! | 100 wt x 200 ag  |  177ms |  25ms |              681KB |
+//! | 200 wt x 400 ag  |  599ms |  36ms |             1364KB |
 //!
-//! The dashboard rebuilds this on every refresh, so at the ceiling Sam asked
-//! for -- 100 worktrees and 200 agents -- a quarter of a second of CPU stood
-//! between a keypress and a frame.
+//! The shape is the claim, not the headline: doubling 100x200 to 200x400 costs
+//! 3.39x before and 1.45x after, so this went from quadratic in
+//! (worktrees x agents) to linear.
 //!
-//! The gates here are COUNTS, not durations. A build that takes 45ms here takes
+//! This is the REFRESH path, and an earlier version of this comment said it was
+//! the keypress path -- "a quarter of a second of CPU stood between a keypress
+//! and a frame". That was wrong and is worth correcting rather than quietly
+//! deleting, because the whole value of the number depends on which path it is
+//! on. A keypress takes the cached-snapshot branch and never calls this; a
+//! measured repaint at 100x200 costs about 49ms against a 50ms frame gap, of
+//! which this build is none. That path is `dashboard_navigation.rs` and
+//! `dashboard_ui_state.rs`, it is still saturated, and it is not what this file
+//! measures.
+//!
+//! The gates here are COUNTS, not durations. A build that takes 25ms here takes
 //! longer on a loaded CI runner and says nothing by it, and this repo has
 //! already paid once for a test that asserted the machine was fast.
 
