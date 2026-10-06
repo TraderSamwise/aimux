@@ -113,6 +113,7 @@ fn missing_group(name: &str, pending_action: Option<&str>) -> WorktreeGroup {
 fn render_frame_with(group: WorktreeGroup, panel: bool) -> String {
     let path = group.path.clone();
     let snapshot = DesktopStateSnapshot {
+        main_checkout_verdicts: Default::default(),
         sessions: Vec::new(),
         teammates: Vec::new(),
         services: Vec::new(),

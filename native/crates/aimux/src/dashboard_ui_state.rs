@@ -1,4 +1,4 @@
-use crate::atomic_write::write_json_atomic;
+use crate::atomic_write::{write_json_atomic, write_json_atomic_fast};
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
     DashboardSession, DesktopStateSnapshot, is_dashboard_supervisor_plane_session,
@@ -105,22 +105,39 @@ impl DashboardUiStatePersistence {
     ) -> Result<bool> {
         let preview_source =
             normalize_preview_source(Some(&Value::String(preview_source.to_owned())));
-        let mut client = read_dashboard_state_snapshot(&self.path)
+        // Each file is read ONCE. The `changed` check used to re-read and
+        // re-parse both of them to compare against the values it had just
+        // derived from them, so a repaint cost four reads and four parses where
+        // two of each answer it.
+        let stored_client = read_dashboard_state_snapshot(&self.path);
+        let mut client = stored_client
+            .clone()
             .unwrap_or_else(|| Value::Object(Default::default()));
         client["screen"] = Value::String(screen.as_str().to_owned());
         persist_navigation_state(&mut client, snapshot, navigation);
 
-        let mut shared = read_dashboard_state_snapshot(&self.shared_path())
+        let stored_shared = read_dashboard_state_snapshot(&self.shared_path());
+        let mut shared = stored_shared
+            .clone()
             .unwrap_or_else(|| Value::Object(Default::default()));
         shared["previewSource"] = Value::String(preview_source.clone());
         shared["detailsSidebarVisible"] = Value::Bool(details_sidebar_visible);
 
-        let changed = read_dashboard_state_snapshot(&self.path).as_ref() != Some(&client)
-            || read_dashboard_state_snapshot(&self.shared_path()).as_ref() != Some(&shared);
+        let changed =
+            stored_client.as_ref() != Some(&client) || stored_shared.as_ref() != Some(&shared);
         if changed {
-            write_json_atomic(&self.path, &client)
+            // Not durable, deliberately. These two files are which row is
+            // selected, which screen is open and which preview is showing --
+            // state a viewer would not miss. `write_json_atomic` would add two
+            // `F_FULLFSYNC` each, measured at 8.35ms apiece on macOS, so a
+            // keypress paid 16.7ms of waiting for the disk out of a 50ms frame
+            // budget to make a few hundred bytes survive a power cut. The
+            // rename is still atomic, so nothing reads a torn file; a crash
+            // loses the selection, which is what reopening the dashboard does
+            // anyway.
+            write_json_atomic_fast(&self.path, &client)
                 .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
-            write_json_atomic(self.shared_path(), &shared).with_context(|| {
+            write_json_atomic_fast(self.shared_path(), &shared).with_context(|| {
                 format!("write dashboard ui state {}", self.shared_path().display())
             })?;
         }
@@ -138,6 +155,7 @@ impl DashboardUiStatePersistence {
     }
 
     pub fn apply_order_to_snapshot(&self, snapshot: &mut DesktopStateSnapshot) {
+        snapshot.main_checkout_verdicts.clear();
         let order_state = self.read_shared_order_state();
         if snapshot.worktree_groups.is_empty() {
             apply_typed_dashboard_order(
@@ -269,6 +287,22 @@ impl DashboardUiStatePersistence {
         } else {
             shared.remove("serviceOrderByWorktreeKey");
         }
+        // Durable, and the one write on this file that should be.
+        //
+        // A previous revision made this fast "because the frame behind the
+        // reorder rewrites the same file anyway". That was wrong, and a
+        // reviewer measured it wrong: `persist_controller_state` re-reads the
+        // shared file, touches only `previewSource` and
+        // `detailsSidebarVisible`, and gates its write on having changed
+        // something -- and the file it just read already holds the new order
+        // keys, so it writes nothing. This is the ONLY write agent order ever
+        // gets.
+        //
+        // It is also not a per-frame cost. A reorder is one deliberate
+        // keypress, so the pair of `fsync`s is paid once, on an explicit action
+        // whose result a user would notice losing. That is the distinction that
+        // makes selection state fast and leaves this durable -- not which file
+        // it happens to live in.
         write_json_atomic(self.shared_path(), &Value::Object(shared))
             .with_context(|| format!("write dashboard ui state {}", self.shared_path().display()))
     }
