@@ -14,8 +14,21 @@ use std::time::{Duration, SystemTime};
 use crate::atomic_write::write_text_atomic;
 use crate::secure_permissions;
 
-/// A lock older than this is assumed to belong to a process that died holding it.
+/// A lock whose owner is still running is assumed to be in use until this old.
 const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
+/// A lock whose owner is PROVABLY gone is reclaimed much sooner: there is
+/// nobody left to finish the write, so waiting the full window only blocks live
+/// writers. The topology lock this one absorbed already worked this way, and
+/// dropping that would have made a crashed writer block every update for thirty
+/// seconds instead of one.
+///
+/// Proof is the point. The absorbed rule also took this short window when the
+/// owner was merely UNREADABLE, which is not evidence of death: a lock written
+/// microseconds ago has no owner file yet, and `jobs/store.rs` holds this lock
+/// across writes without fencing the commit. Treating "I could not tell" as
+/// "nobody is there" would have let a live writer's lock be taken from under
+/// it after a second.
+const STALE_LOCK_AFTER_OWNER_GONE: Duration = Duration::from_secs(1);
 /// How long to keep retrying a held lock before giving up.
 ///
 /// The lock covers one read and one atomic write, so real contention clears in
@@ -81,14 +94,86 @@ fn read_owner(lock_path: &Path) -> Option<String> {
         .map(|value| value.trim().to_owned())
 }
 
+/// The pid half of an owner token (`pid:nanos`).
+///
+/// `None` covers both "no owner file" and "an owner we cannot parse"; neither
+/// is evidence that a process is alive, so both take the shorter stale window.
+fn owner_pid(lock_path: &Path) -> Option<i32> {
+    read_owner(lock_path)?
+        .split(':')
+        .next()?
+        .parse::<i32>()
+        .ok()
+        .filter(|pid| *pid > 0)
+}
+
+fn owner_pid_alive(lock_path: &Path) -> Option<(i32, bool)> {
+    let pid = owner_pid(lock_path)?;
+    Some((pid, pid_alive(pid)))
+}
+
+fn pid_alive(pid: i32) -> bool {
+    // SAFETY: kill(pid, 0) sends no signal; it only asks the OS whether the
+    // process exists and whether this user may signal it.
+    let result = unsafe { libc::kill(pid, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn lock_age(lock_path: &Path) -> Option<Duration> {
+    let modified = fs::metadata(lock_path).ok()?.modified().ok()?;
+    SystemTime::now().duration_since(modified).ok()
+}
+
+/// Says who holds it and how long we actually waited.
+///
+/// The old message named neither. Topology's version was worse still: it said
+/// "Timed out" after a single attempt that never waited at all, which is the
+/// wrapper lying about what happened -- it sent the reader looking for a slow
+/// writer when the real answer was "someone else held it for a millisecond".
+fn held_lock_error(lock_path: &Path, waited: Duration) -> String {
+    let age = match lock_age(lock_path) {
+        Some(age) => format!("{}ms old", age.as_millis()),
+        None => "of unreadable age".to_owned(),
+    };
+    match owner_pid_alive(lock_path) {
+        Some((pid, alive)) => format!(
+            "Could not take the state update lock at {} after waiting {}ms: held by pid {} ({}), {}",
+            lock_path.display(),
+            waited.as_millis(),
+            pid,
+            if alive { "running" } else { "gone" },
+            age
+        ),
+        None => format!(
+            "Could not take the state update lock at {} after waiting {}ms: held, but it names no \
+             owner we could read; {}",
+            lock_path.display(),
+            waited.as_millis(),
+            age
+        ),
+    }
+}
+
 /// Take the update lock guarding `path`, waiting for a holder to finish and
 /// reclaiming it if it has gone stale.
 pub fn acquire_state_update_lock(path: &Path) -> Result<StateUpdateLock, String> {
+    acquire_state_update_lock_within(path, ACQUIRE_TIMEOUT)
+}
+
+/// The waiting form, with the budget passed in.
+///
+/// The parent-directory hardening lives here rather than in the wrapper: a
+/// second entry point that skipped it would create the lock beside a state file
+/// in a directory nobody had made private.
+pub(crate) fn acquire_state_update_lock_within(
+    path: &Path,
+    wait: Duration,
+) -> Result<StateUpdateLock, String> {
     if let Some(parent) = path.parent() {
         secure_permissions::ensure_private_dir(parent).map_err(|error| error.to_string())?;
     }
     let lock_path = state_update_lock_path(path);
-    let deadline = SystemTime::now() + ACQUIRE_TIMEOUT;
+    let started_at = SystemTime::now();
     loop {
         match fs::create_dir(&lock_path) {
             Ok(()) => {
@@ -106,13 +191,13 @@ pub fn acquire_state_update_lock(path: &Path) -> Result<StateUpdateLock, String>
                 if reclaim_stale(&lock_path) {
                     continue;
                 }
-                if SystemTime::now() >= deadline {
-                    return Err(format!(
-                        "Timed out acquiring state update lock at {}",
-                        lock_path.display()
-                    ));
+                let waited = started_at.elapsed().unwrap_or_default();
+                if waited >= wait {
+                    return Err(held_lock_error(&lock_path, waited));
                 }
-                std::thread::sleep(ACQUIRE_RETRY);
+                // Never sleep past the budget: the caller's deadline is the
+                // promise, and overshooting would make the reported wait wrong.
+                std::thread::sleep(ACQUIRE_RETRY.min(wait.saturating_sub(waited)));
             }
             Err(error) => return Err(error.to_string()),
         }
@@ -129,14 +214,16 @@ pub fn state_update_lock_path(path: &Path) -> PathBuf {
 }
 
 fn reclaim_stale(lock_path: &Path) -> bool {
-    let Ok(metadata) = fs::metadata(lock_path) else {
+    let Some(age) = lock_age(lock_path) else {
         return false;
     };
-    let Ok(modified) = metadata.modified() else {
-        return false;
-    };
-    let Ok(age) = SystemTime::now().duration_since(modified) else {
-        return false;
-    };
-    age >= STALE_LOCK_AFTER && fs::remove_dir_all(lock_path).is_ok()
+    age >= stale_lock_window(lock_path) && fs::remove_dir_all(lock_path).is_ok()
+}
+
+fn stale_lock_window(lock_path: &Path) -> Duration {
+    match owner_pid_alive(lock_path) {
+        // Only a pid we read, parsed, and found gone shortens the window.
+        Some((_, false)) => STALE_LOCK_AFTER_OWNER_GONE,
+        _ => STALE_LOCK_AFTER,
+    }
 }
