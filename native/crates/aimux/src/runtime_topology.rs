@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::atomic_write::write_text_atomic_fast;
 use crate::state_update_lock::{
-    ACQUIRE_TIMEOUT as TOPOLOGY_LOCK_WAIT, acquire_state_update_lock_at,
+    ACQUIRE_TIMEOUT as TOPOLOGY_LOCK_WAIT, StaleLockPolicy, acquire_state_update_lock_at,
 };
 
 pub const RUNTIME_TOPOLOGY_VERSION: i64 = 1;
@@ -57,18 +57,28 @@ pub fn update_runtime_topology(
     updater: impl FnOnce(Value) -> Value,
 ) -> Result<Value, String> {
     let path = path.as_ref();
-    // The shared lock, not a second copy of one. Topology grew its own first
-    // and metadata copied it; the copy then gained a real wait, an owner token
-    // its Drop checks, and a commit fence, while this one still made a single
-    // `create_dir` attempt and called the refusal a timeout. Two writers --
-    // creating an agent while the dashboard wrote -- failed instantly on
-    // 2026-10-06 because of it.
+    // The shared lock's machinery, at topology's own path and under topology's
+    // own stale rule. The machinery is what was missing here -- a real wait, an
+    // owner token `Drop` checks, a commit fence -- and a single `create_dir`
+    // that called its refusal a timeout is what made two writers fail instantly
+    // on 2026-10-06.
+    //
+    // The path and the rule stay because a process on an OLDER build is still
+    // locking this directory by these rules, and the daemon, each project
+    // service and the CLI do not restart together.
     // The lock topology has always used, at the path it has always used.
-    // Folding this into the shared module's own naming would have meant an old
-    // binary and a new one holding different directories for the same file --
-    // no mutual exclusion at all across an upgrade, and the daemon, each
-    // project service and the CLI do not restart together.
-    let lock = acquire_state_update_lock_at(&topology_lock_path(path), path, TOPOLOGY_LOCK_WAIT)?;
+    // The path AND the rule stay, because a process on an older build is still
+    // locking this directory by these rules and the daemon, each project
+    // service and the CLI do not restart together. Matching only the path would
+    // have been worse than not sharing one: the old build reads `owner` as a
+    // bare pid, so our token would be unparseable to it, which it treats as no
+    // owner, which it treats as dead after a second -- it would evict a LIVE
+    // holder and write unfenced.
+    let lock = acquire_state_update_lock_at(
+        &topology_lock_path(path),
+        TOPOLOGY_LOCK_WAIT,
+        StaleLockPolicy::LEGACY_TOPOLOGY,
+    )?;
     let current = read_runtime_topology(path)?;
     let next = coerce_runtime_topology(&updater(current))?;
     // Reclamation is optimistic, so a holder that was only paused can wake up

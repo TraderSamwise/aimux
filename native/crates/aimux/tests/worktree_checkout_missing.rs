@@ -102,8 +102,15 @@ fn missing_group(name: &str, pending_action: Option<&str>) -> WorktreeGroup {
     group
 }
 
-/// Render a real dashboard frame holding one worktree group.
+/// Render a real dashboard frame holding one worktree group, with the detail
+/// panel for that group OPEN.
+///
+/// The first version rendered with `focused_group_index: None` and the sidebar
+/// hidden, so a test asserting the frame does NOT say "checkout missing" passed
+/// without ever rendering the panel that says it. A negative assertion over a
+/// surface that was not drawn proves nothing.
 fn render_frame(group: WorktreeGroup) -> String {
+    let path = group.path.clone();
     let snapshot = DesktopStateSnapshot {
         sessions: Vec::new(),
         teammates: Vec::new(),
@@ -131,8 +138,8 @@ fn render_frame(group: WorktreeGroup) -> String {
         nav_level: DashboardNavLevel::Worktrees,
         selected_session_id: None,
         selected_service_id: None,
-        focused_worktree_path: None,
-        focused_group_index: None,
+        focused_worktree_path: path.as_deref(),
+        focused_group_index: Some(0),
         runtime_label: Some("tmux"),
         version: Some("local"),
         hide_offline_agents: false,
@@ -141,7 +148,7 @@ fn render_frame(group: WorktreeGroup) -> String {
         footer_progress: None,
         footer_note: None,
         footer_alerts: &[],
-        details_sidebar_visible: false,
+        details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
     });

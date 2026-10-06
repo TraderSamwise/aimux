@@ -1701,15 +1701,20 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     }
 }
 
+/// Whether something is happening to this worktree right now.
+///
+/// One predicate for the row summary's ordering, the row's tone and the detail
+/// panel, because a checkout that has not arrived yet is not a checkout that is
+/// gone and all three have to agree about which it is.
+fn worktree_action_in_flight(worktree: &DashboardNavigationGroup<'_>) -> bool {
+    worktree.pending_action.is_some() || worktree.removing || worktree.pending
+}
+
 fn worktree_tone(worktree: &DashboardNavigationGroup<'_>) -> Tone {
     if worktree.operation_failure.is_some() {
         return Tone::Danger;
     }
-    // Same ordering as the summary: an action in flight owns the row's tone,
-    // because a checkout that has not arrived yet is not a checkout that is
-    // gone.
-    let in_flight = worktree.pending_action.is_some() || worktree.removing || worktree.pending;
-    if worktree.path_missing && !in_flight {
+    if worktree.path_missing && !worktree_action_in_flight(worktree) {
         return Tone::Danger;
     }
     let mut best = (0, Tone::Muted);
@@ -2210,7 +2215,11 @@ fn render_worktree_details_panel(
     // Said where the path is said, because the path is what is wrong. The word
     // matches the app's, and both read the service's verdict rather than each
     // asking the filesystem.
-    if focused_group.is_some_and(|group| group.path_missing) {
+    //
+    // Under the same precedence the row uses: a worktree mid-create has no
+    // checkout YET, and the row already knew that while this panel did not --
+    // so the two surfaces contradicted each other on the same group.
+    if focused_group.is_some_and(|group| group.path_missing && !worktree_action_in_flight(group)) {
         push_kv(
             &mut lines,
             "Checkout",

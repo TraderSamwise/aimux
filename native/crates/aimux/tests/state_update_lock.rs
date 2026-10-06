@@ -102,7 +102,9 @@ fn a_lock_whose_owner_is_gone_still_gets_the_long_window() {
     fs::create_dir_all(&lock_path).unwrap();
     // A pid high enough that nothing is using it, so `kill(pid, 0)` answers
     // ESRCH. The owner token's shape is `pid:nanos`.
-    fs::write(lock_path.join("owner"), "2147483646:1\n").unwrap();
+    // The bare-pid file, which is what the stale rule reads -- and what a build
+    // predating the owner token also reads.
+    fs::write(lock_path.join("owner"), "2147483646\n").unwrap();
     let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(3);
     let file = fs::File::open(&lock_path).unwrap();
     file.set_times(fs::FileTimes::new().set_modified(aged))
@@ -126,11 +128,7 @@ fn a_lock_whose_owner_is_running_keeps_the_long_window() {
     let path = temp_state_file("live-owner");
     let lock_path = state_update_lock_path(&path);
     fs::create_dir_all(&lock_path).unwrap();
-    fs::write(
-        lock_path.join("owner"),
-        format!("{}:1\n", std::process::id()),
-    )
-    .unwrap();
+    fs::write(lock_path.join("owner"), format!("{}\n", std::process::id())).unwrap();
     let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(5);
     let file = fs::File::open(&lock_path).unwrap();
     file.set_times(fs::FileTimes::new().set_modified(aged))

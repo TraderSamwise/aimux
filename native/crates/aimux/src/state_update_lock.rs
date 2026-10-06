@@ -33,6 +33,39 @@ const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
 pub const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(2);
 const ACQUIRE_RETRY: Duration = Duration::from_millis(5);
 
+/// How long a lock may sit before another writer may take it.
+///
+/// Per caller, because this lock is shared and its holders differ. Topology's
+/// own lock, which this absorbed, recovered from a crashed writer in a second;
+/// `jobs/store.rs` takes this lock across a write at eight sites WITHOUT
+/// fencing the commit, so a short window there is more exposure to the lost
+/// update the lock exists to prevent. One rule for both was wrong whichever
+/// value it took.
+#[derive(Debug, Clone, Copy)]
+pub struct StaleLockPolicy {
+    /// Used when the owner pid is readable and still running.
+    pub owner_running: Duration,
+    /// Used when the owner is gone, or could not be read at all.
+    pub owner_gone_or_unknown: Duration,
+}
+
+impl StaleLockPolicy {
+    /// What every caller but topology uses: one window, whoever holds it.
+    pub const DEFAULT: Self = Self {
+        owner_running: STALE_LOCK_AFTER,
+        owner_gone_or_unknown: STALE_LOCK_AFTER,
+    };
+
+    /// Exactly what the runtime topology lock did before it was folded into
+    /// this one -- and therefore exactly what a process on an OLDER build still
+    /// applies to the same directory. Diverging from it would mean the two
+    /// builds disagree about whether a live holder may be evicted.
+    pub const LEGACY_TOPOLOGY: Self = Self {
+        owner_running: Duration::from_secs(60),
+        owner_gone_or_unknown: Duration::from_secs(1),
+    };
+}
+
 pub struct StateUpdateLock {
     path: PathBuf,
     owner: String,
@@ -79,24 +112,38 @@ fn owner_token() -> String {
     )
 }
 
+/// The file an OLDER build reads, holding a bare pid and nothing else.
+///
+/// The owner token is `pid:nanos`, and a build that predates it parses this
+/// file as a bare `i32` -- so a token here is unparseable to it, which it reads
+/// as "no owner", which it reads as DEAD after one second. It would then evict
+/// a live holder and write unfenced. Keeping this file in the old shape is what
+/// makes the two builds agree about who is holding the lock.
 fn owner_path(lock_path: &Path) -> PathBuf {
     lock_path.join("owner")
 }
 
+/// The file THIS build reads, holding the unique token.
+fn owner_token_path(lock_path: &Path) -> PathBuf {
+    lock_path.join("owner-token")
+}
+
 fn read_owner(lock_path: &Path) -> Option<String> {
-    fs::read_to_string(owner_path(lock_path))
+    fs::read_to_string(owner_token_path(lock_path))
         .ok()
         .map(|value| value.trim().to_owned())
 }
 
-/// The pid half of an owner token (`pid:nanos`).
+/// The holder's pid, read from the file an older build also reads.
 ///
-/// `None` covers both "no owner file" and "an owner we cannot parse"; neither
-/// is evidence that a process is alive, so both take the shorter stale window.
+/// `None` covers both "no owner file" and "an owner we cannot parse". Neither
+/// is evidence that a process is alive, so both take the policy's
+/// owner-gone-or-unknown window, which for every caller but topology is the
+/// same window a live owner gets.
 fn owner_pid(lock_path: &Path) -> Option<i32> {
-    read_owner(lock_path)?
-        .split(':')
-        .next()?
+    fs::read_to_string(owner_path(lock_path))
+        .ok()?
+        .trim()
         .parse::<i32>()
         .ok()
         .filter(|pid| *pid > 0)
@@ -152,7 +199,11 @@ fn held_lock_error(lock_path: &Path, waited: Duration) -> String {
 /// Take the update lock guarding `path`, waiting for a holder to finish and
 /// reclaiming it if it has gone stale.
 pub fn acquire_state_update_lock(path: &Path) -> Result<StateUpdateLock, String> {
-    acquire_state_update_lock_at(&state_update_lock_path(path), path, ACQUIRE_TIMEOUT)
+    acquire_state_update_lock_at(
+        &state_update_lock_path(path),
+        ACQUIRE_TIMEOUT,
+        StaleLockPolicy::DEFAULT,
+    )
 }
 
 /// Take the lock for `path` at a lock directory of the caller's choosing.
@@ -167,16 +218,24 @@ pub fn acquire_state_update_lock(path: &Path) -> Result<StateUpdateLock, String>
 /// lock exists to prevent, silently.
 pub fn acquire_state_update_lock_at(
     lock_path: &Path,
-    path: &Path,
     wait: Duration,
+    stale: StaleLockPolicy,
 ) -> Result<StateUpdateLock, String> {
-    if let Some(parent) = path.parent() {
+    // Hardened from the LOCK's own parent, not from a second path argument the
+    // caller passes alongside it. Two independent arguments can disagree, and
+    // then the directory made private is not the directory the lock is created
+    // in -- which is the hazard this hardening exists for.
+    if let Some(parent) = lock_path.parent() {
         secure_permissions::ensure_private_dir(parent).map_err(|error| error.to_string())?;
     }
-    acquire_lock_directory(lock_path, wait)
+    acquire_lock_directory(lock_path, wait, stale)
 }
 
-fn acquire_lock_directory(lock_path: &Path, wait: Duration) -> Result<StateUpdateLock, String> {
+fn acquire_lock_directory(
+    lock_path: &Path,
+    wait: Duration,
+    stale: StaleLockPolicy,
+) -> Result<StateUpdateLock, String> {
     let lock_path = lock_path.to_path_buf();
     // A monotonic clock, not the wall clock. `SystemTime::elapsed` errors when
     // the wall clock moves backwards, and the first version swallowed that with
@@ -191,7 +250,12 @@ fn acquire_lock_directory(lock_path: &Path, wait: Duration) -> Result<StateUpdat
                 secure_permissions::ensure_private_dir(&lock_path)
                     .map_err(|error| error.to_string())?;
                 let owner = owner_token();
-                write_text_atomic(owner_path(&lock_path), &owner)
+                // The bare pid first, in the shape an older build parses, then
+                // our own token. Order matters: a build that reads only the pid
+                // must never see the directory without one.
+                write_text_atomic(owner_path(&lock_path), format!("{}\n", std::process::id()))
+                    .map_err(|error| error.to_string())?;
+                write_text_atomic(owner_token_path(&lock_path), &owner)
                     .map_err(|error| error.to_string())?;
                 return Ok(StateUpdateLock {
                     path: lock_path,
@@ -199,7 +263,7 @@ fn acquire_lock_directory(lock_path: &Path, wait: Duration) -> Result<StateUpdat
                 });
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                if reclaim_stale(&lock_path) {
+                if reclaim_stale(&lock_path, stale) {
                     continue;
                 }
                 let waited = started_at.elapsed();
@@ -224,9 +288,13 @@ pub fn state_update_lock_path(path: &Path) -> PathBuf {
     parent.join(format!(".{name}.update-lock"))
 }
 
-fn reclaim_stale(lock_path: &Path) -> bool {
+fn reclaim_stale(lock_path: &Path, stale: StaleLockPolicy) -> bool {
     let Some(age) = lock_age(lock_path) else {
         return false;
     };
-    age >= STALE_LOCK_AFTER && fs::remove_dir_all(lock_path).is_ok()
+    let window = match owner_pid_alive(lock_path) {
+        Some((_, true)) => stale.owner_running,
+        _ => stale.owner_gone_or_unknown,
+    };
+    age >= window && fs::remove_dir_all(lock_path).is_ok()
 }

@@ -7,7 +7,7 @@
 //! 2026-10-06, where the user saw exactly that message on an idle machine.
 
 use aimux::runtime_topology::{read_runtime_topology, update_runtime_topology};
-use aimux::state_update_lock::{ACQUIRE_TIMEOUT, acquire_state_update_lock_at};
+use aimux::state_update_lock::{ACQUIRE_TIMEOUT, StaleLockPolicy, acquire_state_update_lock_at};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
@@ -21,8 +21,12 @@ fn topology_lock(path: &std::path::Path) -> PathBuf {
 }
 
 fn hold_topology_lock(path: &std::path::Path) -> aimux::state_update_lock::StateUpdateLock {
-    acquire_state_update_lock_at(&topology_lock(path), path, ACQUIRE_TIMEOUT)
-        .expect("hold the lock")
+    acquire_state_update_lock_at(
+        &topology_lock(path),
+        ACQUIRE_TIMEOUT,
+        StaleLockPolicy::LEGACY_TOPOLOGY,
+    )
+    .expect("hold the lock")
 }
 
 fn temp_topology() -> PathBuf {
@@ -181,5 +185,56 @@ fn the_topology_lock_keeps_its_historical_path() {
         !aimux::state_update_lock::state_update_lock_path(&path).exists(),
         "and the shared module's own naming must not be what topology uses"
     );
+    let _ = fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// A build that predates the owner token still reads our lock as held.
+///
+/// This is what matching the lock PATH alone would not have given. The older
+/// build parses `owner` as a bare `i32` and treats anything it cannot parse as
+/// no owner -- and no owner means stale after ONE SECOND, at which point it
+/// renames the directory away and writes unfenced, while we are still holding
+/// it. Matching the path without matching this file would have been worse than
+/// not sharing a path at all: instead of two locks that ignore each other, one
+/// live holder gets evicted.
+#[test]
+fn an_older_build_can_still_read_who_holds_the_lock() {
+    let path = temp_topology();
+    let _held = hold_topology_lock(&path);
+
+    let owner = fs::read_to_string(topology_lock(&path).join("owner"))
+        .expect("the owner file an older build reads has to exist");
+    let pid = owner.trim().parse::<i32>().unwrap_or_else(|error| {
+        panic!("an older build parses this as a bare pid: {owner:?} ({error})")
+    });
+    assert_eq!(
+        pid,
+        std::process::id() as i32,
+        "and it has to be OUR pid, so that build sees a live holder"
+    );
+    let _ = fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// And the stale rule matches that build's, so neither evicts the other early.
+///
+/// The old rule is 60s for a live owner and 1s otherwise. If this build used
+/// its own 30s, it would evict a live holder that the older build still
+/// considers protected -- the same lost update from the other direction.
+#[test]
+fn the_topology_stale_rule_matches_the_older_builds() {
+    let path = temp_topology();
+    let lock_path = topology_lock(&path);
+    fs::create_dir_all(&lock_path).unwrap();
+    fs::write(lock_path.join("owner"), format!("{}\n", std::process::id())).unwrap();
+    // Forty seconds: past this build's default 30s window, inside the 60s an
+    // older build grants a live owner.
+    let aged = std::time::SystemTime::now() - Duration::from_secs(40);
+    let file = fs::File::open(&lock_path).unwrap();
+    file.set_times(fs::FileTimes::new().set_modified(aged))
+        .unwrap();
+
+    let error = update_runtime_topology(&path, |topology| topology)
+        .expect_err("a live owner's lock must not be taken at forty seconds");
+    assert!(error.contains("held by pid"), "{error}");
     let _ = fs::remove_dir_all(path.parent().unwrap());
 }

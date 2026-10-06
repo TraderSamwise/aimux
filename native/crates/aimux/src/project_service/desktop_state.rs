@@ -1349,6 +1349,17 @@ fn worktree_group(
         // filesystem is touched once per worktree instead of twice. A group
         // with no row behind it -- built because a session still points at the
         // path -- carries no verdict, which is the honest answer.
+        // Read from the row rather than stat'd again here: the verdict is taken
+        // once per build, so the group and the row cannot disagree and the
+        // filesystem is touched once per worktree instead of twice.
+        //
+        // What this does NOT cover, said rather than left to be discovered: a
+        // group that exists only because a session still points at the path,
+        // with no topology row behind it. The service has no record of that
+        // worktree at all, so it has no verdict to give, and inventing one from
+        // a stat here would be a different answer reached a different way --
+        // which is the drift this change exists to remove. `dashboard_navigation`
+        // carries the same `false` for the same reason.
         if worktree.and_then(|worktree| worktree.get("pathMissing")) == Some(&Value::Bool(true)) {
             group.insert("pathMissing".into(), Value::Bool(true));
         }
