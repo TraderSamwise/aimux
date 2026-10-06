@@ -165,13 +165,34 @@ describe("the failed-operations card", () => {
     const tree = renderNode(
       <OperationFailureCardView
         summary={summary}
-        error="connection refused"
+        error="Could not dismiss: connection refused"
         dismissing={false}
         onDismiss={() => {}}
         endpoint={endpoint}
       />,
     );
     expect(allText(tree)).toContain("Could not dismiss: connection refused");
+  });
+
+  /// At the seam a person actually reads. Round 4 of this PR's review caught
+  /// the previous version asserting on the string handed to `setError` while
+  /// the view prefixed every error with "Could not dismiss:" regardless -- so a
+  /// refresh that failed after a clear that worked drew "Could not dismiss:
+  /// Dismissed, but the view did not refresh", contradicting itself and blaming
+  /// the half that worked.
+  it("draws an error exactly as it was framed, adding no blame of its own", () => {
+    const tree = renderNode(
+      <OperationFailureCardView
+        summary={summary}
+        error="Dismissed, but the view did not refresh: atom store is gone"
+        dismissing={false}
+        onDismiss={() => {}}
+        endpoint={endpoint}
+      />,
+    );
+    const text = allText(tree);
+    expect(text).toContain("Dismissed, but the view did not refresh");
+    expect(text).not.toContain("Could not dismiss");
   });
 
   /// The body of the request, which is the whole reach of the key. An empty
@@ -201,6 +222,18 @@ describe("the failed-operations card", () => {
         refresh: vi.fn(),
       };
     }
+
+    /// And a failed dismiss keeps its own frame, which the view no longer adds.
+    it("frames a failed dismiss as a failed dismiss", async () => {
+      clearOperationFailures.mockImplementationOnce(async () => {
+        throw new Error("Failed to fetch");
+      });
+      const sink = io();
+      await runOperationFailureDismiss(endpoint, "tok", sink);
+      expect(sink.setError).toHaveBeenCalledWith(
+        expect.stringContaining("Could not dismiss: Failed to fetch"),
+      );
+    });
 
     it("clears, refreshes, and leaves nothing in flight", async () => {
       const sink = io();
@@ -259,6 +292,22 @@ describe("the failed-operations card", () => {
         expect.stringContaining("Dismissed, but the view did not refresh"),
       );
       expect(sink.setError).not.toHaveBeenCalledWith(expect.stringContaining("Could not dismiss"));
+      // And what the card DRAWS from it, which is the seam that matters: the
+      // string reaching `setError` was already right, and the card still wrote
+      // "Could not dismiss" in front of it.
+      const framed = sink.setError.mock.calls
+        .flat()
+        .filter((value): value is string => typeof value === "string");
+      const drawn = renderNode(
+        <OperationFailureCardView
+          summary={summary}
+          error={framed[framed.length - 1]}
+          dismissing={false}
+          onDismiss={() => {}}
+          endpoint={endpoint}
+        />,
+      );
+      expect(allText(drawn)).not.toContain("Could not dismiss");
       // And the button is usable again, which a throw past the reset would have
       // left stuck at "Dismissing..." forever.
       expect(sink.inFlight()).toBe(false);

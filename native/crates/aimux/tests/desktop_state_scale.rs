@@ -60,12 +60,25 @@ fn topology(root: &str, worktrees: usize, agents: usize) -> Value {
     let nodes = vec![json!({ "id": "node", "rigId": "rig", "logicalId": "node" })];
     let mut sessions = Vec::new();
     for w in 0..worktrees {
-        wts.push(json!({
+        let mut row = json!({
             "id": format!("wt{w}"), "rigId": "rig", "name": format!("w{w}"),
             "path": format!("{root}/.aimux/worktrees/w{w}"),
             "branch": format!("b{w}"), "status": "active",
             "createdAt": stamp(w + 1), "updatedAt": now,
-        }));
+        });
+        // Exactly one row carries a failure, because the clearable verdict is
+        // only derived for a row that has one -- and with no such row in this
+        // fixture, the branch that derives it never ran here. That is how a
+        // per-row `stat` behind that very branch reached master-bound code with
+        // this counter already in place and the gate green.
+        //
+        // One, not all: the marginal below is a difference between two scales,
+        // and a per-row cost on every row would move both ends together.
+        if w == 0 {
+            row["status"] = json!("error");
+            row["operationFailure"] = json!("worktree remove failed");
+        }
+        wts.push(row);
     }
     for a in 0..agents {
         sessions.push(json!({
@@ -209,6 +222,19 @@ fn a_build_asks_the_operating_system_about_paths_not_about_pairings() {
     assert_eq!(
         more_agents.checkout_stats, base.checkout_stats,
         "an extra agent is not an extra checkout, so it must not cost a stat"
+    );
+    // And exactly, because a marginal cannot see a constant and cannot see a
+    // second ask about the same row. 41 rows, 40 questions: the main checkout
+    // is never marked missing, and the row that does carry a failure is already
+    // being asked about as a missing-candidate, so its clearable verdict comes
+    // free. Both of this branch's filesystem regressions land here -- the
+    // filters moving behind the `stat`, and a second `stat` per failing row.
+    assert_eq!(
+        base.checkout_stats, 40,
+        "the build asked the filesystem {} times about 41 rows that between \
+         them raise 40 questions, so something is asking twice or asking about \
+         a row with no question attached",
+        base.checkout_stats
     );
 
     // git is a SUBPROCESS, and no count of filesystem calls can see one. The

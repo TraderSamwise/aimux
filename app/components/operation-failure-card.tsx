@@ -60,7 +60,7 @@ export async function runOperationFailureDismiss(
     // carried out.
     const failure = await dismissOperationFailures(endpoint, token);
     if (failure !== null) {
-      io.setError(failure);
+      io.setError(`Could not dismiss: ${failure}`);
     } else {
       try {
         io.refresh();
@@ -110,7 +110,11 @@ export function OperationFailureCardView({
     <PageStateCard
       className={className}
       title={summary.title}
-      body={[summary.detail, error && `Could not dismiss: ${error}`].filter(Boolean).join("\n")}
+      // The error arrives already framed. The view used to prefix every one of
+      // them with "Could not dismiss:", so a refresh that failed after a clear
+      // that worked read "Could not dismiss: Dismissed, but the view did not
+      // refresh" -- which contradicts itself and blames the half that worked.
+      body={[summary.detail, error].filter(Boolean).join("\n")}
       tone="warning"
       action={
         endpoint ? (

@@ -1938,17 +1938,28 @@ fn worktree_checkout_probe(
         let Some(path) = string_field(worktree, "path") else {
             continue;
         };
-        // One `stat` per row, which is what this cost before either answer was
-        // derived from it, and both answers come from the one classification so
-        // they cannot drift apart by spelling.
+        // Asked only where an answer is used. The filters used to sit in front
+        // of the `stat` as a chain, and folding two answers into one pass moved
+        // them behind it -- which quietly began stat'ing the main checkout and
+        // every row still being created, rows this build had never touched. The
+        // count is a budget, so a row nobody will ask about does not get a
+        // syscall.
+        let can_be_marked_missing = !worktree_checkout_is_still_arriving(worktree)
+            && !is_worktree_path(path, &root_identity);
+        let carries_a_failure = worktree
+            .get("operationFailure")
+            .is_some_and(|failure| !failure.is_null());
+        if !can_be_marked_missing && !carries_a_failure {
+            continue;
+        }
+        // One `stat` for both answers, from one classification, so the route
+        // and the projection cannot drift apart by spelling.
         match worktree_checkout_state(path) {
             WorktreeCheckoutState::Present => {
                 probe.present.insert(path.to_owned());
             }
             WorktreeCheckoutState::Absent => {
-                if !worktree_checkout_is_still_arriving(worktree)
-                    && !is_worktree_path(path, &root_identity)
-                {
+                if can_be_marked_missing {
                     probe.missing.insert(path.to_owned());
                 }
             }
