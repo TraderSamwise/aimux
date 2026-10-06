@@ -1757,24 +1757,42 @@ fn worktree_key(path: Option<&str>) -> String {
 ///
 /// So counting every row failure here would hand back the same bug from the
 /// other side: a hint saying `X clear failures` and a key that sends a request
-/// clearing nothing, forever, with the row still red. `pathMissing` is the
-/// service's own verdict on whether the checkout is there, decided once on the
-/// row, and it is the same question the route asks.
+/// clearing nothing, forever, with the row still red.
+///
+/// This reads `operationFailureClearable`, which the service derives with the
+/// route's OWN rule. The obvious shortcut -- `!pathMissing` -- was wrong in a
+/// way worth recording: `pathMissing` is `NotFound` only, deliberately, since a
+/// path that cannot be stat'd for another reason is unknown rather than absent,
+/// while the route's check is false on ANY stat error. A failed row on an
+/// unreadable mount therefore had no `pathMissing`, the hint appeared, and the
+/// route refused the request -- the exact lie this term exists to prevent. And
+/// `pathMissing` is never set on the main checkout at all, so for that row the
+/// shortcut was a constant `true`.
 pub fn dashboard_has_clearable_failures(snapshot: &DesktopStateSnapshot) -> bool {
     !snapshot.operation_failures.is_empty()
         || snapshot
             .worktree_groups
             .iter()
-            .any(|group| group.operation_failure.is_some() && !group.path_missing)
-        // The row keeps it in `extra`: `DesktopWorktree` has no typed field for
-        // it, and the service writes `operationFailure` onto the row anyway.
+            .any(|group| group.operation_failure.is_some() && row_failure_is_clearable(&group.extra))
+        // The row keeps both in `extra`: `DesktopWorktree` has no typed field
+        // for either, and the service writes them onto the row anyway.
         || snapshot.worktrees.iter().any(|worktree| {
             worktree
                 .extra
                 .get("operationFailure")
                 .is_some_and(|failure| !failure.is_null())
-                && worktree.extra.get("pathMissing") != Some(&Value::Bool(true))
+                && row_failure_is_clearable(&worktree.extra)
         })
+}
+
+/// The service's verdict, and absent means no -- never "probably yes".
+///
+/// A row carrying a failure always gets the field. One that does not have it is
+/// either from a build before this existed or from a group with no topology row
+/// behind it, and in both cases the honest answer is that nothing here knows
+/// the key would work.
+fn row_failure_is_clearable(extra: &BTreeMap<String, Value>) -> bool {
+    extra.get("operationFailureClearable") == Some(&Value::Bool(true))
 }
 
 fn should_keep_operational_worktree(group: &WorktreeGroup) -> bool {

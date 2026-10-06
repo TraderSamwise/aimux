@@ -1235,6 +1235,98 @@ fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
 ///
 /// Asserted BETWEEN the surfaces rather than one test per surface, because a
 /// per-surface test passes happily while the surfaces disagree.
+/// The dashboard and the clear route must agree about whether a failure can be
+/// cleared, including on a path neither of them can stat.
+///
+/// Round 2 of PR 406's adversarial review found the shortcut this replaces.
+/// `pathMissing` is `NotFound` ONLY, deliberately -- a path we cannot stat for
+/// another reason is unknown rather than absent, and calling it missing would
+/// tell someone to throw away a worktree that is still there. But
+/// `clear_worktree_row_failure` asks `Path::exists()`, which is false on ANY
+/// stat error. A failed row under an unreadable parent therefore had no
+/// `pathMissing`, so the dashboard offered `X clear failures` and the route
+/// refused the request -- forever, with the row still red.
+///
+/// The two now share `worktree_checkout_is_present`, and this is the case that
+/// told them apart: a directory with mode 000 over a path that is really there.
+#[test]
+fn a_failure_under_an_unreadable_parent_is_not_advertised_as_clearable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = temp_project("unreadable-parent-clearable");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    init_git_repo(&root);
+    let locked_parent = project.join("locked");
+    let hidden = locked_parent.join("worktree");
+    create_dir_all(&hidden).expect("hidden worktree");
+    let root_path = root.to_string_lossy().into_owned();
+    let hidden_path = hidden.to_string_lossy().into_owned();
+    let present_path = format!("{root_path}/.aimux/worktrees/present");
+    create_dir_all(&present_path).expect("present worktree");
+    std::fs::set_permissions(&locked_parent, std::fs::Permissions::from_mode(0o000))
+        .expect("lock the parent");
+
+    let now = "2026-10-06T00:00:00.000Z";
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": now,
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": now, "updatedAt": now }],
+        "nodes": [], "edges": [], "bindings": [], "sessions": [], "services": [],
+        "worktrees": [
+            { "id": "main", "rigId": "rig-1", "path": root_path, "name": "Main Checkout", "status": "active", "branch": "trunk", "createdAt": now, "updatedAt": now },
+            // Really on disk, and its failure is reachable.
+            { "id": "present", "rigId": "rig-1", "path": present_path, "name": "present", "status": "error", "branch": "b1", "operationFailure": "remove failed", "createdAt": now, "updatedAt": now },
+            // Really on disk too, but behind a parent we cannot traverse, so
+            // `stat` answers EACCES rather than NotFound.
+            { "id": "hidden", "rigId": "rig-1", "path": hidden_path, "name": "hidden", "status": "error", "branch": "b2", "operationFailure": "remove failed", "createdAt": now, "updatedAt": now }
+        ],
+        "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+        "lifecycleOperations": [], "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path.clone(),
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &[])),
+    );
+
+    let verdicts = state["worktrees"]
+        .as_array()
+        .expect("worktree rows")
+        .iter()
+        .filter(|row| row.get("operationFailure").is_some())
+        .map(|row| {
+            (
+                row["name"].as_str().unwrap_or_default().to_owned(),
+                row.get("pathMissing").and_then(Value::as_bool),
+                row.get("operationFailureClearable")
+                    .and_then(Value::as_bool),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // Restore before asserting, so a failure does not leave an undeletable dir.
+    let _ = std::fs::set_permissions(&locked_parent, std::fs::Permissions::from_mode(0o755));
+
+    assert_eq!(
+        verdicts,
+        vec![
+            ("present".to_owned(), None, Some(true)),
+            // Not `pathMissing` -- it is not absent, it is unknown -- and NOT
+            // clearable, because the route cannot reach it either.
+            ("hidden".to_owned(), None, Some(false)),
+        ],
+        "the row the route cannot reach must not be advertised as clearable"
+    );
+    cleanup(project);
+}
+
 #[test]
 fn every_surface_agrees_which_row_is_the_main_checkout() {
     let project = temp_project("main-checkout-alias-surfaces");

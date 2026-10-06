@@ -7,6 +7,7 @@ use crate::config::load_config_for_project;
 use crate::daemon_state::mutate_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
+use crate::project_service::desktop_state::worktree_checkout_is_present;
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::graveyard_cleanup::build_graveyard_cleanup_plan;
 use crate::project_service::operation_failures::{
@@ -1231,7 +1232,7 @@ pub(crate) fn clear_worktree_row_failure(project_state_dir: &Path, worktree_path
             // carrying an `operationFailure` as retryable -- would start
             // refusing the retry as "already exists". A failed remove is the
             // case that gets stuck, and its checkout is still on disk.
-            let has_checkout = !row_path.is_empty() && Path::new(&row_path).exists();
+            let has_checkout = worktree_checkout_is_present(&row_path);
             if matches_path && has_failure && has_checkout {
                 if let Some(map) = worktree.as_object_mut() {
                     map.remove("operationFailure");

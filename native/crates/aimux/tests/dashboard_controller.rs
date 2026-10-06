@@ -3841,6 +3841,9 @@ fn a_failed_worktree_row_is_clearable_after_its_ledger_entry_expires() {
         Some("remove"),
         Some("worktree remove failed"),
     ));
+    group
+        .extra
+        .insert("operationFailureClearable".into(), json!(true));
 
     assert!(
         dashboard_has_clearable_failures(&snapshot),
@@ -3888,9 +3891,10 @@ fn a_failed_create_is_not_something_x_can_clear() {
         Some("create"),
         Some("worktree create failed"),
     ));
-    // The service's own verdict that the checkout is not there, which is the
-    // same question the route asks before refusing.
-    group.path_missing = true;
+    // The service's own verdict, derived with the route's own rule.
+    group
+        .extra
+        .insert("operationFailureClearable".into(), json!(false));
 
     assert!(
         !dashboard_has_clearable_failures(&snapshot),
@@ -3907,9 +3911,8 @@ fn a_failed_create_is_not_something_x_can_clear() {
     );
 }
 
-/// And the row-shaped version of the same thing, since the row and the group
-/// carry the verdict in different places -- a typed `path_missing` on the
-/// group, a flattened `pathMissing` on the row.
+/// And the row-shaped version of the same thing, since the dashboard reads the
+/// rows as well as the groups.
 #[test]
 fn a_failed_create_row_is_not_something_x_can_clear() {
     let mut snapshot = snapshot();
@@ -3924,7 +3927,9 @@ fn a_failed_create_row_is_not_something_x_can_clear() {
     worktree
         .extra
         .insert("operationFailure".into(), json!("worktree create failed"));
-    worktree.extra.insert("pathMissing".into(), json!(true));
+    worktree
+        .extra
+        .insert("operationFailureClearable".into(), json!(false));
 
     assert!(
         !dashboard_has_clearable_failures(&snapshot),

@@ -179,11 +179,8 @@ describe("the failed-operations card", () => {
   /// row -- and the row's copy has no expiry, so a named match would leave the
   /// row red forever with the card gone.
   it("asks the service to clear everything, not one named thing", async () => {
-    const sink = { cleared: vi.fn(), failed: vi.fn() };
-    await dismissOperationFailures(endpoint, "tok", sink);
+    await expect(dismissOperationFailures(endpoint, "tok")).resolves.toBeNull();
     expect(clearOperationFailures).toHaveBeenCalledWith(endpoint, {}, { token: "tok" });
-    expect(sink.cleared).toHaveBeenCalledTimes(1);
-    expect(sink.failed).not.toHaveBeenCalled();
   });
 
   /// The sequence the button runs, which no rendered test can reach: this
@@ -247,6 +244,24 @@ describe("the failed-operations card", () => {
       expect(sink.inFlight()).toBe(false);
     });
 
+    /// A refresh that throws is not a dismiss that failed. The clear already
+    /// happened; saying "Could not dismiss" would be the wrapper lying about
+    /// which half went wrong.
+    it("does not report a refresh failure as a failed dismiss", async () => {
+      const sink = io();
+      sink.refresh.mockImplementationOnce(() => {
+        throw new Error("atom store is gone");
+      });
+      await expect(runOperationFailureDismiss(endpoint, "tok", sink)).rejects.toThrow(
+        "atom store is gone",
+      );
+      expect(sink.setError).not.toHaveBeenCalledWith(expect.stringContaining("atom store"));
+      // And the button is usable again, which a throw past the reset would have
+      // left stuck at "Dismissing..." forever.
+      expect(sink.inFlight()).toBe(false);
+      expect(sink.setDismissing).toHaveBeenLastCalledWith(false);
+    });
+
     it("asks nothing of a host that is not there", async () => {
       const sink = io();
       await runOperationFailureDismiss(null, "tok", sink);
@@ -263,9 +278,6 @@ describe("the failed-operations card", () => {
     clearOperationFailures.mockImplementationOnce(async () => {
       throw new Error("Failed to fetch (http://127.0.0.1:43190/operation-failures/clear)");
     });
-    const sink = { cleared: vi.fn(), failed: vi.fn() };
-    await dismissOperationFailures(endpoint, null, sink);
-    expect(sink.cleared).not.toHaveBeenCalled();
-    expect(sink.failed).toHaveBeenCalledWith(expect.stringContaining("Failed to fetch"));
+    await expect(dismissOperationFailures(endpoint, null)).resolves.toContain("Failed to fetch");
   });
 });

@@ -2311,11 +2311,11 @@ fn every_surface_agrees_whether_there_is_anything_to_clear() {
         snapshot.operation_failures.clear();
         for group in &mut snapshot.worktree_groups {
             group.operation_failure = None;
-            group.path_missing = false;
+            group.extra.remove("operationFailureClearable");
         }
         for worktree in &mut snapshot.worktrees {
             worktree.extra.remove("operationFailure");
-            worktree.extra.remove("pathMissing");
+            worktree.extra.remove("operationFailureClearable");
         }
         if ledger {
             snapshot.operation_failures.push(
@@ -2343,7 +2343,9 @@ fn every_surface_agrees_whether_there_is_anything_to_clear() {
                 }))
                 .expect("a failure record"),
             );
-            group.path_missing = path_missing;
+            group
+                .extra
+                .insert("operationFailureClearable".into(), json!(!path_missing));
         }
 
         let gate = dashboard_has_clearable_failures(&snapshot);

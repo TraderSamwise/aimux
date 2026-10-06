@@ -21,13 +21,12 @@ import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 export async function dismissOperationFailures(
   endpoint: ServiceEndpoint,
   token: string | null,
-  sink: { cleared: () => void; failed: (message: string) => void },
-): Promise<void> {
+): Promise<string | null> {
   try {
     await clearOperationFailures(endpoint, {}, { token });
-    sink.cleared();
+    return null;
   } catch (e) {
-    sink.failed(e instanceof Error ? e.message : String(e));
+    return e instanceof Error ? e.message : String(e);
   }
 }
 
@@ -52,14 +51,25 @@ export async function runOperationFailureDismiss(
 ): Promise<void> {
   if (!endpoint || io.inFlight()) return;
   io.setInFlight(true);
-  io.setDismissing(true);
-  io.setError(null);
-  await dismissOperationFailures(endpoint, token, {
-    cleared: io.refresh,
-    failed: io.setError,
-  });
-  io.setInFlight(false);
-  io.setDismissing(false);
+  try {
+    io.setDismissing(true);
+    io.setError(null);
+    // The request's answer, as a value. It used to be two callbacks invoked
+    // INSIDE the catch's reach, so a throw from the refresh was caught and
+    // reported as "Could not dismiss" -- on a dismiss the server had already
+    // carried out.
+    const failure = await dismissOperationFailures(endpoint, token);
+    if (failure === null) {
+      io.refresh();
+    } else {
+      io.setError(failure);
+    }
+  } finally {
+    // Always, or a throw anywhere above leaves the button disabled and reading
+    // "Dismissing..." with nothing able to put it back.
+    io.setInFlight(false);
+    io.setDismissing(false);
+  }
 }
 
 /// The failed-operations card without the state, so it can be rendered.

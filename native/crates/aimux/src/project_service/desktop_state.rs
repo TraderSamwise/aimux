@@ -766,6 +766,18 @@ fn desktop_worktree_item(
         item.insert("pathMissing".into(), Value::Bool(true));
     }
     insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
+    // Whether the clear route can actually REACH this row's failure, by the
+    // route's own rule. Only asked of a row that has one, so the common build
+    // pays nothing for it.
+    if item
+        .get("operationFailure")
+        .is_some_and(|value| !value.is_null())
+    {
+        item.insert(
+            "operationFailureClearable".into(),
+            Value::Bool(worktree_checkout_is_present(path)),
+        );
+    }
     Value::Object(item)
 }
 
@@ -1462,6 +1474,13 @@ fn worktree_group(
         if worktree.and_then(|worktree| worktree.get("pathMissing")) == Some(&Value::Bool(true)) {
             group.insert("pathMissing".into(), Value::Bool(true));
         }
+    }
+    // Carried from the row for the same reason: one verdict per build, so the
+    // group and the row cannot give the dashboard different answers about
+    // whether the key it is about to offer will do anything.
+    if let Some(clearable) = worktree.and_then(|worktree| worktree.get("operationFailureClearable"))
+    {
+        group.insert("operationFailureClearable".into(), clearable.clone());
     }
     for key in ["createdAt", "pending", "removing", "pendingAction"] {
         insert_value(
@@ -2175,6 +2194,21 @@ fn worktree_row_is_main_checkout(
     root_identity: &str,
 ) -> bool {
     is_worktree_path(worktree_row_path(worktree, project_root), root_identity)
+}
+
+/// Whether a worktree's checkout is there to be acted on.
+///
+/// ONE rule, because two of them disagreed and the disagreement was a lie on
+/// screen. `clear_worktree_row_failure` refuses a row with no checkout, and the
+/// dashboard decided whether to offer the key by reading `pathMissing` -- which
+/// is deliberately `NotFound` only, since a path we cannot stat for another
+/// reason is unknown rather than absent. So a failed row on an unreadable mount
+/// had no `pathMissing`, the hint appeared, and the route refused the request.
+///
+/// `metadata` rather than `exists()` so the two cannot drift again by spelling:
+/// `exists()` is this, with the error thrown away.
+pub fn worktree_checkout_is_present(path: &str) -> bool {
+    !path.trim().is_empty() && std::fs::metadata(path).is_ok()
 }
 
 /// The identity a worktree path is grouped by, for every surface that groups.
