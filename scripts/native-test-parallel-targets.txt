@@ -145,3 +145,4 @@ diagnostics_ptrace
 runtime_topology_lock
 worktree_checkout_missing
 desktop_state_scale
+dashboard_keypress_cost

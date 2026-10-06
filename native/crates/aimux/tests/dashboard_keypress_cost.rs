@@ -30,6 +30,36 @@ use aimux::project_service::desktop_state::{
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
+use std::sync::{Mutex, MutexGuard};
+
+/// Held across every measured window in this file.
+///
+/// `CANONICALIZE_CALLS`, `DURABLE_WRITES` and `FAST_WRITES` are global to the
+/// process and `cargo test` runs a file's tests as concurrent THREADS, so two
+/// tests reading a delta read each other's syscalls.
+///
+/// Listing the target as serial does NOT help, and an earlier revision of this
+/// file claimed it did. `native-test-runner.py` passes `--test-threads=1` only
+/// to unit targets; for an integration binary "serial" means serial relative to
+/// other BINARIES, which are separate processes and never shared a counter in
+/// the first place. The sibling PR removed exactly that false reassurance from
+/// `desktop_state_scale.rs`, and this file repeated it three commits later.
+///
+/// A reviewer proved the consequence by enlarging only the clone fixture: the
+/// first test read 139 and then 265 calls instead of 101, and on one run
+/// `base_calls` was inflated to exactly match `more_agent_calls` -- so the
+/// marginal assertion, the one this file calls the point, passed vacuously
+/// while an unrelated bound caught it.
+static COUNTERS: Mutex<()> = Mutex::new(());
+
+fn counters() -> MutexGuard<'static, ()> {
+    // Poisoning only means another test panicked mid-window. The counters are
+    // still readable, and a second failure reported from here would hide the
+    // first one, which is the one worth reading.
+    COUNTERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn topology(root: &str, worktrees: usize, agents: usize) -> Value {
     let now = "1970-01-01T00:00:00.000Z";
@@ -98,13 +128,9 @@ fn remove_snapshot_tree(label: &str) {
 }
 
 /// What one repaint asks the operating system for.
-///
-/// One test, because both counters are global to the process and `cargo test`
-/// runs a file's tests on parallel threads -- so a second test here would read
-/// this one's syscalls. A further claim about either counter goes in this
-/// function or behind a lock of its own.
 #[test]
 fn what_one_repaint_costs_the_operating_system() {
+    let _counters = counters();
     let base = snapshot("base", 100, 200);
     let more_agents = snapshot("more-agents", 100, 400);
 
@@ -320,6 +346,7 @@ fn what_one_repaint_costs_the_operating_system() {
 /// whole safety argument rests on a `Clone` impl that looks like a mistake.
 #[test]
 fn a_cloned_snapshot_does_not_inherit_the_originals_answers() {
+    let _counters = counters();
     let base = snapshot("clone", 4, 8);
 
     // The very first pass, measured -- an earlier revision of this test asked
@@ -367,6 +394,7 @@ fn a_cloned_snapshot_does_not_inherit_the_originals_answers() {
 /// that keeps that true, because "nobody does this yet" is not a property.
 #[test]
 fn mutating_a_snapshot_in_place_discards_what_was_worked_out_about_it() {
+    let _counters = counters();
     let mut base = snapshot("mutate", 4, 8);
 
     let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);

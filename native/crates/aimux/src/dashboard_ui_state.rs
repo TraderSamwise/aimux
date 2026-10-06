@@ -287,12 +287,23 @@ impl DashboardUiStatePersistence {
         } else {
             shared.remove("serviceOrderByWorktreeKey");
         }
-        // Fast, like the repaint's write of the same file. Reordering agents
-        // sets `render_now`, so the frame behind it rewrites `dashboard-ui.json`
-        // whole -- order keys included -- without syncing. A durable write here
-        // paid two `fsync`s for a guarantee the very next frame dropped, which
-        // is a cost with no corresponding promise. One file, one answer.
-        write_json_atomic_fast(self.shared_path(), &Value::Object(shared))
+        // Durable, and the one write on this file that should be.
+        //
+        // A previous revision made this fast "because the frame behind the
+        // reorder rewrites the same file anyway". That was wrong, and a
+        // reviewer measured it wrong: `persist_controller_state` re-reads the
+        // shared file, touches only `previewSource` and
+        // `detailsSidebarVisible`, and gates its write on having changed
+        // something -- and the file it just read already holds the new order
+        // keys, so it writes nothing. This is the ONLY write agent order ever
+        // gets.
+        //
+        // It is also not a per-frame cost. A reorder is one deliberate
+        // keypress, so the pair of `fsync`s is paid once, on an explicit action
+        // whose result a user would notice losing. That is the distinction that
+        // makes selection state fast and leaves this durable -- not which file
+        // it happens to live in.
+        write_json_atomic(self.shared_path(), &Value::Object(shared))
             .with_context(|| format!("write dashboard ui state {}", self.shared_path().display()))
     }
 }
