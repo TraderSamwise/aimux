@@ -3825,8 +3825,8 @@ fn hiding_offline_agents_keeps_the_supervisor_lane() {
 /// LEDGER was empty, and the footer hint keyed on the same emptiness. The
 /// ledger entry expires on its own; the row does not. So the window between
 /// them was a red row with no key to clear it and no hint that one existed --
-/// rare while the ledger held entries for two hours, and the default for any
-/// shorter window.
+/// rare while the ledger held entries for two hours, and now the normal case:
+/// the window is fifteen minutes, which is the commit after this one.
 #[test]
 fn a_failed_worktree_row_is_clearable_after_its_ledger_entry_expires() {
     let mut snapshot = snapshot();

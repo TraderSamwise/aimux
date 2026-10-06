@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AgentCreatePanel } from "@/components/agent-create-panel";
 import { AgentActions } from "@/components/agent-actions";
+import { OperationFailureCard } from "@/components/operation-failure-card";
 import { PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
@@ -975,10 +976,10 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
     return (
       <View className={statePad}>
         {operationFailureSummary ? (
-          <PageStateCard
-            title={operationFailureSummary.title}
-            body={operationFailureSummary.detail}
-            tone="warning"
+          <OperationFailureCard
+            summary={operationFailureSummary}
+            endpoint={endpoint}
+            token={token}
           />
         ) : (
           <PageStateCard title="No worktrees yet" body="Worktrees will appear here." />
@@ -990,11 +991,11 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
   return (
     <View className={cn(padded && "px-4")}>
       {operationFailureSummary ? (
-        <PageStateCard
+        <OperationFailureCard
           className="mb-4"
-          title={operationFailureSummary.title}
-          body={operationFailureSummary.detail}
-          tone="warning"
+          summary={operationFailureSummary}
+          endpoint={endpoint}
+          token={token}
         />
       ) : null}
       <WorktreeManagementPanel

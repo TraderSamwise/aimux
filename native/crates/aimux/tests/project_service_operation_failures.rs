@@ -1,6 +1,6 @@
 use aimux::project_api_contract::routes;
 use aimux::project_service::operation_failures::{
-    OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
+    ACTIVE_FAILURE_MAX_AGE_MS, OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
     clear_dashboard_operation_failures, dashboard_operation_failures_path,
     list_dashboard_operation_failures, try_add_dashboard_operation_failure,
     try_list_dashboard_operation_failures,
@@ -12,6 +12,16 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// The edge, exactly, and at compile time so no fixture has to sit near it.
+///
+/// Thirty minutes is the claim: a window a person waits out rather than one
+/// that outlives whatever it was about. Widening the constant past this does
+/// not fail a test, it fails the build, and says this line is why.
+const _: () = assert!(
+    ACTIVE_FAILURE_MAX_AGE_MS <= 30 * 60 * 1000,
+    "a failed operation must not keep showing for more than thirty minutes"
+);
 
 #[test]
 fn clears_matching_failures_and_leaves_others_active() {
@@ -196,6 +206,86 @@ fn missing_failure_store_is_genuine_empty_and_clear_reports_zero() {
     assert_eq!(response.status, 200);
     assert_eq!(response.body, json!({ "ok": true, "cleared": 0 }));
     cleanup(project);
+}
+
+/// How long a failed operation keeps showing, from both sides.
+///
+/// Sam asked on 2026-10-06 how long a red card should stay and how to make it
+/// go, after one sat on his dashboard for eleven minutes. It was a two hour
+/// window with no dismiss in the app at all, and -- until the commit before
+/// this one -- no dismiss in the TUI either once the ledger entry had expired
+/// while the worktree row stayed red.
+///
+/// Both directions, because a window is only a window if the near side passes.
+/// A filter that dropped everything would satisfy "the old one is gone" on its
+/// own.
+///
+/// The probes sit a long way from the edge on purpose. A 14-against-16-minute
+/// bracket around a 15-minute window leaves sixty seconds of slack, and a
+/// loaded runner pausing between the write and the read would then file a
+/// correct window as a regression. The edge itself is pinned at compile time,
+/// by the `const _` above.
+#[test]
+fn a_failure_ages_off_the_dashboard_in_minutes_not_hours() {
+    let project = temp_project("age");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    write(
+        dashboard_operation_failures_path(&state_dir),
+        json!({
+            "version": 1,
+            "failures": [
+                {
+                    "id": "failure-stale",
+                    "targetKind": "agent",
+                    "operation": "create",
+                    "title": "Failed to create codex agent",
+                    "createdAt": minutes_ago(90),
+                },
+                {
+                    "id": "failure-recent",
+                    "targetKind": "agent",
+                    "operation": "create",
+                    "title": "Failed to create claude agent",
+                    "createdAt": minutes_ago(1),
+                },
+            ]
+        })
+        .to_string(),
+    )
+    .expect("seed failures");
+
+    // The exact call the desktop-state projection makes, so this is the lane
+    // the dashboard renders rather than a predicate held at arm's length.
+    let listed = try_list_dashboard_operation_failures(&state_dir).expect("list failures");
+    let ids = listed
+        .iter()
+        .map(|failure| failure["id"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        vec!["failure-recent".to_owned()],
+        "a ninety minute old failure is stale and a one minute old one is still \
+         worth showing; listed {ids:?}"
+    );
+    cleanup(project);
+}
+
+/// A timestamp in the format the service writes, since `parse_iso_millis`
+/// wants a `Z` suffix and at most three fractional digits -- which is neither
+/// what RFC 3339 formatting produces nor what a hand-written literal survives.
+fn minutes_ago(minutes: i64) -> String {
+    let at = time::OffsetDateTime::now_utc() - time::Duration::minutes(minutes);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        at.year(),
+        u8::from(at.month()),
+        at.day(),
+        at.hour(),
+        at.minute(),
+        at.second(),
+        at.millisecond()
+    )
 }
 
 fn seed_failures(state_dir: &PathBuf) {

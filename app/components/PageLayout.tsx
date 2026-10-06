@@ -73,11 +73,13 @@ export function PageStateCard({
   body,
   tone = "default",
   className,
+  action,
 }: {
   title: string;
   body?: string;
   tone?: "default" | "warning" | "danger";
   className?: string;
+  action?: React.ReactNode;
 }) {
   return (
     <Card
@@ -90,6 +92,7 @@ export function PageStateCard({
     >
       <Text className="text-base font-semibold text-foreground">{title}</Text>
       {body ? <Text className="mt-1 text-sm text-muted-foreground">{body}</Text> : null}
+      {action ? <View className="mt-3 flex-row">{action}</View> : null}
     </Card>
   );
 }
