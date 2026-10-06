@@ -2177,7 +2177,14 @@ fn worktree_row_is_main_checkout(
     is_worktree_path(worktree_row_path(worktree, project_root), root_identity)
 }
 
-fn worktree_path_identity(path: &str) -> String {
+/// The identity a worktree path is grouped by, for every surface that groups.
+///
+/// `pub` because `dashboard_navigation.rs` had its own copy of this rule --
+/// trim, strip the trailing slash, canonicalise, strip it again -- under the
+/// name `same_dashboard_worktree_path`. Two implementations of one rule agree
+/// only by luck, and this one is also the one `CANONICALIZE_CALLS` counts, so
+/// the copy was invisible to every gate in the repo.
+pub fn worktree_path_identity(path: &str) -> String {
     let trimmed = path.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return String::new();

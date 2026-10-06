@@ -2,6 +2,7 @@ use crate::dashboard_model::{
     DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
     WorktreeGroup, is_dashboard_supervisor_plane_session,
 };
+use crate::project_service::desktop_state::worktree_path_identity;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -605,9 +606,8 @@ pub fn dashboard_navigation_groups<'a>(
     let mut services_by_path: BTreeMap<&str, Vec<&'a DashboardService>> = BTreeMap::new();
     let mut session_path_order = Vec::new();
     let mut service_path_order = Vec::new();
-    let main_path = snapshot.main_checkout_path.as_deref();
-    let is_main_path =
-        |path: &str| main_path.is_some_and(|main| same_dashboard_worktree_path(path, main));
+    let main_checkout_paths = main_checkout_verdicts(snapshot);
+    let is_main_path = |path: &str| main_checkout_paths.get(path).copied().unwrap_or(false);
 
     for session in &snapshot.sessions {
         if is_project_control_session(session) {
@@ -980,18 +980,50 @@ fn parse_timestamp_ms(value: &str) -> Option<u128> {
     crate::project_service::usage::parse_recency_timestamp(value)
 }
 
-/// Compare two worktree paths the way the project service groups them.
-fn same_dashboard_worktree_path(left: &str, right: &str) -> bool {
-    fn identity(path: &str) -> String {
-        let trimmed = path.trim().trim_end_matches('/');
-        std::fs::canonicalize(trimmed)
-            .map(|resolved| resolved.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| trimmed.to_owned())
-            .trim_end_matches('/')
-            .to_owned()
+/// Which of the snapshot's worktree paths name the main checkout.
+///
+/// Answered once per distinct PATH, and the filesystem is asked only for the
+/// paths a plain string comparison cannot settle. What this replaces asked it
+/// once per SESSION, inside a closure that re-canonicalised the main checkout
+/// every time -- so at 100 worktrees and 200 agents one call made 400
+/// `canonicalize` syscalls where 101 answer the same question, and
+/// `dashboard_navigation_groups` is called nine times per repaint.
+///
+/// The identity rule itself now comes from the project service, which is the
+/// surface that does the real grouping. There was a second implementation of it
+/// here -- trim, strip the trailing slash, canonicalise, strip it again -- and
+/// two implementations of one rule agree only by luck. It is also the copy that
+/// no gate could see, because `CANONICALIZE_CALLS` counts the service's.
+fn main_checkout_verdicts(snapshot: &DesktopStateSnapshot) -> BTreeMap<&str, bool> {
+    let mut verdicts = BTreeMap::new();
+    let Some(main) = snapshot.main_checkout_path.as_deref() else {
+        return verdicts;
+    };
+    let main_spelling = main.trim().trim_end_matches('/');
+    // Derived once, not per path, and not at all when every path matches by
+    // spelling -- the ordinary case, since the service hands out the same
+    // spellings it was given.
+    let mut main_identity: Option<String> = None;
+    for path in snapshot
+        .sessions
+        .iter()
+        .filter_map(|session| session.worktree_path.as_deref())
+        .chain(
+            snapshot
+                .services
+                .iter()
+                .filter_map(|service| service.worktree_path.as_deref()),
+        )
+    {
+        if verdicts.contains_key(path) {
+            continue;
+        }
+        let verdict = path.trim().trim_end_matches('/') == main_spelling
+            || worktree_path_identity(path)
+                == *main_identity.get_or_insert_with(|| worktree_path_identity(main));
+        verdicts.insert(path, verdict);
     }
-    left.trim().trim_end_matches('/') == right.trim().trim_end_matches('/')
-        || identity(left) == identity(right)
+    verdicts
 }
 
 pub fn run_show_migrate_picker_contract_case(input: &Value) -> Value {
