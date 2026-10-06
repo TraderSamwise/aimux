@@ -40,6 +40,23 @@ impl<T> SnapshotMemo<T> {
     pub fn get_or_init(&self, build: impl FnOnce() -> T) -> &T {
         self.0.get_or_init(build)
     }
+
+    /// Throw the answer away, because the snapshot it describes has changed.
+    ///
+    /// Required of anything holding a `&mut DesktopStateSnapshot`. Cloning is
+    /// safe without this -- a clone starts empty -- but mutating IN PLACE after
+    /// something has read the grouping would leave an answer about the previous
+    /// value, and a path missing from it reads as "not the main checkout"
+    /// rather than as an error.
+    ///
+    /// No caller can reach that today: both in-place mutators,
+    /// `PendingActions::apply` and `apply_order_to_snapshot`, run on a freshly
+    /// loaded snapshot before anything reads its groups. They clear it anyway,
+    /// because "nobody does this yet" is not a property and the next caller
+    /// will not know to check.
+    pub fn clear(&mut self) {
+        self.0 = std::sync::OnceLock::new();
+    }
 }
 
 impl<T> Clone for SnapshotMemo<T> {

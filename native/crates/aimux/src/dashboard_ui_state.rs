@@ -155,6 +155,7 @@ impl DashboardUiStatePersistence {
     }
 
     pub fn apply_order_to_snapshot(&self, snapshot: &mut DesktopStateSnapshot) {
+        snapshot.main_checkout_verdicts.clear();
         let order_state = self.read_shared_order_state();
         if snapshot.worktree_groups.is_empty() {
             apply_typed_dashboard_order(

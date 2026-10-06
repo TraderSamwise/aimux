@@ -352,3 +352,46 @@ fn a_cloned_snapshot_does_not_inherit_the_originals_answers() {
         "and what it caches is derived, so it cannot make two snapshots unequal"
     );
 }
+
+/// Mutating a snapshot in place throws its answers away.
+///
+/// A clone is safe because it starts empty. Mutating IN PLACE is the other
+/// direction, and `OnceLock` never changes once filled -- so a snapshot whose
+/// sessions were rewritten after something read its grouping would keep
+/// answering about the previous list, and a path missing from the answer reads
+/// as "not the main checkout" rather than as an error.
+///
+/// No caller reaches that today: `PendingActions::apply` and
+/// `apply_order_to_snapshot` both run on a freshly loaded snapshot before
+/// anything reads its groups. They clear it regardless, and this is the test
+/// that keeps that true, because "nobody does this yet" is not a property.
+#[test]
+fn mutating_a_snapshot_in_place_discards_what_was_worked_out_about_it() {
+    let mut base = snapshot("mutate", 4, 8);
+
+    let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let _ = dashboard_navigation_groups(&base);
+    let first = CANONICALIZE_CALLS.load(Ordering::Relaxed) - before;
+    assert!(first > 0, "the first pass works the verdicts out");
+
+    let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let _ = dashboard_navigation_groups(&base);
+    assert_eq!(
+        CANONICALIZE_CALLS.load(Ordering::Relaxed) - before,
+        0,
+        "and the second does not"
+    );
+
+    base.main_checkout_verdicts.clear();
+
+    let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let _ = dashboard_navigation_groups(&base);
+    let after_clear = CANONICALIZE_CALLS.load(Ordering::Relaxed) - before;
+    remove_snapshot_tree("mutate");
+
+    assert_eq!(
+        after_clear, first,
+        "a cleared memo pays the full cost again; a mutator that cleared \
+         nothing would leave the previous answer in place"
+    );
+}
