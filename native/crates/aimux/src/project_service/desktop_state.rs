@@ -779,7 +779,8 @@ fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
         })
         .collect::<Vec<_>>();
     if !worktrees.iter().any(|worktree| {
-        string_field(worktree, "path").is_some_and(|path| same_worktree_path(path, project_root))
+        string_field(worktree, "path")
+            .is_some_and(|path| is_worktree_path(path, &worktree_path_identity(project_root)))
     }) {
         worktrees.insert(
             0,
@@ -807,12 +808,13 @@ async fn desktop_worktrees_async(
 ) -> DesktopWorktreeProjection {
     let topology_worktrees =
         list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
+    let root_identity = worktree_path_identity(project_root);
     let needs_main_branch_probe = topology_worktrees.iter().any(|worktree| {
         let path = string_field(worktree, "path").unwrap_or(project_root);
-        same_worktree_path(path, project_root)
+        is_worktree_path(path, &root_identity)
             && string_field(worktree, "branch").is_none_or(|branch| branch.trim().is_empty())
     }) || !topology_worktrees.iter().any(|worktree| {
-        string_field(worktree, "path").is_some_and(|path| same_worktree_path(path, project_root))
+        string_field(worktree, "path").is_some_and(|path| is_worktree_path(path, &root_identity))
     });
     let main_branch_probe = if needs_main_branch_probe {
         Some(current_git_branch_async(project_root).await)
@@ -866,7 +868,8 @@ async fn desktop_worktrees_async(
         })
         .collect::<Vec<_>>();
     if !worktrees.iter().any(|worktree| {
-        string_field(worktree, "path").is_some_and(|path| same_worktree_path(path, project_root))
+        string_field(worktree, "path")
+            .is_some_and(|path| is_worktree_path(path, &worktree_path_identity(project_root)))
     }) {
         worktrees.insert(
             0,
@@ -1259,9 +1262,10 @@ fn main_branch_probe_if_needed(project_root: &str, worktrees: &[Value]) -> Optio
     // like: then git is asked, and it answers with an empty branch again. That
     // is one subprocess per build for a checkout that is detached, which is
     // worth knowing about and is not worth caching a wrong answer to avoid.
+    let root_identity = worktree_path_identity(project_root);
     let root_row_without_branch = worktrees.iter().any(|worktree| {
         let path = string_field(worktree, "path").unwrap_or(project_root);
-        same_worktree_path(path, project_root)
+        is_worktree_path(path, &root_identity)
             && string_field(worktree, "branch").is_none_or(|branch| branch.trim().is_empty())
     });
     root_row_without_branch.then(|| GitBranchProbe {
@@ -1870,11 +1874,12 @@ fn worktree_branch_or_current(project_root: &str, path: &str, branch: Option<&st
 /// create is minutes of git work. Saying "checkout missing" in red there would
 /// be the same class of lie this change exists to end.
 fn missing_worktree_paths(project_root: &str, topology_worktrees: &[Value]) -> BTreeSet<String> {
+    let root_identity = worktree_path_identity(project_root);
     topology_worktrees
         .iter()
         .filter(|worktree| !worktree_checkout_is_still_arriving(worktree))
         .filter_map(|worktree| string_field(worktree, "path"))
-        .filter(|path| !same_worktree_path(path, project_root))
+        .filter(|path| !is_worktree_path(path, &root_identity))
         .filter(|path| {
             matches!(
                 std::fs::metadata(path),
@@ -2063,8 +2068,14 @@ fn item_worktree_group_key(item: &Value) -> Option<String> {
     Some(worktree_path_identity(&path))
 }
 
-fn same_worktree_path(left: &str, right: &str) -> bool {
-    worktree_path_identity(left) == worktree_path_identity(right)
+/// Whether a path names the worktree whose identity is already in hand.
+///
+/// There was a `same_worktree_path(left, right)` that canonicalised both sides,
+/// and every call inside a loop re-canonicalised the project root -- once per
+/// worktree, in five separate loops. Half the filesystem calls a build made
+/// were re-answering the same question about the same path.
+fn is_worktree_path(path: &str, identity: &str) -> bool {
+    worktree_path_identity(path) == identity
 }
 
 fn worktree_path_identity(path: &str) -> String {

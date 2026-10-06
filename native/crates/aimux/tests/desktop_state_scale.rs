@@ -82,10 +82,10 @@ fn root_for(label: &str) -> String {
 /// `worktree_path_identity` canonicalises, and every group used to ask it of
 /// every session: worktrees x agents syscalls to answer a few hundred distinct
 /// questions. A build over 40 worktrees and 160 agents made 6,400 of them; it
-/// makes about 730 now -- a handful per worktree row and per session, since
-/// `same_worktree_path` canonicalises both sides of each comparison. That
-/// constant is worth reducing and is not what this gate is for: what matters is
-/// that the count follows the number of PATHS and not the number of pairings.
+/// makes about 650 now -- a handful per worktree row and per session. That
+/// constant is worth reducing further and is not what this gate is for: what
+/// matters is that the count follows the number of PATHS, not the number of
+/// pairings.
 ///
 /// This is one test rather than two because `CANONICALIZE_CALLS` is global to
 /// the process and `cargo test` runs a file's tests on parallel threads, so two
@@ -106,9 +106,10 @@ fn a_build_asks_the_filesystem_about_paths_not_about_pairings() {
         Some(worktrees + 1),
         "the build still has to produce a group per worktree plus the main one"
     );
-    // Measured at 729 on 2026-10-06. The bound is set well above that and well
+    // Measured at 649 on 2026-10-06. The bound is set well above that and well
     // below the 6,400 pairings, so ordinary churn in the constant does not fail
     // it but a return to per-pairing work does.
+    println!("{worktrees} worktrees x {agents} agents -> {calls} canonicalize calls");
     assert!(
         calls < 2_000,
         "{worktrees} worktrees and {agents} agents is {} pairings; the build made \
