@@ -1,4 +1,6 @@
-use crate::dashboard_model::{DashboardService, DashboardSession};
+use crate::dashboard_model::{
+    DashboardService, DashboardSession, dashboard_has_clearable_failures,
+};
 use crate::dashboard_navigation::{DashboardNavigationGroupKind, dashboard_navigation_groups};
 use crate::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput};
 use serde_json::{Value, json};
@@ -359,11 +361,18 @@ fn build_dashboard_footer_hints<'a>(
     hints
 }
 
+/// The same predicate the rendered footer and the `X` gate read.
+///
+/// This is the published contract's mirror of the hint row, and it was left on
+/// `operation_failures.is_empty()` when the other two moved -- so the contract
+/// and the thing it is a contract for disagreed in exactly the state the move
+/// was about: a worktree row still red with its ledger entry gone. None of the
+/// contract's cases carried a row failure, so nothing failed.
 fn append_operation_failure_hint<'a>(
     input: &'a DashboardRenderInput<'_>,
     hints: &mut Vec<FooterHint<'a>>,
 ) {
-    if !input.snapshot.operation_failures.is_empty() {
+    if dashboard_has_clearable_failures(input.snapshot) {
         hints.push(FooterHint {
             key: "X",
             label: "clear failures",

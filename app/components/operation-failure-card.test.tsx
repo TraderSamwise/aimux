@@ -24,6 +24,7 @@ vi.mock("@/lib/api", () => ({
 import {
   OperationFailureCardView,
   dismissOperationFailures,
+  runOperationFailureDismiss,
 } from "@/components/operation-failure-card";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 
@@ -76,6 +77,29 @@ describe("the failed-operations card", () => {
     clearOperationFailures.mockClear();
   });
 
+  /// The card still says WHAT failed. An adversarial review of PR 406 pointed
+  /// out that every assertion here was about the dismiss, so the card could
+  /// stop naming the failed operation entirely and nothing would notice.
+  it("names what failed", () => {
+    const tree = renderNode(
+      <OperationFailureCardView
+        summary={summary}
+        error={null}
+        dismissing={false}
+        onDismiss={() => {}}
+        endpoint={endpoint}
+      />,
+    );
+    const text = allText(tree);
+    expect(text).toContain("Failed to graveyard worktree fix-chat");
+    expect(text).toContain("worktree is busy");
+    // The tone, as a reader sees it. `tone` is a prop of `PageStateCard`,
+    // which this harness invokes, so the only trace left on a host node is the
+    // class the card resolved it to.
+    const [card] = findNodes(tree, (node) => String(node.props.className ?? "").includes("amber"));
+    expect(card, "a failure card that does not read as a failure").toBeDefined();
+  });
+
   /// The app shipped with no dismiss at all -- `clearOperationFailures` existed
   /// in `api.ts` and had exactly one caller, its own unit test.
   ///
@@ -90,6 +114,7 @@ describe("the failed-operations card", () => {
         error={null}
         dismissing={false}
         onDismiss={onDismiss}
+        endpoint={endpoint}
       />,
     );
     const [control] = dismissControls(tree);
@@ -104,7 +129,13 @@ describe("the failed-operations card", () => {
   /// round trip to a host and a button that looks idle invites the second tap.
   it("says it is working and takes no second press while it is", () => {
     const tree = renderNode(
-      <OperationFailureCardView summary={summary} error={null} dismissing onDismiss={() => {}} />,
+      <OperationFailureCardView
+        summary={summary}
+        error={null}
+        dismissing
+        onDismiss={() => {}}
+        endpoint={endpoint}
+      />,
     );
     const [control] = dismissControls(tree);
     expect(control.props.label).toBe("Dismissing...");
@@ -120,7 +151,8 @@ describe("the failed-operations card", () => {
         summary={summary}
         error={null}
         dismissing={false}
-        onDismiss={null}
+        onDismiss={() => {}}
+        endpoint={null}
       />,
     );
     expect(dismissControls(tree)).toHaveLength(0);
@@ -136,6 +168,7 @@ describe("the failed-operations card", () => {
         error="connection refused"
         dismissing={false}
         onDismiss={() => {}}
+        endpoint={endpoint}
       />,
     );
     expect(allText(tree)).toContain("Could not dismiss: connection refused");
@@ -151,6 +184,75 @@ describe("the failed-operations card", () => {
     expect(clearOperationFailures).toHaveBeenCalledWith(endpoint, {}, { token: "tok" });
     expect(sink.cleared).toHaveBeenCalledTimes(1);
     expect(sink.failed).not.toHaveBeenCalled();
+  });
+
+  /// The sequence the button runs, which no rendered test can reach: this
+  /// harness has no DOM and calls components as functions, so hooks never run.
+  /// With it inlined in the component, deleting the in-flight guard, never
+  /// clearing it, dropping the refresh or swallowing the error all survived the
+  /// whole suite.
+  describe("the sequence behind the press", () => {
+    function io() {
+      let flight = false;
+      return {
+        inFlight: () => flight,
+        setInFlight: vi.fn((value: boolean) => {
+          flight = value;
+        }),
+        setDismissing: vi.fn(),
+        setError: vi.fn(),
+        refresh: vi.fn(),
+      };
+    }
+
+    it("clears, refreshes, and leaves nothing in flight", async () => {
+      const sink = io();
+      await runOperationFailureDismiss(endpoint, "tok", sink);
+      expect(clearOperationFailures).toHaveBeenCalledWith(endpoint, {}, { token: "tok" });
+      expect(sink.refresh).toHaveBeenCalledTimes(1);
+      expect(sink.setError).toHaveBeenCalledWith(null);
+      expect(sink.setDismissing.mock.calls).toEqual([[true], [false]]);
+      expect(sink.inFlight()).toBe(false);
+    });
+
+    /// Two taps inside one frame. `disabled` only reaches the control on the
+    /// next render, so the guard is the only thing standing between one press
+    /// and two requests.
+    it("takes one request from two presses in the same frame", async () => {
+      const sink = io();
+      await Promise.all([
+        runOperationFailureDismiss(endpoint, "tok", sink),
+        runOperationFailureDismiss(endpoint, "tok", sink),
+      ]);
+      expect(clearOperationFailures).toHaveBeenCalledTimes(1);
+    });
+
+    /// And the press after that one still works, which is the half that a
+    /// guard set but never cleared would break -- silently, and forever.
+    it("still works on the next press", async () => {
+      const sink = io();
+      await runOperationFailureDismiss(endpoint, "tok", sink);
+      await runOperationFailureDismiss(endpoint, "tok", sink);
+      expect(clearOperationFailures).toHaveBeenCalledTimes(2);
+    });
+
+    it("reports a failure and does not refresh", async () => {
+      clearOperationFailures.mockImplementationOnce(async () => {
+        throw new Error("Failed to fetch");
+      });
+      const sink = io();
+      await runOperationFailureDismiss(endpoint, "tok", sink);
+      expect(sink.setError).toHaveBeenCalledWith(expect.stringContaining("Failed to fetch"));
+      expect(sink.refresh).not.toHaveBeenCalled();
+      expect(sink.inFlight()).toBe(false);
+    });
+
+    it("asks nothing of a host that is not there", async () => {
+      const sink = io();
+      await runOperationFailureDismiss(null, "tok", sink);
+      expect(clearOperationFailures).not.toHaveBeenCalled();
+      expect(sink.setDismissing).not.toHaveBeenCalled();
+    });
   });
 
   /// The reason this path does not run errors through `isTransientRequestError`

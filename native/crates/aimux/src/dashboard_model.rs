@@ -1746,12 +1746,26 @@ fn worktree_key(path: Option<&str>) -> String {
 /// "that worktree could never be graveyarded from the TUI". It was fixed in the
 /// route, which does reach both homes, and left in the two callers that decide
 /// whether to call it.
+/// Only a failure the clear can actually REACH counts.
+///
+/// A failed create wears the same two marks as a failed remove -- `status:
+/// "error"` and an `operationFailure` -- on a row whose checkout was never
+/// made, and the route refuses to clear those on purpose: the dashboard would
+/// offer actions against a path that is not there, and
+/// `existing_worktree_create_conflicts` treats such a row as retryable, so
+/// clearing it would start refusing the retry as "already exists".
+///
+/// So counting every row failure here would hand back the same bug from the
+/// other side: a hint saying `X clear failures` and a key that sends a request
+/// clearing nothing, forever, with the row still red. `pathMissing` is the
+/// service's own verdict on whether the checkout is there, decided once on the
+/// row, and it is the same question the route asks.
 pub fn dashboard_has_clearable_failures(snapshot: &DesktopStateSnapshot) -> bool {
     !snapshot.operation_failures.is_empty()
         || snapshot
             .worktree_groups
             .iter()
-            .any(|group| group.operation_failure.is_some())
+            .any(|group| group.operation_failure.is_some() && !group.path_missing)
         // The row keeps it in `extra`: `DesktopWorktree` has no typed field for
         // it, and the service writes `operationFailure` onto the row anyway.
         || snapshot.worktrees.iter().any(|worktree| {
@@ -1759,6 +1773,7 @@ pub fn dashboard_has_clearable_failures(snapshot: &DesktopStateSnapshot) -> bool
                 .extra
                 .get("operationFailure")
                 .is_some_and(|failure| !failure.is_null())
+                && worktree.extra.get("pathMissing") != Some(&Value::Bool(true))
         })
 }
 

@@ -18,9 +18,14 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// Thirty minutes is the claim: a window a person waits out rather than one
 /// that outlives whatever it was about. Widening the constant past this does
 /// not fail a test, it fails the build, and says this line is why.
+///
+/// It bounds a record that CARRIES A TIMESTAMP, which is what the constant
+/// governs. A record with no parseable `createdAt` is of unknown age and stays
+/// up, deliberately -- see
+/// `a_failure_of_unknown_age_is_not_aged_off_by_guesswork` below.
 const _: () = assert!(
     ACTIVE_FAILURE_MAX_AGE_MS <= 30 * 60 * 1000,
-    "a failed operation must not keep showing for more than thirty minutes"
+    "a timestamped failed operation must not keep showing for more than thirty minutes"
 );
 
 #[test]
@@ -269,6 +274,80 @@ fn a_failure_ages_off_the_dashboard_in_minutes_not_hours() {
          worth showing; listed {ids:?}"
     );
     cleanup(project);
+}
+
+/// A record whose age cannot be read is not aged off by guessing it.
+///
+/// `is_active_failure` returns true when `createdAt` is absent or unparseable,
+/// so those records never expire. That is deliberate and it is the reason the
+/// compile-time bound above says "timestamped": an unreadable age is not
+/// evidence of an old record, and dropping one would delete the only report of
+/// a failure on the grounds that we could not tell when it happened.
+///
+/// The store-unavailable record is the case that matters. When the ledger file
+/// cannot be read, `list_dashboard_operation_failures` returns one synthetic
+/// record saying so, with no `createdAt` -- and it has to stay up, because
+/// nothing else on any surface says the store is unreadable. It is also not
+/// clearable: `clear_dashboard_operation_failures` cannot write a file it
+/// cannot parse, so the route answers 500. A card that will not go until the
+/// file is fixed is the honest outcome there, and it names the file.
+///
+/// Both halves are pinned here so that shortening the window later does not
+/// turn either into an expiring record.
+#[test]
+fn a_failure_of_unknown_age_is_not_aged_off_by_guesswork() {
+    let project = temp_project("unknown-age");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    write(
+        dashboard_operation_failures_path(&state_dir),
+        json!({
+            "version": 1,
+            "failures": [
+                { "id": "failure-no-stamp", "targetKind": "agent", "operation": "create",
+                  "title": "Failed to create codex agent" },
+                { "id": "failure-bad-stamp", "targetKind": "agent", "operation": "create",
+                  "title": "Failed to create claude agent", "createdAt": "not a timestamp" },
+            ]
+        })
+        .to_string(),
+    )
+    .expect("seed failures");
+
+    let ids = listed_ids(&state_dir);
+    assert_eq!(
+        ids,
+        vec![
+            "failure-no-stamp".to_owned(),
+            "failure-bad-stamp".to_owned()
+        ],
+        "a record whose age cannot be read stays up rather than being guessed \
+         old; listed {ids:?}"
+    );
+    cleanup(project);
+
+    // And the one that makes it matter: an unreadable store reports itself, and
+    // that report is not a timestamped failure either.
+    let project = temp_project("corrupt");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    write(dashboard_operation_failures_path(&state_dir), "{ not json").expect("seed corrupt store");
+    let listed = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(listed.len(), 1, "an unreadable store reports itself once");
+    assert_eq!(listed[0]["id"], "operation-failure-store-unavailable");
+    assert!(
+        listed[0].get("createdAt").is_none(),
+        "the store-unavailable report carries no age, so no window applies to it"
+    );
+    cleanup(project);
+}
+
+fn listed_ids(state_dir: &PathBuf) -> Vec<String> {
+    try_list_dashboard_operation_failures(state_dir)
+        .expect("list failures")
+        .iter()
+        .map(|failure| failure["id"].as_str().unwrap_or_default().to_owned())
+        .collect()
 }
 
 /// A timestamp in the format the service writes, since `parse_iso_millis`

@@ -31,6 +31,37 @@ export async function dismissOperationFailures(
   }
 }
 
+/// Everything the button does, with the component's state handed in.
+///
+/// Not a convenience: this harness calls components as functions and has no
+/// DOM, so hooks cannot run and nothing can press a rendered control. An
+/// adversarial review of PR 406 made the point concretely -- with the sequence
+/// inlined in the shell, fifteen mutations survived the whole suite, including
+/// deleting the in-flight guard, never clearing it again, dropping the refresh
+/// and swallowing the error. All of that is reachable here.
+export async function runOperationFailureDismiss(
+  endpoint: ServiceEndpoint | null,
+  token: string | null,
+  io: {
+    inFlight: () => boolean;
+    setInFlight: (value: boolean) => void;
+    setDismissing: (value: boolean) => void;
+    setError: (message: string | null) => void;
+    refresh: () => void;
+  },
+): Promise<void> {
+  if (!endpoint || io.inFlight()) return;
+  io.setInFlight(true);
+  io.setDismissing(true);
+  io.setError(null);
+  await dismissOperationFailures(endpoint, token, {
+    cleared: io.refresh,
+    failed: io.setError,
+  });
+  io.setInFlight(false);
+  io.setDismissing(false);
+}
+
 /// The failed-operations card without the state, so it can be rendered.
 ///
 /// The app's test harness calls components as functions and has no DOM, so a
@@ -41,12 +72,18 @@ export function OperationFailureCardView({
   error,
   dismissing,
   onDismiss,
+  endpoint,
   className,
 }: {
   summary: { title: string; detail: string };
   error: string | null;
   dismissing: boolean;
-  onDismiss: (() => void) | null;
+  onDismiss: () => void;
+  // Whether there is a host to ask at all. The decision lives here rather than
+  // in the shell because the shell cannot be rendered by this harness, and a
+  // Dismiss that quietly does nothing is the affordance this card exists to
+  // stop telling.
+  endpoint: ServiceEndpoint | null;
   className?: string;
 }) {
   return (
@@ -56,7 +93,7 @@ export function OperationFailureCardView({
       body={[summary.detail, error && `Could not dismiss: ${error}`].filter(Boolean).join("\n")}
       tone="warning"
       action={
-        onDismiss ? (
+        endpoint ? (
           <Button
             variant="outline"
             size="sm"
@@ -97,19 +134,18 @@ export function OperationFailureCard({
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
 
   async function dismiss() {
-    if (!endpoint || inFlight.current) return;
-    inFlight.current = true;
-    setDismissing(true);
-    setError(null);
-    await dismissOperationFailures(endpoint, token, {
-      cleared: () => {
+    await runOperationFailureDismiss(endpoint, token, {
+      inFlight: () => inFlight.current,
+      setInFlight: (value) => {
+        inFlight.current = value;
+      },
+      setDismissing,
+      setError,
+      refresh: () => {
         kickDesktopRefresh();
         kickProjectViewRefresh(["worktrees", "topology"]);
       },
-      failed: setError,
     });
-    inFlight.current = false;
-    setDismissing(false);
   }
 
   return (
@@ -118,7 +154,8 @@ export function OperationFailureCard({
       summary={summary}
       error={error}
       dismissing={dismissing}
-      onDismiss={endpoint ? dismiss : null}
+      onDismiss={dismiss}
+      endpoint={endpoint}
     />
   );
 }

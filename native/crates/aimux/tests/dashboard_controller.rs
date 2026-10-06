@@ -3854,6 +3854,84 @@ fn a_failed_worktree_row_is_clearable_after_its_ledger_entry_expires() {
     }
 }
 
+/// A failed CREATE is red and is not clearable, and the key must not pretend.
+///
+/// This is the same bug from the other side, and the adversarial review of PR
+/// 406 found it: a failed create writes `status: "error"` and an
+/// `operationFailure` onto a row whose checkout was never made
+/// (`lifecycle/worktrees.rs:397`), and `clear_worktree_row_failure` refuses to
+/// touch a row with no checkout on purpose -- `clearing_failures_leaves_a_failed_create_alone`
+/// in `project_service_lifecycle.rs` pins that refusal.
+///
+/// So once the ledger entry has aged off, a predicate counting every row
+/// failure would show `X clear failures` and send a request that clears
+/// nothing. The row stays red, the hint stays up, and the key does nothing for
+/// as long as the row exists. Shortening the window from two hours to fifteen
+/// minutes made that the likely state rather than the rare one.
+#[test]
+fn a_failed_create_is_not_something_x_can_clear() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+    }
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+    }
+    let group = snapshot
+        .worktree_groups
+        .iter_mut()
+        .find(|group| group.path.is_some())
+        .expect("a worktree group");
+    group.operation_failure = Some(operation_failure(
+        "failure-create",
+        Some("create"),
+        Some("worktree create failed"),
+    ));
+    // The service's own verdict that the checkout is not there, which is the
+    // same question the route asks before refusing.
+    group.path_missing = true;
+
+    assert!(
+        !dashboard_has_clearable_failures(&snapshot),
+        "a failed create is red but unreachable, so there is nothing to offer"
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    assert!(
+        matches!(
+            controller.handle_key(&snapshot, DashboardKey::ClearFailures),
+            DashboardControllerEffect::Ignored
+        ),
+        "X must not send a request the route will refuse"
+    );
+}
+
+/// And the row-shaped version of the same thing, since the row and the group
+/// carry the verdict in different places -- a typed `path_missing` on the
+/// group, a flattened `pathMissing` on the row.
+#[test]
+fn a_failed_create_row_is_not_something_x_can_clear() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+    }
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+    }
+    let worktree = snapshot.worktrees.last_mut().expect("a worktree row");
+    worktree
+        .extra
+        .insert("operationFailure".into(), json!("worktree create failed"));
+    worktree.extra.insert("pathMissing".into(), json!(true));
+
+    assert!(
+        !dashboard_has_clearable_failures(&snapshot),
+        "the row says its checkout is gone, so the clear cannot reach it either"
+    );
+}
+
 /// And with nothing red anywhere, it stays a no-op.
 ///
 /// The inverse, because "always send the request" would also pass the test
