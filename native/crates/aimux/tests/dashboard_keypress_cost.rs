@@ -16,7 +16,7 @@
 //! This file counts, and asserts a MARGINAL rather than a constant: more agents
 //! over the same worktrees are the same set of paths, so they must cost nothing.
 
-use aimux::atomic_write::{DURABLE_WRITES, FAST_WRITES};
+use aimux::atomic_write::{WRITE_COUNTERS, write_counts_since};
 use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, DashboardScreen,
 };
@@ -34,7 +34,7 @@ use std::sync::{Mutex, MutexGuard};
 
 /// Held across every measured window in this file.
 ///
-/// `CANONICALIZE_CALLS`, `DURABLE_WRITES` and `FAST_WRITES` are global to the
+/// `CANONICALIZE_CALLS` and `WRITE_COUNTERS` are global to the
 /// process and `cargo test` runs a file's tests as concurrent THREADS, so two
 /// tests reading a delta read each other's syscalls.
 ///
@@ -186,8 +186,7 @@ fn what_one_repaint_costs_the_operating_system() {
         DashboardUiStatePersistence::new(&root, "client").expect("ui state persistence");
     let navigation = DashboardNavigationState::new(&base);
 
-    let durable_before = DURABLE_WRITES.load(Ordering::Relaxed);
-    let fast_before = FAST_WRITES.load(Ordering::Relaxed);
+    let before = WRITE_COUNTERS.read();
     let wrote = persistence
         .persist_controller_state(
             DashboardScreen::Dashboard,
@@ -197,28 +196,32 @@ fn what_one_repaint_costs_the_operating_system() {
             &navigation,
         )
         .expect("persist");
-    let durable = DURABLE_WRITES.load(Ordering::Relaxed) - durable_before;
-    let fast = FAST_WRITES.load(Ordering::Relaxed) - fast_before;
+    let writes = write_counts_since(before);
     let _ = std::fs::remove_dir_all(&root);
 
     assert!(wrote, "the first persist has both files to write");
     // Both halves matter: zero durable writes is also what "did not write at
     // all" looks like, so the fast count is what makes the zero mean something.
     assert_eq!(
-        fast, 2,
+        writes.fast_completed, 2,
         "a repaint writes the client file and the shared file, and nothing else"
     );
+    // ATTEMPTED, not completed. A durable write whose `sync_all` succeeds and
+    // whose `rename` then fails has paid the `F_FULLFSYNC` and completed
+    // nothing, so a gate reading completions alone would pass with an fsync on
+    // the keypress path -- which is the one thing this is here to forbid.
     assert_eq!(
-        durable, 0,
-        "neither of them is worth waiting for the disk: losing the selected row \
+        writes.durable_attempted, 0,
+        "nothing may even START an fsync on a repaint: losing the selected row \
          to a power cut is what reopening the dashboard does anyway"
     );
 
-    // A write that fails counts as neither, because the counters are
-    // documented as completions. They used to increment on entry, which made
-    // `DURABLE_WRITES` a count of attempts -- harmless for the `== 0` above,
-    // which attempts-counting only makes stricter, and a trap for any later
-    // gate written as `>= 1` to prove something reached disk.
+    // A write that fails is an attempt and not a completion, and both numbers
+    // are needed: the assertion above reads attempts because an fsync paid
+    // before a failed rename still cost the frame, and a gate proving
+    // something reached disk has to read completions because an attempt is not
+    // an arrival. Two revisions of this file kept only one of the two.
+    //
     // Its own directory: `root` is removed above, and an earlier revision of
     // this block wrote into it and failed with NotFound rather than the error
     // it meant to provoke.
@@ -228,8 +231,7 @@ fn what_one_repaint_costs_the_operating_system() {
     let blocker = blocked_root.join("not-a-directory");
     std::fs::write(&blocker, b"x").expect("a plain file");
     let impossible = blocker.join("child.json");
-    let durable_before = DURABLE_WRITES.load(Ordering::Relaxed);
-    let fast_before = FAST_WRITES.load(Ordering::Relaxed);
+    let before = WRITE_COUNTERS.read();
     assert!(
         aimux::atomic_write::write_json_atomic_fast(&impossible, &json!({ "a": 1 })).is_err(),
         "writing under a plain file has to fail"
@@ -238,13 +240,16 @@ fn what_one_repaint_costs_the_operating_system() {
         aimux::atomic_write::write_json_atomic(&impossible, &json!({ "a": 1 })).is_err(),
         "durably too"
     );
+    let failed = write_counts_since(before);
     assert_eq!(
-        (
-            DURABLE_WRITES.load(Ordering::Relaxed) - durable_before,
-            FAST_WRITES.load(Ordering::Relaxed) - fast_before
-        ),
+        (failed.durable_completed, failed.fast_completed),
         (0, 0),
-        "a write that never reached the disk is not a write"
+        "a write that never reached the disk is not a completed write"
+    );
+    assert_eq!(
+        (failed.durable_attempted, failed.fast_attempted),
+        (1, 1),
+        "but it was attempted, and the two claims need telling apart"
     );
     let _ = std::fs::remove_dir_all(&blocked_root);
 

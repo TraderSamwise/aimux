@@ -82,27 +82,91 @@ pub fn quarantine_corrupt_file(path: impl AsRef<Path>) -> Option<PathBuf> {
     Some(destination)
 }
 
-/// How many atomic writes have COMPLETED having waited for the disk.
+/// Atomic writes, counted both ways.
 ///
-/// A durable write is two `fsync`s -- the file and its directory -- and on
-/// macOS `sync_all` is `F_FULLFSYNC`, measured at 8.35ms each. No count of
-/// filesystem lookups can see one, so the dashboard paid 16.7ms per keypress
-/// out of a 50ms frame budget with nothing in the repo able to notice. The
-/// gate for the keypress path is this count, not a duration.
-pub static DURABLE_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Two different claims need two different numbers, and an earlier revision of
+/// this file kept only one of them:
+///
+/// - **Attempted** is what proves nothing on the keypress path even STARTED an
+///   `fsync`. A durable write whose `sync_all` succeeds and whose `rename`
+///   then fails has paid the `F_FULLFSYNC` and completed nothing, so a gate
+///   reading completions alone would pass with an fsync on the hot path.
+/// - **Completed** is what a gate may read to prove something reached disk.
+///   Counting attempts there would let a failed write stand in for a
+///   successful one.
+///
+/// The first revision counted attempts and documented them as completions; the
+/// second counted completions and gave up the stricter claim. Both, then.
+/// Neither is read outside tests.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WriteCounts {
+    pub durable_attempted: usize,
+    pub durable_completed: usize,
+    pub fast_attempted: usize,
+    pub fast_completed: usize,
+}
 
-/// And how many completed without waiting, so a test can tell "did not sync"
-/// from "did not run".
-///
-/// Counted after the rename rather than on entry. An increment at the top would
-/// count attempts, and a later gate written as `durable >= 1` to prove
-/// something was persisted would then read a failed `sync_all` as a success --
-/// the shipped `durable == 0` assertion is only made stricter by counting
-/// attempts, which is exactly the kind of accident that survives until someone
-/// relies on it.
-pub static FAST_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub struct WriteCounters {
+    durable_attempted: std::sync::atomic::AtomicUsize,
+    durable_completed: std::sync::atomic::AtomicUsize,
+    fast_attempted: std::sync::atomic::AtomicUsize,
+    fast_completed: std::sync::atomic::AtomicUsize,
+}
+
+impl WriteCounters {
+    const fn new() -> Self {
+        Self {
+            durable_attempted: std::sync::atomic::AtomicUsize::new(0),
+            durable_completed: std::sync::atomic::AtomicUsize::new(0),
+            fast_attempted: std::sync::atomic::AtomicUsize::new(0),
+            fast_completed: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    pub fn read(&self) -> WriteCounts {
+        use std::sync::atomic::Ordering::Relaxed;
+        WriteCounts {
+            durable_attempted: self.durable_attempted.load(Relaxed),
+            durable_completed: self.durable_completed.load(Relaxed),
+            fast_attempted: self.fast_attempted.load(Relaxed),
+            fast_completed: self.fast_completed.load(Relaxed),
+        }
+    }
+
+    fn attempt(&self, durable: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if durable {
+            self.durable_attempted.fetch_add(1, Relaxed);
+        } else {
+            self.fast_attempted.fetch_add(1, Relaxed);
+        }
+    }
+
+    fn complete(&self, durable: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if durable {
+            self.durable_completed.fetch_add(1, Relaxed);
+        } else {
+            self.fast_completed.fetch_add(1, Relaxed);
+        }
+    }
+}
+
+/// The difference between two reads is what one operation cost.
+pub fn write_counts_since(before: WriteCounts) -> WriteCounts {
+    let now = WRITE_COUNTERS.read();
+    WriteCounts {
+        durable_attempted: now.durable_attempted - before.durable_attempted,
+        durable_completed: now.durable_completed - before.durable_completed,
+        fast_attempted: now.fast_attempted - before.fast_attempted,
+        fast_completed: now.fast_completed - before.fast_completed,
+    }
+}
+
+pub static WRITE_COUNTERS: WriteCounters = WriteCounters::new();
 
 fn atomic_write_impl(path: &Path, data: &[u8], mode: Option<u32>, durable: bool) -> io::Result<()> {
+    WRITE_COUNTERS.attempt(durable);
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -138,13 +202,7 @@ fn atomic_write_impl(path: &Path, data: &[u8], mode: Option<u32>, durable: bool)
         let _ = fs::remove_file(&temp_path);
         return result;
     }
-    // Counted here, after the rename, so the number means what its doc says:
-    // writes that finished, not writes that were attempted.
-    if durable {
-        DURABLE_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    } else {
-        FAST_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
+    WRITE_COUNTERS.complete(durable);
     result
 }
 
