@@ -238,7 +238,18 @@ fi
 
 remote_dependency_pattern='(^|[[:space:]])(tokio-tungstenite|tungstenite|ureq|reqwest|hyper|h2|native-tls|openssl|curl)[[:space:]]+v'
 remote_help_pattern='^[[:space:]]{2}(remote|hosted|login|logout|whoami|security)([[:space:]]|$)'
-remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|tokio[-_]tungstenite|tungstenite|ureq|hosted_server|hosted_cli|remote_login|remote_security_devices|maybe_host_published_attachment|attachments/hosted'
+# Distinctive strings, matched anywhere: each is long enough that a substring
+# hit is a real hit.
+remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|hosted_server|hosted_cli|remote_login|remote_security_devices|maybe_host_published_attachment|attachments/hosted'
+# Bare crate names, which need a word boundary. `strings` emits runs of
+# adjacent literals from rodata with nothing between them, so an unanchored
+# `ureq` matches the tail of our own `project-ensure` whenever the linker puts
+# a literal starting with `q` after it -- "ens<ureq>". That is a daemon CLI
+# subcommand, it is in every local build, and whether it trips this gate
+# depends on rodata layout, so it failed one PR and not the next for no reason
+# either of them could see. A real `ureq` arrives as a path or symbol fragment
+# (`/ureq-2.12.0/src/lib.rs`), which keeps its boundaries.
+remote_crate_pattern='(^|[^[:alnum:]_])(tokio[-_]tungstenite|tungstenite|ureq)([^[:alnum:]_]|$)'
 
 if [ "$VARIANT" = "local" ]; then
   if [ "$SKIP_CARGO_TREE" -eq 0 ] && grep -E "$remote_dependency_pattern" "$TREE_FILE" >/dev/null; then
@@ -254,6 +265,11 @@ if [ "$VARIANT" = "local" ]; then
   if grep -E "$remote_string_pattern" "$STRINGS_FILE" >/dev/null; then
     printf 'Local binary contains remote-control strings:\n' >&2
     grep -E "$remote_string_pattern" "$STRINGS_FILE" >&2
+    exit 1
+  fi
+  if grep -E "$remote_crate_pattern" "$STRINGS_FILE" >/dev/null; then
+    printf 'Local binary contains remote-control crate names:\n' >&2
+    grep -E "$remote_crate_pattern" "$STRINGS_FILE" >&2
     exit 1
   fi
 else
