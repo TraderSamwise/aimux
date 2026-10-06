@@ -46,6 +46,24 @@ pub fn write_text_atomic_fast(path: impl AsRef<Path>, text: impl AsRef<str>) -> 
     atomic_write_fast(path, text.as_ref())
 }
 
+/// JSON written atomically, without waiting for the disk to confirm it.
+///
+/// The rename is still atomic, so a reader never sees a torn file and a crash
+/// loses the write rather than the file. What it does not do is `fsync` the
+/// file and its directory, which on macOS is `F_FULLFSYNC` and was measured at
+/// 8.35ms each -- 16.7ms for the pair, paid on every dashboard keypress against
+/// a 50ms frame budget, to make a few hundred bytes of selection state survive
+/// a power cut.
+///
+/// For state a viewer would not miss -- which row was selected, which tab was
+/// open -- that trade is the wrong way round. Anything another process has to
+/// be able to find after a crash keeps `write_json_atomic`.
+pub fn write_json_atomic_fast(path: impl AsRef<Path>, value: &impl Serialize) -> io::Result<()> {
+    let mut data = serde_json::to_string_pretty(value).map_err(io::Error::other)?;
+    data.push('\n');
+    atomic_write_fast(path, data)
+}
+
 pub fn quarantine_corrupt_file(path: impl AsRef<Path>) -> Option<PathBuf> {
     let path = path.as_ref();
     if !path.exists() {
@@ -64,7 +82,24 @@ pub fn quarantine_corrupt_file(path: impl AsRef<Path>) -> Option<PathBuf> {
     Some(destination)
 }
 
+/// How many atomic writes have waited for the disk to confirm them.
+///
+/// A durable write is two `fsync`s -- the file and its directory -- and on
+/// macOS `sync_all` is `F_FULLFSYNC`, measured at 8.35ms each. No count of
+/// filesystem lookups can see one, so the dashboard paid 16.7ms per keypress
+/// out of a 50ms frame budget with nothing in the repo able to notice. The
+/// gate for the keypress path is this count, not a duration.
+pub static DURABLE_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// And how many have not, so a test can tell "did not sync" from "did not run".
+pub static FAST_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn atomic_write_impl(path: &Path, data: &[u8], mode: Option<u32>, durable: bool) -> io::Result<()> {
+    if durable {
+        DURABLE_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        FAST_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

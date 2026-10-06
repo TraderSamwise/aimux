@@ -16,8 +16,11 @@
 //! This file counts, and asserts a MARGINAL rather than a constant: more agents
 //! over the same worktrees are the same set of paths, so they must cost nothing.
 
+use aimux::atomic_write::{DURABLE_WRITES, FAST_WRITES};
+use aimux::dashboard_controller::DashboardScreen;
 use aimux::dashboard_model::DesktopStateSnapshot;
-use aimux::dashboard_navigation::dashboard_navigation_groups;
+use aimux::dashboard_navigation::{DashboardNavigationState, dashboard_navigation_groups};
+use aimux::dashboard_ui_state::DashboardUiStatePersistence;
 use aimux::project_service::desktop_state::{
     CANONICALIZE_CALLS, DesktopStateInput, build_desktop_state,
 };
@@ -73,9 +76,14 @@ fn snapshot(label: &str, worktrees: usize, agents: usize) -> DesktopStateSnapsho
     serde_json::from_value(state).expect("the service's own state deserialises")
 }
 
-/// One grouping pass asks about paths, and never about agents.
+/// What one repaint asks the operating system for.
+///
+/// One test, because both counters are global to the process and `cargo test`
+/// runs a file's tests on parallel threads -- so a second test here would read
+/// this one's syscalls. A further claim about either counter goes in this
+/// function or behind a lock of its own.
 #[test]
-fn a_repaint_asks_the_filesystem_about_paths_not_about_agents() {
+fn what_one_repaint_costs_the_operating_system() {
     let base = snapshot("base", 100, 200);
     let more_agents = snapshot("more-agents", 100, 400);
 
@@ -115,5 +123,47 @@ fn a_repaint_asks_the_filesystem_about_paths_not_about_agents() {
         per_worktree <= 1.5,
         "{per_worktree:.2} canonicalize calls per worktree means the main \
          checkout's identity is being re-derived rather than held"
+    );
+
+    // And what it asks the DISK for. `persist_controller_state` runs on every
+    // repaint, including the cached one a keypress takes, and wrote both files
+    // durably: two `fsync`s each, and on macOS `sync_all` is `F_FULLFSYNC`,
+    // measured at 8.35ms per file. That is 16.7ms of a 50ms frame budget spent
+    // making a few hundred bytes of selection state survive a power cut.
+    //
+    // No count of filesystem lookups can see an `fsync`, which is why the
+    // 16.7ms sat under the comment that named it and nothing failed.
+    let root = std::env::temp_dir().join(format!("aimux-keypress-persist-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("state directory");
+    let mut persistence =
+        DashboardUiStatePersistence::new(&root, "client").expect("ui state persistence");
+    let navigation = DashboardNavigationState::new(&base);
+
+    let durable_before = DURABLE_WRITES.load(Ordering::Relaxed);
+    let fast_before = FAST_WRITES.load(Ordering::Relaxed);
+    let wrote = persistence
+        .persist_controller_state(
+            DashboardScreen::Dashboard,
+            "scribe",
+            false,
+            &base,
+            &navigation,
+        )
+        .expect("persist");
+    let durable = DURABLE_WRITES.load(Ordering::Relaxed) - durable_before;
+    let fast = FAST_WRITES.load(Ordering::Relaxed) - fast_before;
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(wrote, "the first persist has both files to write");
+    // Both halves matter: zero durable writes is also what "did not write at
+    // all" looks like, so the fast count is what makes the zero mean something.
+    assert_eq!(
+        fast, 2,
+        "a repaint writes the client file and the shared file, and nothing else"
+    );
+    assert_eq!(
+        durable, 0,
+        "neither of them is worth waiting for the disk: losing the selected row \
+         to a power cut is what reopening the dashboard does anyway"
     );
 }
