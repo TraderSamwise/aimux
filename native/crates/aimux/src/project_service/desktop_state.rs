@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::config::default_config;
 use crate::daemon::process_inventory::read_daemon_process_control_plane_warning;
 use crate::daemon_state::{load_daemon_info, load_daemon_info_async, load_metadata_state};
+use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::loop_alert_state_summary;
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
@@ -822,12 +823,29 @@ async fn desktop_worktrees_async(
     let missing = {
         let project_root = project_root.to_owned();
         let worktrees = topology_worktrees.clone();
-        crate::async_runtime::spawn_blocking_named(
+        match crate::async_runtime::spawn_blocking_named(
             crate::async_runtime::scoped_task_name("desktop-state", "worktree-checkouts", "stat"),
             move || missing_worktree_paths(&project_root, &worktrees),
         )
         .await
-        .unwrap_or_default()
+        {
+            Ok(missing) => missing,
+            // Not knowing is not the same as nothing being missing, and
+            // `unwrap_or_default()` here would have said the second while
+            // meaning the first -- in a change whose whole subject is wrappers
+            // that answer a question they did not ask. Nothing can be marked
+            // without the answer, so the state is served unmarked, but the
+            // reason is said out loud rather than swallowed.
+            Err(error) => {
+                log_at(
+                    LogLevel::Warn,
+                    "worktree checkout probe did not run; no checkout is marked missing",
+                    "desktop-state",
+                    Some(json!({ "error": error.to_string() })),
+                );
+                BTreeSet::new()
+            }
+        }
     };
     let mut worktrees = topology_worktrees
         .into_iter()

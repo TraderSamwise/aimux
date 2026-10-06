@@ -341,19 +341,29 @@ fn a_worktree_mid_lifecycle_is_never_marked_by_the_service() {
             topology_with_worktree(&root.to_string_lossy(), &worktree.to_string_lossy());
         topology["worktrees"][0]["status"] = json!(status);
         let state = build_state(&root.to_string_lossy(), &topology);
-        let group = state["worktreeGroups"]
+        // The ROW, which exists for every status in `ACTIVE_WORKTREE_STATUSES`,
+        // rather than the group, which does not: a `removing` worktree is
+        // retired out of the groups, so an `if let Some(group)` here would skip
+        // its assertion silently and the status would go untested.
+        let row = state["worktrees"]
             .as_array()
-            .expect("groups")
+            .expect("worktrees")
             .iter()
-            .find(|group| {
+            .find(|row| {
+                row.get("path").and_then(Value::as_str) == Some(&*worktree.to_string_lossy())
+            })
+            .unwrap_or_else(|| panic!("no row for a {status:?} worktree in {state}"));
+        assert_eq!(
+            row.get("pathMissing"),
+            None,
+            "a worktree with status {status:?} has no checkout yet: {row}"
+        );
+        if let Some(group) = state["worktreeGroups"].as_array().and_then(|groups| {
+            groups.iter().find(|group| {
                 group.get("path").and_then(Value::as_str) == Some(&*worktree.to_string_lossy())
-            });
-        if let Some(group) = group {
-            assert_eq!(
-                group.get("pathMissing"),
-                None,
-                "a worktree with status {status:?} has no checkout yet: {group}"
-            );
+            })
+        }) {
+            assert_eq!(group.get("pathMissing"), None, "{group}");
         }
         let _ = fs::remove_dir_all(&root);
     }
