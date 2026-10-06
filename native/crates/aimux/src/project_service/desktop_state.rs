@@ -739,7 +739,7 @@ fn insert_pending_marks_for_status(item: &mut Map<String, Value>, worktree: &Val
 /// the row carries derived state at all.
 fn desktop_worktree_item(
     project_root: &str,
-    missing: &BTreeSet<String>,
+    checkouts: &WorktreeCheckoutProbe,
     worktree: &Value,
     branch: &str,
 ) -> Value {
@@ -762,20 +762,21 @@ fn desktop_worktree_item(
     // The same verdict the groups carry, on the row the CLI and the TUI
     // overlays read. Marking only the groups left `aimux worktree list` happily
     // printing thirteen checkouts that are not on disk.
-    if missing.contains(path) {
+    if checkouts.missing.contains(path) {
         item.insert("pathMissing".into(), Value::Bool(true));
     }
     insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
-    // Whether the clear route can actually REACH this row's failure, by the
-    // route's own rule. Only asked of a row that has one, so the common build
-    // pays nothing for it.
+    // Whether the clear route can actually REACH this row's failure, read off
+    // the one checkout pass rather than stat'd again here. Deriving it per row
+    // put a blocking `stat` on the tokio reactor in the async route, which is
+    // the thing that route's own comment warns about.
     if item
         .get("operationFailure")
         .is_some_and(|value| !value.is_null())
     {
         item.insert(
             "operationFailureClearable".into(),
-            Value::Bool(worktree_checkout_is_present(path)),
+            Value::Bool(checkouts.present.contains(path)),
         );
     }
     Value::Object(item)
@@ -794,13 +795,13 @@ fn desktop_worktrees(
     root_identity: &str,
     main_branch_probe: Option<&GitBranchProbe>,
 ) -> Vec<Value> {
-    let missing = missing_worktree_paths(project_root, &topology_worktrees);
+    let checkouts = worktree_checkout_probe(project_root, &topology_worktrees);
     let mut worktrees = topology_worktrees
         .into_iter()
         .map(|worktree| {
             desktop_worktree_item(
                 project_root,
-                &missing,
+                &checkouts,
                 &worktree,
                 &worktree_branch_or_current_from_probe(
                     worktree_row_is_main_checkout(&worktree, project_root, root_identity),
@@ -850,16 +851,16 @@ async fn desktop_worktrees_async(
     // Off the reactor: this route is dispatched async, not through the blocking
     // pool the ordinary routes use, and a `stat` on a hung mount blocks until
     // the kernel answers.
-    let missing = {
+    let checkouts = {
         let project_root = project_root.to_owned();
         let worktrees = topology_worktrees.clone();
         match crate::async_runtime::spawn_blocking_named(
             crate::async_runtime::scoped_task_name("desktop-state", "worktree-checkouts", "stat"),
-            move || missing_worktree_paths(&project_root, &worktrees),
+            move || worktree_checkout_probe(&project_root, &worktrees),
         )
         .await
         {
-            Ok(missing) => missing,
+            Ok(probe) => probe,
             // Not knowing is not the same as nothing being missing, and
             // `unwrap_or_default()` here would have said the second while
             // meaning the first -- in a change whose whole subject is wrappers
@@ -873,7 +874,7 @@ async fn desktop_worktrees_async(
                     "project-service",
                     Some(json!({ "error": error.to_string() })),
                 );
-                BTreeSet::new()
+                WorktreeCheckoutProbe::default()
             }
         }
     };
@@ -882,7 +883,7 @@ async fn desktop_worktrees_async(
         .map(|worktree| {
             desktop_worktree_item(
                 project_root,
-                &missing,
+                &checkouts,
                 &worktree,
                 &worktree_branch_or_current_from_probe(
                     worktree_row_is_main_checkout(&worktree, project_root, &root_identity),
@@ -1927,21 +1928,53 @@ fn main_checkout_branch(
 /// marked: `ACTIVE_WORKTREE_STATUSES` includes `planned` and `creating`, and a
 /// create is minutes of git work. Saying "checkout missing" in red there would
 /// be the same class of lie this change exists to end.
-fn missing_worktree_paths(project_root: &str, topology_worktrees: &[Value]) -> BTreeSet<String> {
+fn worktree_checkout_probe(
+    project_root: &str,
+    topology_worktrees: &[Value],
+) -> WorktreeCheckoutProbe {
     let root_identity = worktree_path_identity(project_root);
-    topology_worktrees
-        .iter()
-        .filter(|worktree| !worktree_checkout_is_still_arriving(worktree))
-        .filter_map(|worktree| string_field(worktree, "path"))
-        .filter(|path| !is_worktree_path(path, &root_identity))
-        .filter(|path| {
-            matches!(
-                std::fs::metadata(path),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound
-            )
-        })
-        .map(ToOwned::to_owned)
-        .collect()
+    let mut probe = WorktreeCheckoutProbe::default();
+    for worktree in topology_worktrees {
+        let Some(path) = string_field(worktree, "path") else {
+            continue;
+        };
+        // One `stat` per row, which is what this cost before either answer was
+        // derived from it, and both answers come from the one classification so
+        // they cannot drift apart by spelling.
+        match worktree_checkout_state(path) {
+            WorktreeCheckoutState::Present => {
+                probe.present.insert(path.to_owned());
+            }
+            WorktreeCheckoutState::Absent => {
+                if !worktree_checkout_is_still_arriving(worktree)
+                    && !is_worktree_path(path, &root_identity)
+                {
+                    probe.missing.insert(path.to_owned());
+                }
+            }
+            // Neither set. Not painted gone, and not offered as clearable.
+            WorktreeCheckoutState::Unknown => {}
+        }
+    }
+    probe
+}
+
+/// What one pass of the filesystem learned about the rows' checkouts.
+///
+/// Both answers come from the same `metadata` call, and the whole pass runs
+/// where the caller puts it -- directly on the sync builder, inside
+/// `spawn_blocking` on the async route. Deriving either one per row instead
+/// would put a `stat` back on the reactor, which is the thing the async
+/// route's comment already warns about; an earlier draft of this change did
+/// exactly that.
+#[derive(Default, Debug)]
+struct WorktreeCheckoutProbe {
+    /// A positive `NotFound`, excluding a checkout still arriving and the main
+    /// checkout -- the rows the dashboard must not paint as gone.
+    missing: BTreeSet<String>,
+    /// `metadata` answered Ok, which is the rule `clear_worktree_row_failure`
+    /// uses to decide whether it can touch a row at all.
+    present: BTreeSet<String>,
 }
 
 /// A worktree whose checkout has not been made yet, or is being unmade.
@@ -2196,19 +2229,52 @@ fn worktree_row_is_main_checkout(
     is_worktree_path(worktree_row_path(worktree, project_root), root_identity)
 }
 
+/// What the filesystem says about a worktree's checkout.
+///
+/// Three answers, not two, because the dashboard and the clear route need
+/// different cuts of the same `stat` and reading one off the other is what
+/// went wrong. `Absent` is a positive `NotFound`. `Unknown` is a path we could
+/// not stat for some other reason -- a permission error on a parent, a mount
+/// that is slow to answer -- and it is neither of the others: painting it gone
+/// would tell someone to throw away a worktree that is still there, while
+/// treating it as present would offer a key the route is going to refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeCheckoutState {
+    Present,
+    Absent,
+    Unknown,
+}
+
+pub fn worktree_checkout_state(path: &str) -> WorktreeCheckoutState {
+    // A syscall saved, not a different answer: `stat("")` is already ENOENT.
+    // It also keeps `CHECKOUT_STATS` counting rows rather than empty strings.
+    if path.trim().is_empty() {
+        return WorktreeCheckoutState::Absent;
+    }
+    CHECKOUT_STATS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    match std::fs::metadata(path) {
+        Ok(_) => WorktreeCheckoutState::Present,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => WorktreeCheckoutState::Absent,
+        Err(_) => WorktreeCheckoutState::Unknown,
+    }
+}
+
 /// Whether a worktree's checkout is there to be acted on.
 ///
-/// ONE rule, because two of them disagreed and the disagreement was a lie on
-/// screen. `clear_worktree_row_failure` refuses a row with no checkout, and the
-/// dashboard decided whether to offer the key by reading `pathMissing` -- which
-/// is deliberately `NotFound` only, since a path we cannot stat for another
-/// reason is unknown rather than absent. So a failed row on an unreadable mount
-/// had no `pathMissing`, the hint appeared, and the route refused the request.
+/// ONE rule for the CHECKOUT question, because two of them disagreed and the
+/// disagreement was a lie on screen. `clear_worktree_row_failure` refuses a row
+/// with no checkout, and the dashboard decided whether to offer the key by
+/// reading `pathMissing` -- which is `Absent` only. So a failed row on an
+/// unreadable mount had no `pathMissing`, the hint appeared, and the route
+/// refused the request.
 ///
-/// `metadata` rather than `exists()` so the two cannot drift again by spelling:
-/// `exists()` is this, with the error thrown away.
+/// Not the whole of the route's refusal: it also asks whether the row carries a
+/// failure at all, and it counts `status: "error"` with no `operationFailure`
+/// where the projection stamps the verdict only on a row that has one. Nothing
+/// in this repo writes that combination -- both marks go on together -- so it
+/// is said here rather than guarded.
 pub fn worktree_checkout_is_present(path: &str) -> bool {
-    !path.trim().is_empty() && std::fs::metadata(path).is_ok()
+    worktree_checkout_state(path) == WorktreeCheckoutState::Present
 }
 
 /// The identity a worktree path is grouped by, for every surface that groups.
@@ -2245,6 +2311,16 @@ pub fn worktree_path_identity(path: &str) -> String {
 /// about.
 pub static CANONICALIZE_CALLS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
+
+/// How many times the filesystem has been asked about a worktree's checkout.
+///
+/// A canonicalize count cannot see a `stat`, and the gap let a per-row
+/// `metadata()` into the build -- on the tokio reactor in the async route,
+/// where the one pass this replaced is deliberately inside `spawn_blocking`
+/// because a `stat` on a hung mount blocks until the kernel answers. Nothing
+/// failed. The marginal in `desktop_state_scale.rs` is one per row, which is
+/// what the single pass costs and what a second derived answer would double.
+pub static CHECKOUT_STATS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// How many times git has been asked for the main checkout's branch.
 ///

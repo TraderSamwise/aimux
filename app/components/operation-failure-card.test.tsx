@@ -252,10 +252,13 @@ describe("the failed-operations card", () => {
       sink.refresh.mockImplementationOnce(() => {
         throw new Error("atom store is gone");
       });
-      await expect(runOperationFailureDismiss(endpoint, "tok", sink)).rejects.toThrow(
-        "atom store is gone",
+      await runOperationFailureDismiss(endpoint, "tok", sink);
+      // Named as the refresh, not as the dismiss, and on screen rather than an
+      // unhandled rejection out of `onPress`.
+      expect(sink.setError).toHaveBeenCalledWith(
+        expect.stringContaining("Dismissed, but the view did not refresh"),
       );
-      expect(sink.setError).not.toHaveBeenCalledWith(expect.stringContaining("atom store"));
+      expect(sink.setError).not.toHaveBeenCalledWith(expect.stringContaining("Could not dismiss"));
       // And the button is usable again, which a throw past the reset would have
       // left stuck at "Dismissing..." forever.
       expect(sink.inFlight()).toBe(false);

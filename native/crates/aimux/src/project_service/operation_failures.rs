@@ -15,7 +15,7 @@ const MAX_FAILURES: usize = 100;
 /// A read-time filter, not a prune -- the record stays on disk. Not shorter
 /// than this because an agent launch failure has no second home: a worktree's
 /// rides its topology row unexpiring, this banner is the only place for others.
-pub const ACTIVE_FAILURE_MAX_AGE_MS: u128 = 15 * 60 * 1000;
+const ACTIVE_FAILURE_MAX_AGE_MS: u128 = 15 * 60 * 1000;
 
 /// The edge, here rather than in a test, so a release build cannot widen it.
 ///

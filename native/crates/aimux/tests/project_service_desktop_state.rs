@@ -1235,6 +1235,88 @@ fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
 ///
 /// Asserted BETWEEN the surfaces rather than one test per surface, because a
 /// per-surface test passes happily while the surfaces disagree.
+/// The group and the row give the dashboard the same answer about a failure.
+///
+/// The dashboard draws GROUPS -- the red thing a person sees is a group -- and
+/// `dashboard_has_clearable_failures` reads both. Round 3 of this PR's review
+/// pointed out that every test of the group's verdict hand-stamped it onto a
+/// snapshot, so deleting the line that carries it over from the row failed
+/// nothing, and the two surfaces could have disagreed about the key the
+/// dashboard was about to offer.
+#[test]
+fn a_failed_row_and_its_group_agree_on_whether_the_key_will_work() {
+    let project = temp_project("group-row-clearable-agreement");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    init_git_repo(&root);
+    let root_path = root.to_string_lossy().into_owned();
+    let present_path = format!("{root_path}/.aimux/worktrees/present");
+    create_dir_all(&present_path).expect("present worktree");
+    // Never created, which is what a failed create leaves behind.
+    let absent_path = format!("{root_path}/.aimux/worktrees/absent");
+
+    let now = "2026-10-06T00:00:00.000Z";
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": now,
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": now, "updatedAt": now }],
+        "nodes": [], "edges": [], "bindings": [], "sessions": [], "services": [],
+        "worktrees": [
+            { "id": "main", "rigId": "rig-1", "path": root_path, "name": "Main Checkout", "status": "active", "branch": "trunk", "createdAt": now, "updatedAt": now },
+            { "id": "present", "rigId": "rig-1", "path": present_path, "name": "present", "status": "error", "branch": "b1", "operationFailure": "remove failed", "createdAt": now, "updatedAt": now },
+            { "id": "absent", "rigId": "rig-1", "path": absent_path, "name": "absent", "status": "error", "branch": "b2", "operationFailure": "create failed", "createdAt": now, "updatedAt": now }
+        ],
+        "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+        "lifecycleOperations": [], "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path.clone(),
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &[])),
+    );
+
+    let verdict_by_name = |collection: &str| {
+        state[collection]
+            .as_array()
+            .expect("collection")
+            .iter()
+            .filter(|entry| entry.get("operationFailure").is_some())
+            .map(|entry| {
+                (
+                    entry["name"].as_str().unwrap_or_default().to_owned(),
+                    entry
+                        .get("operationFailureClearable")
+                        .and_then(Value::as_bool),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let rows = verdict_by_name("worktrees");
+    let groups = verdict_by_name("worktreeGroups");
+    assert_eq!(
+        rows,
+        vec![
+            ("present".to_owned(), Some(true)),
+            ("absent".to_owned(), Some(false)),
+        ],
+        "a failure on a checkout that is there is reachable; one on a checkout \
+         that was never made is not"
+    );
+    assert_eq!(
+        groups, rows,
+        "the group the dashboard draws and the row behind it must not disagree \
+         about whether X will do anything"
+    );
+    cleanup(project);
+}
+
 /// The dashboard and the clear route must agree about whether a failure can be
 /// cleared, including on a path neither of them can stat.
 ///

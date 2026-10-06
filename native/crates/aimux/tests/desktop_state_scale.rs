@@ -32,7 +32,7 @@
 //! already paid once for a test that asserted the machine was fast.
 
 use aimux::project_service::desktop_state::{
-    CANONICALIZE_CALLS, DesktopStateInput, GIT_BRANCH_PROBES, build_desktop_state,
+    CANONICALIZE_CALLS, CHECKOUT_STATS, DesktopStateInput, GIT_BRANCH_PROBES, build_desktop_state,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -190,6 +190,27 @@ fn a_build_asks_the_operating_system_about_paths_not_about_pairings() {
         base.canonicalize_calls
     );
 
+    // And the `stat` pass, which a canonicalize count cannot see. One per row:
+    // the build asks the filesystem once about each worktree's checkout and
+    // takes every answer it needs from that. A second answer derived per row --
+    // "is this failure clearable", say -- doubles this, and in the async route
+    // it lands on the tokio reactor rather than in the `spawn_blocking` the one
+    // pass is wrapped in. That happened while this PR was being reviewed, and
+    // nothing failed.
+    let per_extra_worktree_stats =
+        (more_worktrees.checkout_stats - base.checkout_stats) as f64 / 40.0;
+    println!("per extra worktree stats: {per_extra_worktree_stats:.2}");
+    assert!(
+        per_extra_worktree_stats <= 1.0,
+        "{per_extra_worktree_stats:.2} checkout stats per extra worktree means \
+         the build asks the filesystem about a row more than once, and the \
+         second ask is not inside the blocking pass the first one is"
+    );
+    assert_eq!(
+        more_agents.checkout_stats, base.checkout_stats,
+        "an extra agent is not an extra checkout, so it must not cost a stat"
+    );
+
     // git is a SUBPROCESS, and no count of filesystem calls can see one. The
     // sync lane asked for the main checkout's branch three times per build --
     // in the worktree projection, in the group builder, and behind
@@ -219,16 +240,19 @@ fn a_build_asks_the_operating_system_about_paths_not_about_pairings() {
 
 struct Counted {
     canonicalize_calls: usize,
+    checkout_stats: usize,
     git_branch_probes: usize,
     groups: Option<usize>,
 }
 
 fn counted(root: &str, worktrees: usize, agents: usize) -> Counted {
     let canonicalize_before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let stats_before = CHECKOUT_STATS.load(Ordering::Relaxed);
     let probes_before = GIT_BRANCH_PROBES.load(Ordering::Relaxed);
     let state = build(root, worktrees, agents);
     Counted {
         canonicalize_calls: CANONICALIZE_CALLS.load(Ordering::Relaxed) - canonicalize_before,
+        checkout_stats: CHECKOUT_STATS.load(Ordering::Relaxed) - stats_before,
         git_branch_probes: GIT_BRANCH_PROBES.load(Ordering::Relaxed) - probes_before,
         groups: state["worktreeGroups"].as_array().map(Vec::len),
     }

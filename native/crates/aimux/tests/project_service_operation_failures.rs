@@ -13,10 +13,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// The edge lives next to the constant, in `operation_failures.rs`, as a
-/// `const _` -- a test-file assertion only fires when the tests compile, and
-/// the number is wrong in a release build too. It is referenced here because
-/// the probes below are deliberately nowhere near it.
+// The window's edge is asserted next to the constant, in
+// `operation_failures.rs`, as a `const _`: a test-file assertion only fires
+// when the tests compile, and the number is wrong in a release build too. The
+// probes in this file sit deliberately nowhere near that edge.
 
 #[test]
 fn clears_matching_failures_and_leaves_others_active() {

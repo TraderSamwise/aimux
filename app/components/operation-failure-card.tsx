@@ -59,10 +59,20 @@ export async function runOperationFailureDismiss(
     // reported as "Could not dismiss" -- on a dismiss the server had already
     // carried out.
     const failure = await dismissOperationFailures(endpoint, token);
-    if (failure === null) {
-      io.refresh();
-    } else {
+    if (failure !== null) {
       io.setError(failure);
+    } else {
+      try {
+        io.refresh();
+      } catch (e) {
+        // Said, and said as what it is. Routing this to "Could not dismiss"
+        // blamed the wrong half of the work, and letting it escape -- which an
+        // earlier draft did -- made it an unhandled rejection out of `onPress`
+        // with nothing on screen at all.
+        io.setError(
+          `Dismissed, but the view did not refresh: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
   } finally {
     // Always, or a throw anywhere above leaves the button disabled and reading
