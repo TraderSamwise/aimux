@@ -315,12 +315,23 @@ impl PeriodicTask for WindowReconciliationTask {
             if repairs.is_empty() {
                 return Ok(());
             }
-            update_runtime_topology(&topology_path, |current| {
-                // Re-plan against the topology under the lock: another writer may
-                // have changed the bindings since the read above.
-                let repairs = plan_binding_repairs(&current, &owned_windows);
-                apply_binding_repairs(current, &repairs)
-            })
+            // Off the async worker: taking the update lock can wait seconds for
+            // another writer, and blocking a tokio worker thread for that is
+            // how a periodic task stalls every other task sharing the runtime.
+            spawn_blocking_named(
+                scoped_task_name("window-reconciliation", "topology-update", "project"),
+                move || {
+                    update_runtime_topology(&topology_path, |current| {
+                        // Re-plan against the topology under the lock: another
+                        // writer may have changed the bindings since the read
+                        // above.
+                        let repairs = plan_binding_repairs(&current, &owned_windows);
+                        apply_binding_repairs(current, &repairs)
+                    })
+                },
+            )
+            .await
+            .map_err(|error| format!("window reconciliation topology update did not run: {error}"))?
             .map_err(|error| format!("window reconciliation could not write topology: {error}"))?;
             log_lifecycle_always(
                 "repaired stale tmux window bindings",

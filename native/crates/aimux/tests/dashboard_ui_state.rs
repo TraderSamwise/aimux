@@ -199,6 +199,7 @@ fn order_snapshot() -> DesktopStateSnapshot {
             status: WorktreeStatus::Active,
             pending: false,
             removing: false,
+            path_missing: false,
             pending_action: None,
             operation_failure: None,
             sessions: group.sessions,

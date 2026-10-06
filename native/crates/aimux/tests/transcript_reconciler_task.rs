@@ -297,8 +297,20 @@ fn failed_activity_correction_is_reported_and_retried() {
         "failure did not name the failed route/status: {message}"
     );
     assert!(
-        message.contains("Timed out acquiring state update lock"),
+        message.contains("Could not take the state update lock"),
         "failure did not carry the route error cause: {message}"
+    );
+    // The harness plants a bare lock directory with no owner file, so the
+    // holder cannot be named -- and the message says THAT rather than
+    // inventing one. What must always be there is the real wait, which is the
+    // half the old wording ("Timed out") asserted without measuring.
+    assert!(
+        message.contains("after waiting"),
+        "the cause has to say how long it really waited: {message}"
+    );
+    assert!(
+        message.contains("names no owner we could read"),
+        "and say plainly that the holder is unknown: {message}"
     );
 
     fs::remove_dir_all(lock_path).unwrap();

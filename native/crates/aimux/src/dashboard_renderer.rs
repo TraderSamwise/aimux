@@ -30,6 +30,14 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const RECENT_IDLE_MS: u128 = 2 * 60 * 1000;
+/// Said by the TUI row, the TUI detail panel, the pickers, the CLI and the app,
+/// from the one verdict the project service made.
+///
+/// One string rather than five spellings: `needs_response` was written three
+/// different ways across four surfaces in this codebase before someone compared
+/// them, and the app's copy of this word is pinned against this constant by a
+/// test rather than by intention.
+pub const WORKTREE_CHECKOUT_MISSING_LABEL: &str = "checkout missing";
 const COL_SELECT: usize = 2;
 const COL_DOT: usize = 2;
 const COL_INDEX: usize = 4;
@@ -1656,6 +1664,7 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     if worktree.operation_failure.is_some() {
         return style("failed", Tone::Danger);
     }
+
     // Whatever the action is, not two spellings and a catch-all: a worktree
     // mid-rename summarised as "removing", and `dashboard_navigation` then
     // refused Enter on it with "is creating".
@@ -1672,6 +1681,17 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     if worktree.pending {
         return progress_label("pending");
     }
+    // After the in-flight branches, not before them. A worktree being CREATED
+    // has no directory yet -- `creating` is minutes of git work -- so putting
+    // this first made every ordinary create read as a red failure, which is the
+    // same class of lie this whole change exists to end.
+    //
+    // Asked through the shared predicate even though the branches above have
+    // already returned for every case it covers: the three surfaces claim to
+    // share one rule, and a rule that is written twice is a rule that drifts.
+    if worktree.path_missing && !worktree_action_in_flight(worktree) {
+        return style(WORKTREE_CHECKOUT_MISSING_LABEL, Tone::Danger);
+    }
     let parts = semantic_count_parts(worktree);
     if !parts.is_empty() {
         return parts.join(&style(" · ", Tone::Muted));
@@ -1683,8 +1703,20 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     }
 }
 
+/// Whether something is happening to this worktree right now.
+///
+/// One predicate for the row summary's ordering, the row's tone and the detail
+/// panel, because a checkout that has not arrived yet is not a checkout that is
+/// gone and all three have to agree about which it is.
+fn worktree_action_in_flight(worktree: &DashboardNavigationGroup<'_>) -> bool {
+    worktree.pending_action.is_some() || worktree.removing || worktree.pending
+}
+
 fn worktree_tone(worktree: &DashboardNavigationGroup<'_>) -> Tone {
     if worktree.operation_failure.is_some() {
+        return Tone::Danger;
+    }
+    if worktree.path_missing && !worktree_action_in_flight(worktree) {
         return Tone::Danger;
     }
     let mut best = (0, Tone::Muted);
@@ -2182,6 +2214,21 @@ fn render_worktree_details_panel(
         push_kv(&mut lines, "Branch", branch, width);
     }
     push_kv(&mut lines, "Path", path, width);
+    // Said where the path is said, because the path is what is wrong. The word
+    // matches the app's, and both read the service's verdict rather than each
+    // asking the filesystem.
+    //
+    // Under the same precedence the row uses: a worktree mid-create has no
+    // checkout YET, and the row already knew that while this panel did not --
+    // so the two surfaces contradicted each other on the same group.
+    if focused_group.is_some_and(|group| group.path_missing && !worktree_action_in_flight(group)) {
+        push_kv(
+            &mut lines,
+            "Checkout",
+            WORKTREE_CHECKOUT_MISSING_LABEL,
+            width,
+        );
+    }
     if let Some(failure) = focused_group.and_then(|group| group.operation_failure.as_ref()) {
         push_kv(&mut lines, "Status", "failed", width);
         if let Some(operation) = failure.operation.as_deref() {

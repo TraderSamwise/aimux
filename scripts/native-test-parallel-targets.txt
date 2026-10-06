@@ -142,3 +142,5 @@ watcher_tick_loop_budget
 websocket_client
 agent_status_label_surfaces
 diagnostics_ptrace
+runtime_topology_lock
+worktree_checkout_missing

@@ -124,6 +124,7 @@ export interface DesktopWorktree {
   isBare?: boolean;
   pending?: boolean;
   removing?: boolean;
+  pathMissing?: boolean;
 }
 
 export interface DesktopWorktreeGroup {
@@ -133,6 +134,10 @@ export interface DesktopWorktreeGroup {
   status: "active" | "offline";
   pending?: boolean;
   removing?: boolean;
+  // The worktree's checkout is no longer on disk. Decided by the project
+  // service; the app cannot see the server's filesystem, so it renders this
+  // rather than computing anything.
+  pathMissing?: boolean;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -163,6 +168,7 @@ export interface WorktreeBucket {
   isSupervisorLane?: boolean;
   pending?: boolean;
   removing?: boolean;
+  pathMissing?: boolean;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -187,7 +193,10 @@ export function isDesktopServiceOffline(
 export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): WorktreeBucket | null {
   const sessions = bucket.sessions.filter((session) => !isDesktopSessionOffline(session));
   const services = bucket.services.filter((service) => !isDesktopServiceOffline(service));
-  const keepOperational = Boolean(bucket.pending || bucket.removing);
+  // A missing checkout keeps its card in the active view. Dropping it hid the
+  // one state the user has to act on: a worktree whose agents have all gone
+  // offline BECAUSE the checkout went away is exactly the row worth seeing.
+  const keepOperational = Boolean(bucket.pending || bucket.removing || bucket.pathMissing);
   if (sessions.length === 0 && services.length === 0 && !keepOperational) return null;
   return { ...bucket, sessions, services };
 }
@@ -218,6 +227,7 @@ function bucketFromServerGroup(
     isMainCheckout,
     pending: group.pending,
     removing: group.removing,
+    pathMissing: group.pathMissing,
     sessions: group.sessions.filter(
       (session) => !isDashboardHiddenSession(session, hasSupervisorLane),
     ),
@@ -288,6 +298,7 @@ export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
       isMainCheckout: false,
       pending: wt.pending,
       removing: wt.removing,
+      pathMissing: wt.pathMissing,
       sessions: [],
       services: [],
     });

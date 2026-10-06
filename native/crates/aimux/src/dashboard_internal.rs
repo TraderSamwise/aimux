@@ -124,6 +124,15 @@ const DASHBOARD_DEFERRED_REFRESH_BUDGET: Duration = Duration::from_millis(150);
 /// held key cannot starve the data indefinitely.
 const DASHBOARD_DEFERRED_REFRESH_CEILING: Duration = Duration::from_secs(1);
 
+/// Where the data behind a painted frame came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardFrameSource {
+    /// A snapshot fetched for this frame.
+    Fetched,
+    /// The snapshot already in hand, with no fetch for this frame.
+    Cached,
+}
+
 #[derive(Debug, Clone)]
 pub struct NativeDashboardOptions {
     pub project_root: PathBuf,
@@ -326,10 +335,17 @@ pub struct DashboardLoopSeams {
     pub stop: Box<dyn FnMut() -> bool + Send>,
     /// Where frames and terminal control go instead of the real terminal.
     pub output: Box<dyn Write + Send>,
-    /// One call per frame written, at each of the three sites that write one.
-    /// Counted rather than parsed back out of `output`, because the terminal
-    /// guard writes there too and a frame carries no delimiter of its own.
-    pub frame: Box<dyn FnMut() + Send>,
+    /// One call per frame written, at each of the three sites that write one,
+    /// carrying where that frame's data came from. Counted rather than parsed
+    /// back out of `output`, because the terminal guard writes there too and a
+    /// frame carries no delimiter of its own.
+    ///
+    /// The source is here because counting LOADS cannot tell "the cache was
+    /// used" from "the cache was used and a deferred refresh also came due" --
+    /// and which of those happens depends on how long the machine took, so a
+    /// test written on the load count fails on a slow CI runner for a reason
+    /// that has nothing to do with the behaviour it names.
+    pub frame: Box<dyn FnMut(DashboardFrameSource) + Send>,
 }
 
 pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<()> {
@@ -894,7 +910,10 @@ pub fn run_native_dashboard_with_seams(
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
                 if let Some(observe) = seam_frame.as_mut() {
-                    observe();
+                    // This whole branch IS the cached repaint: it is the body
+                    // of `rendered_from_cached_snapshot`, reached only when a
+                    // snapshot was already in hand and no fetch was made.
+                    observe(DashboardFrameSource::Cached);
                 }
                 rendered_once = true;
                 // Written by the frame rather than left to the refresh behind
@@ -1085,7 +1104,7 @@ pub fn run_native_dashboard_with_seams(
                         );
                         write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
                         if let Some(observe) = seam_frame.as_mut() {
-                            observe();
+                            observe(DashboardFrameSource::Fetched);
                         }
                         rendered_once = true;
                         flush_deferred_dashboard_requests(
@@ -1186,7 +1205,7 @@ pub fn run_native_dashboard_with_seams(
                         );
                         write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
                         if let Some(observe) = seam_frame.as_mut() {
-                            observe();
+                            observe(DashboardFrameSource::Fetched);
                         }
                         rendered_once = true;
                         flush_deferred_dashboard_requests(

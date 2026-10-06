@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use aimux::dashboard_controller::DashboardKey;
 use aimux::dashboard_internal::{
-    DashboardLoopSeams, DashboardSnapshotLoad, NativeDashboardOptions,
+    DashboardFrameSource, DashboardLoopSeams, DashboardSnapshotLoad, NativeDashboardOptions,
     run_native_dashboard_with_seams,
 };
 use aimux::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
@@ -68,6 +68,7 @@ impl Write for Sink {
 struct Driven {
     loads: usize,
     frames: usize,
+    cached_frames: usize,
 }
 
 /// One iteration's worth of input: how long to idle before offering it, and
@@ -99,6 +100,8 @@ fn drive(polls: Vec<Poll>) -> Driven {
     let load_counter = Arc::clone(&loads);
     let frames = Arc::new(AtomicUsize::new(0));
     let frame_counter = Arc::clone(&frames);
+    let cached_frames = Arc::new(AtomicUsize::new(0));
+    let cached_counter = Arc::clone(&cached_frames);
 
     let seams = DashboardLoopSeams {
         keys: Box::new(move || {
@@ -125,7 +128,10 @@ fn drive(polls: Vec<Poll>) -> Driven {
         // iteration has nothing left to feed and the loop is done.
         stop: Box::new(move || script.lock().expect("stop script").is_empty()),
         output: Box::new(Sink),
-        frame: Box::new(move || {
+        frame: Box::new(move |source| {
+            if source == DashboardFrameSource::Cached {
+                cached_counter.fetch_add(1, Ordering::Relaxed);
+            }
             frame_counter.fetch_add(1, Ordering::Relaxed);
         }),
     };
@@ -153,6 +159,7 @@ fn drive(polls: Vec<Poll>) -> Driven {
     Driven {
         loads: loads.load(Ordering::Relaxed),
         frames: frames.load(Ordering::Relaxed),
+        cached_frames: cached_frames.load(Ordering::Relaxed),
     }
 }
 
@@ -189,12 +196,12 @@ fn keypresses_repaint_without_fetching_again() {
         (NO_EXTRA_IDLE, vec![DashboardKey::Up]),
     ]);
 
+    assert_eq!(driven.frames, 4, "every keypress still gets a frame");
     assert_eq!(
-        driven.loads, 1,
-        "only the first pass may fetch; three keypresses must repaint from the \
-         snapshot already in hand"
+        driven.cached_frames, 3,
+        "and the three keypresses have to repaint from the snapshot already in \
+         hand, not fetch one each"
     );
-    assert_eq!(driven.frames, 4, "and every one of them still gets a frame");
 }
 
 /// The deferred fetch is paid, not forgotten.

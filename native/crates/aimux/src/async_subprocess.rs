@@ -13,6 +13,21 @@ const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum AsyncCommandError {
     Spawn {
         program: String,
+        /// The working directory the spawn was given, and what we found when
+        /// we went and looked at it.
+        ///
+        /// Carried because a missing working directory fails the spawn with the
+        /// same `ENOENT` a missing program does, and without this the message
+        /// could only ever accuse the program. That is how a deleted worktree
+        /// came out as `failed to run /opt/homebrew/bin/tmux: No such file or
+        /// directory` on a machine where tmux was installed and working.
+        ///
+        /// The verdict is taken once, where the spawn failed -- not in
+        /// `Display`. Formatting must not do filesystem I/O: the same error
+        /// would read differently each time it was printed, and a directory
+        /// recreated in between would make the message deny a cause that was
+        /// real.
+        working_directory: Option<WorkingDirectory>,
         source: std::io::Error,
     },
     Timeout {
@@ -24,9 +39,35 @@ pub enum AsyncCommandError {
 impl std::fmt::Display for AsyncCommandError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Spawn { program, source } => {
-                write!(formatter, "failed to run {program}: {source}")
-            }
+            Self::Spawn {
+                program,
+                working_directory,
+                source,
+            } => match working_directory
+                .as_ref()
+                .and_then(WorkingDirectory::missing)
+            {
+                // Say which side is missing, and say it only when we looked.
+                // `ENOENT` from a spawn means "something in this call does not
+                // exist"; the program is merely the half that was named before.
+                Some((path, reason)) => write!(
+                    formatter,
+                    "failed to run {program} in {}: that working directory is not there ({reason})",
+                    path.display()
+                ),
+                // Say that the directory was checked and was there, so the
+                // next reader does not go and check it again. `ENOENT` from a
+                // spawn also covers a missing program and a missing dynamic
+                // loader or interpreter, and those are what remain here.
+                None => match working_directory {
+                    Some(directory) if source.kind() == std::io::ErrorKind::NotFound => write!(
+                        formatter,
+                        "failed to run {program} (its working directory {} is there): {source}",
+                        directory.path.display()
+                    ),
+                    _ => write!(formatter, "failed to run {program}: {source}"),
+                },
+            },
             Self::Timeout { program, duration } => {
                 write!(formatter, "{program} timed out after {duration:?}")
             }
@@ -35,6 +76,63 @@ impl std::fmt::Display for AsyncCommandError {
 }
 
 impl std::error::Error for AsyncCommandError {}
+
+/// A spawn's working directory and whether it was there when the spawn failed.
+#[derive(Debug)]
+pub struct WorkingDirectory {
+    path: PathBuf,
+    /// Why the directory could not be read, when that is what went wrong.
+    missing_reason: Option<String>,
+}
+
+impl WorkingDirectory {
+    fn missing(&self) -> Option<(&std::path::Path, &str)> {
+        self.missing_reason
+            .as_deref()
+            .map(|reason| (self.path.as_path(), reason))
+    }
+}
+
+/// Look at the directory once, at the moment the spawn failed.
+///
+/// Only `ENOENT`-shaped failures are candidates. Then we go and look: if the
+/// directory stats fine the program keeps the blame, because `ENOENT` from a
+/// spawn also covers a missing program and a missing dynamic loader or
+/// interpreter. Guessing from the errno alone would have swapped one wrong
+/// accusation for another.
+fn judge_working_directory(path: PathBuf, source: &std::io::Error) -> WorkingDirectory {
+    let missing_reason = (source.kind() == std::io::ErrorKind::NotFound)
+        .then(|| {
+            std::fs::metadata(&path)
+                .err()
+                // Both gates are not-found: the spawn has to have failed the
+                // way a missing path fails, AND the directory has to be the
+                // path that is missing. Defensive rather than demonstrated -- a
+                // `chdir` that succeeded leaves little room for the stat to then
+                // fail some other way -- but without it the rule this function
+                // states is not the rule it applies, and "not there (Permission
+                // denied)" should be unreachable by construction, not by luck.
+                .filter(|error| error.kind() == std::io::ErrorKind::NotFound)
+                .map(|error| error.to_string())
+        })
+        .flatten();
+    WorkingDirectory {
+        path,
+        missing_reason,
+    }
+}
+
+fn spawn_error(
+    program: String,
+    current_dir: Option<PathBuf>,
+    source: std::io::Error,
+) -> AsyncCommandError {
+    AsyncCommandError::Spawn {
+        program,
+        working_directory: current_dir.map(|path| judge_working_directory(path, &source)),
+        source,
+    }
+}
 
 pub struct AsyncCommand {
     program: OsString,
@@ -198,6 +296,11 @@ impl AsyncCommand {
         self.program.to_string_lossy().into_owned()
     }
 
+    /// The two things an error needs, read before the command is consumed.
+    fn failure_context(&self) -> (String, Option<PathBuf>) {
+        (self.program_display(), self.current_dir.clone())
+    }
+
     fn build_tokio_command(&mut self) -> Command {
         let mut command = Command::new(&self.program);
         command.args(&self.args);
@@ -239,11 +342,11 @@ async fn run_output(
     command: &mut AsyncCommand,
     timeout: Duration,
 ) -> Result<Output, AsyncCommandError> {
-    let program = command.program_display();
+    let (program, current_dir) = command.failure_context();
     let mut command = command.build_tokio_command();
     match tokio::time::timeout(timeout, command.output()).await {
         Ok(Ok(output)) => Ok(output),
-        Ok(Err(source)) => Err(AsyncCommandError::Spawn { program, source }),
+        Ok(Err(source)) => Err(spawn_error(program, current_dir, source)),
         Err(_) => Err(AsyncCommandError::Timeout {
             program,
             duration: timeout,
@@ -255,11 +358,11 @@ async fn run_status(
     command: &mut AsyncCommand,
     timeout: Duration,
 ) -> Result<ExitStatus, AsyncCommandError> {
-    let program = command.program_display();
+    let (program, current_dir) = command.failure_context();
     let mut command = command.build_tokio_command();
     match tokio::time::timeout(timeout, command.status()).await {
         Ok(Ok(status)) => Ok(status),
-        Ok(Err(source)) => Err(AsyncCommandError::Spawn { program, source }),
+        Ok(Err(source)) => Err(spawn_error(program, current_dir, source)),
         Err(_) => Err(AsyncCommandError::Timeout {
             program,
             duration: timeout,
@@ -268,28 +371,28 @@ async fn run_status(
 }
 
 async fn run_status_unbounded(command: &mut AsyncCommand) -> Result<ExitStatus, AsyncCommandError> {
-    let program = command.program_display();
+    let (program, current_dir) = command.failure_context();
     let mut command = command.build_tokio_command();
     command
         .status()
         .await
-        .map_err(|source| AsyncCommandError::Spawn { program, source })
+        .map_err(|source| spawn_error(program, current_dir, source))
 }
 
 async fn run_spawn_detached(command: &mut AsyncCommand) -> Result<u32, AsyncCommandError> {
-    let program = command.program_display();
+    let (program, current_dir) = command.failure_context();
     command.detached();
     let mut command = command.build_tokio_command();
     command
         .spawn()
-        .map_err(|source| AsyncCommandError::Spawn {
-            program: program.clone(),
-            source,
-        })
+        .map_err(|source| spawn_error(program.clone(), current_dir.clone(), source))
         .and_then(|child| {
-            child.id().ok_or_else(|| AsyncCommandError::Spawn {
-                program,
-                source: std::io::Error::other("spawned child has no process id"),
+            child.id().ok_or_else(|| {
+                spawn_error(
+                    program,
+                    current_dir,
+                    std::io::Error::other("spawned child has no process id"),
+                )
             })
         })
 }
@@ -345,6 +448,111 @@ mod tests {
         let output = command.output().expect("command should run");
         assert_eq!(output.status.code(), Some(7));
         assert_eq!(String::from_utf8_lossy(&output.stderr), "bad thing\n");
+    }
+
+    /// A spawn into a directory that is gone names the DIRECTORY.
+    ///
+    /// This is the bug. A deleted agent worktree made `create_window` fail with
+    /// `failed to run /opt/homebrew/bin/tmux: No such file or directory` on a
+    /// machine where tmux was installed and working, because a missing working
+    /// directory fails a spawn with the same `ENOENT` a missing program does
+    /// and only the program was ever named.
+    #[test]
+    fn a_missing_working_directory_is_named_instead_of_the_program() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let missing =
+            std::env::temp_dir().join(format!("aimux-missing-cwd-{}-spawn", std::process::id()));
+        let _ = std::fs::remove_dir_all(&missing);
+        let mut command = AsyncCommand::new("/bin/sh");
+        command.args(["-c", "true"]).current_dir(&missing);
+
+        let error = command.output().expect_err("spawn should fail");
+        let message = error.to_string();
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "the directory that is missing has to be named: {message}"
+        );
+        assert!(
+            message.contains("working directory is not there"),
+            "and named as the working directory: {message}"
+        );
+    }
+
+    /// A missing PROGRAM is still the program's fault.
+    ///
+    /// The inverse, and the reason the check stats the directory rather than
+    /// reading the errno: `ENOENT` alone cannot tell the two apart, so a fix
+    /// that blamed the directory whenever one was set would have swapped one
+    /// wrong accusation for another.
+    #[test]
+    fn a_missing_program_is_still_the_program_even_with_a_working_directory() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let present = std::env::temp_dir();
+        let mut command = AsyncCommand::new("/definitely/not/aimux");
+        command.current_dir(&present);
+
+        let message = command.output().expect_err("spawn should fail").to_string();
+        assert!(
+            message.contains("/definitely/not/aimux"),
+            "the program has to be named: {message}"
+        );
+        assert!(
+            !message.contains("working directory is not there"),
+            "a directory that exists must not be blamed: {message}"
+        );
+        assert!(
+            message.contains("is there"),
+            "and the message should say the directory was checked: {message}"
+        );
+    }
+
+    /// A working directory we could not READ is not one we know is gone.
+    ///
+    /// The inverse of the test above, and the case a first version got wrong:
+    /// the directory was blamed whenever the spawn said not-found and the stat
+    /// said anything at all, so `EACCES` or `ENOTDIR` printed "that working
+    /// directory is not there (Permission denied)".
+    #[test]
+    fn a_working_directory_we_cannot_read_is_not_declared_missing() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let root =
+            std::env::temp_dir().join(format!("aimux-cwd-unreadable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("scratch");
+        let not_a_directory = root.join("file");
+        std::fs::write(&not_a_directory, b"x").expect("write");
+        // `ENOTDIR` rather than a mode-0 parent: root stats straight through
+        // permissions, so that form of the test would hold for the wrong reason
+        // wherever the suite runs as root.
+        let cwd = not_a_directory.join("child");
+        let probe = std::fs::metadata(&cwd).expect_err("the stat has to fail");
+        assert_ne!(probe.kind(), std::io::ErrorKind::NotFound, "{probe}");
+
+        let mut command = AsyncCommand::new("/definitely/not/aimux");
+        command.current_dir(&cwd);
+        let message = command.output().expect_err("spawn should fail").to_string();
+
+        assert!(
+            !message.contains("working directory is not there"),
+            "a directory we could not read must not be reported as deleted: {message}"
+        );
+        assert!(
+            message.contains("/definitely/not/aimux"),
+            "and the program stays named: {message}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// With no working directory set, the message is unchanged.
+    #[test]
+    fn a_spawn_with_no_working_directory_reads_as_before() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut command = AsyncCommand::new("/definitely/not/aimux");
+        let message = command.output().expect_err("spawn should fail").to_string();
+        assert_eq!(
+            message,
+            "failed to run /definitely/not/aimux: No such file or directory (os error 2)"
+        );
     }
 
     #[test]

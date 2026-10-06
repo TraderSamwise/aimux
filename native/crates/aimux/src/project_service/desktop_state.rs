@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::config::default_config;
 use crate::daemon::process_inventory::read_daemon_process_control_plane_warning;
 use crate::daemon_state::{load_daemon_info, load_daemon_info_async, load_metadata_state};
+use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::loop_alert_state_summary;
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
@@ -724,7 +725,12 @@ fn insert_pending_marks_for_status(item: &mut Map<String, Value>, worktree: &Val
 /// They were two copies differing only in how the branch is resolved, and a
 /// test against one proved nothing about the other — which is the whole reason
 /// the row carries derived state at all.
-fn desktop_worktree_item(project_root: &str, worktree: &Value, branch: &str) -> Value {
+fn desktop_worktree_item(
+    project_root: &str,
+    missing: &BTreeSet<String>,
+    worktree: &Value,
+    branch: &str,
+) -> Value {
     let mut item = Map::new();
     let path = string_field(worktree, "path").unwrap_or(project_root);
     insert_string(
@@ -741,16 +747,26 @@ fn desktop_worktree_item(project_root: &str, worktree: &Value, branch: &str) -> 
     // keeps eleven named keys and `coerce_worktree` twelve, neither including
     // any of those three. The status is where the fact actually lives.
     insert_pending_marks_for_status(&mut item, worktree);
+    // The same verdict the groups carry, on the row the CLI and the TUI
+    // overlays read. Marking only the groups left `aimux worktree list` happily
+    // printing thirteen checkouts that are not on disk.
+    if missing.contains(path) {
+        item.insert("pathMissing".into(), Value::Bool(true));
+    }
     insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
     Value::Object(item)
 }
 
 fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
-    let mut worktrees = list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES))
+    let topology_worktrees =
+        list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
+    let missing = missing_worktree_paths(project_root, &topology_worktrees);
+    let mut worktrees = topology_worktrees
         .into_iter()
         .map(|worktree| {
             desktop_worktree_item(
                 project_root,
+                &missing,
                 &worktree,
                 &worktree_branch_or_current(
                     project_root,
@@ -801,11 +817,42 @@ async fn desktop_worktrees_async(
     } else {
         None
     };
+    // Off the reactor: this route is dispatched async, not through the blocking
+    // pool the ordinary routes use, and a `stat` on a hung mount blocks until
+    // the kernel answers.
+    let missing = {
+        let project_root = project_root.to_owned();
+        let worktrees = topology_worktrees.clone();
+        match crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::scoped_task_name("desktop-state", "worktree-checkouts", "stat"),
+            move || missing_worktree_paths(&project_root, &worktrees),
+        )
+        .await
+        {
+            Ok(missing) => missing,
+            // Not knowing is not the same as nothing being missing, and
+            // `unwrap_or_default()` here would have said the second while
+            // meaning the first -- in a change whose whole subject is wrappers
+            // that answer a question they did not ask. Nothing can be marked
+            // without the answer, so the state is served unmarked, but the
+            // reason is said out loud rather than swallowed.
+            Err(error) => {
+                log_at(
+                    LogLevel::Warn,
+                    "worktree checkout probe did not run; no checkout is marked missing",
+                    "project-service",
+                    Some(json!({ "error": error.to_string() })),
+                );
+                BTreeSet::new()
+            }
+        }
+    };
     let mut worktrees = topology_worktrees
         .into_iter()
         .map(|worktree| {
             desktop_worktree_item(
                 project_root,
+                &missing,
                 &worktree,
                 &worktree_branch_or_current_from_probe(
                     project_root,
@@ -1297,6 +1344,20 @@ fn worktree_group(
     );
     if !main {
         insert_string(&mut group, "path", path);
+        // Read from the row rather than stat'd again here: the verdict is taken
+        // once per build, so the group and the row cannot disagree and the
+        // filesystem is touched once per worktree instead of twice.
+        //
+        // What this does NOT cover, said rather than left to be discovered: a
+        // group that exists only because a session still points at the path,
+        // with no topology row behind it. The service has no record of that
+        // worktree at all, so it has no verdict to give, and inventing one from
+        // a stat here would be a different answer reached a different way --
+        // which is the drift this change exists to remove. `dashboard_navigation`
+        // carries the same `false` for the same reason.
+        if worktree.and_then(|worktree| worktree.get("pathMissing")) == Some(&Value::Bool(true)) {
+            group.insert("pathMissing".into(), Value::Bool(true));
+        }
     }
     for key in ["createdAt", "pending", "removing", "pendingAction"] {
         insert_value(
@@ -1701,6 +1762,55 @@ fn worktree_branch_or_current(project_root: &str, path: &str, branch: Option<&st
             }
         })
         .unwrap_or_default()
+}
+
+/// The worktree paths whose directories have gone from disk.
+///
+/// A deleted worktree stays in the topology, so the dashboard kept rendering it
+/// as a live group and `[n]` into one failed inside tmux. Measured on one real
+/// project: 24 worktrees recorded, 13 with no directory, 5 of those still
+/// `active`.
+///
+/// Taken once per build, as a set, rather than per row: the async desktop-state
+/// route runs on a tokio worker, and a `stat` against a hung network mount
+/// blocks in the kernel until it answers. One `spawn_blocking` for the whole
+/// set keeps that off the reactor -- the sync path pays it directly, as it
+/// already does for `git branch --show-current`.
+///
+/// Only a positive `NotFound` counts. A directory we cannot stat for any other
+/// reason -- a permission error on a parent, a mount that is slow to answer --
+/// is unknown, not absent, and marking it missing would tell the user to throw
+/// away a worktree that is still there.
+///
+/// A worktree that is still being CREATED has no directory yet and must not be
+/// marked: `ACTIVE_WORKTREE_STATUSES` includes `planned` and `creating`, and a
+/// create is minutes of git work. Saying "checkout missing" in red there would
+/// be the same class of lie this change exists to end.
+fn missing_worktree_paths(project_root: &str, topology_worktrees: &[Value]) -> BTreeSet<String> {
+    topology_worktrees
+        .iter()
+        .filter(|worktree| !worktree_checkout_is_still_arriving(worktree))
+        .filter_map(|worktree| string_field(worktree, "path"))
+        .filter(|path| !same_worktree_path(path, project_root))
+        .filter(|path| {
+            matches!(
+                std::fs::metadata(path),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound
+            )
+        })
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// A worktree whose checkout has not been made yet, or is being unmade.
+///
+/// `status` is the topology's own record of the lifecycle, so this keys on that
+/// rather than on whether a `pendingAction` happens to be set on the row.
+fn worktree_checkout_is_still_arriving(worktree: &Value) -> bool {
+    matches!(
+        string_field(worktree, "status"),
+        Some("planned" | "creating" | "removing")
+    )
 }
 
 fn worktree_branch_or_current_from_probe(

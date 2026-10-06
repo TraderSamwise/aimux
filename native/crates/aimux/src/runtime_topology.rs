@@ -3,10 +3,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use crate::atomic_write::{write_text_atomic, write_text_atomic_fast};
-use crate::secure_permissions;
+use crate::atomic_write::write_text_atomic_fast;
+use crate::state_update_lock::{
+    ACQUIRE_TIMEOUT as TOPOLOGY_LOCK_WAIT, StaleLockPolicy, acquire_state_update_lock_at,
+};
 
 pub const RUNTIME_TOPOLOGY_VERSION: i64 = 1;
 
@@ -56,99 +57,39 @@ pub fn update_runtime_topology(
     updater: impl FnOnce(Value) -> Value,
 ) -> Result<Value, String> {
     let path = path.as_ref();
-    let _lock = acquire_update_lock(path)?;
+    // The shared lock's machinery, at topology's own path and under topology's
+    // own stale rule. The machinery is what was missing here -- a real wait, an
+    // owner token `Drop` checks, a commit fence -- and a single `create_dir`
+    // that called its refusal a timeout is what made two writers fail instantly
+    // on 2026-10-06.
+    //
+    // The path AND the stale rule stay, because a process on an older build is
+    // still locking this directory by them and the daemon, each project service
+    // and the CLI do not restart together. Matching only the path would have
+    // been worse than not sharing one: that build reads `owner` as a bare pid,
+    // so our token is unparseable to it, which it reads as no owner, which it
+    // reads as dead after a second -- it would evict a LIVE holder and write
+    // unfenced.
+    let lock = acquire_state_update_lock_at(
+        &topology_lock_path(path),
+        TOPOLOGY_LOCK_WAIT,
+        StaleLockPolicy::LEGACY_TOPOLOGY,
+    )?;
     let current = read_runtime_topology(path)?;
     let next = coerce_runtime_topology(&updater(current))?;
+    // Reclamation is optimistic, so a holder that was only paused can wake up
+    // here. Check we still own the lock before the write lands.
+    lock.ensure_owned_for_commit()?;
     write_runtime_topology(path, &next).map_err(|error| error.to_string())?;
     Ok(next)
 }
 
-struct RuntimeTopologyUpdateLock {
-    path: PathBuf,
-}
-
-impl Drop for RuntimeTopologyUpdateLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
-fn acquire_update_lock(path: &Path) -> Result<RuntimeTopologyUpdateLock, String> {
-    if let Some(parent) = path.parent() {
-        secure_permissions::ensure_private_dir(parent).map_err(|error| error.to_string())?;
-    }
-    let lock_path = topology_lock_path(path);
-    match fs::create_dir(&lock_path) {
-        Ok(()) => {
-            secure_permissions::ensure_private_dir(&lock_path)
-                .map_err(|error| error.to_string())?;
-            write_lock_owner(&lock_path)?;
-            Ok(RuntimeTopologyUpdateLock { path: lock_path })
-        }
-        Err(error)
-            if error.kind() == io::ErrorKind::AlreadyExists && reclaim_stale_lock(&lock_path) =>
-        {
-            fs::create_dir(&lock_path).map_err(|error| error.to_string())?;
-            secure_permissions::ensure_private_dir(&lock_path)
-                .map_err(|error| error.to_string())?;
-            write_lock_owner(&lock_path)?;
-            Ok(RuntimeTopologyUpdateLock { path: lock_path })
-        }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(format!(
-            "Timed out acquiring runtime topology update lock at {}",
-            lock_path.display()
-        )),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
+/// Where topology's update lock lives.
+///
+/// `<file>.lock`, kept from before this used the shared lock, so a process on
+/// an older build and one on a newer build still exclude each other.
 fn topology_lock_path(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.lock", path.display()))
-}
-
-fn write_lock_owner(lock_path: &Path) -> Result<(), String> {
-    write_text_atomic(lock_path.join("owner"), format!("{}\n", std::process::id()))
-        .map_err(|error| error.to_string())
-}
-
-fn reclaim_stale_lock(lock_path: &Path) -> bool {
-    if !is_stale_lock(lock_path) {
-        return false;
-    }
-    let tomb = PathBuf::from(format!(
-        "{}.stale-{}",
-        lock_path.display(),
-        std::process::id()
-    ));
-    if fs::rename(lock_path, &tomb).is_err() {
-        return true;
-    }
-    let _ = fs::remove_dir_all(tomb);
-    true
-}
-
-fn is_stale_lock(lock_path: &Path) -> bool {
-    let age = lock_path
-        .metadata()
-        .and_then(|metadata| metadata.modified())
-        .ok()
-        .and_then(|modified| modified.elapsed().ok())
-        .unwrap_or(Duration::ZERO);
-    let owner = fs::read_to_string(lock_path.join("owner"))
-        .ok()
-        .and_then(|text| text.trim().parse::<i32>().ok())
-        .filter(|pid| *pid > 0);
-    match owner {
-        Some(pid) if pid_alive(pid) => age >= Duration::from_secs(60),
-        _ => age >= Duration::from_secs(1),
-    }
-}
-
-fn pid_alive(pid: i32) -> bool {
-    // SAFETY: kill(pid, 0) does not send a signal; it only asks the OS whether
-    // the process exists and whether this user may signal it.
-    let result = unsafe { libc::kill(pid, 0) };
-    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 pub fn coerce_runtime_topology(raw: &Value) -> Result<Value, String> {
