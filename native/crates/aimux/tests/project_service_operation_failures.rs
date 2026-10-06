@@ -1,6 +1,6 @@
 use aimux::project_api_contract::routes;
 use aimux::project_service::operation_failures::{
-    ACTIVE_FAILURE_MAX_AGE_MS, OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
+    OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
     clear_dashboard_operation_failures, dashboard_operation_failures_path,
     list_dashboard_operation_failures, try_add_dashboard_operation_failure,
     try_list_dashboard_operation_failures,
@@ -13,20 +13,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// The edge, exactly, and at compile time so no fixture has to sit near it.
-///
-/// Thirty minutes is the claim: a window a person waits out rather than one
-/// that outlives whatever it was about. Widening the constant past this does
-/// not fail a test, it fails the build, and says this line is why.
-///
-/// It bounds a record that CARRIES A TIMESTAMP, which is what the constant
-/// governs. A record with no parseable `createdAt` is of unknown age and stays
-/// up, deliberately -- see
-/// `a_failure_of_unknown_age_is_not_aged_off_by_guesswork` below.
-const _: () = assert!(
-    ACTIVE_FAILURE_MAX_AGE_MS <= 30 * 60 * 1000,
-    "a timestamped failed operation must not keep showing for more than thirty minutes"
-);
+/// The edge lives next to the constant, in `operation_failures.rs`, as a
+/// `const _` -- a test-file assertion only fires when the tests compile, and
+/// the number is wrong in a release build too. It is referenced here because
+/// the probes below are deliberately nowhere near it.
 
 #[test]
 fn clears_matching_failures_and_leaves_others_active() {
