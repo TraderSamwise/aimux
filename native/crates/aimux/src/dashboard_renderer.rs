@@ -1684,10 +1684,12 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     // After the in-flight branches, not before them. A worktree being CREATED
     // has no directory yet -- `creating` is minutes of git work -- so putting
     // this first made every ordinary create read as a red failure, which is the
-    // same class of lie this whole change exists to end. The service already
-    // declines to mark a checkout that is still arriving; this ordering is the
-    // second half of that, for a row whose action is in flight for any reason.
-    if worktree.path_missing {
+    // same class of lie this whole change exists to end.
+    //
+    // Asked through the shared predicate even though the branches above have
+    // already returned for every case it covers: the three surfaces claim to
+    // share one rule, and a rule that is written twice is a rule that drifts.
+    if worktree.path_missing && !worktree_action_in_flight(worktree) {
         return style(WORKTREE_CHECKOUT_MISSING_LABEL, Tone::Danger);
     }
     let parts = semantic_count_parts(worktree);

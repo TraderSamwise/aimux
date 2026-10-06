@@ -16,14 +16,14 @@ use crate::secure_permissions;
 
 /// A lock whose owner is still running is assumed to be in use until this old.
 const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
-// The topology lock this one absorbed reclaimed a dead owner's lock after one
-// second rather than thirty, and carrying that rule over looked like a free
-// improvement. It is not: this lock is shared, and `jobs/store.rs` takes it
-// across a write at eight sites without calling `ensure_owned_for_commit`. A
-// shorter window there is strictly more exposure to the lost update the lock
-// exists to prevent, in subsystems that did not ask for it and have no fence to
-// catch it. So every holder keeps the long window, and topology pays one extra
-// stall after a crash instead.
+// Why there is a policy here at all: the topology lock this one absorbed
+// reclaimed a dead owner after one second rather than thirty. Giving every
+// holder that rule is wrong -- `jobs/store.rs` takes this lock across a write
+// at eight sites without calling `ensure_owned_for_commit`, so a shorter window
+// there is more exposure to the lost update the lock exists to prevent. Giving
+// topology the long rule is also wrong, because a process on an older build is
+// still applying the short one to the same directory. So the rule travels with
+// the caller.
 /// How long to keep retrying a held lock before giving up.
 ///
 /// The lock covers one read and one atomic write, so real contention clears in

@@ -238,3 +238,30 @@ fn the_topology_stale_rule_matches_the_older_builds() {
     assert!(error.contains("held by pid"), "{error}");
     let _ = fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// The short half of topology's rule is deliberate, and matches the old build.
+///
+/// A lock directory with no readable owner is "unknown", and under topology's
+/// policy unknown is stale after ONE second -- which looks like the thing the
+/// shared lock's own test forbids. It is kept because a process on an older
+/// build applies exactly that to this directory: raising it here would not stop
+/// that build reclaiming at a second, it would only mean the two disagree about
+/// who may write, which is the whole failure this policy exists to avoid.
+///
+/// Nothing covered this half before, and it is the dangerous one.
+#[test]
+fn an_unowned_topology_lock_is_reclaimed_on_the_old_builds_short_rule() {
+    let path = temp_topology();
+    let lock_path = topology_lock(&path);
+    fs::create_dir_all(&lock_path).unwrap();
+    // No owner file at all: what an older build reads as "no owner", and
+    // therefore as dead after a second.
+    let aged = std::time::SystemTime::now() - Duration::from_secs(3);
+    let file = fs::File::open(&lock_path).unwrap();
+    file.set_times(fs::FileTimes::new().set_modified(aged))
+        .unwrap();
+
+    update_runtime_topology(&path, |topology| topology)
+        .expect("an unowned three-second-old topology lock must be reclaimable");
+    let _ = fs::remove_dir_all(path.parent().unwrap());
+}

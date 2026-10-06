@@ -102,14 +102,15 @@ fn missing_group(name: &str, pending_action: Option<&str>) -> WorktreeGroup {
     group
 }
 
-/// Render a real dashboard frame holding one worktree group, with the detail
-/// panel for that group OPEN.
+/// Render a real dashboard frame holding one worktree group.
 ///
-/// The first version rendered with `focused_group_index: None` and the sidebar
-/// hidden, so a test asserting the frame does NOT say "checkout missing" passed
-/// without ever rendering the panel that says it. A negative assertion over a
-/// surface that was not drawn proves nothing.
-fn render_frame(group: WorktreeGroup) -> String {
+/// `panel` opens the focused worktree detail sidebar. It matters in BOTH
+/// directions and a single shared setting got each one wrong in turn: with the
+/// panel shut, a test asserting the frame does not say "checkout missing"
+/// passed without drawing the surface that says it; with the panel open, a test
+/// asserting the frame DOES say it passed from the panel while the row -- the
+/// thing it names -- went unchecked.
+fn render_frame_with(group: WorktreeGroup, panel: bool) -> String {
     let path = group.path.clone();
     let snapshot = DesktopStateSnapshot {
         sessions: Vec::new(),
@@ -138,8 +139,8 @@ fn render_frame(group: WorktreeGroup) -> String {
         nav_level: DashboardNavLevel::Worktrees,
         selected_session_id: None,
         selected_service_id: None,
-        focused_worktree_path: path.as_deref(),
-        focused_group_index: Some(0),
+        focused_worktree_path: panel.then_some(path.as_deref()).flatten(),
+        focused_group_index: panel.then_some(0),
         runtime_label: Some("tmux"),
         version: Some("local"),
         hide_offline_agents: false,
@@ -148,7 +149,7 @@ fn render_frame(group: WorktreeGroup) -> String {
         footer_progress: None,
         footer_note: None,
         footer_alerts: &[],
-        details_sidebar_visible: true,
+        details_sidebar_visible: panel,
         preview_source: "output",
         scribe_preview_entries: &[],
     });
@@ -309,10 +310,11 @@ fn every_surface_says_the_checkout_is_missing_the_same_way() {
 /// every renderer change reverted. This renders a real frame and reads it.
 #[test]
 fn the_row_a_user_reads_says_the_checkout_is_missing() {
-    let frame = render_frame(missing_group("affiliate-system", None));
+    // Panel SHUT, so the only surface that can satisfy this is the row itself.
+    let frame = render_frame_with(missing_group("affiliate-system", None), false);
     assert!(
         frame.contains(aimux::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL),
-        "the rendered dashboard has to say it:\n{frame}"
+        "the row has to say it with no detail panel open:\n{frame}"
     );
 }
 
@@ -326,7 +328,9 @@ fn the_row_a_user_reads_says_the_checkout_is_missing() {
 /// wrong.
 #[test]
 fn a_worktree_still_being_created_does_not_read_as_a_missing_checkout() {
-    let frame = render_frame(missing_group("being-made", Some("creating")));
+    // Panel OPEN, so this covers the panel as well as the row -- the panel was
+    // the half that still said it while the row beside it said "creating".
+    let frame = render_frame_with(missing_group("being-made", Some("creating")), true);
     assert!(
         !frame.contains(aimux::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL),
         "a create in flight must not read as a failure:\n{frame}"
@@ -427,4 +431,20 @@ fn the_worktree_rows_carry_the_verdict_not_only_the_groups() {
         .unwrap_or_else(|| panic!("no row for the worktree in {state}"));
     assert_eq!(row.get("pathMissing"), Some(&Value::Bool(true)), "{row}");
     let _ = fs::remove_dir_all(&root);
+}
+
+/// And the detail panel says it when nothing is in flight.
+///
+/// The positive half for the panel, kept apart from the row's: one test with
+/// the panel open covering both would pass from either surface, which is how
+/// the row's assertion quietly stopped checking the row.
+#[test]
+fn the_detail_panel_says_it_too() {
+    let shut = render_frame_with(missing_group("affiliate-system", None), false);
+    let open = render_frame_with(missing_group("affiliate-system", None), true);
+    let label = aimux::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL;
+    assert!(
+        open.matches(label).count() > shut.matches(label).count(),
+        "opening the panel has to add the word, not merely keep it:\nshut:\n{shut}\nopen:\n{open}"
+    );
 }

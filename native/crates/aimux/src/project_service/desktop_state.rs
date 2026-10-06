@@ -840,7 +840,7 @@ async fn desktop_worktrees_async(
                 log_at(
                     LogLevel::Warn,
                     "worktree checkout probe did not run; no checkout is marked missing",
-                    "desktop-state",
+                    "project-service",
                     Some(json!({ "error": error.to_string() })),
                 );
                 BTreeSet::new()
@@ -1344,11 +1344,6 @@ fn worktree_group(
     );
     if !main {
         insert_string(&mut group, "path", path);
-        // Read from the row rather than stat'd again here: the verdict is taken
-        // once per build, so the group and the row cannot disagree and the
-        // filesystem is touched once per worktree instead of twice. A group
-        // with no row behind it -- built because a session still points at the
-        // path -- carries no verdict, which is the honest answer.
         // Read from the row rather than stat'd again here: the verdict is taken
         // once per build, so the group and the row cannot disagree and the
         // filesystem is touched once per worktree instead of twice.

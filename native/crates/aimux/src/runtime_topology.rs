@@ -63,17 +63,13 @@ pub fn update_runtime_topology(
     // that called its refusal a timeout is what made two writers fail instantly
     // on 2026-10-06.
     //
-    // The path and the rule stay because a process on an OLDER build is still
-    // locking this directory by these rules, and the daemon, each project
-    // service and the CLI do not restart together.
-    // The lock topology has always used, at the path it has always used.
-    // The path AND the rule stay, because a process on an older build is still
-    // locking this directory by these rules and the daemon, each project
-    // service and the CLI do not restart together. Matching only the path would
-    // have been worse than not sharing one: the old build reads `owner` as a
-    // bare pid, so our token would be unparseable to it, which it treats as no
-    // owner, which it treats as dead after a second -- it would evict a LIVE
-    // holder and write unfenced.
+    // The path AND the stale rule stay, because a process on an older build is
+    // still locking this directory by them and the daemon, each project service
+    // and the CLI do not restart together. Matching only the path would have
+    // been worse than not sharing one: that build reads `owner` as a bare pid,
+    // so our token is unparseable to it, which it reads as no owner, which it
+    // reads as dead after a second -- it would evict a LIVE holder and write
+    // unfenced.
     let lock = acquire_state_update_lock_at(
         &topology_lock_path(path),
         TOPOLOGY_LOCK_WAIT,
