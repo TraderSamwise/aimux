@@ -202,10 +202,17 @@ fn the_render_loop_runs_and_paints_from_a_loaded_snapshot() {
 fn keypresses_repaint_without_fetching_again() {
     // The only test here that moves the windows, because it is the only one
     // whose claim is "all three keys came from the cache" -- a count that a
-    // machine slow enough to outlast either window turns into two. Both are set
-    // past any plausible run of four passes, so nothing but the cacheable
-    // predicate can decide the three frames. Deleting `input_driven` from that
-    // predicate still takes this to zero.
+    // machine slow enough to outlast either window turns into two.
+    //
+    // What this proves is the WIRING: that the loop reaches the cacheable path
+    // on a keypress and paints without fetching. The predicate's own terms are
+    // pinned next to the function, in `dashboard_internal`'s
+    // `everything_the_held_snapshot_cannot_show_refreshes_instead` -- deleting
+    // `input_driven` fails there and, measured, not here, because every pass in
+    // this script that asks for a frame is input-driven, so a predicate that
+    // stopped reading the flag decides these four frames identically. An
+    // earlier revision of this comment claimed that deletion "still takes this
+    // to zero", which a reviewer disproved by running it.
     let driven = drive_with(
         vec![
             (0, vec![]),
