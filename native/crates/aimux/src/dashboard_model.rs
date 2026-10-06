@@ -9,6 +9,53 @@ pub struct DesktopStateGoldenFixture {
     pub runtime_full: DesktopStateSnapshot,
 }
 
+/// Derived data cached for exactly as long as the snapshot it came from.
+///
+/// The dashboard rebuilds its worktree grouping eight times for one keypress --
+/// the controller's move, the renderer's rows and footer, the persist's focus
+/// and selection -- and each rebuild asked the filesystem to canonicalise every
+/// worktree path again. 808 `realpath` syscalls for one Down arrow at 100
+/// worktrees, all of them answering a question about a snapshot that cannot
+/// change while the frame is being drawn.
+///
+/// The three properties that make this safe rather than a trap:
+///
+/// - **Clone makes a FRESH, empty memo.** `DesktopStateSnapshot` is cloned and
+///   then mutated in several places, so a memo copied along with it would be
+///   answering about the old value. There is no way to carry one.
+/// - **It never serialises.** The wire format is untouched, and a memo cannot
+///   arrive from outside.
+/// - **Equality ignores it.** It is derived from the fields, so two snapshots
+///   that differ only in what they have cached are the same snapshot.
+///
+/// This is deliberately NOT the process-wide memo `desktop_state.rs` refuses:
+/// `canonicalize` fails for a worktree still being created, so a cached lexical
+/// fallback that outlived the snapshot would pin the wrong answer while other
+/// surfaces resolved the path freshly. Dying with the snapshot is the whole
+/// point, and it is structural here rather than a rule someone has to remember.
+#[derive(Debug, Default)]
+pub struct SnapshotMemo<T>(std::sync::OnceLock<T>);
+
+impl<T> SnapshotMemo<T> {
+    pub fn get_or_init(&self, build: impl FnOnce() -> T) -> &T {
+        self.0.get_or_init(build)
+    }
+}
+
+impl<T> Clone for SnapshotMemo<T> {
+    fn clone(&self) -> Self {
+        Self(std::sync::OnceLock::new())
+    }
+}
+
+impl<T> PartialEq for SnapshotMemo<T> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl<T> Eq for SnapshotMemo<T> {}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopStateSnapshot {
@@ -29,6 +76,10 @@ pub struct DesktopStateSnapshot {
     pub operation_failures: Vec<DashboardOperationFailure>,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
+    /// Which worktree paths name the main checkout, worked out once per
+    /// snapshot. See [`SnapshotMemo`].
+    #[serde(skip)]
+    pub main_checkout_verdicts: SnapshotMemo<BTreeMap<String, bool>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

@@ -17,9 +17,12 @@
 //! over the same worktrees are the same set of paths, so they must cost nothing.
 
 use aimux::atomic_write::{DURABLE_WRITES, FAST_WRITES};
-use aimux::dashboard_controller::DashboardScreen;
+use aimux::dashboard_controller::{
+    DashboardController, DashboardControllerEffect, DashboardKey, DashboardScreen,
+};
 use aimux::dashboard_model::DesktopStateSnapshot;
 use aimux::dashboard_navigation::{DashboardNavigationState, dashboard_navigation_groups};
+use aimux::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
 use aimux::dashboard_ui_state::DashboardUiStatePersistence;
 use aimux::project_service::desktop_state::{
     CANONICALIZE_CALLS, DesktopStateInput, build_desktop_state,
@@ -65,8 +68,20 @@ fn topology(root: &str, worktrees: usize, agents: usize) -> Value {
 }
 
 /// The snapshot a repaint works from, built by the service as it really is.
+///
+/// The worktree directories are created, so `canonicalize` SUCCEEDS. Without
+/// them every call takes the lexical fallback, which is the cheap path and not
+/// the one a real fleet is on -- a gate that only ever exercises the fallback
+/// is measuring a fixture.
 fn snapshot(label: &str, worktrees: usize, agents: usize) -> DesktopStateSnapshot {
-    let root = format!("/tmp/aimux-keypress-{}-{label}", std::process::id());
+    let root = std::env::temp_dir()
+        .join(format!("aimux-keypress-{}-{label}", std::process::id()))
+        .to_string_lossy()
+        .into_owned();
+    for index in 0..worktrees {
+        std::fs::create_dir_all(format!("{root}/.aimux/worktrees/w{index}"))
+            .expect("worktree directory");
+    }
     let state = build_desktop_state(DesktopStateInput {
         project_root: root.clone(),
         topology: &topology(&root, worktrees, agents),
@@ -74,6 +89,12 @@ fn snapshot(label: &str, worktrees: usize, agents: usize) -> DesktopStateSnapsho
         exchange: &json!({}),
     });
     serde_json::from_value(state).expect("the service's own state deserialises")
+}
+
+fn remove_snapshot_tree(label: &str) {
+    let _ = std::fs::remove_dir_all(
+        std::env::temp_dir().join(format!("aimux-keypress-{}-{label}", std::process::id())),
+    );
 }
 
 /// What one repaint asks the operating system for.
@@ -165,5 +186,169 @@ fn what_one_repaint_costs_the_operating_system() {
         durable, 0,
         "neither of them is worth waiting for the disk: losing the selected row \
          to a power cut is what reopening the dashboard does anyway"
+    );
+
+    // A write that fails counts as neither, because the counters are
+    // documented as completions. They used to increment on entry, which made
+    // `DURABLE_WRITES` a count of attempts -- harmless for the `== 0` above,
+    // which attempts-counting only makes stricter, and a trap for any later
+    // gate written as `>= 1` to prove something reached disk.
+    // Its own directory: `root` is removed above, and an earlier revision of
+    // this block wrote into it and failed with NotFound rather than the error
+    // it meant to provoke.
+    let blocked_root =
+        std::env::temp_dir().join(format!("aimux-keypress-blocked-{}", std::process::id()));
+    std::fs::create_dir_all(&blocked_root).expect("blocker directory");
+    let blocker = blocked_root.join("not-a-directory");
+    std::fs::write(&blocker, b"x").expect("a plain file");
+    let impossible = blocker.join("child.json");
+    let durable_before = DURABLE_WRITES.load(Ordering::Relaxed);
+    let fast_before = FAST_WRITES.load(Ordering::Relaxed);
+    assert!(
+        aimux::atomic_write::write_json_atomic_fast(&impossible, &json!({ "a": 1 })).is_err(),
+        "writing under a plain file has to fail"
+    );
+    assert!(
+        aimux::atomic_write::write_json_atomic(&impossible, &json!({ "a": 1 })).is_err(),
+        "durably too"
+    );
+    assert_eq!(
+        (
+            DURABLE_WRITES.load(Ordering::Relaxed) - durable_before,
+            FAST_WRITES.load(Ordering::Relaxed) - fast_before
+        ),
+        (0, 0),
+        "a write that never reached the disk is not a write"
+    );
+    let _ = std::fs::remove_dir_all(&blocked_root);
+
+    // --- And now the ROUTE, which is the assertion that matters. ---
+    //
+    // Everything above measures ONE call to one helper. A keypress makes
+    // several: the controller moves the selection, the renderer reads the
+    // grouping for the rows and again for the footer, and the persist reads it
+    // twice more for the focused worktree and the selected entry. Each of those
+    // rebuilds the whole grouping, so each pays the 101 again.
+    //
+    // A gate on one call cannot see that. Adding a tenth rebuild to the repaint
+    // adds 101 syscalls to every keypress and leaves the marginal above green,
+    // because it is per-call and flat in the agent count at ANY multiplier --
+    // which is exactly what AGENTS.md means by preferring the route over a
+    // helper in isolation. So this counts a whole Down-arrow frame and gates
+    // the MULTIPLIER: how many times one keypress rebuilds the grouping.
+    let mut controller = DashboardController::new(&base);
+    let mut persistence =
+        DashboardUiStatePersistence::new(&root, "route").expect("ui state persistence");
+    // Warm: the first persist writes both files and the first frame fills
+    // whatever the controller caches, so neither is counted below.
+    let _ = controller.handle_key(&base, DashboardKey::Down);
+    let _ = persistence.persist_controller_state(
+        DashboardScreen::Dashboard,
+        "output",
+        false,
+        &base,
+        &controller.navigation,
+    );
+
+    let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let effect = controller.handle_key(&base, DashboardKey::Down);
+    let frame = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &base,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 40,
+        nav_level: controller.navigation.level,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: controller.navigation.focused_worktree_path(&base),
+        focused_group_index: None,
+        runtime_label: Some("native"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: controller.details_sidebar_visible,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let _ = persistence.persist_controller_state(
+        DashboardScreen::Dashboard,
+        "output",
+        false,
+        &base,
+        &controller.navigation,
+    );
+    let keypress_calls = CANONICALIZE_CALLS.load(Ordering::Relaxed) - before;
+    let _ = std::fs::remove_dir_all(&root);
+    remove_snapshot_tree("base");
+    remove_snapshot_tree("more-agents");
+
+    assert!(
+        matches!(effect, DashboardControllerEffect::Render),
+        "a Down arrow has to be the frame-producing case for this to measure one"
+    );
+    assert!(!frame.frame.is_empty(), "and it has to paint something");
+
+    // Zero. Not "fewer" -- zero. The snapshot cannot change while it is on
+    // screen, so once its verdicts are worked out there is nothing left for a
+    // keypress to ask the filesystem. This was 808 calls, eight rebuilds of the
+    // whole grouping, before the memo.
+    println!("one Down arrow -> {keypress_calls} calls");
+    assert_eq!(
+        keypress_calls, 0,
+        "a keypress on a snapshot already on screen must ask the filesystem \
+         nothing at all; {keypress_calls} calls means something is rebuilding \
+         the worktree grouping from scratch, {base_calls} lookups at a time"
+    );
+}
+
+/// A cloned snapshot works its own verdicts out again.
+///
+/// This is the property that makes the memo safe rather than a trap.
+/// `DesktopStateSnapshot` is cloned and then MUTATED in several places --
+/// `dashboard_internal.rs` reorders sessions, drops agents, rewrites fields --
+/// so a memo that travelled with the clone would answer about the value before
+/// the mutation. Worse quietly than loudly: a missing path reads as "not the
+/// main checkout" rather than as an error.
+///
+/// `SnapshotMemo::clone` returns an empty cell, so carrying one is impossible
+/// by construction rather than by anyone remembering. Asserted here because the
+/// whole safety argument rests on a `Clone` impl that looks like a mistake.
+#[test]
+fn a_cloned_snapshot_does_not_inherit_the_originals_answers() {
+    let base = snapshot("clone", 4, 8);
+
+    // The very first pass, measured -- an earlier revision of this test asked
+    // for the group count first and so measured an already-warm memo, which
+    // made `first` zero and the whole comparison vacuous.
+    let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let groups = dashboard_navigation_groups(&base).len();
+    let first = CANONICALIZE_CALLS.load(Ordering::Relaxed) - before;
+    assert!(groups > 1, "the fixture has worktrees to group");
+    let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let _ = dashboard_navigation_groups(&base);
+    let second = CANONICALIZE_CALLS.load(Ordering::Relaxed) - before;
+    assert!(first > 0, "the first pass has to work them out");
+    assert_eq!(second, 0, "and the second must not");
+
+    let clone = base.clone();
+    let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let _ = dashboard_navigation_groups(&clone);
+    let after_clone = CANONICALIZE_CALLS.load(Ordering::Relaxed) - before;
+    remove_snapshot_tree("clone");
+
+    assert_eq!(
+        after_clone, first,
+        "a clone starts with an empty memo and pays the full cost again; \
+         inheriting the original's answers is how a mutated clone would be \
+         asked about paths it no longer has"
+    );
+    assert_eq!(
+        base, clone,
+        "and what it caches is derived, so it cannot make two snapshots unequal"
     );
 }

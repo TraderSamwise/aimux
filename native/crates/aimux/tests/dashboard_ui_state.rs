@@ -188,6 +188,7 @@ fn order_snapshot() -> DesktopStateSnapshot {
     group.sessions[0].id = "agent-a".into();
     group.sessions[1].id = "agent-b".into();
     DesktopStateSnapshot {
+        main_checkout_verdicts: Default::default(),
         sessions: Vec::new(),
         teammates: Vec::new(),
         services: Vec::new(),

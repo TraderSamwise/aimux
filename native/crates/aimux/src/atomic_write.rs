@@ -82,7 +82,7 @@ pub fn quarantine_corrupt_file(path: impl AsRef<Path>) -> Option<PathBuf> {
     Some(destination)
 }
 
-/// How many atomic writes have waited for the disk to confirm them.
+/// How many atomic writes have COMPLETED having waited for the disk.
 ///
 /// A durable write is two `fsync`s -- the file and its directory -- and on
 /// macOS `sync_all` is `F_FULLFSYNC`, measured at 8.35ms each. No count of
@@ -91,15 +91,18 @@ pub fn quarantine_corrupt_file(path: impl AsRef<Path>) -> Option<PathBuf> {
 /// gate for the keypress path is this count, not a duration.
 pub static DURABLE_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// And how many have not, so a test can tell "did not sync" from "did not run".
+/// And how many completed without waiting, so a test can tell "did not sync"
+/// from "did not run".
+///
+/// Counted after the rename rather than on entry. An increment at the top would
+/// count attempts, and a later gate written as `durable >= 1` to prove
+/// something was persisted would then read a failed `sync_all` as a success --
+/// the shipped `durable == 0` assertion is only made stricter by counting
+/// attempts, which is exactly the kind of accident that survives until someone
+/// relies on it.
 pub static FAST_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn atomic_write_impl(path: &Path, data: &[u8], mode: Option<u32>, durable: bool) -> io::Result<()> {
-    if durable {
-        DURABLE_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    } else {
-        FAST_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -133,6 +136,14 @@ fn atomic_write_impl(path: &Path, data: &[u8], mode: Option<u32>, durable: bool)
 
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
+        return result;
+    }
+    // Counted here, after the rename, so the number means what its doc says:
+    // writes that finished, not writes that were attempted.
+    if durable {
+        DURABLE_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        FAST_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     result
 }

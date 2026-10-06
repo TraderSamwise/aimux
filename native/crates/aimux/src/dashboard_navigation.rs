@@ -994,7 +994,13 @@ fn parse_timestamp_ms(value: &str) -> Option<u128> {
 /// here -- trim, strip the trailing slash, canonicalise, strip it again -- and
 /// two implementations of one rule agree only by luck. It is also the copy that
 /// no gate could see, because `CANONICALIZE_CALLS` counts the service's.
-fn main_checkout_verdicts(snapshot: &DesktopStateSnapshot) -> BTreeMap<&str, bool> {
+fn main_checkout_verdicts(snapshot: &DesktopStateSnapshot) -> &BTreeMap<String, bool> {
+    snapshot
+        .main_checkout_verdicts
+        .get_or_init(|| build_main_checkout_verdicts(snapshot))
+}
+
+fn build_main_checkout_verdicts(snapshot: &DesktopStateSnapshot) -> BTreeMap<String, bool> {
     let mut verdicts = BTreeMap::new();
     let Some(main) = snapshot.main_checkout_path.as_deref() else {
         return verdicts;
@@ -1021,7 +1027,7 @@ fn main_checkout_verdicts(snapshot: &DesktopStateSnapshot) -> BTreeMap<&str, boo
         let verdict = path.trim().trim_end_matches('/') == main_spelling
             || worktree_path_identity(path)
                 == *main_identity.get_or_insert_with(|| worktree_path_identity(main));
-        verdicts.insert(path, verdict);
+        verdicts.insert(path.to_owned(), verdict);
     }
     verdicts
 }

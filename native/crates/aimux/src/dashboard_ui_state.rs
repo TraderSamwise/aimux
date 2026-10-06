@@ -286,7 +286,12 @@ impl DashboardUiStatePersistence {
         } else {
             shared.remove("serviceOrderByWorktreeKey");
         }
-        write_json_atomic(self.shared_path(), &Value::Object(shared))
+        // Fast, like the repaint's write of the same file. Reordering agents
+        // sets `render_now`, so the frame behind it rewrites `dashboard-ui.json`
+        // whole -- order keys included -- without syncing. A durable write here
+        // paid two `fsync`s for a guarantee the very next frame dropped, which
+        // is a cost with no corresponding promise. One file, one answer.
+        write_json_atomic_fast(self.shared_path(), &Value::Object(shared))
             .with_context(|| format!("write dashboard ui state {}", self.shared_path().display()))
     }
 }
