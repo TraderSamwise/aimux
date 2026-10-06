@@ -392,12 +392,18 @@ pub fn build_desktop_state_with_live_window_projection(
     .into_iter()
     .filter(dashboard_session_visibility_allows)
     .collect::<Vec<_>>();
-    // One probe for the whole build, handed to each of the three places that
-    // used to ask git the same question for itself.
-    let main_branch_probe = main_branch_probe_for_topology(&input.project_root, input.topology);
+    // Derived once for the whole build: the active row set, the project root's
+    // identity, and -- only if the rows cannot answer it -- one git probe,
+    // handed to each of the three places that used to ask for itself.
+    let topology_worktrees =
+        list_topology_worktree_states(input.topology, Some(ACTIVE_WORKTREE_STATUSES));
+    let root_identity = worktree_path_identity(&input.project_root);
+    let main_branch_probe =
+        main_branch_probe_for_rows(&input.project_root, &topology_worktrees, &root_identity);
     let worktrees = desktop_worktrees(
         &input.project_root,
-        input.topology,
+        topology_worktrees,
+        &root_identity,
         main_branch_probe.as_ref(),
     );
     let worktree_by_path = worktree_lookup_by_identity(&worktrees);
@@ -763,18 +769,20 @@ fn desktop_worktree_item(
     Value::Object(item)
 }
 
+/// The dashboard's worktree rows, from a row set the caller already has.
+///
+/// `topology_worktrees` and `root_identity` are passed in rather than derived
+/// here because the probe decision needs both first: deriving them twice meant
+/// a second `list_topology_worktree_states`, which deep-clones every matching
+/// row -- about 101 extra row clones per build at the ceiling this branch is
+/// for -- and a second `canonicalize` of the project root.
 fn desktop_worktrees(
     project_root: &str,
-    topology: &Value,
+    topology_worktrees: Vec<Value>,
+    root_identity: &str,
     main_branch_probe: Option<&GitBranchProbe>,
 ) -> Vec<Value> {
-    let topology_worktrees =
-        list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
     let missing = missing_worktree_paths(project_root, &topology_worktrees);
-    // Hoisted, as the async lane already does: derived inside the loop this is
-    // one `canonicalize` of the same path per worktree row, which is the repeat
-    // this branch exists to remove.
-    let root_identity = worktree_path_identity(project_root);
     let mut worktrees = topology_worktrees
         .into_iter()
         .map(|worktree| {
@@ -783,7 +791,7 @@ fn desktop_worktrees(
                 &missing,
                 &worktree,
                 &worktree_branch_or_current_from_probe(
-                    worktree_row_is_main_checkout(&worktree, project_root, &root_identity),
+                    worktree_row_is_main_checkout(&worktree, project_root, root_identity),
                     string_field(&worktree, "branch"),
                     main_branch_probe,
                 ),
@@ -792,7 +800,7 @@ fn desktop_worktrees(
         .collect::<Vec<_>>();
     if !worktrees
         .iter()
-        .any(|worktree| worktree_row_is_main_checkout(worktree, project_root, &root_identity))
+        .any(|worktree| worktree_row_is_main_checkout(worktree, project_root, root_identity))
     {
         worktrees.insert(
             0,
@@ -804,7 +812,7 @@ fn desktop_worktrees(
             }),
         );
     }
-    sort_worktrees(&mut worktrees, project_root, &root_identity);
+    sort_worktrees(&mut worktrees, project_root, root_identity);
     worktrees
 }
 
@@ -1256,11 +1264,12 @@ fn main_branch_probe_needed(
 /// and handed it round; this is that shape, and the gate in
 /// `desktop_state_scale.rs` counts the spawns so a fourth caller cannot quietly
 /// appear.
-fn main_branch_probe_for_topology(project_root: &str, topology: &Value) -> Option<GitBranchProbe> {
-    let topology_worktrees =
-        list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
-    let root_identity = worktree_path_identity(project_root);
-    main_branch_probe_needed(project_root, &topology_worktrees, &root_identity)
+fn main_branch_probe_for_rows(
+    project_root: &str,
+    topology_worktrees: &[Value],
+    root_identity: &str,
+) -> Option<GitBranchProbe> {
+    main_branch_probe_needed(project_root, topology_worktrees, root_identity)
         .then(|| current_git_branch_probe(project_root))
 }
 
