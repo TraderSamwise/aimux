@@ -870,7 +870,8 @@ async fn desktop_worktrees_async(
             Err(error) => {
                 log_at(
                     LogLevel::Warn,
-                    "worktree checkout probe did not run; no checkout is marked missing",
+                    "worktree checkout probe did not run; no checkout is marked \
+                     missing and no failed worktree is offered as clearable",
                     "project-service",
                     Some(json!({ "error": error.to_string() })),
                 );

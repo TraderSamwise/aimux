@@ -1235,6 +1235,94 @@ fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
 ///
 /// Asserted BETWEEN the surfaces rather than one test per surface, because a
 /// per-surface test passes happily while the surfaces disagree.
+/// And the same answer out of the route the dashboard actually calls.
+///
+/// Round 5 of this PR's review asked which path serves the product, and the
+/// answer is `process.rs:675` -- `route_desktop_state_request_async`. Every
+/// other gate for `operationFailureClearable` drives the SYNC builder, so they
+/// proved a projection the dashboard does not use for this route. The two share
+/// `desktop_worktree_item`, but they do not share how they get the checkout
+/// probe: the async path takes it through `spawn_blocking` and falls back to an
+/// empty probe when that does not run.
+#[test]
+fn the_async_route_gives_the_dashboard_the_same_clearable_verdict() {
+    let project = temp_project("async-clearable-verdict");
+    let state_dir = project.join("state");
+    let root = project.join("repo");
+    create_dir_all(&state_dir).expect("state dir");
+    create_dir_all(&root).expect("repo");
+    init_git_repo(&root);
+    let root_path = root.to_string_lossy().into_owned();
+    let present_path = format!("{root_path}/.aimux/worktrees/present");
+    create_dir_all(&present_path).expect("present worktree");
+    let absent_path = format!("{root_path}/.aimux/worktrees/absent");
+
+    let now = "2026-10-06T00:00:00.000Z";
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": now,
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": now, "updatedAt": now }],
+        "nodes": [], "edges": [], "bindings": [], "sessions": [], "services": [],
+        "worktrees": [
+            { "id": "main", "rigId": "rig-1", "path": root_path, "name": "Main Checkout", "status": "active", "branch": "trunk", "createdAt": now, "updatedAt": now },
+            { "id": "present", "rigId": "rig-1", "path": present_path, "name": "present", "status": "error", "branch": "b1", "operationFailure": "remove failed", "createdAt": now, "updatedAt": now },
+            { "id": "absent", "rigId": "rig-1", "path": absent_path, "name": "absent", "status": "error", "branch": "b2", "operationFailure": "create failed", "createdAt": now, "updatedAt": now }
+        ],
+        "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+        "lifecycleOperations": [], "exchangeRefs": []
+    }))
+    .expect("topology");
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology).expect("topology yaml"),
+    )
+    .expect("write topology");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::new(),
+        },
+    )
+    .expect("metadata");
+    write_runtime_exchange(runtime_exchange_path(&state_dir), &exchange_fixture())
+        .expect("exchange");
+
+    let isolation = support::TestIsolation::new("desktop-state-async-clearable");
+    let context = isolation.project_context(&root, &state_dir);
+
+    // aimux-async-seam: test - desktop-state route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:desktop-state-async-clearable",
+        route_desktop_state_request_async(&context, "GET", routes::DESKTOP_STATE),
+    )
+    .expect("desktop-state async route");
+    assert_eq!(response.status, 200);
+
+    let verdicts = response.body["worktrees"]
+        .as_array()
+        .expect("worktree rows")
+        .iter()
+        .filter(|row| row.get("operationFailure").is_some())
+        .map(|row| {
+            (
+                row["name"].as_str().unwrap_or_default().to_owned(),
+                row.get("operationFailureClearable")
+                    .and_then(Value::as_bool),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        verdicts,
+        vec![
+            ("present".to_owned(), Some(true)),
+            ("absent".to_owned(), Some(false)),
+        ],
+        "the route the dashboard calls must answer what the sync builder answers"
+    );
+    cleanup(project);
+}
+
 /// The group and the row give the dashboard the same answer about a failure.
 ///
 /// The dashboard draws GROUPS -- the red thing a person sees is a group -- and
