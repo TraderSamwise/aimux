@@ -503,6 +503,9 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   // "N error" wearing the same amber.
   if (bucket.pending) chips.push({ label: "pending", kind: "working" });
   if (bucket.removing) chips.push({ label: "removing", kind: "working" });
+  // The word the TUI uses, from the same server verdict. An error chip rather
+  // than a working one: nothing is in flight, the checkout is gone.
+  if (bucket.pathMissing) chips.push({ label: "checkout missing", kind: "error" });
   return chips;
 }
 

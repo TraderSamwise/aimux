@@ -11,7 +11,9 @@ use crate::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationGroupKind, DashboardNavigationOutcome,
     DashboardNavigationState, dashboard_navigation_groups,
 };
-use crate::dashboard_renderer::{DashboardFooterNoteView, DashboardNavLevel, DashboardNoteKind};
+use crate::dashboard_renderer::{
+    DashboardFooterNoteView, DashboardNavLevel, DashboardNoteKind, WORKTREE_CHECKOUT_MISSING_LABEL,
+};
 use crate::dashboard_service_input::{
     DashboardServiceInputEffect, DashboardServiceInputState, DashboardThreadReplyState,
 };
@@ -3481,6 +3483,11 @@ fn migrate_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardMigra
         targets.push(DashboardMigrateTarget {
             name: if group.path.is_none() {
                 "(main)".into()
+            } else if group.path_missing {
+                // Migrating an agent INTO a checkout that is gone is the exact
+                // failure this came from, and the picker was the one place that
+                // offered it without saying so.
+                format!("{} ({WORKTREE_CHECKOUT_MISSING_LABEL})", group.name)
             } else {
                 group.name.clone()
             },

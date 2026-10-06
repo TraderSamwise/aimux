@@ -741,6 +741,12 @@ fn desktop_worktree_item(project_root: &str, worktree: &Value, branch: &str) -> 
     // keeps eleven named keys and `coerce_worktree` twelve, neither including
     // any of those three. The status is where the fact actually lives.
     insert_pending_marks_for_status(&mut item, worktree);
+    // The same verdict the groups carry, on the row the CLI and the TUI
+    // overlays read. Marking only the groups left `aimux worktree list` happily
+    // printing thirteen checkouts that are not on disk.
+    if path != project_root && worktree_path_is_missing(path) {
+        item.insert("pathMissing".into(), Value::Bool(true));
+    }
     insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
     Value::Object(item)
 }
@@ -1297,6 +1303,12 @@ fn worktree_group(
     );
     if !main {
         insert_string(&mut group, "path", path);
+        // Decided here, once, so the TUI and the app say the same thing rather
+        // than each asking the filesystem for itself. The main checkout is
+        // skipped: a project whose own root is gone has nothing to render.
+        if worktree_path_is_missing(path) {
+            group.insert("pathMissing".into(), Value::Bool(true));
+        }
     }
     for key in ["createdAt", "pending", "removing", "pendingAction"] {
         insert_value(
@@ -1701,6 +1713,24 @@ fn worktree_branch_or_current(project_root: &str, path: &str, branch: Option<&st
             }
         })
         .unwrap_or_default()
+}
+
+/// Whether a worktree's directory has gone from disk.
+///
+/// A deleted worktree stays in the topology, so the dashboard kept rendering it
+/// as a live group and `[n]` into one failed inside tmux. Measured on one real
+/// project: 24 worktrees recorded, 13 with no directory, 5 of those still
+/// `active`.
+///
+/// Only a positive `NotFound` counts. A directory we cannot stat for any other
+/// reason -- a permission error on a parent, a mount that is slow to answer --
+/// is unknown, not absent, and marking it missing would tell the user to throw
+/// away a worktree that is still there.
+fn worktree_path_is_missing(path: &str) -> bool {
+    matches!(
+        std::fs::metadata(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
 }
 
 fn worktree_branch_or_current_from_probe(

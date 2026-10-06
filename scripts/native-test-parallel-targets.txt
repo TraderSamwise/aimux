@@ -8,6 +8,7 @@ agent_name_across_surfaces
 agent_order_across_surfaces
 agent_plane_across_surfaces
 agent_prompt_submit
+agent_status_label_surfaces
 agent_unread_across_surfaces
 attachment_hosting
 attachment_hosting_url_safety
@@ -60,6 +61,7 @@ dashboard_terminal
 dashboard_tool_picker
 dashboard_tui_visibility_contract
 dashboard_ui_state
+diagnostics_ptrace
 expose_socket
 fixture_agent_contracts
 fixture_cli_core_contracts
@@ -127,6 +129,7 @@ remote_credentials
 remote_login
 rewrite_contract
 runtime_topology
+runtime_topology_lock
 runtime_topology_state_save
 scribe_watcher_guards
 secure_permissions
@@ -140,6 +143,4 @@ transient_state_surfaces
 tui_render
 watcher_tick_loop_budget
 websocket_client
-agent_status_label_surfaces
-diagnostics_ptrace
-runtime_topology_lock
+worktree_checkout_missing

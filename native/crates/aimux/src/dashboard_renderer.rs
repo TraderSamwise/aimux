@@ -30,6 +30,14 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const RECENT_IDLE_MS: u128 = 2 * 60 * 1000;
+/// Said by the TUI row, the TUI detail panel, the pickers, the CLI and the app,
+/// from the one verdict the project service made.
+///
+/// One string rather than five spellings: `needs_response` was written three
+/// different ways across four surfaces in this codebase before someone compared
+/// them, and the app's copy of this word is pinned against this constant by a
+/// test rather than by intention.
+pub const WORKTREE_CHECKOUT_MISSING_LABEL: &str = "checkout missing";
 const COL_SELECT: usize = 2;
 const COL_DOT: usize = 2;
 const COL_INDEX: usize = 4;
@@ -1656,6 +1664,13 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     if worktree.operation_failure.is_some() {
         return style("failed", Tone::Danger);
     }
+    // Before the agent counts, because a checkout that is gone is the whole
+    // story of the row: without this a deleted worktree summarised as "2 idle"
+    // in the ordinary tone, and the only place that said otherwise was the
+    // detail panel of whichever row happened to be focused.
+    if worktree.path_missing {
+        return style(WORKTREE_CHECKOUT_MISSING_LABEL, Tone::Danger);
+    }
     // Whatever the action is, not two spellings and a catch-all: a worktree
     // mid-rename summarised as "removing", and `dashboard_navigation` then
     // refused Enter on it with "is creating".
@@ -1684,7 +1699,7 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
 }
 
 fn worktree_tone(worktree: &DashboardNavigationGroup<'_>) -> Tone {
-    if worktree.operation_failure.is_some() {
+    if worktree.operation_failure.is_some() || worktree.path_missing {
         return Tone::Danger;
     }
     let mut best = (0, Tone::Muted);
@@ -2182,6 +2197,17 @@ fn render_worktree_details_panel(
         push_kv(&mut lines, "Branch", branch, width);
     }
     push_kv(&mut lines, "Path", path, width);
+    // Said where the path is said, because the path is what is wrong. The word
+    // matches the app's, and both read the service's verdict rather than each
+    // asking the filesystem.
+    if focused_group.is_some_and(|group| group.path_missing) {
+        push_kv(
+            &mut lines,
+            "Checkout",
+            WORKTREE_CHECKOUT_MISSING_LABEL,
+            width,
+        );
+    }
     if let Some(failure) = focused_group.and_then(|group| group.operation_failure.as_ref()) {
         push_kv(&mut lines, "Status", "failed", width);
         if let Some(operation) = failure.operation.as_deref() {

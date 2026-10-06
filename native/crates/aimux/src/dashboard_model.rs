@@ -454,6 +454,14 @@ pub struct WorktreeGroup {
     pub pending: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub removing: bool,
+    /// The worktree's directory is not on disk.
+    ///
+    /// Decided once in the project service and rendered, never recomputed by a
+    /// client. Additive rather than a new `status`, because `status` is what
+    /// the topology recorded and this is what the filesystem says now; the two
+    /// disagreeing is exactly the fact worth showing.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub path_missing: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

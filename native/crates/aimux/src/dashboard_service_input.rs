@@ -6,6 +6,7 @@ use crate::dashboard_create::{
     DashboardCreateIntent, DashboardCreatePlan, DashboardServiceCreateIntent, plan_dashboard_create,
 };
 use crate::dashboard_model::{AgentRestoreOffer, DashboardSession, WorktreeGroup};
+use crate::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL;
 use crate::tui_render::theme::{Tone, keycap, keycap_hints, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use std::collections::BTreeMap;
@@ -170,11 +171,20 @@ pub fn render_worktree_list_overlay(
             } else {
                 String::new()
             };
+            // The picker a user acts from. Without this, the one list that
+            // offers a deleted worktree as a choice was also the one list that
+            // said nothing about it.
+            let missing = if worktree.path_missing {
+                format!(" {}", style(WORKTREE_CHECKOUT_MISSING_LABEL, Tone::Danger))
+            } else {
+                String::new()
+            };
             body.push(format!(
-                "  {} {}{}",
+                "  {} {}{}{}",
                 style(&worktree.name, Tone::Strong),
                 style(&format!("({})", worktree.branch), Tone::Muted),
-                main
+                main,
+                missing
             ));
         }
     }

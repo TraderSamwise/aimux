@@ -124,6 +124,7 @@ export interface DesktopWorktree {
   isBare?: boolean;
   pending?: boolean;
   removing?: boolean;
+  pathMissing?: boolean;
 }
 
 export interface DesktopWorktreeGroup {
@@ -133,6 +134,10 @@ export interface DesktopWorktreeGroup {
   status: "active" | "offline";
   pending?: boolean;
   removing?: boolean;
+  // The worktree's checkout is no longer on disk. Decided by the project
+  // service; the app cannot see the server's filesystem, so it renders this
+  // rather than computing anything.
+  pathMissing?: boolean;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -163,6 +168,7 @@ export interface WorktreeBucket {
   isSupervisorLane?: boolean;
   pending?: boolean;
   removing?: boolean;
+  pathMissing?: boolean;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -218,6 +224,7 @@ function bucketFromServerGroup(
     isMainCheckout,
     pending: group.pending,
     removing: group.removing,
+    pathMissing: group.pathMissing,
     sessions: group.sessions.filter(
       (session) => !isDashboardHiddenSession(session, hasSupervisorLane),
     ),
@@ -288,6 +295,7 @@ export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
       isMainCheckout: false,
       pending: wt.pending,
       removing: wt.removing,
+      pathMissing: wt.pathMissing,
       sessions: [],
       services: [],
     });

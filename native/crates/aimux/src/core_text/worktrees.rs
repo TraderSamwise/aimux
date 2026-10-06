@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL;
+
 use super::{
     array, coalesce_string, field, filtered_objects, js_string, nullish_or, object, pad_end,
     pad_start,
@@ -50,11 +52,20 @@ fn render_worktree_table_lines(
         "-".repeat(95),
     ];
     for worktree in worktrees {
+        // The checkout being gone goes on the path, because the path is what is
+        // wrong. Without it this table listed thirteen worktrees that are not
+        // on disk exactly like the eleven that are.
+        let missing = if worktree.get("pathMissing").and_then(Value::as_bool) == Some(true) {
+            format!("  ({WORKTREE_CHECKOUT_MISSING_LABEL})")
+        } else {
+            String::new()
+        };
         lines.push(format!(
-            "{}{}{}",
+            "{}{}{}{}",
             pad_end(coalesce_string(worktree.get("name"), fallback), 30),
             pad_end(coalesce_string(worktree.get("branch"), ""), 35),
-            coalesce_string(worktree.get("path"), fallback)
+            coalesce_string(worktree.get("path"), fallback),
+            missing
         ));
     }
     lines
