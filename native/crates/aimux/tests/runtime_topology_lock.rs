@@ -7,7 +7,7 @@
 //! 2026-10-06, where the user saw exactly that message on an idle machine.
 
 use aimux::runtime_topology::{read_runtime_topology, update_runtime_topology};
-use aimux::state_update_lock::{acquire_state_update_lock, state_update_lock_path};
+use aimux::state_update_lock::{ACQUIRE_TIMEOUT, acquire_state_update_lock_at};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
@@ -15,6 +15,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn topology_lock(path: &std::path::Path) -> PathBuf {
+    PathBuf::from(format!("{}.lock", path.display()))
+}
+
+fn hold_topology_lock(path: &std::path::Path) -> aimux::state_update_lock::StateUpdateLock {
+    acquire_state_update_lock_at(&topology_lock(path), path, ACQUIRE_TIMEOUT)
+        .expect("hold the lock")
+}
 
 fn temp_topology() -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -45,7 +54,7 @@ fn stamp(topology: Value, note: &str) -> Value {
 #[test]
 fn an_update_waits_for_a_writer_that_is_about_to_finish() {
     let path = temp_topology();
-    let held = acquire_state_update_lock(&path).expect("hold the lock");
+    let held = hold_topology_lock(&path);
 
     let releaser = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(120));
@@ -75,7 +84,7 @@ fn an_update_waits_for_a_writer_that_is_about_to_finish() {
 #[test]
 fn an_update_that_cannot_get_the_lock_names_the_holder() {
     let path = temp_topology();
-    let _held = acquire_state_update_lock(&path).expect("hold the lock");
+    let _held = hold_topology_lock(&path);
 
     let error = match update_runtime_topology(&path, |topology| stamp(topology, "never")) {
         Ok(_) => panic!("an update must not proceed while another writer holds the lock"),
@@ -111,7 +120,7 @@ fn two_concurrent_updates_both_land() {
     // for it. Without this they finish microseconds apart and never contend,
     // which would let this pass against the single-attempt lock it exists to
     // rule out.
-    let held = acquire_state_update_lock(&path).expect("hold the lock");
+    let held = hold_topology_lock(&path);
     let releaser = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(120));
         drop(held);
@@ -142,28 +151,35 @@ fn two_concurrent_updates_both_land() {
     let _ = fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// The lock topology takes is the shared one, not a second implementation.
+/// Topology keeps locking the directory it has always locked.
 ///
-/// Topology grew its own first and metadata copied it; the copy then gained a
-/// real wait, an owner token its `Drop` checks, and a commit fence, while the
-/// original kept the single attempt. Pinning the path is what stops the twin
-/// coming back: a bespoke `runtime-topology.yaml.lock` would leave this unheld.
+/// It uses the shared lock's machinery now, but NOT the shared lock's naming.
+/// If this moved to `.runtime-topology.yaml.update-lock`, a process on an older
+/// build and one on a newer build would hold different directories for the same
+/// file and stop excluding each other -- across an upgrade, where the daemon,
+/// each project service and the CLI are separate processes that do not restart
+/// together. The lost update would be silent, which is why the path is pinned
+/// rather than left to the module that owns the lock.
 #[test]
-fn the_topology_lock_is_the_shared_state_lock() {
+fn the_topology_lock_keeps_its_historical_path() {
     let path = temp_topology();
     let seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let probe = std::sync::Arc::clone(&seen);
-    let lock_path = state_update_lock_path(&path);
+    let legacy = topology_lock(&path);
 
     update_runtime_topology(&path, move |topology| {
-        probe.store(lock_path.exists(), Ordering::Relaxed);
+        probe.store(legacy.exists(), Ordering::Relaxed);
         topology
     })
     .expect("update");
 
     assert!(
         seen.load(Ordering::Relaxed),
-        "the shared state lock has to be held while the updater runs"
+        "the lock a pre-upgrade process would take has to be the one we take"
+    );
+    assert!(
+        !aimux::state_update_lock::state_update_lock_path(&path).exists(),
+        "and the shared module's own naming must not be what topology uses"
     );
     let _ = fs::remove_dir_all(path.parent().unwrap());
 }

@@ -105,6 +105,14 @@ fn judge_working_directory(path: PathBuf, source: &std::io::Error) -> WorkingDir
         .then(|| {
             std::fs::metadata(&path)
                 .err()
+                // Both gates are not-found: the spawn has to have failed the
+                // way a missing path fails, AND the directory has to be the
+                // path that is missing. Defensive rather than demonstrated -- a
+                // `chdir` that succeeded leaves little room for the stat to then
+                // fail some other way -- but without it the rule this function
+                // states is not the rule it applies, and "not there (Permission
+                // denied)" should be unreachable by construction, not by luck.
+                .filter(|error| error.kind() == std::io::ErrorKind::NotFound)
                 .map(|error| error.to_string())
         })
         .flatten();
@@ -496,6 +504,43 @@ mod tests {
             message.contains("is there"),
             "and the message should say the directory was checked: {message}"
         );
+    }
+
+    /// A working directory we could not READ is not one we know is gone.
+    ///
+    /// The inverse of the test above, and the case a first version got wrong:
+    /// the directory was blamed whenever the spawn said not-found and the stat
+    /// said anything at all, so `EACCES` or `ENOTDIR` printed "that working
+    /// directory is not there (Permission denied)".
+    #[test]
+    fn a_working_directory_we_cannot_read_is_not_declared_missing() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let root =
+            std::env::temp_dir().join(format!("aimux-cwd-unreadable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("scratch");
+        let not_a_directory = root.join("file");
+        std::fs::write(&not_a_directory, b"x").expect("write");
+        // `ENOTDIR` rather than a mode-0 parent: root stats straight through
+        // permissions, so that form of the test would hold for the wrong reason
+        // wherever the suite runs as root.
+        let cwd = not_a_directory.join("child");
+        let probe = std::fs::metadata(&cwd).expect_err("the stat has to fail");
+        assert_ne!(probe.kind(), std::io::ErrorKind::NotFound, "{probe}");
+
+        let mut command = AsyncCommand::new("/definitely/not/aimux");
+        command.current_dir(&cwd);
+        let message = command.output().expect_err("spawn should fail").to_string();
+
+        assert!(
+            !message.contains("working directory is not there"),
+            "a directory we could not read must not be reported as deleted: {message}"
+        );
+        assert!(
+            message.contains("/definitely/not/aimux"),
+            "and the program stays named: {message}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// With no working directory set, the message is unchanged.

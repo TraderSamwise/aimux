@@ -8,8 +8,12 @@
 //! The verdict is the project service's, taken once, so the TUI and the app
 //! say the same thing instead of each asking the filesystem for itself.
 
-use aimux::dashboard_model::DesktopStateSnapshot;
+use aimux::dashboard_model::{
+    DesktopStateSnapshot, MainCheckoutInfo, WorktreeGroup, WorktreeStatus,
+};
+use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::project_service::desktop_state::{DesktopStateInput, build_desktop_state};
+use aimux::tui_render::text::strip_ansi;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
@@ -63,16 +67,90 @@ fn topology_with_worktree(project_root: &str, worktree_path: &str) -> Value {
     })
 }
 
-fn group_for(project_root: &str, worktree_path: &str) -> Value {
-    let topology = topology_with_worktree(project_root, worktree_path);
+fn build_state(project_root: &str, topology: &Value) -> Value {
     let metadata_sessions = BTreeMap::new();
     let exchange = json!({});
-    let state = build_desktop_state(DesktopStateInput {
+    build_desktop_state(DesktopStateInput {
         project_root: project_root.to_owned(),
-        topology: &topology,
+        topology,
         metadata_sessions: &metadata_sessions,
         exchange: &exchange,
+    })
+}
+
+/// One worktree group as the service would serve it.
+fn worktree_group_value(name: &str, path_missing: bool) -> WorktreeGroup {
+    WorktreeGroup {
+        name: name.to_owned(),
+        branch: name.to_owned(),
+        path: Some(format!("/gone/{name}")),
+        status: WorktreeStatus::Active,
+        pending: false,
+        removing: false,
+        path_missing,
+        pending_action: None,
+        operation_failure: None,
+        sessions: Vec::new(),
+        services: Vec::new(),
+        extra: Default::default(),
+    }
+}
+
+fn missing_group(name: &str, pending_action: Option<&str>) -> WorktreeGroup {
+    let mut group = worktree_group_value(name, true);
+    group.pending_action = pending_action.map(ToOwned::to_owned);
+    group
+}
+
+/// Render a real dashboard frame holding one worktree group.
+fn render_frame(group: WorktreeGroup) -> String {
+    let snapshot = DesktopStateSnapshot {
+        sessions: Vec::new(),
+        teammates: Vec::new(),
+        services: Vec::new(),
+        worktrees: Vec::new(),
+        worktree_groups: vec![group],
+        main_checkout_info: MainCheckoutInfo {
+            name: "Main Checkout".into(),
+            branch: "master".into(),
+            extra: Default::default(),
+        },
+        main_checkout_path: Some("/repo".into()),
+        worktree_removal: None,
+        worktree_removals: Vec::new(),
+        agent_restore_offer: None,
+        operation_failures: Vec::new(),
+        extra: Default::default(),
+    };
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 120,
+        rows: 50,
+        nav_level: DashboardNavLevel::Worktrees,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
+    strip_ansi(&result.frame)
+}
+
+fn group_for(project_root: &str, worktree_path: &str) -> Value {
+    let topology = topology_with_worktree(project_root, worktree_path);
+    let state = build_state(project_root, &topology);
     state["worktreeGroups"]
         .as_array()
         .expect("worktree groups")
@@ -219,65 +297,117 @@ fn every_surface_says_the_checkout_is_missing_the_same_way() {
 
 /// The row a user reads, not only the panel they have to focus.
 ///
-/// The first version marked just the detail panel: a deleted checkout's row
-/// summarised as "2 idle" in the ordinary tone while the app's card already
-/// carried a red chip, so the two surfaces disagreed in the one place the user
-/// looks first.
+/// The first version marked just the detail panel and a test that only checked
+/// the field survived into navigation -- which would have stayed green with
+/// every renderer change reverted. This renders a real frame and reads it.
 #[test]
-fn the_row_summary_says_it_rather_than_counting_agents() {
-    use aimux::dashboard_model::{WorktreeGroup, WorktreeStatus};
-    use aimux::dashboard_navigation::dashboard_navigation_groups;
-
-    let mut snapshot = aimux::dashboard_model::DesktopStateSnapshot {
-        sessions: Vec::new(),
-        teammates: Vec::new(),
-        services: Vec::new(),
-        worktrees: Vec::new(),
-        worktree_groups: vec![WorktreeGroup {
-            name: "affiliate-system".into(),
-            branch: "affiliate-system".into(),
-            path: Some("/gone/affiliate-system".into()),
-            status: WorktreeStatus::Active,
-            pending: false,
-            removing: false,
-            path_missing: true,
-            pending_action: None,
-            operation_failure: None,
-            sessions: Vec::new(),
-            services: Vec::new(),
-            extra: Default::default(),
-        }],
-        main_checkout_info: aimux::dashboard_model::MainCheckoutInfo {
-            name: "Main Checkout".into(),
-            branch: "master".into(),
-            extra: Default::default(),
-        },
-        main_checkout_path: Some("/repo".into()),
-        worktree_removal: None,
-        worktree_removals: Vec::new(),
-        agent_restore_offer: None,
-        operation_failures: Vec::new(),
-        extra: Default::default(),
-    };
-
-    let groups = dashboard_navigation_groups(&snapshot);
-    let group = groups
-        .iter()
-        .find(|group| group.path == Some("/gone/affiliate-system"))
-        .expect("the worktree group reaches navigation");
+fn the_row_a_user_reads_says_the_checkout_is_missing() {
+    let frame = render_frame(missing_group("affiliate-system", None));
     assert!(
-        group.path_missing,
-        "the verdict has to survive into the navigation group the rows render from"
+        frame.contains(aimux::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL),
+        "the rendered dashboard has to say it:\n{frame}"
     );
+}
 
-    snapshot.worktree_groups[0].path_missing = false;
-    let unmarked = dashboard_navigation_groups(&snapshot);
+/// And a worktree being CREATED still reads as creating.
+///
+/// This is the regression the first version shipped: `creating` is minutes of
+/// git work with no directory on disk yet, and marking on absence alone turned
+/// every ordinary create into a red `checkout missing`. The service declines to
+/// mark a checkout that is still arriving, and the renderer puts the in-flight
+/// action first -- both halves, because either alone leaves the other path
+/// wrong.
+#[test]
+fn a_worktree_still_being_created_does_not_read_as_a_missing_checkout() {
+    let frame = render_frame(missing_group("being-made", Some("creating")));
     assert!(
-        !unmarked
+        !frame.contains(aimux::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL),
+        "a create in flight must not read as a failure:\n{frame}"
+    );
+    assert!(frame.contains("creating"), "{frame}");
+}
+
+/// The service does not mark a checkout that has not arrived yet.
+///
+/// The other half of the test above, at the source: `ACTIVE_WORKTREE_STATUSES`
+/// includes `planned`, `creating` and `removing`, so a bare "no directory"
+/// rule marks every worktree mid-create.
+#[test]
+fn a_worktree_mid_lifecycle_is_never_marked_by_the_service() {
+    for status in ["planned", "creating", "removing"] {
+        let root = scratch(status);
+        let worktree = root.join("worktrees").join("arriving");
+        let mut topology =
+            topology_with_worktree(&root.to_string_lossy(), &worktree.to_string_lossy());
+        topology["worktrees"][0]["status"] = json!(status);
+        let state = build_state(&root.to_string_lossy(), &topology);
+        let group = state["worktreeGroups"]
+            .as_array()
+            .expect("groups")
             .iter()
-            .find(|group| group.path == Some("/gone/affiliate-system"))
-            .expect("the group")
-            .path_missing,
-        "and must not be invented when the service did not send it"
+            .find(|group| {
+                group.get("path").and_then(Value::as_str) == Some(&*worktree.to_string_lossy())
+            });
+        if let Some(group) = group {
+            assert_eq!(
+                group.get("pathMissing"),
+                None,
+                "a worktree with status {status:?} has no checkout yet: {group}"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// The picker a user chooses from says it too.
+#[test]
+fn the_worktree_picker_says_it() {
+    let overlay = aimux::dashboard_service_input::render_worktree_list_overlay(
+        &[worktree_group_value("affiliate-system", true)],
+        100,
+        40,
     );
+    assert!(
+        strip_ansi(&overlay).contains(aimux::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL),
+        "{overlay}"
+    );
+}
+
+/// And so does the CLI table, which reads the worktree ROWS, not the groups.
+///
+/// Marking only the groups left `aimux worktree list` printing every deleted
+/// checkout exactly like a live one, and nothing caught it.
+#[test]
+fn the_cli_worktree_table_says_it() {
+    let lines = aimux::core_text::render_core_worktree_list_lines(&json!({
+        "worktrees": [{
+            "name": "affiliate-system",
+            "branch": "affiliate-system",
+            "path": "/gone/affiliate-system",
+            "pathMissing": true,
+        }],
+    }))
+    .join("\n");
+    assert!(
+        lines.contains(aimux::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL),
+        "{lines}"
+    );
+}
+
+/// The top-level worktree row carries the verdict, which is what the CLI reads.
+#[test]
+fn the_worktree_rows_carry_the_verdict_not_only_the_groups() {
+    let root = scratch("rows");
+    let worktree = root.join("worktrees").join("affiliate-system");
+    let topology = topology_with_worktree(&root.to_string_lossy(), &worktree.to_string_lossy());
+    let state = build_state(&root.to_string_lossy(), &topology);
+
+    let row = state["worktrees"]
+        .as_array()
+        .expect("worktrees")
+        .iter()
+        .find(|row| row.get("path").and_then(Value::as_str) == Some(&*worktree.to_string_lossy()))
+        .unwrap_or_else(|| panic!("no row for the worktree in {state}"));
+    assert_eq!(row.get("pathMissing"), Some(&Value::Bool(true)), "{row}");
+    let _ = fs::remove_dir_all(&root);
 }

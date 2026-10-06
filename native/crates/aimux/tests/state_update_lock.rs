@@ -86,14 +86,17 @@ fn a_lock_held_briefly_is_waited_for_rather_than_refused() {
     let _ = fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// A holder that died is reclaimed in about a second, not thirty.
+/// Every holder gets the same stale window, alive or dead.
 ///
-/// Topology's lock already worked this way and absorbing it into this one would
-/// otherwise have been a regression: with a pure age rule, a writer that
-/// crashed holding the lock blocks every other writer for the full stale
-/// window. The pid in the owner token is what makes the difference knowable.
+/// The topology lock this one absorbed reclaimed a dead owner after one second
+/// rather than thirty, and carrying that rule over looked free. It is not: this
+/// lock is shared, and `jobs/store.rs` takes it across a write at eight sites
+/// without calling `ensure_owned_for_commit`. A shorter window there is more
+/// exposure to the lost update the lock exists to prevent, in subsystems that
+/// did not ask for it and have no fence to catch it. Topology pays one extra
+/// stall after a crash instead.
 #[test]
-fn a_lock_whose_owner_is_gone_is_reclaimed_within_the_short_window() {
+fn a_lock_whose_owner_is_gone_still_gets_the_long_window() {
     let path = temp_state_file("dead-owner");
     let lock_path = state_update_lock_path(&path);
     fs::create_dir_all(&lock_path).unwrap();
@@ -105,8 +108,11 @@ fn a_lock_whose_owner_is_gone_is_reclaimed_within_the_short_window() {
     file.set_times(fs::FileTimes::new().set_modified(aged))
         .unwrap();
 
-    acquire_state_update_lock(&path)
-        .expect("a three-second-old lock whose owner is gone must be reclaimable");
+    let error = match acquire_state_update_lock(&path) {
+        Ok(_) => panic!("a three-second-old lock must not be reclaimed, whoever owned it"),
+        Err(error) => error,
+    };
+    assert!(error.contains("gone"), "but the error must say so: {error}");
     let _ = fs::remove_dir_all(path.parent().unwrap());
 }
 

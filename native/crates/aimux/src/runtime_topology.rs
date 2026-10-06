@@ -5,7 +5,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::atomic_write::write_text_atomic_fast;
-use crate::state_update_lock::acquire_state_update_lock;
+use crate::state_update_lock::{
+    ACQUIRE_TIMEOUT as TOPOLOGY_LOCK_WAIT, acquire_state_update_lock_at,
+};
 
 pub const RUNTIME_TOPOLOGY_VERSION: i64 = 1;
 
@@ -61,7 +63,12 @@ pub fn update_runtime_topology(
     // `create_dir` attempt and called the refusal a timeout. Two writers --
     // creating an agent while the dashboard wrote -- failed instantly on
     // 2026-10-06 because of it.
-    let lock = acquire_state_update_lock(path)?;
+    // The lock topology has always used, at the path it has always used.
+    // Folding this into the shared module's own naming would have meant an old
+    // binary and a new one holding different directories for the same file --
+    // no mutual exclusion at all across an upgrade, and the daemon, each
+    // project service and the CLI do not restart together.
+    let lock = acquire_state_update_lock_at(&topology_lock_path(path), path, TOPOLOGY_LOCK_WAIT)?;
     let current = read_runtime_topology(path)?;
     let next = coerce_runtime_topology(&updater(current))?;
     // Reclamation is optimistic, so a holder that was only paused can wake up
@@ -69,6 +76,14 @@ pub fn update_runtime_topology(
     lock.ensure_owned_for_commit()?;
     write_runtime_topology(path, &next).map_err(|error| error.to_string())?;
     Ok(next)
+}
+
+/// Where topology's update lock lives.
+///
+/// `<file>.lock`, kept from before this used the shared lock, so a process on
+/// an older build and one on a newer build still exclude each other.
+fn topology_lock_path(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.lock", path.display()))
 }
 
 pub fn coerce_runtime_topology(raw: &Value) -> Result<Value, String> {

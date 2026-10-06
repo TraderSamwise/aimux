@@ -9,33 +9,28 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::atomic_write::write_text_atomic;
 use crate::secure_permissions;
 
 /// A lock whose owner is still running is assumed to be in use until this old.
 const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
-/// A lock whose owner is PROVABLY gone is reclaimed much sooner: there is
-/// nobody left to finish the write, so waiting the full window only blocks live
-/// writers. The topology lock this one absorbed already worked this way, and
-/// dropping that would have made a crashed writer block every update for thirty
-/// seconds instead of one.
-///
-/// Proof is the point. The absorbed rule also took this short window when the
-/// owner was merely UNREADABLE, which is not evidence of death: a lock written
-/// microseconds ago has no owner file yet, and `jobs/store.rs` holds this lock
-/// across writes without fencing the commit. Treating "I could not tell" as
-/// "nobody is there" would have let a live writer's lock be taken from under
-/// it after a second.
-const STALE_LOCK_AFTER_OWNER_GONE: Duration = Duration::from_secs(1);
+// The topology lock this one absorbed reclaimed a dead owner's lock after one
+// second rather than thirty, and carrying that rule over looked like a free
+// improvement. It is not: this lock is shared, and `jobs/store.rs` takes it
+// across a write at eight sites without calling `ensure_owned_for_commit`. A
+// shorter window there is strictly more exposure to the lost update the lock
+// exists to prevent, in subsystems that did not ask for it and have no fence to
+// catch it. So every holder keeps the long window, and topology pays one extra
+// stall after a crash instead.
 /// How long to keep retrying a held lock before giving up.
 ///
 /// The lock covers one read and one atomic write, so real contention clears in
 /// microseconds. Reaching this deadline means something is genuinely wedged,
 /// and failing the update is honest where proceeding unlocked would silently
 /// lose whichever write finished second.
-const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(2);
+pub const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(2);
 const ACQUIRE_RETRY: Duration = Duration::from_millis(5);
 
 pub struct StateUpdateLock {
@@ -157,23 +152,39 @@ fn held_lock_error(lock_path: &Path, waited: Duration) -> String {
 /// Take the update lock guarding `path`, waiting for a holder to finish and
 /// reclaiming it if it has gone stale.
 pub fn acquire_state_update_lock(path: &Path) -> Result<StateUpdateLock, String> {
-    acquire_state_update_lock_within(path, ACQUIRE_TIMEOUT)
+    acquire_state_update_lock_at(&state_update_lock_path(path), path, ACQUIRE_TIMEOUT)
 }
 
-/// The waiting form, with the budget passed in.
+/// Take the lock for `path` at a lock directory of the caller's choosing.
 ///
-/// The parent-directory hardening lives here rather than in the wrapper: a
-/// second entry point that skipped it would create the lock beside a state file
-/// in a directory nobody had made private.
-pub(crate) fn acquire_state_update_lock_within(
+/// This exists for one reason: the runtime topology had its own lock, at
+/// `<file>.lock`, before it was folded into this one. Moving it to this
+/// module's `.{file}.update-lock` would mean an old process and a new one hold
+/// DIFFERENT directories for the same file and stop excluding each other --
+/// across an upgrade, where the daemon, each project service and the CLI are
+/// separate processes that do not restart together. The window would stay open
+/// until the last of them restarted, and what it costs is the lost update this
+/// lock exists to prevent, silently.
+pub fn acquire_state_update_lock_at(
+    lock_path: &Path,
     path: &Path,
     wait: Duration,
 ) -> Result<StateUpdateLock, String> {
     if let Some(parent) = path.parent() {
         secure_permissions::ensure_private_dir(parent).map_err(|error| error.to_string())?;
     }
-    let lock_path = state_update_lock_path(path);
-    let started_at = SystemTime::now();
+    acquire_lock_directory(lock_path, wait)
+}
+
+fn acquire_lock_directory(lock_path: &Path, wait: Duration) -> Result<StateUpdateLock, String> {
+    let lock_path = lock_path.to_path_buf();
+    // A monotonic clock, not the wall clock. `SystemTime::elapsed` errors when
+    // the wall clock moves backwards, and the first version swallowed that with
+    // `unwrap_or_default()` -- which reads as "no time has passed", so the loop
+    // would spin against a live holder forever and never report anything. A
+    // function whose whole job is to stop lying about waiting must not have a
+    // path where it waits for ever in silence.
+    let started_at = Instant::now();
     loop {
         match fs::create_dir(&lock_path) {
             Ok(()) => {
@@ -191,7 +202,7 @@ pub(crate) fn acquire_state_update_lock_within(
                 if reclaim_stale(&lock_path) {
                     continue;
                 }
-                let waited = started_at.elapsed().unwrap_or_default();
+                let waited = started_at.elapsed();
                 if waited >= wait {
                     return Err(held_lock_error(&lock_path, waited));
                 }
@@ -217,13 +228,5 @@ fn reclaim_stale(lock_path: &Path) -> bool {
     let Some(age) = lock_age(lock_path) else {
         return false;
     };
-    age >= stale_lock_window(lock_path) && fs::remove_dir_all(lock_path).is_ok()
-}
-
-fn stale_lock_window(lock_path: &Path) -> Duration {
-    match owner_pid_alive(lock_path) {
-        // Only a pid we read, parsed, and found gone shortens the window.
-        Some((_, false)) => STALE_LOCK_AFTER_OWNER_GONE,
-        _ => STALE_LOCK_AFTER,
-    }
+    age >= STALE_LOCK_AFTER && fs::remove_dir_all(lock_path).is_ok()
 }

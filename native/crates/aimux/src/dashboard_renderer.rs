@@ -1664,13 +1664,7 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     if worktree.operation_failure.is_some() {
         return style("failed", Tone::Danger);
     }
-    // Before the agent counts, because a checkout that is gone is the whole
-    // story of the row: without this a deleted worktree summarised as "2 idle"
-    // in the ordinary tone, and the only place that said otherwise was the
-    // detail panel of whichever row happened to be focused.
-    if worktree.path_missing {
-        return style(WORKTREE_CHECKOUT_MISSING_LABEL, Tone::Danger);
-    }
+
     // Whatever the action is, not two spellings and a catch-all: a worktree
     // mid-rename summarised as "removing", and `dashboard_navigation` then
     // refused Enter on it with "is creating".
@@ -1687,6 +1681,15 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
     if worktree.pending {
         return progress_label("pending");
     }
+    // After the in-flight branches, not before them. A worktree being CREATED
+    // has no directory yet -- `creating` is minutes of git work -- so putting
+    // this first made every ordinary create read as a red failure, which is the
+    // same class of lie this whole change exists to end. The service already
+    // declines to mark a checkout that is still arriving; this ordering is the
+    // second half of that, for a row whose action is in flight for any reason.
+    if worktree.path_missing {
+        return style(WORKTREE_CHECKOUT_MISSING_LABEL, Tone::Danger);
+    }
     let parts = semantic_count_parts(worktree);
     if !parts.is_empty() {
         return parts.join(&style(" · ", Tone::Muted));
@@ -1699,7 +1702,14 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
 }
 
 fn worktree_tone(worktree: &DashboardNavigationGroup<'_>) -> Tone {
-    if worktree.operation_failure.is_some() || worktree.path_missing {
+    if worktree.operation_failure.is_some() {
+        return Tone::Danger;
+    }
+    // Same ordering as the summary: an action in flight owns the row's tone,
+    // because a checkout that has not arrived yet is not a checkout that is
+    // gone.
+    let in_flight = worktree.pending_action.is_some() || worktree.removing || worktree.pending;
+    if worktree.path_missing && !in_flight {
         return Tone::Danger;
     }
     let mut best = (0, Tone::Muted);
