@@ -277,11 +277,9 @@ impl TmuxRuntimeManager {
             let result = if let Some(timeout) = options.and_then(|options| options.timeout) {
                 command
                     .output_timeout("tmux:subprocess", timeout)
-                    .map_err(|error| format!("failed to run tmux: {error}"))?
+                    .map_err(|error| error.to_string())?
             } else {
-                command
-                    .output()
-                    .map_err(|error| format!("failed to run tmux: {error}"))?
+                command.output().map_err(|error| error.to_string())?
             };
             let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
             record_tmux_exec(args, elapsed_ms, TmuxExecMode::Sync);
@@ -1057,7 +1055,7 @@ impl TmuxRuntimeManager {
         let result = command
             .output_timeout_async(TMUX_CAPTURE_TARGET_TIMEOUT)
             .await
-            .map_err(|error| format!("failed to run tmux: {error}"))?;
+            .map_err(|error| error.to_string())?;
         let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
         record_tmux_exec(&args, elapsed_ms, TmuxExecMode::Async);
         if result.status.success() {
@@ -3731,7 +3729,7 @@ fn default_interactive_exec(
     // sat in the dashboard for half a minute.
     let status = command
         .status_unbounded(format!("tmux interactive {}", args.join(" ")))
-        .map_err(|error| format!("failed to run tmux: {error}"))?;
+        .map_err(|error| error.to_string())?;
     if status.success() {
         Ok(())
     } else {

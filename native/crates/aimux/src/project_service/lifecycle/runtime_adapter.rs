@@ -257,6 +257,10 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
         let output = run_tmux_argv_output(
             new_window_argv(session_name, name, cwd, command, args, detached),
             format!("tmux failed to create window \"{name}\" in session {session_name}"),
+            // The async twin passed this and the sync one did not, so the same
+            // operation reported a deleted worktree as a missing tmux binary on
+            // whichever path the caller happened to take.
+            Some(cwd),
         )?;
         parse_tmux_target(session_name, &output)
     }
@@ -480,11 +484,20 @@ fn parse_tmux_target(session_name: &str, output: &str) -> Result<TmuxTarget, Str
 }
 
 fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<(), String> {
-    run_tmux_argv_output(argv, fallback_error).map(|_| ())
+    run_tmux_argv_output(argv, fallback_error, None).map(|_| ())
 }
 
-fn run_tmux_argv_output(argv: Vec<String>, fallback_error: String) -> Result<String, String> {
-    match tmux_command_from_env().args(argv).output() {
+fn run_tmux_argv_output(
+    argv: Vec<String>,
+    fallback_error: String,
+    cwd: Option<&str>,
+) -> Result<String, String> {
+    let mut command = tmux_command_from_env();
+    command.args(argv);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    match command.output() {
         Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         }
@@ -1424,4 +1437,83 @@ fn git_command(cwd: &str) -> AsyncCommand {
         command.env_remove(key);
     }
     command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The route a user actually hits, end to end, on both twins.
+    ///
+    /// `create_window` passes the agent's worktree as the subprocess working
+    /// directory, and this produced the message on the dashboard: `tmux failed
+    /// to create window "codex" in session aimux-tealstreet-next-...: failed to
+    /// run /opt/homebrew/bin/tmux: No such file or directory`. tmux was
+    /// installed and working; the worktree had been deleted.
+    ///
+    /// Driven through `create_window` rather than the helper underneath it,
+    /// because the helper cannot see whether its caller passed the directory at
+    /// all -- and the sync twin did not, which is how the same operation kept
+    /// the old message on one of the two paths.
+    fn a_window_in_a_deleted_worktree(label: &str) -> (std::path::PathBuf, String) {
+        let missing = std::env::temp_dir().join(format!(
+            "aimux-deleted-worktree-{}-{label}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&missing);
+        (missing, "aimux-test-session".to_owned())
+    }
+
+    fn assert_names_the_worktree(error: &str, missing: &std::path::Path) {
+        assert!(
+            error.contains(&missing.display().to_string()),
+            "the worktree that is gone has to be named: {error}"
+        );
+        assert!(
+            error.contains("working directory is not there"),
+            "and named as the working directory, not as tmux: {error}"
+        );
+        assert!(
+            error.contains("tmux failed to create window"),
+            "without losing which operation failed: {error}"
+        );
+    }
+
+    #[test]
+    fn creating_a_window_in_a_deleted_worktree_names_the_worktree_not_tmux() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let (missing, session) = a_window_in_a_deleted_worktree("sync");
+        let error = ProjectLifecycleRuntime::create_window(
+            &mut SystemProjectLifecycleRuntime,
+            &session,
+            "codex",
+            &missing.to_string_lossy(),
+            "codex",
+            &[],
+            true,
+        )
+        .expect_err("a window cannot be created in a directory that is gone");
+        assert_names_the_worktree(&error, &missing);
+    }
+
+    #[test]
+    fn creating_a_window_asynchronously_names_the_worktree_too() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let (missing, session) = a_window_in_a_deleted_worktree("async");
+        // aimux-async-seam: test - sync test drives async handler
+        let error = crate::async_runtime::block_on_named("test:create-window-async", async {
+            AsyncProjectLifecycleRuntime::create_window(
+                &mut SystemProjectLifecycleRuntime,
+                &session,
+                "codex",
+                &missing.to_string_lossy(),
+                "codex",
+                &[],
+                true,
+            )
+            .await
+        })
+        .expect_err("a window cannot be created in a directory that is gone");
+        assert_names_the_worktree(&error, &missing);
+    }
 }
