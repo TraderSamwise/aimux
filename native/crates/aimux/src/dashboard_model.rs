@@ -1732,6 +1732,36 @@ fn worktree_key(path: Option<&str>) -> String {
     path.unwrap_or("__main__").to_owned()
 }
 
+/// Whether `X` has anything to dismiss.
+///
+/// Not "is the ledger empty". A worktree failure has a SECOND home with no
+/// expiry of its own: `mark_worktree_remove_error` stamps `status: "error"` and
+/// an `operationFailure` onto the topology row, and only the clear route takes
+/// it off again. The controller used to refuse to send that request whenever
+/// the ledger was empty, and the footer hint keyed on the same emptiness -- so
+/// once the ledger entry aged out, the row stayed red with no key that would
+/// clear it and no hint that one existed.
+///
+/// That is the bug the clear route's own comment says was already fixed once:
+/// "that worktree could never be graveyarded from the TUI". It was fixed in the
+/// route, which does reach both homes, and left in the two callers that decide
+/// whether to call it.
+pub fn dashboard_has_clearable_failures(snapshot: &DesktopStateSnapshot) -> bool {
+    !snapshot.operation_failures.is_empty()
+        || snapshot
+            .worktree_groups
+            .iter()
+            .any(|group| group.operation_failure.is_some())
+        // The row keeps it in `extra`: `DesktopWorktree` has no typed field for
+        // it, and the service writes `operationFailure` onto the row anyway.
+        || snapshot.worktrees.iter().any(|worktree| {
+            worktree
+                .extra
+                .get("operationFailure")
+                .is_some_and(|failure| !failure.is_null())
+        })
+}
+
 fn should_keep_operational_worktree(group: &WorktreeGroup) -> bool {
     group.pending
         || group.removing

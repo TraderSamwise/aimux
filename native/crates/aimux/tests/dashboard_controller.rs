@@ -6,7 +6,8 @@ use aimux::dashboard_controller::{
 };
 use aimux::dashboard_model::{
     DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
-    SessionSemanticState, SessionStatus, SessionTeamMetadata, filter_dashboard_visible_model,
+    SessionSemanticState, SessionStatus, SessionTeamMetadata, dashboard_has_clearable_failures,
+    filter_dashboard_visible_model,
 };
 use aimux::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationGroupKind, dashboard_navigation_groups,
@@ -3808,5 +3809,74 @@ fn hiding_offline_agents_keeps_the_supervisor_lane() {
             .iter()
             .any(|session| session.id == "codex-offline"),
         "an ordinary offline agent is still hidden, which is what the toggle is for"
+    );
+}
+
+/// A red worktree row is still clearable once its ledger entry has gone.
+///
+/// A worktree failure has two homes. `mark_worktree_remove_error` stamps
+/// `status: "error"` and an `operationFailure` onto the topology row, and the
+/// clear route reaches both -- its own comment says so, because clearing only
+/// the ledger once left a worktree that "could never be graveyarded from the
+/// TUI".
+///
+/// That fix was made in the route and not in the two callers that decide
+/// whether to call it: the controller refused to send the request whenever the
+/// LEDGER was empty, and the footer hint keyed on the same emptiness. The
+/// ledger entry expires on its own; the row does not. So the window between
+/// them was a red row with no key to clear it and no hint that one existed --
+/// rare while the ledger held entries for two hours, and the default for any
+/// shorter window.
+#[test]
+fn a_failed_worktree_row_is_clearable_after_its_ledger_entry_expires() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    let group = snapshot
+        .worktree_groups
+        .iter_mut()
+        .find(|group| group.path.is_some())
+        .expect("a worktree group");
+    group.operation_failure = Some(operation_failure(
+        "failure-1",
+        Some("remove"),
+        Some("worktree remove failed"),
+    ));
+
+    assert!(
+        dashboard_has_clearable_failures(&snapshot),
+        "a row carrying a failure is something to clear, ledger or no ledger"
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    match controller.handle_key(&snapshot, DashboardKey::ClearFailures) {
+        DashboardControllerEffect::Request(_) => {}
+        other => panic!("X has to reach the service while a row is still red, got {other:?}"),
+    }
+}
+
+/// And with nothing red anywhere, it stays a no-op.
+///
+/// The inverse, because "always send the request" would also pass the test
+/// above while turning every stray `X` into a round trip.
+#[test]
+fn a_dashboard_with_nothing_failed_has_nothing_to_clear() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+    }
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+    }
+
+    assert!(!dashboard_has_clearable_failures(&snapshot));
+
+    let mut controller = DashboardController::new(&snapshot);
+    assert!(
+        matches!(
+            controller.handle_key(&snapshot, DashboardKey::ClearFailures),
+            DashboardControllerEffect::Ignored
+        ),
+        "nothing failed, so X asks the service for nothing"
     );
 }
