@@ -132,6 +132,38 @@ export function OperationFailureCardView({
   );
 }
 
+/// The five callbacks the sequence runs on, assembled from the component's own
+/// state.
+///
+/// Named and exported because this mapping is the one thing `renderToStaticMarkup`
+/// cannot reach -- it renders, it does not press -- and round 5 of this PR's
+/// review showed what that costs: with the mapping inline, wiring `inFlight` to
+/// the `dismissing` STATE instead of the ref brought the double-POST back with
+/// every test still green, because the sequence's tests supply their own
+/// closure. The ref is the point: `dismissing` only reaches the control on the
+/// next render.
+export function useDismissIo(
+  setDismissing: (value: boolean) => void,
+  setError: (message: string | null) => void,
+  refresh: () => void,
+) {
+  const inFlight = useRef(false);
+  return {
+    // Read and written only inside these closures, which run on a press. The
+    // ref is never handed out, so nothing can be given the wrong one -- a
+    // mutation passing `{ current: dismissing }`, the render-scoped flag
+    // instead of the ref, restored the double-POST and survived every test
+    // while the shell still supplied it.
+    inFlight: () => inFlight.current,
+    setInFlight: (value: boolean) => {
+      inFlight.current = value;
+    },
+    setDismissing,
+    setError,
+    refresh,
+  };
+}
+
 /// The failed-operations card, with the dismiss the app never had.
 ///
 /// The TUI has cleared these with `X` since it shipped; here the only exit was
@@ -150,26 +182,18 @@ export function OperationFailureCard({
 }) {
   const [dismissing, setDismissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A ref, not the `dismissing` state: `disabled` only reaches the control on
-  // the next render, so two taps inside one frame both read false and both
-  // post.
-  const inFlight = useRef(false);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
+  // The guard rides a ref inside `useDismissIo`, not the `dismissing` state:
+  // `disabled` only reaches the control on the next render, so two taps inside
+  // one frame would both read false and both post.
+  const io = useDismissIo(setDismissing, setError, () => {
+    kickDesktopRefresh();
+    kickProjectViewRefresh(["worktrees", "topology"]);
+  });
 
   async function dismiss() {
-    await runOperationFailureDismiss(endpoint, token, {
-      inFlight: () => inFlight.current,
-      setInFlight: (value) => {
-        inFlight.current = value;
-      },
-      setDismissing,
-      setError,
-      refresh: () => {
-        kickDesktopRefresh();
-        kickProjectViewRefresh(["worktrees", "topology"]);
-      },
-    });
+    await runOperationFailureDismiss(endpoint, token, io);
   }
 
   return (

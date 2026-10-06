@@ -3857,6 +3857,79 @@ fn a_failed_worktree_row_is_clearable_after_its_ledger_entry_expires() {
     }
 }
 
+/// The ROW's failure is enough on its own.
+///
+/// Round 5 found that every test of this predicate put the failure on the
+/// GROUP, so the rows arm could be deleted and nothing would fail. It is
+/// behaviour-equivalent today only because the projection copies the row's
+/// failure onto its group -- which is a fact about the projection, not about
+/// this predicate, and it is the kind of coincidence this file keeps paying
+/// for.
+#[test]
+fn a_failure_carried_only_by_a_row_is_still_something_x_can_clear() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+        group.extra.remove("operationFailureClearable");
+    }
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+        worktree.extra.remove("operationFailureClearable");
+    }
+    let worktree = snapshot.worktrees.last_mut().expect("a worktree row");
+    worktree
+        .extra
+        .insert("operationFailure".into(), json!("worktree remove failed"));
+    worktree
+        .extra
+        .insert("operationFailureClearable".into(), json!(true));
+
+    assert!(
+        dashboard_has_clearable_failures(&snapshot),
+        "a row carrying a reachable failure is something to clear even with no \
+         group saying so"
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    match controller.handle_key(&snapshot, DashboardKey::ClearFailures) {
+        DashboardControllerEffect::Request(_) => {}
+        other => panic!("X has to reach the service for a row failure, got {other:?}"),
+    }
+}
+
+/// And a verdict the service never gave is not a yes.
+///
+/// `row_failure_is_clearable` documents "absent means no -- never 'probably
+/// yes'", and round 5 pointed out that every test set the field, so the
+/// sentence was ungated. A row from a build before the field existed, or a
+/// group with no topology row behind it, lands here.
+#[test]
+fn a_failure_with_no_verdict_attached_is_not_offered() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+        group.extra.remove("operationFailureClearable");
+    }
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+        worktree.extra.remove("operationFailureClearable");
+    }
+    // A failure, and nothing saying whether the clear can reach it.
+    snapshot
+        .worktrees
+        .last_mut()
+        .expect("a worktree row")
+        .extra
+        .insert("operationFailure".into(), json!("worktree remove failed"));
+
+    assert!(
+        !dashboard_has_clearable_failures(&snapshot),
+        "nothing here knows the key would work, so it must not be offered"
+    );
+}
+
 /// A failed CREATE is red and is not clearable, and the key must not pretend.
 ///
 /// This is the same bug from the other side, and the adversarial review of PR

@@ -21,10 +21,13 @@ vi.mock("@/lib/api", () => ({
   clearOperationFailures: (...args: unknown[]) => clearOperationFailures(...args),
 }));
 
+import { renderToStaticMarkup } from "react-dom/server";
 import {
+  OperationFailureCard,
   OperationFailureCardView,
   dismissOperationFailures,
   runOperationFailureDismiss,
+  useDismissIo,
 } from "@/components/operation-failure-card";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 
@@ -193,6 +196,74 @@ describe("the failed-operations card", () => {
     const text = allText(tree);
     expect(text).toContain("Dismissed, but the view did not refresh");
     expect(text).not.toContain("Could not dismiss");
+  });
+
+  /// The SHELL, rendered for real, because the assembly is the product change.
+  ///
+  /// Round 5 of this PR's review found that nothing instantiated it: the view
+  /// and the sequence were tested, `WorktreeDashboard.test.tsx` mocks the shell
+  /// away, and so `endpoint={null}` at either call site removed the whole
+  /// feature with the suite green. I had declared this seam unreachable on the
+  /// grounds that the harness cannot run hooks; `react-dom/server` is already a
+  /// dependency and runs `useState`, `useRef` and `useSetAtom` perfectly well.
+  /// It renders but does not press, which is what `dismissIo` is for.
+  describe("the shell, assembled", () => {
+    it("renders a dismiss when there is a host", () => {
+      const html = renderToStaticMarkup(
+        <OperationFailureCard summary={summary} endpoint={endpoint} token="tok" />,
+      );
+      expect(html).toContain("Dismiss failed operations");
+      expect(html).toContain(summary.title);
+    });
+
+    it("renders none when there is not", () => {
+      const html = renderToStaticMarkup(
+        <OperationFailureCard summary={summary} endpoint={null} token="tok" />,
+      );
+      expect(html).not.toContain("Dismiss failed operations");
+      // Still says what failed, which is the half that does not need a host.
+      expect(html).toContain(summary.title);
+    });
+  });
+
+  /// The mapping `renderToStaticMarkup` cannot reach. Wiring `inFlight` to the
+  /// `dismissing` state instead of the ref is the mutation that brought the
+  /// double-POST back with everything else green.
+  describe("the callbacks the shell hands over", () => {
+    /// The hook itself, run under SSR, because the guard lives inside it now
+    /// and the point is that no caller supplies it.
+    function capture(setDismissing: () => void, setError: () => void, refresh: () => void) {
+      let captured: ReturnType<typeof useDismissIo> | null = null;
+      function Probe() {
+        captured = useDismissIo(setDismissing, setError, refresh);
+        return null;
+      }
+      renderToStaticMarkup(<Probe />);
+      if (captured === null) throw new Error("the hook did not run");
+      return captured as ReturnType<typeof useDismissIo>;
+    }
+
+    it("keeps the guard on a ref, not on a render-scoped flag", () => {
+      const setDismissing = vi.fn();
+      const io = capture(setDismissing, vi.fn(), vi.fn());
+      expect(io.inFlight()).toBe(false);
+      io.setInFlight(true);
+      expect(io.inFlight(), "the next press in the same frame has to see it").toBe(true);
+      expect(setDismissing, "the guard is not the render flag").not.toHaveBeenCalled();
+    });
+
+    it("keeps the render flag and the error apart", () => {
+      const setDismissing = vi.fn();
+      const setError = vi.fn();
+      const refresh = vi.fn();
+      const io = capture(setDismissing, setError, refresh);
+      io.setDismissing(true);
+      io.setError("boom");
+      io.refresh();
+      expect(setDismissing).toHaveBeenCalledWith(true);
+      expect(setError).toHaveBeenCalledWith("boom");
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
   });
 
   /// The body of the request, which is the whole reach of the key. An empty
