@@ -98,6 +98,7 @@
     "@tradersamwise/eas-release": "0.1.10",
     "@types/event-source-polyfill": "^1.0.5",
     "@types/react": "~19.1.0",
+    "@types/react-dom": "~19.1.0",
     "eas-cli": "^18.5.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.1.8",

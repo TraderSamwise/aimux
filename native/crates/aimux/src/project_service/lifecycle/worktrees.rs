@@ -7,6 +7,7 @@ use crate::config::load_config_for_project;
 use crate::daemon_state::mutate_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
+use crate::project_service::desktop_state::worktree_checkout_is_present;
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::graveyard_cleanup::build_graveyard_cleanup_plan;
 use crate::project_service::operation_failures::{
@@ -98,7 +99,8 @@ pub(super) fn route_worktree_graveyard(
             message,
             &path,
             Some(&worktree_name),
-        );
+        )
+        .message;
         return json_error(409, message);
     }
     let live_service_window_ids = array_field(&topology, "services")
@@ -151,7 +153,8 @@ pub(super) fn route_worktree_graveyard(
             error,
             &path,
             Some(&worktree_name),
-        );
+        )
+        .message;
         return json_error(500, error);
     }
     for window_id in live_service_window_ids {
@@ -218,7 +221,8 @@ pub(super) fn route_worktree_create(
             message,
             &target_path,
             Some(&name),
-        );
+        )
+        .message;
         return json_error(500, message);
     }
     if Path::new(&target_path).exists() {
@@ -230,7 +234,8 @@ pub(super) fn route_worktree_create(
             message,
             &target_path,
             Some(&name),
-        );
+        )
+        .message;
         return json_error(500, message);
     }
     clear_worktree_operation_failure(&project_state_dir, "create", &target_path);
@@ -259,7 +264,8 @@ pub(super) fn route_worktree_create(
                     error,
                     &target_path,
                     Some(&name),
-                );
+                )
+                .message;
                 return json_error(500, error);
             }
         }
@@ -274,7 +280,8 @@ pub(super) fn route_worktree_create(
                     error,
                     &target_path,
                     Some(&name),
-                );
+                )
+                .message;
                 return json_error(500, error);
             }
         }
@@ -292,7 +299,8 @@ pub(super) fn route_worktree_create(
                     error,
                     &target_path,
                     Some(&name),
-                );
+                )
+                .message;
                 return json_error(500, error);
             }
         }
@@ -394,8 +402,7 @@ pub(super) fn route_worktree_create(
             lifecycle_response(payload, "worktree.create", "worktree", Some(&target_path))
         }
         Err(error) => {
-            let _ = upsert_created_worktree_topology(&topology_input, "error", Some(&error));
-            let error = record_worktree_operation_failure(
+            let failure = record_worktree_operation_failure(
                 &project_state_dir,
                 "create",
                 format!("Failed to create worktree \"{name}\""),
@@ -403,7 +410,9 @@ pub(super) fn route_worktree_create(
                 &target_path,
                 Some(&name),
             );
-            json_error(500, error)
+            let _ =
+                upsert_created_worktree_topology(&topology_input, "error", Some(&failure.record));
+            json_error(500, failure.message)
         }
     }
 }
@@ -529,7 +538,8 @@ pub(super) fn route_worktree_remove(
             message,
             &path,
             Some(&worktree_name),
-        );
+        )
+        .message;
         return json_error(409, message);
     }
     let live_service_window_ids = array_field(&topology, "services")
@@ -539,8 +549,7 @@ pub(super) fn route_worktree_remove(
         .collect::<Vec<_>>();
     if Path::new(&path).exists() {
         if let Err(error) = remove_git_worktree_checkout(&project_root, &path) {
-            mark_worktree_remove_error(&project_state_dir, &path, &worktree_name, &error);
-            let error = record_worktree_operation_failure(
+            let failure = record_worktree_operation_failure(
                 &project_state_dir,
                 "remove",
                 format!("Failed to remove worktree \"{worktree_name}\""),
@@ -548,7 +557,11 @@ pub(super) fn route_worktree_remove(
                 &path,
                 Some(&worktree_name),
             );
-            return json_error(500, error);
+            // The row gets the SAME record the ledger got, so `x` on the row
+            // posts a clear the ledger entry matches and one dismiss removes
+            // both renderings.
+            mark_worktree_remove_error(&project_state_dir, &path, &worktree_name, &failure.record);
+            return json_error(500, failure.message);
         }
     } else {
         prune_git_worktrees(&project_root);
@@ -585,6 +598,20 @@ pub(super) fn route_worktree_remove(
 /// Returns the message to give the user: the one passed in, plus a note when
 /// the ledger write itself failed. Dropping it hides that note.
 #[must_use]
+/// A recorded failure: what to tell the caller, and the record itself.
+///
+/// The record is handed back because the worktree ROW needs the same one. It
+/// used to get a bare error string, which `normalize_dashboard_operation_failure_record`
+/// turns into `operation: "legacy"` -- so `x` on a red row posted a clear for
+/// operation "legacy" while the ledger held "remove", the match found nothing,
+/// and the footer said "Dismissed failure" with the card still on screen. The
+/// detail panel read `Operation: legacy` with no age, which after fifteen
+/// minutes is the only surviving explanation of a red row.
+struct RecordedWorktreeFailure {
+    message: String,
+    record: Value,
+}
+
 fn record_worktree_operation_failure(
     project_state_dir: &Path,
     operation: &str,
@@ -592,7 +619,7 @@ fn record_worktree_operation_failure(
     message: String,
     worktree_path: &str,
     worktree_name: Option<&str>,
-) -> String {
+) -> RecordedWorktreeFailure {
     match try_add_dashboard_operation_failure(
         project_state_dir,
         OperationFailureInput {
@@ -606,11 +633,11 @@ fn record_worktree_operation_failure(
             created_at: None,
         },
     ) {
-        Ok(_) => message,
+        Ok(record) => RecordedWorktreeFailure { message, record },
         // An unwritable ledger is the transient-footer bug wearing the fix's
         // clothes: the refusal is correct, the card stays empty, and nothing
         // says why. Say it in the response the user is already reading.
-        Err((error, _failure)) => {
+        Err((error, record)) => {
             log_always_at(
                 LogLevel::Error,
                 "failed to record worktree operation failure",
@@ -621,7 +648,12 @@ fn record_worktree_operation_failure(
                     "error": error.to_string(),
                 })),
             );
-            format!("{message}; additionally failed to record dashboard operation failure: {error}")
+            RecordedWorktreeFailure {
+                message: format!(
+                    "{message}; additionally failed to record dashboard operation failure: {error}"
+                ),
+                record,
+            }
         }
     }
 }
@@ -888,7 +920,8 @@ pub(super) fn route_graveyard_worktree_delete(
             message,
             &path,
             Some(&worktree_name),
-        );
+        )
+        .message;
         return json_error(409, message);
     }
     if Path::new(&path).exists() {
@@ -1072,7 +1105,7 @@ pub(super) struct WorktreeCreateTopologyInput<'a> {
 pub(super) fn upsert_created_worktree_topology(
     input: &WorktreeCreateTopologyInput<'_>,
     status: &str,
-    operation_failure: Option<&str>,
+    operation_failure: Option<&Value>,
 ) -> Result<(), String> {
     update_runtime_topology(
         runtime_topology_path(input.project_state_dir),
@@ -1096,12 +1129,8 @@ pub(super) fn upsert_created_worktree_topology(
                     Value::String(input.main_repo.into()),
                 );
             }
-            if let Some(error) = operation_failure {
-                object_insert_mut(
-                    &mut worktree,
-                    "operationFailure",
-                    Value::String(error.into()),
-                );
+            if let Some(failure) = operation_failure {
+                object_insert_mut(&mut worktree, "operationFailure", failure.clone());
             }
             upsert_array_item(&mut topology, "worktrees", worktree);
             object_insert_mut(&mut topology, "generatedAt", Value::String(now_iso()));
@@ -1175,7 +1204,7 @@ pub(super) fn mark_worktree_remove_error(
     project_state_dir: &Path,
     path: &str,
     name: &str,
-    error: &str,
+    failure: &Value,
 ) {
     let _ = update_runtime_topology(runtime_topology_path(project_state_dir), |topology| {
         map_topology_array(topology, "worktrees", |mut worktree| {
@@ -1190,11 +1219,7 @@ pub(super) fn mark_worktree_remove_error(
                         name.to_owned()
                     }),
                 );
-                object_insert_mut(
-                    &mut worktree,
-                    "operationFailure",
-                    Value::String(error.to_owned()),
-                );
+                object_insert_mut(&mut worktree, "operationFailure", failure.clone());
                 object_insert_mut(&mut worktree, "updatedAt", Value::String(now_iso()));
             }
             worktree
@@ -1231,7 +1256,7 @@ pub(crate) fn clear_worktree_row_failure(project_state_dir: &Path, worktree_path
             // carrying an `operationFailure` as retryable -- would start
             // refusing the retry as "already exists". A failed remove is the
             // case that gets stuck, and its checkout is still on disk.
-            let has_checkout = !row_path.is_empty() && Path::new(&row_path).exists();
+            let has_checkout = worktree_checkout_is_present(&row_path);
             if matches_path && has_failure && has_checkout {
                 if let Some(map) = worktree.as_object_mut() {
                     map.remove("operationFailure");

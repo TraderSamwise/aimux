@@ -6,7 +6,8 @@ use aimux::dashboard_controller::{
 };
 use aimux::dashboard_model::{
     DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
-    SessionSemanticState, SessionStatus, SessionTeamMetadata, filter_dashboard_visible_model,
+    SessionSemanticState, SessionStatus, SessionTeamMetadata, dashboard_has_clearable_failures,
+    filter_dashboard_visible_model,
 };
 use aimux::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationGroupKind, dashboard_navigation_groups,
@@ -3808,5 +3809,230 @@ fn hiding_offline_agents_keeps_the_supervisor_lane() {
             .iter()
             .any(|session| session.id == "codex-offline"),
         "an ordinary offline agent is still hidden, which is what the toggle is for"
+    );
+}
+
+/// A red worktree row is still clearable once its ledger entry has gone.
+///
+/// A worktree failure has two homes. `mark_worktree_remove_error` stamps
+/// `status: "error"` and an `operationFailure` onto the topology row, and the
+/// clear route reaches both -- its own comment says so, because clearing only
+/// the ledger once left a worktree that "could never be graveyarded from the
+/// TUI".
+///
+/// That fix was made in the route and not in the two callers that decide
+/// whether to call it: the controller refused to send the request whenever the
+/// LEDGER was empty, and the footer hint keyed on the same emptiness. The
+/// ledger entry expires on its own; the row does not. So the window between
+/// them was a red row with no key to clear it and no hint that one existed --
+/// rare while the ledger held entries for two hours, and now the normal case:
+/// the window is fifteen minutes, which is the commit after this one.
+#[test]
+fn a_failed_worktree_row_is_clearable_after_its_ledger_entry_expires() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    let group = snapshot
+        .worktree_groups
+        .iter_mut()
+        .find(|group| group.path.is_some())
+        .expect("a worktree group");
+    group.operation_failure = Some(operation_failure(
+        "failure-1",
+        Some("remove"),
+        Some("worktree remove failed"),
+    ));
+    group
+        .extra
+        .insert("operationFailureClearable".into(), json!(true));
+
+    assert!(
+        dashboard_has_clearable_failures(&snapshot),
+        "a row carrying a failure is something to clear, ledger or no ledger"
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    match controller.handle_key(&snapshot, DashboardKey::ClearFailures) {
+        DashboardControllerEffect::Request(_) => {}
+        other => panic!("X has to reach the service while a row is still red, got {other:?}"),
+    }
+}
+
+/// The ROW's failure is enough on its own.
+///
+/// Round 5 found that every test of this predicate put the failure on the
+/// GROUP, so the rows arm could be deleted and nothing would fail. It is
+/// behaviour-equivalent today only because the projection copies the row's
+/// failure onto its group -- which is a fact about the projection, not about
+/// this predicate, and it is the kind of coincidence this file keeps paying
+/// for.
+#[test]
+fn a_failure_carried_only_by_a_row_is_still_something_x_can_clear() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+        group.extra.remove("operationFailureClearable");
+    }
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+        worktree.extra.remove("operationFailureClearable");
+    }
+    let worktree = snapshot.worktrees.last_mut().expect("a worktree row");
+    worktree
+        .extra
+        .insert("operationFailure".into(), json!("worktree remove failed"));
+    worktree
+        .extra
+        .insert("operationFailureClearable".into(), json!(true));
+
+    assert!(
+        dashboard_has_clearable_failures(&snapshot),
+        "a row carrying a reachable failure is something to clear even with no \
+         group saying so"
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    match controller.handle_key(&snapshot, DashboardKey::ClearFailures) {
+        DashboardControllerEffect::Request(_) => {}
+        other => panic!("X has to reach the service for a row failure, got {other:?}"),
+    }
+}
+
+/// And a verdict the service never gave is not a yes.
+///
+/// `row_failure_is_clearable` documents "absent means no -- never 'probably
+/// yes'", and round 5 pointed out that every test set the field, so the
+/// sentence was ungated. A row from a build before the field existed, or a
+/// group with no topology row behind it, lands here.
+#[test]
+fn a_failure_with_no_verdict_attached_is_not_offered() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+        group.extra.remove("operationFailureClearable");
+    }
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+        worktree.extra.remove("operationFailureClearable");
+    }
+    // A failure, and nothing saying whether the clear can reach it.
+    snapshot
+        .worktrees
+        .last_mut()
+        .expect("a worktree row")
+        .extra
+        .insert("operationFailure".into(), json!("worktree remove failed"));
+
+    assert!(
+        !dashboard_has_clearable_failures(&snapshot),
+        "nothing here knows the key would work, so it must not be offered"
+    );
+}
+
+/// A failed CREATE is red and is not clearable, and the key must not pretend.
+///
+/// This is the same bug from the other side, and the adversarial review of PR
+/// 406 found it: a failed create writes `status: "error"` and an
+/// `operationFailure` onto a row whose checkout was never made
+/// (`lifecycle/worktrees.rs:397`), and `clear_worktree_row_failure` refuses to
+/// touch a row with no checkout on purpose -- `clearing_failures_leaves_a_failed_create_alone`
+/// in `project_service_lifecycle.rs` pins that refusal.
+///
+/// So once the ledger entry has aged off, a predicate counting every row
+/// failure would show `X clear failures` and send a request that clears
+/// nothing. The row stays red, the hint stays up, and the key does nothing for
+/// as long as the row exists. Shortening the window from two hours to fifteen
+/// minutes made that the likely state rather than the rare one.
+#[test]
+fn a_failed_create_is_not_something_x_can_clear() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+    }
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+    }
+    let group = snapshot
+        .worktree_groups
+        .iter_mut()
+        .find(|group| group.path.is_some())
+        .expect("a worktree group");
+    group.operation_failure = Some(operation_failure(
+        "failure-create",
+        Some("create"),
+        Some("worktree create failed"),
+    ));
+    // The service's own verdict, derived with the route's own rule.
+    group
+        .extra
+        .insert("operationFailureClearable".into(), json!(false));
+
+    assert!(
+        !dashboard_has_clearable_failures(&snapshot),
+        "a failed create is red but unreachable, so there is nothing to offer"
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    assert!(
+        matches!(
+            controller.handle_key(&snapshot, DashboardKey::ClearFailures),
+            DashboardControllerEffect::Ignored
+        ),
+        "X must not send a request the route will refuse"
+    );
+}
+
+/// And the row-shaped version of the same thing, since the dashboard reads the
+/// rows as well as the groups.
+#[test]
+fn a_failed_create_row_is_not_something_x_can_clear() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+    }
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+    }
+    let worktree = snapshot.worktrees.last_mut().expect("a worktree row");
+    worktree
+        .extra
+        .insert("operationFailure".into(), json!("worktree create failed"));
+    worktree
+        .extra
+        .insert("operationFailureClearable".into(), json!(false));
+
+    assert!(
+        !dashboard_has_clearable_failures(&snapshot),
+        "the row says its checkout is gone, so the clear cannot reach it either"
+    );
+}
+
+/// And with nothing red anywhere, it stays a no-op.
+///
+/// The inverse, because "always send the request" would also pass the test
+/// above while turning every stray `X` into a round trip.
+#[test]
+fn a_dashboard_with_nothing_failed_has_nothing_to_clear() {
+    let mut snapshot = snapshot();
+    snapshot.operation_failures.clear();
+    for group in &mut snapshot.worktree_groups {
+        group.operation_failure = None;
+    }
+    for worktree in &mut snapshot.worktrees {
+        worktree.extra.remove("operationFailure");
+    }
+
+    assert!(!dashboard_has_clearable_failures(&snapshot));
+
+    let mut controller = DashboardController::new(&snapshot);
+    assert!(
+        matches!(
+            controller.handle_key(&snapshot, DashboardKey::ClearFailures),
+            DashboardControllerEffect::Ignored
+        ),
+        "nothing failed, so X asks the service for nothing"
     );
 }

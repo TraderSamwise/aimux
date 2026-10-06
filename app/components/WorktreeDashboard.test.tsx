@@ -27,6 +27,10 @@ vi.mock("@/components/agent-create-panel", () => ({
   AgentCreatePanel: () => React.createElement("AgentCreatePanel"),
 }));
 
+vi.mock("@/components/operation-failure-card", () => ({
+  OperationFailureCard: () => React.createElement("OperationFailureCard"),
+}));
+
 vi.mock("@/components/PageLayout", () => ({
   PageStateCard: () => React.createElement("PageStateCard"),
 }));

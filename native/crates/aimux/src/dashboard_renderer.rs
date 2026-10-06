@@ -3,7 +3,7 @@ mod footer;
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
     DashboardService, DashboardSession, DesktopStateSnapshot, ServiceStatus, SessionStatus,
-    is_dashboard_overseer_session, is_dashboard_scribe_session,
+    dashboard_has_clearable_failures, is_dashboard_overseer_session, is_dashboard_scribe_session,
     is_dashboard_supervisor_plane_session,
 };
 use crate::dashboard_navigation::{
@@ -470,7 +470,7 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
         },
         tone: None,
     }];
-    if !input.snapshot.operation_failures.is_empty() {
+    if dashboard_has_clearable_failures(input.snapshot) {
         visibility.push(FooterHint {
             key: "X",
             label: "clear failures",

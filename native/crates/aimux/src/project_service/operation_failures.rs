@@ -12,7 +12,21 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::router::ProjectServiceRequestContext;
 
 const MAX_FAILURES: usize = 100;
-const ACTIVE_FAILURE_MAX_AGE_MS: u128 = 2 * 60 * 60 * 1000;
+/// A read-time filter, not a prune -- the record stays on disk. Not shorter
+/// than this because an agent launch failure has no second home: a worktree's
+/// rides its topology row unexpiring, this banner is the only place for others.
+const ACTIVE_FAILURE_MAX_AGE_MS: u128 = 15 * 60 * 1000;
+
+/// The edge, here rather than in a test, so a release build cannot widen it.
+///
+/// It bounds a record that CARRIES A TIMESTAMP, which is all this constant
+/// governs: a record with no parseable `createdAt` is of unknown age and stays
+/// up deliberately, which `a_failure_of_unknown_age_is_not_aged_off_by_guesswork`
+/// pins.
+const _: () = assert!(
+    ACTIVE_FAILURE_MAX_AGE_MS <= 30 * 60 * 1000,
+    "a timestamped failed operation must not keep showing for more than thirty minutes"
+);
 static FAILURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

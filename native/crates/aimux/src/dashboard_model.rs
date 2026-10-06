@@ -1732,6 +1732,69 @@ fn worktree_key(path: Option<&str>) -> String {
     path.unwrap_or("__main__").to_owned()
 }
 
+/// Whether `X` has anything to dismiss.
+///
+/// Not "is the ledger empty". A worktree failure has a SECOND home with no
+/// expiry of its own: `mark_worktree_remove_error` stamps `status: "error"` and
+/// an `operationFailure` onto the topology row, and only the clear route takes
+/// it off again. The controller used to refuse to send that request whenever
+/// the ledger was empty, and the footer hint keyed on the same emptiness -- so
+/// once the ledger entry aged out, the row stayed red with no key that would
+/// clear it and no hint that one existed.
+///
+/// That is the bug the clear route's own comment says was already fixed once:
+/// "that worktree could never be graveyarded from the TUI". It was fixed in the
+/// route, which does reach both homes, and left in the two callers that decide
+/// whether to call it.
+/// Only a failure the clear can actually REACH counts.
+///
+/// A failed create wears the same two marks as a failed remove -- `status:
+/// "error"` and an `operationFailure` -- on a row whose checkout was never
+/// made, and the route refuses to clear those on purpose: the dashboard would
+/// offer actions against a path that is not there, and
+/// `existing_worktree_create_conflicts` treats such a row as retryable, so
+/// clearing it would start refusing the retry as "already exists".
+///
+/// So counting every row failure here would hand back the same bug from the
+/// other side: a hint saying `X clear failures` and a key that sends a request
+/// clearing nothing, forever, with the row still red.
+///
+/// This reads `operationFailureClearable`, which the service derives with the
+/// route's OWN rule. The obvious shortcut -- `!pathMissing` -- was wrong in a
+/// way worth recording: `pathMissing` is `NotFound` only, deliberately, since a
+/// path that cannot be stat'd for another reason is unknown rather than absent,
+/// while the route's check is false on ANY stat error. A failed row on an
+/// unreadable mount therefore had no `pathMissing`, the hint appeared, and the
+/// route refused the request -- the exact lie this term exists to prevent. And
+/// `pathMissing` is never set on the main checkout at all, so for that row the
+/// shortcut was a constant `true`.
+pub fn dashboard_has_clearable_failures(snapshot: &DesktopStateSnapshot) -> bool {
+    !snapshot.operation_failures.is_empty()
+        || snapshot
+            .worktree_groups
+            .iter()
+            .any(|group| group.operation_failure.is_some() && row_failure_is_clearable(&group.extra))
+        // The row keeps both in `extra`: `DesktopWorktree` has no typed field
+        // for either, and the service writes them onto the row anyway.
+        || snapshot.worktrees.iter().any(|worktree| {
+            worktree
+                .extra
+                .get("operationFailure")
+                .is_some_and(|failure| !failure.is_null())
+                && row_failure_is_clearable(&worktree.extra)
+        })
+}
+
+/// The service's verdict, and absent means no -- never "probably yes".
+///
+/// A row carrying a failure always gets the field. One that does not have it is
+/// either from a build before this existed or from a group with no topology row
+/// behind it, and in both cases the honest answer is that nothing here knows
+/// the key would work.
+fn row_failure_is_clearable(extra: &BTreeMap<String, Value>) -> bool {
+    extra.get("operationFailureClearable") == Some(&Value::Bool(true))
+}
+
 fn should_keep_operational_worktree(group: &WorktreeGroup) -> bool {
     group.pending
         || group.removing

@@ -2,13 +2,13 @@ use aimux::dashboard_controller::DashboardScreen;
 use aimux::dashboard_model::{
     DashboardOperationFailure, DashboardSessionEvent, DashboardSessionLoopLastAction,
     DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus, SessionTeamMetadata,
-    WorktreeGroup, WorktreeStatus,
+    WorktreeGroup, WorktreeStatus, dashboard_has_clearable_failures,
 };
 use aimux::dashboard_pending_actions::DashboardPendingActions;
 use aimux::dashboard_renderer::{
     DashboardFooterAlert, DashboardFooterNoteView, DashboardNavLevel, DashboardNoteKind,
-    DashboardRenderInput, DashboardSubscreenRenderInput, render_dashboard_frame,
-    render_dashboard_subscreen_frame,
+    DashboardRenderInput, DashboardSubscreenRenderInput, render_dashboard_footer_hints_contract,
+    render_dashboard_frame, render_dashboard_subscreen_frame,
 };
 use aimux::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
@@ -2269,6 +2269,127 @@ fn renders_typed_operation_failures_in_banner_and_worktree_details() {
     assert!(plain.contains("Operation: remove"));
     assert!(plain.contains("Error: branch is busy"));
     assert!(plain.contains("Failed: just now"));
+}
+
+/// The three readers of "is there anything to clear" have to agree.
+///
+/// There are three: the `X` gate in the controller, the hint row the dashboard
+/// actually draws, and `footer.rs`, which is the published contract's mirror of
+/// that row. PR 406 moved the first two onto a shared predicate and left the
+/// third on `operation_failures.is_empty()`, so the contract and the thing it
+/// is a contract for disagreed in exactly the state the move was about -- a
+/// worktree row still red with its ledger entry gone. None of the contract's
+/// six cases carries a row failure, so nothing failed.
+///
+/// This compares the surfaces against each other rather than asserting each
+/// one's answer separately, which is what lets a per-surface test pass happily
+/// while the surfaces disagree.
+#[test]
+fn every_surface_agrees_whether_there_is_anything_to_clear() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+
+    for (label, ledger, row_failure, path_missing, expected) in [
+        ("a ledger entry", true, false, false, true),
+        (
+            "a red row with its ledger entry gone",
+            false,
+            true,
+            false,
+            true,
+        ),
+        (
+            "a failed create, which the route refuses",
+            false,
+            true,
+            true,
+            false,
+        ),
+        ("nothing failed", false, false, false, false),
+    ] {
+        let mut snapshot = fixture.runtime_full.clone();
+        snapshot.operation_failures.clear();
+        for group in &mut snapshot.worktree_groups {
+            group.operation_failure = None;
+            group.extra.remove("operationFailureClearable");
+        }
+        for worktree in &mut snapshot.worktrees {
+            worktree.extra.remove("operationFailure");
+            worktree.extra.remove("operationFailureClearable");
+        }
+        if ledger {
+            snapshot.operation_failures.push(
+                serde_json::from_value(json!({
+                    "id": "failure-1",
+                    "operation": "remove",
+                    "title": "Failed to remove worktree",
+                    "createdAt": "2999-01-01T00:00:00.000Z",
+                }))
+                .expect("a failure record"),
+            );
+        }
+        if row_failure {
+            let group = snapshot
+                .worktree_groups
+                .iter_mut()
+                .find(|group| group.path.is_some())
+                .expect("a worktree group");
+            group.operation_failure = Some(
+                serde_json::from_value(json!({
+                    "id": "failure-row",
+                    "operation": "remove",
+                    "title": "Failed to remove worktree",
+                    "createdAt": "2999-01-01T00:00:00.000Z",
+                }))
+                .expect("a failure record"),
+            );
+            group
+                .extra
+                .insert("operationFailureClearable".into(), json!(!path_missing));
+        }
+
+        let gate = dashboard_has_clearable_failures(&snapshot);
+        let input = clearable_failure_render_input(&snapshot);
+        let drawn = strip_ansi(&render_dashboard_frame(&input).frame).contains("clear failures");
+        let contract = render_dashboard_footer_hints_contract(&input, "output")
+            .to_string()
+            .contains("clear failures");
+
+        assert_eq!(
+            (gate, drawn, contract),
+            (expected, expected, expected),
+            "with {label} the X gate, the drawn hint row and the contract mirror \
+             disagree: gate={gate}, drawn={drawn}, contract={contract}"
+        );
+    }
+}
+
+fn clearable_failure_render_input<'a>(
+    snapshot: &'a aimux::dashboard_model::DesktopStateSnapshot,
+) -> DashboardRenderInput<'a> {
+    DashboardRenderInput {
+        snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 160,
+        rows: 48,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    }
 }
 
 #[test]

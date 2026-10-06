@@ -4,8 +4,9 @@ use crate::dashboard_actions::{
 use crate::dashboard_create::{DashboardCreateBlocked, DashboardCreatePlan};
 use crate::dashboard_launch_options::DashboardLaunchOptionsState;
 use crate::dashboard_model::{
-    DashboardSession, DesktopStateSnapshot, SessionStatus, is_dashboard_overseer_session,
-    is_dashboard_scribe_session, is_dashboard_supervisor_plane_session,
+    DashboardSession, DesktopStateSnapshot, SessionStatus, dashboard_has_clearable_failures,
+    is_dashboard_overseer_session, is_dashboard_scribe_session,
+    is_dashboard_supervisor_plane_session,
 };
 use crate::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationGroupKind, DashboardNavigationOutcome,
@@ -3092,7 +3093,7 @@ impl DashboardController {
         // One key dismisses the whole error surface. The alert line and the
         // failure card are two renderings of the same thing, so clearing one
         // without the other would leave the user chasing the remainder.
-        if snapshot.operation_failures.is_empty() {
+        if !dashboard_has_clearable_failures(snapshot) {
             // Nothing to ask the service for, so the alert is the whole job.
             return if self.footer_alert.take().is_some() {
                 DashboardControllerEffect::Render
