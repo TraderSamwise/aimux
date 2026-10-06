@@ -1311,13 +1311,13 @@ fn the_async_route_gives_the_dashboard_the_same_clearable_verdict() {
                     .and_then(Value::as_bool),
             )
         })
-        .collect::<Vec<_>>();
+        .collect::<BTreeMap<_, _>>();
     assert_eq!(
         verdicts,
-        vec![
+        BTreeMap::from([
             ("present".to_owned(), Some(true)),
             ("absent".to_owned(), Some(false)),
-        ],
+        ]),
         "the route the dashboard calls must answer what the sync builder answers"
     );
     cleanup(project);
@@ -1383,17 +1383,22 @@ fn a_failed_row_and_its_group_agree_on_whether_the_key_will_work() {
                         .and_then(Value::as_bool),
                 )
             })
-            .collect::<Vec<_>>()
+            .collect::<BTreeMap<_, _>>()
     };
 
+    // Keyed by name, not a list. An earlier version compared ordered vectors
+    // and passed on macOS while failing on Linux: both fixture rows carry the
+    // same `createdAt`, so `sort_worktrees` has nothing to order them by and
+    // the sequence is not the fixture's. The claim is per worktree, and a map
+    // says that; a list also asserted an order nobody promised.
     let rows = verdict_by_name("worktrees");
     let groups = verdict_by_name("worktreeGroups");
     assert_eq!(
         rows,
-        vec![
+        BTreeMap::from([
             ("present".to_owned(), Some(true)),
             ("absent".to_owned(), Some(false)),
-        ],
+        ]),
         "a failure on a checkout that is there is reachable; one on a checkout \
          that was never made is not"
     );
@@ -1474,24 +1479,26 @@ fn a_failure_under_an_unreadable_parent_is_not_advertised_as_clearable() {
         .map(|row| {
             (
                 row["name"].as_str().unwrap_or_default().to_owned(),
-                row.get("pathMissing").and_then(Value::as_bool),
-                row.get("operationFailureClearable")
-                    .and_then(Value::as_bool),
+                (
+                    row.get("pathMissing").and_then(Value::as_bool),
+                    row.get("operationFailureClearable")
+                        .and_then(Value::as_bool),
+                ),
             )
         })
-        .collect::<Vec<_>>();
+        .collect::<BTreeMap<_, _>>();
 
     // Restore before asserting, so a failure does not leave an undeletable dir.
     let _ = std::fs::set_permissions(&locked_parent, std::fs::Permissions::from_mode(0o755));
 
     assert_eq!(
         verdicts,
-        vec![
-            ("present".to_owned(), None, Some(true)),
+        BTreeMap::from([
+            ("present".to_owned(), (None, Some(true))),
             // Not `pathMissing` -- it is not absent, it is unknown -- and NOT
             // clearable, because the route cannot reach it either.
-            ("hidden".to_owned(), None, Some(false)),
-        ],
+            ("hidden".to_owned(), (None, Some(false))),
+        ]),
         "the row the route cannot reach must not be advertised as clearable"
     );
     cleanup(project);

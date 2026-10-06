@@ -629,7 +629,12 @@ fn coerce_worktree(value: &Value, index: usize) -> Result<Value, String> {
             &format!("worktrees[{index}].updatedAt"),
         )?,
         optional("removedAt", row.get("removedAt")),
-        optional("operationFailure", row.get("operationFailure")),
+        // Whatever the failure record is, not only a string. `optional` keeps
+        // strings and silently drops everything else, so a structured record --
+        // the same one the ledger holds, carrying the operation and an age --
+        // was discarded here without a word, leaving the row with nothing and
+        // the dashboard with no explanation for a red worktree.
+        optional_value("operationFailure", row.get("operationFailure")),
     ]))
 }
 

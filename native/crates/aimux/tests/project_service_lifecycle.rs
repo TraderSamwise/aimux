@@ -8,7 +8,8 @@ use aimux::project_service::lifecycle::{
     route_lifecycle_request_with_runtime,
 };
 use aimux::project_service::operation_failures::{
-    dashboard_operation_failures_path, list_dashboard_operation_failures,
+    OperationFailureInput, add_dashboard_operation_failure, dashboard_operation_failures_path,
+    list_dashboard_operation_failures, normalize_dashboard_operation_failure_record,
 };
 use aimux::project_service::process::{ProjectServiceStartup, run_project_service_startup_tasks};
 use aimux::project_service::prompt_context::{get_prompt_context_text, set_prompt_context};
@@ -4031,15 +4032,22 @@ fn worktree_create_failure_persists_error_topology_entry() {
     assert_eq!(runtime.worktrees_created.len(), 1);
     let topology = read_topology(&state_dir);
     assert_eq!(topology["worktrees"][0]["status"], "error");
-    assert_eq!(
-        topology["worktrees"][0]["operationFailure"],
-        "fatal: branch failed"
-    );
     let failures = list_dashboard_operation_failures(&state_dir);
     assert_eq!(failures.len(), 1);
     assert_eq!(failures[0]["targetKind"], "worktree");
     assert_eq!(failures[0]["operation"], "create");
     assert_eq!(failures[0]["message"], "fatal: branch failed");
+    // The ROW carries the same record, not a bare error string. It used to
+    // carry the string, which `normalize_dashboard_operation_failure_record`
+    // turns into `operation: "legacy"` with no `createdAt` -- so `x` on the row
+    // posted a clear for operation "legacy" while the ledger held "create", the
+    // match found nothing, and the detail panel read `Operation: legacy` with
+    // no age as the only surviving explanation of a red row.
+    assert_eq!(
+        topology["worktrees"][0]["operationFailure"], failures[0],
+        "the row and the ledger must carry the same record, or no key can clear \
+         both"
+    );
     cleanup(project);
 }
 
@@ -4592,6 +4600,103 @@ fn a_refusal_the_user_can_fix_answers_with_a_conflict() {
             response.body
         );
     }
+    cleanup(project);
+}
+
+/// One `x` on a red row clears BOTH renderings of that failure.
+///
+/// Round 6 of PR 406's review walked the journey and found the lie. A failed
+/// removal writes two things: a ledger entry with `operation: "remove"`, and a
+/// marker on the worktree row. The row used to get the bare error string,
+/// which `normalize_dashboard_operation_failure_record` turns into
+/// `operation: "legacy"` -- so the dashboard's per-row dismiss posted a clear
+/// for operation "legacy", `failure_matches` rejected the ledger entry, and the
+/// footer said "Dismissed failure for <name>" while the card and the
+/// `X clear failures` hint stayed on screen. `dashboard_controller.rs` says in
+/// as many words that "clearing one without the other would leave the user
+/// chasing the remainder".
+///
+/// This drives the clear with the operation the ROW carries, which is what the
+/// dashboard reads off the row and sends.
+#[test]
+fn dismissing_a_red_row_clears_the_ledger_entry_behind_it_too() {
+    let project = temp_project("worktree-row-and-ledger");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    // The checkout really is on disk, which is what makes this the stuck case:
+    // `clear_worktree_row_failure` refuses a row with no checkout behind it, and
+    // `include_agent` is about sessions rather than the filesystem.
+    std::fs::create_dir_all(&worktree).expect("the checkout");
+    write_active_worktree_topology(&state_dir, &worktree, false);
+    let worktree_path = worktree.to_string_lossy().into_owned();
+
+    // What the route writes when a removal fails: the ledger entry, and the
+    // same record on the row.
+    let recorded = add_dashboard_operation_failure(
+        &state_dir,
+        OperationFailureInput {
+            target_kind: "worktree".into(),
+            operation: "remove".into(),
+            title: "Failed to remove worktree wt".into(),
+            message: "the checkout could not be unmade".into(),
+            target_id: None,
+            worktree_path: Some(worktree_path.clone()),
+            worktree_name: Some("wt".into()),
+            created_at: None,
+        },
+    );
+    let topology_path = runtime_topology_path(&state_dir);
+    let mut topology = read_topology(&state_dir);
+    topology["worktrees"][0]["status"] = json!("error");
+    topology["worktrees"][0]["operationFailure"] = recorded.clone();
+    write_runtime_topology(topology_path, &topology).unwrap();
+
+    // Read off the ROW, the way the dashboard does -- through the same
+    // normalizer `insert_operation_failure_value` uses, so a bare string here
+    // becomes `operation: "legacy"` exactly as it does on screen.
+    //
+    // The first version of this test read the operation off the LEDGER record
+    // instead, which is the variable it already had in hand. That made it pass
+    // with the row holding a bare string: the thing under test was never
+    // consulted. Sixth time on this branch that a gate measured one step short
+    // of its claim, and the first time I did it while writing the gate for the
+    // fifth.
+    let stored = read_topology(&state_dir);
+    let row_failure = normalize_dashboard_operation_failure_record(
+        "legacy-worktree-operation-failure".to_owned(),
+        "invalid-worktree-operation-failure".to_owned(),
+        &stored["worktrees"][0]["operationFailure"],
+    );
+    let operation = row_failure["operation"].as_str().expect("an operation");
+    assert_eq!(
+        operation, "remove",
+        "the row has to name the real operation, or no match can find the ledger entry"
+    );
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::OPERATION_FAILURES_CLEAR,
+        Some(&json!({
+            "targetKind": "worktree",
+            "operation": operation,
+            "worktreePath": worktree_path,
+        })),
+    );
+    assert_eq!(response.status, 200, "{:?}", response.body);
+
+    let after = read_topology(&state_dir);
+    assert!(
+        after["worktrees"][0]["operationFailure"].is_null(),
+        "the row's marker is gone"
+    );
+    assert_eq!(after["worktrees"][0]["status"], "active");
+    assert!(
+        list_dashboard_operation_failures(&state_dir).is_empty(),
+        "and so is the card, which is the half that used to survive and leave the \
+         hint up with nothing to clear"
+    );
     cleanup(project);
 }
 
