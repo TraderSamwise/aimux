@@ -38,6 +38,18 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 
+/// A distinct `createdAt` per row, because a real one has that.
+///
+/// Every row used to carry the same timestamp here, which collapsed
+/// `sort_worktrees` to one presorted run and hid the cost of its comparator
+/// entirely -- the gate below reported 7.00 calls per worktree against a
+/// comparator making two `canonicalize` per comparison. `worktree_to_topology_worktree`
+/// stamps `now` on each row, so distinct is the realistic case and uniform was
+/// the fixture flattering the code.
+fn stamp(index: usize) -> String {
+    format!("1970-01-01T00:{:02}:{:02}.000Z", index / 60, index % 60)
+}
+
 fn topology(root: &str, worktrees: usize, agents: usize) -> Value {
     let now = "1970-01-01T00:00:00.000Z";
     let mut wts = vec![json!({
@@ -52,7 +64,7 @@ fn topology(root: &str, worktrees: usize, agents: usize) -> Value {
             "id": format!("wt{w}"), "rigId": "rig", "name": format!("w{w}"),
             "path": format!("{root}/.aimux/worktrees/w{w}"),
             "branch": format!("b{w}"), "status": "active",
-            "createdAt": now, "updatedAt": now,
+            "createdAt": stamp(w + 1), "updatedAt": now,
         }));
     }
     for a in 0..agents {
@@ -145,18 +157,24 @@ fn a_build_asks_the_operating_system_about_paths_not_about_pairings() {
     );
 
     // Per EXTRA WORKTREE, holding the agents still. This is the tight one, and
-    // deliberately so. Measured at exactly 7.00 on 2026-10-06, and a loop that
-    // re-canonicalises the project root once per row adds exactly 1.00 -- so
-    // the bound is 8.00, excluded. One whole call of headroom is narrow on
+    // deliberately so. Measured at exactly 6.00 on 2026-10-06, and anything
+    // that asks the filesystem one more time per row -- an identity derived
+    // inside a loop, a comparator that canonicalises -- adds at least 1.00, so
+    // the bound is 7.00, excluded. One whole call of headroom is narrow on
     // purpose: the count is a syscall tally, not a duration, so it is identical
     // on every machine and every run, and a bound set loose enough to absorb
     // churn is a bound that absorbs the regression too. If a deliberate change
     // moves it, move this number and say why in the commit.
+    //
+    // It has already earned its narrowness once: a comparator keyed on identity
+    // took this to 21.75 and the bound caught it, but only after the fixture
+    // above was given distinct timestamps. A gate is only as honest as the
+    // fixture it runs on.
     let per_extra_worktree =
         (more_worktrees.canonicalize_calls - base.canonicalize_calls) as f64 / 40.0;
     println!("per extra worktree: {per_extra_worktree:.2}");
     assert!(
-        per_extra_worktree < 8.0,
+        per_extra_worktree < 7.0,
         "{per_extra_worktree:.2} canonicalize calls per extra worktree is more \
          than a build needs; the usual cause is a path identity derived inside \
          a loop rather than once above it"

@@ -1309,6 +1309,185 @@ fn every_surface_agrees_which_row_is_the_main_checkout() {
     cleanup(project);
 }
 
+/// A repository on a branch named distinctly enough to be unmistakable.
+///
+/// `trunk` rather than `master` so an assertion cannot pass on a default: a
+/// reader that failed to ask git would produce `""`, and one that read the
+/// wrong repository would produce something else.
+fn init_git_repo(root: &std::path::Path) {
+    for args in [
+        vec!["init", "-b", "trunk"],
+        vec!["config", "user.email", "test@example.com"],
+        vec!["config", "user.name", "Test"],
+    ] {
+        let status = std::process::Command::new("git")
+            .args(&args)
+            .current_dir(root)
+            .output()
+            .expect("git runs");
+        assert!(
+            status.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+    }
+}
+
+/// A row with no `path` key is the project root, to every reader of it.
+///
+/// `desktop_worktree_item` defaulted a missing path to `project_root` and so
+/// did the predicate deciding whether to spend a `git branch --show-current`,
+/// while the main-checkout predicate read the field raw and called such a row
+/// "not the main checkout". So the subprocess was spawned and its answer thrown
+/// away: `worktrees[0].branch` came out empty while the group and
+/// `mainCheckoutInfo` beside it, in the same payload, both named the branch.
+///
+/// Built from a raw topology rather than through `coerce_runtime_topology`,
+/// which refuses a row with no path -- so this state cannot come from our own
+/// writer, only from a hand-edited, legacy or half-written `topology.json`.
+/// That is what makes it worth pinning rather than worth ignoring: the service
+/// reads files it did not write, and the defect is the asymmetry itself -- the
+/// predicate that decides to spend a subprocess and the consumer that uses its
+/// answer reading one field by two rules.
+#[test]
+fn a_worktree_row_with_no_path_is_the_main_checkout_everywhere() {
+    let project = temp_project("main-checkout-pathless");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    let root_path = root.to_string_lossy().into_owned();
+    // A real repository, because the row deliberately carries NO branch: that
+    // is what makes the pathless row's verdict observable. With a branch on the
+    // row every reader agrees however it decides, and the asymmetry costs only
+    // a wasted subprocess -- which is the version of this test that passed
+    // under mutation and therefore proved nothing.
+    init_git_repo(&root);
+    let topology = json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [],
+        "edges": [],
+        "bindings": [],
+        "sessions": [],
+        "services": [],
+        // No `path` AND no branch: the row cannot answer, so whoever decides
+        // it is the main checkout decides whether git gets asked for it.
+        "worktrees": [
+            { "id": "main", "rigId": "rig-1", "name": "Main Checkout", "status": "active", "branch": "", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    });
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path.clone(),
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &[])),
+    );
+
+    let rows = state["worktrees"].as_array().expect("worktree rows");
+    let main_group = state["worktreeGroups"]
+        .as_array()
+        .expect("worktree groups")
+        .iter()
+        .find(|group| group["name"] == "Main Checkout")
+        .expect("a main checkout group");
+
+    assert_eq!(
+        rows.len(),
+        1,
+        "the pathless row IS the root row, so no second one is synthesised: {rows:#?}"
+    );
+    assert_eq!(
+        rows[0]["branch"], "trunk",
+        "the row is the main checkout, so it takes the branch git named: {rows:#?}"
+    );
+    assert_eq!(
+        main_group["branch"], rows[0]["branch"],
+        "the group reads the same row"
+    );
+    assert_eq!(
+        state["mainCheckoutInfo"]["branch"], rows[0]["branch"],
+        "and so does mainCheckoutInfo: {:#?}",
+        state["mainCheckoutInfo"]
+    );
+    cleanup(project);
+}
+
+/// When git cannot answer, both lanes say so rather than one saying nothing.
+///
+/// The async lane attached `branchUnavailable` with git's own stderr; the sync
+/// lane -- which is what the statusline reads -- hardcoded `error: None` and
+/// attached nothing, so the same failure was "could not ask, here is why" on
+/// one surface and a blank branch on the other. The project root here is a real
+/// directory and deliberately NOT a git repository, which is the ordinary way
+/// this happens.
+#[test]
+fn a_branch_git_cannot_give_is_reported_as_a_failure_not_a_blank() {
+    let project = temp_project("main-checkout-not-a-repo");
+    let root = project.join("not-a-repo");
+    create_dir_all(&root).expect("directory");
+    let root_path = root.to_string_lossy().into_owned();
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [],
+        "edges": [],
+        "bindings": [],
+        "sessions": [],
+        "services": [],
+        // An empty branch is the one case that has to ask git, and git cannot
+        // answer for a directory that is not a repository.
+        "worktrees": [
+            { "id": "main", "rigId": "rig-1", "path": root_path, "name": "Main Checkout", "status": "active", "branch": "", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path.clone(),
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &[])),
+    );
+
+    let info = &state["mainCheckoutInfo"];
+    assert_eq!(info["branch"], "", "git could not name a branch");
+    assert_eq!(
+        info["branchUnavailable"]["ok"],
+        json!(false),
+        "and the sync lane has to say it could not ask, not just leave a blank: {info:#?}"
+    );
+    let error = info["branchUnavailable"]["error"]
+        .as_str()
+        .expect("an error naming what went wrong");
+    assert!(
+        error.contains("not a git repository"),
+        "the reason has to be git's own, not a substitute: {error}"
+    );
+    cleanup(project);
+}
+
 #[test]
 fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashboard_clients() {
     let project = temp_project("legacy-worktree-operation-failure");

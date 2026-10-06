@@ -467,14 +467,11 @@ pub fn build_desktop_state_with_live_window_projection(
     state.insert("agentRestoreOffer".into(), Value::Null);
     state.insert(
         "mainCheckoutInfo".into(),
-        json!({
-            "name": "Main Checkout",
-            "branch": main_checkout_branch(
-                &input.project_root,
-                state.get("worktrees"),
-                main_branch_probe.as_ref(),
-            ),
-        }),
+        main_checkout_info(
+            &input.project_root,
+            state.get("worktrees"),
+            main_branch_probe.as_ref(),
+        ),
     );
     state.insert(
         "mainCheckoutPath".into(),
@@ -570,23 +567,14 @@ async fn build_desktop_state_with_live_window_projection_async(
     state.insert("operationFailures".into(), Value::Array(Vec::new()));
     state.insert("controlPlaneWarnings".into(), Value::Array(Vec::new()));
     state.insert("agentRestoreOffer".into(), Value::Null);
-    let mut main_checkout_info = json!({
-        "name": "Main Checkout",
-        "branch": main_checkout_branch(
+    state.insert(
+        "mainCheckoutInfo".into(),
+        main_checkout_info(
             &input.project_root,
             state.get("worktrees"),
             worktree_projection.main_branch_probe.as_ref(),
         ),
-    });
-    if let Some(error) = worktree_projection.main_branch_error
-        && let Value::Object(map) = &mut main_checkout_info
-    {
-        map.insert(
-            "branchUnavailable".into(),
-            json!({ "ok": false, "error": error }),
-        );
-    }
-    state.insert("mainCheckoutInfo".into(), main_checkout_info);
+    );
     state.insert(
         "mainCheckoutPath".into(),
         Value::String(input.project_root.clone()),
@@ -795,7 +783,7 @@ fn desktop_worktrees(
                 &missing,
                 &worktree,
                 &worktree_branch_or_current_from_probe(
-                    worktree_row_is_main_checkout(&worktree, &root_identity),
+                    worktree_row_is_main_checkout(&worktree, project_root, &root_identity),
                     string_field(&worktree, "branch"),
                     main_branch_probe,
                 ),
@@ -804,7 +792,7 @@ fn desktop_worktrees(
         .collect::<Vec<_>>();
     if !worktrees
         .iter()
-        .any(|worktree| worktree_row_is_main_checkout(worktree, &root_identity))
+        .any(|worktree| worktree_row_is_main_checkout(worktree, project_root, &root_identity))
     {
         worktrees.insert(
             0,
@@ -816,13 +804,12 @@ fn desktop_worktrees(
             }),
         );
     }
-    sort_worktrees(&mut worktrees, &root_identity);
+    sort_worktrees(&mut worktrees, project_root, &root_identity);
     worktrees
 }
 
 struct DesktopWorktreeProjection {
     worktrees: Vec<Value>,
-    main_branch_error: Option<String>,
     main_branch_probe: Option<GitBranchProbe>,
 }
 
@@ -878,7 +865,7 @@ async fn desktop_worktrees_async(
                 &missing,
                 &worktree,
                 &worktree_branch_or_current_from_probe(
-                    worktree_row_is_main_checkout(&worktree, &root_identity),
+                    worktree_row_is_main_checkout(&worktree, project_root, &root_identity),
                     string_field(&worktree, "branch"),
                     main_branch_probe.as_ref(),
                 ),
@@ -887,7 +874,7 @@ async fn desktop_worktrees_async(
         .collect::<Vec<_>>();
     if !worktrees
         .iter()
-        .any(|worktree| worktree_row_is_main_checkout(worktree, &root_identity))
+        .any(|worktree| worktree_row_is_main_checkout(worktree, project_root, &root_identity))
     {
         worktrees.insert(
             0,
@@ -899,12 +886,9 @@ async fn desktop_worktrees_async(
             }),
         );
     }
-    sort_worktrees(&mut worktrees, &root_identity);
+    sort_worktrees(&mut worktrees, project_root, &root_identity);
     DesktopWorktreeProjection {
         worktrees,
-        main_branch_error: main_branch_probe
-            .as_ref()
-            .and_then(|probe| probe.error.clone()),
         main_branch_probe,
     }
 }
@@ -1255,12 +1239,11 @@ fn main_branch_probe_needed(
     root_identity: &str,
 ) -> bool {
     topology_worktrees.iter().any(|worktree| {
-        let path = string_field(worktree, "path").unwrap_or(project_root);
-        is_worktree_path(path, root_identity)
+        worktree_row_is_main_checkout(worktree, project_root, root_identity)
             && string_field(worktree, "branch").is_none_or(|branch| branch.trim().is_empty())
     }) || !topology_worktrees
         .iter()
-        .any(|worktree| worktree_row_is_main_checkout(worktree, root_identity))
+        .any(|worktree| worktree_row_is_main_checkout(worktree, project_root, root_identity))
 }
 
 /// The main checkout's branch, asked of git at most once per build.
@@ -1277,12 +1260,8 @@ fn main_branch_probe_for_topology(project_root: &str, topology: &Value) -> Optio
     let topology_worktrees =
         list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
     let root_identity = worktree_path_identity(project_root);
-    main_branch_probe_needed(project_root, &topology_worktrees, &root_identity).then(|| {
-        GitBranchProbe {
-            branch: current_git_branch(project_root),
-            error: None,
-        }
-    })
+    main_branch_probe_needed(project_root, &topology_worktrees, &root_identity)
+        .then(|| current_git_branch_probe(project_root))
 }
 
 fn build_worktree_groups(
@@ -1781,14 +1760,32 @@ fn is_notification_stale(live_label: &str, has_unread_needs_input: bool) -> bool
         )
 }
 
-fn sort_worktrees(worktrees: &mut [Value], root_identity: &str) {
-    worktrees.sort_by(|left, right| {
-        let left_main = worktree_row_is_main_checkout(left, root_identity);
-        let right_main = worktree_row_is_main_checkout(right, root_identity);
+/// Main checkout first, then newest.
+///
+/// The verdict is resolved once per ROW and carried into the sort, not asked
+/// inside the comparator. Keying on identity rather than spelling fixed a real
+/// defect but moved a `canonicalize` into a comparison, and a sort makes
+/// O(n log n) of those: at 40 worktrees the build went from 734 calls to 1,361,
+/// on the branch whose entire subject is not asking the filesystem the same
+/// question twice. The gate did not see it because every fixture row carried
+/// the same `createdAt`, which collapses the sort to one presorted run -- a
+/// real topology stamps each row with `now`, so the fixture was flattering the
+/// code. It stamps distinct timestamps now, and the marginal it reports went
+/// 7.00 -> 21.75 before this.
+fn sort_worktrees(worktrees: &mut Vec<Value>, project_root: &str, root_identity: &str) {
+    let mut decorated = std::mem::take(worktrees)
+        .into_iter()
+        .map(|worktree| {
+            let main = worktree_row_is_main_checkout(&worktree, project_root, root_identity);
+            (main, worktree)
+        })
+        .collect::<Vec<_>>();
+    decorated.sort_by(|(left_main, left), (right_main, right)| {
         right_main
-            .cmp(&left_main)
+            .cmp(left_main)
             .then_with(|| dashboard_created_sort_key(right).cmp(&dashboard_created_sort_key(left)))
     });
+    worktrees.extend(decorated.into_iter().map(|(_, worktree)| worktree));
 }
 
 fn dashboard_session_status(status: Option<&str>) -> &'static str {
@@ -1825,6 +1822,33 @@ fn dashboard_session_visibility_allows(session: &Value) -> bool {
     })
 }
 
+/// `mainCheckoutInfo`, built once for both lanes.
+///
+/// The async lane attached `branchUnavailable` when git could not answer; the
+/// sync lane -- which is what `statusline.rs` reads -- attached nothing, so the
+/// same failure read as "no branch" on one surface and "could not ask, here is
+/// why" on the other. The error is derived from the probe rather than carried
+/// beside it, so a lane cannot have one without the other.
+fn main_checkout_info(
+    project_root: &str,
+    worktrees: Option<&Value>,
+    main_branch_probe: Option<&GitBranchProbe>,
+) -> Value {
+    let mut info = json!({
+        "name": "Main Checkout",
+        "branch": main_checkout_branch(project_root, worktrees, main_branch_probe),
+    });
+    if let Some(error) = main_branch_probe.and_then(|probe| probe.error.as_deref())
+        && let Value::Object(map) = &mut info
+    {
+        map.insert(
+            "branchUnavailable".into(),
+            json!({ "ok": false, "error": error }),
+        );
+    }
+    info
+}
+
 /// The branch `mainCheckoutInfo` reports, for both lanes.
 ///
 /// There were two of these, differing only in their fallback: the sync one ran
@@ -1842,9 +1866,9 @@ fn main_checkout_branch(
     worktrees
         .and_then(Value::as_array)
         .and_then(|worktrees| {
-            worktrees
-                .iter()
-                .find(|worktree| worktree_row_is_main_checkout(worktree, &root_identity))
+            worktrees.iter().find(|worktree| {
+                worktree_row_is_main_checkout(worktree, project_root, &root_identity)
+            })
         })
         .and_then(|worktree| string_field(worktree, "branch"))
         .filter(|branch| !branch.trim().is_empty())
@@ -1921,21 +1945,53 @@ fn worktree_branch_or_current_from_probe(
         .unwrap_or_default()
 }
 
-fn current_git_branch(project_root: &str) -> Option<String> {
+/// The sync lane's probe, carrying what went wrong when it went wrong.
+///
+/// `error: None` was hardcoded here while the async lane filled the slot in,
+/// so with git unable to answer -- not a repository, a broken index, git not on
+/// PATH -- the desktop-state route reported `branchUnavailable` with the stderr
+/// while the statusline reported an empty branch and nothing else. Same
+/// question, two answers, and the one that mattered was the one that said
+/// nothing. AGENTS.md: errors are not empty values, and a wrapper must not lie.
+///
+/// Deliberately the same shape, the same timeout and the same error text as
+/// `current_git_branch_async`, because the two lanes answer one question and
+/// the whole defect was them answering it differently.
+fn current_git_branch_probe(project_root: &str) -> GitBranchProbe {
     GIT_BRANCH_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let output = AsyncCommand::new("git")
         .args(["-C", project_root, "branch", "--show-current"])
-        .output()
-        .ok()?;
+        .output_timeout(
+            crate::async_runtime::scoped_task_name("desktop-state", "main-branch", "git"),
+            std::time::Duration::from_secs(2),
+        );
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            return GitBranchProbe {
+                branch: None,
+                error: Some(error.to_string()),
+            };
+        }
+    };
     if !output.status.success() {
-        return None;
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return GitBranchProbe {
+            branch: None,
+            error: Some(if stderr.is_empty() {
+                "git branch --show-current failed".to_owned()
+            } else {
+                stderr
+            }),
+        };
     }
-    let branch = String::from_utf8(output.stdout).ok()?;
-    let branch = branch.trim();
-    if branch.is_empty() {
-        None
-    } else {
-        Some(branch.to_owned())
+    let branch = String::from_utf8(output.stdout)
+        .ok()
+        .map(|branch| branch.trim().to_owned())
+        .filter(|branch| !branch.is_empty());
+    GitBranchProbe {
+        branch,
+        error: None,
     }
 }
 
@@ -2081,6 +2137,20 @@ fn is_worktree_path(path: &str, identity: &str) -> bool {
     worktree_path_identity(path) == identity
 }
 
+/// What path a worktree row names, with the one default every reader uses.
+///
+/// A row with no `path` key is the project root. `desktop_worktree_item` and
+/// `main_branch_probe_needed` both already defaulted it that way, while the
+/// main-checkout predicate read the field raw and called such a row "not the
+/// main checkout" -- so a pathless root row spent the git subprocess and then
+/// threw the answer away, and `worktrees[0].branch` came out `""` while the
+/// group and `mainCheckoutInfo` beside it both said `master`. One rule, so the
+/// predicate that decides to spend the subprocess and the consumer that uses
+/// it cannot read the same field two ways.
+fn worktree_row_path<'a>(worktree: &'a Value, project_root: &'a str) -> &'a str {
+    string_field(worktree, "path").unwrap_or(project_root)
+}
+
 /// Whether a topology row names the project's main checkout.
 ///
 /// One question with one answer. Five callers compared `path` to
@@ -2090,8 +2160,12 @@ fn is_worktree_path(path: &str, identity: &str) -> bool {
 /// the main row's branch and its sort position on one answer and its agents on
 /// the other. The identity is passed in rather than derived here so no loop
 /// re-canonicalises the root once per row.
-fn worktree_row_is_main_checkout(worktree: &Value, root_identity: &str) -> bool {
-    string_field(worktree, "path").is_some_and(|path| is_worktree_path(path, root_identity))
+fn worktree_row_is_main_checkout(
+    worktree: &Value,
+    project_root: &str,
+    root_identity: &str,
+) -> bool {
+    is_worktree_path(worktree_row_path(worktree, project_root), root_identity)
 }
 
 fn worktree_path_identity(path: &str) -> String {
