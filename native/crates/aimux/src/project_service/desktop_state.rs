@@ -392,7 +392,14 @@ pub fn build_desktop_state_with_live_window_projection(
     .into_iter()
     .filter(dashboard_session_visibility_allows)
     .collect::<Vec<_>>();
-    let worktrees = desktop_worktrees(&input.project_root, input.topology);
+    // One probe for the whole build, handed to each of the three places that
+    // used to ask git the same question for itself.
+    let main_branch_probe = main_branch_probe_for_topology(&input.project_root, input.topology);
+    let worktrees = desktop_worktrees(
+        &input.project_root,
+        input.topology,
+        main_branch_probe.as_ref(),
+    );
     let worktree_by_path = worktree_lookup_by_identity(&worktrees);
     let thread_stats = summarize_thread_stats(input.exchange);
     let workflow_stats = summarize_workflow_stats(input.exchange);
@@ -440,6 +447,7 @@ pub fn build_desktop_state_with_live_window_projection(
         &sessions,
         &services,
         &retired_worktree_paths,
+        main_branch_probe.as_ref(),
         &worktree_by_path,
     );
     let mut state = Map::new();
@@ -461,7 +469,11 @@ pub fn build_desktop_state_with_live_window_projection(
         "mainCheckoutInfo".into(),
         json!({
             "name": "Main Checkout",
-            "branch": main_checkout_branch(&input.project_root, state.get("worktrees")),
+            "branch": main_checkout_branch(
+                &input.project_root,
+                state.get("worktrees"),
+                main_branch_probe.as_ref(),
+            ),
         }),
     );
     state.insert(
@@ -534,7 +546,7 @@ async fn build_desktop_state_with_live_window_projection_async(
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
         .collect::<Vec<_>>();
     let retired_worktree_paths = retired_worktree_paths(input.topology);
-    let worktree_groups = build_worktree_groups_with_branch_probe(
+    let worktree_groups = build_worktree_groups(
         &input.project_root,
         &worktrees,
         &sessions,
@@ -560,7 +572,11 @@ async fn build_desktop_state_with_live_window_projection_async(
     state.insert("agentRestoreOffer".into(), Value::Null);
     let mut main_checkout_info = json!({
         "name": "Main Checkout",
-        "branch": main_checkout_branch_from_worktrees(&input.project_root, state.get("worktrees")),
+        "branch": main_checkout_branch(
+            &input.project_root,
+            state.get("worktrees"),
+            worktree_projection.main_branch_probe.as_ref(),
+        ),
     });
     if let Some(error) = worktree_projection.main_branch_error
         && let Value::Object(map) = &mut main_checkout_info
@@ -759,10 +775,18 @@ fn desktop_worktree_item(
     Value::Object(item)
 }
 
-fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
+fn desktop_worktrees(
+    project_root: &str,
+    topology: &Value,
+    main_branch_probe: Option<&GitBranchProbe>,
+) -> Vec<Value> {
     let topology_worktrees =
         list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
     let missing = missing_worktree_paths(project_root, &topology_worktrees);
+    // Hoisted, as the async lane already does: derived inside the loop this is
+    // one `canonicalize` of the same path per worktree row, which is the repeat
+    // this branch exists to remove.
+    let root_identity = worktree_path_identity(project_root);
     let mut worktrees = topology_worktrees
         .into_iter()
         .map(|worktree| {
@@ -770,29 +794,29 @@ fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
                 project_root,
                 &missing,
                 &worktree,
-                &worktree_branch_or_current(
-                    project_root,
-                    string_field(&worktree, "path").unwrap_or(project_root),
+                &worktree_branch_or_current_from_probe(
+                    worktree_row_is_main_checkout(&worktree, &root_identity),
                     string_field(&worktree, "branch"),
+                    main_branch_probe,
                 ),
             )
         })
         .collect::<Vec<_>>();
-    if !worktrees.iter().any(|worktree| {
-        string_field(worktree, "path")
-            .is_some_and(|path| is_worktree_path(path, &worktree_path_identity(project_root)))
-    }) {
+    if !worktrees
+        .iter()
+        .any(|worktree| worktree_row_is_main_checkout(worktree, &root_identity))
+    {
         worktrees.insert(
             0,
             json!({
                 "name": "Main Checkout",
                 "path": project_root,
-                "branch": current_git_branch(project_root).unwrap_or_default(),
+                "branch": branch_from_probe(main_branch_probe).unwrap_or_default(),
                 "isBare": false,
             }),
         );
     }
-    sort_worktrees(&mut worktrees, project_root);
+    sort_worktrees(&mut worktrees, &root_identity);
     worktrees
 }
 
@@ -809,13 +833,8 @@ async fn desktop_worktrees_async(
     let topology_worktrees =
         list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
     let root_identity = worktree_path_identity(project_root);
-    let needs_main_branch_probe = topology_worktrees.iter().any(|worktree| {
-        let path = string_field(worktree, "path").unwrap_or(project_root);
-        is_worktree_path(path, &root_identity)
-            && string_field(worktree, "branch").is_none_or(|branch| branch.trim().is_empty())
-    }) || !topology_worktrees.iter().any(|worktree| {
-        string_field(worktree, "path").is_some_and(|path| is_worktree_path(path, &root_identity))
-    });
+    let needs_main_branch_probe =
+        main_branch_probe_needed(project_root, &topology_worktrees, &root_identity);
     let main_branch_probe = if needs_main_branch_probe {
         Some(current_git_branch_async(project_root).await)
     } else {
@@ -859,18 +878,17 @@ async fn desktop_worktrees_async(
                 &missing,
                 &worktree,
                 &worktree_branch_or_current_from_probe(
-                    project_root,
-                    string_field(&worktree, "path").unwrap_or(project_root),
+                    worktree_row_is_main_checkout(&worktree, &root_identity),
                     string_field(&worktree, "branch"),
                     main_branch_probe.as_ref(),
                 ),
             )
         })
         .collect::<Vec<_>>();
-    if !worktrees.iter().any(|worktree| {
-        string_field(worktree, "path")
-            .is_some_and(|path| is_worktree_path(path, &worktree_path_identity(project_root)))
-    }) {
+    if !worktrees
+        .iter()
+        .any(|worktree| worktree_row_is_main_checkout(worktree, &root_identity))
+    {
         worktrees.insert(
             0,
             json!({
@@ -881,7 +899,7 @@ async fn desktop_worktrees_async(
             }),
         );
     }
-    sort_worktrees(&mut worktrees, project_root);
+    sort_worktrees(&mut worktrees, &root_identity);
     DesktopWorktreeProjection {
         worktrees,
         main_branch_error: main_branch_probe
@@ -1223,58 +1241,51 @@ fn retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
         .collect()
 }
 
-fn build_worktree_groups(
+/// Whether the main checkout's branch has to be asked of git at all.
+///
+/// Shared by both lanes, because it is one question: a row for the project root
+/// that already names a branch answers it, and so does the absence of any root
+/// row. What is left is a root row whose branch is empty -- what a detached
+/// HEAD looks like -- and then git is asked, and answers with an empty branch
+/// again. That is one subprocess per build for a detached checkout, which is
+/// worth knowing about and is not worth caching a wrong answer to avoid.
+fn main_branch_probe_needed(
     project_root: &str,
-    worktrees: &[Value],
-    sessions: &[Value],
-    services: &[Value],
-    retired_paths: &BTreeSet<String>,
-    rows_by_identity: &BTreeMap<String, Value>,
-) -> Vec<Value> {
-    // Only when the rows cannot answer it. `git branch --show-current` is a
-    // subprocess, and this ran it on EVERY build -- a fixed ~55ms whatever the
-    // project's size, paid again on each dashboard refresh, for every project,
-    // to re-learn a branch the worktree rows almost always carry. The async
-    // builder already asked this question before spending the process; the sync
-    // one did not, which is the drift that makes a cost invisible.
-    let main_branch_probe = main_branch_probe_if_needed(project_root, worktrees);
-    build_worktree_groups_with_branch_probe(
-        project_root,
-        worktrees,
-        sessions,
-        services,
-        retired_paths,
-        main_branch_probe.as_ref(),
-        rows_by_identity,
-    )
+    topology_worktrees: &[Value],
+    root_identity: &str,
+) -> bool {
+    topology_worktrees.iter().any(|worktree| {
+        let path = string_field(worktree, "path").unwrap_or(project_root);
+        is_worktree_path(path, root_identity)
+            && string_field(worktree, "branch").is_none_or(|branch| branch.trim().is_empty())
+    }) || !topology_worktrees
+        .iter()
+        .any(|worktree| worktree_row_is_main_checkout(worktree, root_identity))
 }
 
-/// Whether the main checkout's branch has to be asked of git.
+/// The main checkout's branch, asked of git at most once per build.
 ///
-/// The same condition the async builder applies: a row for the project root
-/// that already names a branch answers it, and so does the absence of any row
-/// for the root at all being false.
-fn main_branch_probe_if_needed(project_root: &str, worktrees: &[Value]) -> Option<GitBranchProbe> {
-    // These rows are the ones `desktop_worktrees` built, and it always inserts a
-    // row for the project root -- so the async builder's second condition, "no
-    // root row at all", cannot be true here and is not repeated. What remains
-    // is a root row whose branch is empty, which is what a detached HEAD looks
-    // like: then git is asked, and it answers with an empty branch again. That
-    // is one subprocess per build for a checkout that is detached, which is
-    // worth knowing about and is not worth caching a wrong answer to avoid.
+/// The sync lane used to ask three times for the same fact: once inside
+/// `desktop_worktrees` while resolving the root row's branch, once inside the
+/// group builder, and once more as the fallback behind `mainCheckoutInfo`.
+/// Three `git branch --show-current` subprocesses, about 55ms each, on every
+/// dashboard refresh of every project. The async lane already derived it once
+/// and handed it round; this is that shape, and the gate in
+/// `desktop_state_scale.rs` counts the spawns so a fourth caller cannot quietly
+/// appear.
+fn main_branch_probe_for_topology(project_root: &str, topology: &Value) -> Option<GitBranchProbe> {
+    let topology_worktrees =
+        list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
     let root_identity = worktree_path_identity(project_root);
-    let root_row_without_branch = worktrees.iter().any(|worktree| {
-        let path = string_field(worktree, "path").unwrap_or(project_root);
-        is_worktree_path(path, &root_identity)
-            && string_field(worktree, "branch").is_none_or(|branch| branch.trim().is_empty())
-    });
-    root_row_without_branch.then(|| GitBranchProbe {
-        branch: current_git_branch(project_root),
-        error: None,
+    main_branch_probe_needed(project_root, &topology_worktrees, &root_identity).then(|| {
+        GitBranchProbe {
+            branch: current_git_branch(project_root),
+            error: None,
+        }
     })
 }
 
-fn build_worktree_groups_with_branch_probe(
+fn build_worktree_groups(
     project_root: &str,
     worktrees: &[Value],
     sessions: &[Value],
@@ -1285,7 +1296,6 @@ fn build_worktree_groups_with_branch_probe(
 ) -> Vec<Value> {
     let by_group = BucketedItems::by_worktree(sessions, services);
     let context = WorktreeGroupContext {
-        project_root,
         by_group: &by_group,
         main_branch_probe,
     };
@@ -1344,74 +1354,77 @@ fn build_worktree_groups_with_branch_probe(
 }
 
 struct WorktreeGroupContext<'a> {
-    project_root: &'a str,
     /// Sessions and services already sorted into their groups.
     ///
     /// Each group used to scan EVERY session and service to find its own, so a
     /// build cost worktrees x agents comparisons -- 20,000 of them at the scale
     /// this is meant to carry, each one re-deriving a lane and canonicalising a
     /// path. The sort happens once instead, and a group takes its bucket.
-    by_group: &'a BucketedItems,
+    by_group: &'a BucketedItems<'a>,
     main_branch_probe: Option<&'a GitBranchProbe>,
 }
 
 /// Sessions and services keyed by the worktree identity they belong to.
+///
+/// Borrowed, not owned. Bucketing by value would copy every session once into
+/// its bucket and once again out of it, and a dashboard session carries its
+/// preview payload -- at the 100-worktree, 200-agent ceiling this branch is
+/// for, that is 200 deep clones per build on top of the 200 the groups need.
+/// The old pairing scan cloned once, so owning here would have handed back
+/// part of what the bucketing won.
 #[derive(Default)]
-struct BucketedItems {
-    sessions: BTreeMap<String, Vec<Value>>,
-    services: BTreeMap<String, Vec<Value>>,
+struct BucketedItems<'a> {
+    sessions: BTreeMap<String, Vec<&'a Value>>,
+    services: BTreeMap<String, Vec<&'a Value>>,
     /// The ones with no worktree of their own, which belong to the main group.
-    main_sessions: Vec<Value>,
-    main_services: Vec<Value>,
+    main_sessions: Vec<&'a Value>,
+    main_services: Vec<&'a Value>,
 }
 
-impl BucketedItems {
+impl<'a> BucketedItems<'a> {
     /// Order within a bucket is the input's.
     ///
     /// That is safe only because `sorted_dashboard_items` ends in a total
     /// tiebreak on id, so the result does not depend on which order items
     /// arrived in. Said out loud because bucketing silently depends on it, and
     /// ordering agreeing across surfaces is a rule this repo has a section for.
-    fn by_worktree(sessions: &[Value], services: &[Value]) -> Self {
+    fn by_worktree(sessions: &'a [Value], services: &'a [Value]) -> Self {
         let mut bucketed = Self::default();
         for session in sessions {
             if session_is_in_supervisor_plane(session) {
                 continue;
             }
             match item_worktree_group_key(session) {
-                Some(key) => bucketed
-                    .sessions
-                    .entry(key)
-                    .or_default()
-                    .push(session.clone()),
-                None => bucketed.main_sessions.push(session.clone()),
+                Some(key) => bucketed.sessions.entry(key).or_default().push(session),
+                None => bucketed.main_sessions.push(session),
             }
         }
         for service in services {
             match item_worktree_group_key(service) {
-                Some(key) => bucketed
-                    .services
-                    .entry(key)
-                    .or_default()
-                    .push(service.clone()),
-                None => bucketed.main_services.push(service.clone()),
+                Some(key) => bucketed.services.entry(key).or_default().push(service),
+                None => bucketed.main_services.push(service),
             }
         }
         bucketed
     }
 
-    fn sessions_for(&self, path_key: &str, main: bool) -> Vec<Value> {
-        let mut items = self.sessions.get(path_key).cloned().unwrap_or_default();
-        if main {
-            items.extend(self.main_sessions.iter().cloned());
-        }
-        items
+    fn sessions_for(&self, path_key: &str, main: bool) -> Vec<&'a Value> {
+        Self::bucket(&self.sessions, &self.main_sessions, path_key, main)
     }
 
-    fn services_for(&self, path_key: &str, main: bool) -> Vec<Value> {
-        let mut items = self.services.get(path_key).cloned().unwrap_or_default();
+    fn services_for(&self, path_key: &str, main: bool) -> Vec<&'a Value> {
+        Self::bucket(&self.services, &self.main_services, path_key, main)
+    }
+
+    fn bucket(
+        by_key: &BTreeMap<String, Vec<&'a Value>>,
+        main_bucket: &[&'a Value],
+        path_key: &str,
+        main: bool,
+    ) -> Vec<&'a Value> {
+        let mut items = by_key.get(path_key).cloned().unwrap_or_default();
         if main {
-            items.extend(self.main_services.iter().cloned());
+            items.extend_from_slice(main_bucket);
         }
         items
     }
@@ -1440,8 +1453,7 @@ fn worktree_group(
         &mut group,
         "branch",
         &worktree_branch_or_current_from_probe(
-            context.project_root,
-            path,
+            main,
             worktree.and_then(|worktree| string_field(worktree, "branch")),
             context.main_branch_probe,
         ),
@@ -1496,9 +1508,14 @@ fn set_indexes(items: &mut [Value]) {
     }
 }
 
-fn sorted_dashboard_items(mut items: Vec<Value>) -> Vec<Value> {
-    items.sort_by(crate::team_contract::compare_agent_canonical_order);
-    items
+/// Sorted into canonical agent order, and cloned exactly once on the way out.
+///
+/// Takes references because the group is the only place an owned copy is
+/// needed -- `Value::Array` wants one. Sorting the references first means the
+/// sort moves pointers rather than JSON objects.
+fn sorted_dashboard_items(mut items: Vec<&Value>) -> Vec<Value> {
+    items.sort_by(|left, right| crate::team_contract::compare_agent_canonical_order(left, right));
+    items.into_iter().cloned().collect()
 }
 
 fn summarize_thread_stats(exchange: &Value) -> BTreeMap<String, ThreadStats> {
@@ -1764,10 +1781,10 @@ fn is_notification_stale(live_label: &str, has_unread_needs_input: bool) -> bool
         )
 }
 
-fn sort_worktrees(worktrees: &mut [Value], project_root: &str) {
+fn sort_worktrees(worktrees: &mut [Value], root_identity: &str) {
     worktrees.sort_by(|left, right| {
-        let left_main = string_field(left, "path") == Some(project_root);
-        let right_main = string_field(right, "path") == Some(project_root);
+        let left_main = worktree_row_is_main_checkout(left, root_identity);
+        let right_main = worktree_row_is_main_checkout(right, root_identity);
         right_main
             .cmp(&left_main)
             .then_with(|| dashboard_created_sort_key(right).cmp(&dashboard_created_sort_key(left)))
@@ -1808,46 +1825,31 @@ fn dashboard_session_visibility_allows(session: &Value) -> bool {
     })
 }
 
-fn main_checkout_branch(project_root: &str, worktrees: Option<&Value>) -> String {
+/// The branch `mainCheckoutInfo` reports, for both lanes.
+///
+/// There were two of these, differing only in their fallback: the sync one ran
+/// `git branch --show-current` itself, the async one returned `""`. So the same
+/// field was derived two ways and the sync way spent a subprocess the lane had
+/// already spent elsewhere. Now both read the probe the build already made --
+/// which is `None` exactly when the rows could answer, so the fallback is
+/// never needed and never silently empty either.
+fn main_checkout_branch(
+    project_root: &str,
+    worktrees: Option<&Value>,
+    main_branch_probe: Option<&GitBranchProbe>,
+) -> String {
+    let root_identity = worktree_path_identity(project_root);
     worktrees
         .and_then(Value::as_array)
         .and_then(|worktrees| {
             worktrees
                 .iter()
-                .find(|worktree| string_field(worktree, "path") == Some(project_root))
+                .find(|worktree| worktree_row_is_main_checkout(worktree, &root_identity))
         })
         .and_then(|worktree| string_field(worktree, "branch"))
         .filter(|branch| !branch.trim().is_empty())
         .map(str::to_owned)
-        .or_else(|| current_git_branch(project_root))
-        .unwrap_or_default()
-}
-
-fn main_checkout_branch_from_worktrees(project_root: &str, worktrees: Option<&Value>) -> String {
-    worktrees
-        .and_then(Value::as_array)
-        .and_then(|worktrees| {
-            worktrees
-                .iter()
-                .find(|worktree| string_field(worktree, "path") == Some(project_root))
-        })
-        .and_then(|worktree| string_field(worktree, "branch"))
-        .filter(|branch| !branch.trim().is_empty())
-        .map(str::to_owned)
-        .unwrap_or_default()
-}
-
-fn worktree_branch_or_current(project_root: &str, path: &str, branch: Option<&str>) -> String {
-    branch
-        .filter(|branch| !branch.trim().is_empty())
-        .map(str::to_owned)
-        .or_else(|| {
-            if path == project_root {
-                current_git_branch(project_root)
-            } else {
-                None
-            }
-        })
+        .or_else(|| branch_from_probe(main_branch_probe))
         .unwrap_or_default()
 }
 
@@ -1902,8 +1904,7 @@ fn worktree_checkout_is_still_arriving(worktree: &Value) -> bool {
 }
 
 fn worktree_branch_or_current_from_probe(
-    project_root: &str,
-    path: &str,
+    is_main_checkout: bool,
     branch: Option<&str>,
     main_branch_probe: Option<&GitBranchProbe>,
 ) -> String {
@@ -1911,7 +1912,7 @@ fn worktree_branch_or_current_from_probe(
         .filter(|branch| !branch.trim().is_empty())
         .map(str::to_owned)
         .or_else(|| {
-            if path == project_root {
+            if is_main_checkout {
                 branch_from_probe(main_branch_probe)
             } else {
                 None
@@ -1921,6 +1922,7 @@ fn worktree_branch_or_current_from_probe(
 }
 
 fn current_git_branch(project_root: &str) -> Option<String> {
+    GIT_BRANCH_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let output = AsyncCommand::new("git")
         .args(["-C", project_root, "branch", "--show-current"])
         .output()
@@ -1947,6 +1949,7 @@ fn branch_from_probe(probe: Option<&GitBranchProbe>) -> Option<String> {
 }
 
 async fn current_git_branch_async(project_root: &str) -> GitBranchProbe {
+    GIT_BRANCH_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let output = AsyncCommand::new("git")
         .args(["-C", project_root, "branch", "--show-current"])
         .output_timeout_async(std::time::Duration::from_secs(2))
@@ -2078,6 +2081,19 @@ fn is_worktree_path(path: &str, identity: &str) -> bool {
     worktree_path_identity(path) == identity
 }
 
+/// Whether a topology row names the project's main checkout.
+///
+/// One question with one answer. Five callers compared `path` to
+/// `project_root` byte for byte while the worktree grouping beside them
+/// compared identities, so a checkout reached by a second spelling -- `/tmp`
+/// under `/private/tmp`, a symlinked repo, a home on an external volume -- put
+/// the main row's branch and its sort position on one answer and its agents on
+/// the other. The identity is passed in rather than derived here so no loop
+/// re-canonicalises the root once per row.
+fn worktree_row_is_main_checkout(worktree: &Value, root_identity: &str) -> bool {
+    string_field(worktree, "path").is_some_and(|path| is_worktree_path(path, root_identity))
+}
+
 fn worktree_path_identity(path: &str) -> String {
     let trimmed = path.trim().trim_end_matches('/');
     if trimmed.is_empty() {
@@ -2104,6 +2120,19 @@ fn worktree_path_identity(path: &str) -> String {
 /// worktree an agent is in, which is the drift this file is full of warnings
 /// about.
 pub static CANONICALIZE_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// How many times git has been asked for the main checkout's branch.
+///
+/// The single largest fixed cost this branch removed -- `git branch
+/// --show-current` ran on EVERY build, about 55ms of subprocess whatever the
+/// project's size, on every dashboard refresh -- and a canonicalize count
+/// cannot see a subprocess, so nothing gated it. Reverting the elision left
+/// every count-based assertion in this repo green.
+///
+/// Counted at the two spawn sites rather than at the decision, so a second
+/// caller that skipped `main_branch_probe_if_needed` would still be counted.
+pub static GIT_BRANCH_PROBES: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 fn canonical_worktree_path(trimmed: &str) -> String {

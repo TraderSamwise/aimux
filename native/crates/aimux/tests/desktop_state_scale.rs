@@ -20,12 +20,11 @@
 //! already paid once for a test that asserted the machine was fast.
 
 use aimux::project_service::desktop_state::{
-    CANONICALIZE_CALLS, DesktopStateInput, build_desktop_state,
+    CANONICALIZE_CALLS, DesktopStateInput, GIT_BRANCH_PROBES, build_desktop_state,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
-use std::time::Instant;
 
 fn topology(root: &str, worktrees: usize, agents: usize) -> Value {
     let now = "1970-01-01T00:00:00.000Z";
@@ -62,12 +61,15 @@ fn topology(root: &str, worktrees: usize, agents: usize) -> Value {
 }
 
 fn build(root: &str, worktrees: usize, agents: usize) -> Value {
-    let top = topology(root, worktrees, agents);
+    build_from(root, &topology(root, worktrees, agents))
+}
+
+fn build_from(root: &str, top: &Value) -> Value {
     let sessions = BTreeMap::new();
     let exchange = json!({});
     build_desktop_state(DesktopStateInput {
         project_root: root.to_owned(),
-        topology: &top,
+        topology: top,
         metadata_sessions: &sessions,
         exchange: &exchange,
     })
@@ -77,72 +79,121 @@ fn root_for(label: &str) -> String {
     format!("/tmp/aimux-scale-{}-{label}", std::process::id())
 }
 
-/// The filesystem is asked about PATHS, not about pairings.
+/// What a build asks the operating system for, as the project grows.
 ///
-/// `worktree_path_identity` canonicalises, and every group used to ask it of
-/// every session: worktrees x agents syscalls to answer a few hundred distinct
-/// questions. A build over 40 worktrees and 160 agents made 6,400 of them; it
-/// makes about 650 now -- a handful per worktree row and per session. That
-/// constant is worth reducing further and is not what this gate is for: what
-/// matters is that the count follows the number of PATHS, not the number of
-/// pairings.
+/// One test, not four. `CANONICALIZE_CALLS` and `GIT_BRANCH_PROBES` are global
+/// to the process and `cargo test` runs a file's tests on parallel threads, so
+/// two tests reading a delta read each other's calls -- which is not a
+/// hypothetical: splitting these counts at 40 worktrees from 649 to 862 and
+/// failed for a reason that had nothing to do with the code. The serial-targets
+/// entry does not help, because integration binaries are already separate
+/// processes and the contention is inside this file.
 ///
-/// This is one test rather than two because `CANONICALIZE_CALLS` is global to
-/// the process and `cargo test` runs a file's tests on parallel threads, so two
-/// tests reading a delta would read each other's calls. The target is also
-/// listed as serial for the same reason.
+/// Every gate here is a COUNT, and the two that matter are MARGINALS between
+/// two scales rather than tuned constants. A duration says nothing on a loaded
+/// runner, and an absolute bound is either so loose it misses a regression --
+/// the first version of this file allowed 2,000 calls and did not notice 82
+/// avoidable ones -- or so tight it fails on fixture churn. What the marginal
+/// says is the shape: how much ONE more worktree costs, and how much ONE more
+/// agent costs.
 #[test]
-fn a_build_asks_the_filesystem_about_paths_not_about_pairings() {
-    let root = root_for("pairings");
-    let worktrees = 40;
-    let agents = 160;
-
-    let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
-    let state = build(&root, worktrees, agents);
-    let calls = CANONICALIZE_CALLS.load(Ordering::Relaxed) - before;
+fn a_build_asks_the_operating_system_about_paths_not_about_pairings() {
+    let base = counted(&root_for("base"), 40, 160);
+    let more_agents = counted(&root_for("more-agents"), 40, 320);
+    let more_worktrees = counted(&root_for("more-worktrees"), 80, 160);
 
     assert_eq!(
-        state["worktreeGroups"].as_array().map(Vec::len),
-        Some(worktrees + 1),
+        base.groups,
+        Some(41),
         "the build still has to produce a group per worktree plus the main one"
     );
-    // Measured at 649 on 2026-10-06. The bound is set well above that and well
-    // below the 6,400 pairings, so ordinary churn in the constant does not fail
-    // it but a return to per-pairing work does.
-    println!("{worktrees} worktrees x {agents} agents -> {calls} canonicalize calls");
+    println!(
+        "40x160 -> {} calls, 40x320 -> {} calls, 80x160 -> {} calls",
+        base.canonicalize_calls, more_agents.canonicalize_calls, more_worktrees.canonicalize_calls
+    );
+
+    // Per EXTRA AGENT, holding the worktrees still. An agent has one worktree
+    // path of its own, so it is allowed to cost a small constant. The old
+    // pairing scan canonicalised once per (worktree, agent), so there it was 40
+    // -- the worktree count -- and this gate does not care what the constant is
+    // as long as it does not scale with the project.
+    let per_extra_agent = (more_agents.canonicalize_calls - base.canonicalize_calls) as f64 / 160.0;
+    println!("per extra agent: {per_extra_agent:.2}");
     assert!(
-        calls < 2_000,
-        "{worktrees} worktrees and {agents} agents is {} pairings; the build made \
-         {calls} canonicalize calls, which is pairing-shaped rather than \
-         path-shaped",
-        worktrees * agents
+        per_extra_agent <= 4.0,
+        "{per_extra_agent:.2} canonicalize calls per extra agent means the cost \
+         of an agent scales with the number of worktrees, which is the pairing \
+         shape this build is not allowed to have"
+    );
+
+    // Per EXTRA WORKTREE, holding the agents still. This is the tight one, and
+    // deliberately so. Measured at exactly 7.00 on 2026-10-06, and a loop that
+    // re-canonicalises the project root once per row adds exactly 1.00 -- so
+    // the bound is 8.00, excluded. One whole call of headroom is narrow on
+    // purpose: the count is a syscall tally, not a duration, so it is identical
+    // on every machine and every run, and a bound set loose enough to absorb
+    // churn is a bound that absorbs the regression too. If a deliberate change
+    // moves it, move this number and say why in the commit.
+    let per_extra_worktree =
+        (more_worktrees.canonicalize_calls - base.canonicalize_calls) as f64 / 40.0;
+    println!("per extra worktree: {per_extra_worktree:.2}");
+    assert!(
+        per_extra_worktree < 8.0,
+        "{per_extra_worktree:.2} canonicalize calls per extra worktree is more \
+         than a build needs; the usual cause is a path identity derived inside \
+         a loop rather than once above it"
+    );
+
+    // And the absolute shape, which is what the whole branch is about: the
+    // pairings at this scale are 6,400, and a build that asked the filesystem
+    // once per pairing made exactly that many.
+    assert!(
+        base.canonicalize_calls < 40 * 160 / 4,
+        "40 worktrees and 160 agents is 6,400 pairings and the build made {} \
+         canonicalize calls, which is pairing-shaped rather than path-shaped",
+        base.canonicalize_calls
+    );
+
+    // git is a SUBPROCESS, and no count of filesystem calls can see one. The
+    // sync lane asked for the main checkout's branch three times per build --
+    // in the worktree projection, in the group builder, and behind
+    // `mainCheckoutInfo` -- about 55ms each, on every dashboard refresh of
+    // every project. These rows all carry a branch, so the answer is zero.
+    assert_eq!(
+        base.git_branch_probes, 0,
+        "every row carries a branch, so there is nothing to ask git"
+    );
+
+    // The inverse, which is what makes that zero mean anything: strip the
+    // branch off the root's row and git has to be asked -- once for the build,
+    // not once per consumer.
+    let root = root_for("probe-needed");
+    let mut top = topology(&root, 6, 12);
+    top["worktrees"].as_array_mut().expect("worktree rows")[0]["branch"] = json!("");
+
+    let before = GIT_BRANCH_PROBES.load(Ordering::Relaxed);
+    let _ = build_from(&root, &top);
+    let probes = GIT_BRANCH_PROBES.load(Ordering::Relaxed) - before;
+    assert_eq!(
+        probes, 1,
+        "a root row with no branch is the one case git has to be asked about, \
+         and one build asks once"
     );
 }
 
-/// Growth is linear in the work, not quadratic in it.
-///
-/// Doubling both worktrees and agents quadruples the PAIRINGS, so a quadratic
-/// build grows about fourfold. This asserts the ratio rather than any duration,
-/// and leaves a wide margin because a shared machine is noisy -- it is here to
-/// catch a return to quadratic, not to police milliseconds.
-#[test]
-#[ignore = "timing-sensitive: run deliberately, not in CI"]
-fn doubling_the_project_does_not_quadruple_the_build() {
-    let root = root_for("growth");
-    let _ = build(&root, 50, 100);
-    let _ = build(&root, 100, 200);
+struct Counted {
+    canonicalize_calls: usize,
+    git_branch_probes: usize,
+    groups: Option<usize>,
+}
 
-    let small = Instant::now();
-    let _ = build(&root, 50, 100);
-    let small = small.elapsed();
-    let large = Instant::now();
-    let _ = build(&root, 100, 200);
-    let large = large.elapsed();
-
-    let ratio = large.as_secs_f64() / small.as_secs_f64();
-    println!("50x100 {small:?}, 100x200 {large:?}, ratio {ratio:.2}");
-    assert!(
-        ratio < 3.0,
-        "doubling the project should not treble the build: {small:?} -> {large:?}"
-    );
+fn counted(root: &str, worktrees: usize, agents: usize) -> Counted {
+    let canonicalize_before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let probes_before = GIT_BRANCH_PROBES.load(Ordering::Relaxed);
+    let state = build(root, worktrees, agents);
+    Counted {
+        canonicalize_calls: CANONICALIZE_CALLS.load(Ordering::Relaxed) - canonicalize_before,
+        git_branch_probes: GIT_BRANCH_PROBES.load(Ordering::Relaxed) - probes_before,
+        groups: state["worktreeGroups"].as_array().map(Vec::len),
+    }
 }

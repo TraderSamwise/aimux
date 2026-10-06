@@ -1219,6 +1219,96 @@ fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
     cleanup(project);
 }
 
+/// Every surface that names the main checkout agrees about which row it is.
+///
+/// The grouping above compares path IDENTITIES, so it coalesced the symlink and
+/// the realpath. Five callers next to it compared the path to `project_root`
+/// byte for byte and so answered the same question a second way: the worktree
+/// sort, the two `mainCheckoutInfo.branch` readers and the two per-row branch
+/// resolvers. With the project reached by its realpath and the topology row
+/// carrying the symlink spelling -- `/tmp` under `/private/tmp`, a symlinked
+/// repo, a home on an external volume -- the group said `master` while
+/// `mainCheckoutInfo` said nothing and the main row sorted wherever its
+/// `createdAt` put it. `AgentChatScreen` renders `mainCheckoutInfo.branch` as
+/// the branch label for a main-checkout agent, so the chat header and the
+/// worktree beside it disagreed.
+///
+/// Asserted BETWEEN the surfaces rather than one test per surface, because a
+/// per-surface test passes happily while the surfaces disagree.
+#[test]
+fn every_surface_agrees_which_row_is_the_main_checkout() {
+    let project = temp_project("main-checkout-alias-surfaces");
+    let real_root = project.join("repo-real");
+    let alias_root = project.join("repo-alias");
+    create_dir_all(&real_root).expect("real repo");
+    symlink(&real_root, &alias_root).expect("repo alias");
+    let real_path = real_root.to_string_lossy().into_owned();
+    let alias_path = alias_root.to_string_lossy().into_owned();
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": real_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [],
+        "edges": [],
+        "bindings": [],
+        "sessions": [],
+        "services": [],
+        // The root's row carries the ALIAS spelling, and a later worktree row
+        // sorts ahead of it on `createdAt` unless the main-checkout verdict
+        // puts it first.
+        "worktrees": [
+            { "id": "main-alias", "rigId": "rig-1", "path": alias_path, "name": "Main Checkout", "status": "active", "branch": "master", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" },
+            { "id": "feature", "rigId": "rig-1", "path": format!("{real_path}/.aimux/worktrees/feature"), "name": "feature", "status": "active", "branch": "feat/x", "createdAt": "2026-09-10T01:00:00.000Z", "updatedAt": "2026-09-10T01:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: real_path.clone(),
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &[])),
+    );
+
+    let groups = state["worktreeGroups"].as_array().expect("worktree groups");
+    let main_group = groups
+        .iter()
+        .find(|group| group["name"] == "Main Checkout")
+        .expect("a main checkout group");
+    let rows = state["worktrees"].as_array().expect("worktree rows");
+
+    assert_eq!(
+        main_group["branch"], "master",
+        "the group reads the row's branch through the identity it matched on"
+    );
+    assert_eq!(
+        state["mainCheckoutInfo"]["branch"], main_group["branch"],
+        "mainCheckoutInfo and the group render the same fact, so they have to \
+         find the same row: {:#?}",
+        state["mainCheckoutInfo"]
+    );
+    assert_eq!(
+        rows[0]["path"],
+        json!(alias_path),
+        "and the main checkout sorts first, ahead of a worktree created later"
+    );
+    assert_eq!(
+        rows[0]["branch"], main_group["branch"],
+        "the row and the group carry one branch between them"
+    );
+    cleanup(project);
+}
+
 #[test]
 fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashboard_clients() {
     let project = temp_project("legacy-worktree-operation-failure");

@@ -73,7 +73,7 @@
     },
     {
       "file": "native/crates/aimux/src/project_service/desktop_state.rs",
-      "function": "build_worktree_groups_with_branch_probe",
+      "function": "build_worktree_groups",
       "reason": "Worktree groups, not the agents inside them."
     },
     {
