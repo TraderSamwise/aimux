@@ -26,8 +26,8 @@ use std::time::Duration;
 
 use aimux::dashboard_controller::DashboardKey;
 use aimux::dashboard_internal::{
-    DashboardFrameSource, DashboardLoopSeams, DashboardSnapshotLoad, NativeDashboardOptions,
-    run_native_dashboard_with_seams,
+    DashboardFrameSource, DashboardLoopSeams, DashboardRefreshDeferral, DashboardSnapshotLoad,
+    NativeDashboardOptions, run_native_dashboard_with_seams,
 };
 use aimux::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 
@@ -81,6 +81,16 @@ type Poll = (u64, Vec<DashboardKey>);
 /// independent counter is how the first version of this file ended the loop
 /// after one iteration and read none of the keys it was handing over.
 fn drive(polls: Vec<Poll>) -> Driven {
+    drive_with(polls, DashboardRefreshDeferral::PRODUCTION)
+}
+
+/// The same, with the deferral windows the loop judges a skipped fetch against.
+///
+/// Held still by the one test whose claim is about the cache rather than about
+/// the clock: four passes of a loaded runner can outlast the 150ms budget and
+/// the 1s ceiling both, and the fetch that forces is the budget working, not
+/// the cache failing. Every other test here leaves them at the real values.
+fn drive_with(polls: Vec<Poll>, deferral: DashboardRefreshDeferral) -> Driven {
     // Counted, not named after the script length. Integration binaries do not
     // get `--test-threads=1` -- `native-test-runner.py` adds it only for unit
     // tests -- so these run as concurrent threads, and two scripts of the same
@@ -134,6 +144,7 @@ fn drive(polls: Vec<Poll>) -> Driven {
             }
             frame_counter.fetch_add(1, Ordering::Relaxed);
         }),
+        deferral,
     };
 
     let options = NativeDashboardOptions {
@@ -189,12 +200,24 @@ fn the_render_loop_runs_and_paints_from_a_loaded_snapshot() {
 /// predicate -- the exact regression PR 388 fixed -- left the suite green.
 #[test]
 fn keypresses_repaint_without_fetching_again() {
-    let driven = drive(vec![
-        (0, vec![]),
-        (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
-        (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
-        (NO_EXTRA_IDLE, vec![DashboardKey::Up]),
-    ]);
+    // The only test here that moves the windows, because it is the only one
+    // whose claim is "all three keys came from the cache" -- a count that a
+    // machine slow enough to outlast either window turns into two. Both are set
+    // past any plausible run of four passes, so nothing but the cacheable
+    // predicate can decide the three frames. Deleting `input_driven` from that
+    // predicate still takes this to zero.
+    let driven = drive_with(
+        vec![
+            (0, vec![]),
+            (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
+            (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
+            (NO_EXTRA_IDLE, vec![DashboardKey::Up]),
+        ],
+        DashboardRefreshDeferral {
+            budget: Duration::from_secs(600),
+            ceiling: Duration::from_secs(600),
+        },
+    );
 
     assert_eq!(driven.frames, 4, "every keypress still gets a frame");
     assert_eq!(

@@ -124,6 +124,35 @@ const DASHBOARD_DEFERRED_REFRESH_BUDGET: Duration = Duration::from_millis(150);
 /// held key cannot starve the data indefinitely.
 const DASHBOARD_DEFERRED_REFRESH_CEILING: Duration = Duration::from_secs(1);
 
+/// The two windows a deferred fetch is judged against.
+///
+/// Carried rather than read from the constants at the decision site so a driven
+/// loop can hold them still. A test that wants "three keypresses, three cached
+/// frames" is otherwise asserting on how long the machine took: four passes of
+/// a loaded CI runner can outlast both windows, and the fetch that forces is
+/// the budget doing its job, not the cache failing.
+#[derive(Debug, Clone, Copy)]
+pub struct DashboardRefreshDeferral {
+    /// How long after the last keypress the fetch waits before it is paid.
+    pub budget: Duration,
+    /// And the longest it may wait however much more input arrives.
+    pub ceiling: Duration,
+}
+
+impl DashboardRefreshDeferral {
+    /// What the loop runs with in production.
+    pub const PRODUCTION: Self = Self {
+        budget: DASHBOARD_DEFERRED_REFRESH_BUDGET,
+        ceiling: DASHBOARD_DEFERRED_REFRESH_CEILING,
+    };
+}
+
+impl Default for DashboardRefreshDeferral {
+    fn default() -> Self {
+        Self::PRODUCTION
+    }
+}
+
 /// Where the data behind a painted frame came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardFrameSource {
@@ -346,6 +375,13 @@ pub struct DashboardLoopSeams {
     /// test written on the load count fails on a slow CI runner for a reason
     /// that has nothing to do with the behaviour it names.
     pub frame: Box<dyn FnMut(DashboardFrameSource) + Send>,
+    /// The two deferral windows the loop judges a skipped fetch against.
+    ///
+    /// Held still so an assertion about the cache is not an assertion about how
+    /// long the machine took. `DashboardRefreshDeferral::PRODUCTION` is what the
+    /// loop runs with when no seams are passed, and the test that proves the
+    /// budget comes due uses that value rather than one of its own.
+    pub deferral: DashboardRefreshDeferral,
 }
 
 pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<()> {
@@ -365,6 +401,9 @@ pub fn run_native_dashboard_with_seams(
     // Split rather than kept whole: the loop holds `output` across its body and
     // calls the other seams inside it, which one `Option<DashboardLoopSeams>`
     // would make two simultaneous mutable borrows of.
+    let deferral = seams
+        .as_ref()
+        .map_or(DashboardRefreshDeferral::PRODUCTION, |seams| seams.deferral);
     let (mut seam_keys, mut seam_snapshot, mut seam_stop, seam_output, mut seam_frame) = match seams
     {
         Some(seams) => (
@@ -839,6 +878,7 @@ pub fn run_native_dashboard_with_seams(
             controller
                 .as_ref()
                 .is_some_and(|controller| !controller.navigation.quick_jump_digits.is_empty()),
+            deferral,
         );
         // Held rather than dropped: `render_now` stays set, so the frame goes
         // up on the next pass. Master could not paint faster than the sleep
@@ -1356,17 +1396,18 @@ fn dashboard_refresh_deferral_expired(
     deferred_for: Option<Duration>,
     idle_for: Option<Duration>,
     quick_jump_pending: bool,
+    deferral: DashboardRefreshDeferral,
 ) -> bool {
     let Some(deferred_for) = deferred_for else {
         return false;
     };
-    if deferred_for >= DASHBOARD_DEFERRED_REFRESH_CEILING {
+    if deferred_for >= deferral.ceiling {
         return true;
     }
     if quick_jump_pending {
         return false;
     }
-    idle_for.is_some_and(|idle| idle >= DASHBOARD_DEFERRED_REFRESH_BUDGET)
+    idle_for.is_some_and(|idle| idle >= deferral.budget)
 }
 
 fn dashboard_render_source(input: DashboardRenderSourceInput) -> DashboardRenderSource {
@@ -4358,6 +4399,7 @@ mod tests {
                     Some(Duration::from_millis(gap)),
                     Some(Duration::from_millis(gap)),
                     true,
+                    DashboardRefreshDeferral::PRODUCTION,
                 ),
                 "a jump {gap}ms in still owns the list it started against"
             );
@@ -4373,6 +4415,7 @@ mod tests {
             Some(DASHBOARD_DEFERRED_REFRESH_CEILING),
             Some(DASHBOARD_DEFERRED_REFRESH_CEILING),
             true,
+            DashboardRefreshDeferral::PRODUCTION,
         ));
     }
 
@@ -4385,6 +4428,7 @@ mod tests {
                 Some(Duration::from_millis(800)),
                 Some(Duration::from_millis(20)),
                 false,
+                DashboardRefreshDeferral::PRODUCTION,
             ),
             "still typing"
         );
@@ -4393,6 +4437,7 @@ mod tests {
                 Some(Duration::from_millis(800)),
                 Some(DASHBOARD_DEFERRED_REFRESH_BUDGET),
                 false,
+                DashboardRefreshDeferral::PRODUCTION,
             ),
             "stopped typing"
         );
@@ -4401,6 +4446,7 @@ mod tests {
                 Some(DASHBOARD_DEFERRED_REFRESH_CEILING),
                 Some(Duration::from_millis(0)),
                 false,
+                DashboardRefreshDeferral::PRODUCTION,
             ),
             "never stops typing"
         );
@@ -4411,7 +4457,12 @@ mod tests {
     fn no_deferral_asks_for_nothing() {
         for idle in [None, Some(Duration::from_secs(60))] {
             assert!(
-                !dashboard_refresh_deferral_expired(None, idle, false),
+                !dashboard_refresh_deferral_expired(
+                    None,
+                    idle,
+                    false,
+                    DashboardRefreshDeferral::PRODUCTION,
+                ),
                 "nothing was deferred, so nothing is due: idle={idle:?}"
             );
         }
