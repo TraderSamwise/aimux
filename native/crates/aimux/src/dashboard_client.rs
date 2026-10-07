@@ -7,9 +7,8 @@ use crate::dashboard_actions::DashboardActionRequest;
 use crate::dashboard_model::DesktopStateSnapshot;
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
-use crate::project_service::lifecycle_mutation_queue::QUEUED_LIFECYCLE_TIMEOUT_MS;
-use crate::project_service::routes::{
-    ProjectServiceHttpMethod, ProjectServiceRouteGroup, project_service_specs_for,
+use crate::project_service::lifecycle_mutation_queue::{
+    QUEUED_LIFECYCLE_TIMEOUT_MS, lifecycle_transition_for_route,
 };
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
@@ -206,9 +205,20 @@ pub fn build_project_service_json_request(
         method,
         headers,
         body,
-        timeout_ms: Some(2_000),
+        timeout_ms: Some(PROJECT_SERVICE_READ_TIMEOUT_MS),
     })
 }
+
+/// What a read waits for the project service.
+///
+/// This was 2s, and `dashboard_internal` already documents that the service
+/// "misses the 2s budget routinely" under load -- which is how a busy moment
+/// put `request timed out after 2000ms` in the footer for a refresh that was
+/// merely slow, with the screen it already drew still correct underneath. A
+/// read is not a mutation: nothing is lost by waiting, and the Expo client
+/// already allows 10s for the same calls, so this is the two clients agreeing
+/// rather than one more number.
+const PROJECT_SERVICE_READ_TIMEOUT_MS: u64 = 10_000;
 
 fn map_transport_error(error: CoreCommandTransportError) -> anyhow::Error {
     anyhow!(error.to_string())
@@ -227,11 +237,10 @@ fn map_action_transport_error(path: &str, error: CoreCommandTransportError) -> a
         return map_transport_error(error);
     };
     if is_queued_lifecycle_mutation(path) {
-        anyhow!(
-            "{path} timed out after {timeout_ms}ms waiting for the lifecycle \
-             queue; the project service may still be finishing it, so check \
-             before retrying"
-        )
+        // Short on purpose: the footer truncates to the terminal width on one
+        // line with no wrap, so a longer sentence lost the half that tells the
+        // reader what to do.
+        anyhow!("{path} timed out after {timeout_ms}ms — may still be running, check first")
     } else {
         anyhow!("{path} timed out after {timeout_ms}ms")
     }
@@ -271,10 +280,18 @@ fn dashboard_action_timeout_ms(path: &str) -> u64 {
 }
 
 /// Whether this route queues behind the project service's lifecycle permit.
-fn is_queued_lifecycle_mutation(path: &str) -> bool {
-    project_service_specs_for(ProjectServiceHttpMethod::Post, path)
-        .iter()
-        .any(|spec| spec.group == ProjectServiceRouteGroup::Lifecycle)
+///
+/// Asked of the function that actually takes the permit, not of the route
+/// GROUP. The two are not the same set: `interrupt`,
+/// `dismiss-restore-previous` and `record-backend-session` are in the
+/// lifecycle group and return `None` here, so they never queue and have no
+/// reason to wait; and a route put in another group would queue without the
+/// group ever saying so. Keying on the group would have been a second rule
+/// agreeing with the first by luck.
+pub fn is_queued_lifecycle_mutation(path: &str) -> bool {
+    // The transition carries ids read off the body, which this question does
+    // not depend on -- only on whether the route takes the permit at all.
+    lifecycle_transition_for_route(path, &Value::Null).is_some()
 }
 
 fn string_field(value: &Value, field: &str) -> Option<String> {
@@ -313,22 +330,18 @@ mod tests {
     /// interrupt, rename, migrate, switch-tool and teammate action.
     #[test]
     fn no_lifecycle_action_gives_up_before_its_own_queue_does() {
-        let lifecycle = crate::project_service::routes::project_service_route_specs()
+        // Every canonical route, asked of the function that takes the permit.
+        // Walking the lifecycle GROUP instead would pass while a queued route
+        // sat in another group on the 2s default.
+        let queued = crate::project_service::routes::canonical_project_api_routes()
             .into_iter()
-            .filter(|spec| spec.group == ProjectServiceRouteGroup::Lifecycle)
-            .filter(|spec| spec.method == ProjectServiceHttpMethod::Post)
+            .filter(|path| is_queued_lifecycle_mutation(path))
             .collect::<Vec<_>>();
         assert!(
-            lifecycle.len() > 10,
-            "the lifecycle group should be the whole mutation surface, got {}",
-            lifecycle.len()
+            queued.len() > 10,
+            "the queue should hold the whole mutation surface, got {queued:?}"
         );
-        for spec in &lifecycle {
-            // Exact paths only: a prefix route has no single path the client
-            // sends, and every lifecycle route today is exact.
-            let Some(path) = spec.pattern.exact_path() else {
-                continue;
-            };
+        for path in &queued {
             let budget = dashboard_action_timeout_ms(path);
             assert!(
                 budget >= QUEUED_LIFECYCLE_TIMEOUT_MS,
@@ -336,6 +349,16 @@ mod tests {
                  {QUEUED_LIFECYCLE_TIMEOUT_MS}ms for a turn"
             );
         }
+        // And a route that does NOT queue keeps the short budget, so the fix
+        // is not "wait two minutes for everything".
+        assert!(
+            !is_queued_lifecycle_mutation(routes::agents::INTERRUPT),
+            "interrupt does not take the permit, so it must not wait for one"
+        );
+        assert_eq!(
+            dashboard_action_timeout_ms(routes::agents::INTERRUPT),
+            2_000
+        );
     }
 
     /// A timeout that abandons work has to say so.
@@ -356,12 +379,21 @@ mod tests {
             "names no route: {message}"
         );
         assert!(
-            message.contains("may still be finishing"),
+            message.contains("may still be running"),
             "does not say the work outlives the request: {message}"
         );
         assert!(
-            message.contains("before retrying"),
+            message.contains("check first"),
             "does not warn that a retry is not free: {message}"
+        );
+        // The footer truncates to the terminal width on ONE line with no wrap,
+        // so the clause telling the reader what to do has to fit after the
+        // route rather than past the edge. Measured without the route, which
+        // is as long as whatever route failed.
+        let tail = message.chars().count() - routes::agents::SPAWN.chars().count();
+        assert!(
+            tail <= 60,
+            "{tail} chars of explanation will be cut off on a narrow terminal: {message}"
         );
 
         // A read carries no such promise, so it must not make one.
@@ -372,7 +404,7 @@ mod tests {
         .to_string();
         assert!(read.contains("/desktop-state"), "names no route: {read}");
         assert!(
-            !read.contains("may still be finishing"),
+            !read.contains("may still be running"),
             "a read does not keep running after the client leaves: {read}"
         );
     }
