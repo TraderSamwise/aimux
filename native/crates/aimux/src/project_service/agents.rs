@@ -897,7 +897,11 @@ pub fn describe_session_restorability(
 
 fn active_task_for<'a>(tasks: &'a [Value], session_id: &str) -> Option<&'a Value> {
     tasks.iter().find(|task| {
-        string_field(task, "assignedTo") == Some(session_id)
+        // `assignee` as well as `assignedTo`, because the derivation resolves
+        // the owner that way too. Matching only one meant a task assigned by
+        // the other spelling counted on the row and was invisible here.
+        string_field(task, "assignedTo").or_else(|| string_field(task, "assignee"))
+            == Some(session_id)
             && !matches!(
                 string_field(task, "status"),
                 Some("done" | "failed" | "canceled" | "cancelled" | "abandoned")

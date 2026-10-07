@@ -54,6 +54,13 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
             "status": "offline",
             "restoreState": "ready"
         }),
+        json!({
+            "id": "codex-2",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "status": "running"
+        }),
     ];
     let mut metadata = BTreeMap::new();
     metadata.insert(
@@ -70,6 +77,7 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
     let tasks = vec![
         json!({ "id": "task-1", "description": "Do it", "status": "in_progress", "assignedTo": "codex-1" }),
         json!({ "id": "task-2", "description": "Done", "status": "done", "assignedTo": "codex-1" }),
+        json!({ "id": "task-3", "description": "Assignee only", "status": "in_progress", "assignee": "codex-2" }),
     ];
 
     let agents = build_agent_list(&sessions, &metadata, &tasks, None);
@@ -105,6 +113,17 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
     assert!(agents[1].get("overseer").is_none());
     assert!(agents[1].get("scribe").is_none());
     assert!(agents[1]["task"].is_null());
+    // The derivation resolves an owner by `assignee` too, so a task assigned
+    // that way has to reach this record or `ps` answers `ready` for an agent
+    // the row calls `next_step`.
+    assert_eq!(
+        agents[2]["task"],
+        json!({ "id": "task-3", "description": "Assignee only", "status": "in_progress" })
+    );
+    assert!(
+        render_core_agent_ps_lines(&json!({ "agents": agents.clone() }))
+            .contains(&"codex-2  [codex:coder]  next_step".to_string())
+    );
     // A kill in flight has to survive the projection, or the one answer every
     // surface renders cannot see it and `ps` reports the turn it interrupted.
     assert_eq!(agents[0]["pendingAction"], "graveyarding");
