@@ -138,6 +138,14 @@ pub fn stranded_agent_ids(topology: &Value) -> Vec<String> {
     list_topology_session_states(topology, None)
         .iter()
         .filter(|session| string_at(session, "status") != Some("graveyard"))
+        // Belt and braces over the rule above. A live row should never reach
+        // here -- its worktree would not be abandoned -- but this writes to the
+        // topology and drops tmux bindings, and the cost of the carve-out being
+        // wrong once is a running agent stamped dead with its window orphaned.
+        .filter(|session| {
+            !crate::project_service::session_visibility::LIVE_SESSION_STATUSES
+                .contains(&string_at(session, "status").unwrap_or(""))
+        })
         .filter(|session| {
             crate::project_service::desktop_state::item_is_in_abandoned_worktree(
                 session, &abandoned,

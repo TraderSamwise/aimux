@@ -1296,21 +1296,18 @@ pub fn abandoned_retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
     //
     // These are the same projections without the live-window downgrade, so the
     // status here is the durable one, which is the whole point.
-    // An item whose raw path is one an ACTIVE row already names is in that
-    // worktree, and cannot be the reason a retired one is still alive. Checking
-    // the string first keeps the canonicalize -- which the scale gate budgets
-    // per agent -- off every agent in an ordinary checkout, and leaves it for
-    // the few that could actually answer the question.
-    let active_paths = worktree_row_paths(&list_topology_worktree_states(
-        topology,
-        Some(ACTIVE_WORKTREE_STATUSES),
-    ));
+    // Every live item, keyed the way the filter below keys it. A cheaper skip
+    // was tried -- "an item whose raw path is one an ACTIVE row already names
+    // cannot be the reason a retired one is still alive" -- and it is false in
+    // both of the cases that matter: `item_worktree_group_key` prefers the
+    // stored LANE, which `agent_roles` deliberately sets to a worktree other
+    // than the checkout, and two rows can share one canonical identity. Either
+    // way the filter still keyed the agent into the retired worktree while the
+    // skip stopped it from rescuing one, which is a live agent on no surface --
+    // the failure this whole change exists to end, reintroduced for a syscall.
     let sessions = list_topology_session_states(topology, Some(LIVE_SESSION_STATUSES));
     let services = list_topology_service_states(topology, Some(LIVE_SERVICE_WINDOW_STATUSES));
     for item in sessions.iter().chain(services.iter()) {
-        if string_field(item, "worktreePath").is_some_and(|path| active_paths.contains(path)) {
-            continue;
-        }
         if let Some(key) = item_worktree_group_key(item) {
             retired.remove(&key);
         }
@@ -2375,11 +2372,6 @@ fn worktree_lookup_by_identity(worktrees: &[Value]) -> BTreeMap<String, Value> {
 ///
 /// The same rule `item_matches_worktree_group` applied, asked once per item
 /// rather than once per item per group.
-/// `pub` for the reaper, which has to key a row the same way the groups do.
-pub fn item_worktree_group_key_for(item: &Value) -> Option<String> {
-    item_worktree_group_key(item)
-}
-
 fn item_worktree_group_key(item: &Value) -> Option<String> {
     let lane = agent_lane(Some(item));
     let lane_path = lane
