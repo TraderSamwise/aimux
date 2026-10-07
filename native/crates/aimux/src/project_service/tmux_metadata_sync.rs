@@ -129,28 +129,19 @@ pub fn sync_tmux_window_metadata(
     })
 }
 
+/// The word Exposé's chip, the tmux bar and `exposeStatus` all read.
+///
 /// The same five inputs the agent list and the dashboard row feed the
-/// derivation. Passing the raw status and defaulting the assignment is how
-/// Exposé's chip came to say "Ready" for an agent the row called "Next step",
-/// and "Idle" for one it called "Working".
-fn window_label_input(
+/// derivation. Passing the raw status and defaulting the assignment is how the
+/// chip came to say "Ready" for an agent the row called "Next step", and
+/// "Idle" for one it called "Working".
+fn window_user_label(
     project_state_dir: &Path,
     session_id: &str,
     status: &str,
     derived: &Value,
-) -> SessionSemanticsInput {
-    let has_active_task = try_read_runtime_exchange(runtime_exchange_path(project_state_dir))
-        .ok()
-        .map(|exchange| {
-            active_task_session_ids(
-                exchange
-                    .get("tasks")
-                    .and_then(Value::as_array)
-                    .map_or(&[][..], Vec::as_slice),
-            )
-        })
-        .is_some_and(|assigned| assigned.contains(session_id));
-    SessionSemanticsInput {
+) -> String {
+    let input = |has_active_task| SessionSemanticsInput {
         status: normalized_session_status(Some(status)).to_owned(),
         pending_action: None,
         activity: string_field(derived, "activity").map(str::to_owned),
@@ -161,7 +152,40 @@ fn window_label_input(
             .unwrap_or_default(),
         has_active_task,
         ..SessionSemanticsInput::default()
+    };
+    let label = user_label_of(&derive_session_semantics(input(false)));
+    // This runs per streamed output frame, so the exchange is read only when
+    // the assignment could still change the answer. `ready` and `idle` are
+    // the two words the task arm sits immediately before, so they are exactly
+    // the cases it could have displaced -- asked of the one rule rather than
+    // by restating its precedence here.
+    if !matches!(label.as_str(), "ready" | "idle") {
+        return label;
     }
+    let assigned = match try_read_runtime_exchange(runtime_exchange_path(project_state_dir)) {
+        Ok(exchange) => active_task_session_ids(
+            exchange
+                .get("tasks")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+        ),
+        // Nothing to say an assignment exists is not the same as saying none
+        // does, but the word has no spelling for "unknown" and the row would
+        // answer from the same unreadable file.
+        Err(_) => return label,
+    };
+    if !assigned.contains(session_id) {
+        return label;
+    }
+    user_label_of(&derive_session_semantics(input(true)))
+}
+
+fn user_label_of(semantic: &Value) -> String {
+    semantic
+        .get("user")
+        .and_then(|user| string_field(user, "label"))
+        .unwrap_or("ready")
+        .to_owned()
 }
 
 pub fn build_tmux_window_metadata(
@@ -187,17 +211,7 @@ pub fn build_tmux_window_metadata(
     let status = string_field(session, "status").unwrap_or("running");
     let activity = string_field(derived, "activity").map(str::to_owned);
     let attention = string_field(derived, "attention").map(str::to_owned);
-    let semantic = derive_session_semantics(window_label_input(
-        project_state_dir,
-        &session_id,
-        status,
-        derived,
-    ));
-    let user_label = semantic
-        .get("user")
-        .and_then(|user| string_field(user, "label"))
-        .unwrap_or("ready")
-        .to_owned();
+    let user_label = window_user_label(project_state_dir, &session_id, status, derived);
     let mut out = Map::new();
     out.insert("kind".into(), Value::String("agent".into()));
     out.insert("sessionId".into(), Value::String(session_id.clone()));
@@ -293,17 +307,7 @@ pub fn derive_recency_fields_for_window_metadata(
         .map(str::to_owned)
         .unwrap_or_else(|| {
             let status = string_field(metadata, "status").unwrap_or("running");
-            let semantic = derive_session_semantics(window_label_input(
-                project_state_dir,
-                session_id,
-                status,
-                derived,
-            ));
-            semantic
-                .get("user")
-                .and_then(|user| string_field(user, "label"))
-                .unwrap_or("ready")
-                .to_owned()
+            window_user_label(project_state_dir, session_id, status, derived)
         });
     let anchor = recency_anchor(project_state_dir, session_id, derived, &user_label)?;
     let anchor_object = anchor.as_object()?;
