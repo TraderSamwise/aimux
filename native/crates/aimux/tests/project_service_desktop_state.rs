@@ -1,4 +1,6 @@
 use aimux::atomic_write::write_json_atomic;
+use aimux::config::default_config;
+use aimux::core_text::render_core_agent_ps_lines;
 use aimux::daemon::process_inventory::{
     daemon_process_health_path, daemon_process_health_snapshot,
     write_daemon_process_health_snapshot,
@@ -8,6 +10,9 @@ use aimux::dashboard_model::{DashboardOperationFailure, DesktopStateSnapshot};
 use aimux::process_inspector::ProcessArgsEntry;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
+use aimux::project_service::agents::{
+    build_agent_list, topology_desktop_session_list_with_live_window_ids,
+};
 use aimux::project_service::desktop_state::{
     DesktopStateInput, build_desktop_state_with_live_window_ids, route_desktop_state_request_async,
     route_desktop_state_request_with_runtime,
@@ -19,13 +24,14 @@ use aimux::project_service::router::{
     OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
 };
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
+use aimux::project_service::tmux_metadata_sync::build_tmux_window_metadata;
 use aimux::project_service::visual_clients::ProjectHotSnapshotCoordinator;
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
 use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
-use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use serde_json::{Map, Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -2341,6 +2347,320 @@ fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashbo
         legacy_message
     );
     cleanup(project);
+}
+
+/// One session to override, and the status, activity and attention to give it.
+/// Exposé's chip is a FOURTH surface, worded from `userLabel` in the tmux
+/// window metadata by a derivation call the one-answer work did not move. It
+/// passed the raw status and defaulted the assignment, so the chip said
+/// "Ready" for an agent the row called "Next step" and "Idle" for one it
+/// called "Working" -- with every other gate green, because they all compare
+/// the three word MAPS and never the inputs each surface's producer feeds.
+#[test]
+fn the_expose_chip_words_an_agent_the_way_the_dashboard_row_does() {
+    let project = temp_project("expose-chip-agrees");
+    let state_dir = project.join(".aimux");
+    create_dir_all(&state_dir).unwrap();
+
+    let mut topology = topology_fixture();
+    for (id, status) in [("codex-live", "starting"), ("boss", "running")] {
+        let session = topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|session| session["id"] == id)
+            .unwrap();
+        session["status"] = json!(status);
+    }
+    let mut metadata = metadata_fixture();
+    // The ask would win over both the liveness and the assignment arms, and
+    // this is about the two inputs the chip was not given.
+    for id in ["codex-live", "boss"] {
+        let entry = metadata
+            .entry(id.to_owned())
+            .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+        entry["derived"] = json!({});
+    }
+    let mut exchange = exchange_fixture();
+    exchange["tasks"].as_array_mut().unwrap().push(json!({
+        "id": "task-in-flight",
+        "description": "Still assigned",
+        "status": "in_progress",
+        "assignedTo": "boss"
+    }));
+
+    write_runtime_exchange(runtime_exchange_path(&state_dir), &exchange).unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: metadata.clone(),
+        },
+    )
+    .unwrap();
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: project.to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &metadata,
+            exchange: &exchange,
+        },
+        Some(&support::live_windows(
+            "aimux-repo",
+            &["@1", "@2", "@3", "@4"],
+        )),
+    );
+
+    let mut compared = Vec::new();
+    for session in topology["sessions"].as_array().unwrap() {
+        let id = session["id"].as_str().unwrap();
+        let Some(row) = state["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(state["teammates"].as_array().into_iter().flatten())
+            .find(|candidate| candidate["id"] == id)
+        else {
+            continue;
+        };
+        let row_label = row["semantic"]["user"]["label"].as_str().unwrap();
+        let window = build_tmux_window_metadata(&state_dir, session, None);
+        let chip_label = window["userLabel"].as_str().unwrap_or("");
+        assert_eq!(
+            chip_label, row_label,
+            "Exposé's chip and the dashboard row disagree about {id}"
+        );
+        compared.push(row_label.to_owned());
+    }
+
+    assert!(
+        compared.iter().any(|label| label == "working"),
+        "the `starting` agent must reach `working`; reached {compared:?}"
+    );
+    assert!(
+        compared.iter().any(|label| label == "next_step"),
+        "the assigned agent must reach `next_step`; reached {compared:?}"
+    );
+    cleanup(project);
+}
+
+/// One session to override, and what to give it. `None` REMOVES the fixture's
+/// own value rather than leaving it: a case that silently kept
+/// `attention: needs_input` retested the case above it, which is how the
+/// `starting` row went uncompared.
+struct StateCase {
+    session: &'static str,
+    status: Option<&'static str>,
+    activity: Option<&'static str>,
+    attention: Option<&'static str>,
+    /// A task with this status, assigned to the session. `pending` is the
+    /// status `task assign` writes and the derivation does not count, so it
+    /// is the one that catches a selection difference between the row's set
+    /// and the agent list's.
+    assign_task: Option<&'static str>,
+}
+
+const fn case(
+    session: &'static str,
+    status: Option<&'static str>,
+    activity: Option<&'static str>,
+    attention: Option<&'static str>,
+) -> StateCase {
+    StateCase {
+        session,
+        status,
+        activity,
+        attention,
+        assign_task: None,
+    }
+}
+
+#[test]
+fn ps_and_the_dashboard_row_print_the_same_word_for_every_agent() {
+    // AGENTS.md "One Answer, Many Surfaces": the gate compares the surfaces
+    // against each other. The previous one rebuilt `ps`'s own expectation by
+    // calling the same derivation, so it stayed green while `ps` published
+    // `user.label` and every other surface published `statusLabel`.
+    //
+    // The base fixture only covers running, idle, offline and an outstanding
+    // ask, so each case overrides one session to reach a state the fixture
+    // does not hold. A state covered by neither is a blind spot.
+    let cases: &[StateCase] = &[
+        case("codex-live", None, None, None),
+        // `starting` is normalised to `waiting` for the derivation, and only
+        // on the dashboard side. Nothing else compares that normalisation.
+        case("codex-live", Some("starting"), None, None),
+        case("codex-live", Some("running"), None, None),
+        case("codex-live", Some("running"), Some("running"), None),
+        case("codex-live", Some("running"), Some("done"), None),
+        case("codex-live", Some("running"), Some("interrupted"), None),
+        case("codex-live", Some("running"), Some("error"), None),
+        case("codex-live", Some("running"), None, Some("needs_response")),
+        case("codex-live", Some("running"), None, Some("blocked")),
+        case("codex-live", Some("offline"), Some("running"), None),
+        case(
+            "codex-live",
+            Some("offline"),
+            Some("running"),
+            Some("needs_input"),
+        ),
+        case("codex-live", Some("idle"), None, None),
+        case("boss", Some("idle"), None, None),
+        case("reviewer", Some("offline"), Some("done"), None),
+        // An assignment in flight reaches the derivation by two different
+        // routes -- `summarize_active_tasks` for the row, and
+        // `active_task_session_ids` inside `build_agent_list` for `ps` -- and
+        // a selection difference between them was a blocker of its own.
+        StateCase {
+            session: "boss",
+            status: Some("running"),
+            activity: None,
+            attention: None,
+            assign_task: Some("in_progress"),
+        },
+        StateCase {
+            session: "boss",
+            status: Some("running"),
+            activity: None,
+            attention: None,
+            assign_task: Some("pending"),
+        },
+    ];
+
+    let mut words = Vec::new();
+    for StateCase {
+        session: target,
+        status,
+        activity,
+        attention,
+        assign_task,
+    } in cases
+    {
+        let mut topology = topology_fixture();
+        if let Some(status) = status {
+            let session = topology["sessions"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|session| session["id"] == *target)
+                .unwrap_or_else(|| panic!("{target} is not in the fixture"));
+            session["status"] = json!(status);
+        }
+        let mut metadata = metadata_fixture();
+        let entry = metadata
+            .entry((*target).to_owned())
+            .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+        if entry["derived"].as_object().is_none() {
+            entry["derived"] = json!({});
+        }
+        let derived = entry["derived"].as_object_mut().unwrap();
+        for (key, value) in [("activity", activity), ("attention", attention)] {
+            match value {
+                Some(value) => {
+                    derived.insert(key.into(), json!(value));
+                }
+                None => {
+                    derived.remove(key);
+                }
+            }
+        }
+        let mut exchange = exchange_fixture();
+        if let Some(task_status) = assign_task {
+            exchange["tasks"].as_array_mut().unwrap().push(json!({
+                "id": "task-in-flight",
+                "description": "Still assigned",
+                "status": task_status,
+                "assignedTo": target
+            }));
+        }
+        let live = support::live_windows("aimux-repo", &["@1", "@2", "@3", "@4"]);
+
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&live),
+        );
+        let agents = build_agent_list(
+            &topology_desktop_session_list_with_live_window_ids(
+                &topology,
+                &metadata,
+                &tools(),
+                &live,
+            ),
+            &metadata,
+            exchange["tasks"].as_array().map_or(&[][..], Vec::as_slice),
+            None,
+        );
+        let ps = render_core_agent_ps_lines(&json!({ "agents": agents }));
+
+        let mut compared = Vec::new();
+        for session in state["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(state["teammates"].as_array().into_iter().flatten())
+        {
+            let id = session["id"].as_str().unwrap();
+            let published = session["semantic"]["presentation"]["statusLabel"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{id} has no published status label"));
+            let line = ps
+                .iter()
+                .find(|line| line.split("  ").next() == Some(id))
+                .unwrap_or_else(|| panic!("{id} is on the dashboard but absent from ps:\n{ps:#?}"));
+            let fields = line.split("  ").collect::<Vec<_>>();
+            let tool_at = fields
+                .iter()
+                .position(|field| field.starts_with('['))
+                .unwrap_or_else(|| panic!("no tool column in {line:?}"));
+            assert_eq!(
+                fields.get(tool_at + 1).copied(),
+                Some(published),
+                "ps and the dashboard row disagree about {id} \
+                 with {target} as {status:?}/{activity:?}/{attention:?} \
+                 and task {assign_task:?}: \
+                 {line:?} vs {published:?}"
+            );
+            compared.push(published.to_owned());
+        }
+        assert_eq!(
+            compared.len(),
+            4,
+            "every fixture agent must be compared, not merely several"
+        );
+        words.extend(compared);
+    }
+
+    // A case that silently reproduces another case's state proves nothing, so
+    // the words actually reached are asserted rather than assumed.
+    let reached = words.into_iter().collect::<BTreeSet<_>>();
+    for expected in [
+        "working",
+        "ready",
+        "idle",
+        "offline",
+        "done",
+        "interrupted",
+        "error",
+        "needs input",
+        "needs reply",
+        "blocked",
+        "next step",
+    ] {
+        assert!(
+            reached.contains(expected),
+            "no case reached {expected:?}; reached {reached:?}"
+        );
+    }
+}
+
+fn tools() -> Map<String, Value> {
+    default_config()["tools"].as_object().unwrap().clone()
 }
 
 fn topology_fixture() -> Value {

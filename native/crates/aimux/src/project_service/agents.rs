@@ -760,6 +760,10 @@ pub fn build_agent_list(
     tasks: &[Value],
     role_registry: Option<&Value>,
 ) -> Vec<Value> {
+    // The one answer is derived HERE, not by each renderer. `ps` recomputing
+    // it from the record is what let four rounds of fixes diverge from the
+    // dashboard row over inputs the record did not carry.
+    let active_tasks = crate::project_service::session_semantics::active_task_session_ids(tasks);
     sessions
         .iter()
         .map(|session| {
@@ -784,6 +788,9 @@ pub fn build_agent_list(
                 "restoreBlockedReason",
                 "worktreePath",
                 "label",
+                // A kill in flight is the answer, not the turn it interrupted.
+                // Without this the one answer could not see a transient here.
+                "pendingAction",
             ] {
                 insert_value(&mut agent, key, session.get(key).cloned());
             }
@@ -836,6 +843,16 @@ pub fn build_agent_list(
                     }),
                 );
             }
+            agent.insert(
+                "state".into(),
+                Value::String(crate::project_service::session_semantics::agent_one_answer(
+                    agent.get("status").and_then(Value::as_str),
+                    agent.get("pendingAction").and_then(Value::as_str),
+                    agent.get("activity").and_then(Value::as_str),
+                    agent.get("attention").and_then(Value::as_str),
+                    active_tasks.contains(id),
+                )),
+            );
             Value::Object(agent)
         })
         .collect()
@@ -894,7 +911,11 @@ pub fn describe_session_restorability(
 
 fn active_task_for<'a>(tasks: &'a [Value], session_id: &str) -> Option<&'a Value> {
     tasks.iter().find(|task| {
-        string_field(task, "assignedTo") == Some(session_id)
+        // `assignee` as well as `assignedTo`, because the derivation resolves
+        // the owner that way too. Matching only one meant a task assigned by
+        // the other spelling counted on the row and was invisible here.
+        string_field(task, "assignedTo").or_else(|| string_field(task, "assignee"))
+            == Some(session_id)
             && !matches!(
                 string_field(task, "status"),
                 Some("done" | "failed" | "canceled" | "cancelled" | "abandoned")

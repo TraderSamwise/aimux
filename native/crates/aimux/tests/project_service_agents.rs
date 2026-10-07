@@ -1,4 +1,5 @@
 use aimux::config::default_config;
+use aimux::core_text::render_core_agent_ps_lines;
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::debug_logging::{
     LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
@@ -42,7 +43,8 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
             "team": { "role": "coder" },
             "status": "running",
             "worktreePath": "/repo",
-            "label": "Code"
+            "label": "Code",
+            "pendingAction": "graveyarding"
         }),
         json!({
             "id": "claude-1",
@@ -51,6 +53,13 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
             "command": "claude",
             "status": "offline",
             "restoreState": "ready"
+        }),
+        json!({
+            "id": "codex-2",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "status": "running"
         }),
     ];
     let mut metadata = BTreeMap::new();
@@ -68,6 +77,7 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
     let tasks = vec![
         json!({ "id": "task-1", "description": "Do it", "status": "in_progress", "assignedTo": "codex-1" }),
         json!({ "id": "task-2", "description": "Done", "status": "done", "assignedTo": "codex-1" }),
+        json!({ "id": "task-3", "description": "Assignee only", "status": "in_progress", "assignee": "codex-2" }),
     ];
 
     let agents = build_agent_list(&sessions, &metadata, &tasks, None);
@@ -103,6 +113,121 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
     assert!(agents[1].get("overseer").is_none());
     assert!(agents[1].get("scribe").is_none());
     assert!(agents[1]["task"].is_null());
+    // The derivation resolves an owner by `assignee` too, so a task assigned
+    // that way has to reach this record or `ps` answers `ready` for an agent
+    // the row calls `next_step`.
+    assert_eq!(
+        agents[2]["task"],
+        json!({ "id": "task-3", "description": "Assignee only", "status": "in_progress" })
+    );
+    assert!(
+        render_core_agent_ps_lines(&json!({ "agents": agents.clone() }))
+            .contains(&"codex-2  [codex:coder]  next step".to_string())
+    );
+    // A kill in flight has to survive the projection, or the one answer every
+    // surface renders cannot see it and `ps` reports the turn it interrupted.
+    assert_eq!(agents[0]["pendingAction"], "graveyarding");
+    assert_eq!(
+        render_core_agent_ps_lines(&json!({ "agents": agents }))[0],
+        "codex-1  \"Code\"  [codex:overseer]  Removing  {overseer loop}"
+    );
+}
+
+#[test]
+fn build_agent_list_publishes_the_one_state_word() {
+    // The word is derived once here, where the whole task set is in hand.
+    // `ps` recomputing it from the projected record is what let four rounds
+    // of fixes disagree with the dashboard row.
+    let word = |session: Value, metadata: Value, tasks: Vec<Value>| {
+        let mut sessions = BTreeMap::new();
+        if !metadata.is_null() {
+            sessions.insert("a".to_owned(), metadata);
+        }
+        build_agent_list(&[session], &sessions, &tasks, None)[0]["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let agent = |status: &str| json!({ "id": "a", "tool": "codex", "status": status });
+    let derived = |activity: &str, attention: &str| {
+        let mut derived = serde_json::Map::new();
+        if !activity.is_empty() {
+            derived.insert("activity".into(), json!(activity));
+        }
+        if !attention.is_empty() {
+            derived.insert("attention".into(), json!(attention));
+        }
+        json!({ "derived": Value::Object(derived) })
+    };
+
+    assert_eq!(
+        word(agent("running"), derived("running", ""), vec![]),
+        "working"
+    );
+    // `starting` is the status `ps` used to answer `idle` for while every
+    // derived surface called the same agent working.
+    assert_eq!(word(agent("starting"), Value::Null, vec![]), "working");
+    assert_eq!(word(agent("running"), Value::Null, vec![]), "ready");
+    assert_eq!(word(agent("idle"), derived("done", ""), vec![]), "done");
+    assert_eq!(
+        word(agent("idle"), derived("interrupted", ""), vec![]),
+        "interrupted"
+    );
+    assert_eq!(
+        word(agent("running"), derived("error", ""), vec![]),
+        "error"
+    );
+    // The published word, not the machine key: the bar, the overlay and the
+    // app row all say "needs reply" for this one.
+    assert_eq!(
+        word(agent("running"), derived("", "needs_response"), vec![]),
+        "needs reply"
+    );
+    // Stored `running` on a session whose window is gone is not work in
+    // progress, and a stale ask does not make a dead agent actionable.
+    assert_eq!(
+        word(agent("offline"), derived("running", ""), vec![]),
+        "offline"
+    );
+    assert_eq!(
+        word(agent("offline"), derived("waiting", "needs_input"), vec![]),
+        "offline"
+    );
+
+    // A leading non-active task must not hide a later active one. `task
+    // assign` writes `pending`, which the derivation does not count, and
+    // selecting the agent's first non-terminal task answered `ready` here
+    // while the dashboard row said "next step".
+    assert_eq!(
+        word(
+            agent("running"),
+            Value::Null,
+            vec![
+                json!({ "id": "t1", "status": "pending", "assignedTo": "a" }),
+                json!({ "id": "t2", "status": "in_progress", "assignedTo": "a" }),
+            ],
+        ),
+        "next step",
+        "an active assignment behind a pending one still counts"
+    );
+    assert_eq!(
+        word(
+            agent("running"),
+            Value::Null,
+            vec![json!({ "id": "t1", "status": "pending", "assignedTo": "a" })],
+        ),
+        "ready",
+        "and a pending assignment on its own is not one in flight"
+    );
+    // The derivation resolves an owner by `assignee` too.
+    assert_eq!(
+        word(
+            agent("running"),
+            Value::Null,
+            vec![json!({ "id": "t1", "status": "in_progress", "assignee": "a" })],
+        ),
+        "next step"
+    );
 }
 
 #[test]

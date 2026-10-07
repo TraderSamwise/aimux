@@ -544,15 +544,6 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
         let id = field(agent, "id").and_then(Value::as_str).unwrap_or("?");
         let tool = field(agent, "tool").and_then(Value::as_str).unwrap_or("?");
         let role = field(agent, "role").and_then(Value::as_str).unwrap_or("");
-        let status = field(agent, "status")
-            .and_then(Value::as_str)
-            .unwrap_or("?");
-        let activity = field(agent, "activity")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let attention = field(agent, "attention")
-            .and_then(Value::as_str)
-            .unwrap_or("");
         let loop_value = object(agent, "loop");
         let task = object(agent, "task");
         let mut tags = Vec::new();
@@ -576,13 +567,10 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
                     .unwrap_or_default()
             ));
         }
-        let state = [activity, attention]
-            .into_iter()
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>()
-            .join("/");
+        // Rendered, not derived. The project service publishes the word.
+        let state = field(agent, "state").and_then(Value::as_str).unwrap_or("?");
         output.push(format!(
-            "{id}{}  [{tool}{}]  {status}{}{}",
+            "{id}{}  [{tool}{}]  {state}{}",
             agent_chosen_name(agent)
                 .map(|name| format!("  \"{name}\""))
                 .unwrap_or_default(),
@@ -590,11 +578,6 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
                 "".into()
             } else {
                 format!(":{role}")
-            },
-            if state.is_empty() {
-                "".into()
-            } else {
-                format!("  {state}")
             },
             if tags.is_empty() {
                 "".into()
@@ -726,12 +709,7 @@ fn render_agent_list_summary(agent: &Value) -> String {
         tags.push(format!("loop{goal}"));
     }
 
-    let state = ["activity", "attention"]
-        .into_iter()
-        .filter_map(|key| field(agent, key).and_then(Value::as_str))
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
+    let state = field(agent, "state").and_then(Value::as_str).unwrap_or("?");
     let mut detail = vec![
         format!("canonical={}", agent_canonical_id(agent)),
         format!("aimux={}", js_string_or_undefined(field(agent, "id"))),
@@ -745,17 +723,13 @@ fn render_agent_list_summary(agent: &Value) -> String {
     {
         detail.push(format!("backend={backend_session_id}"));
     }
-    if !state.is_empty() {
-        detail.push(format!("state={state}"));
-    }
     if !tags.is_empty() {
         detail.push(tags.join(" "));
     }
-    let status = field(agent, "status")
-        .filter(|value| !value.is_null())
-        .map(|value| js_string(Some(value)))
-        .unwrap_or_else(|| "?".into());
-    format!("  {status}  {}", detail.join("  "))
+    // The answer leads, and the raw axis is not printed beside it: a
+    // projected `starting` next to `state=working` is the same two-sources
+    // shape this replaced. `--json` still carries every raw field.
+    format!("  {state}  {}", detail.join("  "))
 }
 
 fn js_string_or_undefined(value: Option<&Value>) -> String {

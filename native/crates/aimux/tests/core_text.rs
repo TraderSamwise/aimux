@@ -80,28 +80,71 @@ fn renders_remote_auth_and_whoami_without_credentials() {
 }
 
 #[test]
+fn ps_renders_the_published_word_and_never_the_raw_axes() {
+    // The complaint this answers: "i cant tell difference between false
+    // 'working' state vs 'needs input' state vs 'finished' state". `ps` used
+    // to print the raw axes side by side, so a dead agent read
+    // `offline  done/normal` -- a projected liveness next to a turn state
+    // nothing rewrote when its window died.
+    //
+    // The word itself is derived by the project service, so this covers only
+    // the rendering. The word is pinned on the route in
+    // `project_service_agents::build_agent_list_publishes_the_one_state_word`
+    // and compared against the dashboard row in
+    // `project_service_desktop_state::ps_and_the_dashboard_row_print_the_same_word_for_every_agent`.
+    let line = |agent: serde_json::Value| {
+        render_core_agent_ps_lines(&json!({ "agents": [agent] }))[0].clone()
+    };
+
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "state": "working" })),
+        "a  [codex]  working"
+    );
+    assert_eq!(
+        line(json!({
+            "id": "a", "tool": "codex", "state": "offline",
+            "status": "offline", "activity": "running", "attention": "needs_input"
+        })),
+        "a  [codex]  offline",
+        "the raw axes are not printed beside the answer, in any combination"
+    );
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "state": "needs input" })),
+        "a  [codex]  needs input",
+        "a two-word published label survives rendering"
+    );
+    // A service too old to publish the word must say so, not print a blank
+    // column that reads as "nothing is happening".
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "status": "running" })),
+        "a  [codex]  ?",
+        "an absent word is unknown, not idle"
+    );
+}
+
+#[test]
 fn renders_agent_and_team_details() {
     assert_eq!(
         render_core_agent_ps_lines(&json!({ "agents": [{
-            "id": "codex-1", "tool": "codex", "role": "builder", "status": "working",
-            "activity": "editing", "attention": "needed", "overseer": true,
+            "id": "codex-1", "tool": "codex", "role": "builder", "state": "working",
+            "overseer": true,
             "loop": { "active": true, "goal": "ship" }, "worktreePath": "/repo/wt",
             "task": { "description": "Implement port", "status": "active" }
         }] })),
         vec![
-            "codex-1  [codex:builder]  working  editing/needed  {overseer loop:ship}",
+            "codex-1  [codex:builder]  working  {overseer loop:ship}",
             "    worktree: /repo/wt",
             "    task: Implement port (active)",
         ]
     );
     assert_eq!(
         render_core_agent_ps_lines(&json!({ "agents": [
-            { "id": "codex-1", "tool": "codex", "label": "Review lane", "status": "running" },
-            { "id": "codex-ho1ofa", "tool": "codex", "label": "codex-ho1ofa", "status": "running" },
+            { "id": "codex-1", "tool": "codex", "label": "Review lane", "state": "ready" },
+            { "id": "codex-ho1ofa", "tool": "codex", "label": "codex-ho1ofa", "state": "ready" },
         ] })),
         vec![
-            "codex-1  \"Review lane\"  [codex]  running",
-            "codex-ho1ofa  [codex]  running",
+            "codex-1  \"Review lane\"  [codex]  ready",
+            "codex-ho1ofa  [codex]  ready",
         ],
         "a chosen name is printed and a generated label is not presented as one"
     );
@@ -111,12 +154,12 @@ fn renders_agent_and_team_details() {
             "agents": [
                 {
                     "id": "codex-2", "toolConfigKey": "codex-heavy", "tool": "codex",
-                    "status": "working", "activity": "editing", "scribe": true,
+                    "status": "running", "state": "working", "scribe": true,
                     "loop": { "active": true }
                 },
                 {
                     "id": "codex-1", "tool": "codex", "role": "builder", "status": "idle",
-                    "attention": "needed", "overseer": true, "backendSessionId": "backend-1",
+                    "state": "needs input", "overseer": true, "backendSessionId": "backend-1",
                     "loop": { "active": true, "goal": "ship" }, "worktreePath": "/repo/wt",
                     "task": { "description": "Implement port", "status": "active" }
                 }
@@ -124,10 +167,10 @@ fn renders_agent_and_team_details() {
         })),
         vec![
             "Main Checkout  /repo",
-            "  working  canonical=codex-heavy  aimux=codex-2  state=editing  scribe loop",
+            "  working  canonical=codex-heavy  aimux=codex-2  scribe loop",
             "",
             "wt  /repo/wt",
-            "  idle  canonical=codex  aimux=codex-1  backend=backend-1  state=needed  role=builder overseer loop=ship",
+            "  needs input  canonical=codex  aimux=codex-1  backend=backend-1  role=builder overseer loop=ship",
             "    task: Implement port (active)",
         ]
     );

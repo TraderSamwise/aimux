@@ -156,6 +156,68 @@ fn workflow_pressure(
     }
 }
 
+/// `ps` printed the three raw axes, so a session whose window had died read
+/// `offline  done/normal`. It now answers with `presentation.statusLabel`,
+/// the published word the bar, the overlay and the app row all render.
+pub fn agent_one_answer(
+    status: Option<&str>,
+    pending_action: Option<&str>,
+    activity: Option<&str>,
+    attention: Option<&str>,
+    has_active_task: bool,
+) -> String {
+    let semantic = derive_session_semantics(SessionSemanticsInput {
+        status: normalized_session_status(status).to_owned(),
+        pending_action: pending_action.map(str::to_owned),
+        activity: activity.map(str::to_owned),
+        attention: attention.map(str::to_owned),
+        has_active_task,
+        ..Default::default()
+    });
+    // `user.label` is the machine key, not the published word: it says
+    // `needs_response` where every surface says "needs reply", and
+    // `graveyarding` where the row says "Removing".
+    semantic
+        .get("presentation")
+        .and_then(|presentation| presentation.get("statusLabel"))
+        .and_then(Value::as_str)
+        .unwrap_or("idle")
+        .to_owned()
+}
+
+/// Which sessions hold an assignment still in flight. Sharing only the
+/// predicate was not enough: the agent list picked one task by a different
+/// rule first, so a leading `pending` task hid a later `in_progress` one.
+pub fn active_task_session_ids(tasks: &[Value]) -> std::collections::BTreeSet<String> {
+    tasks
+        .iter()
+        .filter(|task| task_status_is_active(string_field(task, "status").as_deref()))
+        .filter_map(|task| {
+            string_field(task, "assignedTo").or_else(|| string_field(task, "assignee"))
+        })
+        .collect()
+}
+
+/// The statuses `user_state` counts as an assignment still in flight. The
+/// agent list keeps a wider set on the record, so reading `task` presence
+/// instead made `ps` answer `ready` where the row answered `next_step`.
+fn task_status_is_active(status: Option<&str>) -> bool {
+    matches!(status, Some("assigned" | "in_progress" | "blocked"))
+}
+
+/// Raw topology statuses narrowed to the four the derivation is written
+/// against. Feeding it raw `starting` made `ps` answer `idle` for the same
+/// agent every other surface called working.
+pub fn normalized_session_status(status: Option<&str>) -> &'static str {
+    match status {
+        Some("running") => "running",
+        Some("idle") => "idle",
+        Some("starting") => "waiting",
+        Some("offline") => "offline",
+        _ => "offline",
+    }
+}
+
 fn user_state(input: &SessionSemanticsInput, lifecycle: &str, attention: &str) -> Value {
     match lifecycle {
         "creating" | "starting" => user("starting", "none", "runtime", None),
@@ -217,6 +279,13 @@ fn notifications_state(
         notifications.insert("latestText".into(), Value::String(text));
     }
     Value::Object(notifications)
+}
+
+/// The published word for a `user.label` or a transient action. Exposed so
+/// one test can compare it against the row's and the chip's own maps over the
+/// whole vocabulary, not only the states a fixture happens to reach.
+pub fn published_status_label(label: &str) -> &str {
+    status_label_for(label)
 }
 
 fn status_label_for(label: &str) -> &str {
