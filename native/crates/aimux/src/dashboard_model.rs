@@ -163,6 +163,10 @@ pub struct DashboardSession {
     pub last_output_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub became_idle_at: Option<String>,
+    /// Whether this agent produced output recently enough to stand out,
+    /// decided by the project service so every screen reads one answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_output: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_event: Option<DashboardSessionEvent>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -530,6 +534,11 @@ pub struct WorktreeGroup {
     /// disagreeing is exactly the fact worth showing.
     #[serde(default, skip_serializing_if = "is_false")]
     pub path_missing: bool,
+    /// Whether this checkout holds an agent that has produced output
+    /// recently, folded by the project service over the same sessions the
+    /// card renders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_output: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -87,6 +87,7 @@ fn worktree_group_value(name: &str, path_missing: bool) -> WorktreeGroup {
         status: WorktreeStatus::Active,
         pending: false,
         removing: false,
+        recent_output: None,
         path_missing,
         pending_action: None,
         operation_failure: None,

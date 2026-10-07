@@ -1,5 +1,7 @@
 use serde_json::{Map, Value};
 
+use crate::session_recency::is_agent_output_event_kind;
+
 pub fn normalize_agent_event(event: Value) -> Value {
     let mut event = object_value(event);
     if !event.contains_key("ts") {
@@ -182,20 +184,6 @@ fn derive_from_event(current: &Value, event: &Value, suppress_unseen: bool) -> D
         unseen_count,
         became_idle_at,
     }
-}
-
-fn is_agent_output_event_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "response"
-            | "task_done"
-            | "task_failed"
-            | "needs_input"
-            | "blocked"
-            | "interrupted"
-            | "notify"
-            | "status"
-    )
 }
 
 fn increment_unseen(current: i64, suppress_unseen: bool) -> i64 {

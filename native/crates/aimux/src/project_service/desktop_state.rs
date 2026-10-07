@@ -464,15 +464,16 @@ pub fn build_desktop_state_with_live_window_projection(
         .iter()
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
         .collect::<Vec<_>>();
-    let worktree_groups = build_worktree_groups(
-        &input.project_root,
-        &worktrees,
-        &sessions,
-        &services,
-        &abandoned_worktree_paths,
-        main_branch_probe.as_ref(),
-        &worktree_by_path,
-    );
+    let worktree_groups = build_worktree_groups(WorktreeGroupsInput {
+        project_root: &input.project_root,
+        worktrees: &worktrees,
+        sessions: &sessions,
+        services: &services,
+        teammates: &teammates,
+        retired_paths: &abandoned_worktree_paths,
+        main_branch_probe: main_branch_probe.as_ref(),
+        rows_by_identity: &worktree_by_path,
+    });
     let mut state = Map::new();
     state.insert("ok".into(), Value::Bool(true));
     state.insert("serviceInfo".into(), service_info());
@@ -579,15 +580,16 @@ async fn build_desktop_state_with_live_window_projection_async(
         .iter()
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
         .collect::<Vec<_>>();
-    let worktree_groups = build_worktree_groups(
-        &input.project_root,
-        &worktrees,
-        &sessions,
-        &services,
-        &abandoned_worktree_paths,
-        worktree_projection.main_branch_probe.as_ref(),
-        &worktree_by_path,
-    );
+    let worktree_groups = build_worktree_groups(WorktreeGroupsInput {
+        project_root: &input.project_root,
+        worktrees: &worktrees,
+        sessions: &sessions,
+        services: &services,
+        teammates: &teammates,
+        retired_paths: &abandoned_worktree_paths,
+        main_branch_probe: worktree_projection.main_branch_probe.as_ref(),
+        rows_by_identity: &worktree_by_path,
+    });
     let mut state = Map::new();
     state.insert("ok".into(), Value::Bool(true));
     state.insert("serviceInfo".into(), service_info());
@@ -1161,6 +1163,34 @@ fn dashboard_session(
         .unwrap_or(false)
         && is_notification_stale(live_label, notifications.needs_input_unread_count > 0);
     item.insert("notificationStale".into(), Value::Bool(notification_stale));
+    // Derived here so the dashboard row, the topology row and anything added
+    // later read one answer instead of each applying its own window. A
+    // stopped agent keeps the stamp it died with, and weight means something
+    // is happening, so liveness is part of the fact.
+    // `runtime_lifecycle` answers `error` before it answers `offline`, so an
+    // agent that failed and then lost its window is `isAlive: true`. The
+    // projected status is the one thing that cannot be fooled by that.
+    let is_alive = semantic
+        .get("runtime")
+        .and_then(|runtime| runtime.get("isAlive"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && raw_status != "offline";
+    let last_event = item.get("lastEvent");
+    item.insert(
+        "recentOutput".into(),
+        Value::Bool(
+            is_alive
+                && crate::session_recency::output_is_recent(
+                    crate::session_recency::output_anchor(
+                        item.get("lastOutputAt").and_then(Value::as_str),
+                        last_event.and_then(|event| string_field(event, "kind")),
+                        last_event.and_then(|event| string_field(event, "ts")),
+                    ),
+                    crate::session_recency::now_millis(),
+                ),
+        ),
+    );
     item.insert("semantic".into(), semantic);
     if !item.contains_key("overseer") {
         item.insert("overseer".into(), Value::Bool(false));
@@ -1472,16 +1502,29 @@ fn main_branch_probe_for_rows(
         .then(|| current_git_branch_probe(project_root))
 }
 
-fn build_worktree_groups(
-    project_root: &str,
-    worktrees: &[Value],
-    sessions: &[Value],
-    services: &[Value],
-    retired_paths: &BTreeSet<String>,
-    main_branch_probe: Option<&GitBranchProbe>,
-    rows_by_identity: &BTreeMap<String, Value>,
-) -> Vec<Value> {
-    let by_group = BucketedItems::by_worktree(sessions, services);
+struct WorktreeGroupsInput<'a> {
+    project_root: &'a str,
+    worktrees: &'a [Value],
+    sessions: &'a [Value],
+    services: &'a [Value],
+    teammates: &'a [Value],
+    retired_paths: &'a BTreeSet<String>,
+    main_branch_probe: Option<&'a GitBranchProbe>,
+    rows_by_identity: &'a BTreeMap<String, Value>,
+}
+
+fn build_worktree_groups(input: WorktreeGroupsInput<'_>) -> Vec<Value> {
+    let WorktreeGroupsInput {
+        project_root,
+        worktrees,
+        sessions,
+        services,
+        teammates,
+        retired_paths,
+        main_branch_probe,
+        rows_by_identity,
+    } = input;
+    let by_group = BucketedItems::by_worktree(sessions, services, teammates);
     let context = WorktreeGroupContext {
         by_group: &by_group,
         main_branch_probe,
@@ -1563,9 +1606,14 @@ struct WorktreeGroupContext<'a> {
 struct BucketedItems<'a> {
     sessions: BTreeMap<String, Vec<&'a Value>>,
     services: BTreeMap<String, Vec<&'a Value>>,
+    /// Teammates, bucketed the same way. The card does not give them rows --
+    /// they are listed in its details panel -- but the topology screen does,
+    /// and a checkout answer that left them out sat plain above a bold row.
+    teammates: BTreeMap<String, Vec<&'a Value>>,
     /// The ones with no worktree of their own, which belong to the main group.
     main_sessions: Vec<&'a Value>,
     main_services: Vec<&'a Value>,
+    main_teammates: Vec<&'a Value>,
 }
 
 impl<'a> BucketedItems<'a> {
@@ -1575,7 +1623,7 @@ impl<'a> BucketedItems<'a> {
     /// tiebreak on id, so the result does not depend on which order items
     /// arrived in. Said out loud because bucketing silently depends on it, and
     /// ordering agreeing across surfaces is a rule this repo has a section for.
-    fn by_worktree(sessions: &'a [Value], services: &'a [Value]) -> Self {
+    fn by_worktree(sessions: &'a [Value], services: &'a [Value], teammates: &'a [Value]) -> Self {
         let mut bucketed = Self::default();
         for session in sessions {
             if session_is_in_supervisor_plane(session) {
@@ -1592,11 +1640,21 @@ impl<'a> BucketedItems<'a> {
                 None => bucketed.main_services.push(service),
             }
         }
+        for teammate in teammates {
+            match item_worktree_group_key(teammate) {
+                Some(key) => bucketed.teammates.entry(key).or_default().push(teammate),
+                None => bucketed.main_teammates.push(teammate),
+            }
+        }
         bucketed
     }
 
     fn sessions_for(&self, path_key: &str, main: bool) -> Vec<&'a Value> {
         Self::bucket(&self.sessions, &self.main_sessions, path_key, main)
+    }
+
+    fn teammates_for(&self, path_key: &str, main: bool) -> Vec<&'a Value> {
+        Self::bucket(&self.teammates, &self.main_teammates, path_key, main)
     }
 
     fn services_for(&self, path_key: &str, main: bool) -> Vec<&'a Value> {
@@ -1689,9 +1747,51 @@ fn worktree_group(
         "status".into(),
         Value::String(if active { "active" } else { "offline" }.into()),
     );
+    // Folded over the SAME set the card renders, once, here. Folding it in
+    // the renderer instead read a list the view had already filtered -- hide
+    // offline agents and the title changed -- and the topology screen folded
+    // a different list again, which included teammates the card never sees.
+    group.insert(
+        "recentOutput".into(),
+        Value::Bool(worktree_recent_output(&[
+            &group_sessions,
+            &sorted_dashboard_items(context.by_group.teammates_for(path_key, main)),
+        ])),
+    );
     group.insert("sessions".into(), Value::Array(group_sessions));
     group.insert("services".into(), Value::Array(group_services));
     Value::Object(group)
+}
+
+/// Whether a checkout holds an agent of its OWN that has produced output
+/// recently.
+///
+/// Its own means the agents whose plane is this checkout: ordinary sessions,
+/// which the card rows, and teammates, which the card lists in its details
+/// panel. Both are working in it.
+///
+/// Project-control agents are NOT its own. An overseer sits in the supervisor
+/// card and is near-permanently active, so counting it made the main
+/// checkout -- where most agents live and most people look -- bold forever,
+/// which is the whole signal gone. The topology screen rows an overseer under
+/// the checkout its directory names, so a bold overseer row can sit under a
+/// plain heading there; that reads correctly, because the heading is about
+/// the checkout's own agents and the row is about the overseer. Counting it
+/// to make the two adjacent weights match would trade a true statement for a
+/// useless one.
+///
+/// No agents of its own at all is no answer rather than a quiet one, so a
+/// checkout running only services does not draw a plain title over bold
+/// service rows.
+fn worktree_recent_output(groups: &[&[Value]]) -> bool {
+    let mut any_agent = false;
+    for session in groups.iter().flat_map(|group| group.iter()) {
+        any_agent = true;
+        if session.get("recentOutput").and_then(Value::as_bool) != Some(false) {
+            return true;
+        }
+    }
+    !any_agent
 }
 
 fn set_indexes(items: &mut [Value]) {
@@ -2352,7 +2452,7 @@ fn worktree_lookup_by_identity(worktrees: &[Value]) -> BTreeMap<String, Value> {
 ///
 /// The same rule `item_matches_worktree_group` applied, asked once per item
 /// rather than once per item per group.
-fn item_worktree_group_key(item: &Value) -> Option<String> {
+pub fn item_worktree_group_key(item: &Value) -> Option<String> {
     let lane = agent_lane(Some(item));
     let lane_path = lane
         .get("worktreePath")
