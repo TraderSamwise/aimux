@@ -201,7 +201,7 @@ pub fn active_task_session_ids(tasks: &[Value]) -> std::collections::BTreeSet<St
 /// The statuses `user_state` counts as an assignment still in flight. The
 /// agent list keeps a wider set on the record, so reading `task` presence
 /// instead made `ps` answer `ready` where the row answered `next_step`.
-pub fn task_status_is_active(status: Option<&str>) -> bool {
+fn task_status_is_active(status: Option<&str>) -> bool {
     matches!(status, Some("assigned" | "in_progress" | "blocked"))
 }
 

@@ -30,7 +30,7 @@ use aimux::tmux::CapturePaneOptions;
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
 use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -2349,12 +2349,36 @@ fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashbo
 }
 
 /// One session to override, and the status, activity and attention to give it.
-type StateCase = (
-    &'static str,
-    Option<&'static str>,
-    Option<&'static str>,
-    Option<&'static str>,
-);
+/// One session to override, and what to give it. `None` REMOVES the fixture's
+/// own value rather than leaving it: a case that silently kept
+/// `attention: needs_input` retested the case above it, which is how the
+/// `starting` row went uncompared.
+struct StateCase {
+    session: &'static str,
+    status: Option<&'static str>,
+    activity: Option<&'static str>,
+    attention: Option<&'static str>,
+    /// A task with this status, assigned to the session. `pending` is the
+    /// status `task assign` writes and the derivation does not count, so it
+    /// is the one that catches a selection difference between the row's set
+    /// and the agent list's.
+    assign_task: Option<&'static str>,
+}
+
+const fn case(
+    session: &'static str,
+    status: Option<&'static str>,
+    activity: Option<&'static str>,
+    attention: Option<&'static str>,
+) -> StateCase {
+    StateCase {
+        session,
+        status,
+        activity,
+        attention,
+        assign_task: None,
+    }
+}
 
 #[test]
 fn ps_and_the_dashboard_row_print_the_same_word_for_every_agent() {
@@ -2364,65 +2388,96 @@ fn ps_and_the_dashboard_row_print_the_same_word_for_every_agent() {
     // `user.label` and every other surface published `statusLabel`.
     //
     // The base fixture only covers running, idle, offline and an outstanding
-    // ask, so each case below overrides one session to reach a state the
-    // fixture does not hold. A state covered by neither is a blind spot.
+    // ask, so each case overrides one session to reach a state the fixture
+    // does not hold. A state covered by neither is a blind spot.
     let cases: &[StateCase] = &[
-        ("codex-live", None, None, None),
-        ("codex-live", Some("starting"), None, None),
-        ("codex-live", Some("running"), Some("done"), Some("normal")),
-        (
-            "codex-live",
-            Some("running"),
-            Some("interrupted"),
-            Some("normal"),
-        ),
-        ("codex-live", Some("running"), Some("error"), Some("normal")),
-        ("codex-live", Some("running"), None, Some("needs_response")),
-        ("codex-live", Some("running"), None, Some("blocked")),
-        (
+        case("codex-live", None, None, None),
+        // `starting` is normalised to `waiting` for the derivation, and only
+        // on the dashboard side. Nothing else compares that normalisation.
+        case("codex-live", Some("starting"), None, None),
+        case("codex-live", Some("running"), None, None),
+        case("codex-live", Some("running"), Some("running"), None),
+        case("codex-live", Some("running"), Some("done"), None),
+        case("codex-live", Some("running"), Some("interrupted"), None),
+        case("codex-live", Some("running"), Some("error"), None),
+        case("codex-live", Some("running"), None, Some("needs_response")),
+        case("codex-live", Some("running"), None, Some("blocked")),
+        case("codex-live", Some("offline"), Some("running"), None),
+        case(
             "codex-live",
             Some("offline"),
             Some("running"),
             Some("needs_input"),
         ),
-        ("boss", Some("idle"), None, None),
-        ("reviewer", Some("offline"), Some("done"), None),
+        case("codex-live", Some("idle"), None, None),
+        case("boss", Some("idle"), None, None),
+        case("reviewer", Some("offline"), Some("done"), None),
+        // An assignment in flight reaches the derivation by two different
+        // routes -- `summarize_active_tasks` for the row, and
+        // `active_task_session_ids` inside `build_agent_list` for `ps` -- and
+        // a selection difference between them was a blocker of its own.
+        StateCase {
+            session: "boss",
+            status: Some("running"),
+            activity: None,
+            attention: None,
+            assign_task: Some("in_progress"),
+        },
+        StateCase {
+            session: "boss",
+            status: Some("running"),
+            activity: None,
+            attention: None,
+            assign_task: Some("pending"),
+        },
     ];
 
-    for (target, status, activity, attention) in cases {
+    let mut words = Vec::new();
+    for StateCase {
+        session: target,
+        status,
+        activity,
+        attention,
+        assign_task,
+    } in cases
+    {
         let mut topology = topology_fixture();
         if let Some(status) = status {
-            let sessions = topology["sessions"].as_array_mut().unwrap();
-            let session = sessions
+            let session = topology["sessions"]
+                .as_array_mut()
+                .unwrap()
                 .iter_mut()
                 .find(|session| session["id"] == *target)
                 .unwrap_or_else(|| panic!("{target} is not in the fixture"));
             session["status"] = json!(status);
         }
         let mut metadata = metadata_fixture();
-        if activity.is_some() || attention.is_some() {
-            let entry = metadata.entry((*target).to_owned()).or_insert_with(
-                || json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }),
-            );
-            let derived = entry["derived"].as_object_mut().unwrap();
-            match activity {
-                Some(activity) => {
-                    derived.insert("activity".into(), json!(activity));
+        let entry = metadata
+            .entry((*target).to_owned())
+            .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+        if entry["derived"].as_object().is_none() {
+            entry["derived"] = json!({});
+        }
+        let derived = entry["derived"].as_object_mut().unwrap();
+        for (key, value) in [("activity", activity), ("attention", attention)] {
+            match value {
+                Some(value) => {
+                    derived.insert(key.into(), json!(value));
                 }
                 None => {
-                    derived.remove("activity");
-                }
-            }
-            match attention {
-                Some(attention) => {
-                    derived.insert("attention".into(), json!(attention));
-                }
-                None => {
-                    derived.remove("attention");
+                    derived.remove(key);
                 }
             }
         }
-        let exchange = exchange_fixture();
+        let mut exchange = exchange_fixture();
+        if let Some(task_status) = assign_task {
+            exchange["tasks"].as_array_mut().unwrap().push(json!({
+                "id": "task-in-flight",
+                "description": "Still assigned",
+                "status": task_status,
+                "assignedTo": target
+            }));
+        }
         let live = support::live_windows("aimux-repo", &["@1", "@2", "@3", "@4"]);
 
         let state = build_desktop_state_with_live_window_ids(
@@ -2447,7 +2502,7 @@ fn ps_and_the_dashboard_row_print_the_same_word_for_every_agent() {
         );
         let ps = render_core_agent_ps_lines(&json!({ "agents": agents }));
 
-        let mut compared = 0;
+        let mut compared = Vec::new();
         for session in state["sessions"]
             .as_array()
             .into_iter()
@@ -2471,14 +2526,39 @@ fn ps_and_the_dashboard_row_print_the_same_word_for_every_agent() {
                 fields.get(tool_at + 1).copied(),
                 Some(published),
                 "ps and the dashboard row disagree about {id} \
-                 with {target} as {status:?}/{activity:?}/{attention:?}: \
+                 with {target} as {status:?}/{activity:?}/{attention:?} \
+                 and task {assign_task:?}: \
                  {line:?} vs {published:?}"
             );
-            compared += 1;
+            compared.push(published.to_owned());
         }
         assert_eq!(
-            compared, 4,
+            compared.len(),
+            4,
             "every fixture agent must be compared, not merely several"
+        );
+        words.extend(compared);
+    }
+
+    // A case that silently reproduces another case's state proves nothing, so
+    // the words actually reached are asserted rather than assumed.
+    let reached = words.into_iter().collect::<BTreeSet<_>>();
+    for expected in [
+        "working",
+        "ready",
+        "idle",
+        "offline",
+        "done",
+        "interrupted",
+        "error",
+        "needs input",
+        "needs reply",
+        "blocked",
+        "next step",
+    ] {
+        assert!(
+            reached.contains(expected),
+            "no case reached {expected:?}; reached {reached:?}"
         );
     }
 }

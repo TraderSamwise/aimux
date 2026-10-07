@@ -149,6 +149,7 @@ fn every_surface_words_a_state_the_same_way() {
 /// diverged the two surfaces silently with every other gate green.
 #[test]
 fn the_published_word_depends_on_nothing_the_cli_cannot_pass() {
+    let mut labels = std::collections::BTreeSet::new();
     let five = |status: &str,
                 pending: Option<&str>,
                 activity: Option<&str>,
@@ -197,6 +198,14 @@ fn the_published_word_depends_on_nothing_the_cli_cannot_pass() {
             false,
         ),
         ("running", Some("starting"), None, None, false),
+        // `user_state`'s final arm. Without a case that lands here, a rule
+        // keyed on an unread count would pass: the dashboard fills the counts
+        // and the CLI defaults them to zero.
+        ("idle", None, None, None, false),
+        ("idle", None, None, Some("normal"), false),
+        ("offline", None, None, None, false),
+        ("graveyard", None, None, None, false),
+        ("idle", None, None, None, true),
     ] {
         let bare = derive_session_semantics(five(status, pending, activity, attention, task));
         let busy =
@@ -212,7 +221,15 @@ fn the_published_word_depends_on_nothing_the_cli_cannot_pass() {
             string_at(&bare, ["user", "label"]),
             string_at(&busy, ["user", "label"]),
         );
+        labels.insert(string_at(&bare, ["user", "label"]));
     }
+    // Including the arm nothing used to reach. A combination list that misses
+    // an arm leaves that arm free to read an input the CLI cannot pass.
+    assert!(
+        labels.contains("idle"),
+        "no case reached the fall-through arm; reached {labels:?}"
+    );
+    assert!(labels.len() >= 10, "reached only {labels:?}");
 }
 
 /// The fixture's list of user labels is still every label `user_state` emits.
