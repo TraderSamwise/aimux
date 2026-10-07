@@ -242,7 +242,7 @@ fn mirrors_text_chunking_options_and_mouse_bindings() {
     let config = build_default_root_mouse_bindings_config("open-pane-link", "open-status-pr");
     let expected = [
         "bind-key -T root MouseDown1Pane if-shell \"open-pane-link\" \"\" \"select-pane -t = \\; send-keys -M\"".to_owned(),
-        "bind-key -T root MouseDrag1Pane if-shell -F \"#{||:#{pane_in_mode},#{mouse_any_flag}}\" { send-keys -M } { copy-mode -M }".to_owned(),
+        "bind-key -T root MouseDrag1Pane if-shell -F \"#{pane_in_mode}\" { send-keys -M } { copy-mode -M }".to_owned(),
         "bind-key -T root WheelUpPane if-shell -F \"#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}\" \"copy-mode -e \\; send-keys -X -N 1 scroll-up\" \"send-keys -M\"".to_owned(),
         "bind-key -T root WheelDownPane if-shell -F \"#{||:#{alternate_on},#{mouse_any_flag}}\" { send-keys -M } { send-keys -M }".to_owned(),
         "bind-key -T root DoubleClick1Pane if-shell \"open-pane-link\" \"\" \"send-keys -M\"".to_owned(),
@@ -437,6 +437,45 @@ fn mirrors_remaining_low_level_command_vectors() {
     assert_eq!(kill_window_argv("@3"), ["kill-window", "-t", "@3"]);
     assert_eq!(clear_history_argv("@3"), ["clear-history", "-t", "@3"]);
     assert_eq!(select_window_argv("@3"), ["select-window", "-t", "@3"]);
+}
+
+/// A drag selects even where the application has asked for the mouse.
+///
+/// This is the whole of "select to copy does not work any more". tmux's own
+/// default forwards a drag whenever the pane has mouse reporting on, and codex
+/// turns it on -- so every drag over a codex pane went to codex and tmux began
+/// no selection, while claude panes, which do not, kept working. Nothing in
+/// aimux had changed, which is exactly why it read as aimux breaking.
+#[test]
+fn a_drag_selects_even_when_the_application_holds_the_mouse() {
+    let config = build_default_root_mouse_bindings_config("open-pane-link", "open-status-pr");
+    let line = |needle: &str| {
+        config
+            .lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("no binding for {needle}"))
+            .to_owned()
+    };
+
+    // The whole line, not substrings of it: every substring assertion worth
+    // writing here also passes with the two branches swapped, which is the
+    // same binding behaving backwards.
+    assert_eq!(
+        line("-T root MouseDrag1Pane"),
+        "bind-key -T root MouseDrag1Pane if-shell -F \"#{pane_in_mode}\" \
+         { send-keys -M } { copy-mode -M }"
+    );
+    // Said separately because it is the thing that must not come back, and a
+    // future rewrite of that line should fail on this even if it is spelled
+    // some other way.
+    assert!(
+        !line("-T root MouseDrag1Pane").contains("mouse_any_flag"),
+        "an application holding the mouse must not decide whether a drag can \
+         select; that is what broke this"
+    );
+
+    // Wheel and click are untouched: a TUI keeps its scrolling and its clicks.
+    assert!(line("-T root WheelUpPane").contains("mouse_any_flag"));
 }
 
 #[test]

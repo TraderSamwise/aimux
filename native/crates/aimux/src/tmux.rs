@@ -54,7 +54,16 @@ pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-r
 /// 6: the window-change hook moved off pane-focus-in, which never fired
 ///    because focus-events is off. Hooks live on the session, so a live one
 ///    keeps the dead hook until it is reconfigured.
-pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "6";
+/// 7: a drag selects even where the application holds the mouse, and
+///    copy-command moved to the stable shim. Key bindings and that option are
+///    both written at configure time, so without this the fix ships and a
+///    running session keeps the binding that broke select-to-copy.
+///
+/// Nothing enforces this; a test asserting the literal value only fires on the
+/// NEXT correct bump, which teaches the next person to delete it. What catches
+/// a forgotten bump is noticing that the thing you changed is written by
+/// `configure_managed_session`.
+pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "7";
 pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
 pub const AIMUX_TMUX_BIN_ENV: &str = "AIMUX_TMUX_BIN";
 pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-tool}}";
@@ -2758,7 +2767,31 @@ pub fn build_default_root_mouse_bindings_config(
 ) -> String {
     [
         format!(r#"bind-key -T root MouseDown1Pane if-shell "{open_pane_link_command}" "" "select-pane -t = \; send-keys -M""#),
-        "bind-key -T root MouseDrag1Pane if-shell -F \"#{||:#{pane_in_mode},#{mouse_any_flag}}\" { send-keys -M } { copy-mode -M }".to_owned(),
+        // Drag selects, whatever the application thinks about the mouse.
+        //
+        // tmux's own default also forwards a drag when the pane has mouse
+        // reporting on, and that is why select-to-copy stopped working: codex
+        // turns it on, so every drag over a codex pane went to codex and tmux
+        // started no selection. Claude panes kept working, which is what made
+        // it read as aimux breaking rather than an agent changing.
+        //
+        // Only `pane_in_mode` decides. Already in copy-mode means extend the
+        // selection; otherwise begin one. Wheel and click still go to the
+        // application, so a TUI keeps its scrolling and its clicks.
+        //
+        // This does take the bare drag from an application that wants it -- an
+        // editor with `mouse=a` loses drag-select and drag-to-resize. A
+        // MODIFIED drag still reaches it: tmux delivers an unbound mouse key
+        // straight to the pane, so `M-`, `C-` and `S-` drags are forwarded
+        // without anything here binding them. An explicit binding for that was
+        // tried and removed -- it only restated tmux's fall-through.
+        //
+        // The `pane_in_mode` branch is tmux's own shape rather than a
+        // behaviour this relies on: once a pane is in a mode, mouse keys
+        // resolve in that mode's table, so in practice this line is
+        // `copy-mode -M`. Kept because the condition is what tmux's default
+        // carries and costs nothing.
+        "bind-key -T root MouseDrag1Pane if-shell -F \"#{pane_in_mode}\" { send-keys -M } { copy-mode -M }".to_owned(),
         "bind-key -T root WheelUpPane if-shell -F \"#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}\" \"copy-mode -e \\; send-keys -X -N 1 scroll-up\" \"send-keys -M\"".to_owned(),
         "bind-key -T root WheelDownPane if-shell -F \"#{||:#{alternate_on},#{mouse_any_flag}}\" { send-keys -M } { send-keys -M }".to_owned(),
         format!(r#"bind-key -T root DoubleClick1Pane if-shell "{open_pane_link_command}" "" "send-keys -M""#),
@@ -3547,10 +3580,32 @@ fn default_open_hyperlink_command() -> String {
 /// tmux's own OSC 52 carries an empty selector, which mosh drops. This writes
 /// the `c`-selector form to each attached client instead, so a copy lands on
 /// the clipboard of the machine the user is sitting at rather than the host's.
+/// The stable shim, for the same reason `statusline_executable` takes it: this
+/// is written into a session option once and a session is only reconfigured on
+/// a runtime-contract bump, so a versioned path outlives the build it names.
+/// Pruning an old `~/.aimux/native/<version>` then leaves a `copy-command` that
+/// exits 127, and the selection reaches the tmux buffer while nothing reaches
+/// the clipboard -- silently, and until the next bump.
+///
+/// What this buys is that pruning OLD builds is safe, not that no version is
+/// named: the shim is itself a symlink into a versioned directory, and where
+/// there is no shim -- an install to a different `AIMUX_BIN_DIR`, or the native
+/// binary run directly -- `statusline_executable` falls back to the versioned
+/// path for this and for the statusline alike.
 pub fn default_clipboard_copy_command() -> String {
+    let shim = crate::cli_launcher::get_aimux_stable_shim_path();
+    let usable = !shim.is_empty() && Path::new(&shim).exists();
+    clipboard_copy_command_from(shim, usable, persistent_aimux_executable)
+}
+
+fn clipboard_copy_command_from(
+    shim: String,
+    shim_is_usable: bool,
+    fallback: impl FnOnce() -> String,
+) -> String {
     format!(
         "{} __tmux-clipboard-copy-internal",
-        shell_quote(&persistent_aimux_executable())
+        shell_quote(&statusline_executable_from(shim, shim_is_usable, fallback))
     )
 }
 
@@ -3954,6 +4009,43 @@ mod tests {
         assert_eq!(
             statusline_executable_from(String::new(), false, || "/versioned/aimux".to_owned()),
             "/versioned/aimux"
+        );
+    }
+
+    /// And so does the clipboard copy, for the same reason.
+    ///
+    /// `copy-command` is written into a session option once. A versioned path
+    /// there outlives the build it names -- those directories get pruned --
+    /// and a `copy-command` pointing at a deleted one fails with 127: the
+    /// selection reaches the tmux buffer and nothing reaches the clipboard,
+    /// silently and for good.
+    ///
+    /// Driven through the same seam `statusline_executable_from` has, because
+    /// the obvious assertion -- that the command names whatever
+    /// `statusline_executable()` returns -- is `f() == f()`. It can only fail
+    /// on a machine where the shim exists, and CI has none, so a revert to the
+    /// versioned path would have shipped green.
+    #[test]
+    fn the_clipboard_copy_runs_the_stable_shim_so_an_install_reaches_live_sessions() {
+        assert_eq!(
+            clipboard_copy_command_from("/home/sam/.local/bin/aimux".to_owned(), true, || {
+                panic!("the shim was usable and should have been taken")
+            }),
+            "'/home/sam/.local/bin/aimux' __tmux-clipboard-copy-internal"
+        );
+        assert_eq!(
+            clipboard_copy_command_from(String::new(), false, || "/versioned/aimux".to_owned()),
+            "'/versioned/aimux' __tmux-clipboard-copy-internal"
+        );
+
+        // And that the real one goes through it. The branches above are worth
+        // nothing if the caller stops using them, and this holds with or
+        // without a shim on the machine running it.
+        let shim = crate::cli_launcher::get_aimux_stable_shim_path();
+        let usable = !shim.is_empty() && Path::new(&shim).exists();
+        assert_eq!(
+            default_clipboard_copy_command(),
+            clipboard_copy_command_from(shim, usable, persistent_aimux_executable)
         );
     }
 
