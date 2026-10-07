@@ -125,6 +125,11 @@ export interface DesktopWorktree {
   pending?: boolean;
   removing?: boolean;
   pathMissing?: boolean;
+  // The service stamps this on the ROW as well as the group, and the legacy
+  // bucket path below is the only reader that had no field for it -- so an
+  // older payload with no `worktreeGroups` dropped a failed agentless worktree
+  // the group path would have kept.
+  operationFailure?: ProjectOperationFailure | null;
 }
 
 export interface DesktopWorktreeGroup {
@@ -315,6 +320,7 @@ export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
       pending: wt.pending,
       removing: wt.removing,
       pathMissing: wt.pathMissing,
+      operationFailure: wt.operationFailure,
       sessions: [],
       services: [],
     });

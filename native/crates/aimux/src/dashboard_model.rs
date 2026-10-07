@@ -753,7 +753,7 @@ pub fn is_dashboard_session_offline(session: &DashboardSession) -> bool {
 pub fn filter_dashboard_visible_model(
     snapshot: &DesktopStateSnapshot,
     hide_offline_agents: bool,
-    kept_worktree_paths: &[&str],
+    kept: &DashboardKeptWorktrees,
 ) -> DashboardVisibleModel {
     if !hide_offline_agents {
         return DashboardVisibleModel {
@@ -791,9 +791,15 @@ pub fn filter_dashboard_visible_model(
                 .filter(|session| dashboard_session_survives_hidden_offline(session))
                 .cloned()
                 .collect::<Vec<_>>();
-            if group_sessions.is_empty()
-                && !should_keep_operational_worktree(group, kept_worktree_paths)
-            {
+            // Services count, the way the app's half already counted them. The
+            // TUI dropped a worktree on its AGENTS alone, so a checkout with a
+            // dev server running in it and no agents vanished from the TUI
+            // under `a` while the app kept the card and the running service.
+            let group_has_live_service = group
+                .services
+                .iter()
+                .any(|service| !is_dashboard_service_offline(service));
+            if group_sessions.is_empty() && !group_has_live_service && !kept.keeps(group) {
                 return None;
             }
             visible_group_worktrees.insert(worktree_key(group.path.as_deref()));
@@ -1816,19 +1822,47 @@ fn row_failure_is_clearable(extra: &BTreeMap<String, Value>) -> bool {
 /// one row worth seeing, and the two surfaces answered that differently.
 /// `optimistic` is gone -- nothing in the crate or the app ever set it on a
 /// GROUP, only on sessions and services.
-fn should_keep_operational_worktree(group: &WorktreeGroup, kept_paths: &[&str]) -> bool {
-    group.pending
-        || group.removing
-        || group.path_missing
-        || group.pending_action.is_some()
-        || group.operation_failure.is_some()
-        // `path` is None for the main checkout and the supervisor lane, which
-        // the pointer therefore cannot protect; they are never filtered out on
-        // emptiness anyway.
-        || group
-            .path
-            .as_deref()
-            .is_some_and(|path| kept_paths.contains(&path))
+/// The worktrees `a` must not hide whatever their agents are doing.
+///
+/// `paths` holds the one the pointer is on and the ones creates are waiting
+/// for. A list because the two are not alternatives: a create whose worktree
+/// never lands would otherwise mask the pointer's own path, which turns the
+/// whole rule off silently, and two creates in flight would mask each other.
+///
+/// `main_checkout` is separate because that group's `path` is `None` -- it is a
+/// group like any other and the same emptiness test drops it, so without this
+/// the rule would have an exception for the one worktree every project has.
+#[derive(Debug, Default, Clone)]
+pub struct DashboardKeptWorktrees {
+    pub paths: Vec<String>,
+    pub main_checkout: bool,
+}
+
+impl DashboardKeptWorktrees {
+    fn keeps(&self, group: &WorktreeGroup) -> bool {
+        if group.pending
+            || group.removing
+            || group.path_missing
+            || group.pending_action.is_some()
+            || group.operation_failure.is_some()
+        {
+            return true;
+        }
+        match group.path.as_deref() {
+            Some(path) => self.paths.iter().any(|kept| kept == path),
+            None => self.main_checkout,
+        }
+    }
+}
+
+fn is_dashboard_service_offline(service: &DashboardService) -> bool {
+    if service.pending_action.is_some() {
+        return false;
+    }
+    matches!(
+        service.status,
+        ServiceStatus::Offline | ServiceStatus::Exited | ServiceStatus::Stopped
+    )
 }
 
 const DASHBOARD_MODEL_CONTRACT_NOW: i64 = 1_770_000_000_000;

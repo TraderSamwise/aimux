@@ -21,8 +21,8 @@ use crate::dashboard_event_stream::{
 use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_launch_options::render_launch_options_overlay;
 use crate::dashboard_model::{
-    DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus, filter_dashboard_visible_model,
-    is_dashboard_overseer_session, is_dashboard_scribe_session,
+    DashboardKeptWorktrees, DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus,
+    filter_dashboard_visible_model, is_dashboard_overseer_session, is_dashboard_scribe_session,
 };
 use crate::dashboard_navigation::{CarriedSelection, DashboardEntryRef};
 use crate::dashboard_pending_actions::{
@@ -33,6 +33,7 @@ use crate::dashboard_project_events::{
     dashboard_alert_footer_flash,
 };
 use crate::dashboard_readiness::mark_native_dashboard_ready;
+use crate::dashboard_renderer::DashboardNavLevel;
 use crate::dashboard_renderer::{
     DashboardFooterAlert, DashboardRenderInput, DashboardSubscreenRenderInput,
     render_dashboard_frame, render_dashboard_subscreen_frame,
@@ -458,11 +459,15 @@ pub fn run_native_dashboard_with_seams(
     let mut last_cached_frame_at: Option<Instant> = None;
 
     let mut pending_selection: Option<String> = None;
-    // The worktree a create is waiting to land, held until a snapshot carries
-    // it. It feeds the `a` filter's keep-set as well as the selection: a
+    // The worktrees creates are waiting to land, held until a snapshot carries
+    // them. They feed the `a` filter's keep-set as well as the selection: a
     // worktree made while the filter is on has no agents yet, so selecting it
     // after the filter had already dropped it would never find it.
-    let mut pending_worktree_focus: Option<String> = None;
+    //
+    // A list, because two creates can be in flight -- a slow one from a PR and
+    // a quick local one -- and a single slot meant the second to FINISH hid the
+    // other, which is the bug this exists to fix arriving from the other side.
+    let mut pending_worktree_focus: Vec<String> = Vec::new();
     let mut rendered_once = false;
     let mut viewport = DashboardViewport {
         cols: options.cols,
@@ -1079,29 +1084,32 @@ pub fn run_native_dashboard_with_seams(
                         // navigation indices belong to -- the incoming one has
                         // not been filtered yet, so an index resolved against
                         // it names a different group whenever `a` is on.
-                        let focused_worktree_path = controller
+                        let focused_group = controller
                             .as_ref()
                             .zip(latest_snapshot.as_ref())
                             .and_then(|(controller, previous)| {
-                                controller
-                                    .navigation
-                                    .focused_worktree_path(previous)
-                                    .map(str::to_owned)
+                                controller.navigation.focused_group(previous)
                             });
-                        // Both, not one or the other: a create whose worktree
-                        // never lands would otherwise mask the pointer's own
-                        // path for the rest of the session.
-                        let kept_worktree_paths = [
-                            pending_worktree_focus.as_deref(),
-                            focused_worktree_path.as_deref(),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>();
+                        let focused_worktree_path = focused_group
+                            .as_ref()
+                            .and_then(|group| group.path)
+                            .map(str::to_owned);
+                        let mut kept = DashboardKeptWorktrees {
+                            paths: pending_worktree_focus.clone(),
+                            // The main checkout is a group like any other and
+                            // the same emptiness test drops it, so the pointer
+                            // has to be able to hold it too.
+                            main_checkout: focused_group
+                                .as_ref()
+                                .is_some_and(|group| group.path.is_none()),
+                        };
+                        if let Some(path) = focused_worktree_path.clone() {
+                            kept.paths.push(path);
+                        }
                         let visible_model = filter_dashboard_visible_model(
                             &loaded.snapshot,
                             hide_offline_agents,
-                            &kept_worktree_paths,
+                            &kept,
                         );
                         // Read off the outgoing snapshot, before anything can
                         // move the indices, so the pointer can be put back on
@@ -1152,21 +1160,46 @@ pub fn run_native_dashboard_with_seams(
                         }
                         // After the restore, so returning from an agent wins
                         // over whatever the last persisted selection was.
-                        if let Some(session_id) = pending_selection.take() {
+                        let returned_to_agent = if let Some(session_id) = pending_selection.take() {
                             controller
                                 .navigation
-                                .select_session(&visible_model.snapshot, &session_id);
+                                .select_session(&visible_model.snapshot, &session_id)
+                        } else {
+                            false
+                        };
+                        // The worktree row the pointer was on, put back by
+                        // identity. Keeping a row alive because the pointer is
+                        // on it makes its existence depend on where the pointer
+                        // is, so moving off one shifts every index below it --
+                        // one Down would land two rows further on. The Sessions
+                        // level already follows its selection this way; the
+                        // worktree level followed nothing.
+                        if controller.navigation.level == DashboardNavLevel::Worktrees
+                            && let Some(path) = focused_worktree_path.as_deref()
+                        {
+                            controller
+                                .navigation
+                                .select_worktree(&visible_model.snapshot, path);
                         }
                         // Held until the snapshot actually carries it: the
                         // create responds before the worktree reaches a build,
                         // so the first refresh after it usually has nothing to
                         // point at yet.
-                        if let Some(path) = pending_worktree_focus.clone()
-                            && controller
-                                .navigation
-                                .select_worktree(&visible_model.snapshot, &path)
+                        //
+                        // Only while the user is still choosing a worktree, and
+                        // only if nothing else claimed the pointer this frame.
+                        // A create can take tens of seconds; yanking someone out
+                        // of an agent list they walked into in the meantime, or
+                        // over the agent they just came back from, is the
+                        // dashboard going somewhere nobody asked it to go.
+                        if controller.navigation.level == DashboardNavLevel::Worktrees
+                            && !returned_to_agent
                         {
-                            pending_worktree_focus = None;
+                            pending_worktree_focus.retain(|path| {
+                                !controller
+                                    .navigation
+                                    .select_worktree(&visible_model.snapshot, path)
+                            });
                         }
                         let frame = render_dashboard_snapshot(
                             &options,
@@ -2215,8 +2248,11 @@ fn execute_overseer_watch_command(
     )?;
     let loaded = load_dashboard_snapshot(options)?;
     // No prior filtered snapshot here, so nothing to resolve a pointer against.
-    let visible_model =
-        filter_dashboard_visible_model(&loaded.snapshot, controller.hide_offline_agents, &[]);
+    let visible_model = filter_dashboard_visible_model(
+        &loaded.snapshot,
+        controller.hide_offline_agents,
+        &DashboardKeptWorktrees::default(),
+    );
     if let Some(overseer_session_id) = response
         .result
         .get("overseerSessionId")
@@ -3395,13 +3431,15 @@ fn drain_dashboard_request_outcomes(
     outcomes: &Receiver<DashboardRequestOutcome>,
     pending_actions: &mut DashboardPendingActions,
     mut controller: Option<&mut DashboardController>,
-    pending_worktree_focus: &mut Option<String>,
+    pending_worktree_focus: &mut Vec<String>,
 ) -> bool {
     let mut changed = false;
     while let Ok(outcome) = outcomes.try_recv() {
         changed = true;
-        if let Some(path) = outcome.created_worktree_path {
-            *pending_worktree_focus = Some(path);
+        if let Some(path) = outcome.created_worktree_path
+            && !pending_worktree_focus.contains(&path)
+        {
+            pending_worktree_focus.push(path);
         }
         if let Some(message) = outcome.failure {
             if let Some(controller) = controller.as_deref_mut() {
@@ -3474,7 +3512,7 @@ mod tests {
     fn a_finished_create_hands_its_worktree_to_the_pointer() {
         let (tx, rx) = mpsc::channel();
         let mut pending_actions = DashboardPendingActions::default();
-        let mut focus = None;
+        let mut focus = Vec::new();
 
         tx.send(DashboardRequestOutcome {
             created_worktree_path: Some("/repo/.aimux/worktrees/fresh".to_owned()),
@@ -3485,10 +3523,30 @@ mod tests {
         })
         .expect("send");
         drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
-        assert_eq!(focus.as_deref(), Some("/repo/.aimux/worktrees/fresh"));
+        assert_eq!(focus, vec!["/repo/.aimux/worktrees/fresh".to_owned()]);
 
-        // An outcome that made nothing leaves the waiting one alone rather than
-        // clearing it: the create's worktree can take several refreshes to
+        // A second create waits beside the first rather than replacing it: the
+        // one to FINISH first is not the one the user asked for last, and a
+        // single slot meant the loser was filtered off the dashboard.
+        tx.send(DashboardRequestOutcome {
+            created_worktree_path: Some("/repo/.aimux/worktrees/second".to_owned()),
+            pending: None,
+            action: None,
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
+        assert_eq!(
+            focus,
+            vec![
+                "/repo/.aimux/worktrees/fresh".to_owned(),
+                "/repo/.aimux/worktrees/second".to_owned()
+            ]
+        );
+
+        // An outcome that made nothing leaves the waiting ones alone rather
+        // than clearing them: a create's worktree can take several refreshes to
         // appear, and any other mutation can finish in between.
         tx.send(DashboardRequestOutcome {
             created_worktree_path: None,
@@ -3499,7 +3557,7 @@ mod tests {
         })
         .expect("send");
         drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
-        assert_eq!(focus.as_deref(), Some("/repo/.aimux/worktrees/fresh"));
+        assert_eq!(focus.len(), 2);
     }
 
     /// Only a worktree CREATE reports a path the pointer should follow.
@@ -3708,7 +3766,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert_eq!(
@@ -3807,7 +3865,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
         assert_eq!(
             controller.footer_progress_message(),
@@ -3827,7 +3885,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
         assert_eq!(controller.footer_progress_message(), None);
     }
@@ -3922,7 +3980,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
         assert_eq!(
             controller.footer_progress_message(),
@@ -3947,7 +4005,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
         assert_eq!(controller.footer_progress_message(), None);
     }
@@ -3994,7 +4052,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
         assert_eq!(
             controller.footer_progress_message(),
@@ -4014,7 +4072,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
         assert_eq!(controller.footer_progress_message(), None);
     }
@@ -4060,7 +4118,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
         assert_eq!(
             controller.footer_progress_message(),
@@ -4080,7 +4138,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
         assert_eq!(controller.footer_progress_message(), None);
     }
@@ -4218,7 +4276,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
         controller.handle_key(&snapshot, crate::dashboard_controller::DashboardKey::Down);
 
@@ -4254,7 +4312,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert_eq!(controller.footer_note_message(), Some("Restored 36 agents"));
@@ -4471,7 +4529,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert_eq!(controller.footer_progress_message(), None);
@@ -4502,7 +4560,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert_eq!(
@@ -4534,7 +4592,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert_eq!(controller.footer_progress_message(), None);
@@ -4575,7 +4633,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert_eq!(
@@ -4614,7 +4672,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert_eq!(
@@ -4654,7 +4712,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert_eq!(controller.footer_alert, None);
@@ -4689,7 +4747,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert!(
@@ -4721,7 +4779,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         let alert = controller.footer_alert.expect("a failure");
@@ -4768,7 +4826,7 @@ mod tests {
             &rx,
             &mut pending_actions,
             Some(&mut controller),
-            &mut None,
+            &mut Vec::new(),
         );
 
         assert!(

@@ -1,6 +1,6 @@
 use aimux::dashboard_model::{
-    DesktopStateGoldenFixture, ServiceStatus, SessionStatus, filter_dashboard_visible_model,
-    is_dashboard_session_offline,
+    DashboardKeptWorktrees, DashboardService, DesktopStateGoldenFixture, ServiceStatus,
+    SessionStatus, filter_dashboard_visible_model, is_dashboard_session_offline,
 };
 use serde_json::json;
 
@@ -161,7 +161,8 @@ fn dashboard_visible_model_hides_offline_agents_and_keeps_related_services() {
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let snapshot = fixture.runtime_full;
 
-    let visible = filter_dashboard_visible_model(&snapshot, true, &[]);
+    let visible =
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default());
 
     assert_eq!(visible.hidden_offline_agent_count, 2);
     assert_eq!(
@@ -211,7 +212,8 @@ fn the_filter_keeps_the_worktree_the_pointer_is_on() {
     empty.operation_failure = None;
     snapshot.worktree_groups.push(empty);
 
-    let unpointed = filter_dashboard_visible_model(&snapshot, true, &[]);
+    let unpointed =
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default());
     assert!(
         unpointed
             .snapshot
@@ -221,8 +223,14 @@ fn the_filter_keeps_the_worktree_the_pointer_is_on() {
         "an agentless worktree nobody is pointing at still goes"
     );
 
-    let pointed =
-        filter_dashboard_visible_model(&snapshot, true, &["/repo/.aimux/worktrees/fresh"]);
+    let pointed = filter_dashboard_visible_model(
+        &snapshot,
+        true,
+        &DashboardKeptWorktrees {
+            paths: vec!["/repo/.aimux/worktrees/fresh".to_owned()],
+            ..Default::default()
+        },
+    );
     assert!(
         pointed
             .snapshot
@@ -234,12 +242,110 @@ fn the_filter_keeps_the_worktree_the_pointer_is_on() {
     );
     // Pointing at one does not keep the others.
     assert!(
-        filter_dashboard_visible_model(&snapshot, true, &["/repo/.aimux/worktrees/other"])
+        filter_dashboard_visible_model(
+            &snapshot,
+            true,
+            &DashboardKeptWorktrees {
+                paths: vec!["/repo/.aimux/worktrees/other".to_owned()],
+                ..Default::default()
+            },
+        )
+        .snapshot
+        .worktree_groups
+        .iter()
+        .all(|group| group.name != "fresh"),
+        "pointing somewhere else kept it anyway"
+    );
+}
+
+/// A worktree with a running service and no agents is not empty.
+///
+/// The TUI dropped a group on its AGENTS alone, so a checkout with a dev server
+/// running in it vanished under `a` while the app kept the card and the service
+/// row -- one filter, two answers.
+#[test]
+fn a_worktree_whose_only_occupant_is_a_running_service_survives_the_filter() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full;
+    let service = snapshot
+        .worktree_groups
+        .iter()
+        .find_map(|group| group.services.first().cloned())
+        .expect("a service in the fixture");
+    let mut serving = snapshot.worktree_groups[0].clone();
+    serving.name = "serving".into();
+    serving.path = Some("/repo/.aimux/worktrees/serving".into());
+    serving.sessions.clear();
+    serving.pending = false;
+    serving.removing = false;
+    serving.path_missing = false;
+    serving.pending_action = None;
+    serving.operation_failure = None;
+    serving.services = vec![DashboardService {
+        status: ServiceStatus::Running,
+        pending_action: None,
+        ..service
+    }];
+    snapshot.worktree_groups.push(serving);
+
+    let visible =
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default());
+    assert!(
+        visible
             .snapshot
             .worktree_groups
             .iter()
-            .all(|group| group.name != "fresh"),
-        "pointing somewhere else kept it anyway"
+            .any(|group| group.name == "serving"),
+        "a running service was not enough to keep its worktree: {:#?}",
+        visible.snapshot.worktree_groups
+    );
+}
+
+/// And the main checkout, which has no path for the pointer to name.
+///
+/// It is a group like any other and the same emptiness test drops it, so the
+/// rule would have had an exception for the one worktree every project has.
+#[test]
+fn the_filter_keeps_the_main_checkout_when_the_pointer_is_on_it() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light;
+    let main = snapshot
+        .worktree_groups
+        .iter_mut()
+        .find(|group| group.path.is_none())
+        .expect("a main checkout group");
+    main.sessions.clear();
+    main.services.clear();
+    main.pending = false;
+    main.removing = false;
+    main.path_missing = false;
+    main.pending_action = None;
+    main.operation_failure = None;
+
+    assert!(
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default())
+            .snapshot
+            .worktree_groups
+            .iter()
+            .all(|group| group.path.is_some()),
+        "an empty main checkout nobody is pointing at still goes"
+    );
+    assert!(
+        filter_dashboard_visible_model(
+            &snapshot,
+            true,
+            &DashboardKeptWorktrees {
+                main_checkout: true,
+                ..Default::default()
+            },
+        )
+        .snapshot
+        .worktree_groups
+        .iter()
+        .any(|group| group.path.is_none()),
+        "the main checkout went out from under the pointer"
     );
 }
 
@@ -266,7 +372,7 @@ fn a_worktree_whose_checkout_has_gone_survives_the_filter() {
     snapshot.worktree_groups.push(gone);
 
     assert!(
-        filter_dashboard_visible_model(&snapshot, true, &[])
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default())
             .snapshot
             .worktree_groups
             .iter()
@@ -299,7 +405,8 @@ fn the_hidden_count_is_exactly_what_the_filter_removed() {
     snapshot.worktree_groups.clear();
     snapshot.services.clear();
 
-    let visible = filter_dashboard_visible_model(&snapshot, true, &[]);
+    let visible =
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default());
 
     // The count and the list are two statements about one decision, and
     // nothing tied them together: the count exempted project-control sessions

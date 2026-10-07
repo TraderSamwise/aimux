@@ -1,6 +1,6 @@
 use aimux::dashboard_model::{
-    DashboardService, DashboardSession, DesktopStateSnapshot, DesktopWorktree, MainCheckoutInfo,
-    WorktreeGroup, filter_dashboard_visible_model,
+    DashboardKeptWorktrees, DashboardService, DashboardSession, DesktopStateSnapshot,
+    DesktopWorktree, MainCheckoutInfo, WorktreeGroup, filter_dashboard_visible_model,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -89,7 +89,11 @@ fn run_case(input: CaseInput) -> Value {
         operation_failures: Vec::new(),
         extra: Default::default(),
     };
-    let visible = filter_dashboard_visible_model(&snapshot, input.model.hide_offline_agents, &[]);
+    let visible = filter_dashboard_visible_model(
+        &snapshot,
+        input.model.hide_offline_agents,
+        &DashboardKeptWorktrees::default(),
+    );
     json!({
         "hiddenOfflineAgentCount": visible.hidden_offline_agent_count,
         "sessions": visible.snapshot.sessions,
