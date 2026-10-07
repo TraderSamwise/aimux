@@ -98,6 +98,41 @@ fn second_quick_jump_digit_selects_session_or_service_inside_worktree() {
     assert_eq!(state.item_index, 2);
 }
 
+/// The pointer follows a worktree that has just been made.
+///
+/// `w` asks for a name and the route decides the path, so the create response
+/// is the only thing that knows where it landed; the dashboard then has to
+/// wait for a snapshot that carries it. Returning false rather than guessing is
+/// what lets the caller keep waiting instead of moving the pointer somewhere
+/// arbitrary in the meantime.
+#[test]
+fn selecting_a_worktree_by_path_waits_until_it_is_on_screen() {
+    let snapshot = snapshot();
+    let mut state = DashboardNavigationState::new(&snapshot);
+    let path = snapshot
+        .worktree_groups
+        .iter()
+        .find_map(|group| group.path.as_deref())
+        .expect("a worktree with a path");
+
+    let before = state.worktree_index;
+    assert!(
+        !state.select_worktree(&snapshot, "/repo/.aimux/worktrees/not-here"),
+        "a path that is not on screen must not move the pointer"
+    );
+    assert_eq!(
+        state.worktree_index, before,
+        "the pointer moved for a path that is not there"
+    );
+
+    assert!(state.select_worktree(&snapshot, path));
+    assert_eq!(state.focused_worktree_path(&snapshot), Some(path));
+    assert_ne!(
+        state.worktree_index, before,
+        "this fixture has to actually move the pointer to be worth running"
+    );
+}
+
 /// The only place in the whole dashboard that could call a worktree "unknown".
 ///
 /// It fires for a session whose worktree path the service gave no group -- a

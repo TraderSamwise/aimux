@@ -458,6 +458,11 @@ pub fn run_native_dashboard_with_seams(
     let mut last_cached_frame_at: Option<Instant> = None;
 
     let mut pending_selection: Option<String> = None;
+    // The worktree a create is waiting to land, held until a snapshot carries
+    // it. It feeds the `a` filter's keep-set as well as the selection: a
+    // worktree made while the filter is on has no agents yet, so selecting it
+    // after the filter had already dropped it would never find it.
+    let mut pending_worktree_focus: Option<String> = None;
     let mut rendered_once = false;
     let mut viewport = DashboardViewport {
         cols: options.cols,
@@ -607,6 +612,7 @@ pub fn run_native_dashboard_with_seams(
             &request_outcomes_rx,
             &mut pending_actions,
             controller.as_mut(),
+            &mut pending_worktree_focus,
         ) {
             render_now = true;
             render_requested_by_data = true;
@@ -1069,8 +1075,34 @@ pub fn run_native_dashboard_with_seams(
                             .as_ref()
                             .map(|controller| controller.hide_offline_agents)
                             .unwrap_or(false);
-                        let visible_model =
-                            filter_dashboard_visible_model(&loaded.snapshot, hide_offline_agents);
+                        // Read off the OUTGOING snapshot, which is the one the
+                        // navigation indices belong to -- the incoming one has
+                        // not been filtered yet, so an index resolved against
+                        // it names a different group whenever `a` is on.
+                        let focused_worktree_path = controller
+                            .as_ref()
+                            .zip(latest_snapshot.as_ref())
+                            .and_then(|(controller, previous)| {
+                                controller
+                                    .navigation
+                                    .focused_worktree_path(previous)
+                                    .map(str::to_owned)
+                            });
+                        // Both, not one or the other: a create whose worktree
+                        // never lands would otherwise mask the pointer's own
+                        // path for the rest of the session.
+                        let kept_worktree_paths = [
+                            pending_worktree_focus.as_deref(),
+                            focused_worktree_path.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                        let visible_model = filter_dashboard_visible_model(
+                            &loaded.snapshot,
+                            hide_offline_agents,
+                            &kept_worktree_paths,
+                        );
                         // Read off the outgoing snapshot, before anything can
                         // move the indices, so the pointer can be put back on
                         // the same agent once this one is in place.
@@ -1124,6 +1156,17 @@ pub fn run_native_dashboard_with_seams(
                             controller
                                 .navigation
                                 .select_session(&visible_model.snapshot, &session_id);
+                        }
+                        // Held until the snapshot actually carries it: the
+                        // create responds before the worktree reaches a build,
+                        // so the first refresh after it usually has nothing to
+                        // point at yet.
+                        if let Some(path) = pending_worktree_focus.clone()
+                            && controller
+                                .navigation
+                                .select_worktree(&visible_model.snapshot, &path)
+                        {
+                            pending_worktree_focus = None;
                         }
                         let frame = render_dashboard_snapshot(
                             &options,
@@ -2171,8 +2214,9 @@ fn execute_overseer_watch_command(
         Some(20_000),
     )?;
     let loaded = load_dashboard_snapshot(options)?;
+    // No prior filtered snapshot here, so nothing to resolve a pointer against.
     let visible_model =
-        filter_dashboard_visible_model(&loaded.snapshot, controller.hide_offline_agents);
+        filter_dashboard_visible_model(&loaded.snapshot, controller.hide_offline_agents, &[]);
     if let Some(overseer_session_id) = response
         .result
         .get("overseerSessionId")
@@ -3231,6 +3275,10 @@ struct DashboardRequestOutcome {
     /// What a successful mutation did, for the routes where succeeding quietly
     /// is indistinguishable from doing nothing.
     notice: Option<DashboardActionNotice>,
+    /// The worktree a create just made, so the pointer can follow it there.
+    /// Taken from the response because nothing else knows the path: `w` asks
+    /// for a NAME, and the route decides where it lands.
+    created_worktree_path: Option<String>,
 }
 
 /// Send the mutations queued during key handling, now that the optimistic frame
@@ -3279,18 +3327,40 @@ fn flush_deferred_dashboard_requests(
         // retried from a different pane would never answer its own failure.
         let action = Some(DashboardActionIdentity::of(&request));
         thread::spawn(move || {
-            let (failure, notice) = match execute_dashboard_controller_action(&endpoint, &request) {
-                Ok(body) => (None, dashboard_action_notice(request.path, &body)),
-                Err(error) => (Some(error.to_string()), None),
-            };
+            let (failure, notice, created_worktree_path) =
+                match execute_dashboard_controller_action(&endpoint, &request) {
+                    Ok(body) => (
+                        None,
+                        dashboard_action_notice(request.path, &body),
+                        created_worktree_path_from_response(request.path, &body),
+                    ),
+                    Err(error) => (Some(error.to_string()), None, None),
+                };
             let _ = outcomes.send(DashboardRequestOutcome {
                 pending,
                 action,
                 failure,
+                created_worktree_path,
                 notice,
             });
         });
     }
+}
+
+/// Where a worktree create actually landed.
+///
+/// `w` asks for a name and the route decides the path, so the response is the
+/// only place that knows it. Read for the create route alone, because every
+/// other route's `path` names something that already existed.
+fn created_worktree_path_from_response(path: &str, body: &Value) -> Option<String> {
+    if path != crate::project_api_contract::routes::worktree_actions::CREATE {
+        return None;
+    }
+    body.get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
 }
 
 /// The sentence a finished mutation leaves in the footer, and whether it is
@@ -3325,10 +3395,14 @@ fn drain_dashboard_request_outcomes(
     outcomes: &Receiver<DashboardRequestOutcome>,
     pending_actions: &mut DashboardPendingActions,
     mut controller: Option<&mut DashboardController>,
+    pending_worktree_focus: &mut Option<String>,
 ) -> bool {
     let mut changed = false;
     while let Ok(outcome) = outcomes.try_recv() {
         changed = true;
+        if let Some(path) = outcome.created_worktree_path {
+            *pending_worktree_focus = Some(path);
+        }
         if let Some(message) = outcome.failure {
             if let Some(controller) = controller.as_deref_mut() {
                 controller.clear_progress_for(outcome.action.as_ref());
@@ -3390,6 +3464,78 @@ fn drain_dashboard_request_outcomes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The create's path reaches the loop that has to act on it.
+    ///
+    /// Every call site but the live loop passes `&mut None`, so without this
+    /// the one wire that carries a create to the pointer was held up by nothing
+    /// at all.
+    #[test]
+    fn a_finished_create_hands_its_worktree_to_the_pointer() {
+        let (tx, rx) = mpsc::channel();
+        let mut pending_actions = DashboardPendingActions::default();
+        let mut focus = None;
+
+        tx.send(DashboardRequestOutcome {
+            created_worktree_path: Some("/repo/.aimux/worktrees/fresh".to_owned()),
+            pending: None,
+            action: None,
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
+        assert_eq!(focus.as_deref(), Some("/repo/.aimux/worktrees/fresh"));
+
+        // An outcome that made nothing leaves the waiting one alone rather than
+        // clearing it: the create's worktree can take several refreshes to
+        // appear, and any other mutation can finish in between.
+        tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
+            pending: None,
+            action: None,
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
+        assert_eq!(focus.as_deref(), Some("/repo/.aimux/worktrees/fresh"));
+    }
+
+    /// Only a worktree CREATE reports a path the pointer should follow.
+    ///
+    /// Every other route's `path` names something that already existed, and
+    /// moving the pointer onto it would be the dashboard jumping somewhere the
+    /// user did not ask to go -- graveyarding a worktree would pull the
+    /// selection onto the row it had just taken away.
+    #[test]
+    fn only_a_worktree_create_reports_where_the_pointer_should_go() {
+        use crate::project_api_contract::routes;
+
+        let body = json!({ "ok": true, "path": "/repo/.aimux/worktrees/fresh" });
+        assert_eq!(
+            created_worktree_path_from_response(routes::worktree_actions::CREATE, &body).as_deref(),
+            Some("/repo/.aimux/worktrees/fresh")
+        );
+        assert_eq!(
+            created_worktree_path_from_response(routes::worktree_actions::GRAVEYARD, &body),
+            None
+        );
+        assert_eq!(
+            created_worktree_path_from_response(
+                routes::worktree_actions::CREATE,
+                &json!({ "ok": true, "path": "   " })
+            ),
+            None
+        );
+        assert_eq!(
+            created_worktree_path_from_response(
+                routes::worktree_actions::CREATE,
+                &json!({ "ok": true })
+            ),
+            None
+        );
+    }
 
     /// A dialog is drawn in ONE pass, inside the synchronized update.
     ///
@@ -3542,6 +3688,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity {
                 path: crate::project_api_contract::routes::worktree_actions::GRAVEYARD,
@@ -3557,7 +3704,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert_eq!(
             controller.footer_alert_message(),
@@ -3643,6 +3795,7 @@ mod tests {
         // Somebody else's outcome is not an answer to this one.
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-a")),
             failure: None,
@@ -3650,7 +3803,12 @@ mod tests {
         })
         .expect("send");
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
         assert_eq!(
             controller.footer_progress_message(),
             Some("Creating worktree feature-a")
@@ -3658,13 +3816,19 @@ mod tests {
 
         // Its own, built the way `flush_deferred_dashboard_requests` builds it.
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&request)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
         assert_eq!(controller.footer_progress_message(), None);
     }
 
@@ -3747,13 +3911,19 @@ mod tests {
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         let mut pending_actions = DashboardPendingActions::default();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&spawn)),
             failure: Some("dashboard action failed: lifecycle mutation already in progress".into()),
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
         assert_eq!(
             controller.footer_progress_message(),
             Some("Creating claude agent"),
@@ -3766,13 +3936,19 @@ mod tests {
         );
 
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&spawn)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
         assert_eq!(controller.footer_progress_message(), None);
     }
 
@@ -3807,13 +3983,19 @@ mod tests {
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         let mut pending_actions = DashboardPendingActions::default();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&claude)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
         assert_eq!(
             controller.footer_progress_message(),
             Some("Creating worktree feature-a"),
@@ -3821,13 +4003,19 @@ mod tests {
         );
 
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&worktree)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
         assert_eq!(controller.footer_progress_message(), None);
     }
 
@@ -3861,13 +4049,19 @@ mod tests {
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         let mut pending_actions = DashboardPendingActions::default();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&worktree)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
         assert_eq!(
             controller.footer_progress_message(),
             Some("Creating claude agent"),
@@ -3875,13 +4069,19 @@ mod tests {
         );
 
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&spawn)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
         assert_eq!(controller.footer_progress_message(), None);
     }
 
@@ -4001,6 +4201,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(restore_previous()),
             failure: None,
@@ -4013,7 +4214,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
         controller.handle_key(&snapshot, crate::dashboard_controller::DashboardKey::Down);
 
         assert_eq!(
@@ -4031,6 +4237,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(restore_previous()),
             failure: None,
@@ -4043,7 +4250,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert_eq!(controller.footer_note_message(), Some("Restored 36 agents"));
         assert_eq!(controller.footer_alert_message(), None);
@@ -4245,6 +4457,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(restore_previous()),
             failure: None,
@@ -4254,7 +4467,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert_eq!(controller.footer_progress_message(), None);
     }
@@ -4270,6 +4488,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-a")),
             failure: None,
@@ -4279,7 +4498,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert_eq!(
             controller.footer_progress_message(),
@@ -4296,6 +4520,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(restore_previous()),
             failure: Some("project service refused".into()),
@@ -4305,7 +4530,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert_eq!(controller.footer_progress_message(), None);
         assert_eq!(
@@ -4331,6 +4561,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-b")),
             failure: None,
@@ -4340,7 +4571,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert_eq!(
             controller.footer_alert_message(),
@@ -4361,6 +4597,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity {
                 path: crate::project_api_contract::routes::agents::RESUME,
@@ -4373,7 +4610,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert_eq!(
             controller.footer_alert_message(),
@@ -4398,6 +4640,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-a")),
             failure: None,
@@ -4407,7 +4650,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert_eq!(controller.footer_alert, None);
     }
@@ -4424,6 +4672,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity {
                 path: crate::project_api_contract::routes::worktree_actions::GRAVEYARD,
@@ -4436,7 +4685,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert!(
             controller.footer_alert.is_some(),
@@ -4453,6 +4707,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-a")),
             failure: Some("Could not stop agent claude-a".into()),
@@ -4462,7 +4717,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         let alert = controller.footer_alert.expect("a failure");
         assert_eq!(alert.message, "Could not stop agent claude-a");
@@ -4495,6 +4755,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: Some((PendingTarget::Session, "claude-a".into(), token)),
             action: Some(stop_agent("claude-a")),
             failure: Some("Could not stop agent claude-a".into()),
@@ -4503,7 +4764,12 @@ mod tests {
         .expect("queue outcome");
         drop(tx);
 
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut None,
+        );
 
         assert!(
             pending_actions.is_empty(),

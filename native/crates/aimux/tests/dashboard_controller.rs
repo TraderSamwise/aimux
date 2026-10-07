@@ -546,7 +546,7 @@ fn quick_jump_uses_filtered_worktrees_when_offline_agents_are_hidden() {
     snapshot.worktree_groups[0].services.clear();
     snapshot.services.clear();
 
-    let visible = filter_dashboard_visible_model(&snapshot, true).snapshot;
+    let visible = filter_dashboard_visible_model(&snapshot, true, &[]).snapshot;
     let mut controller = DashboardController::new(&visible);
     controller.hide_offline_agents = true;
 
@@ -3780,7 +3780,7 @@ fn hiding_offline_agents_keeps_the_supervisor_lane() {
     grouped.worktree_path = group_path.clone();
     snapshot.worktree_groups[1].sessions = vec![grouped];
 
-    let visible = aimux::dashboard_model::filter_dashboard_visible_model(&snapshot, true);
+    let visible = aimux::dashboard_model::filter_dashboard_visible_model(&snapshot, true, &[]);
     let kept_group = visible
         .snapshot
         .worktree_groups

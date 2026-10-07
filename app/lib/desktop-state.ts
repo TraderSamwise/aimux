@@ -138,6 +138,8 @@ export interface DesktopWorktreeGroup {
   // service; the app cannot see the server's filesystem, so it renders this
   // rather than computing anything.
   pathMissing?: boolean;
+  pendingAction?: string;
+  operationFailure?: ProjectOperationFailure | null;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -169,6 +171,8 @@ export interface WorktreeBucket {
   pending?: boolean;
   removing?: boolean;
   pathMissing?: boolean;
+  pendingAction?: string;
+  operationFailure?: ProjectOperationFailure | null;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -196,7 +200,17 @@ export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): Wor
   // A missing checkout keeps its card in the active view. Dropping it hid the
   // one state the user has to act on: a worktree whose agents have all gone
   // offline BECAUSE the checkout went away is exactly the row worth seeing.
-  const keepOperational = Boolean(bucket.pending || bucket.removing || bucket.pathMissing);
+  //
+  // The same clauses as `should_keep_operational_worktree`, which had
+  // `pendingAction` and `operationFailure` where this had only `pathMissing`,
+  // so the two surfaces kept different worktrees on screen under one filter.
+  const keepOperational = Boolean(
+    bucket.pending ||
+    bucket.removing ||
+    bucket.pathMissing ||
+    bucket.pendingAction ||
+    bucket.operationFailure,
+  );
   if (sessions.length === 0 && services.length === 0 && !keepOperational) return null;
   return { ...bucket, sessions, services };
 }
@@ -228,6 +242,8 @@ function bucketFromServerGroup(
     pending: group.pending,
     removing: group.removing,
     pathMissing: group.pathMissing,
+    pendingAction: group.pendingAction,
+    operationFailure: group.operationFailure,
     sessions: group.sessions.filter(
       (session) => !isDashboardHiddenSession(session, hasSupervisorLane),
     ),

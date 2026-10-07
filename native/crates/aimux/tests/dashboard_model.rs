@@ -161,7 +161,7 @@ fn dashboard_visible_model_hides_offline_agents_and_keeps_related_services() {
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let snapshot = fixture.runtime_full;
 
-    let visible = filter_dashboard_visible_model(&snapshot, true);
+    let visible = filter_dashboard_visible_model(&snapshot, true, &[]);
 
     assert_eq!(visible.hidden_offline_agent_count, 2);
     assert_eq!(
@@ -189,6 +189,92 @@ fn dashboard_visible_model_hides_offline_agents_and_keeps_related_services() {
     );
 }
 
+/// `a` keeps the worktree the pointer is on, agents or not.
+///
+/// A worktree made while the filter is on has no agents yet, so it was dropped
+/// the moment it appeared and the pointer could never reach it -- `w` looked
+/// like it had done nothing at all.
+#[test]
+fn the_filter_keeps_the_worktree_the_pointer_is_on() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light;
+    let mut empty = snapshot.worktree_groups[0].clone();
+    empty.name = "fresh".into();
+    empty.path = Some("/repo/.aimux/worktrees/fresh".into());
+    empty.sessions.clear();
+    empty.services.clear();
+    empty.pending = false;
+    empty.removing = false;
+    empty.path_missing = false;
+    empty.pending_action = None;
+    empty.operation_failure = None;
+    snapshot.worktree_groups.push(empty);
+
+    let unpointed = filter_dashboard_visible_model(&snapshot, true, &[]);
+    assert!(
+        unpointed
+            .snapshot
+            .worktree_groups
+            .iter()
+            .all(|group| group.name != "fresh"),
+        "an agentless worktree nobody is pointing at still goes"
+    );
+
+    let pointed =
+        filter_dashboard_visible_model(&snapshot, true, &["/repo/.aimux/worktrees/fresh"]);
+    assert!(
+        pointed
+            .snapshot
+            .worktree_groups
+            .iter()
+            .any(|group| group.name == "fresh"),
+        "the pointed-at worktree was filtered out from under the pointer: {:#?}",
+        pointed.snapshot.worktree_groups
+    );
+    // Pointing at one does not keep the others.
+    assert!(
+        filter_dashboard_visible_model(&snapshot, true, &["/repo/.aimux/worktrees/other"])
+            .snapshot
+            .worktree_groups
+            .iter()
+            .all(|group| group.name != "fresh"),
+        "pointing somewhere else kept it anyway"
+    );
+}
+
+/// The same clauses the app's `filterWorktreeBucketToActiveEntries` applies.
+///
+/// This rule had `pendingAction` and `operationFailure` where the app had only
+/// `pathMissing`, so one filter kept different worktrees on screen depending on
+/// which surface was looking.
+#[test]
+fn a_worktree_whose_checkout_has_gone_survives_the_filter() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light;
+    let mut gone = snapshot.worktree_groups[0].clone();
+    gone.name = "gone".into();
+    gone.path = Some("/repo/.aimux/worktrees/gone".into());
+    gone.sessions.clear();
+    gone.services.clear();
+    gone.pending = false;
+    gone.removing = false;
+    gone.pending_action = None;
+    gone.operation_failure = None;
+    gone.path_missing = true;
+    snapshot.worktree_groups.push(gone);
+
+    assert!(
+        filter_dashboard_visible_model(&snapshot, true, &[])
+            .snapshot
+            .worktree_groups
+            .iter()
+            .any(|group| group.name == "gone"),
+        "the one row the user has to act on was hidden"
+    );
+}
+
 #[test]
 fn the_hidden_count_is_exactly_what_the_filter_removed() {
     let fixture: DesktopStateGoldenFixture =
@@ -213,7 +299,7 @@ fn the_hidden_count_is_exactly_what_the_filter_removed() {
     snapshot.worktree_groups.clear();
     snapshot.services.clear();
 
-    let visible = filter_dashboard_visible_model(&snapshot, true);
+    let visible = filter_dashboard_visible_model(&snapshot, true, &[]);
 
     // The count and the list are two statements about one decision, and
     // nothing tied them together: the count exempted project-control sessions

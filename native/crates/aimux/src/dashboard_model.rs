@@ -753,6 +753,7 @@ pub fn is_dashboard_session_offline(session: &DashboardSession) -> bool {
 pub fn filter_dashboard_visible_model(
     snapshot: &DesktopStateSnapshot,
     hide_offline_agents: bool,
+    kept_worktree_paths: &[&str],
 ) -> DashboardVisibleModel {
     if !hide_offline_agents {
         return DashboardVisibleModel {
@@ -790,7 +791,9 @@ pub fn filter_dashboard_visible_model(
                 .filter(|session| dashboard_session_survives_hidden_offline(session))
                 .cloned()
                 .collect::<Vec<_>>();
-            if group_sessions.is_empty() && !should_keep_operational_worktree(group) {
+            if group_sessions.is_empty()
+                && !should_keep_operational_worktree(group, kept_worktree_paths)
+            {
                 return None;
             }
             visible_group_worktrees.insert(worktree_key(group.path.as_deref()));
@@ -1795,16 +1798,37 @@ fn row_failure_is_clearable(extra: &BTreeMap<String, Value>) -> bool {
     extra.get("operationFailureClearable") == Some(&Value::Bool(true))
 }
 
-fn should_keep_operational_worktree(group: &WorktreeGroup) -> bool {
+/// Which agentless worktrees `a` still shows.
+///
+/// `kept_paths` holds the one the pointer is on and the one a create is
+/// waiting for. A worktree made while the filter is on has no agents yet, so it
+/// was filtered out the moment it appeared and the pointer could never reach it
+/// -- `w` looked like it had done nothing. Keeping the pointed-at row visible
+/// for as long as it is pointed at is the user's own suggestion, and it makes
+/// the create case work without a special path for it.
+///
+/// A list rather than one path, because the two are not alternatives: a create
+/// whose worktree never lands would otherwise mask the pointer's own path for
+/// the rest of the session, which quietly turns the whole rule off.
+///
+/// `pathMissing` is here because the app's rule has it and this one did not:
+/// a worktree whose agents went offline BECAUSE its checkout went away is the
+/// one row worth seeing, and the two surfaces answered that differently.
+/// `optimistic` is gone -- nothing in the crate or the app ever set it on a
+/// GROUP, only on sessions and services.
+fn should_keep_operational_worktree(group: &WorktreeGroup, kept_paths: &[&str]) -> bool {
     group.pending
         || group.removing
+        || group.path_missing
         || group.pending_action.is_some()
         || group.operation_failure.is_some()
+        // `path` is None for the main checkout and the supervisor lane, which
+        // the pointer therefore cannot protect; they are never filtered out on
+        // emptiness anyway.
         || group
-            .extra
-            .get("optimistic")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
+            .path
+            .as_deref()
+            .is_some_and(|path| kept_paths.contains(&path))
 }
 
 const DASHBOARD_MODEL_CONTRACT_NOW: i64 = 1_770_000_000_000;
