@@ -2543,7 +2543,63 @@ fn the_service_decides_who_produced_output_recently() {
                 "{target} is live and on the dashboard but absent from the topology view"
             ),
         }
+        // And the checkout row above it folds its agents, so the screen does
+        // not draw a heavy title over light names.
+        let checkout = find_topology_worktree_row(&topology_view, "feature-a");
+        if let Some(checkout) = checkout {
+            let agents_recent = topology_agent_rows(&topology_view)
+                .iter()
+                .filter(|row| {
+                    row["worktreePath"]
+                        .as_str()
+                        .is_some_and(|path| path.ends_with("feature-a"))
+                })
+                .any(|row| row["recentOutput"].as_bool() != Some(false));
+            assert_eq!(
+                checkout["recentOutput"].as_bool(),
+                Some(agents_recent),
+                "the checkout row must fold the agents under it"
+            );
+        }
     }
+}
+
+fn find_topology_worktree_row(topology: &Value, name: &str) -> Option<Value> {
+    topology_rows(topology)
+        .into_iter()
+        .find(|row| row["kind"].as_str() == Some("worktree") && row["label"].as_str() == Some(name))
+}
+
+fn topology_agent_rows(topology: &Value) -> Vec<Value> {
+    topology_rows(topology)
+        .into_iter()
+        .filter(|row| row["kind"].as_str() == Some("agent"))
+        .collect()
+}
+
+fn topology_rows(topology: &Value) -> Vec<Value> {
+    fn walk(value: &Value, out: &mut Vec<Value>) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, out);
+                }
+            }
+            Value::Object(map) => {
+                if map.contains_key("kind") && map.contains_key("depth") {
+                    out.push(value.clone());
+                    return;
+                }
+                for nested in map.values() {
+                    walk(nested, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(topology, &mut out);
+    out
 }
 
 fn find_topology_agent_row(topology: &Value, session_id: &str) -> Option<Value> {

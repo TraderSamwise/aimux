@@ -12,15 +12,23 @@
 
 use aimux::dashboard_model::{DesktopStateGoldenFixture, SessionStatus};
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
+use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
 
 const COMMAND: &str = "codex";
 const NAME: &str = "Wgt";
+const SECOND_NAME: &str = "Wgt2";
 
 struct Row {
     status: SessionStatus,
     recent_output: Option<bool>,
+    /// An event whose kind the output allowlist rejects, with no output stamp.
+    non_output_event: bool,
+    /// A second agent in the same checkout, so the card's fold over its
+    /// agents is actually exercised. Over one session `any`, `all` and
+    /// "ask the first one" are indistinguishable.
+    second_recent_output: Option<Option<bool>>,
 }
 
 /// The raw frame, ANSI intact, for one agent alone in the first checkout.
@@ -41,6 +49,22 @@ fn frame(row: Row) -> String {
         .expect("the fixture has a checkout");
     group.services.clear();
     group.sessions.truncate(1);
+    if let Some(second) = row.second_recent_output {
+        let mut extra = group
+            .sessions
+            .first()
+            .expect("the checkout has an agent")
+            .clone();
+        extra.id = format!("{}-second", extra.id);
+        extra.label = Some(SECOND_NAME.to_owned());
+        extra.status = SessionStatus::Running;
+        extra.pending_action = None;
+        extra.semantic = None;
+        extra.activity = None;
+        extra.attention = None;
+        extra.recent_output = second;
+        group.sessions.push(extra);
+    }
     let session = group
         .sessions
         .first_mut()
@@ -56,6 +80,16 @@ fn frame(row: Row) -> String {
     session.activity = None;
     session.attention = None;
     session.recent_output = row.recent_output;
+    if row.non_output_event {
+        session.last_output_at = None;
+        session.last_event = Some(
+            serde_json::from_value(json!({
+                "kind": "task_canceled",
+                "ts": "2026-09-05T00:09:00.000Z"
+            }))
+            .expect("valid session event"),
+        );
+    }
     let agent_id = session.id.clone();
     snapshot.sessions = snapshot
         .worktree_groups
@@ -111,6 +145,8 @@ fn weight_follows_the_published_answer_and_nothing_else() {
     let bold = frame(Row {
         status: SessionStatus::Running,
         recent_output: Some(true),
+        non_output_event: false,
+        second_recent_output: None,
     });
     assert!(
         name_is_bold(&bold),
@@ -122,19 +158,89 @@ fn weight_follows_the_published_answer_and_nothing_else() {
         "and so must the checkout holding it"
     );
 
-    for quiet in [None, Some(false)] {
-        let frame = frame(Row {
-            status: SessionStatus::Running,
-            recent_output: quiet,
-        });
-        assert!(
-            !name_is_bold(&frame),
-            "a quiet agent must not, or the weight means nothing ({quiet:?})"
-        );
-        assert_eq!(
-            title_is_bold(&frame),
-            Some(false),
-            "nor its checkout ({quiet:?})"
-        );
-    }
+    let quiet = frame(Row {
+        status: SessionStatus::Running,
+        recent_output: Some(false),
+        non_output_event: false,
+        second_recent_output: None,
+    });
+    assert!(
+        !name_is_bold(&quiet),
+        "a quiet agent must not, or the weight means nothing"
+    );
+    assert_eq!(title_is_bold(&quiet), Some(false), "nor its checkout");
+
+    // A service too old to publish an answer has not said there is no output.
+    // Every name was bold before this existed, so that is what absent means.
+    let unknown = frame(Row {
+        status: SessionStatus::Running,
+        recent_output: None,
+        non_output_event: false,
+        second_recent_output: None,
+    });
+    assert!(
+        name_is_bold(&unknown),
+        "an unanswered question must not read as a quiet agent"
+    );
+    assert_eq!(
+        title_is_bold(&unknown),
+        Some(true),
+        "nor as a quiet checkout"
+    );
+
+    // The card asks ALL of its agents, not just the first. With one session
+    // in the group, `any`, `all` and "ask the first" all pass.
+    let second_only = frame(Row {
+        status: SessionStatus::Running,
+        recent_output: Some(false),
+        non_output_event: false,
+        second_recent_output: Some(Some(true)),
+    });
+    assert_eq!(
+        title_is_bold(&second_only),
+        Some(true),
+        "a checkout whose SECOND agent just finished must still read heavier"
+    );
+    assert!(
+        !second_only.contains(&format!("\x1b[1m{NAME}\x1b[0m")),
+        "and the quiet agent in it must stay plain"
+    );
+    assert!(
+        second_only.contains(&format!("\x1b[1m{SECOND_NAME}\x1b[0m")),
+        "while the recently active one is the bold name"
+    );
+
+    let both_quiet = frame(Row {
+        status: SessionStatus::Running,
+        recent_output: Some(false),
+        non_output_event: false,
+        second_recent_output: Some(Some(false)),
+    });
+    assert_eq!(
+        title_is_bold(&both_quiet),
+        Some(false),
+        "and a checkout where neither agent has spoken stays plain"
+    );
+}
+
+#[test]
+fn a_row_with_no_output_to_report_still_reports_something() {
+    // The output allowlist rejects `task_canceled`, and nothing writes
+    // `lastOutputAt` for it. The time cell read the same anchor as the weight
+    // and so rendered the empty string -- a row that silently says nothing at
+    // all, for an agent that is up and running.
+    let frame = frame(Row {
+        status: SessionStatus::Running,
+        recent_output: Some(false),
+        non_output_event: true,
+        second_recent_output: None,
+    });
+    let row = frame
+        .lines()
+        .find(|line| line.contains(NAME))
+        .unwrap_or_else(|| panic!("the agent is not in the frame"));
+    assert!(
+        row.contains(" ago") || row.contains("just now"),
+        "the time cell must say when something last happened: {row:?}"
+    );
 }

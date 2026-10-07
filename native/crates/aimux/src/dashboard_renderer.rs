@@ -1149,9 +1149,7 @@ fn service_row(service: &DashboardService, selected: bool, digit: Option<usize>)
             width: COL_INDEX,
         },
         Column {
-            // Not bold. Weight in this column means "an agent produced
-            // output in the last hour", and a service never claims that.
-            content: &style(label, Tone::Text),
+            content: &style(label, Tone::Strong),
             width: COL_IDENTITY,
         },
         Column {
@@ -1317,14 +1315,16 @@ fn session_output_at(session: &DashboardSession) -> Option<&str> {
 /// all. A window applied here would have been a second rule beside a second
 /// renderer.
 fn has_recent_output(session: &DashboardSession) -> bool {
-    session.recent_output == Some(true)
+    // Absent is "the service has not told us", not "no output": a service too
+    // old to publish it leaves every name bold, which is what they all were
+    // before this existed, rather than silently de-emphasising the lot.
+    session.recent_output != Some(false)
 }
 
 fn worktree_has_recent_output(worktree: &DashboardNavigationGroup<'_>) -> bool {
-    worktree
-        .sessions
-        .iter()
-        .any(|session| has_recent_output(session))
+    // No agents is no answer, not a quiet one. A checkout running only
+    // services would otherwise draw a plain title over bold service rows.
+    worktree.sessions.is_empty() || worktree.sessions.iter().copied().any(has_recent_output)
 }
 
 fn session_time_anchor(session: &DashboardSession) -> Option<(String, Option<&str>)> {
@@ -1360,7 +1360,12 @@ fn session_time_anchor(session: &DashboardSession) -> Option<(String, Option<&st
                         .or(session.last_used_at.as_deref()),
                 ))
             }),
-        Some("working" | "ready") => last_output_at.map(|value| ("output".to_owned(), Some(value))),
+        Some(state @ ("working" | "ready")) => last_output_at
+            .map(|value| ("output".to_owned(), Some(value)))
+            .or_else(|| {
+                session_activity_anchor(session)
+                    .map(|value| (row_state_label(state).to_lowercase(), Some(value)))
+            }),
         Some("done") => last_output_at
             .map(|value| ("output".to_owned(), Some(value)))
             .or_else(|| {
@@ -1389,8 +1394,33 @@ fn session_time_anchor(session: &DashboardSession) -> Option<(String, Option<&st
                 .or(last_output_at)
                 .or(session.last_used_at.as_deref()),
         )),
-        _ => last_output_at.map(|value| ("output".to_owned(), Some(value))),
+        state => last_output_at
+            .map(|value| ("output".to_owned(), Some(value)))
+            .or_else(|| {
+                session_activity_anchor(session).map(|value| {
+                    (
+                        state.map(row_state_label).unwrap_or("idle").to_lowercase(),
+                        Some(value),
+                    )
+                })
+            }),
     }
+}
+
+/// Something, rather than a blank cell.
+///
+/// The output anchor answers "when did this agent last speak", and a row with
+/// nothing to report there still has a last anything-happened. The cell went
+/// blank for a session whose only event was one the output allowlist rejects
+/// -- a cancelled task, a finished loop -- which is a row that silently says
+/// nothing at all.
+fn session_activity_anchor(session: &DashboardSession) -> Option<&str> {
+    session
+        .last_event
+        .as_ref()
+        .and_then(|event| event.ts.as_deref())
+        .or(session.became_idle_at.as_deref())
+        .or(session.last_used_at.as_deref())
 }
 
 fn session_time_text(session: &DashboardSession) -> String {
@@ -3226,17 +3256,19 @@ fn render_library_content(resource: Option<&Value>, selected_index: usize) -> Ve
 
 /// `codex (i5qr9c)` — the dashboard's shape, so the same agent reads the same
 /// way on both screens. Without the id every agent row was the same sentence.
+/// Absent is unknown, as it is on the dashboard row: a service too old to
+/// publish the answer leaves every name with the weight it always had.
+fn topology_row_weight(row: &Value) -> Tone {
+    if row.get("recentOutput").and_then(Value::as_bool) == Some(false) {
+        Tone::Text
+    } else {
+        Tone::Strong
+    }
+}
+
 fn topology_row_identity(row: &Value, label: &str) -> String {
     let name = truncate_plain(label, 20);
-    let weight = if row
-        .get("recentOutput")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        Tone::Strong
-    } else {
-        Tone::Text
-    };
+    let weight = topology_row_weight(row);
     let Some(session_id) = string_at(row, &["sessionId"]) else {
         return style(&name, weight);
     };
@@ -3330,7 +3362,10 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
                     " ".into()
                 },
                 topology_dot(health),
-                style(&truncate_plain(label, 30), Tone::Strong),
+                // The same weight rule as the card on the dashboard. Leaving
+                // this bold while the agent rows beneath it went conditional
+                // drew a heavy title over light names on one screen.
+                style(&truncate_plain(label, 30), topology_row_weight(row)),
                 detail,
                 status,
                 trailing_mark(selected)

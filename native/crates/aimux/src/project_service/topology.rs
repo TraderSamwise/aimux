@@ -215,6 +215,21 @@ pub fn build_project_topology(project_name: &str, worktrees: Vec<Value>) -> Valu
         row.insert("health".into(), Value::String(health.into()));
         insert_optional_string(&mut row, "status", string_field(worktree, "status"));
         insert_optional_string(&mut row, "worktreePath", string_field(worktree, "path"));
+        // Folded from the agents the checkout holds, the same way the
+        // dashboard card decides it: no agents is no answer, not a quiet one.
+        let agent_rows = child_rows
+            .iter()
+            .filter(|row| string_field(row, "kind") == Some("agent"))
+            .collect::<Vec<_>>();
+        row.insert(
+            "recentOutput".into(),
+            Value::Bool(
+                agent_rows.is_empty()
+                    || agent_rows
+                        .iter()
+                        .any(|row| row.get("recentOutput").and_then(Value::as_bool) != Some(false)),
+            ),
+        );
         rows.push(Value::Object(row));
         rows.extend(child_rows);
     }
