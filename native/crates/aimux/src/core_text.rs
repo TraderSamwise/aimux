@@ -567,15 +567,8 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
                     .unwrap_or_default()
             ));
         }
-        // One answer, one call. `ps` deriving its own was how the same agent
-        // read `idle` here and Working on the dashboard row.
-        let state = crate::project_service::session_semantics::agent_one_answer(
-            field(agent, "status").and_then(Value::as_str),
-            field(agent, "pendingAction").and_then(Value::as_str),
-            field(agent, "activity").and_then(Value::as_str),
-            field(agent, "attention").and_then(Value::as_str),
-            agent_has_active_task(agent),
-        );
+        // Rendered, not derived. The project service publishes the word.
+        let state = field(agent, "state").and_then(Value::as_str).unwrap_or("?");
         output.push(format!(
             "{id}{}  [{tool}{}]  {state}{}",
             agent_chosen_name(agent)
@@ -689,15 +682,6 @@ fn agent_worktree_sort_key(path: Option<&str>, project_root: &str) -> String {
     }
 }
 
-fn agent_has_active_task(agent: &Value) -> bool {
-    object(agent, "task")
-        .and_then(|task| task.get("status"))
-        .and_then(Value::as_str)
-        .is_some_and(|status| {
-            crate::project_service::session_semantics::task_status_is_active(Some(status))
-        })
-}
-
 fn render_agent_list_summary(agent: &Value) -> String {
     let mut tags = Vec::new();
     if let Some(role) = field(agent, "role")
@@ -725,15 +709,7 @@ fn render_agent_list_summary(agent: &Value) -> String {
         tags.push(format!("loop{goal}"));
     }
 
-    // The same one answer `ps` prints. This printed `activity/attention` raw,
-    // so a dead agent listed `state=running/normal`.
-    let state = crate::project_service::session_semantics::agent_one_answer(
-        field(agent, "status").and_then(Value::as_str),
-        field(agent, "pendingAction").and_then(Value::as_str),
-        field(agent, "activity").and_then(Value::as_str),
-        field(agent, "attention").and_then(Value::as_str),
-        agent_has_active_task(agent),
-    );
+    let state = field(agent, "state").and_then(Value::as_str).unwrap_or("?");
     let mut detail = vec![
         format!("canonical={}", agent_canonical_id(agent)),
         format!("aimux={}", js_string_or_undefined(field(agent, "id"))),
@@ -747,17 +723,13 @@ fn render_agent_list_summary(agent: &Value) -> String {
     {
         detail.push(format!("backend={backend_session_id}"));
     }
-    if !state.is_empty() {
-        detail.push(format!("state={state}"));
-    }
     if !tags.is_empty() {
         detail.push(tags.join(" "));
     }
-    let status = field(agent, "status")
-        .filter(|value| !value.is_null())
-        .map(|value| js_string(Some(value)))
-        .unwrap_or_else(|| "?".into());
-    format!("  {status}  {}", detail.join("  "))
+    // The answer leads, and the raw axis is not printed beside it: a
+    // projected `starting` next to `state=working` is the same two-sources
+    // shape this replaced. `--json` still carries every raw field.
+    format!("  {state}  {}", detail.join("  "))
 }
 
 fn js_string_or_undefined(value: Option<&Value>) -> String {

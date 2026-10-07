@@ -39,8 +39,8 @@ use super::preview_snapshots::{
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::session_semantics::{
-    SessionSemanticsInput, derive_session_semantics, normalized_session_status,
-    task_status_is_active,
+    SessionSemanticsInput, active_task_session_ids, derive_session_semantics,
+    normalized_session_status,
 };
 use super::session_visibility::{
     AgentVisibilityInput, AgentVisibilityRule, LIVE_SESSION_STATUSES,
@@ -1868,15 +1868,7 @@ fn summarize_notification_stats(exchange: &Value) -> BTreeMap<String, Notificati
 }
 
 fn summarize_active_tasks(exchange: &Value) -> BTreeSet<String> {
-    array_field(exchange, "tasks")
-        .iter()
-        .filter(|task| task_status_is_active(string_field(task, "status")))
-        .filter_map(|task| {
-            string_field(task, "assignedTo")
-                .or_else(|| string_field(task, "assignee"))
-                .map(str::to_owned)
-        })
-        .collect()
+    active_task_session_ids(array_field(exchange, "tasks"))
 }
 
 fn pending_deliveries_by_participant(exchange: &Value, thread_id: &str) -> BTreeMap<String, i64> {

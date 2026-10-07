@@ -1,8 +1,4 @@
 use aimux::core_text::*;
-use aimux::project_service::session_semantics::{
-    SessionSemanticsInput, derive_session_semantics, normalized_session_status,
-    task_status_is_active,
-};
 use serde_json::json;
 
 #[test]
@@ -84,150 +80,54 @@ fn renders_remote_auth_and_whoami_without_credentials() {
 }
 
 #[test]
-fn ps_says_which_of_working_waiting_or_finished_an_agent_is() {
+fn ps_renders_the_published_word_and_never_the_raw_axes() {
     // The complaint this answers: "i cant tell difference between false
     // 'working' state vs 'needs input' state vs 'finished' state". `ps` used
     // to print the raw axes side by side, so a dead agent read
     // `offline  done/normal` -- a projected liveness next to a turn state
     // nothing rewrote when its window died.
+    //
+    // The word itself is derived by the project service, so this covers only
+    // the rendering. The word is pinned on the route in
+    // `project_service_agents::build_agent_list_publishes_the_one_state_word`
+    // and compared against the dashboard row in
+    // `project_service_desktop_state::ps_and_the_dashboard_row_print_the_same_word_for_every_agent`.
     let line = |agent: serde_json::Value| {
         render_core_agent_ps_lines(&json!({ "agents": [agent] }))[0].clone()
     };
 
     assert_eq!(
-        line(json!({ "id": "a", "tool": "codex", "status": "running", "activity": "running" })),
+        line(json!({ "id": "a", "tool": "codex", "state": "working" })),
         "a  [codex]  working"
     );
     assert_eq!(
-        line(json!({ "id": "a", "tool": "codex", "status": "idle", "activity": "done" })),
-        "a  [codex]  done"
-    );
-    // The one that was lying. Stored `running` on a session whose window is
-    // gone is not work in progress; nothing rewrites `activity` on death.
-    assert_eq!(
-        line(json!({ "id": "a", "tool": "codex", "status": "offline", "activity": "running" })),
-        "a  [codex]  offline",
-        "a dead agent must not claim to be working"
-    );
-    // A stale ask left behind by a dead agent is not an ask you can answer,
-    // and reporting one made the row urgent, top-ranked and enterable.
-    assert_eq!(
         line(json!({
-            "id": "a", "tool": "codex", "status": "offline",
-            "activity": "waiting", "attention": "needs_input"
+            "id": "a", "tool": "codex", "state": "offline",
+            "status": "offline", "activity": "running", "attention": "needs_input"
         })),
         "a  [codex]  offline",
-        "a stopped agent is reported stopped, whatever it last asked"
+        "the raw axes are not printed beside the answer, in any combination"
     );
-    // `starting` is the reachable status `ps` answered `idle` for while every
-    // derived surface called the same agent working.
     assert_eq!(
-        line(json!({ "id": "a", "tool": "codex", "status": "starting" })),
-        "a  [codex]  working",
-        "an agent coming up is not idle"
+        line(json!({ "id": "a", "tool": "codex", "state": "needs input" })),
+        "a  [codex]  needs input",
+        "a two-word published label survives rendering"
     );
-    // A live session with nothing recorded still has an answer.
+    // A service too old to publish the word must say so, not print a blank
+    // column that reads as "nothing is happening".
     assert_eq!(
         line(json!({ "id": "a", "tool": "codex", "status": "running" })),
-        "a  [codex]  ready",
-        "a live agent with no recorded turn is up and not busy, not blank"
+        "a  [codex]  ?",
+        "an absent word is unknown, not idle"
     );
-    assert_eq!(
-        line(json!({
-            "id": "a", "tool": "codex", "status": "running", "attention": "needs_input"
-        })),
-        "a  [codex]  needs input",
-        "a live agent asking is the case that is actually on the user"
-    );
-    assert_eq!(
-        line(json!({ "id": "a", "tool": "codex", "status": "idle", "activity": "interrupted" })),
-        "a  [codex]  interrupted",
-        "interrupted is not done"
-    );
-    assert_eq!(
-        line(json!({ "id": "a", "tool": "codex", "status": "running", "activity": "error" })),
-        "a  [codex]  error"
-    );
-    // A removal in flight is named by its own word, not by the turn it was
-    // mid-way through.
-    assert_eq!(
-        line(json!({
-            "id": "a", "tool": "codex", "status": "running",
-            "activity": "running", "pendingAction": "graveyarding"
-        })),
-        "a  [codex]  Removing"
-    );
-    // The assignment the dashboard row calls `next_step`.
-    assert_eq!(
-        line(json!({
-            "id": "a", "tool": "codex", "status": "running",
-            "task": { "description": "Ship", "status": "assigned" }
-        })),
-        "a  [codex]  next step",
-        "an agent still holding an assignment is not merely ready"
-    );
-}
-
-#[test]
-fn ps_has_no_rule_of_its_own_for_any_reachable_state() {
-    // This builds its expectation from the same derivation `ps` calls, so it
-    // proves only that `ps` grew no second rule inline -- it is NOT the
-    // cross-surface gate. That one is
-    // `ps_and_the_dashboard_row_print_the_same_word_for_every_agent` in
-    // `project_service_desktop_state`, which asks the other surface.
-    for (status, activity, attention, task_status) in [
-        ("starting", None, None, None),
-        ("running", Some("running"), None, None),
-        ("running", None, Some("needs_input"), None),
-        ("idle", Some("done"), None, None),
-        ("offline", Some("running"), None, None),
-        ("offline", Some("waiting"), Some("needs_input"), None),
-        // An agent still holding an assignment. `ps` left `has_active_task`
-        // at its default, so it answered `ready` where the row said
-        // `next_step` -- and the agent list keeps a wider set of task
-        // statuses on the record than the derivation counts.
-        ("running", None, None, Some("assigned")),
-        ("running", None, None, Some("in_progress")),
-        ("running", None, None, Some("open")),
-        ("running", None, None, Some("done")),
-    ] {
-        let mut agent = json!({ "id": "a", "tool": "codex", "status": status });
-        if let Some(activity) = activity {
-            agent["activity"] = json!(activity);
-        }
-        if let Some(attention) = attention {
-            agent["attention"] = json!(attention);
-        }
-        if let Some(task_status) = task_status {
-            agent["task"] = json!({ "description": "Ship", "status": task_status });
-        }
-        let semantic = derive_session_semantics(SessionSemanticsInput {
-            status: normalized_session_status(Some(status)).to_owned(),
-            activity: activity.map(str::to_owned),
-            attention: attention.map(str::to_owned),
-            has_active_task: task_status_is_active(task_status),
-            ..Default::default()
-        });
-        let published = semantic["presentation"]["statusLabel"].as_str().unwrap();
-        let rendered = render_core_agent_ps_lines(&json!({ "agents": [agent] }));
-        assert_eq!(
-            rendered[0],
-            format!("a  [codex]  {published}"),
-            "ps must print the word the other surfaces render for \
-             {status}/{activity:?}/{attention:?}/{task_status:?}"
-        );
-    }
-    // And the predicate is the derivation's, not "the record carries a task".
-    assert!(task_status_is_active(Some("assigned")));
-    assert!(!task_status_is_active(Some("open")));
 }
 
 #[test]
 fn renders_agent_and_team_details() {
     assert_eq!(
         render_core_agent_ps_lines(&json!({ "agents": [{
-            "id": "codex-1", "tool": "codex", "role": "builder", "status": "running",
-            "activity": "running", "attention": "normal", "overseer": true,
+            "id": "codex-1", "tool": "codex", "role": "builder", "state": "working",
+            "overseer": true,
             "loop": { "active": true, "goal": "ship" }, "worktreePath": "/repo/wt",
             "task": { "description": "Implement port", "status": "active" }
         }] })),
@@ -239,8 +139,8 @@ fn renders_agent_and_team_details() {
     );
     assert_eq!(
         render_core_agent_ps_lines(&json!({ "agents": [
-            { "id": "codex-1", "tool": "codex", "label": "Review lane", "status": "running" },
-            { "id": "codex-ho1ofa", "tool": "codex", "label": "codex-ho1ofa", "status": "running" },
+            { "id": "codex-1", "tool": "codex", "label": "Review lane", "state": "ready" },
+            { "id": "codex-ho1ofa", "tool": "codex", "label": "codex-ho1ofa", "state": "ready" },
         ] })),
         vec![
             "codex-1  \"Review lane\"  [codex]  ready",
@@ -254,12 +154,12 @@ fn renders_agent_and_team_details() {
             "agents": [
                 {
                     "id": "codex-2", "toolConfigKey": "codex-heavy", "tool": "codex",
-                    "status": "running", "activity": "running", "scribe": true,
+                    "status": "running", "state": "working", "scribe": true,
                     "loop": { "active": true }
                 },
                 {
                     "id": "codex-1", "tool": "codex", "role": "builder", "status": "idle",
-                    "attention": "needs_input", "overseer": true, "backendSessionId": "backend-1",
+                    "state": "needs input", "overseer": true, "backendSessionId": "backend-1",
                     "loop": { "active": true, "goal": "ship" }, "worktreePath": "/repo/wt",
                     "task": { "description": "Implement port", "status": "active" }
                 }
@@ -267,10 +167,10 @@ fn renders_agent_and_team_details() {
         })),
         vec![
             "Main Checkout  /repo",
-            "  running  canonical=codex-heavy  aimux=codex-2  state=working  scribe loop",
+            "  working  canonical=codex-heavy  aimux=codex-2  scribe loop",
             "",
             "wt  /repo/wt",
-            "  idle  canonical=codex  aimux=codex-1  backend=backend-1  state=needs input  role=builder overseer loop=ship",
+            "  needs input  canonical=codex  aimux=codex-1  backend=backend-1  role=builder overseer loop=ship",
             "    task: Implement port (active)",
         ]
     );

@@ -823,6 +823,7 @@ fn loop_routes_round_trip_through_daemon_http_to_project_service() {
                     "id": "claude-1",
                     "tool": "claude",
                     "status": "running",
+                    "state": "ready",
                     "loop": { "active": true, "goal": "ship the slice" }
                 },
                 {

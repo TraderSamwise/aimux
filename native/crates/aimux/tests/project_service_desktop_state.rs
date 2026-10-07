@@ -2348,65 +2348,139 @@ fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashbo
     cleanup(project);
 }
 
+/// One session to override, and the status, activity and attention to give it.
+type StateCase = (
+    &'static str,
+    Option<&'static str>,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+
 #[test]
 fn ps_and_the_dashboard_row_print_the_same_word_for_every_agent() {
     // AGENTS.md "One Answer, Many Surfaces": the gate compares the surfaces
     // against each other. The previous one rebuilt `ps`'s own expectation by
     // calling the same derivation, so it stayed green while `ps` published
     // `user.label` and every other surface published `statusLabel`.
-    let topology = topology_fixture();
-    let metadata = metadata_fixture();
-    let exchange = exchange_fixture();
-    let live = support::live_windows("aimux-repo", &["@1", "@2", "@3", "@4"]);
+    //
+    // The base fixture only covers running, idle, offline and an outstanding
+    // ask, so each case below overrides one session to reach a state the
+    // fixture does not hold. A state covered by neither is a blind spot.
+    let cases: &[StateCase] = &[
+        ("codex-live", None, None, None),
+        ("codex-live", Some("starting"), None, None),
+        ("codex-live", Some("running"), Some("done"), Some("normal")),
+        (
+            "codex-live",
+            Some("running"),
+            Some("interrupted"),
+            Some("normal"),
+        ),
+        ("codex-live", Some("running"), Some("error"), Some("normal")),
+        ("codex-live", Some("running"), None, Some("needs_response")),
+        ("codex-live", Some("running"), None, Some("blocked")),
+        (
+            "codex-live",
+            Some("offline"),
+            Some("running"),
+            Some("needs_input"),
+        ),
+        ("boss", Some("idle"), None, None),
+        ("reviewer", Some("offline"), Some("done"), None),
+    ];
 
-    let state = build_desktop_state_with_live_window_ids(
-        DesktopStateInput {
-            project_root: "/repo".into(),
-            topology: &topology,
-            metadata_sessions: &metadata,
-            exchange: &exchange,
-        },
-        Some(&live),
-    );
-    let agents = build_agent_list(
-        &topology_desktop_session_list_with_live_window_ids(&topology, &metadata, &tools(), &live),
-        &metadata,
-        exchange["tasks"].as_array().map_or(&[][..], Vec::as_slice),
-        None,
-    );
-    let ps = render_core_agent_ps_lines(&json!({ "agents": agents }));
+    for (target, status, activity, attention) in cases {
+        let mut topology = topology_fixture();
+        if let Some(status) = status {
+            let sessions = topology["sessions"].as_array_mut().unwrap();
+            let session = sessions
+                .iter_mut()
+                .find(|session| session["id"] == *target)
+                .unwrap_or_else(|| panic!("{target} is not in the fixture"));
+            session["status"] = json!(status);
+        }
+        let mut metadata = metadata_fixture();
+        if activity.is_some() || attention.is_some() {
+            let entry = metadata.entry((*target).to_owned()).or_insert_with(
+                || json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+            );
+            let derived = entry["derived"].as_object_mut().unwrap();
+            match activity {
+                Some(activity) => {
+                    derived.insert("activity".into(), json!(activity));
+                }
+                None => {
+                    derived.remove("activity");
+                }
+            }
+            match attention {
+                Some(attention) => {
+                    derived.insert("attention".into(), json!(attention));
+                }
+                None => {
+                    derived.remove("attention");
+                }
+            }
+        }
+        let exchange = exchange_fixture();
+        let live = support::live_windows("aimux-repo", &["@1", "@2", "@3", "@4"]);
 
-    let mut compared = 0;
-    for session in state["sessions"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .chain(state["teammates"].as_array().into_iter().flatten())
-    {
-        let id = session["id"].as_str().unwrap();
-        let published = session["semantic"]["presentation"]["statusLabel"]
-            .as_str()
-            .unwrap_or_else(|| panic!("{id} has no published status label"));
-        let line = ps
-            .iter()
-            .find(|line| line.split("  ").next() == Some(id))
-            .unwrap_or_else(|| panic!("{id} is on the dashboard but absent from ps:\n{ps:#?}"));
-        let fields = line.split("  ").collect::<Vec<_>>();
-        let tool_at = fields
-            .iter()
-            .position(|field| field.starts_with('['))
-            .unwrap_or_else(|| panic!("no tool column in {line:?}"));
-        assert_eq!(
-            fields.get(tool_at + 1).copied(),
-            Some(published),
-            "ps and the dashboard row disagree about {id}: {line:?} vs {published:?}"
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&live),
         );
-        compared += 1;
+        let agents = build_agent_list(
+            &topology_desktop_session_list_with_live_window_ids(
+                &topology,
+                &metadata,
+                &tools(),
+                &live,
+            ),
+            &metadata,
+            exchange["tasks"].as_array().map_or(&[][..], Vec::as_slice),
+            None,
+        );
+        let ps = render_core_agent_ps_lines(&json!({ "agents": agents }));
+
+        let mut compared = 0;
+        for session in state["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(state["teammates"].as_array().into_iter().flatten())
+        {
+            let id = session["id"].as_str().unwrap();
+            let published = session["semantic"]["presentation"]["statusLabel"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{id} has no published status label"));
+            let line = ps
+                .iter()
+                .find(|line| line.split("  ").next() == Some(id))
+                .unwrap_or_else(|| panic!("{id} is on the dashboard but absent from ps:\n{ps:#?}"));
+            let fields = line.split("  ").collect::<Vec<_>>();
+            let tool_at = fields
+                .iter()
+                .position(|field| field.starts_with('['))
+                .unwrap_or_else(|| panic!("no tool column in {line:?}"));
+            assert_eq!(
+                fields.get(tool_at + 1).copied(),
+                Some(published),
+                "ps and the dashboard row disagree about {id} \
+                 with {target} as {status:?}/{activity:?}/{attention:?}: \
+                 {line:?} vs {published:?}"
+            );
+            compared += 1;
+        }
+        assert_eq!(
+            compared, 4,
+            "every fixture agent must be compared, not merely several"
+        );
     }
-    assert!(
-        compared >= 4,
-        "the fixture must cover several agents, compared {compared}"
-    );
 }
 
 fn tools() -> Map<String, Value> {

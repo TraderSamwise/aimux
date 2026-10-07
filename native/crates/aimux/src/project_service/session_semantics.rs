@@ -185,6 +185,19 @@ pub fn agent_one_answer(
         .to_owned()
 }
 
+/// Which sessions hold an assignment still in flight. Sharing only the
+/// predicate was not enough: the agent list picked one task by a different
+/// rule first, so a leading `pending` task hid a later `in_progress` one.
+pub fn active_task_session_ids(tasks: &[Value]) -> std::collections::BTreeSet<String> {
+    tasks
+        .iter()
+        .filter(|task| task_status_is_active(string_field(task, "status").as_deref()))
+        .filter_map(|task| {
+            string_field(task, "assignedTo").or_else(|| string_field(task, "assignee"))
+        })
+        .collect()
+}
+
 /// The statuses `user_state` counts as an assignment still in flight. The
 /// agent list keeps a wider set on the record, so reading `task` presence
 /// instead made `ps` answer `ready` where the row answered `next_step`.
@@ -266,6 +279,13 @@ fn notifications_state(
         notifications.insert("latestText".into(), Value::String(text));
     }
     Value::Object(notifications)
+}
+
+/// The published word for a `user.label` or a transient action. Exposed so
+/// one test can compare it against the row's and the chip's own maps over the
+/// whole vocabulary, not only the states a fixture happens to reach.
+pub fn published_status_label(label: &str) -> &str {
+    status_label_for(label)
 }
 
 fn status_label_for(label: &str) -> &str {

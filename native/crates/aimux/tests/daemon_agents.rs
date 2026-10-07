@@ -82,6 +82,7 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
                         "status": "running",
                         "activity": "running",
                         "attention": "needs_input",
+                        "state": "needs input",
                         "worktreePath": "/repo/wt",
                         "task": { "description": "Ship", "status": "todo" }
                     }]
@@ -414,10 +415,7 @@ fn agent_read_mutation_routes_match_text_and_json_shapes() {
     .expect("list route");
     let list_text = text_body(list);
     assert!(list_text.contains("wt  /repo/wt"));
-    assert!(
-        list_text
-            .contains("  running  canonical=claude  aimux=claude-1  state=needs input  role=dev")
-    );
+    assert!(list_text.contains("  needs input  canonical=claude  aimux=claude-1  role=dev"));
     assert!(list_text.contains("    task: Ship (todo)"));
 
     let list_json = route_agent_text_request(

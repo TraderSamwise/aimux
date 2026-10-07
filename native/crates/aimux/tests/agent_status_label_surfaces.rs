@@ -102,9 +102,25 @@ fn an_agent_idle_at_its_prompt_is_ready_and_never_running() {
 #[test]
 fn every_surface_words_a_state_the_same_way() {
     let fixture = fixture();
-    for case in fixture["cases"].as_array().expect("cases") {
-        let user_label = case["userLabel"].as_str().expect("userLabel");
-        let served = string_at(&semantics(case), ["presentation", "statusLabel"]);
+    // Every PINNED label, not only the ones the cases happen to reach. The
+    // cases cover eleven of the fourteen, so `graveyarding`, `starting` and
+    // `stopping` were free to drift, and the transients below -- which the
+    // row words from `pendingAction` rather than from `user.label` -- were
+    // compared nowhere at all.
+    let labels = fixture["userLabels"]["labels"]
+        .as_array()
+        .expect("pinned labels")
+        .iter()
+        .map(|label| label.as_str().expect("label").to_owned())
+        .chain(
+            aimux::transient_state::TRANSIENT_ACTIONS
+                .iter()
+                .map(|action| (*action).to_owned()),
+        )
+        .collect::<Vec<_>>();
+    for user_label in &labels {
+        let user_label = user_label.as_str();
+        let served = aimux::project_service::session_semantics::published_status_label(user_label);
         let row = aimux::dashboard_renderer::row_state_label(user_label);
         let chip = aimux::project_service::switchable_agents::user_label_chip(user_label);
 
@@ -120,6 +136,82 @@ fn every_surface_words_a_state_the_same_way() {
                 "{user_label}: the service says {served:?} and Exposé's chip says {chip:?}"
             );
         }
+    }
+    assert!(
+        labels.len() >= 28,
+        "the label and transient sets must both be covered"
+    );
+}
+
+/// `agent_one_answer` passes five inputs and defaults the other eleven, so
+/// the CLI only agrees with the dashboard row while the word depends on those
+/// five alone. Nothing pinned that, and a rule keyed on a count would have
+/// diverged the two surfaces silently with every other gate green.
+#[test]
+fn the_published_word_depends_on_nothing_the_cli_cannot_pass() {
+    let five = |status: &str,
+                pending: Option<&str>,
+                activity: Option<&str>,
+                attention: Option<&str>,
+                task: bool| SessionSemanticsInput {
+        status: status.to_owned(),
+        pending_action: pending.map(str::to_owned),
+        activity: activity.map(str::to_owned),
+        attention: attention.map(str::to_owned),
+        has_active_task: task,
+        ..SessionSemanticsInput::default()
+    };
+    let loaded = |mut input: SessionSemanticsInput| {
+        input.unseen_count = 7;
+        input.notification_unread_count = 3;
+        input.latest_notification = Some(serde_json::json!({ "body": "look at me" }));
+        input.latest_notification_text = Some("look at me".to_owned());
+        input.thread_unread_count = 4;
+        input.thread_pending_count = 5;
+        input.thread_waiting_on_me_count = 6;
+        input.thread_waiting_on_them_count = 2;
+        input.workflow_on_me_count = 8;
+        input.workflow_blocked_count = 9;
+        input.workflow_family_count = 2;
+        input
+    };
+
+    for (status, pending, activity, attention, task) in [
+        ("running", None, Some("running"), None, false),
+        ("running", None, None, None, false),
+        ("running", None, None, None, true),
+        ("waiting", None, None, None, false),
+        ("idle", None, Some("done"), None, false),
+        ("idle", None, Some("interrupted"), None, false),
+        ("running", None, Some("error"), None, false),
+        ("running", None, None, Some("needs_input"), false),
+        ("running", None, None, Some("needs_response"), false),
+        ("running", None, None, Some("blocked"), false),
+        ("offline", None, Some("running"), None, false),
+        ("offline", None, Some("waiting"), Some("needs_input"), false),
+        (
+            "running",
+            Some("graveyarding"),
+            Some("running"),
+            None,
+            false,
+        ),
+        ("running", Some("starting"), None, None, false),
+    ] {
+        let bare = derive_session_semantics(five(status, pending, activity, attention, task));
+        let busy =
+            derive_session_semantics(loaded(five(status, pending, activity, attention, task)));
+        assert_eq!(
+            string_at(&bare, ["presentation", "statusLabel"]),
+            string_at(&busy, ["presentation", "statusLabel"]),
+            "counts, notifications and threads changed the word for \
+             {status}/{pending:?}/{activity:?}/{attention:?}/{task}, which the \
+             CLI cannot pass and so cannot agree about"
+        );
+        assert_eq!(
+            string_at(&bare, ["user", "label"]),
+            string_at(&busy, ["user", "label"]),
+        );
     }
 }
 

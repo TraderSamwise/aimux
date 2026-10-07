@@ -760,6 +760,10 @@ pub fn build_agent_list(
     tasks: &[Value],
     role_registry: Option<&Value>,
 ) -> Vec<Value> {
+    // The one answer is derived HERE, not by each renderer. `ps` recomputing
+    // it from the record is what let four rounds of fixes diverge from the
+    // dashboard row over inputs the record did not carry.
+    let active_tasks = crate::project_service::session_semantics::active_task_session_ids(tasks);
     sessions
         .iter()
         .map(|session| {
@@ -839,6 +843,16 @@ pub fn build_agent_list(
                     }),
                 );
             }
+            agent.insert(
+                "state".into(),
+                Value::String(crate::project_service::session_semantics::agent_one_answer(
+                    agent.get("status").and_then(Value::as_str),
+                    agent.get("pendingAction").and_then(Value::as_str),
+                    agent.get("activity").and_then(Value::as_str),
+                    agent.get("attention").and_then(Value::as_str),
+                    active_tasks.contains(id),
+                )),
+            );
             Value::Object(agent)
         })
         .collect()
