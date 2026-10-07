@@ -2958,6 +2958,140 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
         );
     }
 
+    // A TEAMMATE IN THE SUPERVISOR PLANE -- both exclusions at once. Adding
+    // the sessions loop's supervisor skip to the teammate loop is the
+    // symmetry any reviewer would reach for, and it drops this agent from the
+    // answer while the topology screen keeps its row.
+    {
+        let mut topology = topology_fixture();
+        topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|session| session["id"] == "codex-live" || session["id"] == "reviewer");
+        let session = topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|session| session["id"] == "reviewer")
+            .expect("reviewer is in the fixture");
+        session["lane"] = json!({ "kind": "supervisor" });
+        let mut metadata = metadata_fixture();
+        for (id, stamp) in [("reviewer", &recent), ("codex-live", &stale)] {
+            let entry = metadata.entry(id.to_owned()).or_insert_with(
+                || json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+            );
+            entry["derived"] = json!({ "lastOutputAt": stamp });
+        }
+        let exchange = exchange_fixture();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&support::live_windows(
+                "aimux-repo",
+                &["@1", "@2", "@3", "@4"],
+            )),
+        );
+        assert!(
+            state["teammates"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|session| session["id"] == "reviewer"),
+            "the subject has to be a teammate AND in the supervisor plane"
+        );
+        let group = state["worktreeGroups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|group| group["name"] == "feature-a")
+            .cloned()
+            .expect("feature-a is a checkout");
+        assert_eq!(
+            group["recentOutput"], true,
+            "it is still an agent in that checkout, however many row lists \
+             leave it out"
+        );
+    }
+
+    // A SUPERVISOR-PLANE AGENT. The card shows it in its own card rather
+    // than under a checkout; the topology screen rows it under the checkout
+    // its directory names. The checkout answer is about the CHECKOUT, so it
+    // counts -- asking only about one screen's row list left the answer plain
+    // directly above that agent's bold row on the other.
+    {
+        let mut topology = topology_fixture();
+        topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|session| session["id"] == "codex-live" || session["id"] == "reviewer");
+        let session = topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|session| session["id"] == "codex-live")
+            .expect("codex-live is in the fixture");
+        session["lane"] = json!({ "kind": "supervisor" });
+        let mut metadata = metadata_fixture();
+        for (id, stamp) in [("codex-live", &recent), ("reviewer", &stale)] {
+            let entry = metadata.entry(id.to_owned()).or_insert_with(
+                || json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+            );
+            entry["derived"] = json!({ "lastOutputAt": stamp });
+        }
+        let exchange = exchange_fixture();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&support::live_windows(
+                "aimux-repo",
+                &["@1", "@2", "@3", "@4"],
+            )),
+        );
+        let group = state["worktreeGroups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|group| group["name"] == "feature-a")
+            .cloned()
+            .expect("feature-a is a checkout");
+        assert!(
+            group["sessions"]
+                .as_array()
+                .is_none_or(|sessions| sessions.iter().all(|s| s["id"] != "codex-live")),
+            "the card does not row a supervisor-plane agent under a checkout, \
+             or this is not the case it looks like"
+        );
+        assert_eq!(
+            group["recentOutput"], true,
+            "but it is an agent in that checkout, so the checkout has had \
+             recent output and no row beneath it can contradict the heading"
+        );
+        let topology_view =
+            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let row = find_topology_worktree_row(&topology_view, "feature-a")
+            .expect("feature-a is in the topology view");
+        assert_eq!(
+            row["recentOutput"].as_bool(),
+            Some(true),
+            "and the screen that DOES row it says the same"
+        );
+        let agent_row = find_topology_agent_row(&topology_view, "codex-live")
+            .expect("the supervisor-plane agent still has a topology row");
+        assert_eq!(
+            agent_row["recentOutput"].as_bool(),
+            Some(true),
+            "that row is bold, which is what the heading must not deny"
+        );
+    }
+
     // An offline agent is still an agent. Skipping it in the fold turned a
     // checkout whose only agent is dead and quiet into "no agents to ask",
     // and the title went bold for a checkout with nothing happening in it.
