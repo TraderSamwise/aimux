@@ -217,17 +217,21 @@ pub fn build_project_topology(project_name: &str, worktrees: Vec<Value>) -> Valu
         insert_optional_string(&mut row, "worktreePath", string_field(worktree, "path"));
         // Folded from the agents the checkout holds, the same way the
         // dashboard card decides it: no agents is no answer, not a quiet one.
-        let agent_rows = child_rows
+        // Folded from the sessions, not the rows: a row carries no team
+        // flags, and `dashboard_navigation` leaves project-control sessions
+        // out of the card's own fold -- so folding them here gave the same
+        // checkout a bold title on one screen and a plain one on the other.
+        let folded = array_field(worktree, "sessions")
             .iter()
-            .filter(|row| string_field(row, "kind") == Some("agent"))
+            .filter(|session| !crate::team_contract::is_project_control_session(Some(session)))
             .collect::<Vec<_>>();
         row.insert(
             "recentOutput".into(),
             Value::Bool(
-                agent_rows.is_empty()
-                    || agent_rows
-                        .iter()
-                        .any(|row| row.get("recentOutput").and_then(Value::as_bool) != Some(false)),
+                folded.is_empty()
+                    || folded.iter().any(|session| {
+                        session.get("recentOutput").and_then(Value::as_bool) != Some(false)
+                    }),
             ),
         );
         rows.push(Value::Object(row));

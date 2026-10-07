@@ -1165,11 +1165,15 @@ fn dashboard_session(
     // later read one answer instead of each applying its own window. A
     // stopped agent keeps the stamp it died with, and weight means something
     // is happening, so liveness is part of the fact.
+    // `runtime_lifecycle` answers `error` before it answers `offline`, so an
+    // agent that failed and then lost its window is `isAlive: true`. The
+    // projected status is the one thing that cannot be fooled by that.
     let is_alive = semantic
         .get("runtime")
         .and_then(|runtime| runtime.get("isAlive"))
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        .unwrap_or(false)
+        && raw_status != "offline";
     let last_event = item.get("lastEvent");
     item.insert(
         "recentOutput".into(),

@@ -1360,12 +1360,10 @@ fn session_time_anchor(session: &DashboardSession) -> Option<(String, Option<&st
                         .or(session.last_used_at.as_deref()),
                 ))
             }),
-        Some(state @ ("working" | "ready")) => last_output_at
-            .map(|value| ("output".to_owned(), Some(value)))
-            .or_else(|| {
-                session_activity_anchor(session)
-                    .map(|value| (row_state_label(state).to_lowercase(), Some(value)))
-            }),
+        // No output, no output recency. Node drew this cell blank too, and
+        // the parity captures pin it: a session with nothing to report is
+        // what blank means here.
+        Some("working" | "ready") => last_output_at.map(|value| ("output".to_owned(), Some(value))),
         Some("done") => last_output_at
             .map(|value| ("output".to_owned(), Some(value)))
             .or_else(|| {
@@ -1394,33 +1392,8 @@ fn session_time_anchor(session: &DashboardSession) -> Option<(String, Option<&st
                 .or(last_output_at)
                 .or(session.last_used_at.as_deref()),
         )),
-        state => last_output_at
-            .map(|value| ("output".to_owned(), Some(value)))
-            .or_else(|| {
-                session_activity_anchor(session).map(|value| {
-                    (
-                        state.map(row_state_label).unwrap_or("idle").to_lowercase(),
-                        Some(value),
-                    )
-                })
-            }),
+        _ => last_output_at.map(|value| ("output".to_owned(), Some(value))),
     }
-}
-
-/// Something, rather than a blank cell.
-///
-/// The output anchor answers "when did this agent last speak", and a row with
-/// nothing to report there still has a last anything-happened. The cell went
-/// blank for a session whose only event was one the output allowlist rejects
-/// -- a cancelled task, a finished loop -- which is a row that silently says
-/// nothing at all.
-fn session_activity_anchor(session: &DashboardSession) -> Option<&str> {
-    session
-        .last_event
-        .as_ref()
-        .and_then(|event| event.ts.as_deref())
-        .or(session.became_idle_at.as_deref())
-        .or(session.last_used_at.as_deref())
 }
 
 fn session_time_text(session: &DashboardSession) -> String {

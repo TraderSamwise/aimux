@@ -2479,6 +2479,18 @@ fn the_service_decides_who_produced_output_recently() {
         ("codex-live", None, Some(("prompt", &recent)), true, false),
         // A stopped agent keeps the stamp and loses the weight.
         ("codex-cold", Some(&recent), None, false, false),
+        // And the one that defeats a liveness check read off the lifecycle:
+        // `runtime_lifecycle` answers `error` before it answers `offline`, so
+        // an agent that failed and then lost its window is `isAlive: true`.
+        // `isAlive` is TRUE here, and that is the trap: the weight must not be
+        // read off the lifecycle, which answers `error` before `offline`.
+        (
+            "codex-cold",
+            Some(&recent),
+            Some(("task_failed", &recent)),
+            true,
+            false,
+        ),
     ];
 
     for (target, last_output_at, last_event, expect_alive, expect_recent) in cases {
@@ -2490,6 +2502,10 @@ fn the_service_decides_who_produced_output_recently() {
         let derived = entry["derived"].as_object_mut().unwrap();
         derived.remove("lastOutputAt");
         derived.remove("lastEvent");
+        derived.remove("attention");
+        if last_event.is_some_and(|(kind, _)| kind == "task_failed") {
+            derived.insert("attention".into(), json!("error"));
+        }
         if let Some(stamp) = last_output_at {
             derived.insert("lastOutputAt".into(), json!(stamp));
         }
@@ -2536,11 +2552,14 @@ fn the_service_decides_who_produced_output_recently() {
                 "the topology row must carry the same answer for {target}"
             ),
             // The topology view lists live sessions only, so a stopped agent
-            // has no row to disagree on -- but a live one must never be
-            // missing, or the carry is unproven.
-            None => assert!(
-                !*expect_alive,
-                "{target} is live and on the dashboard but absent from the topology view"
+            // has no row to disagree on -- but a running one must never be
+            // missing, or the carry is unproven. Keyed on the projected
+            // status rather than `isAlive`, which the lifecycle can answer
+            // `true` for an exited agent.
+            None => assert_ne!(
+                session["status"].as_str(),
+                Some("running"),
+                "{target} is running and on the dashboard but absent from the topology view"
             ),
         }
         // And the checkout row above it folds its agents, so the screen does
@@ -2562,6 +2581,67 @@ fn the_service_decides_who_produced_output_recently() {
             );
         }
     }
+}
+
+/// A checkout whose only agents are project-control sessions folds as "no
+/// agents" on the dashboard card, because `dashboard_navigation` leaves them
+/// out of the group. Folding them here instead gave the same checkout a bold
+/// title on one screen and a plain one on the other.
+#[test]
+fn both_folds_leave_out_the_sessions_the_dashboard_card_leaves_out() {
+    let mut topology = topology_fixture();
+    // `boss` is the fixture's overseer, and it is the main checkout's only
+    // agent once the others are gone.
+    topology["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|session| session["id"] == "boss");
+
+    let mut metadata = metadata_fixture();
+    let entry = metadata
+        .entry("boss".to_owned())
+        .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+    entry["derived"] = json!({ "lastOutputAt": iso_ms_ago(2 * 60 * 60 * 1000) });
+    let exchange = exchange_fixture();
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: "/repo".into(),
+            topology: &topology,
+            metadata_sessions: &metadata,
+            exchange: &exchange,
+        },
+        Some(&support::live_windows(
+            "aimux-repo",
+            &["@1", "@2", "@3", "@4"],
+        )),
+    );
+    let boss = state["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(state["teammates"].as_array().into_iter().flatten())
+        .find(|session| session["id"] == "boss")
+        .expect("boss is on the dashboard");
+    assert_eq!(
+        boss["projectControl"], true,
+        "the subject has to actually be a project-control session"
+    );
+    assert_eq!(
+        boss["recentOutput"], false,
+        "and it has to be the quiet one, or the fold is not being asked"
+    );
+
+    let topology_view =
+        build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+    let checkout = find_topology_worktree_row(&topology_view, "Main Checkout")
+        .expect("the main checkout is in the topology view");
+    assert_eq!(
+        checkout["recentOutput"].as_bool(),
+        Some(true),
+        "a checkout holding only project-control agents has no answer, and \
+         the dashboard card already reads it that way"
+    );
 }
 
 fn find_topology_worktree_row(topology: &Value, name: &str) -> Option<Value> {
