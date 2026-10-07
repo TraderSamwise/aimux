@@ -1,9 +1,10 @@
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
 
-use super::desktop_state::desktop_state_for_context;
+use super::desktop_state::{desktop_state_for_context, worktree_path_identity};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 
@@ -69,6 +70,21 @@ pub fn rollup_health(healths: &[&str]) -> &'static str {
 }
 
 pub fn build_topology_worktrees_from_desktop_state(state: &Value) -> Vec<Value> {
+    // Keyed the way the groups themselves are keyed. The main checkout's
+    // group carries no `path` at all while its worktree row carries the
+    // project root, so raw string equality matched neither -- and the main
+    // checkout is where most agents live.
+    let main_identity = string_field(state, "mainCheckoutPath").map(worktree_path_identity);
+    let group_recent_output = array_field(state, "worktreeGroups")
+        .iter()
+        .filter_map(|group| {
+            let identity = match string_field(group, "path") {
+                Some(path) => worktree_path_identity(path),
+                None => main_identity.clone()?,
+            };
+            Some((identity, group.get("recentOutput")?.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut sessions = array_field(state, "sessions").to_vec();
     sessions.extend_from_slice(array_field(state, "teammates"));
     let services = array_field(state, "services");
@@ -105,13 +121,8 @@ pub fn build_topology_worktrees_from_desktop_state(state: &Value) -> Vec<Value> 
             // sessions the card renders. The list assembled here includes
             // teammates the card never holds, so folding it would answer a
             // different question.
-            if let Some(recent_output) = array_field(state, "worktreeGroups")
-                .iter()
-                .find(|group| {
-                    string_field(group, "path") == worktree_path
-                        || (worktree_path.is_none() && group.get("path").is_none())
-                })
-                .and_then(|group| group.get("recentOutput"))
+            if let Some(recent_output) = worktree_path
+                .and_then(|path| group_recent_output.get(&worktree_path_identity(path)))
             {
                 next.insert("recentOutput".into(), recent_output.clone());
             }

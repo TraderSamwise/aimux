@@ -2685,6 +2685,136 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
         "and both screens say so"
     );
 
+    // THE MAIN CHECKOUT, which is where most agents live. Its group carries
+    // no `path` at all while its worktree row carries the project root, so a
+    // matcher doing raw string equality found neither -- and the topology row
+    // read "unknown" and drew bold while the card drew plain.
+    {
+        let mut topology = topology_fixture();
+        topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|session| session["id"] == "codex-live");
+        let session = topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .first_mut()
+            .expect("codex-live is in the fixture");
+        // A trailing slash, which the group keys normalise away and raw
+        // string equality does not.
+        session["worktreePath"] = json!("/repo/");
+        session["team"] = json!({ "role": "coder" });
+        let mut metadata = metadata_fixture();
+        let entry = metadata
+            .entry("codex-live".to_owned())
+            .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+        entry["derived"] = json!({ "lastOutputAt": stale.clone() });
+        let exchange = exchange_fixture();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&support::live_windows(
+                "aimux-repo",
+                &["@1", "@2", "@3", "@4"],
+            )),
+        );
+        let main_group = state["worktreeGroups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|group| group.get("path").is_none())
+            .cloned()
+            .expect("the main checkout is a group");
+        assert_eq!(
+            main_group["sessions"].as_array().map(Vec::len),
+            Some(1),
+            "the main checkout has to hold the agent, or nothing is being asked"
+        );
+        assert_eq!(
+            main_group["recentOutput"], false,
+            "its only agent has been quiet for two hours"
+        );
+        let topology_view =
+            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let row = find_topology_worktree_row(&topology_view, "Main Checkout")
+            .expect("the main checkout is in the topology view");
+        assert_eq!(
+            row["recentOutput"].as_bool(),
+            Some(false),
+            "and the topology row must carry that, not read it as unknown and \
+             draw the heading bold over a plain card"
+        );
+    }
+
+    // A checkout whose recorded path carries a trailing slash. The group keys
+    // normalise that away and the worktree row does not, so a matcher doing
+    // raw string equality finds no group and the row reads "unknown".
+    {
+        let mut topology = topology_fixture();
+        topology["worktrees"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .filter(|worktree| worktree["name"] == "feature-a")
+            .for_each(|worktree| {
+                worktree["path"] = json!("/repo/.aimux/worktrees/feature-a/");
+            });
+        topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|session| session["id"] == "codex-live");
+        let session = topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .first_mut()
+            .expect("codex-live is in the fixture");
+        session["team"] = json!({ "role": "coder" });
+        let mut metadata = metadata_fixture();
+        let entry = metadata
+            .entry("codex-live".to_owned())
+            .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+        entry["derived"] = json!({ "lastOutputAt": stale.clone() });
+        let exchange = exchange_fixture();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&support::live_windows(
+                "aimux-repo",
+                &["@1", "@2", "@3", "@4"],
+            )),
+        );
+        let group = state["worktreeGroups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|group| group["name"] == "feature-a")
+            .cloned()
+            .expect("feature-a is a checkout");
+        assert_eq!(
+            group["sessions"].as_array().map(Vec::len),
+            Some(1),
+            "the checkout has to hold the agent whatever its path is spelled like"
+        );
+        assert_eq!(group["recentOutput"], false, "and that agent is quiet");
+        let topology_view =
+            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let row = find_topology_worktree_row(&topology_view, "feature-a")
+            .expect("feature-a is in the topology view");
+        assert_eq!(
+            row["recentOutput"].as_bool(),
+            Some(false),
+            "and the row carries it: the two spellings are one checkout"
+        );
+    }
+
     // An offline agent is still an agent. Skipping it in the fold turned a
     // checkout whose only agent is dead and quiet into "no agents to ask",
     // and the title went bold for a checkout with nothing happening in it.
