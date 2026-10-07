@@ -286,6 +286,52 @@ describe("desktop state resource lifecycle", () => {
     expect(shown[0]?.services).toEqual([]);
   });
 
+  it("keeps an agentless worktree the service marked operational", () => {
+    // The same clauses `should_keep_operational_worktree` applies. This rule
+    // had only `pathMissing` where that one had `pendingAction` and
+    // `operationFailure`, so one filter kept different worktrees on screen
+    // depending on which surface was looking at it.
+    const groups = groupByWorktree(
+      desktopState({
+        worktreeGroups: [
+          {
+            name: "renaming",
+            branch: "renaming",
+            path: "/repo/.aimux/worktrees/renaming",
+            status: "offline",
+            pendingAction: "removing",
+            sessions: [],
+            services: [],
+          },
+          {
+            name: "failed",
+            branch: "failed",
+            path: "/repo/.aimux/worktrees/failed",
+            status: "offline",
+            operationFailure: { id: "f1", operation: "remove", message: "remove failed" },
+            sessions: [],
+            services: [],
+          },
+          {
+            name: "ordinary",
+            branch: "ordinary",
+            path: "/repo/.aimux/worktrees/ordinary",
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+        ],
+      }),
+    );
+
+    const shown = groups.flatMap((bucket) => {
+      const activeBucket = filterWorktreeBucketToActiveEntries(bucket);
+      return activeBucket ? [activeBucket] : [];
+    });
+
+    expect(shown.map((bucket) => bucket.name).sort()).toEqual(["failed", "renaming"]);
+  });
+
   it("keeps active supervisor lane entries in the compact sidebar projection", () => {
     const groups = groupByWorktree(
       desktopState({

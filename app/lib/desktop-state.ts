@@ -12,6 +12,8 @@ import type {
 } from "../../src/project-api-contract";
 
 export type DesktopSessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
+// The three the project service actually sends: `dashboard_service_status`
+// narrows everything else, mapping a stopped service to `exited`.
 export type DesktopServiceStatus = "running" | "exited" | "offline";
 export type ExposePreviewSnapshotSource = "capture" | "tap";
 export type ExposeChatPreviewSource = "readAgentOutput";
@@ -125,6 +127,11 @@ export interface DesktopWorktree {
   pending?: boolean;
   removing?: boolean;
   pathMissing?: boolean;
+  // The service stamps this on the ROW as well as the group, and the legacy
+  // bucket path below is the only reader that had no field for it -- so an
+  // older payload with no `worktreeGroups` dropped a failed agentless worktree
+  // the group path would have kept.
+  operationFailure?: ProjectOperationFailure | null;
 }
 
 export interface DesktopWorktreeGroup {
@@ -138,6 +145,8 @@ export interface DesktopWorktreeGroup {
   // service; the app cannot see the server's filesystem, so it renders this
   // rather than computing anything.
   pathMissing?: boolean;
+  pendingAction?: string;
+  operationFailure?: ProjectOperationFailure | null;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -169,6 +178,8 @@ export interface WorktreeBucket {
   pending?: boolean;
   removing?: boolean;
   pathMissing?: boolean;
+  pendingAction?: string;
+  operationFailure?: ProjectOperationFailure | null;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -187,6 +198,7 @@ export function isDesktopServiceOffline(
   service: Pick<DesktopService, "pendingAction" | "status">,
 ): boolean {
   if (service.pendingAction) return false;
+  // The same set `is_dashboard_service_offline` uses.
   return service.status === "offline" || service.status === "exited";
 }
 
@@ -196,7 +208,17 @@ export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): Wor
   // A missing checkout keeps its card in the active view. Dropping it hid the
   // one state the user has to act on: a worktree whose agents have all gone
   // offline BECAUSE the checkout went away is exactly the row worth seeing.
-  const keepOperational = Boolean(bucket.pending || bucket.removing || bucket.pathMissing);
+  //
+  // The same clauses as `should_keep_operational_worktree`, which had
+  // `pendingAction` and `operationFailure` where this had only `pathMissing`,
+  // so the two surfaces kept different worktrees on screen under one filter.
+  const keepOperational = Boolean(
+    bucket.pending ||
+    bucket.removing ||
+    bucket.pathMissing ||
+    bucket.pendingAction ||
+    bucket.operationFailure,
+  );
   if (sessions.length === 0 && services.length === 0 && !keepOperational) return null;
   return { ...bucket, sessions, services };
 }
@@ -228,6 +250,8 @@ function bucketFromServerGroup(
     pending: group.pending,
     removing: group.removing,
     pathMissing: group.pathMissing,
+    pendingAction: group.pendingAction,
+    operationFailure: group.operationFailure,
     sessions: group.sessions.filter(
       (session) => !isDashboardHiddenSession(session, hasSupervisorLane),
     ),
@@ -299,6 +323,7 @@ export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
       pending: wt.pending,
       removing: wt.removing,
       pathMissing: wt.pathMissing,
+      operationFailure: wt.operationFailure,
       sessions: [],
       services: [],
     });

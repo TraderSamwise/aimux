@@ -753,6 +753,7 @@ pub fn is_dashboard_session_offline(session: &DashboardSession) -> bool {
 pub fn filter_dashboard_visible_model(
     snapshot: &DesktopStateSnapshot,
     hide_offline_agents: bool,
+    kept: &DashboardKeptWorktrees,
 ) -> DashboardVisibleModel {
     if !hide_offline_agents {
         return DashboardVisibleModel {
@@ -790,7 +791,15 @@ pub fn filter_dashboard_visible_model(
                 .filter(|session| dashboard_session_survives_hidden_offline(session))
                 .cloned()
                 .collect::<Vec<_>>();
-            if group_sessions.is_empty() && !should_keep_operational_worktree(group) {
+            // Services count, the way the app's half already counted them. The
+            // TUI dropped a worktree on its AGENTS alone, so a checkout with a
+            // dev server running in it and no agents vanished from the TUI
+            // under `a` while the app kept the card and the running service.
+            let group_has_live_service = group
+                .services
+                .iter()
+                .any(|service| !is_dashboard_service_offline(service));
+            if group_sessions.is_empty() && !group_has_live_service && !kept.keeps(group) {
                 return None;
             }
             visible_group_worktrees.insert(worktree_key(group.path.as_deref()));
@@ -1795,16 +1804,65 @@ fn row_failure_is_clearable(extra: &BTreeMap<String, Value>) -> bool {
     extra.get("operationFailureClearable") == Some(&Value::Bool(true))
 }
 
-fn should_keep_operational_worktree(group: &WorktreeGroup) -> bool {
-    group.pending
-        || group.removing
-        || group.pending_action.is_some()
-        || group.operation_failure.is_some()
-        || group
-            .extra
-            .get("optimistic")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
+/// The worktrees `a` must not hide whatever their agents are doing.
+///
+/// A worktree made while the filter is on has no agents yet, so it was filtered
+/// out the moment it appeared and the pointer could never reach it -- `w`
+/// looked like it had done nothing. Keeping the pointed-at row visible for as
+/// long as it is pointed at is Sam's own suggestion, and it makes the create
+/// case work without a special path for it.
+///
+/// `paths` holds the one the pointer is on and the ones creates are waiting
+/// for. A list, because those are not alternatives: one path would let a create
+/// whose worktree never lands mask the pointer's own for the rest of the
+/// session, and two creates in flight would mask each other.
+///
+/// `main_checkout` is separate because that group's `path` is `None`. It is a
+/// group like any other and the same emptiness test drops it, so without this
+/// the rule would have an exception for the one worktree every project has.
+///
+/// The operational clauses live here too, so every caller gets them whatever it
+/// passes. `path_missing` is among them because the app's half had it and this
+/// one did not; `optimistic` is not, because nothing in the crate or the app
+/// has ever set it on a GROUP -- only on sessions and services.
+#[derive(Debug, Default, Clone)]
+pub struct DashboardKeptWorktrees {
+    pub paths: Vec<String>,
+    pub main_checkout: bool,
+}
+
+impl DashboardKeptWorktrees {
+    fn keeps(&self, group: &WorktreeGroup) -> bool {
+        if group.pending
+            || group.removing
+            || group.path_missing
+            || group.pending_action.is_some()
+            || group.operation_failure.is_some()
+        {
+            return true;
+        }
+        match group.path.as_deref() {
+            Some(path) => self.paths.iter().any(|kept| kept == path),
+            None => self.main_checkout,
+        }
+    }
+}
+
+/// Not running, for the purpose of whether its worktree is empty.
+///
+/// `Stopped` is listed because the enum has it, not because the wire does:
+/// `dashboard_service_status` narrows every service in the payload to
+/// `running | exited | offline`, mapping a stopped one to `exited`. `Error` is
+/// deliberately absent on both sides -- a service that failed is a state to
+/// look at, not one to hide.
+fn is_dashboard_service_offline(service: &DashboardService) -> bool {
+    if service.pending_action.is_some() {
+        return false;
+    }
+    matches!(
+        service.status,
+        ServiceStatus::Offline | ServiceStatus::Exited | ServiceStatus::Stopped
+    )
 }
 
 const DASHBOARD_MODEL_CONTRACT_NOW: i64 = 1_770_000_000_000;

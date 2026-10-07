@@ -35,7 +35,14 @@
               "status": "running",
               "active": true,
               "worktreePath": "/repo/.aimux/worktrees/dead",
-              "semantic": { "user": { "label": "offline" }, "presentation": { "statusLabel": "offline" } }
+              "semantic": {
+                "user": {
+                  "label": "offline"
+                },
+                "presentation": {
+                  "statusLabel": "offline"
+                }
+              }
             }
           ],
           "services": [
@@ -96,7 +103,14 @@
             "status": "running",
             "active": true,
             "worktreePath": "/repo/.aimux/worktrees/dead",
-            "semantic": { "user": { "label": "offline" }, "presentation": { "statusLabel": "offline" } }
+            "semantic": {
+              "user": {
+                "label": "offline"
+              },
+              "presentation": {
+                "statusLabel": "offline"
+              }
+            }
           }
         ],
         "services": [
@@ -173,7 +187,14 @@
               "status": "running",
               "active": true,
               "worktreePath": "/repo/.aimux/worktrees/dead",
-              "semantic": { "user": { "label": "offline" }, "presentation": { "statusLabel": "offline" } }
+              "semantic": {
+                "user": {
+                  "label": "offline"
+                },
+                "presentation": {
+                  "statusLabel": "offline"
+                }
+              }
             }
           ],
           "services": [
@@ -241,7 +262,14 @@
                   "status": "running",
                   "active": true,
                   "worktreePath": "/repo/.aimux/worktrees/dead",
-                  "semantic": { "user": { "label": "offline" }, "presentation": { "statusLabel": "offline" } }
+                  "semantic": {
+                    "user": {
+                      "label": "offline"
+                    },
+                    "presentation": {
+                      "statusLabel": "offline"
+                    }
+                  }
                 }
               ],
               "services": [
@@ -279,12 +307,21 @@
             "status": "running",
             "active": true,
             "worktreePath": "/repo/.aimux/worktrees/live"
+          },
+          {
+            "id": "dead-svc",
+            "command": "yarn dev",
+            "args": [],
+            "status": "running",
+            "active": true,
+            "worktreePath": "/repo/.aimux/worktrees/dead"
           }
         ],
         "worktreeGroups": [
           {
             "name": "live",
             "branch": "master",
+            "path": "/repo/.aimux/worktrees/live",
             "status": "active",
             "sessions": [
               {
@@ -305,8 +342,24 @@
                 "active": true,
                 "worktreePath": "/repo/.aimux/worktrees/live"
               }
-            ],
-            "path": "/repo/.aimux/worktrees/live"
+            ]
+          },
+          {
+            "name": "dead",
+            "branch": "master",
+            "path": "/repo/.aimux/worktrees/dead",
+            "status": "active",
+            "sessions": [],
+            "services": [
+              {
+                "id": "dead-svc",
+                "command": "yarn dev",
+                "args": [],
+                "status": "running",
+                "active": true,
+                "worktreePath": "/repo/.aimux/worktrees/dead"
+              }
+            ]
           }
         ]
       },

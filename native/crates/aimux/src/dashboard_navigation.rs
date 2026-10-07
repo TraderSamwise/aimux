@@ -188,6 +188,23 @@ impl DashboardNavigationState {
         false
     }
 
+    /// Point the selection at one WORKTREE by path. Returns false when it is
+    /// not on screen, so a caller can keep waiting for it rather than moving
+    /// the selection somewhere arbitrary.
+    pub fn select_worktree(&mut self, snapshot: &DesktopStateSnapshot, path: &str) -> bool {
+        let Some(worktree_index) = dashboard_navigation_groups(snapshot)
+            .iter()
+            .position(|group| group.path == Some(path))
+        else {
+            return false;
+        };
+        self.level = DashboardNavLevel::Worktrees;
+        self.worktree_index = worktree_index;
+        self.item_index = 0;
+        self.clear_quick_jump();
+        true
+    }
+
     /// The service half of [`Self::select_session`]. Services sit after a
     /// group's sessions, which is the order [`entry_at`] reads them back in.
     pub fn select_service(&mut self, snapshot: &DesktopStateSnapshot, service_id: &str) -> bool {

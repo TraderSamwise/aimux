@@ -21,10 +21,12 @@ use crate::dashboard_event_stream::{
 use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_launch_options::render_launch_options_overlay;
 use crate::dashboard_model::{
-    DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus, filter_dashboard_visible_model,
-    is_dashboard_overseer_session, is_dashboard_scribe_session,
+    DashboardKeptWorktrees, DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus,
+    filter_dashboard_visible_model, is_dashboard_overseer_session, is_dashboard_scribe_session,
 };
-use crate::dashboard_navigation::{CarriedSelection, DashboardEntryRef};
+use crate::dashboard_navigation::{
+    CarriedSelection, DashboardEntryRef, DashboardNavigationGroupKind, dashboard_navigation_groups,
+};
 use crate::dashboard_pending_actions::{
     DashboardPendingActions, PendingTarget, pending_action_for_request,
 };
@@ -33,6 +35,7 @@ use crate::dashboard_project_events::{
     dashboard_alert_footer_flash,
 };
 use crate::dashboard_readiness::mark_native_dashboard_ready;
+use crate::dashboard_renderer::DashboardNavLevel;
 use crate::dashboard_renderer::{
     DashboardFooterAlert, DashboardRenderInput, DashboardSubscreenRenderInput,
     render_dashboard_frame, render_dashboard_subscreen_frame,
@@ -458,6 +461,15 @@ pub fn run_native_dashboard_with_seams(
     let mut last_cached_frame_at: Option<Instant> = None;
 
     let mut pending_selection: Option<String> = None;
+    // The worktrees creates are waiting to land, held until a snapshot carries
+    // them. They feed the `a` filter's keep-set as well as the selection: a
+    // worktree made while the filter is on has no agents yet, so selecting it
+    // after the filter had already dropped it would never find it.
+    //
+    // A list, because two creates can be in flight -- a slow one from a PR and
+    // a quick local one -- and a single slot meant the second to FINISH hid the
+    // other, which is the bug this exists to fix arriving from the other side.
+    let mut pending_worktree_focus: Vec<PendingWorktreeFocus> = Vec::new();
     let mut rendered_once = false;
     let mut viewport = DashboardViewport {
         cols: options.cols,
@@ -607,6 +619,7 @@ pub fn run_native_dashboard_with_seams(
             &request_outcomes_rx,
             &mut pending_actions,
             controller.as_mut(),
+            &mut pending_worktree_focus,
         ) {
             render_now = true;
             render_requested_by_data = true;
@@ -1069,8 +1082,44 @@ pub fn run_native_dashboard_with_seams(
                             .as_ref()
                             .map(|controller| controller.hide_offline_agents)
                             .unwrap_or(false);
-                        let visible_model =
-                            filter_dashboard_visible_model(&loaded.snapshot, hide_offline_agents);
+                        // Read off the OUTGOING snapshot, which is the one the
+                        // navigation indices belong to -- the incoming one has
+                        // not been filtered yet, so an index resolved against
+                        // it names a different group whenever `a` is on.
+                        let focused_group = controller
+                            .as_ref()
+                            .zip(latest_snapshot.as_ref())
+                            .and_then(|(controller, previous)| {
+                                controller.navigation.focused_group(previous)
+                            });
+                        let focused_worktree_path = focused_group
+                            .as_ref()
+                            .and_then(|group| group.path)
+                            .map(str::to_owned);
+                        let mut kept = DashboardKeptWorktrees {
+                            paths: pending_worktree_focus
+                                .iter()
+                                .map(|entry| entry.path.clone())
+                                .collect(),
+                            // The main checkout is a group like any other and
+                            // the same emptiness test drops it, so the pointer
+                            // has to be able to hold it too. On KIND, not on a
+                            // missing path: the supervisor row has no path
+                            // either, and pointing at it was keeping an
+                            // unrelated empty main checkout on screen.
+                            main_checkout: focused_group.as_ref().is_some_and(|group| {
+                                group.path.is_none()
+                                    && group.kind == DashboardNavigationGroupKind::Worktree
+                            }),
+                        };
+                        if let Some(path) = focused_worktree_path.clone() {
+                            kept.paths.push(path);
+                        }
+                        let visible_model = filter_dashboard_visible_model(
+                            &loaded.snapshot,
+                            hide_offline_agents,
+                            &kept,
+                        );
                         // Read off the outgoing snapshot, before anything can
                         // move the indices, so the pointer can be put back on
                         // the same agent once this one is in place.
@@ -1120,10 +1169,65 @@ pub fn run_native_dashboard_with_seams(
                         }
                         // After the restore, so returning from an agent wins
                         // over whatever the last persisted selection was.
-                        if let Some(session_id) = pending_selection.take() {
+                        let returned_to_agent = if let Some(session_id) = pending_selection.take() {
                             controller
                                 .navigation
-                                .select_session(&visible_model.snapshot, &session_id);
+                                .select_session(&visible_model.snapshot, &session_id)
+                        } else {
+                            false
+                        };
+                        // The worktree row the pointer was on, put back by
+                        // identity. Keeping a row alive because the pointer is
+                        // on it makes its existence depend on where the pointer
+                        // is, so moving off one shifts every index below it --
+                        // one Down would land two rows further on. The Sessions
+                        // level already follows its selection this way; the
+                        // worktree level followed nothing.
+                        //
+                        // Not mid-chord: `select_worktree` clears the quick
+                        // jump, so a refresh between the two digits of `2` `1`
+                        // threw the first one away and the second then jumped to
+                        // worktree 1 instead of agent 1 inside worktree 2. The
+                        // anchor is what keeps a jump correct across a refresh,
+                        // and this would have been the one thing that erased it.
+                        if controller.navigation.level == DashboardNavLevel::Worktrees
+                            && controller.navigation.quick_jump_digits.is_empty()
+                            && let Some(path) = focused_worktree_path.as_deref()
+                        {
+                            controller
+                                .navigation
+                                .select_worktree(&visible_model.snapshot, path);
+                        }
+                        // Held until the snapshot actually carries it: the
+                        // create responds before the worktree reaches a build,
+                        // so the first refresh after it usually has nothing to
+                        // point at yet.
+                        //
+                        // Only while the user is still choosing a worktree, and
+                        // only if nothing else claimed the pointer this frame.
+                        // A create can take tens of seconds; yanking someone out
+                        // of an agent list they walked into in the meantime, or
+                        // over the agent they just came back from, is the
+                        // dashboard going somewhere nobody asked it to go.
+                        //
+                        // And it is a chance, not a latch. A worktree that has
+                        // arrived while the user was busy elsewhere has had its
+                        // turn: holding the jump would fire it the next time
+                        // they happened to be back at this level, minutes later,
+                        // off the row they had just chosen.
+                        let followable = controller.navigation.level
+                            == DashboardNavLevel::Worktrees
+                            && controller.navigation.quick_jump_digits.is_empty()
+                            && !returned_to_agent;
+                        if let Some(path) = worktree_focus_to_follow(
+                            &mut pending_worktree_focus,
+                            Instant::now(),
+                            followable,
+                            &|path| worktree_is_on_screen(&visible_model.snapshot, path),
+                        ) {
+                            controller
+                                .navigation
+                                .select_worktree(&visible_model.snapshot, &path);
                         }
                         let frame = render_dashboard_snapshot(
                             &options,
@@ -2171,8 +2275,12 @@ fn execute_overseer_watch_command(
         Some(20_000),
     )?;
     let loaded = load_dashboard_snapshot(options)?;
-    let visible_model =
-        filter_dashboard_visible_model(&loaded.snapshot, controller.hide_offline_agents);
+    // No prior filtered snapshot here, so nothing to resolve a pointer against.
+    let visible_model = filter_dashboard_visible_model(
+        &loaded.snapshot,
+        controller.hide_offline_agents,
+        &DashboardKeptWorktrees::default(),
+    );
     if let Some(overseer_session_id) = response
         .result
         .get("overseerSessionId")
@@ -3231,6 +3339,10 @@ struct DashboardRequestOutcome {
     /// What a successful mutation did, for the routes where succeeding quietly
     /// is indistinguishable from doing nothing.
     notice: Option<DashboardActionNotice>,
+    /// The worktree a create just made, so the pointer can follow it there.
+    /// Taken from the response because nothing else knows the path: `w` asks
+    /// for a NAME, and the route decides where it lands.
+    created_worktree_path: Option<String>,
 }
 
 /// Send the mutations queued during key handling, now that the optimistic frame
@@ -3279,18 +3391,98 @@ fn flush_deferred_dashboard_requests(
         // retried from a different pane would never answer its own failure.
         let action = Some(DashboardActionIdentity::of(&request));
         thread::spawn(move || {
-            let (failure, notice) = match execute_dashboard_controller_action(&endpoint, &request) {
-                Ok(body) => (None, dashboard_action_notice(request.path, &body)),
-                Err(error) => (Some(error.to_string()), None),
-            };
+            let (failure, notice, created_worktree_path) =
+                match execute_dashboard_controller_action(&endpoint, &request) {
+                    Ok(body) => (
+                        None,
+                        dashboard_action_notice(request.path, &body),
+                        created_worktree_path_from_response(request.path, &body),
+                    ),
+                    Err(error) => (Some(error.to_string()), None, None),
+                };
             let _ = outcomes.send(DashboardRequestOutcome {
                 pending,
                 action,
                 failure,
+                created_worktree_path,
                 notice,
             });
         });
     }
+}
+
+/// Whether a path is a group the pointer could be put on right now.
+///
+/// The same list `select_worktree` searches, not `snapshot.worktree_groups`:
+/// the navigation layer also renders a group for a path only an agent names, so
+/// asking the raw groups would have called a worktree absent that the pointer
+/// could in fact have reached -- and the entry would have waited for it forever.
+fn worktree_is_on_screen(snapshot: &DesktopStateSnapshot, path: &str) -> bool {
+    dashboard_navigation_groups(snapshot)
+        .iter()
+        .any(|group| group.path == Some(path))
+}
+
+/// How long a create keeps the pointer's attention.
+///
+/// Long enough for the checkout and its prepare step, and for the user to
+/// glance at something else in between; short enough that it cannot surface
+/// much later as a jump nobody connects to anything they did.
+const WORKTREE_FOCUS_TTL: Duration = Duration::from_secs(120);
+
+/// A worktree a create made, waiting for the pointer to be free to go to it.
+#[derive(Debug, Clone)]
+struct PendingWorktreeFocus {
+    path: String,
+    expires_at: Instant,
+}
+
+/// Which waiting worktree the pointer should move to, and what keeps waiting.
+///
+/// Pulled out of the loop because every bug in this feature has been in these
+/// three lines of bookkeeping, and inside the loop they were reachable only by
+/// prose: dropping an arrival the pointer was never free to take put the user
+/// back where the whole change started, with `w` producing nothing on screen.
+///
+/// - Nothing is offered while the pointer is busy, and nothing is discarded for
+///   it either. A create that lands while the user is inside an agent waits for
+///   them to come back out.
+/// - The first arrival takes the pointer. The others are on screen and there is
+///   one pointer, so they stop waiting rather than queue up behind it.
+/// - Everything expires. Without that, a path that never lands stays in the
+///   keep-set for the session and fires if that name is ever created again.
+fn worktree_focus_to_follow(
+    pending: &mut Vec<PendingWorktreeFocus>,
+    now: Instant,
+    followable: bool,
+    is_on_screen: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    pending.retain(|entry| entry.expires_at > now);
+    if !followable {
+        return None;
+    }
+    let arrived = pending
+        .iter()
+        .position(|entry| is_on_screen(&entry.path))
+        .map(|index| pending[index].path.clone());
+    pending.retain(|entry| !is_on_screen(&entry.path));
+    arrived
+}
+
+/// Where a worktree create actually landed.
+///
+/// `w` asks for a name and the route decides the path, so the response is the
+/// only place that knows it. Read for the create route alone, because every
+/// other route's `path` names something that already existed.
+fn created_worktree_path_from_response(path: &str, body: &Value) -> Option<String> {
+    if path != crate::project_api_contract::routes::worktree_actions::CREATE {
+        return None;
+    }
+    body.get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
 }
 
 /// The sentence a finished mutation leaves in the footer, and whether it is
@@ -3325,10 +3517,21 @@ fn drain_dashboard_request_outcomes(
     outcomes: &Receiver<DashboardRequestOutcome>,
     pending_actions: &mut DashboardPendingActions,
     mut controller: Option<&mut DashboardController>,
+    pending_worktree_focus: &mut Vec<PendingWorktreeFocus>,
 ) -> bool {
     let mut changed = false;
     while let Ok(outcome) = outcomes.try_recv() {
         changed = true;
+        if let Some(path) = outcome.created_worktree_path
+            && !pending_worktree_focus
+                .iter()
+                .any(|entry| entry.path == path)
+        {
+            pending_worktree_focus.push(PendingWorktreeFocus {
+                expires_at: Instant::now() + WORKTREE_FOCUS_TTL,
+                path,
+            });
+        }
         if let Some(message) = outcome.failure {
             if let Some(controller) = controller.as_deref_mut() {
                 controller.clear_progress_for(outcome.action.as_ref());
@@ -3390,6 +3593,206 @@ fn drain_dashboard_request_outcomes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The whole of the pointer-follows-a-create decision, in one place.
+    ///
+    /// Every defect in this feature has been in this bookkeeping, and inside
+    /// the loop it was reachable only by reading it.
+    #[test]
+    fn a_create_waits_for_the_pointer_to_be_free_then_takes_it_once() {
+        let now = Instant::now();
+        let on_screen = |path: &str| path != "/repo/.aimux/worktrees/not-yet";
+        let entry = |path: &str| PendingWorktreeFocus {
+            path: path.to_owned(),
+            expires_at: now + Duration::from_secs(60),
+        };
+
+        // Busy: nothing is offered, and nothing is thrown away for it either.
+        // Dropping an arrival the pointer was never free to take leaves the
+        // user with `w` having produced nothing on screen, which is the bug
+        // this feature exists to fix.
+        let mut pending = vec![entry("/repo/.aimux/worktrees/fresh")];
+        assert_eq!(
+            worktree_focus_to_follow(&mut pending, now, false, &on_screen),
+            None
+        );
+        assert_eq!(pending.len(), 1);
+
+        // Free: the FIRST arrival takes the pointer. The rest are on screen and
+        // there is one pointer, so they stop waiting rather than queue.
+        let mut pending = vec![
+            entry("/repo/.aimux/worktrees/fresh"),
+            entry("/repo/.aimux/worktrees/second"),
+        ];
+        assert_eq!(
+            worktree_focus_to_follow(&mut pending, now, true, &on_screen).as_deref(),
+            Some("/repo/.aimux/worktrees/fresh")
+        );
+        assert!(pending.is_empty());
+
+        // Not here yet: keeps waiting, and keeps the filter keeping its row.
+        let mut pending = vec![entry("/repo/.aimux/worktrees/not-yet")];
+        assert_eq!(
+            worktree_focus_to_follow(&mut pending, now, true, &on_screen),
+            None
+        );
+        assert_eq!(pending.len(), 1);
+
+        // And it does not wait forever. Without an expiry the entry sits in the
+        // keep-set for the session and fires if that name is ever made again.
+        let mut pending = vec![entry("/repo/.aimux/worktrees/not-yet")];
+        assert_eq!(
+            worktree_focus_to_follow(
+                &mut pending,
+                now + Duration::from_secs(61),
+                true,
+                &on_screen
+            ),
+            None
+        );
+        assert!(pending.is_empty());
+    }
+
+    /// A worktree that is on screen takes its turn or loses it.
+    ///
+    /// The jump is suppressed while the user is inside an agent list, and
+    /// holding it instead of dropping it made it a latch: the create would fire
+    /// the next time they happened to be back at the worktree level, minutes
+    /// later, off the row they had just chosen.
+    #[test]
+    fn a_worktree_that_has_arrived_does_not_wait_for_a_second_chance() {
+        use crate::dashboard_model::{DesktopStateGoldenFixture, WorktreeGroup, WorktreeStatus};
+
+        let fixture: DesktopStateGoldenFixture = serde_json::from_str(include_str!(
+            "../../../../src/multiplexer/desktop-state-golden.fixture.json"
+        ))
+        .expect("valid desktop-state fixture");
+        let mut snapshot = fixture.runtime_light;
+        snapshot.worktree_groups = vec![WorktreeGroup {
+            name: "fresh".into(),
+            branch: "fresh".into(),
+            path: Some("/repo/.aimux/worktrees/fresh".into()),
+            status: WorktreeStatus::Active,
+            pending: false,
+            removing: false,
+            path_missing: false,
+            pending_action: None,
+            operation_failure: None,
+            sessions: Vec::new(),
+            services: Vec::new(),
+            extra: Default::default(),
+        }];
+
+        assert!(worktree_is_on_screen(
+            &snapshot,
+            "/repo/.aimux/worktrees/fresh"
+        ));
+        assert!(!worktree_is_on_screen(
+            &snapshot,
+            "/repo/.aimux/worktrees/not-yet"
+        ));
+    }
+
+    /// The create's path reaches the loop that has to act on it.
+    ///
+    /// Every call site but the live loop passes `&mut None`, so without this
+    /// the one wire that carries a create to the pointer was held up by nothing
+    /// at all.
+    #[test]
+    fn a_finished_create_hands_its_worktree_to_the_pointer() {
+        let (tx, rx) = mpsc::channel();
+        let mut pending_actions = DashboardPendingActions::default();
+        let mut focus = Vec::new();
+
+        tx.send(DashboardRequestOutcome {
+            created_worktree_path: Some("/repo/.aimux/worktrees/fresh".to_owned()),
+            pending: None,
+            action: None,
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
+        assert_eq!(
+            focus
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/repo/.aimux/worktrees/fresh"]
+        );
+
+        // A second create waits beside the first rather than replacing it: the
+        // one to FINISH first is not the one the user asked for last, and a
+        // single slot meant the loser was filtered off the dashboard.
+        tx.send(DashboardRequestOutcome {
+            created_worktree_path: Some("/repo/.aimux/worktrees/second".to_owned()),
+            pending: None,
+            action: None,
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
+        assert_eq!(
+            focus
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "/repo/.aimux/worktrees/fresh",
+                "/repo/.aimux/worktrees/second"
+            ]
+        );
+
+        // An outcome that made nothing leaves the waiting ones alone rather
+        // than clearing them: a create's worktree can take several refreshes to
+        // appear, and any other mutation can finish in between.
+        tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
+            pending: None,
+            action: None,
+            failure: None,
+            notice: None,
+        })
+        .expect("send");
+        drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
+        assert_eq!(focus.len(), 2);
+    }
+
+    /// Only a worktree CREATE reports a path the pointer should follow.
+    ///
+    /// Every other route's `path` names something that already existed, and
+    /// moving the pointer onto it would be the dashboard jumping somewhere the
+    /// user did not ask to go -- graveyarding a worktree would pull the
+    /// selection onto the row it had just taken away.
+    #[test]
+    fn only_a_worktree_create_reports_where_the_pointer_should_go() {
+        use crate::project_api_contract::routes;
+
+        let body = json!({ "ok": true, "path": "/repo/.aimux/worktrees/fresh" });
+        assert_eq!(
+            created_worktree_path_from_response(routes::worktree_actions::CREATE, &body).as_deref(),
+            Some("/repo/.aimux/worktrees/fresh")
+        );
+        assert_eq!(
+            created_worktree_path_from_response(routes::worktree_actions::GRAVEYARD, &body),
+            None
+        );
+        assert_eq!(
+            created_worktree_path_from_response(
+                routes::worktree_actions::CREATE,
+                &json!({ "ok": true, "path": "   " })
+            ),
+            None
+        );
+        assert_eq!(
+            created_worktree_path_from_response(
+                routes::worktree_actions::CREATE,
+                &json!({ "ok": true })
+            ),
+            None
+        );
+    }
 
     /// A dialog is drawn in ONE pass, inside the synchronized update.
     ///
@@ -3542,6 +3945,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity {
                 path: crate::project_api_contract::routes::worktree_actions::GRAVEYARD,
@@ -3557,7 +3961,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert_eq!(
             controller.footer_alert_message(),
@@ -3643,6 +4052,7 @@ mod tests {
         // Somebody else's outcome is not an answer to this one.
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-a")),
             failure: None,
@@ -3650,7 +4060,12 @@ mod tests {
         })
         .expect("send");
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
         assert_eq!(
             controller.footer_progress_message(),
             Some("Creating worktree feature-a")
@@ -3658,13 +4073,19 @@ mod tests {
 
         // Its own, built the way `flush_deferred_dashboard_requests` builds it.
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&request)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
         assert_eq!(controller.footer_progress_message(), None);
     }
 
@@ -3747,13 +4168,19 @@ mod tests {
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         let mut pending_actions = DashboardPendingActions::default();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&spawn)),
             failure: Some("dashboard action failed: lifecycle mutation already in progress".into()),
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
         assert_eq!(
             controller.footer_progress_message(),
             Some("Creating claude agent"),
@@ -3766,13 +4193,19 @@ mod tests {
         );
 
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&spawn)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
         assert_eq!(controller.footer_progress_message(), None);
     }
 
@@ -3807,13 +4240,19 @@ mod tests {
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         let mut pending_actions = DashboardPendingActions::default();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&claude)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
         assert_eq!(
             controller.footer_progress_message(),
             Some("Creating worktree feature-a"),
@@ -3821,13 +4260,19 @@ mod tests {
         );
 
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&worktree)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
         assert_eq!(controller.footer_progress_message(), None);
     }
 
@@ -3861,13 +4306,19 @@ mod tests {
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         let mut pending_actions = DashboardPendingActions::default();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&worktree)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
         assert_eq!(
             controller.footer_progress_message(),
             Some("Creating claude agent"),
@@ -3875,13 +4326,19 @@ mod tests {
         );
 
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity::of(&spawn)),
             failure: None,
             notice: None,
         })
         .expect("send");
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
         assert_eq!(controller.footer_progress_message(), None);
     }
 
@@ -4001,6 +4458,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(restore_previous()),
             failure: None,
@@ -4013,7 +4471,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
         controller.handle_key(&snapshot, crate::dashboard_controller::DashboardKey::Down);
 
         assert_eq!(
@@ -4031,6 +4494,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(restore_previous()),
             failure: None,
@@ -4043,7 +4507,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert_eq!(controller.footer_note_message(), Some("Restored 36 agents"));
         assert_eq!(controller.footer_alert_message(), None);
@@ -4245,6 +4714,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(restore_previous()),
             failure: None,
@@ -4254,7 +4724,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert_eq!(controller.footer_progress_message(), None);
     }
@@ -4270,6 +4745,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-a")),
             failure: None,
@@ -4279,7 +4755,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert_eq!(
             controller.footer_progress_message(),
@@ -4296,6 +4777,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(restore_previous()),
             failure: Some("project service refused".into()),
@@ -4305,7 +4787,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert_eq!(controller.footer_progress_message(), None);
         assert_eq!(
@@ -4331,6 +4818,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-b")),
             failure: None,
@@ -4340,7 +4828,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert_eq!(
             controller.footer_alert_message(),
@@ -4361,6 +4854,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity {
                 path: crate::project_api_contract::routes::agents::RESUME,
@@ -4373,7 +4867,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert_eq!(
             controller.footer_alert_message(),
@@ -4398,6 +4897,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-a")),
             failure: None,
@@ -4407,7 +4907,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert_eq!(controller.footer_alert, None);
     }
@@ -4424,6 +4929,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(DashboardActionIdentity {
                 path: crate::project_api_contract::routes::worktree_actions::GRAVEYARD,
@@ -4436,7 +4942,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert!(
             controller.footer_alert.is_some(),
@@ -4453,6 +4964,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: None,
             action: Some(stop_agent("claude-a")),
             failure: Some("Could not stop agent claude-a".into()),
@@ -4462,7 +4974,12 @@ mod tests {
         drop(tx);
 
         let mut pending_actions = DashboardPendingActions::default();
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         let alert = controller.footer_alert.expect("a failure");
         assert_eq!(alert.message, "Could not stop agent claude-a");
@@ -4495,6 +5012,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel::<DashboardRequestOutcome>();
         tx.send(DashboardRequestOutcome {
+            created_worktree_path: None,
             pending: Some((PendingTarget::Session, "claude-a".into(), token)),
             action: Some(stop_agent("claude-a")),
             failure: Some("Could not stop agent claude-a".into()),
@@ -4503,7 +5021,12 @@ mod tests {
         .expect("queue outcome");
         drop(tx);
 
-        drain_dashboard_request_outcomes(&rx, &mut pending_actions, Some(&mut controller));
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut pending_actions,
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
 
         assert!(
             pending_actions.is_empty(),
