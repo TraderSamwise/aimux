@@ -21,7 +21,7 @@ use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::{
-    LiveWindowIdsProjection, live_services_with_window_projection,
+    LIVE_SERVICE_WINDOW_STATUSES, LiveWindowIdsProjection, live_services_with_window_projection,
     topology_desktop_session_list_with_live_window_projection,
     try_live_window_ids_for_session_projection, try_live_window_ids_for_session_projection_async,
 };
@@ -40,7 +40,8 @@ use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::session_semantics::{SessionSemanticsInput, derive_session_semantics};
 use super::session_visibility::{
-    AgentVisibilityInput, AgentVisibilityRule, session_is_in_supervisor_plane,
+    AgentVisibilityInput, AgentVisibilityRule, LIVE_SESSION_STATUSES,
+    session_is_in_supervisor_plane,
 };
 use super::usage::parse_recency_timestamp;
 use super::visual_clients::VisualClientLeaseRoute;
@@ -383,6 +384,7 @@ pub fn build_desktop_state_with_live_window_projection(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let retired_worktree_paths = retired_worktree_paths(input.topology);
     let all_sessions = topology_desktop_session_list_with_live_window_projection(
         input.topology,
         input.metadata_sessions,
@@ -391,6 +393,9 @@ pub fn build_desktop_state_with_live_window_projection(
     )
     .into_iter()
     .filter(dashboard_session_visibility_allows)
+    .filter(|session| {
+        !item_is_retired_debris(session, &retired_worktree_paths, LIVE_SESSION_STATUSES)
+    })
     .collect::<Vec<_>>();
     // Derived once for the whole build: the active row set, the project root's
     // identity, and -- only if the rows cannot answer it -- one git probe,
@@ -441,12 +446,20 @@ pub fn build_desktop_state_with_live_window_projection(
     let service_states = live_services_with_window_projection(
         list_topology_service_states(input.topology, Some(DASHBOARD_SERVICE_STATUSES)),
         live_window_ids,
-    );
+    )
+    .into_iter()
+    .filter(|service| {
+        !item_is_retired_debris(
+            service,
+            &retired_worktree_paths,
+            LIVE_SERVICE_WINDOW_STATUSES,
+        )
+    })
+    .collect::<Vec<_>>();
     let services = service_states
         .iter()
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
         .collect::<Vec<_>>();
-    let retired_worktree_paths = retired_worktree_paths(input.topology);
     let worktree_groups = build_worktree_groups(
         &input.project_root,
         &worktrees,
@@ -497,6 +510,7 @@ async fn build_desktop_state_with_live_window_projection_async(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let retired_worktree_paths = retired_worktree_paths(input.topology);
     let all_sessions = topology_desktop_session_list_with_live_window_projection(
         input.topology,
         input.metadata_sessions,
@@ -505,6 +519,9 @@ async fn build_desktop_state_with_live_window_projection_async(
     )
     .into_iter()
     .filter(dashboard_session_visibility_allows)
+    .filter(|session| {
+        !item_is_retired_debris(session, &retired_worktree_paths, LIVE_SESSION_STATUSES)
+    })
     .collect::<Vec<_>>();
     let worktree_projection = desktop_worktrees_async(&input.project_root, input.topology).await;
     let worktrees = worktree_projection.worktrees;
@@ -543,12 +560,20 @@ async fn build_desktop_state_with_live_window_projection_async(
     let service_states = live_services_with_window_projection(
         list_topology_service_states(input.topology, Some(DASHBOARD_SERVICE_STATUSES)),
         live_window_ids,
-    );
+    )
+    .into_iter()
+    .filter(|service| {
+        !item_is_retired_debris(
+            service,
+            &retired_worktree_paths,
+            LIVE_SERVICE_WINDOW_STATUSES,
+        )
+    })
+    .collect::<Vec<_>>();
     let services = service_states
         .iter()
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
         .collect::<Vec<_>>();
-    let retired_worktree_paths = retired_worktree_paths(input.topology);
     let worktree_groups = build_worktree_groups(
         &input.project_root,
         &worktrees,
@@ -1231,11 +1256,38 @@ fn dashboard_service(
     Value::Object(item)
 }
 
-/// Paths of worktrees the user has graveyarded or removed.
+/// An agent left behind by a worktree the topology has retired.
 ///
-/// They are already absent from the active worktree list, but a session that
-/// still names one would otherwise reintroduce the group, so a graveyarded
-/// worktree holding an offline agent never left the dashboard.
+/// Graveyarding takes the GROUP off the dashboard and that is deliberate, but
+/// the agent stayed in the flat `sessions` array -- and `dashboard_navigation`
+/// regroups that array by path, so the TUI rebuilt the group the service had
+/// just removed, naming it "unknown" because no row was left to read a name
+/// from. That is the dead worktree Sam is looking at.
+///
+/// A RUNNING agent on a retired path is not debris and keeps its place; hiding
+/// a live agent is the worse of the two lies, and so is this failing closed --
+/// when the tmux query is unavailable nothing is downgraded to `offline`, so
+/// these survive the build rather than being read as dead.
+///
+/// `live_statuses` is the caller's, not one list for both kinds: a session is
+/// also live at `idle`, and a service at `planned` is not live at all.
+fn item_is_retired_debris(
+    item: &Value,
+    retired_paths: &BTreeSet<String>,
+    live_statuses: &[&str],
+) -> bool {
+    // `worktree_path_identity` canonicalizes, which the scale gate budgets per
+    // agent, and a project with no retired worktree has nothing to ask.
+    if retired_paths.is_empty() {
+        return false;
+    }
+    string_field(item, "worktreePath").is_some_and(|path| {
+        retired_paths.contains(&worktree_path_identity(path))
+            && !live_statuses.contains(&string_field(item, "status").unwrap_or(""))
+    })
+}
+
+/// Paths of worktrees the user has graveyarded or removed.
 fn retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
     list_topology_worktree_states(topology, None)
         .iter()
@@ -2162,7 +2214,9 @@ fn dashboard_created_sort_key(entry: &Value) -> i128 {
         .unwrap_or_default()
 }
 
-fn path_basename(path: &str) -> Option<&str> {
+/// `pub` because `dashboard_navigation` names an unrecognised worktree the same
+/// way `worktree_group` does, and two spellings of one rule drift.
+pub fn path_basename(path: &str) -> Option<&str> {
     Path::new(path).file_name().and_then(|name| name.to_str())
 }
 

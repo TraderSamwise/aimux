@@ -28,7 +28,7 @@ const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline
 /// The dashboard's "needs input" label is derived from metadata rather than
 /// stored here, so it rides on one of these underlying statuses.
 const LIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle"];
-const LIVE_SERVICE_WINDOW_STATUSES: &[&str] = &["starting", "running"];
+pub const LIVE_SERVICE_WINDOW_STATUSES: &[&str] = &["starting", "running"];
 const LIVE_WINDOW_IDS_QUERY_CACHE_TTL: Duration = Duration::from_millis(500);
 static LIVE_WINDOW_IDS_QUERY_CACHE: OnceLock<Mutex<Option<LiveWindowIdsQueryCacheEntry>>> =
     OnceLock::new();
