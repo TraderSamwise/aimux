@@ -40,6 +40,7 @@ use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::session_semantics::{
     SessionSemanticsInput, derive_session_semantics, normalized_session_status,
+    task_status_is_active,
 };
 use super::session_visibility::{
     AgentVisibilityInput, AgentVisibilityRule, LIVE_SESSION_STATUSES,
@@ -1869,12 +1870,7 @@ fn summarize_notification_stats(exchange: &Value) -> BTreeMap<String, Notificati
 fn summarize_active_tasks(exchange: &Value) -> BTreeSet<String> {
     array_field(exchange, "tasks")
         .iter()
-        .filter(|task| {
-            matches!(
-                string_field(task, "status"),
-                Some("assigned" | "in_progress" | "blocked")
-            )
-        })
+        .filter(|task| task_status_is_active(string_field(task, "status")))
         .filter_map(|task| {
             string_field(task, "assignedTo")
                 .or_else(|| string_field(task, "assignee"))

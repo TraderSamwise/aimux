@@ -574,6 +574,7 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
             field(agent, "pendingAction").and_then(Value::as_str),
             field(agent, "activity").and_then(Value::as_str),
             field(agent, "attention").and_then(Value::as_str),
+            agent_has_active_task(agent),
         );
         output.push(format!(
             "{id}{}  [{tool}{}]  {state}{}",
@@ -688,6 +689,15 @@ fn agent_worktree_sort_key(path: Option<&str>, project_root: &str) -> String {
     }
 }
 
+fn agent_has_active_task(agent: &Value) -> bool {
+    object(agent, "task")
+        .and_then(|task| task.get("status"))
+        .and_then(Value::as_str)
+        .is_some_and(|status| {
+            crate::project_service::session_semantics::task_status_is_active(Some(status))
+        })
+}
+
 fn render_agent_list_summary(agent: &Value) -> String {
     let mut tags = Vec::new();
     if let Some(role) = field(agent, "role")
@@ -722,6 +732,7 @@ fn render_agent_list_summary(agent: &Value) -> String {
         field(agent, "pendingAction").and_then(Value::as_str),
         field(agent, "activity").and_then(Value::as_str),
         field(agent, "attention").and_then(Value::as_str),
+        agent_has_active_task(agent),
     );
     let mut detail = vec![
         format!("canonical={}", agent_canonical_id(agent)),

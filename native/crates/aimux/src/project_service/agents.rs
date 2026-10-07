@@ -784,6 +784,9 @@ pub fn build_agent_list(
                 "restoreBlockedReason",
                 "worktreePath",
                 "label",
+                // A kill in flight is the answer, not the turn it interrupted.
+                // Without this the one answer could not see a transient here.
+                "pendingAction",
             ] {
                 insert_value(&mut agent, key, session.get(key).cloned());
             }

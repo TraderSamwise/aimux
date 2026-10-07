@@ -164,12 +164,14 @@ pub fn agent_one_answer(
     pending_action: Option<&str>,
     activity: Option<&str>,
     attention: Option<&str>,
+    has_active_task: bool,
 ) -> String {
     let semantic = derive_session_semantics(SessionSemanticsInput {
         status: normalized_session_status(status).to_owned(),
         pending_action: pending_action.map(str::to_owned),
         activity: activity.map(str::to_owned),
         attention: attention.map(str::to_owned),
+        has_active_task,
         ..Default::default()
     });
     semantic
@@ -178,6 +180,13 @@ pub fn agent_one_answer(
         .and_then(Value::as_str)
         .unwrap_or("idle")
         .to_owned()
+}
+
+/// The statuses `user_state` counts as an assignment still in flight. The
+/// agent list keeps a wider set on the record, so reading `task` presence
+/// instead made `ps` answer `ready` where the row answered `next_step`.
+pub fn task_status_is_active(status: Option<&str>) -> bool {
+    matches!(status, Some("assigned" | "in_progress" | "blocked"))
 }
 
 /// Raw topology statuses narrowed to the four the derivation is written

@@ -1,6 +1,7 @@
 use aimux::core_text::*;
 use aimux::project_service::session_semantics::{
     SessionSemanticsInput, derive_session_semantics, normalized_session_status,
+    task_status_is_active,
 };
 use serde_json::json;
 
@@ -156,6 +157,15 @@ fn ps_says_which_of_working_waiting_or_finished_an_agent_is() {
         })),
         "a  [codex]  graveyarding"
     );
+    // The assignment the dashboard row calls `next_step`.
+    assert_eq!(
+        line(json!({
+            "id": "a", "tool": "codex", "status": "running",
+            "task": { "description": "Ship", "status": "assigned" }
+        })),
+        "a  [codex]  next_step",
+        "an agent still holding an assignment is not merely ready"
+    );
 }
 
 #[test]
@@ -163,13 +173,21 @@ fn ps_and_the_derived_surfaces_answer_with_the_same_word() {
     // AGENTS.md "One Answer, Many Surfaces": the gate compares the surfaces
     // against each other, not each against its own expectation. `ps` had its
     // own rule, and for `starting` the two rules disagreed.
-    for (status, activity, attention) in [
-        ("starting", None, None),
-        ("running", Some("running"), None),
-        ("running", None, Some("needs_input")),
-        ("idle", Some("done"), None),
-        ("offline", Some("running"), None),
-        ("offline", Some("waiting"), Some("needs_input")),
+    for (status, activity, attention, task_status) in [
+        ("starting", None, None, None),
+        ("running", Some("running"), None, None),
+        ("running", None, Some("needs_input"), None),
+        ("idle", Some("done"), None, None),
+        ("offline", Some("running"), None, None),
+        ("offline", Some("waiting"), Some("needs_input"), None),
+        // An agent still holding an assignment. `ps` left `has_active_task`
+        // at its default, so it answered `ready` where the row said
+        // `next_step` -- and the agent list keeps a wider set of task
+        // statuses on the record than the derivation counts.
+        ("running", None, None, Some("assigned")),
+        ("running", None, None, Some("in_progress")),
+        ("running", None, None, Some("open")),
+        ("running", None, None, Some("done")),
     ] {
         let mut agent = json!({ "id": "a", "tool": "codex", "status": status });
         if let Some(activity) = activity {
@@ -178,19 +196,28 @@ fn ps_and_the_derived_surfaces_answer_with_the_same_word() {
         if let Some(attention) = attention {
             agent["attention"] = json!(attention);
         }
+        if let Some(task_status) = task_status {
+            agent["task"] = json!({ "description": "Ship", "status": task_status });
+        }
         let semantic = derive_session_semantics(SessionSemanticsInput {
             status: normalized_session_status(Some(status)).to_owned(),
             activity: activity.map(str::to_owned),
             attention: attention.map(str::to_owned),
+            has_active_task: task_status_is_active(task_status),
             ..Default::default()
         });
         let published = semantic["user"]["label"].as_str().unwrap();
+        let rendered = render_core_agent_ps_lines(&json!({ "agents": [agent] }));
         assert_eq!(
-            render_core_agent_ps_lines(&json!({ "agents": [agent] }))[0],
+            rendered[0],
             format!("a  [codex]  {published}"),
-            "ps must print the word the other surfaces render for {status}/{activity:?}/{attention:?}"
+            "ps must print the word the other surfaces render for \
+             {status}/{activity:?}/{attention:?}/{task_status:?}"
         );
     }
+    // And the predicate is the derivation's, not "the record carries a task".
+    assert!(task_status_is_active(Some("assigned")));
+    assert!(!task_status_is_active(Some("open")));
 }
 
 #[test]

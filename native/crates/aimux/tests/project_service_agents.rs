@@ -1,4 +1,5 @@
 use aimux::config::default_config;
+use aimux::core_text::render_core_agent_ps_lines;
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::debug_logging::{
     LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
@@ -42,7 +43,8 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
             "team": { "role": "coder" },
             "status": "running",
             "worktreePath": "/repo",
-            "label": "Code"
+            "label": "Code",
+            "pendingAction": "graveyarding"
         }),
         json!({
             "id": "claude-1",
@@ -103,6 +105,13 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
     assert!(agents[1].get("overseer").is_none());
     assert!(agents[1].get("scribe").is_none());
     assert!(agents[1]["task"].is_null());
+    // A kill in flight has to survive the projection, or the one answer every
+    // surface renders cannot see it and `ps` reports the turn it interrupted.
+    assert_eq!(agents[0]["pendingAction"], "graveyarding");
+    assert_eq!(
+        render_core_agent_ps_lines(&json!({ "agents": agents }))[0],
+        "codex-1  \"Code\"  [codex:overseer]  graveyarding  {overseer loop}"
+    );
 }
 
 #[test]
