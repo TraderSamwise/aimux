@@ -10,7 +10,6 @@ use crate::dashboard_navigation::{
     DASHBOARD_QUICK_JUMP_LIMIT, DashboardNavigationGroup, DashboardNavigationGroupKind,
     dashboard_navigation_groups,
 };
-use crate::project_service::graveyard_contract::graveyard_reason_is_unrecoverable;
 use crate::project_service::work_outline::{WorkOutlineEntry, WorkOutlineStatus};
 use crate::project_service::worktree_colors_contract::worktree_color_ansi;
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
@@ -40,9 +39,6 @@ const RECENT_IDLE_MS: u128 = 2 * 60 * 1000;
 /// test rather than by intention.
 pub const WORKTREE_CHECKOUT_MISSING_LABEL: &str = "checkout missing";
 
-fn graveyard_agent_is_unrecoverable(agent: &Value) -> bool {
-    string_at(agent, &["graveyardReason"]).is_some_and(graveyard_reason_is_unrecoverable)
-}
 const COL_SELECT: usize = 2;
 const COL_DOT: usize = 2;
 const COL_INDEX: usize = 4;
@@ -3530,11 +3526,14 @@ fn render_graveyard_content(
                 let headline = string_at(agent, &["headline"])
                     .map(|headline| format!(" · {headline}"))
                     .unwrap_or_default();
-                let unrecoverable = if graveyard_agent_is_unrecoverable(agent) {
-                    format!(" {}", style("· unrecoverable", Tone::Danger))
-                } else {
-                    String::new()
-                };
+                // Not "unrecoverable": `graveyard.agent.resurrect` restores any
+                // graveyarded row whatever its reason, and the reason is
+                // whatever the caller typed -- `--reason "done for now"` was
+                // painted red and called lost. What cannot be brought back is a
+                // checkout that is gone, which this row does not know.
+                let reason = string_at(agent, &["graveyardReason"])
+                    .map(|reason| format!(" {}", style(&format!("· {reason}"), Tone::Muted)))
+                    .unwrap_or_default();
                 let text = format!(
                     "{}{} {} {}{}{}",
                     selected_marker(selected),
@@ -3551,7 +3550,7 @@ fn render_graveyard_content(
                         ),
                         Tone::Muted
                     ),
-                    unrecoverable,
+                    reason,
                     graveyard_pending_suffix(row)
                 );
                 let text = recency_chip(string_at(row, &["lastUsedAt"]))
@@ -4153,12 +4152,7 @@ fn render_graveyard_details(
             lines.extend(wrap_key_value("Headline", headline, width));
         }
         if let Some(reason) = string_at(entry, &["graveyardReason"]) {
-            let key = if graveyard_agent_is_unrecoverable(entry) {
-                "Unrecoverable"
-            } else {
-                "Reason"
-            };
-            lines.extend(wrap_key_value(key, reason, width));
+            lines.extend(wrap_key_value("Reason", reason, width));
         }
         if let Some(command) = string_at(entry, &["command"]) {
             lines.extend(wrap_key_value("Command", command, width));

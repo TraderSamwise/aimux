@@ -78,6 +78,17 @@ fn topology(root: &str, worktrees: usize, agents: usize) -> Value {
             row["status"] = json!("error");
             row["operationFailure"] = json!("worktree remove failed");
         }
+        // And exactly one GRAVEYARD row, for the same reason: the abandoned-
+        // worktree filter short-circuits on an empty retired set, so with every
+        // row active the branch that canonicalises per agent never ran here and
+        // the comment claiming this gate budgets it was false.
+        //
+        // It keeps an agent, so it is not abandoned and the row is derived
+        // rather than dropped -- the more expensive of the two paths.
+        if w == 1 {
+            row["status"] = json!("graveyard");
+            row["removedAt"] = json!(now);
+        }
         wts.push(row);
     }
     for a in 0..agents {

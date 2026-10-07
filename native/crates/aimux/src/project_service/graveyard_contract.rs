@@ -1,9 +1,9 @@
 //! Facts about the graveyard that more than one surface has to agree on.
 //!
-//! The renderer paints a graveyarded agent red and calls it unrecoverable, so
-//! it has to know which reasons actually mean that. Reaching into the route
-//! layer for the string would have made a renderer depend on a route; the
-//! contract modules beside this one exist for exactly that reason.
+//! The route writes the marker and the resurrect route reads it back; reaching
+//! into the route layer for the string from anywhere else would make a reader
+//! depend on a route, which is what the contract modules beside this one exist
+//! to prevent.
 
 /// Why an agent is in the graveyard when its worktree took it there.
 ///
@@ -12,12 +12,11 @@
 /// killed by hand where they put it.
 pub const WORKTREE_GRAVEYARD_AGENT_REASON: &str = "worktree-graveyarded";
 
-/// A graveyarded agent the user cannot bring back.
-///
-/// `graveyardReason` was read as the verdict itself, which was true while only
-/// a reap set it. A worktree now sends its own agents to the graveyard and
-/// resurrecting it brings exactly those back, so painting them red and calling
-/// them lost names a state one keypress undoes.
-pub fn graveyard_reason_is_unrecoverable(reason: &str) -> bool {
-    reason != WORKTREE_GRAVEYARD_AGENT_REASON
-}
+// There is deliberately no "is this unrecoverable" predicate here.
+//
+// The renderer used to paint any agent carrying a `graveyardReason` red and
+// call it unrecoverable. No reason establishes that: `graveyard.agent.resurrect`
+// restores any graveyarded row whatever its reason, the reason is often
+// whatever the caller typed (`--reason "done for now"` was painted red and
+// called lost), and the one genuinely unrecoverable state -- the checkout gone
+// with the worktree not graveyarded -- is not written on the row at all.

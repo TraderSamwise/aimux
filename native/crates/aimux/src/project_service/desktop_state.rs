@@ -400,8 +400,12 @@ pub fn build_desktop_state_with_live_window_projection(
     // handed to each of the three places that used to ask for itself.
     let mut topology_worktrees =
         list_topology_worktree_states(input.topology, Some(ACTIVE_WORKTREE_STATUSES));
-    let retired_alive = retired_rows_still_alive(input.topology, &abandoned_worktree_paths);
-    let retired_identities = worktree_identities(&retired_alive);
+    let retired_alive = retired_rows_still_alive(
+        input.topology,
+        &topology_worktrees,
+        &abandoned_worktree_paths,
+    );
+    let retired_paths = worktree_row_paths(&retired_alive);
     topology_worktrees.extend(retired_alive);
     let root_identity = worktree_path_identity(&input.project_root);
     let main_branch_probe =
@@ -412,7 +416,7 @@ pub fn build_desktop_state_with_live_window_projection(
         &root_identity,
         main_branch_probe.as_ref(),
     );
-    let retired_rows = split_off_retired_rows(&mut worktrees, &retired_identities);
+    let retired_rows = split_off_retired_rows(&mut worktrees, &retired_paths);
     let mut worktree_by_path = worktree_lookup_by_identity(&worktrees);
     add_rows_to_lookup(&mut worktree_by_path, retired_rows);
     let thread_stats = summarize_thread_stats(input.exchange);
@@ -518,12 +522,16 @@ async fn build_desktop_state_with_live_window_projection_async(
     .filter(dashboard_session_visibility_allows)
     .filter(|session| !item_is_in_abandoned_worktree(session, &abandoned_worktree_paths))
     .collect::<Vec<_>>();
-    let retired_alive = retired_rows_still_alive(input.topology, &abandoned_worktree_paths);
-    let retired_identities = worktree_identities(&retired_alive);
+    let retired_alive = retired_rows_still_alive(
+        input.topology,
+        &list_topology_worktree_states(input.topology, Some(ACTIVE_WORKTREE_STATUSES)),
+        &abandoned_worktree_paths,
+    );
+    let retired_paths = worktree_row_paths(&retired_alive);
     let worktree_projection =
         desktop_worktrees_async(&input.project_root, input.topology, retired_alive).await;
     let mut worktrees = worktree_projection.worktrees;
-    let retired_rows = split_off_retired_rows(&mut worktrees, &retired_identities);
+    let retired_rows = split_off_retired_rows(&mut worktrees, &retired_paths);
     let mut worktree_by_path = worktree_lookup_by_identity(&worktrees);
     add_rows_to_lookup(&mut worktree_by_path, retired_rows);
     let thread_stats = summarize_thread_stats(input.exchange);
@@ -1288,9 +1296,21 @@ pub fn abandoned_retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
     //
     // These are the same projections without the live-window downgrade, so the
     // status here is the durable one, which is the whole point.
+    // An item whose raw path is one an ACTIVE row already names is in that
+    // worktree, and cannot be the reason a retired one is still alive. Checking
+    // the string first keeps the canonicalize -- which the scale gate budgets
+    // per agent -- off every agent in an ordinary checkout, and leaves it for
+    // the few that could actually answer the question.
+    let active_paths = worktree_row_paths(&list_topology_worktree_states(
+        topology,
+        Some(ACTIVE_WORKTREE_STATUSES),
+    ));
     let sessions = list_topology_session_states(topology, Some(LIVE_SESSION_STATUSES));
     let services = list_topology_service_states(topology, Some(LIVE_SERVICE_WINDOW_STATUSES));
     for item in sessions.iter().chain(services.iter()) {
+        if string_field(item, "worktreePath").is_some_and(|path| active_paths.contains(path)) {
+            continue;
+        }
         if let Some(key) = item_worktree_group_key(item) {
             retired.remove(&key);
         }
@@ -1340,7 +1360,18 @@ fn retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
 /// whose checkout is gone rendered as an ordinary group, and a failure recorded
 /// against it reached the dashboard with no clear key -- the invariant
 /// `dashboard_has_clearable_failures` states in so many words.
-fn retired_rows_still_alive(topology: &Value, abandoned_paths: &BTreeSet<String>) -> Vec<Value> {
+fn retired_rows_still_alive(
+    topology: &Value,
+    active_rows: &[Value],
+    abandoned_paths: &BTreeSet<String>,
+) -> Vec<Value> {
+    // Raw `path`, not the canonical identity, for the collision check and for
+    // the split below. Both run once per worktree row, and the scale gate
+    // budgets canonicalize calls per row for exactly that reason -- an identity
+    // derived inside a per-row loop is the shape it exists to catch. The rows
+    // being compared are the same topology strings on both sides, so an exact
+    // match is the right question anyway.
+    let active_paths = worktree_row_paths(active_rows);
     list_topology_worktree_states(topology, None)
         .into_iter()
         .filter(|worktree| {
@@ -1348,15 +1379,20 @@ fn retired_rows_still_alive(topology: &Value, abandoned_paths: &BTreeSet<String>
                 .is_some_and(|status| !ACTIVE_WORKTREE_STATUSES.contains(&status))
         })
         .filter(|worktree| {
-            string_field(worktree, "path")
-                .is_some_and(|path| !abandoned_paths.contains(&worktree_path_identity(path)))
+            string_field(worktree, "path").is_some_and(|path| {
+                // Never where an ACTIVE row already claims the path: taking the
+                // retired one in meant the split below lifted the live row out
+                // of `state["worktrees"]` with it.
+                !abandoned_paths.contains(&worktree_path_identity(path))
+                    && !active_paths.contains(path)
+            })
         })
         .collect()
 }
 
-fn worktree_identities(rows: &[Value]) -> BTreeSet<String> {
+fn worktree_row_paths(rows: &[Value]) -> BTreeSet<String> {
     rows.iter()
-        .filter_map(|row| string_field(row, "path").map(worktree_path_identity))
+        .filter_map(|row| string_field(row, "path").map(str::to_owned))
         .collect()
 }
 
@@ -1374,14 +1410,20 @@ fn add_rows_to_lookup(lookup: &mut BTreeMap<String, Value>, rows: Vec<Value>) {
 /// The retired rows out of a derived set, so they can feed the group index
 /// without reaching `state["worktrees"]` -- `aimux worktree list` must not
 /// start printing the graveyard.
-fn split_off_retired_rows(worktrees: &mut Vec<Value>, retired: &BTreeSet<String>) -> Vec<Value> {
-    if retired.is_empty() {
+fn split_off_retired_rows(
+    worktrees: &mut Vec<Value>,
+    retired_paths: &BTreeSet<String>,
+) -> Vec<Value> {
+    if retired_paths.is_empty() {
         return Vec::new();
     }
     let mut taken = Vec::new();
     worktrees.retain(|worktree| {
-        let is_retired = string_field(worktree, "path")
-            .is_some_and(|path| retired.contains(&worktree_path_identity(path)));
+        // `desktop_worktree_item` copies `path` through verbatim, so the
+        // derived row and the source row carry the same string and no identity
+        // has to be derived to pair them.
+        let is_retired =
+            string_field(worktree, "path").is_some_and(|path| retired_paths.contains(path));
         if is_retired {
             taken.push(worktree.clone());
         }
