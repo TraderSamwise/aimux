@@ -51,7 +51,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -86,13 +86,13 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-alpha-111",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": [
                   {
                     "sessionName": "aimux-alpha-111-client-deadbeef",
-                    "contract": "6",
+                    "contract": "7",
                     "rebuildRequired": false
                   }
                 ]
@@ -171,8 +171,8 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -248,7 +248,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 3\n  projects: 2 (1 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/alpha\n  sources: daemon-state, tmux\n  runtime: contract=6 expected=6 rebuild=no\n  service: mismatch endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-old\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    mismatch aimux-alpha-111:@1 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-old expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new\n\nProject ok: /repo/beta\n  sources: tmux\n  runtime: contract=6 expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 3\n  projects: 2 (1 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/alpha\n  sources: daemon-state, tmux\n  runtime: contract=7 expected=7 rebuild=no\n  service: mismatch endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-old\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    mismatch aimux-alpha-111:@1 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-old expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new\n\nProject ok: /repo/beta\n  sources: tmux\n  runtime: contract=7 expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
       "inputSha256": "0146c5b6b07aa773d057446c052bd0a1aeb6b2895b9fbd133ff57305427a23e1"
     },
@@ -288,7 +288,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -323,8 +323,8 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-alpha-111",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -406,7 +406,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/alpha\n  sources: daemon-state, tmux\n  runtime: contract=6 expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    mismatch aimux-alpha-111:@1 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-old expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/alpha\n  sources: daemon-state, tmux\n  runtime: contract=7 expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    mismatch aimux-alpha-111:@1 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-old expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
       "inputSha256": "a2a11bf4ff87ab3ddf8b31b972fe9aad407714c36f908a863781bb01f9f77666"
     },
@@ -443,7 +443,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -477,8 +477,8 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-legacy-333",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -554,7 +554,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 0\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/legacy\n  sources: tmux\n  runtime: contract=6 expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    mismatch aimux-legacy-333:@3 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=(missing)"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 0\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/legacy\n  sources: tmux\n  runtime: contract=7 expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    mismatch aimux-legacy-333:@3 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=(missing)"
       },
       "inputSha256": "ff08d2b06e47a465bdc4f962f06ef132cf8d898756f076c0376528d771373889"
     },
@@ -591,7 +591,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -626,7 +626,7 @@
               "runtime": {
                 "sessionName": "aimux-alpha-e9602a6bd7fe",
                 "contract": null,
-                "expectedContract": "6",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -683,7 +683,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=6 rebuild=no\n  service: unreachable endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: (unknown)\n    expected: api=4 build=service-new\n    error: connection refused\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=7 rebuild=no\n  service: unreachable endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: (unknown)\n    expected: api=4 build=service-new\n    error: connection refused\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none"
       },
       "inputSha256": "cc7554b025500ea648514e15c218e6205ba7f2c3500e9ba54bfd566ee24b2032"
     },
@@ -720,7 +720,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -755,7 +755,7 @@
               "runtime": {
                 "sessionName": "aimux-alpha-e9602a6bd7fe",
                 "contract": null,
-                "expectedContract": "6",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -827,7 +827,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=running restarts=2 pid=1001\n      last restart: 2026-08-10T07:00:02.000Z\n      last exit: unexpected code=1 signal=(none) at=2026-08-10T07:00:00.000Z\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=running restarts=2 pid=1001\n      last restart: 2026-08-10T07:00:02.000Z\n      last exit: unexpected code=1 signal=(none) at=2026-08-10T07:00:00.000Z\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none"
       },
       "inputSha256": "eeba1c42485b555da95ddabd35ae79e97cd75b8a5d217e4125430b59a2fe1bb7"
     },
@@ -864,7 +864,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -899,7 +899,7 @@
               "runtime": {
                 "sessionName": "aimux-alpha-e9602a6bd7fe",
                 "contract": null,
-                "expectedContract": "6",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -962,7 +962,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=6 rebuild=no\n  service: mismatch endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n    error: projectStateDir mismatch: expected /Users/sam/.aimux/projects/alpha-e9602a6bd7fe actual /Users/sam/.aimux/projects/beta-5458e3c21af1\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=7 rebuild=no\n  service: mismatch endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n    error: projectStateDir mismatch: expected /Users/sam/.aimux/projects/alpha-e9602a6bd7fe actual /Users/sam/.aimux/projects/beta-5458e3c21af1\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none"
       },
       "inputSha256": "067c97683044b1d54e3ee127cc69f94c32430d9ab12c810381e20f2c92ecaed3"
     },
@@ -1000,7 +1000,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -1035,7 +1035,7 @@
               "runtime": {
                 "sessionName": "aimux-alpha-e9602a6bd7fe",
                 "contract": null,
-                "expectedContract": "6",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -1098,7 +1098,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none",
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none",
         "requestLog": [
           {
             "url": "http://127.0.0.1:43211/health",
@@ -1149,7 +1149,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -1183,8 +1183,8 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -1266,7 +1266,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/beta\n  sources: daemon-state\n  runtime: contract=6 expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    mismatch aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-old"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 0 need runtime rebuild)\n\nProject needs-attention: /repo/beta\n  sources: daemon-state\n  runtime: contract=7 expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    mismatch aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-old"
       },
       "inputSha256": "8832c8f9c30652272968600051f2aa26c0ddac1b3dda6ca8398fd2195fafc48d"
     },
@@ -1305,7 +1305,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -1341,7 +1341,7 @@
               "runtime": {
                 "sessionName": "aimux-beta-222",
                 "contract": "legacy-contract",
-                "expectedContract": "6",
+                "expectedContract": "7",
                 "rebuildRequired": true,
                 "clientSessions": []
               },
@@ -1423,7 +1423,7 @@
             "runtimeRebuildRequired": 1
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 1 need runtime rebuild)\n\nProject needs-attention: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=legacy-contract expected=6 rebuild=yes\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 1 need runtime rebuild)\n\nProject needs-attention: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=legacy-contract expected=7 rebuild=yes\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
       "inputSha256": "f60ed8a55482d1e6c54ccc51c166be0e83fb7b89c221a0c248f1aac494b59dbf"
     },
@@ -1463,7 +1463,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -1498,8 +1498,8 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": true,
                 "clientSessions": [
                   {
@@ -1587,7 +1587,7 @@
             "runtimeRebuildRequired": 1
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 1 need runtime rebuild)\n\nProject needs-attention: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=6 expected=6 rebuild=yes\n    client: aimux-beta-222-client-deadbeef contract=legacy-contract expected=6 rebuild=yes\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 1 need runtime rebuild)\n\nProject needs-attention: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=7 expected=7 rebuild=yes\n    client: aimux-beta-222-client-deadbeef contract=legacy-contract expected=7 rebuild=yes\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
       "inputSha256": "f9e0370aa0924dfc98bfceed2d6a861f7bd2796048bdb9a1239fb901337474ce"
     },
@@ -1627,7 +1627,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -1662,8 +1662,8 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": true,
                 "clientSessions": [
                   {
@@ -1751,7 +1751,7 @@
             "runtimeRebuildRequired": 1
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 1 need runtime rebuild)\n\nProject needs-attention: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=6 expected=6 rebuild=yes\n    client: aimux-beta-222-client-aaaaaaaa contract=(missing) expected=6 rebuild=yes\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (0 ok, 0 stopped, 0 inactive, 1 need attention, 1 need runtime rebuild)\n\nProject needs-attention: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=7 expected=7 rebuild=yes\n    client: aimux-beta-222-client-aaaaaaaa contract=(missing) expected=7 rebuild=yes\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
       "inputSha256": "de3ac34811fcbbc9631d2cec44efcac9abdf11e3a181c4cbcb8087272c9cb48b"
     },
@@ -1791,7 +1791,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -1826,8 +1826,8 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -1909,7 +1909,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=6 expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=7 expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
       "inputSha256": "898a17c2e08998c2a07a616abdbc62d50064894d98c776319783c5efeaff056f"
     },
@@ -1946,7 +1946,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -1981,13 +1981,13 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": [
                   {
                     "sessionName": "aimux-beta-222-client-deadbeef",
-                    "contract": "6",
+                    "contract": "7",
                     "rebuildRequired": false
                   }
                 ]
@@ -2070,7 +2070,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=6 expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=7 expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
       "inputSha256": "8749f85e5067b6ffc37a5f89f3d5275859eba725d72e37bf6492d472334d6486"
     },
@@ -2107,7 +2107,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -2142,7 +2142,7 @@
               "runtime": {
                 "sessionName": "aimux-beta-5458e3c21af1",
                 "contract": null,
-                "expectedContract": "6",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -2205,7 +2205,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state\n  runtime: contract=(missing) expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state\n  runtime: contract=(missing) expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards: none"
       },
       "inputSha256": "05bc31e7e10c2d6b606a96961b6dfdb0c6b3527795f7742a872189e137a4bad1"
     },
@@ -2242,7 +2242,7 @@
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
-            "runtimeContract": "6"
+            "runtimeContract": "7"
           },
           "daemon": {
             "running": true,
@@ -2279,8 +2279,8 @@
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
-                "contract": "6",
-                "expectedContract": "6",
+                "contract": "7",
+                "expectedContract": "7",
                 "rebuildRequired": false,
                 "clientSessions": []
               },
@@ -2377,7 +2377,7 @@
             "runtimeRebuildRequired": 0
           }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 6\n  daemon: running pid=9001\n    daemon process: pid=9001\n      args: /opt/aimux/native/local-current/bin/aimux daemon run\n      native paths: /opt/aimux/native/local-current/bin/aimux\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=6 expected=6 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002 stale-native-path=yes\n      args: /opt/aimux/native/local-old/dist/main.js __project-service-internal\n      native paths: /opt/aimux/native/local-old/dist/main.js\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown) stale-native-path=yes\n        args: /opt/aimux/native/local-old/dist/main.js --tmux-dashboard-internal\n        native paths: /opt/aimux/native/local-old/dist/main.js\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new\n\nStale hook processes: 1\n  hook process: pid=77 stale-native-path=yes\n    args: /Users/sam/.volta/bin/claude --settings command='/opt/aimux/native/local-old/dist/main.js' claude-hook stop --project /repo/alpha\n    native paths: /opt/aimux/native/local-old/dist/main.js"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  package profile: full\n  build variant: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 7\n  daemon: running pid=9001\n    daemon process: pid=9001\n      args: /opt/aimux/native/local-current/bin/aimux daemon run\n      native paths: /opt/aimux/native/local-current/bin/aimux\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (1 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=7 expected=7 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002 stale-native-path=yes\n      args: /opt/aimux/native/local-old/dist/main.js __project-service-internal\n      native paths: /opt/aimux/native/local-old/dist/main.js\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  git checkout: not checked (project root is not present on disk)\n  agents: ok\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown) stale-native-path=yes\n        args: /opt/aimux/native/local-old/dist/main.js --tmux-dashboard-internal\n        native paths: /opt/aimux/native/local-old/dist/main.js\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new\n\nStale hook processes: 1\n  hook process: pid=77 stale-native-path=yes\n    args: /Users/sam/.volta/bin/claude --settings command='/opt/aimux/native/local-old/dist/main.js' claude-hook stop --project /repo/alpha\n    native paths: /opt/aimux/native/local-old/dist/main.js"
       },
       "inputSha256": "19a87ea6be12ada66c056c35133ff077c66b446b226d86674ec4ccbc7e1a9a9d"
     }
