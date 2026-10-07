@@ -1,4 +1,6 @@
 use aimux::atomic_write::write_json_atomic;
+use aimux::config::default_config;
+use aimux::core_text::render_core_agent_ps_lines;
 use aimux::daemon::process_inventory::{
     daemon_process_health_path, daemon_process_health_snapshot,
     write_daemon_process_health_snapshot,
@@ -8,6 +10,9 @@ use aimux::dashboard_model::{DashboardOperationFailure, DesktopStateSnapshot};
 use aimux::process_inspector::ProcessArgsEntry;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
+use aimux::project_service::agents::{
+    build_agent_list, topology_desktop_session_list_with_live_window_ids,
+};
 use aimux::project_service::desktop_state::{
     DesktopStateInput, build_desktop_state_with_live_window_ids, route_desktop_state_request_async,
     route_desktop_state_request_with_runtime,
@@ -24,7 +29,7 @@ use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
 use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
@@ -2341,6 +2346,71 @@ fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashbo
         legacy_message
     );
     cleanup(project);
+}
+
+#[test]
+fn ps_and_the_dashboard_row_print_the_same_word_for_every_agent() {
+    // AGENTS.md "One Answer, Many Surfaces": the gate compares the surfaces
+    // against each other. The previous one rebuilt `ps`'s own expectation by
+    // calling the same derivation, so it stayed green while `ps` published
+    // `user.label` and every other surface published `statusLabel`.
+    let topology = topology_fixture();
+    let metadata = metadata_fixture();
+    let exchange = exchange_fixture();
+    let live = support::live_windows("aimux-repo", &["@1", "@2", "@3", "@4"]);
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: "/repo".into(),
+            topology: &topology,
+            metadata_sessions: &metadata,
+            exchange: &exchange,
+        },
+        Some(&live),
+    );
+    let agents = build_agent_list(
+        &topology_desktop_session_list_with_live_window_ids(&topology, &metadata, &tools(), &live),
+        &metadata,
+        exchange["tasks"].as_array().map_or(&[][..], Vec::as_slice),
+        None,
+    );
+    let ps = render_core_agent_ps_lines(&json!({ "agents": agents }));
+
+    let mut compared = 0;
+    for session in state["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(state["teammates"].as_array().into_iter().flatten())
+    {
+        let id = session["id"].as_str().unwrap();
+        let published = session["semantic"]["presentation"]["statusLabel"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{id} has no published status label"));
+        let line = ps
+            .iter()
+            .find(|line| line.split("  ").next() == Some(id))
+            .unwrap_or_else(|| panic!("{id} is on the dashboard but absent from ps:\n{ps:#?}"));
+        let fields = line.split("  ").collect::<Vec<_>>();
+        let tool_at = fields
+            .iter()
+            .position(|field| field.starts_with('['))
+            .unwrap_or_else(|| panic!("no tool column in {line:?}"));
+        assert_eq!(
+            fields.get(tool_at + 1).copied(),
+            Some(published),
+            "ps and the dashboard row disagree about {id}: {line:?} vs {published:?}"
+        );
+        compared += 1;
+    }
+    assert!(
+        compared >= 4,
+        "the fixture must cover several agents, compared {compared}"
+    );
+}
+
+fn tools() -> Map<String, Value> {
+    default_config()["tools"].as_object().unwrap().clone()
 }
 
 fn topology_fixture() -> Value {

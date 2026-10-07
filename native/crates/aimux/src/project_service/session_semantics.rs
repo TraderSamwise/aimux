@@ -157,8 +157,8 @@ fn workflow_pressure(
 }
 
 /// `ps` printed the three raw axes, so a session whose window had died read
-/// `offline  done/normal`. It now answers with the published label every
-/// other surface renders, derived by this same call rather than its own rule.
+/// `offline  done/normal`. It now answers with `presentation.statusLabel`,
+/// the published word the bar, the overlay and the app row all render.
 pub fn agent_one_answer(
     status: Option<&str>,
     pending_action: Option<&str>,
@@ -174,9 +174,12 @@ pub fn agent_one_answer(
         has_active_task,
         ..Default::default()
     });
+    // `user.label` is the machine key, not the published word: it says
+    // `needs_response` where every surface says "needs reply", and
+    // `graveyarding` where the row says "Removing".
     semantic
-        .get("user")
-        .and_then(|user| user.get("label"))
+        .get("presentation")
+        .and_then(|presentation| presentation.get("statusLabel"))
         .and_then(Value::as_str)
         .unwrap_or("idle")
         .to_owned()

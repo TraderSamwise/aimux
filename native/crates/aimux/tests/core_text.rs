@@ -136,7 +136,7 @@ fn ps_says_which_of_working_waiting_or_finished_an_agent_is() {
         line(json!({
             "id": "a", "tool": "codex", "status": "running", "attention": "needs_input"
         })),
-        "a  [codex]  needs_input",
+        "a  [codex]  needs input",
         "a live agent asking is the case that is actually on the user"
     );
     assert_eq!(
@@ -155,7 +155,7 @@ fn ps_says_which_of_working_waiting_or_finished_an_agent_is() {
             "id": "a", "tool": "codex", "status": "running",
             "activity": "running", "pendingAction": "graveyarding"
         })),
-        "a  [codex]  graveyarding"
+        "a  [codex]  Removing"
     );
     // The assignment the dashboard row calls `next_step`.
     assert_eq!(
@@ -163,16 +163,18 @@ fn ps_says_which_of_working_waiting_or_finished_an_agent_is() {
             "id": "a", "tool": "codex", "status": "running",
             "task": { "description": "Ship", "status": "assigned" }
         })),
-        "a  [codex]  next_step",
+        "a  [codex]  next step",
         "an agent still holding an assignment is not merely ready"
     );
 }
 
 #[test]
-fn ps_and_the_derived_surfaces_answer_with_the_same_word() {
-    // AGENTS.md "One Answer, Many Surfaces": the gate compares the surfaces
-    // against each other, not each against its own expectation. `ps` had its
-    // own rule, and for `starting` the two rules disagreed.
+fn ps_has_no_rule_of_its_own_for_any_reachable_state() {
+    // This builds its expectation from the same derivation `ps` calls, so it
+    // proves only that `ps` grew no second rule inline -- it is NOT the
+    // cross-surface gate. That one is
+    // `ps_and_the_dashboard_row_print_the_same_word_for_every_agent` in
+    // `project_service_desktop_state`, which asks the other surface.
     for (status, activity, attention, task_status) in [
         ("starting", None, None, None),
         ("running", Some("running"), None, None),
@@ -206,7 +208,7 @@ fn ps_and_the_derived_surfaces_answer_with_the_same_word() {
             has_active_task: task_status_is_active(task_status),
             ..Default::default()
         });
-        let published = semantic["user"]["label"].as_str().unwrap();
+        let published = semantic["presentation"]["statusLabel"].as_str().unwrap();
         let rendered = render_core_agent_ps_lines(&json!({ "agents": [agent] }));
         assert_eq!(
             rendered[0],
@@ -268,7 +270,7 @@ fn renders_agent_and_team_details() {
             "  running  canonical=codex-heavy  aimux=codex-2  state=working  scribe loop",
             "",
             "wt  /repo/wt",
-            "  idle  canonical=codex  aimux=codex-1  backend=backend-1  state=needs_input  role=builder overseer loop=ship",
+            "  idle  canonical=codex  aimux=codex-1  backend=backend-1  state=needs input  role=builder overseer loop=ship",
             "    task: Implement port (active)",
         ]
     );

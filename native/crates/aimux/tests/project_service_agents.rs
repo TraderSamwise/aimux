@@ -122,14 +122,14 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
     );
     assert!(
         render_core_agent_ps_lines(&json!({ "agents": agents.clone() }))
-            .contains(&"codex-2  [codex:coder]  next_step".to_string())
+            .contains(&"codex-2  [codex:coder]  next step".to_string())
     );
     // A kill in flight has to survive the projection, or the one answer every
     // surface renders cannot see it and `ps` reports the turn it interrupted.
     assert_eq!(agents[0]["pendingAction"], "graveyarding");
     assert_eq!(
         render_core_agent_ps_lines(&json!({ "agents": agents }))[0],
-        "codex-1  \"Code\"  [codex:overseer]  graveyarding  {overseer loop}"
+        "codex-1  \"Code\"  [codex:overseer]  Removing  {overseer loop}"
     );
 }
 
