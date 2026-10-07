@@ -4451,6 +4451,91 @@ fn worktree_resurrect_brings_back_the_agents_its_graveyard_took() {
     cleanup(project);
 }
 
+/// An agent the user already killed keeps their decision.
+///
+/// It is already in the graveyard, its bindings are gone, and restamping the
+/// reason would both relabel why it is there and make the worktree's resurrect
+/// bring it back -- undoing a kill nobody asked to undo.
+#[test]
+fn worktree_graveyard_leaves_an_already_killed_agents_reason_alone() {
+    let project = temp_project("worktree-graveyard-already-killed");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    set_topology_session_status(&state_dir, "codex-live", "graveyard");
+    set_topology_session_graveyard_reason(&state_dir, "codex-live", "done");
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let graveyarded = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(graveyarded.status, 200, "{:?}", graveyarded.body);
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-live")["graveyardReason"],
+        "done"
+    );
+
+    let resurrected = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_WORKTREE,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(resurrected.status, 200, "{:?}", resurrected.body);
+    let agent = session(&read_topology(&state_dir), "codex-live");
+    assert_eq!(
+        agent["status"], "graveyard",
+        "the worktree brought back an agent the user had killed: {agent:?}"
+    );
+}
+
+/// An agent attached through its node's `cwd` rather than a `worktreePath`.
+///
+/// `remove_worktree_dependents` already finds one that way, and the dashboard
+/// groups one that way. Reading the field alone left it un-graveyarded here
+/// while the dashboard still grouped it into the worktree that had gone.
+#[test]
+fn worktree_graveyard_takes_an_agent_attached_through_its_node() {
+    let project = temp_project("worktree-graveyard-node-cwd");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    set_topology_session_status(&state_dir, "codex-live", "offline");
+    clear_topology_session_worktree_path(&state_dir, "codex-live");
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-live")["status"],
+        "graveyard"
+    );
+    cleanup(project);
+}
+
 /// One spelling of a path, across both halves of the fix.
 ///
 /// Topology paths come from git as realpaths while a session's `worktreePath`
@@ -6319,6 +6404,36 @@ fn published_worktree_group(project: &Path, topology: &Value) -> Value {
 
 fn read_topology(state_dir: &PathBuf) -> Value {
     read_runtime_topology(runtime_topology_path(state_dir)).unwrap()
+}
+
+fn set_topology_session_graveyard_reason(state_dir: &PathBuf, session_id: &str, reason: &str) {
+    update_runtime_topology(runtime_topology_path(state_dir), |mut topology| {
+        if let Some(sessions) = topology["sessions"].as_array_mut() {
+            for session in sessions {
+                if session["id"] == session_id {
+                    session["graveyardReason"] = Value::String(reason.to_owned());
+                }
+            }
+        }
+        topology
+    })
+    .unwrap();
+}
+
+fn clear_topology_session_worktree_path(state_dir: &PathBuf, session_id: &str) {
+    update_runtime_topology(runtime_topology_path(state_dir), |mut topology| {
+        if let Some(sessions) = topology["sessions"].as_array_mut() {
+            for session in sessions {
+                if session["id"] == session_id
+                    && let Some(map) = session.as_object_mut()
+                {
+                    map.remove("worktreePath");
+                }
+            }
+        }
+        topology
+    })
+    .unwrap();
 }
 
 fn set_topology_session_worktree_path(state_dir: &PathBuf, session_id: &str, path: &str) {

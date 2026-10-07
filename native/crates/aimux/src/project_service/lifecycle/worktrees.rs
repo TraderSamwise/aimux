@@ -134,10 +134,30 @@ pub(super) fn route_worktree_graveyard(
         .collect::<Vec<_>>();
     // Named before the write, because the cleanups below have to run for the
     // same ids and the closure can be re-run under contention.
+    //
+    // Through the node's `cwd` as well, which is how `remove_worktree_dependents`
+    // already finds a session attached to this worktree without a
+    // `worktreePath` of its own -- and how the dashboard groups one. Reading
+    // only the field left such a session un-graveyarded here and ungrouped
+    // there, which is the same hole from the other side.
+    //
+    // Already in the graveyard is already done: the user put it there, its
+    // bindings are gone, and restamping the reason would both relabel their
+    // decision and make the worktree's resurrect undo it.
+    let node_by_id = array_field(&topology, "nodes")
+        .into_iter()
+        .map(|node| (string_field(&node, "id"), node))
+        .collect::<Map<_, _>>();
     let retired_session_ids = array_field(&topology, "sessions")
         .into_iter()
-        .filter(|session| same_worktree_path(&string_field(session, "worktreePath"), &path))
-        .filter(|session| !LIVE_STATUSES.contains(&string_field(session, "status").as_str()))
+        .filter(|session| {
+            topology_item_worktree_path(session, &node_by_id)
+                .is_some_and(|session_path| same_worktree_path(&session_path, &path))
+        })
+        .filter(|session| {
+            let status = string_field(session, "status");
+            !LIVE_STATUSES.contains(&status.as_str()) && status != "graveyard"
+        })
         .map(|session| string_field(&session, "id"))
         .filter(|id| !id.is_empty())
         .collect::<Vec<_>>();

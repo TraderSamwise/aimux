@@ -1279,30 +1279,35 @@ fn abandoned_retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
     if retired.is_empty() {
         return retired;
     }
-    for item in array_field(topology, "sessions")
+    let sessions = array_field(topology, "sessions");
+    let services = array_field(topology, "services");
+    for item in sessions
         .iter()
         .filter(|session| {
             LIVE_SESSION_STATUSES.contains(&string_field(session, "status").unwrap_or(""))
         })
-        .chain(array_field(topology, "services").iter().filter(|service| {
+        .chain(services.iter().filter(|service| {
             LIVE_SERVICE_WINDOW_STATUSES.contains(&string_field(service, "status").unwrap_or(""))
         }))
     {
-        if let Some(path) = string_field(item, "worktreePath") {
-            retired.remove(&worktree_path_identity(path));
+        if let Some(key) = item_worktree_group_key(item) {
+            retired.remove(&key);
         }
     }
     retired
 }
 
 fn item_is_in_abandoned_worktree(item: &Value, abandoned_paths: &BTreeSet<String>) -> bool {
-    // `worktree_path_identity` canonicalizes, which the scale gate budgets per
+    // `item_worktree_group_key` canonicalizes, which the scale gate budgets per
     // agent, and a project with nothing abandoned has nothing to ask.
     if abandoned_paths.is_empty() {
         return false;
     }
-    string_field(item, "worktreePath")
-        .is_some_and(|path| abandoned_paths.contains(&worktree_path_identity(path)))
+    // The key the GROUPS are built from, not `worktreePath`. An agent whose
+    // plane names a worktree, or that carries only its node's `cwd`, is grouped
+    // into that worktree -- so reading the field instead left it unfiltered
+    // here and ungrouped there, which is this bug from the other side.
+    item_worktree_group_key(item).is_some_and(|key| abandoned_paths.contains(&key))
 }
 
 /// Paths of worktrees the user has graveyarded or removed.
