@@ -2758,7 +2758,19 @@ pub fn build_default_root_mouse_bindings_config(
 ) -> String {
     [
         format!(r#"bind-key -T root MouseDown1Pane if-shell "{open_pane_link_command}" "" "select-pane -t = \; send-keys -M""#),
-        "bind-key -T root MouseDrag1Pane if-shell -F \"#{||:#{pane_in_mode},#{mouse_any_flag}}\" { send-keys -M } { copy-mode -M }".to_owned(),
+        // Drag selects, whatever the application thinks about the mouse.
+        //
+        // tmux's own default also forwards a drag when the pane has mouse
+        // reporting on, and that is why select-to-copy stopped working: codex
+        // turns it on, so every drag over a codex pane went to codex and tmux
+        // started no selection. Claude panes kept working, which is what made
+        // it read as aimux breaking rather than an agent changing.
+        //
+        // Only `pane_in_mode` decides now. Already in copy-mode means extend
+        // the selection; otherwise begin one. Wheel and click still go to the
+        // application, so a TUI keeps its scrolling and its clicks -- it is
+        // only the drag, which these agents do not use, that tmux takes.
+        "bind-key -T root MouseDrag1Pane if-shell -F \"#{pane_in_mode}\" { send-keys -M } { copy-mode -M }".to_owned(),
         "bind-key -T root WheelUpPane if-shell -F \"#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}\" \"copy-mode -e \\; send-keys -X -N 1 scroll-up\" \"send-keys -M\"".to_owned(),
         "bind-key -T root WheelDownPane if-shell -F \"#{||:#{alternate_on},#{mouse_any_flag}}\" { send-keys -M } { send-keys -M }".to_owned(),
         format!(r#"bind-key -T root DoubleClick1Pane if-shell "{open_pane_link_command}" "" "send-keys -M""#),

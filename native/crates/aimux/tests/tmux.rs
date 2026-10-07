@@ -242,7 +242,7 @@ fn mirrors_text_chunking_options_and_mouse_bindings() {
     let config = build_default_root_mouse_bindings_config("open-pane-link", "open-status-pr");
     let expected = [
         "bind-key -T root MouseDown1Pane if-shell \"open-pane-link\" \"\" \"select-pane -t = \\; send-keys -M\"".to_owned(),
-        "bind-key -T root MouseDrag1Pane if-shell -F \"#{||:#{pane_in_mode},#{mouse_any_flag}}\" { send-keys -M } { copy-mode -M }".to_owned(),
+        "bind-key -T root MouseDrag1Pane if-shell -F \"#{pane_in_mode}\" { send-keys -M } { copy-mode -M }".to_owned(),
         "bind-key -T root WheelUpPane if-shell -F \"#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}\" \"copy-mode -e \\; send-keys -X -N 1 scroll-up\" \"send-keys -M\"".to_owned(),
         "bind-key -T root WheelDownPane if-shell -F \"#{||:#{alternate_on},#{mouse_any_flag}}\" { send-keys -M } { send-keys -M }".to_owned(),
         "bind-key -T root DoubleClick1Pane if-shell \"open-pane-link\" \"\" \"send-keys -M\"".to_owned(),
@@ -437,6 +437,49 @@ fn mirrors_remaining_low_level_command_vectors() {
     assert_eq!(kill_window_argv("@3"), ["kill-window", "-t", "@3"]);
     assert_eq!(clear_history_argv("@3"), ["clear-history", "-t", "@3"]);
     assert_eq!(select_window_argv("@3"), ["select-window", "-t", "@3"]);
+}
+
+/// A drag selects even where the application has asked for the mouse.
+///
+/// This is the whole of "select to copy does not work any more". tmux's own
+/// default forwards a drag whenever the pane has mouse reporting on, and codex
+/// turns it on -- so every drag over a codex pane went to codex and tmux began
+/// no selection, while claude panes, which do not, kept working. Nothing in
+/// aimux had changed, which is exactly why it read as aimux breaking.
+///
+/// Asserted on the condition rather than on the whole line, because what must
+/// not come back is `mouse_any_flag` deciding whether a drag can select.
+#[test]
+fn a_drag_selects_even_when_the_application_holds_the_mouse() {
+    let config = build_default_root_mouse_bindings_config("open-pane-link", "open-status-pr");
+    let drag = config
+        .lines()
+        .find(|line| line.contains("MouseDrag1Pane"))
+        .expect("a drag binding");
+
+    assert!(
+        drag.contains("{ copy-mode -M }"),
+        "a drag outside copy-mode has to begin a selection: {drag}"
+    );
+    assert!(
+        !drag.contains("mouse_any_flag"),
+        "an application holding the mouse must not decide whether a drag can \
+         select; that is what broke this: {drag}"
+    );
+    // Still forwarded once a selection is under way, so dragging inside
+    // copy-mode extends it rather than starting again.
+    assert!(
+        drag.contains("#{pane_in_mode}") && drag.contains("{ send-keys -M }"),
+        "{drag}"
+    );
+
+    // Wheel and click are untouched: a TUI keeps its scrolling and its clicks,
+    // and only the drag -- which these agents do not use -- is taken.
+    let wheel = config
+        .lines()
+        .find(|line| line.contains("WheelUpPane") && line.contains("-T root"))
+        .expect("a wheel binding");
+    assert!(wheel.contains("mouse_any_flag"), "{wheel}");
 }
 
 #[test]
