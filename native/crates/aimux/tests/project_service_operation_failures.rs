@@ -714,49 +714,6 @@ fn clearing_the_queue_failure_does_not_take_live_agent_failures_with_it() {
 }
 
 #[test]
-fn a_healthy_queue_load_does_not_erase_the_save_that_lost_the_input() {
-    let project = temp_project("mirror-queue-steps");
-    let state_dir = project.join("state");
-    create_dir_all(&state_dir).expect("state dir");
-
-    // Reading the queue and writing it back are different failures. Collapsed
-    // into one key, a healthy load every 500ms cleared the save failure that
-    // had just lost a user's queued input -- inside half a second, before any
-    // surface drew it, which is worse than the window this item replaced.
-    for operation in ["input.delivery.queue.load", "input.delivery.queue.save"] {
-        try_add_dashboard_operation_failure(
-            &state_dir,
-            OperationFailureInput {
-                target_kind: "agent-input-queue".into(),
-                operation: operation.into(),
-                title: "Agent input delivery queue unavailable".into(),
-                message: format!("{operation} broke"),
-                ..OperationFailureInput::default()
-            },
-        )
-        .expect("record failure");
-    }
-
-    clear_dashboard_operation_failures(
-        &state_dir,
-        OperationFailureMatch {
-            target_kind: Some("agent-input-queue".into()),
-            operation: Some("input.delivery.queue.load".into()),
-            target_id: None,
-            worktree_path: WorktreePathMatch::Any,
-        },
-    )
-    .expect("clear");
-
-    assert_eq!(
-        notification_bodies(&state_dir),
-        vec!["input.delivery.queue.save broke".to_owned()],
-        "a successful load must clear only what the load proved healthy"
-    );
-    cleanup(project);
-}
-
-#[test]
 fn a_mirror_that_failed_to_write_is_not_counted_as_written() {
     let project = temp_project("mirror-write-failed");
     let state_dir = project.join("state");

@@ -24,7 +24,9 @@ use aimux::project_service::agent_output_projection::{
 };
 use aimux::project_service::metadata::update_session_metadata;
 use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
-use aimux::project_service::operation_failures::list_dashboard_operation_failures;
+use aimux::project_service::operation_failures::{
+    OperationFailureInput, list_dashboard_operation_failures, try_add_dashboard_operation_failure,
+};
 use aimux::project_service::router::{
     OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
 };
@@ -3012,6 +3014,60 @@ fn expired_failed_delivery_persists_remaining_queue_after_one_attempt() {
         queued_delivery_count(&state_dir),
         2,
         "a failed queued send must remain visible and must not drop later queued input"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn a_healthy_queue_load_does_not_erase_the_save_that_lost_the_input() {
+    let project = temp_project("queue-load-clear-scope");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    // The three queue steps the task can fail at. Reading and writing have
+    // different recoveries, so a healthy read must not speak for a write --
+    // under one key, a load every 500ms erased the save failure that had just
+    // lost a user's queued input, before any surface drew it.
+    for operation in [
+        "input.delivery.queue.load",
+        "input.delivery.queue.save",
+        "input.delivery.queue.merge",
+    ] {
+        try_add_dashboard_operation_failure(
+            &state_dir,
+            OperationFailureInput {
+                target_kind: "agent-input-queue".into(),
+                operation: operation.into(),
+                title: "Agent input delivery queue unavailable".into(),
+                message: format!("{operation} broke"),
+                ..OperationFailureInput::default()
+            },
+        )
+        .expect("record failure");
+    }
+
+    // The real task, against a queue it can read.
+    let mut runtime = FakeActivityRuntime::default();
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, 1);
+
+    let mut survived = list_dashboard_operation_failures(&state_dir)
+        .iter()
+        .filter(|failure| failure["targetKind"] == "agent-input-queue")
+        .map(|failure| failure["operation"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    survived.sort();
+    // Only the step the task actually completed is cleared. An empty queue
+    // returns before the merge read and before the save, so neither of those
+    // was proved healthy and neither record may be dropped -- a save failure
+    // records input that was lost, and that loss does not resolve itself.
+    assert_eq!(
+        survived,
+        vec![
+            "input.delivery.queue.merge".to_owned(),
+            "input.delivery.queue.save".to_owned()
+        ],
+        "a healthy load must speak only for the load"
     );
     cleanup(project);
 }

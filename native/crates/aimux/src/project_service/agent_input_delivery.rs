@@ -347,6 +347,10 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         return;
     };
     clear_agent_input_delivery_queue_failure(context, QUEUE_LOAD_OPERATION);
+    // Deliberately clears nothing here. An empty queue does not prove the last
+    // write landed -- it is also what the disk looks like when the write is
+    // what failed -- so a save failure stays until a save succeeds. It records
+    // input that was lost, and that loss does not resolve itself.
     if state.pending.is_empty() {
         backlog_metric(
             AGENT_INPUT_DELIVERY_BACKLOG,
@@ -593,6 +597,7 @@ pub async fn run_pending_agent_input_deliveries_async(
     let mut pending = remaining;
     match load_delivery_state(&path) {
         Ok(current) => {
+            clear_agent_input_delivery_queue_failure(context, QUEUE_MERGE_OPERATION);
             pending.extend(
                 current
                     .pending
@@ -608,7 +613,7 @@ pub async fn run_pending_agent_input_deliveries_async(
             );
             record_agent_input_delivery_queue_failure(
                 context,
-                QUEUE_SAVE_OPERATION,
+                QUEUE_MERGE_OPERATION,
                 format!("Could not merge queued agent input delivery state: {error}"),
             );
             failures.push(error);
@@ -964,6 +969,11 @@ pub(crate) const AGENT_INPUT_QUEUE_TARGET_KIND: &str = "agent-input-queue";
 /// queued input -- within half a second, and before any surface drew it.
 const QUEUE_LOAD_OPERATION: &str = "input.delivery.queue.load";
 const QUEUE_SAVE_OPERATION: &str = "input.delivery.queue.save";
+/// Re-reading the queue to merge back what arrived while the task ran. It is a
+/// READ, and the write that follows it in the same call succeeds almost always
+/// -- `save_delivery_state` rewrites the file the read could not parse. Under
+/// the save's key this failure was cleared microseconds after it was recorded.
+const QUEUE_MERGE_OPERATION: &str = "input.delivery.queue.merge";
 
 fn record_agent_input_delivery_queue_failure(
     context: &ProjectServiceRequestContext,
