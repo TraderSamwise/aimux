@@ -772,16 +772,29 @@ pub(super) fn route_graveyard_agent_resurrect(
         return json_error(404, format!("Graveyard session \"{session_id}\" not found"));
     };
     let state = topology_session_to_session_state(&session, &topology);
-    if let Some(worktree_path) = trimmed_string(state.get("worktreePath"))
-        && !worktree_path_is_graveyarded(&topology, &worktree_path)
-        && !Path::new(&worktree_path).exists()
-    {
-        return json_error(
-            500,
-            format!(
-                "Cannot resurrect agent \"{session_id}\" because its worktree \"{worktree_path}\" is missing; restore the worktree first"
-            ),
-        );
+    if let Some(worktree_path) = trimmed_string(state.get("worktreePath")) {
+        // A graveyarded worktree used to be the carve-out here, back when
+        // graveyarding one left its agents alone. It now takes them with it and
+        // gives them back, so bringing one out on its own produced an agent in
+        // a worktree no surface shows -- not in `sessions`, not in a group, not
+        // in the graveyard -- and the reaper put it straight back on its next
+        // tick. One door, and it is the worktree's.
+        if worktree_path_is_graveyarded(&topology, &worktree_path) {
+            return json_error(
+                409,
+                format!(
+                    "Cannot resurrect agent \"{session_id}\" on its own because its worktree \"{worktree_path}\" is in the graveyard; resurrect the worktree, which brings its agents back with it"
+                ),
+            );
+        }
+        if !Path::new(&worktree_path).exists() {
+            return json_error(
+                500,
+                format!(
+                    "Cannot resurrect agent \"{session_id}\" because its worktree \"{worktree_path}\" is missing; restore the worktree first"
+                ),
+            );
+        }
     }
     let node_id = string_field(&session, "nodeId");
     if let Err(error) =

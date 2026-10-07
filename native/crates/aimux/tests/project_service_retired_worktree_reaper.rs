@@ -95,31 +95,19 @@ fn an_agent_already_in_the_graveyard_is_not_reaped_again() {
     assert!(stranded_agent_ids(&topology).is_empty());
 }
 
-/// `graveyard.agent.resurrect` deliberately allows bringing an agent back into
-/// a worktree that is still graveyarded, setting it `offline` with a fresh
-/// `updatedAt`. Reaping on presence alone sent it straight back two minutes
-/// later, every time, with no message -- the user's own action undone on a
-/// timer.
+/// A row touched long after its worktree was retired is still debris.
+///
+/// An `updatedAt` test was tried as a way to leave resurrected agents alone,
+/// and the live project disproved it: a batch status write had touched the
+/// stranded rows a week AFTER the retirement, which would have immunised the
+/// very backlog this exists for. The resurrect route refuses instead, so
+/// nothing here has to guess.
 #[test]
-fn an_agent_resurrected_since_the_retirement_is_left_alone() {
+fn a_row_touched_after_the_retirement_is_still_reaped() {
     let topology = topology(
-        json!([{ "id": "codex-cold", "nodeId": "node-cold", "status": "offline", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/perf", "createdAt": NOW, "updatedAt": "2026-10-07T02:00:00.000Z" }]),
+        json!([{ "id": "codex-cold", "nodeId": "node-cold", "status": "offline", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/perf", "createdAt": NOW, "updatedAt": "2026-10-14T00:00:00.000Z" }]),
         "graveyard",
     );
 
-    assert!(stranded_agent_ids(&topology).is_empty());
-}
-
-/// Not knowing when a row was last touched is not evidence that nobody has.
-/// Every row `route_worktree_graveyard` writes carries `removedAt`; one that
-/// does not came from somewhere else, and is left where it is.
-#[test]
-fn a_retirement_with_no_timestamp_reaps_nothing() {
-    let mut topology = topology(json!([cold()]), "graveyard");
-    topology["worktrees"][0]
-        .as_object_mut()
-        .expect("worktree row")
-        .remove("removedAt");
-
-    assert!(stranded_agent_ids(&topology).is_empty());
+    assert_eq!(stranded_agent_ids(&topology), vec!["codex-cold".to_owned()]);
 }

@@ -13,19 +13,17 @@
 //! nothing in it is alive, and then all of it goes. A live agent keeps its
 //! place and its worktree keeps its group.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use serde_json::{Value, json};
 
 use crate::async_runtime::{scoped_task_name, spawn_blocking_named};
 use crate::debug_logging::log_lifecycle_always;
 use crate::project_service::desktop_state::abandoned_retired_worktree_paths;
-use crate::project_service::desktop_state::worktree_path_identity;
 use crate::project_service::graveyard_contract::WORKTREE_GRAVEYARD_AGENT_REASON;
-use crate::project_service::lifecycle::now_iso;
+use crate::project_service::lifecycle::{now_iso, prune_restore_eligibility};
+use crate::project_service::prompt_context::clear_prompt_context;
 use crate::runtime_topology::{
-    list_topology_session_states, list_topology_worktree_states, read_runtime_topology,
-    runtime_topology_path, update_runtime_topology,
+    list_topology_session_states, read_runtime_topology, runtime_topology_path,
+    update_runtime_topology,
 };
 use crate::runtime_topology_sessions::move_topology_session_to_graveyard;
 
@@ -60,31 +58,38 @@ impl PeriodicTask for RetiredWorktreeReaperTask {
             let topology = read_runtime_topology(&topology_path).map_err(|error| {
                 format!("retired worktree reaper topology unavailable: {error}")
             })?;
-            let stranded = stranded_agent_ids(&topology);
-            if stranded.is_empty() {
+            if stranded_agent_ids(&topology).is_empty() {
                 return Ok(());
             }
             // Off the async worker: taking the update lock can wait seconds for
             // another writer, and blocking a tokio worker thread for that is
             // how a periodic task stalls every other task sharing the runtime.
-            let reaped = stranded.clone();
-            spawn_blocking_named(
+            let state_dir = context.project_state_dir().to_path_buf();
+            let reaped = spawn_blocking_named(
                 scoped_task_name("retired-worktree-reaper", "topology-update", "project"),
                 move || {
-                    update_runtime_topology(&topology_path, |mut current| {
-                        // Re-derived under the lock: another writer may have
-                        // resurrected the worktree or started an agent in it
-                        // since the read above.
+                    let mut reaped = Vec::new();
+                    // Re-derived under the lock: another writer may have
+                    // resurrected the worktree or started an agent in it since
+                    // the read above, so the set from before the wait is a
+                    // guess. What the log names is what this moved.
+                    let result = update_runtime_topology(&topology_path, |mut current| {
+                        reaped.clear();
                         for session_id in stranded_agent_ids(&current) {
-                            move_topology_session_to_graveyard(
+                            if move_topology_session_to_graveyard(
                                 &mut current,
                                 &session_id,
                                 &now_iso(),
                                 Some(WORKTREE_GRAVEYARD_AGENT_REASON),
-                            );
+                            )
+                            .is_some()
+                            {
+                                reaped.push(session_id);
+                            }
                         }
                         current
-                    })
+                    });
+                    result.map(|_| reaped)
                 },
             )
             .await
@@ -92,6 +97,16 @@ impl PeriodicTask for RetiredWorktreeReaperTask {
             .map_err(|error| {
                 format!("retired worktree reaper could not write topology: {error}")
             })?;
+            if reaped.is_empty() {
+                return Ok(());
+            }
+            // What `route_agent_kill` does for one agent, for each of these.
+            // Without them the restore offer goes on proposing an agent whose
+            // checkout is gone, and accepting it restores nothing.
+            for session_id in &reaped {
+                clear_prompt_context(&state_dir, session_id);
+                prune_restore_eligibility(&state_dir, session_id);
+            }
             log_lifecycle_always(
                 "retired agents left behind by a graveyarded worktree",
                 "retired-worktree-reaper",
@@ -108,18 +123,18 @@ impl PeriodicTask for RetiredWorktreeReaperTask {
 /// node's `cwd` is seen, which is the same projection the dashboard reads --
 /// an agent the two disagreed about was hidden by one and left by the other.
 ///
-/// Left behind, not merely present. `graveyard.agent.resurrect` deliberately
-/// allows bringing an agent back into a worktree that is still graveyarded, and
-/// that sets the row to `offline` with a fresh `updatedAt`. Reaping on presence
-/// alone sent it straight back two minutes later, every time, with no message:
-/// the user's own action silently undone on a timer. A row the user has touched
-/// since the retirement is theirs.
+/// Nothing here races the user. `graveyard.agent.resurrect` used to allow
+/// bringing an agent back into a still-graveyarded worktree, which this would
+/// have undone two minutes later with no message; that route refuses now, and
+/// the worktree's own resurrect is the one door. An `updatedAt` test was tried
+/// instead and is not a substitute: on the live project a batch status write
+/// had touched the stranded rows a week AFTER the retirement, which would have
+/// immunised the very backlog this exists for.
 pub fn stranded_agent_ids(topology: &Value) -> Vec<String> {
     let abandoned = abandoned_retired_worktree_paths(topology);
     if abandoned.is_empty() {
         return Vec::new();
     }
-    let retired_at = retirement_times(topology, &abandoned);
     list_topology_session_states(topology, None)
         .iter()
         .filter(|session| string_at(session, "status") != Some("graveyard"))
@@ -128,50 +143,12 @@ pub fn stranded_agent_ids(topology: &Value) -> Vec<String> {
                 session, &abandoned,
             )
         })
-        .filter(|session| left_behind_by_retirement(session, &retired_at))
         .filter_map(|session| string_at(session, "id").map(str::to_owned))
         .collect()
 }
 
 fn string_at<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
-}
-
-/// When each abandoned worktree was retired, keyed the way the paths are.
-fn retirement_times(topology: &Value, abandoned: &BTreeSet<String>) -> BTreeMap<String, String> {
-    list_topology_worktree_states(topology, None)
-        .into_iter()
-        .filter_map(|worktree| {
-            let path = string_at(&worktree, "path")?;
-            let identity = worktree_path_identity(path);
-            if !abandoned.contains(&identity) {
-                return None;
-            }
-            let retired_at = string_at(&worktree, "removedAt")
-                .or_else(|| string_at(&worktree, "updatedAt"))?
-                .to_owned();
-            Some((identity, retired_at))
-        })
-        .collect()
-}
-
-/// Whether this row predates its worktree's retirement.
-///
-/// Both timestamps come from `now_iso`, which is fixed-width UTC, so comparing
-/// them as text is comparing them as instants. A row with no timestamp to
-/// compare is left alone: not knowing when it was last touched is not evidence
-/// that nobody has.
-fn left_behind_by_retirement(session: &Value, retired_at: &BTreeMap<String, String>) -> bool {
-    let Some(key) = crate::project_service::desktop_state::item_worktree_group_key_for(session)
-    else {
-        return false;
-    };
-    let (Some(retired_at), Some(updated_at)) =
-        (retired_at.get(&key), string_at(session, "updatedAt"))
-    else {
-        return false;
-    };
-    updated_at.as_bytes() <= retired_at.as_bytes()
 }
 
 pub fn retired_worktree_reaper_task() -> Box<dyn PeriodicTask> {

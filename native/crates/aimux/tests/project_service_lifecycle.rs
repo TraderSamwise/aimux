@@ -3223,8 +3223,16 @@ fn graveyard_agent_resurrect_rejects_missing_active_worktree() {
     cleanup(project);
 }
 
+/// This used to allow it, and the allowance has been withdrawn on purpose.
+///
+/// It made sense while graveyarding a worktree left its agents alone: the agent
+/// was the only thing to bring back. The worktree takes its agents with it now
+/// and returns them, so letting one out alone produced an agent in a worktree
+/// that is in the graveyard -- absent from `sessions`, from every group and
+/// from the graveyard list, visible only to `aimux ps` -- which the reaper then
+/// sent back on its next tick, silently. The refusal names the way through.
 #[test]
-fn graveyard_agent_resurrect_allows_missing_graveyarded_worktree() {
+fn graveyard_agent_resurrect_sends_a_graveyarded_worktrees_agent_through_the_worktree() {
     let project = temp_project("graveyard-agent-graveyarded-worktree");
     let state_dir = project.join("state");
     let worktree = project.join("missing-graveyarded");
@@ -3241,10 +3249,18 @@ fn graveyard_agent_resurrect_allows_missing_graveyarded_worktree() {
     )
     .unwrap();
 
-    assert_eq!(response.status, 200);
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("resurrect the worktree"),
+        "{:?}",
+        response.body
+    );
     assert_eq!(
         session(&read_topology(&state_dir), "codex-old")["status"],
-        "offline"
+        "graveyard"
     );
     cleanup(project);
 }
@@ -4498,6 +4514,107 @@ fn worktree_graveyard_leaves_an_already_killed_agents_reason_alone() {
         agent["status"], "graveyard",
         "the worktree brought back an agent the user had killed: {agent:?}"
     );
+}
+
+/// An agent cannot be brought out of a graveyarded worktree on its own.
+///
+/// That used to be a deliberate carve-out, from when graveyarding a worktree
+/// left its agents alone. It takes them with it and gives them back now, so
+/// bringing one out by itself produced an agent in a worktree no surface shows,
+/// which the reaper then put straight back. One door, and it is the worktree's.
+#[test]
+fn an_agent_of_a_graveyarded_worktree_is_resurrected_through_the_worktree() {
+    let project = temp_project("graveyard-agent-resurrect-refused");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    set_topology_session_status(&state_dir, "codex-live", "offline");
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+    route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    let refused = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_AGENT,
+        Some(&json!({ "sessionId": "codex-live" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(refused.status, 409, "{:?}", refused.body);
+    assert!(
+        refused.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("resurrect the worktree"),
+        "the refusal has to name the way through: {:?}",
+        refused.body
+    );
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-live")["status"],
+        "graveyard"
+    );
+    cleanup(project);
+}
+
+/// And the worktree gives back an agent attached through its node too.
+///
+/// The take loop asked `item_is_in_worktree`; the resurrect loop asked the raw
+/// field. So the route could graveyard an agent it structurally could not give
+/// back, and that agent stayed behind while every sibling returned.
+#[test]
+fn worktree_resurrect_returns_an_agent_attached_through_its_node() {
+    let project = temp_project("worktree-resurrect-node-cwd");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    set_topology_session_status(&state_dir, "codex-live", "offline");
+    clear_topology_session_worktree_path(&state_dir, "codex-live");
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+    route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-live")["status"],
+        "graveyard"
+    );
+
+    let resurrected = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_WORKTREE,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(resurrected.status, 200, "{:?}", resurrected.body);
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-live")["status"],
+        "offline",
+        "the route took this agent and had no way to give it back"
+    );
+    cleanup(project);
 }
 
 /// Nothing moves while anything in the worktree is alive.

@@ -964,12 +964,17 @@ pub(super) fn route_graveyard_worktree_resurrect(
             // the user killed by hand keeps its own reason and stays where they
             // put it. Without this the worktree returned empty and each agent
             // had to be hunted down one at a time.
+            let returning_nodes = node_index(&topology);
             let returning = array_field(&topology, "sessions")
                 .into_iter()
                 .filter(|session| {
                     string_field(session, "graveyardReason") == WORKTREE_GRAVEYARD_AGENT_REASON
                 })
-                .filter(|session| same_worktree_path(&string_field(session, "worktreePath"), &path))
+                // The same question the take loop asks. Matching the field
+                // alone could not give back an agent attached through its
+                // node's `cwd`: the route took it and then had no way to return
+                // it, while every sibling came back.
+                .filter(|session| item_is_in_worktree(session, &returning_nodes, &path))
                 .map(|session| string_field(&session, "id"))
                 .filter(|id| !id.is_empty())
                 .collect::<Vec<_>>();

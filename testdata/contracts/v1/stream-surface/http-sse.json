@@ -214,6 +214,11 @@
                 "hot": false
               },
               {
+                "name": "retired-worktree-reaper",
+                "intervalMs": "<interval-ms-or-null>",
+                "hot": false
+              },
+              {
                 "name": "runtime-health-recorder",
                 "intervalMs": "<interval-ms-or-null>",
                 "hot": false
@@ -567,6 +572,11 @@
                 },
                 {
                   "name": "project-expose-hot-snapshot-refresh",
+                  "intervalMs": "<interval-ms-or-null>",
+                  "hot": false
+                },
+                {
+                  "name": "retired-worktree-reaper",
                   "intervalMs": "<interval-ms-or-null>",
                   "hot": false
                 },
