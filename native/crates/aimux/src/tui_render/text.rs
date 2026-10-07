@@ -57,9 +57,10 @@ fn csi_end(bytes: &[u8], start: usize) -> Option<usize> {
     }
     match bytes.get(end) {
         Some(0x40..=0x7e) => Some(end + 1),
-        // A sequence that never finished. `truncate_ansi` can cut one in half,
-        // and emitting the bare ESC and `[` as text would count two characters
-        // of width that nothing draws.
+        // A sequence that never finished. `truncate` and `truncate_plain` cut
+        // by UTF-16 units and can leave one half-written -- `truncate_ansi`
+        // cannot, it copies whole SGRs -- and emitting the bare ESC and `[` as
+        // text would count two characters of width that nothing draws.
         None => Some(bytes.len()),
         _ => None,
     }

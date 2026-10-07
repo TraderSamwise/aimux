@@ -337,6 +337,92 @@ fn stripping_terminal_control_leaves_only_what_is_drawn() {
     );
 }
 
+/// A row exactly as wide as the terminal is left alone.
+///
+/// `truncate_ansi(row, cols - 1)` survived every other test here and all seven
+/// parity frames. The header and footer rules are `"─".repeat(cols)`, so an
+/// off-by-one in the truncation shortens both of them on every frame -- and
+/// that is also the width at which the trailing-erase form eats a character,
+/// which is why the erase goes before the content.
+#[test]
+fn a_row_the_width_of_the_terminal_keeps_all_of_it() {
+    let header: Vec<String> = Vec::new();
+    let footer: Vec<String> = Vec::new();
+    let content = vec!["x".repeat(40)];
+    let result = compose_screen_frame(&ScreenFrameInput {
+        cols: 40,
+        rows: 3,
+        header: &header,
+        content: &content,
+        footer_lines: &footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: false,
+        right_panel: None,
+    });
+
+    let rows = strip_terminal_control(&result.frame)
+        .split("\r\n")
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        visible_width(&rows[0]),
+        40,
+        "a row that is exactly the terminal's width has nothing to cut: {:?}",
+        rows[0]
+    );
+    // And the rule the real frames carry, which is the case that matters.
+    let ruled_footer = vec!["q quit".to_owned()];
+    let ruled = compose_screen_frame(&ScreenFrameInput {
+        cols: 40,
+        rows: 4,
+        header: &header,
+        content: &content,
+        footer_lines: &ruled_footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: false,
+        right_panel: None,
+    });
+    let rule = strip_terminal_control(&ruled.frame)
+        .split("\r\n")
+        .find(|row| row.starts_with('─'))
+        .map(str::to_owned)
+        .expect("the footer rule");
+    assert_eq!(
+        visible_width(&rule),
+        40,
+        "the footer rule spans the terminal: {rule:?}"
+    );
+
+    // And a row that really is too wide is cut to the terminal, not to one
+    // short of it. `truncate_ansi(row, cols - 1)` survived every other
+    // assertion here: a row of exactly `cols` is never truncated at all, so
+    // nothing saw the off-by-one.
+    let over = vec!["y".repeat(60)];
+    let cut = compose_screen_frame(&ScreenFrameInput {
+        cols: 40,
+        rows: 3,
+        header: &header,
+        content: &over,
+        footer_lines: &footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: false,
+        right_panel: None,
+    });
+    let cut_rows = strip_terminal_control(&cut.frame)
+        .split("\r\n")
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        visible_width(&cut_rows[0]),
+        40,
+        "an over-wide row fills the terminal exactly: {:?}",
+        cut_rows[0]
+    );
+}
+
 fn assert_rows_fit(frame: &str, cols: usize) {
     for (index, row) in strip_terminal_control(frame).split("\r\n").enumerate() {
         assert!(

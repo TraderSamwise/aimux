@@ -2502,10 +2502,33 @@ fn dashboard_overlay_frame(
     base: &crate::tui_render::screen_frame::ScreenFrameResult,
     overlay: String,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
+    compose_overlay_frame(base, overlay, OverlayBackground::Dimmed)
+}
+
+/// Whether the frame behind a dialog is dimmed.
+///
+/// Node dimmed in dashboard mode and not in a subscreen
+/// (`src/multiplexer/subscreens.ts` wrote the overlay alone over an undimmed
+/// screen), and this keeps that. Routing the subscreen through the dimming
+/// composer was a looks change nobody asked for in a change about flicker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OverlayBackground {
+    Dimmed,
+    AsDrawn,
+}
+
+fn compose_overlay_frame(
+    base: &crate::tui_render::screen_frame::ScreenFrameResult,
+    overlay: String,
+    background: OverlayBackground,
+) -> crate::tui_render::screen_frame::ScreenFrameResult {
     let base_rows = crate::tui_render::screen_frame::unwrap_synchronized_frame(&base.frame);
     let mut frame = String::with_capacity(base.frame.len() + overlay.len() + 16);
     frame.push_str(crate::tui_render::screen_frame::SYNCHRONIZED_BEGIN);
-    frame.push_str(&recede(base_rows));
+    match background {
+        OverlayBackground::Dimmed => frame.push_str(&recede(base_rows)),
+        OverlayBackground::AsDrawn => frame.push_str(base_rows),
+    }
     frame.push_str(&overlay);
     // Always, and not whatever the base happened to end with: a frame without
     // the markers used to leave this opening an update it never closed, and a
@@ -2651,14 +2674,16 @@ fn render_dashboard_subscreen_snapshot(
         version: Some(&dashboard_runtime_version()),
     });
     if let Some(reply) = controller.thread_reply.as_ref() {
-        // Through the same composer as every other overlay. This site appended
-        // the reply box straight onto the frame -- after the `\x1b[?2026l` that
-        // closes it, and over an unreceded background -- which is the second
-        // visible pass `dashboard_overlay_frame` exists to prevent, and which
-        // the comment on that function claimed was already gone.
-        return dashboard_overlay_frame(
+        // Inside the synchronized update, and over the screen AS DRAWN. This
+        // site appended the reply box straight onto the frame, after the
+        // `\x1b[?2026l` that closes it -- the second visible pass the wrapper
+        // exists to prevent. The background is deliberately not dimmed: Node
+        // receded in dashboard mode only, and dimming a subscreen here would be
+        // a looks change nobody asked for in a change about flicker.
+        return compose_overlay_frame(
             &frame,
             render_thread_reply_overlay(reply, viewport.cols, viewport.rows),
+            OverlayBackground::AsDrawn,
         );
     }
     frame
@@ -3430,11 +3455,40 @@ mod tests {
             dialog_at < end_at,
             "the dialog has to be inside the update, not painted after it"
         );
-        // The rows still erase themselves under the dimming, or the dialog sits
-        // over whatever the last frame left.
+        // Dimmed, and every row still erasing itself under the dimming. The
+        // `contains("\x1b[K")` this replaces was satisfied by one erase
+        // anywhere, and nothing asserted the dimming at all -- `recede` could
+        // have been dropped entirely.
         assert!(
-            composed.frame.contains("\x1b[K"),
-            "receding the base must not take the per-row erase with it"
+            composed.frame.contains("\x1b[2;38;5;240m"),
+            "a dialog over the dashboard dims what is behind it"
+        );
+        let dimmed_rows = composed
+            .frame
+            .strip_prefix(SYNCHRONIZED_BEGIN)
+            .expect("the update opens")
+            .split("\r\n")
+            .count();
+        assert_eq!(
+            composed.frame.matches("\x1b[K").count(),
+            dimmed_rows,
+            "receding the base must not take any row's erase with it"
+        );
+
+        // And a subscreen dialog is drawn over the screen AS DRAWN. Node
+        // receded in dashboard mode only, so dimming here would be a looks
+        // change nobody asked for.
+        let plain = compose_overlay_frame(&base, "DIALOG".to_owned(), OverlayBackground::AsDrawn);
+        assert!(
+            !plain.frame.contains("\x1b[2;38;5;240m"),
+            "a subscreen dialog must not dim the screen behind it"
+        );
+        assert!(plain.frame.starts_with(SYNCHRONIZED_BEGIN));
+        assert!(plain.frame.ends_with(SYNCHRONIZED_END));
+        assert!(
+            plain.frame.find("DIALOG").expect("the dialog")
+                < plain.frame.find(SYNCHRONIZED_END).expect("it closes"),
+            "and is still drawn inside the update"
         );
 
         // A frame with no markers is wrapped whole rather than left open.

@@ -128,6 +128,23 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
     }
 }
 
+pub const SYNCHRONIZED_BEGIN: &str = "\x1b[?2026h";
+pub const SYNCHRONIZED_END: &str = "\x1b[?2026l";
+
+/// A composed frame's rows, with its synchronized wrapper taken off.
+///
+/// So an overlay can be added INSIDE the update rather than after it. A frame
+/// that does not carry the markers is returned whole, and the caller wraps it
+/// either way -- an earlier version returned an empty trailer for that case,
+/// which had the caller open a synchronized update it never closed. A terminal
+/// left inside one stops painting.
+pub fn unwrap_synchronized_frame(frame: &str) -> &str {
+    frame
+        .strip_prefix(SYNCHRONIZED_BEGIN)
+        .and_then(|rest| rest.strip_suffix(SYNCHRONIZED_END))
+        .unwrap_or(frame)
+}
+
 /// The bytes that put a frame on the screen, one row at a time.
 ///
 /// `\x1b[2J` used to open every frame. It blanks the WHOLE screen before a
@@ -157,23 +174,13 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
 /// after the header and the footer, and the body is padded to it, so the rows
 /// here are exactly `rows`. A trailing `\x1b[J` would have the same
 /// pending-wrap problem for a frame whose last row is a rule.
-pub const SYNCHRONIZED_BEGIN: &str = "\x1b[?2026h";
-pub const SYNCHRONIZED_END: &str = "\x1b[?2026l";
-
-/// A composed frame's rows, with its synchronized wrapper taken off.
 ///
-/// So an overlay can be added INSIDE the update rather than after it. A frame
-/// that does not carry the markers is returned whole, and the caller wraps it
-/// either way -- an earlier version returned an empty trailer for that case,
-/// which had the caller open a synchronized update it never closed. A terminal
-/// left inside one stops painting.
-pub fn unwrap_synchronized_frame(frame: &str) -> &str {
-    frame
-        .strip_prefix(SYNCHRONIZED_BEGIN)
-        .and_then(|rest| rest.strip_suffix(SYNCHRONIZED_END))
-        .unwrap_or(frame)
-}
-
+/// The row widths are only as honest as `visible_width`, which counts UTF-16
+/// units rather than terminal cells. Forty CJW characters measure forty and
+/// occupy eighty, so a row of them is not truncated, wraps, and -- with the
+/// clear gone -- orphans the previous frame's tail below it. That metric is
+/// what the whole layout is built on and every parity frame is captured
+/// against, so it is said here rather than changed.
 fn compose_rows<'a>(rows: impl Iterator<Item = &'a String>, cols: usize) -> String {
     let mut frame = String::from("\x1b[?2026h\x1b[H");
     for (index, row) in rows.enumerate() {
