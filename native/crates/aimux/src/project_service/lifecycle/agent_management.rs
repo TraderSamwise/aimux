@@ -780,10 +780,19 @@ pub(super) fn route_graveyard_agent_resurrect(
         // in the graveyard -- and the reaper put it straight back on its next
         // tick. One door, and it is the worktree's.
         if worktree_path_is_graveyarded(&topology, &worktree_path) {
+            // Which way out, decided here rather than left to be discovered:
+            // `graveyard.worktree.resurrect` refuses a checkout that is gone,
+            // so sending the user there when it is would be a wall with
+            // directions painted on it.
+            let way_out = if Path::new(&worktree_path).exists() {
+                "resurrect the worktree, which brings its agents back with it"
+            } else {
+                "its checkout is gone too, so the worktree has to be created again"
+            };
             return json_error(
                 409,
                 format!(
-                    "Cannot resurrect agent \"{session_id}\" on its own because its worktree \"{worktree_path}\" is in the graveyard; resurrect the worktree, which brings its agents back with it"
+                    "Cannot resurrect agent \"{session_id}\" on its own because its worktree \"{worktree_path}\" is in the graveyard; {way_out}"
                 ),
             );
         }

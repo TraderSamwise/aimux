@@ -3250,11 +3250,14 @@ fn graveyard_agent_resurrect_sends_a_graveyarded_worktrees_agent_through_the_wor
     .unwrap();
 
     assert_eq!(response.status, 409, "{:?}", response.body);
+    // This fixture's checkout is gone, and the worktree resurrect refuses one
+    // of those -- so pointing the user at it would be a wall with directions
+    // painted on it.
     assert!(
         response.body["error"]
             .as_str()
             .unwrap()
-            .contains("resurrect the worktree"),
+            .contains("has to be created again"),
         "{:?}",
         response.body
     );
