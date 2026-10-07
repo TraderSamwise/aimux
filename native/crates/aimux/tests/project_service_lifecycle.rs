@@ -16,7 +16,8 @@ use aimux::project_service::prompt_context::{get_prompt_context_text, set_prompt
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::runtime_exchange_path;
 use aimux::runtime_topology::{
-    coerce_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
+    coerce_runtime_topology, read_runtime_topology, runtime_topology_path, update_runtime_topology,
+    write_runtime_topology,
 };
 use aimux::tmux::{LiveWindowIndex, TmuxTarget};
 use aimux::tui_render::text::strip_ansi;
@@ -4342,6 +4343,58 @@ fn worktree_graveyard_stops_services_and_moves_topology_entry() {
     cleanup(project);
 }
 
+/// The agents go into the graveyard with their worktree.
+///
+/// Only the services were retired here. An agent in the worktree kept an
+/// `offline` row pointing at a checkout about to be deleted, which nothing
+/// reaped, the graveyard screen never listed, and the dashboard regrouped into
+/// a worktree it could no longer name -- the "unknown" row on the TUI.
+#[test]
+fn worktree_graveyard_takes_its_agents_with_it() {
+    let project = temp_project("worktree-graveyard-agents");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    // Offline by STATUS, which is the rule this uses. A row still claiming
+    // `running` whose window happens to be gone is not proof the agent is dead,
+    // and `graveyard.worktree.delete` refuses on exactly that row.
+    set_topology_session_status(&state_dir, "codex-live", "offline");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    let topology = read_topology(&state_dir);
+    let session = topology["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["id"] == "codex-live")
+        .expect("agent row");
+    assert_eq!(session["status"], "graveyard");
+    assert_eq!(session["graveyardReason"], "worktree-graveyarded");
+    assert!(session["graveyardedAt"].as_str().is_some());
+    assert!(
+        topology["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|binding| binding["nodeId"] != "agent:codex-live"),
+        "a graveyarded agent kept a tmux binding: {:?}",
+        topology["bindings"]
+    );
+    cleanup(project);
+}
+
 /// A dead window is not an attached agent.
 ///
 /// Topology status is durable: when a window dies without the service seeing it
@@ -6166,6 +6219,20 @@ fn published_worktree_group(project: &Path, topology: &Value) -> Value {
 
 fn read_topology(state_dir: &PathBuf) -> Value {
     read_runtime_topology(runtime_topology_path(state_dir)).unwrap()
+}
+
+fn set_topology_session_status(state_dir: &PathBuf, session_id: &str, status: &str) {
+    update_runtime_topology(runtime_topology_path(state_dir), |mut topology| {
+        if let Some(sessions) = topology["sessions"].as_array_mut() {
+            for session in sessions {
+                if session["id"] == session_id {
+                    session["status"] = Value::String(status.to_owned());
+                }
+            }
+        }
+        topology
+    })
+    .unwrap();
 }
 
 fn read_state(state_dir: &Path) -> Value {

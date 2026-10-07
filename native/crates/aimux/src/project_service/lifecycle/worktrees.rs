@@ -17,6 +17,7 @@ use crate::project_service::operation_failures::{
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::project_service::worktree_cache_cleanup::run_worktree_cache_cleanup;
 use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
+use crate::runtime_topology_sessions::move_topology_session_to_graveyard;
 
 use super::json_helpers::*;
 use super::runtime_adapter::{
@@ -120,6 +121,35 @@ pub(super) fn route_worktree_graveyard(
                 }
                 service
             });
+            // The dead agents go with it. Only the services were retired here,
+            // so an `offline` agent kept a row pointing at a checkout about to
+            // be deleted: nothing reaped it, the graveyard screen never listed
+            // it, and the dashboard regrouped it into a worktree it could no
+            // longer name -- the "unknown" row on the TUI.
+            //
+            // By STATUS, not by the window check this route refused on. That
+            // check proves the tmux window is gone, which is not the same as
+            // the agent being dead, and `graveyard.worktree.delete` refuses on
+            // exactly those rows before it removes a checkout with uncommitted
+            // work in it. Turning "could not confirm" into "dead" here would
+            // take that guard away.
+            let retired_session_ids = array_field(&topology, "sessions")
+                .into_iter()
+                .filter(|session| string_field(session, "worktreePath") == path)
+                .filter(|session| {
+                    !LIVE_STATUSES.contains(&string_field(session, "status").as_str())
+                })
+                .map(|session| string_field(&session, "id"))
+                .filter(|id| !id.is_empty())
+                .collect::<Vec<_>>();
+            for session_id in retired_session_ids {
+                move_topology_session_to_graveyard(
+                    &mut topology,
+                    &session_id,
+                    &now,
+                    Some("worktree-graveyarded"),
+                );
+            }
             topology = map_topology_array(topology, "worktrees", |mut current| {
                 if string_field(&current, "path") == path {
                     object_insert_mut(&mut current, "status", Value::String("graveyard".into()));
