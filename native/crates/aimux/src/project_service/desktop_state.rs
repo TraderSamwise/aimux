@@ -1161,6 +1161,30 @@ fn dashboard_session(
         .unwrap_or(false)
         && is_notification_stale(live_label, notifications.needs_input_unread_count > 0);
     item.insert("notificationStale".into(), Value::Bool(notification_stale));
+    // Derived here so the dashboard row, the topology row and anything added
+    // later read one answer instead of each applying its own window. A
+    // stopped agent keeps the stamp it died with, and weight means something
+    // is happening, so liveness is part of the fact.
+    let is_alive = semantic
+        .get("runtime")
+        .and_then(|runtime| runtime.get("isAlive"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let last_event = item.get("lastEvent");
+    item.insert(
+        "recentOutput".into(),
+        Value::Bool(
+            is_alive
+                && crate::session_recency::output_is_recent(
+                    crate::session_recency::output_anchor(
+                        item.get("lastOutputAt").and_then(Value::as_str),
+                        last_event.and_then(|event| string_field(event, "kind")),
+                        last_event.and_then(|event| string_field(event, "ts")),
+                    ),
+                    crate::session_recency::now_millis(),
+                ),
+        ),
+    );
     item.insert("semantic".into(), semantic);
     if !item.contains_key("overseer") {
         item.insert("overseer".into(), Value::Bool(false));

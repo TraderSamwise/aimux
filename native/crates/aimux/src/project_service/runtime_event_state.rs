@@ -184,19 +184,7 @@ fn derive_from_event(current: &Value, event: &Value, suppress_unseen: bool) -> D
     }
 }
 
-fn is_agent_output_event_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "response"
-            | "task_done"
-            | "task_failed"
-            | "needs_input"
-            | "blocked"
-            | "interrupted"
-            | "notify"
-            | "status"
-    )
-}
+use crate::session_recency::is_agent_output_event_kind;
 
 fn increment_unseen(current: i64, suppress_unseen: bool) -> i64 {
     if suppress_unseen {

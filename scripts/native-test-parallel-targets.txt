@@ -54,6 +54,7 @@ dashboard_processes
 dashboard_project_event_refresh_contract
 dashboard_project_events
 dashboard_readiness
+dashboard_recent_output_weight
 dashboard_service_input
 dashboard_session_details_contract
 dashboard_terminal

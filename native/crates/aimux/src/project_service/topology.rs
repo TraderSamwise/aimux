@@ -153,6 +153,11 @@ pub fn build_project_topology(project_name: &str, worktrees: Vec<Value>) -> Valu
                     .filter(|description| !description.is_empty()),
             );
             insert_optional_string(&mut row, "worktreePath", string_field(worktree, "path"));
+            // Carried, not recomputed: the topology screen renders the same
+            // agent as the dashboard row and claimed to read the same way.
+            if let Some(recent_output) = session.get("recentOutput").and_then(Value::as_bool) {
+                row.insert("recentOutput".into(), Value::Bool(recent_output));
+            }
             child_rows.push(Value::Object(row));
         }
         for service in array_field(worktree, "services") {

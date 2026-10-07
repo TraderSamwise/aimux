@@ -163,6 +163,10 @@ pub struct DashboardSession {
     pub last_output_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub became_idle_at: Option<String>,
+    /// Whether this agent produced output recently enough to stand out,
+    /// decided by the project service so every screen reads one answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_output: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_event: Option<DashboardSessionEvent>,
     #[serde(skip_serializing_if = "Option::is_none")]

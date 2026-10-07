@@ -25,6 +25,9 @@ use aimux::project_service::router::{
 };
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
 use aimux::project_service::tmux_metadata_sync::build_tmux_window_metadata;
+use aimux::project_service::topology::{
+    build_project_topology, build_topology_worktrees_from_desktop_state,
+};
 use aimux::project_service::visual_clients::ProjectHotSnapshotCoordinator;
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
@@ -2443,6 +2446,146 @@ fn the_expose_chip_words_an_agent_the_way_the_dashboard_row_does() {
         "the assigned agent must reach `next_step`; reached {compared:?}"
     );
     cleanup(project);
+}
+
+/// One session to override, the output stamp and latest event to give it, and
+/// whether the service should then call it alive and recently active.
+type RecentOutputCase<'a> = (
+    &'a str,
+    Option<&'a str>,
+    Option<(&'a str, &'a str)>,
+    bool,
+    bool,
+);
+
+/// Who gets the weight, decided once and rendered by two screens.
+///
+/// `lastOutputAt` is never cleared, so a dead agent carries the stamp it had
+/// when its window went away. And three copies of "which event kinds mean
+/// output" disagreed: the dashboard row counted anything that was not a
+/// prompt, while the writers of the stamp used an allowlist, so an event kind
+/// this build has not heard of was output on the row and not in the stamp.
+#[test]
+fn the_service_decides_who_produced_output_recently() {
+    let recent = iso_ms_ago(60 * 1000);
+    let stale = iso_ms_ago(2 * 60 * 60 * 1000);
+    let cases: &[RecentOutputCase<'_>] = &[
+        ("codex-live", Some(&recent), None, true, true),
+        ("codex-live", Some(&stale), None, true, false),
+        ("codex-live", None, None, true, false),
+        // Output known only from the latest event still counts as output.
+        ("codex-live", None, Some(("response", &recent)), true, true),
+        // And an event kind that is not output does not, whatever its stamp.
+        ("codex-live", None, Some(("prompt", &recent)), true, false),
+        // A stopped agent keeps the stamp and loses the weight.
+        ("codex-cold", Some(&recent), None, false, false),
+    ];
+
+    for (target, last_output_at, last_event, expect_alive, expect_recent) in cases {
+        let topology = topology_fixture();
+        let mut metadata = metadata_fixture();
+        let entry = metadata
+            .entry((*target).to_owned())
+            .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+        let derived = entry["derived"].as_object_mut().unwrap();
+        derived.remove("lastOutputAt");
+        derived.remove("lastEvent");
+        if let Some(stamp) = last_output_at {
+            derived.insert("lastOutputAt".into(), json!(stamp));
+        }
+        if let Some((kind, ts)) = last_event {
+            derived.insert("lastEvent".into(), json!({ "kind": kind, "ts": ts }));
+        }
+        let exchange = exchange_fixture();
+
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&support::live_windows(
+                "aimux-repo",
+                &["@1", "@2", "@3", "@4"],
+            )),
+        );
+        let session = state["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(state["teammates"].as_array().into_iter().flatten())
+            .find(|session| session["id"] == *target)
+            .unwrap_or_else(|| panic!("{target} is not on the dashboard"));
+        assert_eq!(
+            session["semantic"]["runtime"]["isAlive"], *expect_alive,
+            "{target} liveness"
+        );
+        assert_eq!(
+            session["recentOutput"], *expect_recent,
+            "recentOutput for {target} with {last_output_at:?} / {last_event:?}"
+        );
+
+        // The topology screen renders the same agent and says so in its own
+        // doc comment, but cannot see the stamp -- it has to be carried.
+        let topology_view =
+            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        match find_topology_agent_row(&topology_view, target) {
+            Some(row) => assert_eq!(
+                row["recentOutput"], *expect_recent,
+                "the topology row must carry the same answer for {target}"
+            ),
+            // The topology view lists live sessions only, so a stopped agent
+            // has no row to disagree on -- but a live one must never be
+            // missing, or the carry is unproven.
+            None => assert!(
+                !*expect_alive,
+                "{target} is live and on the dashboard but absent from the topology view"
+            ),
+        }
+    }
+}
+
+fn find_topology_agent_row(topology: &Value, session_id: &str) -> Option<Value> {
+    fn walk(value: &Value, session_id: &str, found: &mut Option<Value>) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, session_id, found);
+                }
+            }
+            Value::Object(map) => {
+                if map.get("kind").and_then(Value::as_str) == Some("agent")
+                    && map.get("sessionId").and_then(Value::as_str) == Some(session_id)
+                {
+                    *found = Some(value.clone());
+                    return;
+                }
+                for nested in map.values() {
+                    walk(nested, session_id, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = None;
+    walk(topology, session_id, &mut found);
+    found
+}
+
+fn iso_ms_ago(ms: u128) -> String {
+    let now = time::OffsetDateTime::now_utc()
+        - time::Duration::milliseconds(i64::try_from(ms).expect("offset fits"));
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond()
+    )
 }
 
 /// One session to override, and what to give it. `None` REMOVES the fixture's

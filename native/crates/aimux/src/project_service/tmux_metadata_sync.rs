@@ -387,19 +387,7 @@ fn should_apply_policy(window_id: &str) -> bool {
     applied.insert(window_id.to_owned())
 }
 
-fn is_agent_output_event_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "response"
-            | "task_done"
-            | "task_failed"
-            | "needs_input"
-            | "blocked"
-            | "interrupted"
-            | "notify"
-            | "status"
-    )
-}
+use crate::session_recency::is_agent_output_event_kind;
 
 fn object_mut(value: &mut Value) -> &mut Map<String, Value> {
     match value {
