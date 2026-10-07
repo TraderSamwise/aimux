@@ -100,16 +100,6 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
                 // scrambled, but nothing was left behind. Each row erases only
                 // itself now, so a wrapped row would leave the tail of the last
                 // frame below it.
-                // Only when it really is too wide: `truncate_ansi` appends a
-                // reset whether or not it cut anything, and these rows are
-                // compared byte for byte against the frames Node drew.
-                .map(|line| {
-                    if visible_width(&line) > cols {
-                        truncate_ansi(&line, cols)
-                    } else {
-                        line
-                    }
-                })
                 .collect()
         } else {
             visible
@@ -130,7 +120,10 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
         // screen is ever blank: a row goes straight from the old content to the
         // new. There is nothing to erase below, because the body is padded to
         // the viewport and header + body + footer is exactly `rows`.
-        frame: compose_rows(input.header.iter().chain(body.iter()).chain(footer.iter())),
+        frame: compose_rows(
+            input.header.iter().chain(body.iter()).chain(footer.iter()),
+            cols,
+        ),
         scroll_offset,
     }
 }
@@ -167,30 +160,40 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
 pub const SYNCHRONIZED_BEGIN: &str = "\x1b[?2026h";
 pub const SYNCHRONIZED_END: &str = "\x1b[?2026l";
 
-/// A composed frame split into its rows and whatever closes it.
+/// A composed frame's rows, with its synchronized wrapper taken off.
 ///
-/// So an overlay can be added INSIDE the synchronized update rather than after
-/// it. Returns the whole frame as the rows and an empty trailer if the markers
-/// are not where they are expected, which keeps a caller from silently losing
-/// the frame if this ever stops being how frames are built.
-pub fn split_synchronized_frame(frame: &str) -> (&str, &str) {
-    match frame
+/// So an overlay can be added INSIDE the update rather than after it. A frame
+/// that does not carry the markers is returned whole, and the caller wraps it
+/// either way -- an earlier version returned an empty trailer for that case,
+/// which had the caller open a synchronized update it never closed. A terminal
+/// left inside one stops painting.
+pub fn unwrap_synchronized_frame(frame: &str) -> &str {
+    frame
         .strip_prefix(SYNCHRONIZED_BEGIN)
         .and_then(|rest| rest.strip_suffix(SYNCHRONIZED_END))
-    {
-        Some(rows) => (rows, SYNCHRONIZED_END),
-        None => (frame, ""),
-    }
+        .unwrap_or(frame)
 }
 
-fn compose_rows<'a>(rows: impl Iterator<Item = &'a String>) -> String {
+fn compose_rows<'a>(rows: impl Iterator<Item = &'a String>, cols: usize) -> String {
     let mut frame = String::from("\x1b[?2026h\x1b[H");
     for (index, row) in rows.enumerate() {
         if index > 0 {
             frame.push_str("\r\n");
         }
         frame.push_str("\x1b[m\x1b[K");
-        frame.push_str(row);
+        // Every row, not only the two-pane body. `center` pads to
+        // `72.max(cols)` and only ever pads, so under 72 columns the header
+        // title, the plain content rows and the footer hints all arrive wider
+        // than the screen. Each one wraps, shifts every row after it, and --
+        // now that a row erases only itself -- orphans the tail of the last
+        // frame below it. Only when it really is too wide: `truncate_ansi`
+        // appends a reset whether or not it cut anything, and these rows are
+        // compared byte for byte against the frames Node drew.
+        if visible_width(row) > cols {
+            frame.push_str(&truncate_ansi(row, cols));
+        } else {
+            frame.push_str(row);
+        }
     }
     frame.push_str("\x1b[?2026l");
     frame

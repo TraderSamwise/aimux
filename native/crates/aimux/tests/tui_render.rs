@@ -281,15 +281,72 @@ fn a_narrow_terminal_gets_rows_that_fit_it() {
         right_panel: Some(&right),
     });
 
-    for (index, row) in strip_terminal_control(&result.frame)
-        .split("\r\n")
-        .enumerate()
-    {
+    assert_rows_fit(&result.frame, 40);
+
+    // And the plain path, which has no two-pane composer in front of it: the
+    // header title and the footer hints go through `center`, which pads to
+    // `72.max(cols)` and only ever pads. An earlier version of this fix
+    // truncated only the two-pane body, so these three row sources still came
+    // through wider than the screen.
+    let wide_header = vec!["a header line that is far wider than forty columns".to_owned()];
+    let wide_footer =
+        vec!["↑↓ select  Tab details  d/c/p/L/t/g screens  Esc dashboard  q quit".to_owned()];
+    let wide_content = vec!["a content row that is also far wider than forty columns".to_owned()];
+    let plain = compose_screen_frame(&ScreenFrameInput {
+        cols: 40,
+        rows: 8,
+        header: &wide_header,
+        content: &wide_content,
+        footer_lines: &wide_footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: false,
+        right_panel: None,
+    });
+    assert_rows_fit(&plain.frame, 40);
+}
+
+/// Every CSI sequence, not only the colours, and nothing swallowed wholesale.
+///
+/// `strip_ansi` is deliberately SGR-only -- it measures how wide a styled
+/// string is, and those strings carry nothing else -- so a composed frame's
+/// `\x1b[H` and `\x1b[m\x1b[K` counted as visible characters under it. This is
+/// the one that knows about the rest, and it had no test of its own: the only
+/// finals it ever sees in practice are `h`, `l`, `H`, `m` and `K`.
+#[test]
+fn stripping_terminal_control_leaves_only_what_is_drawn() {
+    assert_eq!(
+        strip_terminal_control("\x1b[?2026h\x1b[H\x1b[m\x1b[Krow\x1b[?2026l"),
+        "row"
+    );
+    // Private, intermediate and the far ends of the final-byte range.
+    assert_eq!(strip_terminal_control("a\x1b[>4;2mb"), "ab");
+    assert_eq!(strip_terminal_control("a\x1b[1 qb"), "ab");
+    assert_eq!(strip_terminal_control("a\x1b[@b\x1b[~c"), "abc");
+    // A sequence cut in half, which `truncate_ansi` can produce. The bare ESC
+    // and `[` are not two characters of width.
+    assert_eq!(strip_terminal_control("row\x1b["), "row");
+    assert_eq!(strip_terminal_control("row\x1b[38;5"), "row");
+    // Not a CSI at all: left alone rather than guessed at.
+    assert_eq!(strip_terminal_control("row\x1bOP"), "row\x1bOP");
+    // A byte outside every allowed range ends the sequence without consuming
+    // the text after it.
+    assert_eq!(
+        strip_terminal_control("a\x1b[1\u{00e9}b"),
+        "a\x1b[1\u{00e9}b"
+    );
+}
+
+fn assert_rows_fit(frame: &str, cols: usize) {
+    for (index, row) in strip_terminal_control(frame).split("\r\n").enumerate() {
         assert!(
-            visible_width(row) <= 40,
-            "row {} is {} wide in a 40 column terminal and will wrap: {:?}",
+            visible_width(row) <= cols,
+            "row {} is {} wide in a {} column terminal and will wrap, shifting \
+             every row after it and orphaning the last frame's tail below it: \
+             {:?}",
             index + 1,
             visible_width(row),
+            cols,
             strip_ansi(row)
         );
     }

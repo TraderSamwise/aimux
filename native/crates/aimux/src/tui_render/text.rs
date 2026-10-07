@@ -55,7 +55,14 @@ fn csi_end(bytes: &[u8], start: usize) -> Option<usize> {
     while matches!(bytes.get(end), Some(0x20..=0x2f)) {
         end += 1;
     }
-    matches!(bytes.get(end), Some(0x40..=0x7e)).then_some(end + 1)
+    match bytes.get(end) {
+        Some(0x40..=0x7e) => Some(end + 1),
+        // A sequence that never finished. `truncate_ansi` can cut one in half,
+        // and emitting the bare ESC and `[` as text would count two characters
+        // of width that nothing draws.
+        None => Some(bytes.len()),
+        _ => None,
+    }
 }
 
 pub fn strip_ansi(text: &str) -> String {
