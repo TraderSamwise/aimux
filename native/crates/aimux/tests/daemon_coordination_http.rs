@@ -856,7 +856,7 @@ fn loop_routes_round_trip_through_daemon_http_to_project_service() {
     assert_eq!(listed.status, 200);
     let listed_text = text_body(&listed);
     assert!(listed_text.contains("Loop agents:\n"));
-    assert!(listed_text.contains("claude-1  [claude]  running  {loop:ship the slice}"));
+    assert!(listed_text.contains("claude-1  [claude]  ready  {loop:ship the slice}"));
     assert!(!listed_text.contains("codex-1"));
 
     let added = handle_daemon_runtime_request(

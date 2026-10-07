@@ -156,66 +156,40 @@ fn workflow_pressure(
     }
 }
 
-/// The one question every surface was asking in its own words: is this agent
-/// waiting on ME, still working, finished, or not running?
-///
-/// `user.label` could not answer it. That is one fourteen-value enum mixing
-/// liveness (`offline`, `starting`), turn (`working`, `done`) and ask
-/// (`needs_input`, `blocked`), so six call sites re-bucketed it by hand and
-/// `aimux ps` skipped it entirely and printed the three raw axes instead --
-/// which is how a session reads `offline done/normal`.
-///
-/// Two rules carry the whole thing:
-///
-/// An ask OUTLIVES the process. An agent that stopped while waiting on you is
-/// still waiting on you, and the answer says so -- `user.label` collapses an
-/// offline session to `offline` with attention `none`, so "it died asking me
-/// something" was lost on every surface, not just `ps`.
-///
-/// Nothing that is not running can be WORKING. `activity` is written by the
-/// agent and nothing rewrites it when the window dies, so a crashed agent's
-/// last word stays `running` forever. Liveness decides, and a stored
-/// `running` on a dead session reads as stopped mid-turn, not as work in
-/// progress.
-pub fn agent_disposition(
-    status: &str,
+/// `ps` printed the three raw axes, so a session whose window had died read
+/// `offline  done/normal`. It now answers with the published label every
+/// other surface renders, derived by this same call rather than its own rule.
+pub fn agent_one_answer(
+    status: Option<&str>,
+    pending_action: Option<&str>,
     activity: Option<&str>,
     attention: Option<&str>,
-) -> &'static str {
-    let activity = activity.unwrap_or("");
-    let attention = attention.unwrap_or("");
-    // `waiting` is the client-narrowed spelling of a live session that is
-    // asking. Leaving it out of the live set sent exactly the sessions this
-    // exists for -- a live agent waiting on you -- down the dead branch and
-    // reported them `not_running`.
-    let live = crate::project_service::session_visibility::LIVE_SESSION_STATUSES.contains(&status)
-        || status == "waiting";
-    if attention == "error" || activity == "error" {
-        return "failed";
-    }
-    // An ask outlives the process; a removal does not leave one behind.
-    if matches!(attention, "needs_input" | "needs_response" | "blocked") && status != "graveyard" {
-        return "waiting_on_user";
-    }
-    if !live {
-        return match activity {
-            // `interrupted` is not `done`; `user_state` keeps them apart and
-            // so does this. A graveyarded agent is removed, not finished.
-            _ if status == "graveyard" => "not_running",
-            "done" => "finished",
-            "interrupted" => "interrupted",
-            _ => "not_running",
-        };
-    }
-    match activity {
-        "running" | "waiting" => "working",
-        "done" => "finished",
-        "interrupted" => "interrupted",
-        // A live session with nothing recorded still has an answer: it is up
-        // and not doing anything. Returning nothing left `ps` printing no
-        // state word at all, which is the question going unanswered.
-        "" | "idle" if status == "running" || status == "waiting" => "ready",
-        _ => "idle",
+) -> String {
+    let semantic = derive_session_semantics(SessionSemanticsInput {
+        status: normalized_session_status(status).to_owned(),
+        pending_action: pending_action.map(str::to_owned),
+        activity: activity.map(str::to_owned),
+        attention: attention.map(str::to_owned),
+        ..Default::default()
+    });
+    semantic
+        .get("user")
+        .and_then(|user| user.get("label"))
+        .and_then(Value::as_str)
+        .unwrap_or("idle")
+        .to_owned()
+}
+
+/// Raw topology statuses narrowed to the four the derivation is written
+/// against. Feeding it raw `starting` made `ps` answer `idle` for the same
+/// agent every other surface called working.
+pub fn normalized_session_status(status: Option<&str>) -> &'static str {
+    match status {
+        Some("running") => "running",
+        Some("idle") => "idle",
+        Some("starting") => "waiting",
+        Some("offline") => "offline",
+        _ => "offline",
     }
 }
 
@@ -224,17 +198,6 @@ fn user_state(input: &SessionSemanticsInput, lifecycle: &str, attention: &str) -
         "creating" | "starting" => user("starting", "none", "runtime", None),
         "stopping" => user("stopping", "none", "runtime", None),
         "graveyarding" => user("graveyarding", "none", "runtime", None),
-        // Not a blanket `offline`. An agent that stopped while waiting on you
-        // is still waiting on you, and collapsing that to `offline` with
-        // attention `none` lost "it died asking me something" on every
-        // surface -- which is why `ps` and the TUI could disagree about the
-        // same session.
-        "offline" if matches!(attention, "needs_input" | "needs_response" | "blocked") => user(
-            attention,
-            attention,
-            "tool",
-            Some("stopped while waiting on you"),
-        ),
         "offline" => user("offline", "none", "runtime", None),
         _ if attention == "error" || input.activity.as_deref() == Some("error") => {
             user("error", "error", "tool", None)

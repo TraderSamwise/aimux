@@ -544,12 +544,6 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
         let id = field(agent, "id").and_then(Value::as_str).unwrap_or("?");
         let tool = field(agent, "tool").and_then(Value::as_str).unwrap_or("?");
         let role = field(agent, "role").and_then(Value::as_str).unwrap_or("");
-        let status = field(agent, "status")
-            .and_then(Value::as_str)
-            .unwrap_or("?");
-        let attention = field(agent, "attention")
-            .and_then(Value::as_str)
-            .unwrap_or("");
         let loop_value = object(agent, "loop");
         let task = object(agent, "task");
         let mut tags = Vec::new();
@@ -573,32 +567,16 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
                     .unwrap_or_default()
             ));
         }
-        let disposition = crate::project_service::session_semantics::agent_disposition(
-            status,
+        // One answer, one call. `ps` deriving its own was how the same agent
+        // read `idle` here and Working on the dashboard row.
+        let state = crate::project_service::session_semantics::agent_one_answer(
+            field(agent, "status").and_then(Value::as_str),
+            field(agent, "pendingAction").and_then(Value::as_str),
             field(agent, "activity").and_then(Value::as_str),
             field(agent, "attention").and_then(Value::as_str),
         );
-        // The derived answer replaces the two raw axes rather than joining
-        // them. `offline done/normal` printed a projected liveness beside a
-        // turn state nothing rewrote when the window died; only the ask is
-        // kept, because which ask it is still matters.
-        let state = [
-            disposition,
-            // Only when the derived answer IS the ask. Appending it on its own
-            // is the same two-sources mistake this replaced: a graveyarded
-            // agent carries a stale `needs_input` it is no longer asking.
-            if disposition == "waiting_on_user" {
-                attention
-            } else {
-                ""
-            },
-        ]
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
         output.push(format!(
-            "{id}{}  [{tool}{}]  {status}{}{}",
+            "{id}{}  [{tool}{}]  {state}{}",
             agent_chosen_name(agent)
                 .map(|name| format!("  \"{name}\""))
                 .unwrap_or_default(),
@@ -606,11 +584,6 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
                 "".into()
             } else {
                 format!(":{role}")
-            },
-            if state.is_empty() {
-                "".into()
-            } else {
-                format!("  {state}")
             },
             if tags.is_empty() {
                 "".into()
@@ -742,12 +715,14 @@ fn render_agent_list_summary(agent: &Value) -> String {
         tags.push(format!("loop{goal}"));
     }
 
-    let state = ["activity", "attention"]
-        .into_iter()
-        .filter_map(|key| field(agent, key).and_then(Value::as_str))
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
+    // The same one answer `ps` prints. This printed `activity/attention` raw,
+    // so a dead agent listed `state=running/normal`.
+    let state = crate::project_service::session_semantics::agent_one_answer(
+        field(agent, "status").and_then(Value::as_str),
+        field(agent, "pendingAction").and_then(Value::as_str),
+        field(agent, "activity").and_then(Value::as_str),
+        field(agent, "attention").and_then(Value::as_str),
+    );
     let mut detail = vec![
         format!("canonical={}", agent_canonical_id(agent)),
         format!("aimux={}", js_string_or_undefined(field(agent, "id"))),

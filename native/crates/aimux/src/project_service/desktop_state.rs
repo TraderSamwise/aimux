@@ -38,7 +38,9 @@ use super::preview_snapshots::{
 };
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
-use super::session_semantics::{SessionSemanticsInput, derive_session_semantics};
+use super::session_semantics::{
+    SessionSemanticsInput, derive_session_semantics, normalized_session_status,
+};
 use super::session_visibility::{
     AgentVisibilityInput, AgentVisibilityRule, LIVE_SESSION_STATUSES,
     session_is_in_supervisor_plane,
@@ -956,7 +958,7 @@ fn dashboard_session(
     let id = string_field(session, "id").unwrap_or("");
     let metadata = metadata_sessions.get(id);
     let pending_action = string_field(session, "pendingAction").map(str::to_owned);
-    let raw_status = dashboard_session_status(string_field(session, "status"));
+    let raw_status = normalized_session_status(string_field(session, "status"));
     let mut item = Map::new();
     insert_string(&mut item, "id", id);
     insert_optional(&mut item, "command", string_field(session, "command"));
@@ -1998,16 +2000,6 @@ fn sort_worktrees(worktrees: &mut Vec<Value>, project_root: &str, root_identity:
             .then_with(|| dashboard_created_sort_key(right).cmp(&dashboard_created_sort_key(left)))
     });
     worktrees.extend(decorated.into_iter().map(|(_, worktree)| worktree));
-}
-
-fn dashboard_session_status(status: Option<&str>) -> &'static str {
-    match status {
-        Some("running") => "running",
-        Some("idle") => "idle",
-        Some("starting") => "waiting",
-        Some("offline") => "offline",
-        _ => "offline",
-    }
 }
 
 fn dashboard_service_status(status: Option<&str>) -> &'static str {
