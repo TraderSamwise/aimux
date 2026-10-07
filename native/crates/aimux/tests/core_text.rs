@@ -1,4 +1,7 @@
 use aimux::core_text::*;
+use aimux::project_service::session_semantics::{
+    SessionSemanticsInput, agent_disposition, derive_session_semantics,
+};
 use serde_json::json;
 
 #[test]
@@ -118,6 +121,75 @@ fn ps_says_which_of_working_waiting_or_finished_an_agent_is() {
         line(json!({ "id": "a", "tool": "codex", "status": "offline", "activity": "done" })),
         "a  [codex]  offline  finished"
     );
+
+    // `waiting` is the client-narrowed spelling of a LIVE session that is
+    // asking. Treating it as not-live reported the very sessions this exists
+    // for as `not_running`.
+    assert_eq!(
+        line(json!({
+            "id": "a", "tool": "codex", "status": "waiting", "attention": "needs_input"
+        })),
+        "a  [codex]  waiting  waiting_on_user/needs_input",
+        "a live agent asking must not read as stopped"
+    );
+    // The case that actually reaches the liveness branch: `waiting` with no
+    // outstanding ask. Without `waiting` in the live set this reported
+    // `not_running` for a session that is up and working.
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "status": "waiting", "activity": "running" })),
+        "a  [codex]  waiting  working",
+        "a live agent is working whichever spelling of live it carries"
+    );
+    // A live session with nothing recorded still has an answer.
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "status": "running" })),
+        "a  [codex]  running  ready",
+        "a live agent with no recorded turn is up and not busy, not blank"
+    );
+    // `interrupted` is not `done`.
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "status": "offline", "activity": "interrupted" })),
+        "a  [codex]  offline  interrupted"
+    );
+    // A removed agent is not finished, and is not still asking.
+    assert_eq!(
+        line(json!({
+            "id": "a", "tool": "codex", "status": "graveyard",
+            "activity": "done", "attention": "needs_input"
+        })),
+        "a  [codex]  graveyard  not_running",
+        "a removed agent is neither finished nor waiting on you"
+    );
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "status": "running", "activity": "error" })),
+        "a  [codex]  running  failed"
+    );
+}
+
+#[test]
+fn ps_and_the_derived_surfaces_agree_about_an_agent_that_died_asking() {
+    // AGENTS.md "One Answer, Many Surfaces". `ps` reads `agent_disposition`
+    // and every other surface reads `semantic.user.label`; if those two
+    // disagree the fix has moved the lie rather than removed it. The case
+    // that disagreed: an offline session with an outstanding ask, which
+    // `user_state` collapsed to plain `offline` with attention `none`.
+    let semantic = derive_session_semantics(SessionSemanticsInput {
+        status: "offline".into(),
+        activity: Some("waiting".into()),
+        attention: Some("needs_input".into()),
+        ..Default::default()
+    });
+
+    assert_eq!(
+        semantic["user"]["label"], "needs_input",
+        "the derived surfaces must keep the ask an offline agent left behind"
+    );
+    assert_eq!(semantic["user"]["attention"], "needs_input");
+    assert_eq!(
+        agent_disposition("offline", Some("waiting"), Some("needs_input")),
+        "waiting_on_user",
+        "and ps must say the same thing"
+    );
 }
 
 #[test]
@@ -141,8 +213,8 @@ fn renders_agent_and_team_details() {
             { "id": "codex-ho1ofa", "tool": "codex", "label": "codex-ho1ofa", "status": "running" },
         ] })),
         vec![
-            "codex-1  \"Review lane\"  [codex]  running",
-            "codex-ho1ofa  [codex]  running",
+            "codex-1  \"Review lane\"  [codex]  running  ready",
+            "codex-ho1ofa  [codex]  running  ready",
         ],
         "a chosen name is printed and a generated label is not presented as one"
     );

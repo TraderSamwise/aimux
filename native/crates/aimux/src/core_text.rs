@@ -547,9 +547,6 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
         let status = field(agent, "status")
             .and_then(Value::as_str)
             .unwrap_or("?");
-        let activity = field(agent, "activity")
-            .and_then(Value::as_str)
-            .unwrap_or("");
         let attention = field(agent, "attention")
             .and_then(Value::as_str)
             .unwrap_or("");
@@ -576,10 +573,6 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
                     .unwrap_or_default()
             ));
         }
-        // The three axes used to be printed side by side and disagreed:
-        // `offline done/normal` is a projected liveness next to a turn state
-        // nothing rewrote when the window died. One derived answer leads, and
-        // the raw axes follow it for the detail they still carry.
         let disposition = crate::project_service::session_semantics::agent_disposition(
             status,
             field(agent, "activity").and_then(Value::as_str),
@@ -587,20 +580,23 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
         );
         // The derived answer replaces the two raw axes rather than joining
         // them. `offline done/normal` printed a projected liveness beside a
-        // turn state nothing rewrote when the window died; the ask is kept
-        // because which ask it is still matters.
+        // turn state nothing rewrote when the window died; only the ask is
+        // kept, because which ask it is still matters.
         let state = [
             disposition,
-            match attention {
-                "needs_input" | "needs_response" | "blocked" => attention,
-                _ => "",
+            // Only when the derived answer IS the ask. Appending it on its own
+            // is the same two-sources mistake this replaced: a graveyarded
+            // agent carries a stale `needs_input` it is no longer asking.
+            if disposition == "waiting_on_user" {
+                attention
+            } else {
+                ""
             },
         ]
         .into_iter()
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join("/");
-        let _ = activity;
         output.push(format!(
             "{id}{}  [{tool}{}]  {status}{}{}",
             agent_chosen_name(agent)

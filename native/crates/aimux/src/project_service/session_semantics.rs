@@ -184,25 +184,37 @@ pub fn agent_disposition(
 ) -> &'static str {
     let activity = activity.unwrap_or("");
     let attention = attention.unwrap_or("");
+    // `waiting` is the client-narrowed spelling of a live session that is
+    // asking. Leaving it out of the live set sent exactly the sessions this
+    // exists for -- a live agent waiting on you -- down the dead branch and
+    // reported them `not_running`.
+    let live = crate::project_service::session_visibility::LIVE_SESSION_STATUSES.contains(&status)
+        || status == "waiting";
     if attention == "error" || activity == "error" {
         return "failed";
     }
-    if matches!(attention, "needs_input" | "needs_response" | "blocked") {
+    // An ask outlives the process; a removal does not leave one behind.
+    if matches!(attention, "needs_input" | "needs_response" | "blocked") && status != "graveyard" {
         return "waiting_on_user";
     }
-    if !crate::project_service::session_visibility::LIVE_SESSION_STATUSES.contains(&status) {
+    if !live {
         return match activity {
-            "done" | "interrupted" => "finished",
+            // `interrupted` is not `done`; `user_state` keeps them apart and
+            // so does this. A graveyarded agent is removed, not finished.
+            _ if status == "graveyard" => "not_running",
+            "done" => "finished",
+            "interrupted" => "interrupted",
             _ => "not_running",
         };
     }
     match activity {
         "running" | "waiting" => "working",
         "done" => "finished",
-        _ if status == "waiting" => "working",
-        // A live session with nothing recorded has no turn state yet, and
-        // "idle" would be a confident answer built from absent data.
-        "" => "",
+        "interrupted" => "interrupted",
+        // A live session with nothing recorded still has an answer: it is up
+        // and not doing anything. Returning nothing left `ps` printing no
+        // state word at all, which is the question going unanswered.
+        "" | "idle" if status == "running" || status == "waiting" => "ready",
         _ => "idle",
     }
 }
@@ -212,6 +224,17 @@ fn user_state(input: &SessionSemanticsInput, lifecycle: &str, attention: &str) -
         "creating" | "starting" => user("starting", "none", "runtime", None),
         "stopping" => user("stopping", "none", "runtime", None),
         "graveyarding" => user("graveyarding", "none", "runtime", None),
+        // Not a blanket `offline`. An agent that stopped while waiting on you
+        // is still waiting on you, and collapsing that to `offline` with
+        // attention `none` lost "it died asking me something" on every
+        // surface -- which is why `ps` and the TUI could disagree about the
+        // same session.
+        "offline" if matches!(attention, "needs_input" | "needs_response" | "blocked") => user(
+            attention,
+            attention,
+            "tool",
+            Some("stopped while waiting on you"),
+        ),
         "offline" => user("offline", "none", "runtime", None),
         _ if attention == "error" || input.activity.as_deref() == Some("error") => {
             user("error", "error", "tool", None)
