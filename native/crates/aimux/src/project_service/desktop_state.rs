@@ -2333,6 +2333,11 @@ fn worktree_lookup_by_identity(worktrees: &[Value]) -> BTreeMap<String, Value> {
 ///
 /// The same rule `item_matches_worktree_group` applied, asked once per item
 /// rather than once per item per group.
+/// `pub` for the reaper, which has to key a row the same way the groups do.
+pub fn item_worktree_group_key_for(item: &Value) -> Option<String> {
+    item_worktree_group_key(item)
+}
+
 fn item_worktree_group_key(item: &Value) -> Option<String> {
     let lane = agent_lane(Some(item));
     let lane_path = lane

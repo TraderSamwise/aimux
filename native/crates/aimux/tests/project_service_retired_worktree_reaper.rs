@@ -11,7 +11,10 @@ use aimux::project_service::retired_worktree_reaper::stranded_agent_ids;
 use aimux::runtime_topology::coerce_runtime_topology;
 use serde_json::{Value, json};
 
+/// The agents stopped before the worktree was retired, which is the shape a
+/// retirement actually leaves behind.
 const NOW: &str = "2026-10-07T00:00:00.000Z";
+const RETIRED_AT: &str = "2026-10-07T01:00:00.000Z";
 
 fn topology(sessions: Value, worktree_status: &str) -> Value {
     coerce_runtime_topology(&json!({
@@ -26,7 +29,7 @@ fn topology(sessions: Value, worktree_status: &str) -> Value {
         "sessions": sessions,
         "services": [],
         "worktrees": [
-            { "id": "wt-perf", "rigId": "rig-1", "path": "/repo/.aimux/worktrees/perf", "name": "perf", "status": worktree_status, "branch": "perf", "createdAt": NOW, "updatedAt": NOW }
+            { "id": "wt-perf", "rigId": "rig-1", "path": "/repo/.aimux/worktrees/perf", "name": "perf", "status": worktree_status, "branch": "perf", "createdAt": NOW, "updatedAt": RETIRED_AT, "removedAt": RETIRED_AT }
         ],
         "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
         "lifecycleOperations": [], "exchangeRefs": []
@@ -88,6 +91,35 @@ fn an_agent_already_in_the_graveyard_is_not_reaped_again() {
         json!([{ "id": "codex-cold", "nodeId": "node-cold", "status": "graveyard", "graveyardReason": "done", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/perf", "createdAt": NOW, "updatedAt": NOW }]),
         "graveyard",
     );
+
+    assert!(stranded_agent_ids(&topology).is_empty());
+}
+
+/// `graveyard.agent.resurrect` deliberately allows bringing an agent back into
+/// a worktree that is still graveyarded, setting it `offline` with a fresh
+/// `updatedAt`. Reaping on presence alone sent it straight back two minutes
+/// later, every time, with no message -- the user's own action undone on a
+/// timer.
+#[test]
+fn an_agent_resurrected_since_the_retirement_is_left_alone() {
+    let topology = topology(
+        json!([{ "id": "codex-cold", "nodeId": "node-cold", "status": "offline", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/perf", "createdAt": NOW, "updatedAt": "2026-10-07T02:00:00.000Z" }]),
+        "graveyard",
+    );
+
+    assert!(stranded_agent_ids(&topology).is_empty());
+}
+
+/// Not knowing when a row was last touched is not evidence that nobody has.
+/// Every row `route_worktree_graveyard` writes carries `removedAt`; one that
+/// does not came from somewhere else, and is left where it is.
+#[test]
+fn a_retirement_with_no_timestamp_reaps_nothing() {
+    let mut topology = topology(json!([cold()]), "graveyard");
+    topology["worktrees"][0]
+        .as_object_mut()
+        .expect("worktree row")
+        .remove("removedAt");
 
     assert!(stranded_agent_ids(&topology).is_empty());
 }

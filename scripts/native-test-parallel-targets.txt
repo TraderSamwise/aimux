@@ -115,6 +115,7 @@ project_service_shell_state
 project_service_team
 project_service_topology
 project_service_usage
+project_service_retired_worktree_reaper
 project_service_window_reconciliation
 project_service_work_outline
 project_service_worktrees
