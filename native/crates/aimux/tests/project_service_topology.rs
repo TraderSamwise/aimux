@@ -233,3 +233,56 @@ fn temp_project(label: &str) -> PathBuf {
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
 }
+
+/// Absent is carried as absent.
+///
+/// The row's weight reads `recentOutput != Some(false)`, so turning an
+/// unanswered question into `false` would draw a plain name on this screen for
+/// an agent the dashboard draws bold.
+#[test]
+fn an_unanswered_question_is_not_carried_as_a_no() {
+    let worktrees = vec![serde_json::json!({
+        "name": "feature-a",
+        "path": "/repo/.aimux/worktrees/feature-a",
+        "status": "active",
+        "sessions": [
+            { "id": "codex-1", "command": "codex", "status": "running", "label": "Coder" }
+        ],
+        "services": []
+    })];
+    let topology = aimux::project_service::topology::build_project_topology("repo", worktrees);
+    let row = find_rows(&topology)
+        .into_iter()
+        .find(|row| row["sessionId"] == "codex-1")
+        .expect("the agent has a row");
+    assert!(
+        row.get("recentOutput").is_none(),
+        "a session with no published answer must not be carried as a quiet \
+         one: {row}"
+    );
+}
+
+fn find_rows(topology: &serde_json::Value) -> Vec<serde_json::Value> {
+    fn walk(value: &serde_json::Value, out: &mut Vec<serde_json::Value>) {
+        match value {
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    walk(item, out);
+                }
+            }
+            serde_json::Value::Object(map) => {
+                if map.contains_key("kind") && map.contains_key("depth") {
+                    out.push(value.clone());
+                    return;
+                }
+                for nested in map.values() {
+                    walk(nested, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(topology, &mut out);
+    out
+}

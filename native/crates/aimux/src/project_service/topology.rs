@@ -101,6 +101,20 @@ pub fn build_topology_worktrees_from_desktop_state(state: &Value) -> Vec<Value> 
                     ),
                 );
             }
+            // Carried from the card's own group, which folded it over the
+            // sessions the card renders. The list assembled here includes
+            // teammates the card never holds, so folding it would answer a
+            // different question.
+            if let Some(recent_output) = array_field(state, "worktreeGroups")
+                .iter()
+                .find(|group| {
+                    string_field(group, "path") == worktree_path
+                        || (worktree_path.is_none() && group.get("path").is_none())
+                })
+                .and_then(|group| group.get("recentOutput"))
+            {
+                next.insert("recentOutput".into(), recent_output.clone());
+            }
             next.insert("sessions".into(), Value::Array(worktree_sessions));
             next.insert("services".into(), Value::Array(worktree_services));
             Value::Object(next)
@@ -217,23 +231,12 @@ pub fn build_project_topology(project_name: &str, worktrees: Vec<Value>) -> Valu
         insert_optional_string(&mut row, "worktreePath", string_field(worktree, "path"));
         // Folded from the agents the checkout holds, the same way the
         // dashboard card decides it: no agents is no answer, not a quiet one.
-        // Folded from the sessions, not the rows: a row carries no team
-        // flags, and `dashboard_navigation` leaves project-control sessions
-        // out of the card's own fold -- so folding them here gave the same
-        // checkout a bold title on one screen and a plain one on the other.
-        let folded = array_field(worktree, "sessions")
-            .iter()
-            .filter(|session| !crate::team_contract::is_project_control_session(Some(session)))
-            .collect::<Vec<_>>();
-        row.insert(
-            "recentOutput".into(),
-            Value::Bool(
-                folded.is_empty()
-                    || folded.iter().any(|session| {
-                        session.get("recentOutput").and_then(Value::as_bool) != Some(false)
-                    }),
-            ),
-        );
+        // Carried, never folded again. Two folds over two slightly different
+        // session lists is how the same checkout came to read bold on one
+        // screen and plain on the other.
+        if let Some(recent_output) = worktree.get("recentOutput") {
+            row.insert("recentOutput".into(), recent_output.clone());
+        }
         rows.push(Value::Object(row));
         rows.extend(child_rows);
     }

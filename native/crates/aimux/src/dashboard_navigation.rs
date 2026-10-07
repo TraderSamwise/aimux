@@ -37,6 +37,10 @@ pub struct DashboardNavigationGroup<'a> {
     pub removing: bool,
     /// The worktree's directory is gone, as the project service found it.
     pub path_missing: bool,
+    /// The project service's answer about recent agent output in this
+    /// checkout. Rendered, never recomputed: folding it here read a list the
+    /// view had already filtered.
+    pub recent_output: Option<bool>,
     pub pending_action: Option<&'a str>,
     pub operation_failure: Option<&'a DashboardOperationFailure>,
     pub sessions: Vec<&'a DashboardSession>,
@@ -609,6 +613,7 @@ pub fn dashboard_navigation_groups<'a>(
             pending: false,
             removing: false,
             path_missing: false,
+            recent_output: None,
             pending_action: None,
             operation_failure: None,
             entries: navigation_entries(&supervisor_sessions, &[]),
@@ -678,6 +683,7 @@ pub fn dashboard_navigation_groups<'a>(
                 pending: main_group.pending,
                 removing: main_group.removing,
                 path_missing: main_group.path_missing,
+                recent_output: main_group.recent_output,
                 pending_action: main_group.pending_action.as_deref(),
                 operation_failure: main_group.operation_failure.as_ref(),
                 sessions,
@@ -695,6 +701,7 @@ pub fn dashboard_navigation_groups<'a>(
                 pending: false,
                 removing: false,
                 path_missing: false,
+                recent_output: None,
                 pending_action: None,
                 operation_failure: None,
                 sessions: main_sessions,
@@ -740,6 +747,7 @@ pub fn dashboard_navigation_groups<'a>(
                 pending: group.pending,
                 removing: group.removing,
                 path_missing: group.path_missing,
+                recent_output: group.recent_output,
                 pending_action: group.pending_action.as_deref(),
                 operation_failure: group.operation_failure.as_ref(),
                 sessions,
@@ -797,6 +805,7 @@ pub fn dashboard_navigation_groups<'a>(
                 // this path; the service never grouped it, so it has no verdict
                 // on the directory and this must not invent one.
                 path_missing: false,
+                recent_output: None,
                 pending_action: None,
                 operation_failure: None,
                 sessions,
@@ -842,6 +851,7 @@ struct NavigationWorktreeInput<'a> {
     pending: bool,
     removing: bool,
     path_missing: bool,
+    recent_output: Option<bool>,
     pending_action: Option<&'a str>,
     operation_failure: Option<&'a DashboardOperationFailure>,
     sessions: Vec<&'a DashboardSession>,
@@ -862,6 +872,7 @@ fn push_navigation_worktree<'a>(
         pending: input.pending,
         removing: input.removing,
         path_missing: input.path_missing,
+        recent_output: input.recent_output,
         pending_action: input.pending_action,
         operation_failure: input.operation_failure,
         entries: navigation_entries(&input.sessions, &input.services),

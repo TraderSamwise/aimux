@@ -3675,6 +3675,7 @@ mod tests {
             status: WorktreeStatus::Active,
             pending: false,
             removing: false,
+            recent_output: None,
             path_missing: false,
             pending_action: None,
             operation_failure: None,

@@ -27,9 +27,12 @@ struct Row {
     non_output_event: bool,
     /// Drop every agent from the checkout, leaving only its service rows.
     services_only: bool,
-    /// A second agent in the same checkout, so the card's fold over its
-    /// agents is actually exercised. Over one session `any`, `all` and
-    /// "ask the first one" are indistinguishable.
+    /// The checkout's own published answer. Folded by the project service
+    /// over the same sessions the card renders, and read here rather than
+    /// recomputed.
+    group_recent_output: Option<bool>,
+    /// A second agent in the same checkout, so the frame shows which of two
+    /// names carries the weight.
     second_recent_output: Option<Option<bool>>,
 }
 
@@ -49,6 +52,7 @@ fn frame(row: Row) -> String {
         .worktree_groups
         .first_mut()
         .expect("the fixture has a checkout");
+    group.recent_output = row.group_recent_output;
     if row.services_only {
         group.sessions.clear();
         snapshot.sessions.clear();
@@ -159,6 +163,7 @@ fn weight_follows_the_published_answer_and_nothing_else() {
     let bold = frame(Row {
         status: SessionStatus::Running,
         recent_output: Some(true),
+        group_recent_output: Some(true),
         non_output_event: false,
         second_recent_output: None,
         services_only: false,
@@ -176,6 +181,7 @@ fn weight_follows_the_published_answer_and_nothing_else() {
     let quiet = frame(Row {
         status: SessionStatus::Running,
         recent_output: Some(false),
+        group_recent_output: Some(false),
         non_output_event: false,
         second_recent_output: None,
         services_only: false,
@@ -186,11 +192,35 @@ fn weight_follows_the_published_answer_and_nothing_else() {
     );
     assert_eq!(title_is_bold(&quiet), Some(false), "nor its checkout");
 
+    // The card READS the checkout's answer; it does not fold its own list.
+    // Folding read a list the view had already filtered, and the topology
+    // screen folded a different one again. The two are made to disagree here
+    // on purpose: one quiet agent, and a checkout the service calls active.
+    let read_not_folded = frame(Row {
+        status: SessionStatus::Running,
+        recent_output: Some(false),
+        group_recent_output: Some(true),
+        non_output_event: false,
+        second_recent_output: None,
+        services_only: false,
+    });
+    assert_eq!(
+        title_is_bold(&read_not_folded),
+        Some(true),
+        "the title must follow the published checkout answer, not a fold of \
+         the rows this view happens to be showing"
+    );
+    assert!(
+        !name_is_bold(&read_not_folded),
+        "while the quiet agent in it stays plain"
+    );
+
     // A service too old to publish an answer has not said there is no output.
     // Every name was bold before this existed, so that is what absent means.
     let unknown = frame(Row {
         status: SessionStatus::Running,
         recent_output: None,
+        group_recent_output: None,
         non_output_event: false,
         second_recent_output: None,
         services_only: false,
@@ -205,20 +235,16 @@ fn weight_follows_the_published_answer_and_nothing_else() {
         "nor as a quiet checkout"
     );
 
-    // The card asks ALL of its agents, not just the first. With one session
-    // in the group, `any`, `all` and "ask the first" all pass.
+    // Which of two names carries the weight. The fold itself is the project
+    // service's, gated in `project_service_desktop_state`.
     let second_only = frame(Row {
         status: SessionStatus::Running,
         recent_output: Some(false),
+        group_recent_output: Some(true),
         non_output_event: false,
         second_recent_output: Some(Some(true)),
         services_only: false,
     });
-    assert_eq!(
-        title_is_bold(&second_only),
-        Some(true),
-        "a checkout whose SECOND agent just finished must still read heavier"
-    );
     assert!(
         !second_only.contains(&format!("\x1b[1m{NAME}\x1b[0m")),
         "and the quiet agent in it must stay plain"
@@ -231,6 +257,7 @@ fn weight_follows_the_published_answer_and_nothing_else() {
     let both_quiet = frame(Row {
         status: SessionStatus::Running,
         recent_output: Some(false),
+        group_recent_output: Some(false),
         non_output_event: false,
         second_recent_output: Some(Some(false)),
         services_only: false,
@@ -253,6 +280,7 @@ fn a_cancelled_task_is_not_the_agent_having_produced_output() {
     let frame = frame(Row {
         status: SessionStatus::Running,
         recent_output: Some(false),
+        group_recent_output: Some(false),
         non_output_event: true,
         services_only: false,
         second_recent_output: None,
@@ -279,6 +307,7 @@ fn a_checkout_with_no_agents_to_ask_is_not_a_quiet_one() {
     let frame = frame(Row {
         status: SessionStatus::Running,
         recent_output: Some(false),
+        group_recent_output: Some(true),
         non_output_event: false,
         services_only: true,
         second_recent_output: None,

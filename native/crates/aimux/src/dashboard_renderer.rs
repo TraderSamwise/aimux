@@ -1322,9 +1322,11 @@ fn has_recent_output(session: &DashboardSession) -> bool {
 }
 
 fn worktree_has_recent_output(worktree: &DashboardNavigationGroup<'_>) -> bool {
-    // No agents is no answer, not a quiet one. A checkout running only
-    // services would otherwise draw a plain title over bold service rows.
-    worktree.sessions.is_empty() || worktree.sessions.iter().copied().any(has_recent_output)
+    // Read, not folded. Folding `worktree.sessions` here read a list the view
+    // had already filtered: hiding offline agents emptied it and turned the
+    // title bold, and the topology screen folded a different list again.
+    // Absent is unknown, as it is for an agent.
+    worktree.recent_output != Some(false)
 }
 
 fn session_time_anchor(session: &DashboardSession) -> Option<(String, Option<&str>)> {

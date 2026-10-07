@@ -2583,64 +2583,169 @@ fn the_service_decides_who_produced_output_recently() {
     }
 }
 
-/// A checkout whose only agents are project-control sessions folds as "no
-/// agents" on the dashboard card, because `dashboard_navigation` leaves them
-/// out of the group. Folding them here instead gave the same checkout a bold
-/// title on one screen and a plain one on the other.
+/// One fold, over the sessions the card renders, published on the group.
+///
+/// It used to be folded twice: once in the renderer over `worktree.sessions`,
+/// which the VIEW had already filtered -- pressing `o` to hide offline agents
+/// emptied the list and turned the title bold -- and once in the topology
+/// builder over a list that also included teammates the card never sees. Same
+/// checkout, two weights, one frame.
 #[test]
-fn both_folds_leave_out_the_sessions_the_dashboard_card_leaves_out() {
-    let mut topology = topology_fixture();
-    // `boss` is the fixture's overseer, and it is the main checkout's only
-    // agent once the others are gone.
-    topology["sessions"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|session| session["id"] == "boss");
+fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
+    let recent = iso_ms_ago(60 * 1000);
+    let stale = iso_ms_ago(2 * 60 * 60 * 1000);
 
-    let mut metadata = metadata_fixture();
-    let entry = metadata
-        .entry("boss".to_owned())
-        .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
-    entry["derived"] = json!({ "lastOutputAt": iso_ms_ago(2 * 60 * 60 * 1000) });
-    let exchange = exchange_fixture();
+    let build = |stamps: Vec<(&str, &str)>, drop: Vec<&str>, teammate_of: Option<&str>| {
+        // `reviewer` is a teammate in the fixture, which is exactly the set
+        // the card leaves out -- so the plain two-agent cases promote it.
+        let mut topology = topology_fixture();
+        topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|session| !drop.contains(&session["id"].as_str().unwrap_or_default()));
+        if teammate_of.is_none() {
+            let session = topology["sessions"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|session| session["id"] == "reviewer");
+            if let Some(session) = session {
+                session["team"] = json!({ "role": "reviewer" });
+            }
+        }
+        if let Some(parent) = teammate_of {
+            let session = topology["sessions"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|session| session["id"] == "codex-live")
+                .expect("codex-live is in the fixture");
+            session["team"] = json!({ "parentSessionId": parent, "role": "reviewer" });
+        }
+        let mut metadata = metadata_fixture();
+        for (id, stamp) in &stamps {
+            let entry = metadata.entry((*id).to_owned()).or_insert_with(
+                || json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+            );
+            entry["derived"] = json!({ "lastOutputAt": stamp });
+        }
+        let exchange = exchange_fixture();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&support::live_windows(
+                "aimux-repo",
+                &["@1", "@2", "@3", "@4"],
+            )),
+        );
+        let group = state["worktreeGroups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|group| group["name"] == "feature-a")
+            .cloned();
+        let topology_view =
+            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let row = find_topology_worktree_row(&topology_view, "feature-a");
+        (group, row)
+    };
 
-    let state = build_desktop_state_with_live_window_ids(
-        DesktopStateInput {
-            project_root: "/repo".into(),
-            topology: &topology,
-            metadata_sessions: &metadata,
-            exchange: &exchange,
-        },
-        Some(&support::live_windows(
-            "aimux-repo",
-            &["@1", "@2", "@3", "@4"],
-        )),
+    // Two agents, only the SECOND recently active: the fold asks all of them.
+    let (group, row) = build(
+        vec![("codex-live", &stale), ("reviewer", &recent)],
+        vec![],
+        None,
     );
-    let boss = state["sessions"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .chain(state["teammates"].as_array().into_iter().flatten())
-        .find(|session| session["id"] == "boss")
-        .expect("boss is on the dashboard");
+    let group = group.expect("feature-a is a checkout");
     assert_eq!(
-        boss["projectControl"], true,
-        "the subject has to actually be a project-control session"
+        group["recentOutput"], true,
+        "a checkout whose second agent just finished has had recent output"
     );
     assert_eq!(
-        boss["recentOutput"], false,
-        "and it has to be the quiet one, or the fold is not being asked"
+        row.as_ref().map(|row| row["recentOutput"].clone()),
+        Some(group["recentOutput"].clone()),
+        "and the topology row carries that answer rather than folding again"
     );
 
-    let topology_view =
-        build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
-    let checkout = find_topology_worktree_row(&topology_view, "Main Checkout")
-        .expect("the main checkout is in the topology view");
+    // Both quiet.
+    let (group, row) = build(
+        vec![("codex-live", &stale), ("reviewer", &stale)],
+        vec![],
+        None,
+    );
+    let group = group.expect("feature-a is a checkout");
+    assert_eq!(group["recentOutput"], false, "neither agent has spoken");
     assert_eq!(
-        checkout["recentOutput"].as_bool(),
-        Some(true),
-        "a checkout holding only project-control agents has no answer, and \
-         the dashboard card already reads it that way"
+        row.map(|row| row["recentOutput"].clone()),
+        Some(group["recentOutput"].clone()),
+        "and both screens say so"
+    );
+
+    // An offline agent is still an agent. Skipping it in the fold turned a
+    // checkout whose only agent is dead and quiet into "no agents to ask",
+    // and the title went bold for a checkout with nothing happening in it.
+    let offline_only = {
+        let mut topology = topology_fixture();
+        topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|session| session["id"] == "codex-live");
+        let session = topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .first_mut()
+            .expect("codex-live is in the fixture");
+        session["status"] = json!("offline");
+        session["team"] = json!({ "role": "coder" });
+        let mut metadata = metadata_fixture();
+        let entry = metadata
+            .entry("codex-live".to_owned())
+            .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+        entry["derived"] = json!({ "lastOutputAt": recent.clone() });
+        let exchange = exchange_fixture();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&support::live_windows(
+                "aimux-repo",
+                &["@1", "@2", "@3", "@4"],
+            )),
+        );
+        state["worktreeGroups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|group| group["name"] == "feature-a")
+            .cloned()
+            .expect("feature-a is a checkout")
+    };
+    assert_eq!(
+        offline_only["sessions"].as_array().map(Vec::len),
+        Some(1),
+        "the checkout has to actually hold the offline agent, or the fold is \
+         answering the empty-checkout question instead"
+    );
+    assert_eq!(
+        offline_only["recentOutput"], false,
+        "a checkout whose only agent is dead has had no recent output"
+    );
+
+    // A teammate is an agent the card's own group never holds, so the two
+    // folds counted different sets.
+    let (group, row) = build(vec![("codex-live", &stale)], vec!["reviewer"], Some("boss"));
+    let group = group.expect("feature-a is a checkout");
+    assert_eq!(
+        row.map(|row| row["recentOutput"].clone()),
+        Some(group["recentOutput"].clone()),
+        "a checkout holding only a teammate must read the same on both screens"
     );
 }
 

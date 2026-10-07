@@ -1717,9 +1717,34 @@ fn worktree_group(
         "status".into(),
         Value::String(if active { "active" } else { "offline" }.into()),
     );
+    // Folded over the SAME set the card renders, once, here. Folding it in
+    // the renderer instead read a list the view had already filtered -- hide
+    // offline agents and the title changed -- and the topology screen folded
+    // a different list again, which included teammates the card never sees.
+    group.insert(
+        "recentOutput".into(),
+        Value::Bool(worktree_recent_output(&group_sessions)),
+    );
     group.insert("sessions".into(), Value::Array(group_sessions));
     group.insert("services".into(), Value::Array(group_services));
     Value::Object(group)
+}
+
+/// Whether a checkout holds an agent that has produced output recently.
+///
+/// Project-control sessions are left out because the card leaves them out of
+/// its own group, and no agents at all is no answer rather than a quiet one:
+/// a checkout running only services would otherwise draw a plain title over
+/// bold service rows.
+fn worktree_recent_output(group_sessions: &[Value]) -> bool {
+    let agents = group_sessions
+        .iter()
+        .filter(|session| !crate::team_contract::is_project_control_session(Some(session)))
+        .collect::<Vec<_>>();
+    agents.is_empty()
+        || agents
+            .iter()
+            .any(|session| session.get("recentOutput").and_then(Value::as_bool) != Some(false))
 }
 
 fn set_indexes(items: &mut [Value]) {
