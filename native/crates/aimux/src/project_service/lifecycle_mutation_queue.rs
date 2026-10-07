@@ -30,6 +30,13 @@ const DEFAULT_QUEUE_LIMIT: usize = 32;
 /// rather than declaring the holder dead.
 const WAIT_FOR_TURN_TIMEOUT: Duration = Duration::from_millis(150_000);
 
+/// What a caller has to be willing to wait for a queued mutation.
+///
+/// The same 120s the CLI allows, published so a client cannot pick a budget
+/// shorter than the wait this queue will impose on it -- which turns "your
+/// turn has not come yet" into "your request failed".
+pub const QUEUED_LIFECYCLE_TIMEOUT_MS: u64 = 120_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LifecycleTransitionInput {
     pub operation: String,
