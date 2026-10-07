@@ -52,6 +52,10 @@ const MIRROR_THROTTLE_RETENTION_MS: u128 = 10 * NOTIFICATION_REMIRROR_MIN_INTERV
 /// `record_worktree_operation_failure` has no target id -- without the path,
 /// two worktrees' create failures would share one thread and the second would
 /// overwrite the first.
+/// What a mirrored failure says it is. Readers key on this, not on spelling in
+/// the title or body.
+pub const OPERATION_FAILURE_NOTIFICATION_KIND: &str = "operation_failure";
+
 pub fn operation_failure_notification_key(failure: &Value) -> String {
     let field = |key: &str| {
         failure
@@ -172,42 +176,48 @@ pub fn clear_dashboard_operation_failures(
     let Some(failures) = state.get_mut("failures").and_then(Value::as_array_mut) else {
         return Ok(0);
     };
+    // Keys first, notifications second, ledger last. The other order loses:
+    // once a row is `cleared: true` the matcher skips it forever, so a clear
+    // that marked the row and then failed to reach the exchange would leave a
+    // notification nothing could ever name again -- while the route had
+    // already told the user it was dismissed.
     let mut cleared_keys = Vec::new();
+    for failure in failures.iter() {
+        if failure_matches(failure, &matcher) {
+            cleared_keys.push(operation_failure_notification_key(failure));
+        }
+    }
+    let changed = cleared_keys.len();
+    if changed == 0 {
+        return Ok(0);
+    }
+    cleared_keys.sort();
+    cleared_keys.dedup();
+    // The durable copy goes with the ledger entry. Without this a transient
+    // failure that recovers leaves a permanent entry, which is the reverse of
+    // the bug this mirror exists for.
+    clear_notifications(
+        project_state_dir,
+        NotificationMutation {
+            target_keys: Some(cleared_keys.clone()),
+            ..NotificationMutation::default()
+        },
+    )
+    .map_err(|error| format!("failed to clear operation failure notifications: {error}"))?;
+    forget_mirror_throttle(project_state_dir, &cleared_keys);
     for failure in failures.iter_mut() {
         if !failure_matches(failure, &matcher) {
             continue;
         }
-        let key = operation_failure_notification_key(failure);
         if let Value::Object(record) = failure {
             record.insert("cleared".into(), Value::Bool(true));
-            cleared_keys.push(key);
         }
     }
-    let changed = cleared_keys.len();
-    if changed > 0
-        && let Err(error) = save_state(&path, state)
-    {
+    if let Err(error) = save_state(&path, state) {
         return Err(format!(
             "failed to persist dashboard operation failure clear at {}: {error}",
             path.display()
         ));
-    }
-    // The durable copy goes with the ledger entry. Without this a transient
-    // failure that recovers leaves a permanent notification, which is the
-    // reverse of the bug this mirror exists for.
-    if !cleared_keys.is_empty() {
-        cleared_keys.sort();
-        cleared_keys.dedup();
-        forget_mirror_throttle(project_state_dir, &cleared_keys);
-        if let Err(error) = clear_notifications(
-            project_state_dir,
-            NotificationMutation {
-                target_keys: Some(cleared_keys),
-                ..NotificationMutation::default()
-            },
-        ) {
-            eprintln!("aimux: cleared operation failures but not their notifications: {error}");
-        }
     }
     Ok(changed)
 }
@@ -251,7 +261,24 @@ pub fn try_add_dashboard_operation_failure(
     project_state_dir: impl AsRef<Path>,
     input: OperationFailureInput,
 ) -> Result<Value, (io::Error, Value)> {
-    add_dashboard_operation_failure_impl(project_state_dir.as_ref(), input, true)
+    add_dashboard_operation_failure_impl(
+        project_state_dir.as_ref(),
+        input,
+        true,
+        now_epoch_millis(),
+    )
+}
+
+/// The same, with the clock handed in. The re-mirror floor is measured against
+/// wall time, so without this nothing can prove it ever expires -- and a floor
+/// that never expires is a latch that lets a live failure's durable copy age
+/// out with no way back.
+pub fn try_add_dashboard_operation_failure_at(
+    project_state_dir: impl AsRef<Path>,
+    input: OperationFailureInput,
+    now_ms: u128,
+) -> Result<Value, (io::Error, Value)> {
+    add_dashboard_operation_failure_impl(project_state_dir.as_ref(), input, true, now_ms)
 }
 
 /// For the one caller that already writes its own notification AND publishes a
@@ -261,14 +288,20 @@ pub fn add_dashboard_operation_failure_without_notification(
     project_state_dir: impl AsRef<Path>,
     input: OperationFailureInput,
 ) -> Value {
-    add_dashboard_operation_failure_impl(project_state_dir.as_ref(), input, false)
-        .unwrap_or_else(|(_, failure)| failure)
+    add_dashboard_operation_failure_impl(
+        project_state_dir.as_ref(),
+        input,
+        false,
+        now_epoch_millis(),
+    )
+    .unwrap_or_else(|(_, failure)| failure)
 }
 
 fn add_dashboard_operation_failure_impl(
     project_state_dir: &Path,
     input: OperationFailureInput,
     mirror_to_notifications: bool,
+    now_ms: u128,
 ) -> Result<Value, (io::Error, Value)> {
     let path = dashboard_operation_failures_path(project_state_dir);
     let mut state = load_state(&path).unwrap_or_else(|error| {
@@ -308,16 +341,6 @@ fn add_dashboard_operation_failure_impl(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    if mirror_to_notifications
-        && mirror_is_due(
-            project_state_dir,
-            &operation_failure_notification_key(&failure),
-            failure_epoch_millis(&failure),
-        )
-        && let Err(error) = mirror_operation_failure_to_notifications(project_state_dir, &failure)
-    {
-        eprintln!("aimux: recorded operation failure but not its notification: {error}");
-    }
     failures.retain(|existing| {
         existing.get("cleared").and_then(Value::as_bool) == Some(true)
             || existing.get("targetKind") != failure.get("targetKind")
@@ -326,22 +349,54 @@ fn add_dashboard_operation_failure_impl(
             || existing.get("worktreePath") != failure.get("worktreePath")
     });
     failures.insert(0, failure.clone());
+    // Rows `save_state` is about to drop. A dropped row can never be matched
+    // again, so its clear would never derive the key -- the durable copy would
+    // outlive every surface that could name it.
+    let evicted = failures
+        .iter()
+        .skip(MAX_FAILURES)
+        .filter(|row| row.get("cleared").and_then(Value::as_bool) != Some(true))
+        .map(operation_failure_notification_key)
+        .collect::<Vec<_>>();
     state["failures"] = Value::Array(failures);
-    match save_state(&path, state) {
-        Ok(()) => Ok(failure),
-        Err(error) => Err((error, failure)),
+    // After the ledger write, never before: a mirror written against a ledger
+    // row that then failed to persist is a durable copy with nothing to clear
+    // it.
+    if let Err(error) = save_state(&path, state) {
+        return Err((error, failure));
     }
+    if mirror_to_notifications
+        && mirror_is_due(
+            project_state_dir,
+            &operation_failure_notification_key(&failure),
+            now_ms,
+        )
+        && let Err(error) = mirror_operation_failure_to_notifications(project_state_dir, &failure)
+    {
+        eprintln!("aimux: recorded operation failure but not its notification: {error}");
+    }
+    release_evicted_failure_notifications(project_state_dir, evicted);
+    Ok(failure)
 }
 
-/// When this failure happened. The record's own stamp, so a caller replaying
-/// history cannot be throttled by the wall clock, and an unparseable stamp
-/// falls back to now rather than to "never".
-fn failure_epoch_millis(failure: &Value) -> u128 {
-    failure
-        .get("createdAt")
-        .and_then(Value::as_str)
-        .and_then(parse_iso_millis)
-        .unwrap_or_else(now_epoch_millis)
+/// A row the ledger has forgotten keeps no durable copy, because nothing left
+/// can dismiss it.
+fn release_evicted_failure_notifications(project_state_dir: &Path, mut keys: Vec<String>) {
+    if keys.is_empty() {
+        return;
+    }
+    keys.sort();
+    keys.dedup();
+    forget_mirror_throttle(project_state_dir, &keys);
+    if let Err(error) = clear_notifications(
+        project_state_dir,
+        NotificationMutation {
+            target_keys: Some(keys),
+            ..NotificationMutation::default()
+        },
+    ) {
+        eprintln!("aimux: dropped operation failures but not their notifications: {error}");
+    }
 }
 
 fn mirror_throttle() -> &'static Mutex<HashMap<String, u128>> {
@@ -357,9 +412,9 @@ fn mirror_throttle() -> &'static Mutex<HashMap<String, u128>> {
 fn mirror_is_due(project_state_dir: &Path, key: &str, now: u128) -> bool {
     let key = throttle_key(project_state_dir, key);
     let key = key.as_str();
-    let Ok(mut throttle) = mirror_throttle().lock() else {
-        return true;
-    };
+    let mut throttle = mirror_throttle()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     throttle
         .retain(|_, mirrored_at| now.saturating_sub(*mirrored_at) < MIRROR_THROTTLE_RETENTION_MS);
     if throttle.get(key).is_some_and(|mirrored_at| {
@@ -373,10 +428,11 @@ fn mirror_is_due(project_state_dir: &Path, key: &str, now: u128) -> bool {
 
 /// A cleared failure that comes back is news again, not a repeat.
 fn forget_mirror_throttle(project_state_dir: &Path, keys: &[String]) {
-    if let Ok(mut throttle) = mirror_throttle().lock() {
-        for key in keys {
-            throttle.remove(&throttle_key(project_state_dir, key));
-        }
+    let mut throttle = mirror_throttle()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for key in keys {
+        throttle.remove(&throttle_key(project_state_dir, key));
     }
 }
 
@@ -408,8 +464,11 @@ fn mirror_operation_failure_to_notifications(
             title: string("title"),
             body: string("message"),
             target_key: Some(operation_failure_notification_key(failure)),
-            target_kind: Some("operation-failure".to_owned()),
-            kind: Some("operation_failure".to_owned()),
+            // `targetKind` is a taxonomy of what the key POINTS AT -- the
+            // contract allows only "session" or "generic" -- and this key
+            // points at an operation, not a session. What kind of event it is
+            // belongs in `kind`, which is where every reader looks.
+            kind: Some(OPERATION_FAILURE_NOTIFICATION_KIND.to_owned()),
             worktree_path: optional("worktreePath"),
             worktree_name: optional("worktreeName"),
             created_at: optional("createdAt"),

@@ -347,6 +347,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         );
         return;
     };
+    clear_agent_input_delivery_queue_failure(context);
     if state.pending.is_empty() {
         backlog_metric(
             AGENT_INPUT_DELIVERY_BACKLOG,
@@ -467,7 +468,10 @@ pub async fn run_pending_agent_input_deliveries_async(
     let state = {
         let _guard = context.agent_input_delivery_queue.lock();
         match load_delivery_state(&path) {
-            Ok(state) => state,
+            Ok(state) => {
+                clear_agent_input_delivery_queue_failure(context);
+                state
+            }
             Err(_) => {
                 let error = load_error_for_path(&path);
                 record_backlog_error(
@@ -950,6 +954,9 @@ fn load_error_for_path(path: &Path) -> String {
     }
 }
 
+/// The queue is its own target. See `clear_agent_input_delivery_queue_failure`.
+pub(crate) const AGENT_INPUT_QUEUE_TARGET_KIND: &str = "agent-input-queue";
+
 fn record_agent_input_delivery_failure(
     context: &ProjectServiceRequestContext,
     session_id: Option<&str>,
@@ -969,7 +976,11 @@ fn record_agent_input_delivery_failure(
     let _ = add_dashboard_operation_failure(
         context.project_state_dir(),
         OperationFailureInput {
-            target_kind: "agent".into(),
+            target_kind: if session_id.is_some() {
+                "agent".into()
+            } else {
+                AGENT_INPUT_QUEUE_TARGET_KIND.into()
+            },
             operation: "input.delivery".into(),
             title: title.into(),
             message,
@@ -977,6 +988,23 @@ fn record_agent_input_delivery_failure(
             worktree_path: None,
             worktree_name: None,
             created_at: None,
+        },
+    );
+}
+
+/// What failed is the queue, not an agent, and saying so is what makes it
+/// clearable: a matcher with no `targetId` matches ANY target id, so a clear
+/// written against `agent` would take every live per-session delivery failure
+/// with it. Nothing cleared this class before and it aged off in fifteen
+/// minutes; a durable copy has to be released when the queue loads.
+fn clear_agent_input_delivery_queue_failure(context: &ProjectServiceRequestContext) {
+    let _ = clear_dashboard_operation_failures(
+        context.project_state_dir(),
+        OperationFailureMatch {
+            target_kind: Some(AGENT_INPUT_QUEUE_TARGET_KIND.into()),
+            operation: Some("input.delivery".into()),
+            target_id: None,
+            worktree_path: WorktreePathMatch::Any,
         },
     );
 }

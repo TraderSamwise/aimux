@@ -7011,7 +7011,7 @@ fn operation_failure_notification_bodies(state_dir: &std::path::Path) -> Vec<Str
     )
     .notifications
     .iter()
-    .filter(|record| record["targetKind"] == "operation-failure")
+    .filter(|record| record["kind"] == "operation_failure")
     .map(|record| record["body"].as_str().unwrap_or_default().to_owned())
     .collect()
 }

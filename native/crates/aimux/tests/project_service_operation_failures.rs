@@ -4,7 +4,7 @@ use aimux::project_service::operation_failures::{
     OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
     clear_dashboard_operation_failures, dashboard_operation_failures_path,
     list_dashboard_operation_failures, try_add_dashboard_operation_failure,
-    try_list_dashboard_operation_failures,
+    try_add_dashboard_operation_failure_at, try_list_dashboard_operation_failures,
 };
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::runtime_exchange_path;
@@ -560,10 +560,16 @@ fn a_message_that_varies_per_tick_does_not_buy_a_write_per_tick() {
         "a second message within the floor must not rewrite the exchange"
     );
 
-    // The inverse: the floor is a floor, not a lock. Once the standing record
-    // is older than it, the newest message replaces the durable copy.
-    record_delivery_failure_at(&state_dir, "codex-2", "first error", minutes_ago(5));
-    record_delivery_failure(&state_dir, "codex-2", "second error");
+    // The inverse: the floor is a floor, not a lock. A minute later the newest
+    // message replaces the durable copy, which is what keeps a live failure's
+    // copy inside the newest-N the exchange retains.
+    record_delivery_failure(&state_dir, "codex-2", "first error");
+    record_delivery_failure_at(
+        &state_dir,
+        "codex-2",
+        "second error",
+        five_minutes_from_now(),
+    );
     let mut bodies = notification_bodies(&state_dir);
     bodies.sort();
     assert_eq!(
@@ -604,17 +610,122 @@ fn a_failure_that_comes_back_after_a_clear_is_mirrored_again() {
     cleanup(project);
 }
 
-fn record_delivery_failure(state_dir: &PathBuf, session_id: &str, message: &str) {
-    record_delivery_failure_at(state_dir, session_id, message, minutes_ago(0));
+#[test]
+fn a_failure_the_ledger_forgets_does_not_keep_a_durable_copy() {
+    let project = temp_project("mirror-evicted");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    record_delivery_failure(&state_dir, "codex-evicted", "tmux window is gone");
+    assert_eq!(notification_bodies(&state_dir).len(), 1);
+
+    // `save_state` keeps only the newest hundred. Past that the row can never
+    // be matched again, so nothing could ever derive its key to dismiss it.
+    for index in 0..120 {
+        record_delivery_failure(&state_dir, &format!("codex-{index}"), "tmux window is gone");
+    }
+
+    assert!(
+        !notification_bodies(&state_dir)
+            .iter()
+            .any(|body| body == "tmux window is gone")
+            || !listed_ids(&state_dir).is_empty(),
+        "placeholder"
+    );
+    let surviving = list_dashboard_operation_failures(&state_dir).len();
+    assert!(
+        surviving <= 100,
+        "the ledger must have truncated: {surviving}"
+    );
+    assert_eq!(
+        notification_bodies(&state_dir).len(),
+        surviving,
+        "every durable copy must still have a ledger row that can dismiss it"
+    );
+    cleanup(project);
 }
 
-fn record_delivery_failure_at(
-    state_dir: &PathBuf,
-    session_id: &str,
-    message: &str,
-    created_at: String,
-) {
+#[test]
+fn a_dismiss_that_cannot_reach_the_notification_store_is_not_reported_as_done() {
+    let project = temp_project("mirror-clear-fails");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    record_delivery_failure(&state_dir, "codex-1", "tmux window is gone");
+
+    // The exchange unreadable: the clear cannot reach the durable copy.
+    let exchange = runtime_exchange_path(&state_dir);
+    write(&exchange, "{ not: yaml: [").expect("corrupt exchange");
+
+    let cleared = clear_dashboard_operation_failures(
+        &state_dir,
+        OperationFailureMatch {
+            target_kind: Some("agent".into()),
+            operation: Some("input.delivery".into()),
+            target_id: Some("codex-1".into()),
+            worktree_path: WorktreePathMatch::Any,
+        },
+    );
+    assert!(
+        cleared.is_err(),
+        "a dismiss that left the durable copy behind must not report success"
+    );
+    // And the row stays matchable, so the user can try again. Marking it first
+    // would have made the copy unnameable forever.
+    assert_eq!(
+        list_dashboard_operation_failures(&state_dir).len(),
+        1,
+        "the ledger row must survive a failed dismiss"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn clearing_the_queue_failure_does_not_take_live_agent_failures_with_it() {
+    let project = temp_project("mirror-queue-scope");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    record_delivery_failure(&state_dir, "codex-1", "tmux window is gone");
     try_add_dashboard_operation_failure(
+        &state_dir,
+        OperationFailureInput {
+            target_kind: "agent-input-queue".into(),
+            operation: "input.delivery".into(),
+            title: "Agent input delivery queue unavailable".into(),
+            message: "queue file is corrupt".into(),
+            ..OperationFailureInput::default()
+        },
+    )
+    .expect("record failure");
+
+    // A matcher with no `targetId` matches ANY target id, so a clear written
+    // against `agent` would take the live per-session failure with it.
+    clear_dashboard_operation_failures(
+        &state_dir,
+        OperationFailureMatch {
+            target_kind: Some("agent-input-queue".into()),
+            operation: Some("input.delivery".into()),
+            target_id: None,
+            worktree_path: WorktreePathMatch::Any,
+        },
+    )
+    .expect("clear");
+
+    assert_eq!(
+        notification_bodies(&state_dir),
+        vec!["tmux window is gone".to_owned()],
+        "the agent's own delivery failure must survive the queue clear"
+    );
+    cleanup(project);
+}
+
+fn record_delivery_failure(state_dir: &PathBuf, session_id: &str, message: &str) {
+    record_delivery_failure_at(state_dir, session_id, message, epoch_millis_now());
+}
+
+fn record_delivery_failure_at(state_dir: &PathBuf, session_id: &str, message: &str, now_ms: u128) {
+    try_add_dashboard_operation_failure_at(
         state_dir,
         OperationFailureInput {
             target_kind: "agent".into(),
@@ -622,11 +733,22 @@ fn record_delivery_failure_at(
             title: "Agent input was not delivered".into(),
             message: message.into(),
             target_id: Some(session_id.into()),
-            created_at: Some(created_at),
             ..OperationFailureInput::default()
         },
+        now_ms,
     )
     .expect("record failure");
+}
+
+fn epoch_millis_now() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_millis()
+}
+
+fn five_minutes_from_now() -> u128 {
+    epoch_millis_now() + 5 * 60 * 1000
 }
 
 fn notification_bodies(state_dir: &PathBuf) -> Vec<String> {
@@ -636,12 +758,12 @@ fn notification_bodies(state_dir: &PathBuf) -> Vec<String> {
             unread_only: false,
             include_cleared: false,
             session_id: None,
-            limit: Some(50),
+            limit: Some(500),
         },
     )
     .notifications
     .iter()
-    .filter(|record| record["targetKind"] == "operation-failure")
+    .filter(|record| record["kind"] == "operation_failure")
     .map(|record| record["body"].as_str().unwrap_or_default().to_owned())
     .collect()
 }
