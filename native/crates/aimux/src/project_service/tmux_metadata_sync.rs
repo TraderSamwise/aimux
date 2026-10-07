@@ -11,7 +11,11 @@ use crate::team_contract::{
 use crate::tmux::{TmuxRuntimeManager, TmuxTarget};
 
 use super::notifications::{NotificationQuery, list_notification_snapshot};
-use super::session_semantics::{SessionSemanticsInput, derive_session_semantics};
+use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
+use super::session_semantics::{
+    SessionSemanticsInput, active_task_session_ids, derive_session_semantics,
+    normalized_session_status,
+};
 use super::usage::load_last_used_state;
 
 const LIVE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
@@ -125,6 +129,41 @@ pub fn sync_tmux_window_metadata(
     })
 }
 
+/// The same five inputs the agent list and the dashboard row feed the
+/// derivation. Passing the raw status and defaulting the assignment is how
+/// Exposé's chip came to say "Ready" for an agent the row called "Next step",
+/// and "Idle" for one it called "Working".
+fn window_label_input(
+    project_state_dir: &Path,
+    session_id: &str,
+    status: &str,
+    derived: &Value,
+) -> SessionSemanticsInput {
+    let has_active_task = try_read_runtime_exchange(runtime_exchange_path(project_state_dir))
+        .ok()
+        .map(|exchange| {
+            active_task_session_ids(
+                exchange
+                    .get("tasks")
+                    .and_then(Value::as_array)
+                    .map_or(&[][..], Vec::as_slice),
+            )
+        })
+        .is_some_and(|assigned| assigned.contains(session_id));
+    SessionSemanticsInput {
+        status: normalized_session_status(Some(status)).to_owned(),
+        pending_action: None,
+        activity: string_field(derived, "activity").map(str::to_owned),
+        attention: string_field(derived, "attention").map(str::to_owned),
+        unseen_count: derived
+            .get("unseenCount")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        has_active_task,
+        ..SessionSemanticsInput::default()
+    }
+}
+
 pub fn build_tmux_window_metadata(
     project_state_dir: &Path,
     session: &Value,
@@ -148,18 +187,12 @@ pub fn build_tmux_window_metadata(
     let status = string_field(session, "status").unwrap_or("running");
     let activity = string_field(derived, "activity").map(str::to_owned);
     let attention = string_field(derived, "attention").map(str::to_owned);
-    let unseen_count = derived
-        .get("unseenCount")
-        .and_then(Value::as_i64)
-        .unwrap_or_default();
-    let semantic = derive_session_semantics(SessionSemanticsInput {
-        status: status.to_owned(),
-        pending_action: None,
-        activity: activity.clone(),
-        attention: attention.clone(),
-        unseen_count,
-        ..SessionSemanticsInput::default()
-    });
+    let semantic = derive_session_semantics(window_label_input(
+        project_state_dir,
+        &session_id,
+        status,
+        derived,
+    ));
     let user_label = semantic
         .get("user")
         .and_then(|user| string_field(user, "label"))
@@ -260,20 +293,12 @@ pub fn derive_recency_fields_for_window_metadata(
         .map(str::to_owned)
         .unwrap_or_else(|| {
             let status = string_field(metadata, "status").unwrap_or("running");
-            let activity = string_field(derived, "activity").map(str::to_owned);
-            let attention = string_field(derived, "attention").map(str::to_owned);
-            let unseen_count = derived
-                .get("unseenCount")
-                .and_then(Value::as_i64)
-                .unwrap_or_default();
-            let semantic = derive_session_semantics(SessionSemanticsInput {
-                status: status.to_owned(),
-                pending_action: None,
-                activity,
-                attention,
-                unseen_count,
-                ..SessionSemanticsInput::default()
-            });
+            let semantic = derive_session_semantics(window_label_input(
+                project_state_dir,
+                session_id,
+                status,
+                derived,
+            ));
             semantic
                 .get("user")
                 .and_then(|user| string_field(user, "label"))

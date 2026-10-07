@@ -24,6 +24,7 @@ use aimux::project_service::router::{
     OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
 };
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
+use aimux::project_service::tmux_metadata_sync::build_tmux_window_metadata;
 use aimux::project_service::visual_clients::ProjectHotSnapshotCoordinator;
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
@@ -2349,6 +2350,101 @@ fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashbo
 }
 
 /// One session to override, and the status, activity and attention to give it.
+/// Exposé's chip is a FOURTH surface, worded from `userLabel` in the tmux
+/// window metadata by a derivation call the one-answer work did not move. It
+/// passed the raw status and defaulted the assignment, so the chip said
+/// "Ready" for an agent the row called "Next step" and "Idle" for one it
+/// called "Working" -- with every other gate green, because they all compare
+/// the three word MAPS and never the inputs each surface's producer feeds.
+#[test]
+fn the_expose_chip_words_an_agent_the_way_the_dashboard_row_does() {
+    let project = temp_project("expose-chip-agrees");
+    let state_dir = project.join(".aimux");
+    create_dir_all(&state_dir).unwrap();
+
+    let mut topology = topology_fixture();
+    for (id, status) in [("codex-live", "starting"), ("boss", "running")] {
+        let session = topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|session| session["id"] == id)
+            .unwrap();
+        session["status"] = json!(status);
+    }
+    let mut metadata = metadata_fixture();
+    // The ask would win over both the liveness and the assignment arms, and
+    // this is about the two inputs the chip was not given.
+    for id in ["codex-live", "boss"] {
+        let entry = metadata
+            .entry(id.to_owned())
+            .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+        entry["derived"] = json!({});
+    }
+    let mut exchange = exchange_fixture();
+    exchange["tasks"].as_array_mut().unwrap().push(json!({
+        "id": "task-in-flight",
+        "description": "Still assigned",
+        "status": "in_progress",
+        "assignedTo": "boss"
+    }));
+
+    write_runtime_exchange(runtime_exchange_path(&state_dir), &exchange).unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: metadata.clone(),
+        },
+    )
+    .unwrap();
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: project.to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &metadata,
+            exchange: &exchange,
+        },
+        Some(&support::live_windows(
+            "aimux-repo",
+            &["@1", "@2", "@3", "@4"],
+        )),
+    );
+
+    let mut compared = Vec::new();
+    for session in topology["sessions"].as_array().unwrap() {
+        let id = session["id"].as_str().unwrap();
+        let Some(row) = state["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(state["teammates"].as_array().into_iter().flatten())
+            .find(|candidate| candidate["id"] == id)
+        else {
+            continue;
+        };
+        let row_label = row["semantic"]["user"]["label"].as_str().unwrap();
+        let window = build_tmux_window_metadata(&state_dir, session, None);
+        let chip_label = window["userLabel"].as_str().unwrap_or("");
+        assert_eq!(
+            chip_label, row_label,
+            "Exposé's chip and the dashboard row disagree about {id}"
+        );
+        compared.push(row_label.to_owned());
+    }
+
+    assert!(
+        compared.iter().any(|label| label == "working"),
+        "the `starting` agent must reach `working`; reached {compared:?}"
+    );
+    assert!(
+        compared.iter().any(|label| label == "next_step"),
+        "the assigned agent must reach `next_step`; reached {compared:?}"
+    );
+    cleanup(project);
+}
+
 /// One session to override, and what to give it. `None` REMOVES the fixture's
 /// own value rather than leaving it: a case that silently kept
 /// `attention: needs_input` retested the case above it, which is how the
