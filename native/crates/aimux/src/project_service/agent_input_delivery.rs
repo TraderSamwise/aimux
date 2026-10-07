@@ -336,10 +336,9 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
             load_error_for_path(&path),
         );
-        record_agent_input_delivery_failure(
+        record_agent_input_delivery_queue_failure(
             context,
-            None,
-            "Agent input delivery queue unavailable",
+            QUEUE_LOAD_OPERATION,
             format!(
                 "Skipped queued agent input delivery because {}",
                 load_error_for_path(&path)
@@ -347,7 +346,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         );
         return;
     };
-    clear_agent_input_delivery_queue_failure(context);
+    clear_agent_input_delivery_queue_failure(context, QUEUE_LOAD_OPERATION);
     if state.pending.is_empty() {
         backlog_metric(
             AGENT_INPUT_DELIVERY_BACKLOG,
@@ -436,21 +435,23 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
     };
     let depth = state.pending.len();
     match save_delivery_state(&path, state) {
-        Ok(()) => backlog_metric(
-            AGENT_INPUT_DELIVERY_BACKLOG,
-            Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
-        )
-        .set_depth(depth),
+        Ok(()) => {
+            clear_agent_input_delivery_queue_failure(context, QUEUE_SAVE_OPERATION);
+            backlog_metric(
+                AGENT_INPUT_DELIVERY_BACKLOG,
+                Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+            )
+            .set_depth(depth);
+        }
         Err(error) => {
             record_backlog_error(
                 AGENT_INPUT_DELIVERY_BACKLOG,
                 Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
                 error.clone(),
             );
-            record_agent_input_delivery_failure(
+            record_agent_input_delivery_queue_failure(
                 context,
-                None,
-                "Agent input delivery queue unavailable",
+                QUEUE_SAVE_OPERATION,
                 format!("Could not save queued agent input delivery state: {error}"),
             );
         }
@@ -469,7 +470,7 @@ pub async fn run_pending_agent_input_deliveries_async(
         let _guard = context.agent_input_delivery_queue.lock();
         match load_delivery_state(&path) {
             Ok(state) => {
-                clear_agent_input_delivery_queue_failure(context);
+                clear_agent_input_delivery_queue_failure(context, QUEUE_LOAD_OPERATION);
                 state
             }
             Err(_) => {
@@ -479,10 +480,9 @@ pub async fn run_pending_agent_input_deliveries_async(
                     Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
                     error.clone(),
                 );
-                record_agent_input_delivery_failure(
+                record_agent_input_delivery_queue_failure(
                     context,
-                    None,
-                    "Agent input delivery queue unavailable",
+                    QUEUE_LOAD_OPERATION,
                     format!("Skipped queued agent input delivery because {error}"),
                 );
                 return Err(format!("agent input delivery queue unavailable: {error}"));
@@ -606,10 +606,9 @@ pub async fn run_pending_agent_input_deliveries_async(
                 Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
                 error.clone(),
             );
-            record_agent_input_delivery_failure(
+            record_agent_input_delivery_queue_failure(
                 context,
-                None,
-                "Agent input delivery queue unavailable",
+                QUEUE_SAVE_OPERATION,
                 format!("Could not merge queued agent input delivery state: {error}"),
             );
             failures.push(error);
@@ -621,21 +620,23 @@ pub async fn run_pending_agent_input_deliveries_async(
     };
     let depth = state.pending.len();
     match save_delivery_state(&path, state) {
-        Ok(()) => backlog_metric(
-            AGENT_INPUT_DELIVERY_BACKLOG,
-            Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
-        )
-        .set_depth(depth),
+        Ok(()) => {
+            clear_agent_input_delivery_queue_failure(context, QUEUE_SAVE_OPERATION);
+            backlog_metric(
+                AGENT_INPUT_DELIVERY_BACKLOG,
+                Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+            )
+            .set_depth(depth);
+        }
         Err(error) => {
             record_backlog_error(
                 AGENT_INPUT_DELIVERY_BACKLOG,
                 Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
                 error.clone(),
             );
-            record_agent_input_delivery_failure(
+            record_agent_input_delivery_queue_failure(
                 context,
-                None,
-                "Agent input delivery queue unavailable",
+                QUEUE_SAVE_OPERATION,
                 format!("Could not save queued agent input delivery state: {error}"),
             );
             failures.push(error);
@@ -957,6 +958,37 @@ fn load_error_for_path(path: &Path) -> String {
 /// The queue is its own target. See `clear_agent_input_delivery_queue_failure`.
 pub(crate) const AGENT_INPUT_QUEUE_TARGET_KIND: &str = "agent-input-queue";
 
+/// Reading the queue and writing it back are different failures with different
+/// recoveries, and they MUST NOT share a key. Collapsed into one, a healthy
+/// load every 500ms cleared the save failure that had just lost a user's
+/// queued input -- within half a second, and before any surface drew it.
+const QUEUE_LOAD_OPERATION: &str = "input.delivery.queue.load";
+const QUEUE_SAVE_OPERATION: &str = "input.delivery.queue.save";
+
+fn record_agent_input_delivery_queue_failure(
+    context: &ProjectServiceRequestContext,
+    operation: &str,
+    message: impl Into<String>,
+) {
+    let message = message.into();
+    log_at(
+        LogLevel::Warn,
+        "Agent input delivery queue unavailable",
+        "agent-input-delivery",
+        Some(json!({ "operation": operation, "message": message })),
+    );
+    let _ = add_dashboard_operation_failure(
+        context.project_state_dir(),
+        OperationFailureInput {
+            target_kind: AGENT_INPUT_QUEUE_TARGET_KIND.into(),
+            operation: operation.into(),
+            title: "Agent input delivery queue unavailable".into(),
+            message,
+            ..OperationFailureInput::default()
+        },
+    );
+}
+
 fn record_agent_input_delivery_failure(
     context: &ProjectServiceRequestContext,
     session_id: Option<&str>,
@@ -997,12 +1029,15 @@ fn record_agent_input_delivery_failure(
 /// written against `agent` would take every live per-session delivery failure
 /// with it. Nothing cleared this class before and it aged off in fifteen
 /// minutes; a durable copy has to be released when the queue loads.
-fn clear_agent_input_delivery_queue_failure(context: &ProjectServiceRequestContext) {
+fn clear_agent_input_delivery_queue_failure(
+    context: &ProjectServiceRequestContext,
+    operation: &str,
+) {
     let _ = clear_dashboard_operation_failures(
         context.project_state_dir(),
         OperationFailureMatch {
             target_kind: Some(AGENT_INPUT_QUEUE_TARGET_KIND.into()),
-            operation: Some("input.delivery".into()),
+            operation: Some(operation.to_owned()),
             target_id: None,
             worktree_path: WorktreePathMatch::Any,
         },

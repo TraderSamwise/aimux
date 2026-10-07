@@ -365,15 +365,14 @@ fn add_dashboard_operation_failure_impl(
     if let Err(error) = save_state(&path, state) {
         return Err((error, failure));
     }
-    if mirror_to_notifications
-        && mirror_is_due(
-            project_state_dir,
-            &operation_failure_notification_key(&failure),
-            now_ms,
-        )
-        && let Err(error) = mirror_operation_failure_to_notifications(project_state_dir, &failure)
-    {
-        eprintln!("aimux: recorded operation failure but not its notification: {error}");
+    let key = operation_failure_notification_key(&failure);
+    if mirror_to_notifications && mirror_is_due(project_state_dir, &key, now_ms) {
+        match mirror_operation_failure_to_notifications(project_state_dir, &failure) {
+            Ok(()) => record_mirror_write(project_state_dir, &key, now_ms),
+            Err(error) => {
+                eprintln!("aimux: recorded operation failure but not its notification: {error}")
+            }
+        }
     }
     release_evicted_failure_notifications(project_state_dir, evicted);
     Ok(failure)
@@ -404,26 +403,32 @@ fn mirror_throttle() -> &'static Mutex<HashMap<String, u128>> {
     THROTTLE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Whether this key may write the exchange again, recording that it did.
+/// Whether this key may write the exchange again. Asks only.
 ///
 /// Process-local on purpose: this rate-limits OUR writes, so a restart
 /// re-mirroring once is right -- that is the run that would rebuild a copy the
 /// exchange had evicted.
 fn mirror_is_due(project_state_dir: &Path, key: &str, now: u128) -> bool {
     let key = throttle_key(project_state_dir, key);
-    let key = key.as_str();
     let mut throttle = mirror_throttle()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     throttle
         .retain(|_, mirrored_at| now.saturating_sub(*mirrored_at) < MIRROR_THROTTLE_RETENTION_MS);
-    if throttle.get(key).is_some_and(|mirrored_at| {
+    !throttle.get(&key).is_some_and(|mirrored_at| {
         now.saturating_sub(*mirrored_at) < NOTIFICATION_REMIRROR_MIN_INTERVAL_MS
-    }) {
-        return false;
-    }
-    throttle.insert(key.to_owned(), now);
-    true
+    })
+}
+
+/// Commits the throttle, and only once the write landed. Committing inside the
+/// check instead loses the write on any transient exchange-lock error: the key
+/// is pinned non-due for a minute, and a one-shot failure like a failed agent
+/// create has no second occurrence to try again with.
+fn record_mirror_write(project_state_dir: &Path, key: &str, now: u128) {
+    mirror_throttle()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(throttle_key(project_state_dir, key), now);
 }
 
 /// A cleared failure that comes back is news again, not a repeat.
