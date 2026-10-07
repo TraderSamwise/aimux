@@ -4571,6 +4571,65 @@ fn an_agent_of_a_graveyarded_worktree_is_resurrected_through_the_worktree() {
     cleanup(project);
 }
 
+/// A graveyarded worktree is not a worktree in the way.
+///
+/// "Already exists" about something the user threw away was the last door
+/// shut: once a graveyarded worktree whose checkout is gone can no longer be
+/// resurrected, the agent refusal sends the user here and here sent them back.
+#[test]
+fn worktree_create_reuses_the_name_of_a_graveyarded_worktree() {
+    let project = temp_project("worktree-create-after-graveyard");
+    let state_dir = project.join("state");
+    write_worktree_create_topology(&state_dir, json!([]));
+    let project_root = project.to_string_lossy().into_owned();
+    let created_path = project
+        .join(".aimux/worktrees/demo")
+        .to_string_lossy()
+        .into_owned();
+    // No directory on disk: this is the trap case -- the checkout is gone, so
+    // the worktree cannot be resurrected and creating it again is the only way
+    // back to its agents.
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime {
+        main_repo: Some(project_root),
+        ..Default::default()
+    };
+    let first = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "demo" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(first.status, 200, "{:?}", first.body);
+    route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": created_path })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    let again = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::CREATE,
+        Some(&json!({ "name": "demo" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(
+        again.status, 200,
+        "a graveyarded row refused the name back: {:?}",
+        again.body
+    );
+    cleanup(project);
+}
+
 /// And the worktree gives back an agent attached through its node too.
 ///
 /// The take loop asked `item_is_in_worktree`; the resurrect loop asked the raw
