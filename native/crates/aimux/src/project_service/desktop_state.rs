@@ -1610,16 +1610,10 @@ struct BucketedItems<'a> {
     /// they are listed in its details panel -- but the topology screen does,
     /// and a checkout answer that left them out sat plain above a bold row.
     teammates: BTreeMap<String, Vec<&'a Value>>,
-    /// Agents in the supervisor plane. The card shows them in its own card
-    /// rather than under a checkout, and the topology screen rows them under
-    /// the checkout their directory names. Kept for the checkout ANSWER, which
-    /// is about the checkout rather than about one screen's row list.
-    plane_agents: BTreeMap<String, Vec<&'a Value>>,
     /// The ones with no worktree of their own, which belong to the main group.
     main_sessions: Vec<&'a Value>,
     main_services: Vec<&'a Value>,
     main_teammates: Vec<&'a Value>,
-    main_plane_agents: Vec<&'a Value>,
 }
 
 impl<'a> BucketedItems<'a> {
@@ -1632,14 +1626,12 @@ impl<'a> BucketedItems<'a> {
     fn by_worktree(sessions: &'a [Value], services: &'a [Value], teammates: &'a [Value]) -> Self {
         let mut bucketed = Self::default();
         for session in sessions {
-            let (bucket, main_bucket) = if session_is_in_supervisor_plane(session) {
-                (&mut bucketed.plane_agents, &mut bucketed.main_plane_agents)
-            } else {
-                (&mut bucketed.sessions, &mut bucketed.main_sessions)
-            };
+            if session_is_in_supervisor_plane(session) {
+                continue;
+            }
             match item_worktree_group_key(session) {
-                Some(key) => bucket.entry(key).or_default().push(session),
-                None => main_bucket.push(session),
+                Some(key) => bucketed.sessions.entry(key).or_default().push(session),
+                None => bucketed.main_sessions.push(session),
             }
         }
         for service in services {
@@ -1663,10 +1655,6 @@ impl<'a> BucketedItems<'a> {
 
     fn teammates_for(&self, path_key: &str, main: bool) -> Vec<&'a Value> {
         Self::bucket(&self.teammates, &self.main_teammates, path_key, main)
-    }
-
-    fn plane_agents_for(&self, path_key: &str, main: bool) -> Vec<&'a Value> {
-        Self::bucket(&self.plane_agents, &self.main_plane_agents, path_key, main)
     }
 
     fn services_for(&self, path_key: &str, main: bool) -> Vec<&'a Value> {
@@ -1768,7 +1756,6 @@ fn worktree_group(
         Value::Bool(worktree_recent_output(&[
             &group_sessions,
             &sorted_dashboard_items(context.by_group.teammates_for(path_key, main)),
-            &sorted_dashboard_items(context.by_group.plane_agents_for(path_key, main)),
         ])),
     );
     group.insert("sessions".into(), Value::Array(group_sessions));
@@ -1776,22 +1763,26 @@ fn worktree_group(
     Value::Object(group)
 }
 
-/// Whether a checkout holds an agent that has produced output recently.
+/// Whether a checkout holds an agent of its OWN that has produced output
+/// recently.
 ///
-/// Project-control sessions are left out because the card leaves them out of
-/// its own group, and no agents at all is no answer rather than a quiet one:
-/// a checkout running only services would otherwise draw a plain title over
-/// bold service rows.
-/// Whether a checkout holds an agent that has produced output recently.
+/// Its own means the agents whose plane is this checkout: ordinary sessions,
+/// which the card rows, and teammates, which the card lists in its details
+/// panel. Both are working in it.
 ///
-/// Every agent whose plane is this checkout counts, whichever list a given
-/// screen puts it in: the card rows ordinary agents and shows teammates in
-/// its details panel, the topology screen rows teammates and supervisor-plane
-/// agents too. Asking only about one screen's rows is how a checkout came to
-/// read plain directly above a bold row on the other.
+/// Project-control agents are NOT its own. An overseer sits in the supervisor
+/// card and is near-permanently active, so counting it made the main
+/// checkout -- where most agents live and most people look -- bold forever,
+/// which is the whole signal gone. The topology screen rows an overseer under
+/// the checkout its directory names, so a bold overseer row can sit under a
+/// plain heading there; that reads correctly, because the heading is about
+/// the checkout's own agents and the row is about the overseer. Counting it
+/// to make the two adjacent weights match would trade a true statement for a
+/// useless one.
 ///
-/// No agents at all is no answer rather than a quiet one, so a checkout
-/// running only services does not draw a plain title over bold service rows.
+/// No agents of its own at all is no answer rather than a quiet one, so a
+/// checkout running only services does not draw a plain title over bold
+/// service rows.
 fn worktree_recent_output(groups: &[&[Value]]) -> bool {
     let mut any_agent = false;
     for session in groups.iter().flat_map(|group| group.iter()) {

@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
+use crate::session_recency::is_agent_output_event_kind;
+
 use crate::runtime_topology::list_topology_session_states;
 use crate::session_recency::session_recency_anchor;
 use crate::team_contract::{
@@ -386,8 +388,6 @@ fn should_apply_policy(window_id: &str) -> bool {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     applied.insert(window_id.to_owned())
 }
-
-use crate::session_recency::is_agent_output_event_kind;
 
 fn object_mut(value: &mut Value) -> &mut Map<String, Value> {
     match value {

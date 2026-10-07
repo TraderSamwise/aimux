@@ -1,5 +1,7 @@
 use serde_json::{Map, Value};
 
+use crate::session_recency::is_agent_output_event_kind;
+
 pub fn normalize_agent_event(event: Value) -> Value {
     let mut event = object_value(event);
     if !event.contains_key("ts") {
@@ -183,8 +185,6 @@ fn derive_from_event(current: &Value, event: &Value, suppress_unseen: bool) -> D
         became_idle_at,
     }
 }
-
-use crate::session_recency::is_agent_output_event_kind;
 
 fn increment_unseen(current: i64, suppress_unseen: bool) -> i64 {
     if suppress_unseen {
