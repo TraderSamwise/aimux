@@ -576,11 +576,31 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
                     .unwrap_or_default()
             ));
         }
-        let state = [activity, attention]
-            .into_iter()
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>()
-            .join("/");
+        // The three axes used to be printed side by side and disagreed:
+        // `offline done/normal` is a projected liveness next to a turn state
+        // nothing rewrote when the window died. One derived answer leads, and
+        // the raw axes follow it for the detail they still carry.
+        let disposition = crate::project_service::session_semantics::agent_disposition(
+            status,
+            field(agent, "activity").and_then(Value::as_str),
+            field(agent, "attention").and_then(Value::as_str),
+        );
+        // The derived answer replaces the two raw axes rather than joining
+        // them. `offline done/normal` printed a projected liveness beside a
+        // turn state nothing rewrote when the window died; the ask is kept
+        // because which ask it is still matters.
+        let state = [
+            disposition,
+            match attention {
+                "needs_input" | "needs_response" | "blocked" => attention,
+                _ => "",
+            },
+        ]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+        let _ = activity;
         output.push(format!(
             "{id}{}  [{tool}{}]  {status}{}{}",
             agent_chosen_name(agent)

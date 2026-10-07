@@ -80,16 +80,57 @@ fn renders_remote_auth_and_whoami_without_credentials() {
 }
 
 #[test]
+fn ps_says_which_of_working_waiting_or_finished_an_agent_is() {
+    // The complaint this answers: "i cant tell difference between false
+    // 'working' state vs 'needs input' state vs 'finished' state". `ps` used
+    // to print the raw axes side by side, so a dead agent read
+    // `offline  done/normal` -- a projected liveness next to a turn state
+    // nothing rewrote when its window died.
+    let line = |agent: serde_json::Value| {
+        render_core_agent_ps_lines(&json!({ "agents": [agent] }))[0].clone()
+    };
+
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "status": "running", "activity": "running" })),
+        "a  [codex]  running  working"
+    );
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "status": "idle", "activity": "done" })),
+        "a  [codex]  idle  finished"
+    );
+    // The one that was lying. Stored `running` on a session whose window is
+    // gone is not work in progress; nothing rewrites `activity` on death.
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "status": "offline", "activity": "running" })),
+        "a  [codex]  offline  not_running",
+        "a dead agent must not claim to be working"
+    );
+    // And an ask outlives the process, so this stays on the user.
+    assert_eq!(
+        line(json!({
+            "id": "a", "tool": "codex", "status": "offline",
+            "activity": "waiting", "attention": "needs_input"
+        })),
+        "a  [codex]  offline  waiting_on_user/needs_input",
+        "an agent that stopped while asking is still asking"
+    );
+    assert_eq!(
+        line(json!({ "id": "a", "tool": "codex", "status": "offline", "activity": "done" })),
+        "a  [codex]  offline  finished"
+    );
+}
+
+#[test]
 fn renders_agent_and_team_details() {
     assert_eq!(
         render_core_agent_ps_lines(&json!({ "agents": [{
-            "id": "codex-1", "tool": "codex", "role": "builder", "status": "working",
-            "activity": "editing", "attention": "needed", "overseer": true,
+            "id": "codex-1", "tool": "codex", "role": "builder", "status": "running",
+            "activity": "running", "attention": "normal", "overseer": true,
             "loop": { "active": true, "goal": "ship" }, "worktreePath": "/repo/wt",
             "task": { "description": "Implement port", "status": "active" }
         }] })),
         vec![
-            "codex-1  [codex:builder]  working  editing/needed  {overseer loop:ship}",
+            "codex-1  [codex:builder]  running  working  {overseer loop:ship}",
             "    worktree: /repo/wt",
             "    task: Implement port (active)",
         ]

@@ -156,6 +156,57 @@ fn workflow_pressure(
     }
 }
 
+/// The one question every surface was asking in its own words: is this agent
+/// waiting on ME, still working, finished, or not running?
+///
+/// `user.label` could not answer it. That is one fourteen-value enum mixing
+/// liveness (`offline`, `starting`), turn (`working`, `done`) and ask
+/// (`needs_input`, `blocked`), so six call sites re-bucketed it by hand and
+/// `aimux ps` skipped it entirely and printed the three raw axes instead --
+/// which is how a session reads `offline done/normal`.
+///
+/// Two rules carry the whole thing:
+///
+/// An ask OUTLIVES the process. An agent that stopped while waiting on you is
+/// still waiting on you, and the answer says so -- `user.label` collapses an
+/// offline session to `offline` with attention `none`, so "it died asking me
+/// something" was lost on every surface, not just `ps`.
+///
+/// Nothing that is not running can be WORKING. `activity` is written by the
+/// agent and nothing rewrites it when the window dies, so a crashed agent's
+/// last word stays `running` forever. Liveness decides, and a stored
+/// `running` on a dead session reads as stopped mid-turn, not as work in
+/// progress.
+pub fn agent_disposition(
+    status: &str,
+    activity: Option<&str>,
+    attention: Option<&str>,
+) -> &'static str {
+    let activity = activity.unwrap_or("");
+    let attention = attention.unwrap_or("");
+    if attention == "error" || activity == "error" {
+        return "failed";
+    }
+    if matches!(attention, "needs_input" | "needs_response" | "blocked") {
+        return "waiting_on_user";
+    }
+    if !crate::project_service::session_visibility::LIVE_SESSION_STATUSES.contains(&status) {
+        return match activity {
+            "done" | "interrupted" => "finished",
+            _ => "not_running",
+        };
+    }
+    match activity {
+        "running" | "waiting" => "working",
+        "done" => "finished",
+        _ if status == "waiting" => "working",
+        // A live session with nothing recorded has no turn state yet, and
+        // "idle" would be a confident answer built from absent data.
+        "" => "",
+        _ => "idle",
+    }
+}
+
 fn user_state(input: &SessionSemanticsInput, lifecycle: &str, attention: &str) -> Value {
     match lifecycle {
         "creating" | "starting" => user("starting", "none", "runtime", None),
