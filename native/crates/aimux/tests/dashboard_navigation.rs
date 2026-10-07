@@ -98,6 +98,43 @@ fn second_quick_jump_digit_selects_session_or_service_inside_worktree() {
     assert_eq!(state.item_index, 2);
 }
 
+/// The only place in the whole dashboard that could call a worktree "unknown".
+///
+/// It fires for a session whose worktree path the service gave no group -- a
+/// graveyarded worktree's leftover agents, before that debris was dropped at
+/// the source. The name is on the path; nothing here knows the branch.
+#[test]
+fn an_unrecognised_worktree_path_is_named_by_its_directory_not_called_unknown() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups.truncate(1);
+    snapshot.worktree_groups[0].services.clear();
+    snapshot.services.clear();
+
+    let mut stray = snapshot.worktree_groups[0].sessions[0].clone();
+    stray.id = "codex-stray".into();
+    stray.overseer = None;
+    stray.scribe = None;
+    stray.project_control = None;
+    stray.team = None;
+    stray.worktree_path = Some("/repo/.aimux/worktrees/perf".into());
+    stray.worktree_name = None;
+    stray.worktree_branch = None;
+    snapshot.sessions = vec![stray];
+    snapshot.worktree_groups[0].sessions.clear();
+
+    let groups = dashboard_navigation_groups(&snapshot);
+    let stray_group = groups
+        .iter()
+        .find(|group| group.path == Some("/repo/.aimux/worktrees/perf"))
+        .expect("orphan group");
+    assert_eq!(stray_group.name, "perf");
+    assert_eq!(stray_group.branch, "");
+    assert!(
+        groups.iter().all(|group| group.name != "unknown"),
+        "a worktree was named unknown"
+    );
+}
+
 #[test]
 fn navigation_skips_project_control_sessions_inside_worktree_groups() {
     let mut snapshot = snapshot();

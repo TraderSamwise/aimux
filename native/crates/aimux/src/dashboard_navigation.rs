@@ -2,7 +2,7 @@ use crate::dashboard_model::{
     DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
     WorktreeGroup, is_dashboard_supervisor_plane_session,
 };
-use crate::project_service::desktop_state::worktree_path_identity;
+use crate::project_service::desktop_state::{path_basename, worktree_path_identity};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -750,7 +750,11 @@ pub fn dashboard_navigation_groups<'a>(
                     .first()
                     .and_then(|service| service.worktree_name.as_deref())
             })
-            .unwrap_or("unknown");
+            // The same rule `worktree_group` names a row-less group by, rather
+            // than the word "unknown" -- which was the only way a worktree could
+            // be called that anywhere, and is what a graveyarded worktree's
+            // leftover agents used to paint across the dashboard.
+            .unwrap_or_else(|| path_basename(path).unwrap_or(path));
         let branch = sessions
             .first()
             .and_then(|session| session.worktree_branch.as_deref())
@@ -759,7 +763,10 @@ pub fn dashboard_navigation_groups<'a>(
                     .first()
                     .and_then(|service| service.worktree_branch.as_deref())
             })
-            .unwrap_or("unknown");
+            // Left empty rather than guessed: the path gives a name, nothing
+            // here gives a branch, and "unknown" in the branch column is a word
+            // where the honest answer is a blank.
+            .unwrap_or("");
         push_navigation_worktree(
             &mut groups,
             NavigationWorktreeInput {
