@@ -7,18 +7,24 @@ use crate::config::load_config_for_project;
 use crate::daemon_state::mutate_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
-use crate::project_service::desktop_state::worktree_checkout_is_present;
+use crate::project_service::desktop_state::{worktree_checkout_is_present, worktree_path_identity};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::graveyard_cleanup::build_graveyard_cleanup_plan;
+use crate::project_service::graveyard_contract::WORKTREE_GRAVEYARD_AGENT_REASON;
 use crate::project_service::operation_failures::{
     OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
     clear_dashboard_operation_failures, try_add_dashboard_operation_failure,
 };
+use crate::project_service::prompt_context::clear_prompt_context;
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::project_service::worktree_cache_cleanup::run_worktree_cache_cleanup;
 use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
+use crate::runtime_topology_sessions::{
+    move_topology_session_to_graveyard, resurrect_topology_session,
+};
 
 use super::json_helpers::*;
+use super::restore_snapshot::prune_restore_eligibility;
 use super::runtime_adapter::{
     PreparedPullRequestWorktree, PreparedRemoteBranchWorktree, PreparedRemoteSourceWorktree,
     ProjectLifecycleRuntime, prune_git_worktrees, remote_worktree_name_from_source,
@@ -53,6 +59,37 @@ impl PreparedWorktreeSource {
             Self::RemoteSource { prepared, .. } => prepared.branch.as_str(),
         }
     }
+}
+
+/// One spelling of a worktree path, because the two halves of a graveyard
+/// disagreed on which rows they were about.
+///
+/// Topology paths come from git as realpaths while a session's `worktreePath`
+/// is stored verbatim from the request that launched it, so `/tmp/x` and
+/// `/private/tmp/x` name one worktree. The dashboard already hides by the
+/// canonical identity; matching raw strings here left the agent un-graveyarded
+/// AND hidden, with no surface and no way back.
+fn same_worktree_path(left: &str, right: &str) -> bool {
+    left == right || worktree_path_identity(left) == worktree_path_identity(right)
+}
+
+fn node_index(topology: &Value) -> Map<String, Value> {
+    array_field(topology, "nodes")
+        .into_iter()
+        .map(|node| (string_field(&node, "id"), node))
+        .collect()
+}
+
+/// Whether a row belongs to this worktree, asked ONE way.
+///
+/// The guard that refuses a graveyard and the loops that then act on the rows
+/// were asking two different questions, so a row the guard could not see was
+/// still acted on: a mis-spelled path meant a live agent kept running while
+/// its worktree was graveyarded under it, and `graveyard.worktree.delete`
+/// would then force-remove the checkout.
+fn item_is_in_worktree(item: &Value, node_by_id: &Map<String, Value>, worktree_path: &str) -> bool {
+    topology_item_worktree_path(item, node_by_id)
+        .is_some_and(|item_path| same_worktree_path(&item_path, worktree_path))
 }
 
 pub(super) fn route_worktree_graveyard(
@@ -105,21 +142,81 @@ pub(super) fn route_worktree_graveyard(
     }
     let live_service_window_ids = array_field(&topology, "services")
         .into_iter()
-        .filter(|service| string_field(service, "worktreePath") == path)
+        .filter(|service| item_is_in_worktree(service, &node_index(&topology), &path))
         .filter_map(|service| live_window_id_for_service(&topology, &service))
         .collect::<Vec<_>>();
+    let mut retired_session_ids = Vec::new();
     if let Err(error) =
         update_runtime_topology(runtime_topology_path(&project_state_dir), |mut topology| {
             let now = now_iso();
             let project_root = context.project_root().to_string_lossy().into_owned();
             let rig_id = ensure_rig(&mut topology, &project_root, &now);
+            let service_nodes = node_index(&topology);
             topology = map_topology_array(topology, "services", |mut service| {
-                if string_field(&service, "worktreePath") == path {
+                if item_is_in_worktree(&service, &service_nodes, &path) {
                     object_insert_mut(&mut service, "status", Value::String("stopped".into()));
                     object_insert_mut(&mut service, "updatedAt", Value::String(now.clone()));
                 }
                 service
             });
+            // The dead agents go with it. Only the services were retired here,
+            // so an `offline` agent kept a row pointing at a checkout about to
+            // be deleted: nothing reaped it, the graveyard screen never listed
+            // it, and the dashboard regrouped it into a worktree it could no
+            // longer name -- the "unknown" row on the TUI.
+            //
+            // By STATUS, not by the window check this route refused on. That
+            // check proves the tmux window is gone, which is not the same as
+            // the agent being dead, and `graveyard.worktree.delete` refuses on
+            // exactly those rows before it removes a checkout with uncommitted
+            // work in it. Turning "could not confirm" into "dead" here would
+            // take that guard away.
+            // Derived HERE, not before the lock. Taking the update lock can
+            // wait seconds for another writer, and in that window an offline
+            // row can be restarted under the same id -- so a set named outside
+            // would stamp a now-running agent dead, drop its tmux binding, and
+            // leave `graveyard.worktree.delete` reading `graveyard` on the one
+            // row that was supposed to refuse it, two keypresses from
+            // force-removing a checkout with uncommitted work in it. The
+            // closure can also be re-run, so this has to be a function of the
+            // topology it is handed.
+            //
+            // Through the node's `cwd` as well, which is how the dashboard
+            // groups a session with no `worktreePath` of its own. Already in
+            // the graveyard is already done: restamping the reason would
+            // relabel the user's decision and make the resurrect undo it.
+            let node_by_id = node_index(&topology);
+            let worktree_sessions = array_field(&topology, "sessions")
+                .into_iter()
+                .filter(|session| item_is_in_worktree(session, &node_by_id, &path))
+                .collect::<Vec<_>>();
+            // Nothing moves while anything in here is alive. The guard above
+            // refuses on an agent with a live WINDOW; a row whose status is
+            // live but whose window has gone gets through it, and retiring that
+            // agent's offline neighbour would take its own row off the
+            // dashboard -- which is where a teammate is reached from, so a
+            // running teammate would be left on no surface at all.
+            retired_session_ids.clear();
+            if !worktree_sessions
+                .iter()
+                .any(|session| LIVE_STATUSES.contains(&string_field(session, "status").as_str()))
+            {
+                retired_session_ids.extend(
+                    worktree_sessions
+                        .iter()
+                        .filter(|session| string_field(session, "status") != "graveyard")
+                        .map(|session| string_field(session, "id"))
+                        .filter(|id| !id.is_empty()),
+                );
+            }
+            for session_id in &retired_session_ids {
+                move_topology_session_to_graveyard(
+                    &mut topology,
+                    session_id,
+                    &now,
+                    Some(WORKTREE_GRAVEYARD_AGENT_REASON),
+                );
+            }
             topology = map_topology_array(topology, "worktrees", |mut current| {
                 if string_field(&current, "path") == path {
                     object_insert_mut(&mut current, "status", Value::String("graveyard".into()));
@@ -159,6 +256,14 @@ pub(super) fn route_worktree_graveyard(
     }
     for window_id in live_service_window_ids {
         let _ = runtime.kill_window(&window_id);
+    }
+    // What `route_agent_kill` does for one agent, for each of these, and only
+    // for the ones the write actually moved. Without them the restore offer
+    // keeps proposing an agent in a checkout that is about to be deleted, and
+    // accepting it restores nothing.
+    for session_id in &retired_session_ids {
+        clear_prompt_context(&project_state_dir, session_id);
+        prune_restore_eligibility(&project_state_dir, session_id);
     }
     clear_all_worktree_operation_failures(&project_state_dir, &path);
     // This route keeps the row, moving it to `status: "graveyard"`, so a
@@ -544,7 +649,7 @@ pub(super) fn route_worktree_remove(
     }
     let live_service_window_ids = array_field(&topology, "services")
         .into_iter()
-        .filter(|service| string_field(service, "worktreePath") == path)
+        .filter(|service| item_is_in_worktree(service, &node_index(&topology), &path))
         .filter_map(|service| live_window_id_for_service(&topology, &service))
         .collect::<Vec<_>>();
     if Path::new(&path).exists() {
@@ -694,9 +799,10 @@ fn attached_live_agent_label(
     // Narrowed to this checkout before tmux is asked anything. Building the
     // inventory costs a subprocess, and most of these calls are for a worktree
     // with no sessions at all.
+    let node_by_id = node_index(topology);
     let candidates = array_field(topology, "sessions")
         .into_iter()
-        .filter(|session| string_field(session, "worktreePath") == path)
+        .filter(|session| item_is_in_worktree(session, &node_by_id, path))
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         return None;
@@ -854,6 +960,27 @@ pub(super) fn route_graveyard_worktree_resurrect(
                     "updatedAt": now,
                 }));
                 object_insert_mut(&mut topology, "worktrees", Value::Array(worktrees));
+            }
+            // The agents come back with it, and only the ones it took. An agent
+            // the user killed by hand keeps its own reason and stays where they
+            // put it. Without this the worktree returned empty and each agent
+            // had to be hunted down one at a time.
+            let returning_nodes = node_index(&topology);
+            let returning = array_field(&topology, "sessions")
+                .into_iter()
+                .filter(|session| {
+                    string_field(session, "graveyardReason") == WORKTREE_GRAVEYARD_AGENT_REASON
+                })
+                // The same question the take loop asks. Matching the field
+                // alone could not give back an agent attached through its
+                // node's `cwd`: the route took it and then had no way to return
+                // it, while every sibling came back.
+                .filter(|session| item_is_in_worktree(session, &returning_nodes, &path))
+                .map(|session| string_field(&session, "id"))
+                .filter(|id| !id.is_empty())
+                .collect::<Vec<_>>();
+            for session_id in returning {
+                resurrect_topology_session(&mut topology, &session_id, &now);
             }
             let mut graveyard = array_field(&topology, "worktreeGraveyard");
             graveyard.retain(|entry| string_field(entry, "path") != path);
@@ -1089,6 +1216,13 @@ pub(super) fn existing_worktree_create_conflicts(topology: &Value, target_path: 
                     .and_then(Value::as_str)
                     .is_none()
                 && string_field(&worktree, "status") != "creating"
+                // A row in the graveyard is not a worktree in the way. It said
+                // "already exists" about something the user had thrown away,
+                // and once a graveyarded worktree whose checkout is gone can no
+                // longer be resurrected, that answer was the last door out:
+                // the agent resurrect sent the user here and here sent them
+                // back. Creating it again is the whole point of the graveyard.
+                && string_field(&worktree, "status") != "graveyard"
         })
 }
 
@@ -1282,36 +1416,29 @@ pub(crate) fn clear_worktree_row_failure(project_state_dir: &Path, worktree_path
     cleared
 }
 
+/// The same membership question the graveyard asks, because the delete has to
+/// act on the rows the graveyard moved. Matching the raw string here while the
+/// graveyard matched canonically left a session the graveyard had taken with
+/// its row and its assets after its worktree was deleted -- and with the
+/// graveyard entry then marked `deletedAt`, nothing could resurrect it.
 pub(super) fn session_ids_for_worktree(topology: &Value, worktree_path: &str) -> Vec<String> {
-    let node_by_id = array_field(topology, "nodes")
-        .into_iter()
-        .map(|node| (string_field(&node, "id"), node))
-        .collect::<Map<_, _>>();
+    let node_by_id = node_index(topology);
     array_field(topology, "sessions")
         .into_iter()
-        .filter(|session| {
-            topology_item_worktree_path(session, &node_by_id).as_deref() == Some(worktree_path)
-        })
+        .filter(|session| item_is_in_worktree(session, &node_by_id, worktree_path))
         .map(|session| string_field(&session, "id"))
         .collect()
 }
 
 pub(super) fn remove_worktree_dependents(topology: &mut Value, worktree_path: &str) {
-    let node_by_id = array_field(topology, "nodes")
-        .into_iter()
-        .map(|node| (string_field(&node, "id"), node))
-        .collect::<Map<_, _>>();
+    let node_by_id = node_index(topology);
     let removing_sessions = array_field(topology, "sessions")
         .into_iter()
-        .filter(|session| {
-            topology_item_worktree_path(session, &node_by_id).as_deref() == Some(worktree_path)
-        })
+        .filter(|session| item_is_in_worktree(session, &node_by_id, worktree_path))
         .collect::<Vec<_>>();
     let removing_services = array_field(topology, "services")
         .into_iter()
-        .filter(|service| {
-            topology_item_worktree_path(service, &node_by_id).as_deref() == Some(worktree_path)
-        })
+        .filter(|service| item_is_in_worktree(service, &node_by_id, worktree_path))
         .collect::<Vec<_>>();
     let removing_session_ids = removing_sessions
         .iter()

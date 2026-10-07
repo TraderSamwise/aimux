@@ -38,6 +38,7 @@ const RECENT_IDLE_MS: u128 = 2 * 60 * 1000;
 /// them, and the app's copy of this word is pinned against this constant by a
 /// test rather than by intention.
 pub const WORKTREE_CHECKOUT_MISSING_LABEL: &str = "checkout missing";
+
 const COL_SELECT: usize = 2;
 const COL_DOT: usize = 2;
 const COL_INDEX: usize = 4;
@@ -3525,11 +3526,14 @@ fn render_graveyard_content(
                 let headline = string_at(agent, &["headline"])
                     .map(|headline| format!(" · {headline}"))
                     .unwrap_or_default();
-                let unrecoverable = if agent.get("graveyardReason").is_some() {
-                    format!(" {}", style("· unrecoverable", Tone::Danger))
-                } else {
-                    String::new()
-                };
+                // Not "unrecoverable": `graveyard.agent.resurrect` restores any
+                // graveyarded row whatever its reason, and the reason is
+                // whatever the caller typed -- `--reason "done for now"` was
+                // painted red and called lost. What cannot be brought back is a
+                // checkout that is gone, which this row does not know.
+                let reason = string_at(agent, &["graveyardReason"])
+                    .map(|reason| format!(" {}", style(&format!("· {reason}"), Tone::Muted)))
+                    .unwrap_or_default();
                 let text = format!(
                     "{}{} {} {}{}{}",
                     selected_marker(selected),
@@ -3546,7 +3550,7 @@ fn render_graveyard_content(
                         ),
                         Tone::Muted
                     ),
-                    unrecoverable,
+                    reason,
                     graveyard_pending_suffix(row)
                 );
                 let text = recency_chip(string_at(row, &["lastUsedAt"]))
@@ -4148,7 +4152,7 @@ fn render_graveyard_details(
             lines.extend(wrap_key_value("Headline", headline, width));
         }
         if let Some(reason) = string_at(entry, &["graveyardReason"]) {
-            lines.extend(wrap_key_value("Unrecoverable", reason, width));
+            lines.extend(wrap_key_value("Reason", reason, width));
         }
         if let Some(command) = string_at(entry, &["command"]) {
             lines.extend(wrap_key_value("Command", command, width));

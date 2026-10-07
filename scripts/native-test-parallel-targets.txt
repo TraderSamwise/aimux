@@ -107,6 +107,7 @@ project_service_plans
 project_service_project_observability
 project_service_prompt_context
 project_service_reads
+project_service_retired_worktree_reaper
 project_service_route_contract
 project_service_runtime_events
 project_service_scheduler

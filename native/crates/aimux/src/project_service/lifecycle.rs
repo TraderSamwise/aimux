@@ -37,6 +37,7 @@ use agent_management::*;
 use agent_session_launch::*;
 pub use default_scribe::ensure_default_scribe_agent;
 pub(crate) use default_scribe::is_scribe_session;
+pub(crate) use ids::now_iso;
 use ids::*;
 use json_helpers::*;
 use response_helpers::*;
@@ -44,8 +45,8 @@ pub(crate) use restore_offer::read_displayable_agent_restore_offer;
 use restore_offer::*;
 pub use restore_snapshot::seed_agent_restore_prompt_gates_for_daemon_boot;
 pub(crate) use restore_snapshot::{
-    derive_agent_restore_offer, read_last_online_agents_snapshot, record_last_online_agents,
-    restore_now_iso, restore_project_id,
+    derive_agent_restore_offer, prune_restore_eligibility, read_last_online_agents_snapshot,
+    record_last_online_agents, restore_now_iso, restore_project_id,
 };
 #[cfg(test)]
 pub(crate) use runtime_adapter::AsyncProjectLifecycleRuntime;

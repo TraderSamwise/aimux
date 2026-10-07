@@ -1153,6 +1153,521 @@ fn a_graveyarded_worktree_leaves_the_dashboard_even_with_an_offline_agent_in_it(
         groups.iter().all(|group| group["name"] != "perf"),
         "graveyarded worktree still listed: {groups:#?}"
     );
+    // The group leaving was only half of it. The agent stayed in the flat
+    // array, `dashboard_navigation` regroups that array by worktree path, and
+    // with no row behind the path it named the rebuilt group "unknown" -- so
+    // the worktree the service had just removed came back on the TUI wearing a
+    // different name. Asserted here rather than only in the renderer, because
+    // the removal is the service's answer and every surface reads it.
+    let sessions = state["sessions"].as_array().expect("sessions");
+    assert!(
+        sessions.iter().all(|session| session["id"] != "codex-perf"),
+        "agent of a graveyarded worktree still published: {sessions:#?}"
+    );
+    assert!(
+        groups.iter().all(|group| {
+            group["sessions"].as_array().is_none_or(|group_sessions| {
+                group_sessions
+                    .iter()
+                    .all(|session| session["id"] != "codex-perf")
+            })
+        }),
+        "agent of a graveyarded worktree still grouped: {groups:#?}"
+    );
+    cleanup(project);
+}
+
+/// The inverse of the test above, and the reason that one does not simply drop
+/// every agent on a retired path: an agent can still be RUNNING in a worktree
+/// whose row has been retired, and hiding a live agent is the worse of the two
+/// lies. It keeps its place AND its group, because the Expo app renders
+/// `worktreeGroups` and nothing else -- leaving the group to the TUI's
+/// navigation layer would have put the same agent on one surface and not the
+/// other.
+#[cfg(unix)]
+#[test]
+fn a_running_agent_keeps_its_place_when_its_worktree_is_graveyarded() {
+    let project = temp_project("graveyarded-worktree-live-agent");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    let root_path = root.to_string_lossy().into_owned();
+    let retired = format!("{root_path}/.aimux/worktrees/perf");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-perf", "rigId": "rig-1", "logicalId": "codex-perf", "toolConfigKey": "codex", "cwd": retired, "createdAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-perf", "nodeId": "node-perf", "tmuxSession": "aimux-repo", "tmuxWindowId": "@7", "tmuxWindowIndex": 7, "tmuxWindowName": "codex", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "sessions": [
+            { "id": "codex-perf", "nodeId": "node-perf", "status": "running", "command": "codex", "worktreePath": retired, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "wt-perf", "rigId": "rig-1", "path": retired, "name": "perf", "status": "graveyard", "branch": "perf", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z", "removedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &["@7"])),
+    );
+
+    let sessions = state["sessions"].as_array().expect("sessions");
+    assert!(
+        sessions.iter().any(|session| session["id"] == "codex-perf"),
+        "running agent dropped with its graveyarded worktree: {sessions:#?}"
+    );
+    let groups = state["worktreeGroups"].as_array().expect("worktree groups");
+    let group = groups
+        .iter()
+        .find(|group| group["name"] == "perf")
+        .unwrap_or_else(|| panic!("no group for the live agent's worktree: {groups:#?}"));
+    assert_eq!(group["branch"], "perf");
+    assert_eq!(group["sessions"][0]["id"], "codex-perf");
+    // Through the same derivation the active rows get, in the same probe pass.
+    // A row bolted on afterwards carried no checkout verdict at all, so a
+    // graveyarded worktree whose checkout is gone rendered as an ordinary
+    // group -- which is two of the three Sam is looking at.
+    assert_eq!(
+        group["pathMissing"], true,
+        "the retired row skipped the checkout probe: {group:#?}"
+    );
+    assert!(
+        !state["worktrees"]
+            .as_array()
+            .expect("worktrees")
+            .iter()
+            .any(|row| row["name"] == "perf"),
+        "a graveyarded worktree reached the row list: {:#?}",
+        state["worktrees"]
+    );
+    cleanup(project);
+}
+
+/// A row the topology still calls `running` whose tmux window has gone.
+///
+/// The projection downgrades that to `offline` before the dashboard sees it,
+/// while `graveyard.worktree.delete` refuses on the DURABLE row -- so reading
+/// the projected status here hid an agent that was still blocking the delete,
+/// and the refusal named an agent on no screen.
+#[cfg(unix)]
+#[test]
+fn an_agent_the_topology_still_calls_running_is_not_debris() {
+    let project = temp_project("graveyarded-worktree-dead-window");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    let root_path = root.to_string_lossy().into_owned();
+    let retired = format!("{root_path}/.aimux/worktrees/perf");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-perf", "rigId": "rig-1", "logicalId": "codex-perf", "toolConfigKey": "codex", "cwd": retired, "createdAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-perf", "nodeId": "node-perf", "tmuxSession": "aimux-repo", "tmuxWindowId": "@7", "tmuxWindowIndex": 7, "tmuxWindowName": "codex", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "sessions": [
+            { "id": "codex-perf", "nodeId": "node-perf", "status": "running", "command": "codex", "worktreePath": retired, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "wt-perf", "rigId": "rig-1", "path": retired, "name": "perf", "status": "graveyard", "branch": "perf", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z", "removedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    // tmux answered, and @7 was not in what it returned.
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &[])),
+    );
+
+    let sessions = state["sessions"].as_array().expect("sessions");
+    let session = sessions
+        .iter()
+        .find(|session| session["id"] == "codex-perf")
+        .unwrap_or_else(|| {
+            panic!(
+                "the delete route still refuses on this row, so it must be on screen: {sessions:#?}"
+            )
+        });
+    assert_eq!(session["status"], "offline", "the projection still applies");
+    cleanup(project);
+}
+
+/// A live agent attached through its node's `cwd` rather than a `worktreePath`.
+///
+/// The projection fills `worktreePath` from the node, so the filter saw the
+/// retired path while the liveness carve-out -- reading the raw row -- did not,
+/// and the agent could not un-abandon its own worktree. Live agent, no surface.
+#[cfg(unix)]
+#[test]
+fn a_live_agent_attached_through_its_node_keeps_its_worktree_alive() {
+    let project = temp_project("graveyarded-worktree-node-cwd");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    let root_path = root.to_string_lossy().into_owned();
+    let retired = format!("{root_path}/.aimux/worktrees/perf");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-perf", "rigId": "rig-1", "logicalId": "codex-perf", "toolConfigKey": "codex", "cwd": retired, "createdAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-perf", "nodeId": "node-perf", "tmuxSession": "aimux-repo", "tmuxWindowId": "@7", "tmuxWindowIndex": 7, "tmuxWindowName": "codex", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        // No `worktreePath` of its own: the node's `cwd` is the only record.
+        "sessions": [
+            { "id": "codex-perf", "nodeId": "node-perf", "status": "running", "command": "codex", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "wt-perf", "rigId": "rig-1", "path": retired, "name": "perf", "status": "graveyard", "branch": "perf", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z", "removedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+        "lifecycleOperations": [], "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &["@7"])),
+    );
+
+    let sessions = state["sessions"].as_array().expect("sessions");
+    assert!(
+        sessions.iter().any(|session| session["id"] == "codex-perf"),
+        "a live agent was dropped because its worktree is named by its node: {sessions:#?}"
+    );
+    let groups = state["worktreeGroups"].as_array().expect("worktree groups");
+    assert!(
+        groups.iter().any(|group| group["name"] == "perf"),
+        "no group for the live agent's worktree: {groups:#?}"
+    );
+    cleanup(project);
+}
+
+/// A live agent whose stored PLANE names the retired worktree.
+///
+/// `item_worktree_group_key` prefers the lane, which `agent_roles` sets to a
+/// worktree other than the agent's own checkout on purpose. A cheaper
+/// carve-out that skipped an item whose raw path an active row already names
+/// could not see that, so the filter keyed the agent into the retired worktree
+/// while nothing rescued it: a running agent on no surface.
+#[cfg(unix)]
+#[test]
+fn a_live_agent_whose_plane_names_the_retired_worktree_keeps_it_alive() {
+    let project = temp_project("graveyarded-worktree-lane");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    let root_path = root.to_string_lossy().into_owned();
+    let retired = format!("{root_path}/.aimux/worktrees/perf");
+    let elsewhere = format!("{root_path}/.aimux/worktrees/other");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-perf", "rigId": "rig-1", "logicalId": "codex-perf", "toolConfigKey": "codex", "cwd": elsewhere, "createdAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-perf", "nodeId": "node-perf", "tmuxSession": "aimux-repo", "tmuxWindowId": "@7", "tmuxWindowIndex": 7, "tmuxWindowName": "codex", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        // Its checkout is `other`; its PLANE is the graveyarded `perf`.
+        "sessions": [
+            { "id": "codex-perf", "nodeId": "node-perf", "status": "running", "command": "codex", "worktreePath": elsewhere, "lane": { "kind": "worktree", "worktreePath": retired }, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "wt-other", "rigId": "rig-1", "path": elsewhere, "name": "other", "status": "active", "branch": "other", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" },
+            { "id": "wt-perf", "rigId": "rig-1", "path": retired, "name": "perf", "status": "graveyard", "branch": "perf", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z", "removedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+        "lifecycleOperations": [], "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &["@7"])),
+    );
+
+    let sessions = state["sessions"].as_array().expect("sessions");
+    assert!(
+        sessions.iter().any(|session| session["id"] == "codex-perf"),
+        "a running agent was dropped because its plane names a graveyarded worktree: {sessions:#?}"
+    );
+    cleanup(project);
+}
+
+/// A SERVICE in an abandoned worktree goes too.
+///
+/// Every other gate here set `"services": []`, so the service arm of this rule
+/// was carried by nothing at all.
+#[cfg(unix)]
+#[test]
+fn a_graveyarded_worktrees_stopped_service_leaves_with_it() {
+    let project = temp_project("graveyarded-worktree-service");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    let root_path = root.to_string_lossy().into_owned();
+    let retired = format!("{root_path}/.aimux/worktrees/perf");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "svc-perf", "rigId": "rig-1", "logicalId": "web", "role": "service", "runtime": "service", "toolConfigKey": "service", "cwd": retired, "label": "web", "createdAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "edges": [], "bindings": [], "sessions": [],
+        "services": [
+            { "id": "web", "rigId": "rig-1", "nodeId": "svc-perf", "status": "stopped", "command": "yarn dev", "worktreePath": retired, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktrees": [
+            { "id": "wt-perf", "rigId": "rig-1", "path": retired, "name": "perf", "status": "graveyard", "branch": "perf", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z", "removedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+        "lifecycleOperations": [], "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &[])),
+    );
+
+    let services = state["services"].as_array().expect("services");
+    assert!(
+        services.iter().all(|service| service["id"] != "web"),
+        "service of a graveyarded worktree still published: {services:#?}"
+    );
+    let groups = state["worktreeGroups"].as_array().expect("worktree groups");
+    assert!(
+        groups.iter().all(|group| group["name"] != "perf"),
+        "graveyarded worktree still grouped by its service: {groups:#?}"
+    );
+    cleanup(project);
+}
+
+/// The surfaces compared against each other, which is what AGENTS.md asks for.
+///
+/// One graveyarded worktree holding one running agent and one offline one. A
+/// per-surface gate passes happily while the surfaces disagree -- that is how
+/// an agent came to be in `sessions` and in no group, visible on the TUI and
+/// invisible in the app.
+#[cfg(unix)]
+#[test]
+fn every_published_agent_is_reachable_through_some_group() {
+    let project = temp_project("graveyarded-worktree-surfaces");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    let root_path = root.to_string_lossy().into_owned();
+    let retired = format!("{root_path}/.aimux/worktrees/perf");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-live", "rigId": "rig-1", "logicalId": "codex-live", "toolConfigKey": "codex", "cwd": retired, "createdAt": "2026-09-10T00:00:00.000Z" },
+            { "id": "node-cold", "rigId": "rig-1", "logicalId": "codex-cold", "toolConfigKey": "codex", "cwd": retired, "createdAt": "2026-09-10T00:00:01.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@7", "tmuxWindowIndex": 7, "tmuxWindowName": "codex", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "sessions": [
+            { "id": "codex-live", "nodeId": "node-live", "status": "running", "command": "codex", "worktreePath": retired, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" },
+            { "id": "codex-cold", "nodeId": "node-cold", "status": "offline", "command": "codex", "worktreePath": retired, "createdAt": "2026-09-10T00:00:01.000Z", "updatedAt": "2026-09-10T00:00:01.000Z" }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "wt-perf", "rigId": "rig-1", "path": retired, "name": "perf", "status": "graveyard", "branch": "perf", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z", "removedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+        "lifecycleOperations": [], "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &["@7"])),
+    );
+
+    let published = state["sessions"]
+        .as_array()
+        .expect("sessions")
+        .iter()
+        .filter_map(|session| session["id"].as_str().map(str::to_owned))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut grouped = state["worktreeGroups"]
+        .as_array()
+        .expect("worktree groups")
+        .iter()
+        .flat_map(|group| group["sessions"].as_array().into_iter().flatten())
+        .filter_map(|session| session["id"].as_str().map(str::to_owned))
+        .collect::<std::collections::BTreeSet<_>>();
+    grouped.extend(
+        state["supervisorLane"]["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|session| session["id"].as_str().map(str::to_owned)),
+    );
+    assert_eq!(
+        published, grouped,
+        "an agent is published but reachable through no group"
+    );
+    // Both, because the rule is per WORKTREE. An offline sibling of a live
+    // agent is not debris: a parent and its teammate share a path, and the
+    // teammate is reachable only through the parent's row, so hiding the
+    // offline one took the running one off every surface with it.
+    assert!(published.contains("codex-live"), "{published:?}");
+    assert!(published.contains("codex-cold"), "{published:?}");
+    cleanup(project);
+}
+
+/// And through the route the dashboard actually calls.
+///
+/// `process.rs:675` serves desktop state through `route_desktop_state_request_async`,
+/// so a gate that only drives the sync builder proves nothing about what the
+/// user sees. The two lanes filter in two places and nothing but this says they
+/// agree.
+#[test]
+fn the_async_route_also_drops_a_graveyarded_worktrees_leftover_agent() {
+    let project = temp_project("async-graveyard-debris");
+    let state_dir = project.join("state");
+    let root = project.join("repo");
+    create_dir_all(&state_dir).expect("state dir");
+    create_dir_all(&root).expect("repo");
+    init_git_repo(&root);
+    let root_path = root.to_string_lossy().into_owned();
+    let retired = format!("{root_path}/.aimux/worktrees/perf");
+
+    let now = "2026-10-06T00:00:00.000Z";
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": now,
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": now, "updatedAt": now }],
+        "nodes": [
+            { "id": "node-perf", "rigId": "rig-1", "logicalId": "codex-perf", "toolConfigKey": "codex", "cwd": retired, "createdAt": now }
+        ],
+        "edges": [], "bindings": [],
+        "sessions": [
+            { "id": "codex-perf", "nodeId": "node-perf", "status": "offline", "command": "codex", "worktreePath": retired, "createdAt": now, "updatedAt": now }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "main", "rigId": "rig-1", "path": root_path, "name": "Main Checkout", "status": "active", "branch": "trunk", "createdAt": now, "updatedAt": now },
+            { "id": "wt-perf", "rigId": "rig-1", "path": retired, "name": "perf", "status": "graveyard", "branch": "perf", "createdAt": now, "updatedAt": now, "removedAt": now }
+        ],
+        "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+        "lifecycleOperations": [], "exchangeRefs": []
+    }))
+    .expect("topology");
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology).expect("topology yaml"),
+    )
+    .expect("write topology");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::new(),
+        },
+    )
+    .expect("metadata");
+    write_runtime_exchange(runtime_exchange_path(&state_dir), &exchange_fixture())
+        .expect("exchange");
+
+    let isolation = support::TestIsolation::new("desktop-state-async-graveyard-debris");
+    let context = isolation.project_context(&root, &state_dir);
+
+    // aimux-async-seam: test - desktop-state route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:desktop-state-async-graveyard-debris",
+        route_desktop_state_request_async(&context, "GET", routes::DESKTOP_STATE),
+    )
+    .expect("desktop-state async route");
+    assert_eq!(response.status, 200);
+
+    let sessions = response.body["sessions"].as_array().expect("sessions");
+    assert!(
+        sessions.iter().all(|session| session["id"] != "codex-perf"),
+        "agent of a graveyarded worktree still published by the async route: {sessions:#?}"
+    );
+    let groups = response.body["worktreeGroups"]
+        .as_array()
+        .expect("worktree groups");
+    assert!(
+        groups.iter().all(|group| group["name"] != "perf"),
+        "graveyarded worktree still grouped by the async route: {groups:#?}"
+    );
     cleanup(project);
 }
 

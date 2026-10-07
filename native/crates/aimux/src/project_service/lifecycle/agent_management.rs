@@ -772,16 +772,38 @@ pub(super) fn route_graveyard_agent_resurrect(
         return json_error(404, format!("Graveyard session \"{session_id}\" not found"));
     };
     let state = topology_session_to_session_state(&session, &topology);
-    if let Some(worktree_path) = trimmed_string(state.get("worktreePath"))
-        && !worktree_path_is_graveyarded(&topology, &worktree_path)
-        && !Path::new(&worktree_path).exists()
-    {
-        return json_error(
-            500,
-            format!(
-                "Cannot resurrect agent \"{session_id}\" because its worktree \"{worktree_path}\" is missing; restore the worktree first"
-            ),
-        );
+    if let Some(worktree_path) = trimmed_string(state.get("worktreePath")) {
+        // A graveyarded worktree used to be the carve-out here, back when
+        // graveyarding one left its agents alone. It now takes them with it and
+        // gives them back, so bringing one out on its own produced an agent in
+        // a worktree no surface shows -- not in `sessions`, not in a group, not
+        // in the graveyard -- and the reaper put it straight back on its next
+        // tick. One door, and it is the worktree's.
+        if worktree_path_is_graveyarded(&topology, &worktree_path) {
+            // Which way out, decided here rather than left to be discovered:
+            // `graveyard.worktree.resurrect` refuses a checkout that is gone,
+            // so sending the user there when it is would be a wall with
+            // directions painted on it.
+            let way_out = if Path::new(&worktree_path).exists() {
+                "resurrect the worktree, which brings its agents back with it"
+            } else {
+                "its checkout is gone too, so the worktree has to be created again"
+            };
+            return json_error(
+                409,
+                format!(
+                    "Cannot resurrect agent \"{session_id}\" on its own because its worktree \"{worktree_path}\" is in the graveyard; {way_out}"
+                ),
+            );
+        }
+        if !Path::new(&worktree_path).exists() {
+            return json_error(
+                500,
+                format!(
+                    "Cannot resurrect agent \"{session_id}\" because its worktree \"{worktree_path}\" is missing; restore the worktree first"
+                ),
+            );
+        }
     }
     let node_id = string_field(&session, "nodeId");
     if let Err(error) =

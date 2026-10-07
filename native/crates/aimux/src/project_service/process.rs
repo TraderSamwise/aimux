@@ -41,6 +41,7 @@ use crate::project_service::agent_input_delivery::agent_input_delivery_task;
 use crate::project_service::agent_restore_task::agent_restore_snapshot_task;
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
+use crate::project_service::retired_worktree_reaper::retired_worktree_reaper_task;
 use crate::project_service::runtime_health_history::runtime_health_recorder_task;
 use crate::project_service::scheduler::{
     PeriodicTask, PeriodicTaskFuture, ProjectSchedulerHandle, spawn_project_service_scheduler,
@@ -1786,6 +1787,7 @@ pub fn project_service_periodic_tasks_for_context(
     periodic_tasks.push(loop_watcher_task(context));
     periodic_tasks.push(scribe_watcher_task(context));
     periodic_tasks.push(window_reconciliation_task());
+    periodic_tasks.push(retired_worktree_reaper_task());
     append_stability_doctor_test_wedge_task(&mut periodic_tasks);
     periodic_tasks
 }
