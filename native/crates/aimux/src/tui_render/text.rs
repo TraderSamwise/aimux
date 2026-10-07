@@ -13,6 +13,51 @@ pub(crate) fn sgr_end(bytes: &[u8], start: usize) -> Option<usize> {
     (bytes.get(end) == Some(&b'm')).then_some(end + 1)
 }
 
+/// Every CSI sequence gone, not only the colours.
+///
+/// `strip_ansi` is deliberately SGR-only: it is what measures how WIDE a styled
+/// string is, and the strings it measures carry nothing else. A composed frame
+/// does -- `\x1b[H` to home the cursor, `\x1b[m\x1b[K` to clear each row before
+/// drawing it, `\x1b[?2026h` to open the synchronized update -- and under
+/// `strip_ansi` each of those counts as visible characters. That is why the
+/// frame assertions used to exempt their first line.
+pub fn strip_terminal_control(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if let Some(end) = csi_end(bytes, index) {
+            index = end;
+            continue;
+        }
+        let character = text[index..]
+            .chars()
+            .next()
+            .expect("index must be at a UTF-8 character boundary");
+        output.push(character);
+        index += character.len_utf8();
+    }
+
+    output
+}
+
+/// The end of a CSI sequence: `ESC [`, parameter and intermediate bytes, then
+/// one final byte in `@`..`~`.
+fn csi_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start) != Some(&ESC) || bytes.get(start + 1) != Some(&b'[') {
+        return None;
+    }
+    let mut end = start + 2;
+    while matches!(bytes.get(end), Some(0x30..=0x3f)) {
+        end += 1;
+    }
+    while matches!(bytes.get(end), Some(0x20..=0x2f)) {
+        end += 1;
+    }
+    matches!(bytes.get(end), Some(0x40..=0x7e)).then_some(end + 1)
+}
+
 pub fn strip_ansi(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut output = String::with_capacity(text.len());

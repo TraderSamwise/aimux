@@ -2490,12 +2490,25 @@ fn render_dashboard_snapshot(
     frame
 }
 
+/// A dialog over a receded frame, composed INSIDE the synchronized update.
+///
+/// It used to be composed around it: `recede` prepends its own SGR ahead of the
+/// `\x1b[?2026h` that opens the frame, and the overlay was pushed on after the
+/// `\x1b[?2026l` that closes it. So a terminal honouring the wrapper drew the
+/// dimmed dashboard, ended the update, and then drew the dialog -- two visible
+/// passes for one frame, which is the same flicker the full-screen clear caused
+/// and which the wrapper exists to prevent.
 fn dashboard_overlay_frame(
     base: &crate::tui_render::screen_frame::ScreenFrameResult,
     overlay: String,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
-    let mut frame = recede(&base.frame);
+    let (base_rows, trailer) =
+        crate::tui_render::screen_frame::split_synchronized_frame(&base.frame);
+    let mut frame = String::with_capacity(base.frame.len() + overlay.len() + 16);
+    frame.push_str(crate::tui_render::screen_frame::SYNCHRONIZED_BEGIN);
+    frame.push_str(&recede(base_rows));
     frame.push_str(&overlay);
+    frame.push_str(trailer);
     crate::tui_render::screen_frame::ScreenFrameResult {
         frame,
         scroll_offset: base.scroll_offset,

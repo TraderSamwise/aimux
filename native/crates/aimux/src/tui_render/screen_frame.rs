@@ -1,4 +1,5 @@
 use super::text::{center, compose_two_pane, strip_ansi, truncate_ansi};
+use super::theme::visible_width;
 
 #[derive(Debug, Clone)]
 pub struct ScreenFrameInput<'a> {
@@ -91,6 +92,24 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
             compose_two_pane(&visible, right_panel, content_width, Some("   "))
                 .into_iter()
                 .take(viewport_height)
+                // Truncated to the terminal, the way the footer rows already
+                // are. `content_width` is `72.max(cols)`, a MINIMUM content
+                // width, so under 72 columns the two-pane body is composed
+                // wider than the screen and every row of it wraps. The
+                // full-screen clear hid the consequence: the layout was already
+                // scrambled, but nothing was left behind. Each row erases only
+                // itself now, so a wrapped row would leave the tail of the last
+                // frame below it.
+                // Only when it really is too wide: `truncate_ansi` appends a
+                // reset whether or not it cut anything, and these rows are
+                // compared byte for byte against the frames Node drew.
+                .map(|line| {
+                    if visible_width(&line) > cols {
+                        truncate_ansi(&line, cols)
+                    } else {
+                        line
+                    }
+                })
                 .collect()
         } else {
             visible
@@ -100,21 +119,79 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
     };
 
     ScreenFrameResult {
-        // Wrapped in a synchronized update (DECSET 2026) the way Exposé already
-        // wraps its repaint: without it the terminal paints the cleared screen
-        // before the new one arrives, which is a visible blank on every
-        // keystroke in a dialog.
-        frame: format!(
-            "\x1b[?2026h\x1b[2J\x1b[H{}\x1b[?2026l",
-            input
-                .header
-                .iter()
-                .chain(body.iter())
-                .chain(footer.iter())
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("\r\n")
-        ),
+        // Still wrapped in a synchronized update (DECSET 2026), and no longer
+        // relying on it. The frame used to open with `\x1b[2J`, which blanks the
+        // WHOLE screen before a single character of the new one is drawn -- so
+        // any terminal that does not honour 2026, or that gives up on it part
+        // way through a slow write, shows an empty screen on every keystroke.
+        // That is the flicker.
+        //
+        // Each row now erases its own tail after it is drawn, so no part of the
+        // screen is ever blank: a row goes straight from the old content to the
+        // new. There is nothing to erase below, because the body is padded to
+        // the viewport and header + body + footer is exactly `rows`.
+        frame: compose_rows(input.header.iter().chain(body.iter()).chain(footer.iter())),
         scroll_offset,
     }
+}
+
+/// The bytes that put a frame on the screen, one row at a time.
+///
+/// `\x1b[2J` used to open every frame. It blanks the WHOLE screen before a
+/// single character of the new one is drawn, so any terminal that does not
+/// honour the synchronized update, or that gives up on it part way through a
+/// slow write, shows an empty screen on every keystroke. That is the flicker.
+///
+/// Each row now clears only itself, immediately before its own content, so the
+/// most that is ever blank is one row and only for the few bytes until that
+/// row is drawn. The synchronized wrapper stays -- it is four bytes and it
+/// still helps where it is honoured -- but nothing depends on it any more.
+///
+/// `\x1b[m` before each erase, because `\x1b[K` fills with the CURRENT
+/// background: a row reached with a colour still open would paint it out to the
+/// margin. `style` and `truncate_ansi` close every span they open, and all
+/// thirteen golden frames end their rows reset, but that is a convention of the
+/// theme and `header` and `content` arrive here raw.
+///
+/// The erase goes BEFORE the content, not after it. After is tempting -- it
+/// never blanks anything -- but a row already as wide as the terminal leaves
+/// the cursor on the last column with its wrap pending, and `\x1b[K` there
+/// erases from the cursor inclusive and takes the character just drawn. The
+/// header and footer rules are `"─".repeat(cols)`, exactly that wide, so the
+/// trailing form loses the last `─` of both on every frame.
+///
+/// Nothing erases below the last row: `viewport_height` is whatever is left
+/// after the header and the footer, and the body is padded to it, so the rows
+/// here are exactly `rows`. A trailing `\x1b[J` would have the same
+/// pending-wrap problem for a frame whose last row is a rule.
+pub const SYNCHRONIZED_BEGIN: &str = "\x1b[?2026h";
+pub const SYNCHRONIZED_END: &str = "\x1b[?2026l";
+
+/// A composed frame split into its rows and whatever closes it.
+///
+/// So an overlay can be added INSIDE the synchronized update rather than after
+/// it. Returns the whole frame as the rows and an empty trailer if the markers
+/// are not where they are expected, which keeps a caller from silently losing
+/// the frame if this ever stops being how frames are built.
+pub fn split_synchronized_frame(frame: &str) -> (&str, &str) {
+    match frame
+        .strip_prefix(SYNCHRONIZED_BEGIN)
+        .and_then(|rest| rest.strip_suffix(SYNCHRONIZED_END))
+    {
+        Some(rows) => (rows, SYNCHRONIZED_END),
+        None => (frame, ""),
+    }
+}
+
+fn compose_rows<'a>(rows: impl Iterator<Item = &'a String>) -> String {
+    let mut frame = String::from("\x1b[?2026h\x1b[H");
+    for (index, row) in rows.enumerate() {
+        if index > 0 {
+            frame.push_str("\r\n");
+        }
+        frame.push_str("\x1b[m\x1b[K");
+        frame.push_str(row);
+    }
+    frame.push_str("\x1b[?2026l");
+    frame
 }

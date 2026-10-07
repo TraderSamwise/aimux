@@ -656,7 +656,32 @@ fn matches_node_library_subscreen_full_frame() {
     assert_same_frame(NODE_SUBSCREEN_LIBRARY_FRAME, &result.frame);
 }
 
+/// What these fixtures are the authority on, and what they are not.
+///
+/// They are byte-exact captures of the frames the Node TUI drew, and they pin
+/// every visible character, every SGR and every line break -- which is why they
+/// are worth keeping. They are NOT the authority on the frame's ENVELOPE: how
+/// the bytes get onto the screen. Node opened every frame with `\x1b[2J`, which
+/// blanks the whole screen before anything is redrawn; this repo deliberately
+/// does not, because that blank is the flicker on every keystroke.
+///
+/// So the envelope is normalised off both sides rather than recaptured. Pasting
+/// this renderer's own output into the fixtures would leave seven tests
+/// agreeing with whatever it happens to produce, which is the opposite of a
+/// parity gate. The envelope has a test of its own:
+/// `a_repaint_never_blanks_the_screen`.
+fn frame_content_only(frame: &str) -> String {
+    frame
+        .replace("\x1b[?2026h", "")
+        .replace("\x1b[?2026l", "")
+        .replace("\x1b[2J", "")
+        .replace("\x1b[H", "")
+        .replace("\x1b[m\x1b[K", "")
+}
+
 fn assert_same_frame(expected: &str, actual: &str) {
+    let expected = &frame_content_only(expected);
+    let actual = &frame_content_only(actual);
     if expected == actual {
         return;
     }
@@ -681,9 +706,13 @@ fn assert_same_frame(expected: &str, actual: &str) {
 }
 
 fn assert_frame_fits_viewport(frame: &str, width: usize) {
-    for (index, line) in frame.split("\r\n").enumerate() {
+    // Measured on the content, because `strip_ansi` only strips SGR: a row's
+    // `\x1b[K` tail and the frame's own `\x1b[H` would otherwise count as three
+    // visible characters each. That is also why the old version of this
+    // assertion had to exempt the first line.
+    for (index, line) in frame_content_only(frame).split("\r\n").enumerate() {
         assert!(
-            visible_width(line) <= width || line.starts_with("\x1b[2J\x1b[H"),
+            visible_width(line) <= width,
             "line {} exceeds viewport width {}: width={} line={:?}",
             index + 1,
             width,
@@ -735,8 +764,8 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     assert!(plain.contains("Ready"));
     assert!(plain.contains("thread 8/0/5"));
     assert!(plain.contains("step in"));
-    for line in result.frame.split("\r\n") {
-        assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
+    for line in frame_content_only(&result.frame).split("\r\n") {
+        assert!(visible_width(line) <= 140);
     }
 }
 
@@ -1207,8 +1236,8 @@ fn renders_selected_session_details_sidebar_when_visible() {
     assert!(plain.contains("State"));
     assert!(plain.contains("New activity"));
     assert!(plain.contains("Last"));
-    for line in result.frame.split("\r\n") {
-        assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
+    for line in frame_content_only(&result.frame).split("\r\n") {
+        assert!(visible_width(line) <= 140);
     }
 }
 
@@ -1555,8 +1584,8 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
     assert!(visible_plain.contains("Agents"));
     assert!(!hidden_plain.contains("WORKTREE"));
     assert_ne!(visible.frame, hidden.frame);
-    for line in visible.frame.split("\r\n") {
-        assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
+    for line in frame_content_only(&visible.frame).split("\r\n") {
+        assert!(visible_width(line) <= 140);
     }
 }
 
