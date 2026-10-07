@@ -125,17 +125,12 @@ pub fn stranded_agent_ids(topology: &Value) -> Vec<String> {
         .filter(|session| string_at(session, "status") != Some("graveyard"))
         .filter(|session| {
             crate::project_service::desktop_state::item_is_in_abandoned_worktree(
-                session,
-                abandoned_ref(&abandoned),
+                session, &abandoned,
             )
         })
         .filter(|session| left_behind_by_retirement(session, &retired_at))
         .filter_map(|session| string_at(session, "id").map(str::to_owned))
         .collect()
-}
-
-fn abandoned_ref(abandoned: &BTreeSet<String>) -> &BTreeSet<String> {
-    abandoned
 }
 
 fn string_at<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
@@ -162,8 +157,10 @@ fn retirement_times(topology: &Value, abandoned: &BTreeSet<String>) -> BTreeMap<
 
 /// Whether this row predates its worktree's retirement.
 ///
-/// A row with no timestamp to compare is left alone: not knowing when it was
-/// last touched is not evidence that nobody has.
+/// Both timestamps come from `now_iso`, which is fixed-width UTC, so comparing
+/// them as text is comparing them as instants. A row with no timestamp to
+/// compare is left alone: not knowing when it was last touched is not evidence
+/// that nobody has.
 fn left_behind_by_retirement(session: &Value, retired_at: &BTreeMap<String, String>) -> bool {
     let Some(key) = crate::project_service::desktop_state::item_worktree_group_key_for(session)
     else {
