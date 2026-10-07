@@ -384,7 +384,7 @@ pub fn build_desktop_state_with_live_window_projection(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let retired_worktree_paths = retired_worktree_paths(input.topology);
+    let abandoned_worktree_paths = abandoned_retired_worktree_paths(input.topology);
     let all_sessions = topology_desktop_session_list_with_live_window_projection(
         input.topology,
         input.metadata_sessions,
@@ -393,9 +393,7 @@ pub fn build_desktop_state_with_live_window_projection(
     )
     .into_iter()
     .filter(dashboard_session_visibility_allows)
-    .filter(|session| {
-        !item_is_retired_debris(session, &retired_worktree_paths, LIVE_SESSION_STATUSES)
-    })
+    .filter(|session| !item_is_in_abandoned_worktree(session, &abandoned_worktree_paths))
     .collect::<Vec<_>>();
     // Derived once for the whole build: the active row set, the project root's
     // identity, and -- only if the rows cannot answer it -- one git probe,
@@ -411,7 +409,12 @@ pub fn build_desktop_state_with_live_window_projection(
         &root_identity,
         main_branch_probe.as_ref(),
     );
-    let worktree_by_path = worktree_lookup_by_identity(&worktrees);
+    let mut worktree_by_path = worktree_lookup_by_identity(&worktrees);
+    add_retired_rows_still_alive(
+        &mut worktree_by_path,
+        input.topology,
+        &abandoned_worktree_paths,
+    );
     let thread_stats = summarize_thread_stats(input.exchange);
     let workflow_stats = summarize_workflow_stats(input.exchange);
     let notification_stats = summarize_notification_stats(input.exchange);
@@ -448,13 +451,7 @@ pub fn build_desktop_state_with_live_window_projection(
         live_window_ids,
     )
     .into_iter()
-    .filter(|service| {
-        !item_is_retired_debris(
-            service,
-            &retired_worktree_paths,
-            LIVE_SERVICE_WINDOW_STATUSES,
-        )
-    })
+    .filter(|service| !item_is_in_abandoned_worktree(service, &abandoned_worktree_paths))
     .collect::<Vec<_>>();
     let services = service_states
         .iter()
@@ -465,7 +462,7 @@ pub fn build_desktop_state_with_live_window_projection(
         &worktrees,
         &sessions,
         &services,
-        &retired_worktree_paths,
+        &abandoned_worktree_paths,
         main_branch_probe.as_ref(),
         &worktree_by_path,
     );
@@ -510,7 +507,7 @@ async fn build_desktop_state_with_live_window_projection_async(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let retired_worktree_paths = retired_worktree_paths(input.topology);
+    let abandoned_worktree_paths = abandoned_retired_worktree_paths(input.topology);
     let all_sessions = topology_desktop_session_list_with_live_window_projection(
         input.topology,
         input.metadata_sessions,
@@ -519,13 +516,16 @@ async fn build_desktop_state_with_live_window_projection_async(
     )
     .into_iter()
     .filter(dashboard_session_visibility_allows)
-    .filter(|session| {
-        !item_is_retired_debris(session, &retired_worktree_paths, LIVE_SESSION_STATUSES)
-    })
+    .filter(|session| !item_is_in_abandoned_worktree(session, &abandoned_worktree_paths))
     .collect::<Vec<_>>();
     let worktree_projection = desktop_worktrees_async(&input.project_root, input.topology).await;
     let worktrees = worktree_projection.worktrees;
-    let worktree_by_path = worktree_lookup_by_identity(&worktrees);
+    let mut worktree_by_path = worktree_lookup_by_identity(&worktrees);
+    add_retired_rows_still_alive(
+        &mut worktree_by_path,
+        input.topology,
+        &abandoned_worktree_paths,
+    );
     let thread_stats = summarize_thread_stats(input.exchange);
     let workflow_stats = summarize_workflow_stats(input.exchange);
     let notification_stats = summarize_notification_stats(input.exchange);
@@ -562,13 +562,7 @@ async fn build_desktop_state_with_live_window_projection_async(
         live_window_ids,
     )
     .into_iter()
-    .filter(|service| {
-        !item_is_retired_debris(
-            service,
-            &retired_worktree_paths,
-            LIVE_SERVICE_WINDOW_STATUSES,
-        )
-    })
+    .filter(|service| !item_is_in_abandoned_worktree(service, &abandoned_worktree_paths))
     .collect::<Vec<_>>();
     let services = service_states
         .iter()
@@ -579,7 +573,7 @@ async fn build_desktop_state_with_live_window_projection_async(
         &worktrees,
         &sessions,
         &services,
-        &retired_worktree_paths,
+        &abandoned_worktree_paths,
         worktree_projection.main_branch_probe.as_ref(),
         &worktree_by_path,
     );
@@ -1256,35 +1250,59 @@ fn dashboard_service(
     Value::Object(item)
 }
 
-/// An agent left behind by a worktree the topology has retired.
+/// Worktrees the topology has retired with nothing alive left in them.
 ///
 /// Graveyarding takes the GROUP off the dashboard and that is deliberate, but
-/// the agent stayed in the flat `sessions` array -- and `dashboard_navigation`
+/// the agents stayed in the flat `sessions` array -- and `dashboard_navigation`
 /// regroups that array by path, so the TUI rebuilt the group the service had
 /// just removed, naming it "unknown" because no row was left to read a name
 /// from. That is the dead worktree Sam is looking at.
 ///
-/// A RUNNING agent on a retired path is not debris and keeps its place; hiding
-/// a live agent is the worse of the two lies, and so is this failing closed --
-/// when the tmux query is unavailable nothing is downgraded to `offline`, so
-/// these survive the build rather than being read as dead.
+/// Per PATH, not per item, and from the DURABLE status rather than the
+/// projected one. Both of those were wrong in the first draft:
 ///
-/// `live_statuses` is the caller's, not one list for both kinds: a session is
-/// also live at `idle`, and a service at `planned` is not live at all.
-fn item_is_retired_debris(
-    item: &Value,
-    retired_paths: &BTreeSet<String>,
-    live_statuses: &[&str],
-) -> bool {
+/// - A session is downgraded to `offline` when a successful tmux query shows
+///   its window gone, while the topology row still says `running` -- and
+///   `graveyard.worktree.delete` refuses on that durable row. Reading the
+///   projection here hid an agent that was still blocking the delete, naming
+///   an agent on no screen.
+/// - A parent agent and its teammate share a worktree, and the teammate is
+///   reachable only through the parent's row. Hiding an `offline` parent took
+///   a RUNNING teammate off every surface with it.
+///
+/// So a retired worktree is debris only when nothing in it is alive, and then
+/// all of it goes. It fails open for the same reason `worktree_checkout_state`
+/// has three answers rather than two: when tmux cannot be asked nothing is
+/// downgraded, and the durable status is what this reads anyway.
+fn abandoned_retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
+    let mut retired = retired_worktree_paths(topology);
+    if retired.is_empty() {
+        return retired;
+    }
+    for item in array_field(topology, "sessions")
+        .iter()
+        .filter(|session| {
+            LIVE_SESSION_STATUSES.contains(&string_field(session, "status").unwrap_or(""))
+        })
+        .chain(array_field(topology, "services").iter().filter(|service| {
+            LIVE_SERVICE_WINDOW_STATUSES.contains(&string_field(service, "status").unwrap_or(""))
+        }))
+    {
+        if let Some(path) = string_field(item, "worktreePath") {
+            retired.remove(&worktree_path_identity(path));
+        }
+    }
+    retired
+}
+
+fn item_is_in_abandoned_worktree(item: &Value, abandoned_paths: &BTreeSet<String>) -> bool {
     // `worktree_path_identity` canonicalizes, which the scale gate budgets per
-    // agent, and a project with no retired worktree has nothing to ask.
-    if retired_paths.is_empty() {
+    // agent, and a project with nothing abandoned has nothing to ask.
+    if abandoned_paths.is_empty() {
         return false;
     }
-    string_field(item, "worktreePath").is_some_and(|path| {
-        retired_paths.contains(&worktree_path_identity(path))
-            && !live_statuses.contains(&string_field(item, "status").unwrap_or(""))
-    })
+    string_field(item, "worktreePath")
+        .is_some_and(|path| abandoned_paths.contains(&worktree_path_identity(path)))
 }
 
 /// Paths of worktrees the user has graveyarded or removed.
@@ -1297,6 +1315,37 @@ fn retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
         })
         .filter_map(|worktree| string_field(worktree, "path").map(worktree_path_identity))
         .collect()
+}
+
+/// The rows of retired worktrees something is still alive in.
+///
+/// They are kept out of `worktrees` -- `aimux worktree list` must not start
+/// printing the graveyard -- but their GROUP has to exist, or the live agent in
+/// them renders only in the TUI, whose navigation layer rebuilds a group the
+/// service never sent. The Expo app renders `worktreeGroups` and nothing else,
+/// so without this the same agent is on one surface and not the other.
+fn add_retired_rows_still_alive(
+    lookup: &mut BTreeMap<String, Value>,
+    topology: &Value,
+    abandoned_paths: &BTreeSet<String>,
+) {
+    for worktree in list_topology_worktree_states(topology, None) {
+        if string_field(&worktree, "status")
+            .is_none_or(|status| ACTIVE_WORKTREE_STATUSES.contains(&status))
+        {
+            continue;
+        }
+        let Some(path) = string_field(&worktree, "path") else {
+            continue;
+        };
+        let identity = worktree_path_identity(path);
+        if abandoned_paths.contains(&identity) {
+            continue;
+        }
+        // `or_insert`, never overwrite: an active row for the same path is the
+        // one every other surface reads, and a retired row must not displace it.
+        lookup.entry(identity).or_insert(worktree);
+    }
 }
 
 /// Whether the main checkout's branch has to be asked of git at all.
