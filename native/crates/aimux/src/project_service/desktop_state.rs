@@ -13,8 +13,8 @@ use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
 use crate::runtime_topology::{
-    list_topology_service_states, list_topology_worktree_states, read_runtime_topology,
-    runtime_topology_path,
+    list_topology_service_states, list_topology_session_states, list_topology_worktree_states,
+    read_runtime_topology, runtime_topology_path,
 };
 use crate::team_contract::{agent_lane, agent_role, agent_role_state};
 use crate::tmux::TmuxTarget;
@@ -398,23 +398,23 @@ pub fn build_desktop_state_with_live_window_projection(
     // Derived once for the whole build: the active row set, the project root's
     // identity, and -- only if the rows cannot answer it -- one git probe,
     // handed to each of the three places that used to ask for itself.
-    let topology_worktrees =
+    let mut topology_worktrees =
         list_topology_worktree_states(input.topology, Some(ACTIVE_WORKTREE_STATUSES));
+    let retired_alive = retired_rows_still_alive(input.topology, &abandoned_worktree_paths);
+    let retired_identities = worktree_identities(&retired_alive);
+    topology_worktrees.extend(retired_alive);
     let root_identity = worktree_path_identity(&input.project_root);
     let main_branch_probe =
         main_branch_probe_for_rows(&input.project_root, &topology_worktrees, &root_identity);
-    let worktrees = desktop_worktrees(
+    let mut worktrees = desktop_worktrees(
         &input.project_root,
         topology_worktrees,
         &root_identity,
         main_branch_probe.as_ref(),
     );
+    let retired_rows = split_off_retired_rows(&mut worktrees, &retired_identities);
     let mut worktree_by_path = worktree_lookup_by_identity(&worktrees);
-    add_retired_rows_still_alive(
-        &mut worktree_by_path,
-        input.topology,
-        &abandoned_worktree_paths,
-    );
+    add_rows_to_lookup(&mut worktree_by_path, retired_rows);
     let thread_stats = summarize_thread_stats(input.exchange);
     let workflow_stats = summarize_workflow_stats(input.exchange);
     let notification_stats = summarize_notification_stats(input.exchange);
@@ -518,14 +518,14 @@ async fn build_desktop_state_with_live_window_projection_async(
     .filter(dashboard_session_visibility_allows)
     .filter(|session| !item_is_in_abandoned_worktree(session, &abandoned_worktree_paths))
     .collect::<Vec<_>>();
-    let worktree_projection = desktop_worktrees_async(&input.project_root, input.topology).await;
-    let worktrees = worktree_projection.worktrees;
+    let retired_alive = retired_rows_still_alive(input.topology, &abandoned_worktree_paths);
+    let retired_identities = worktree_identities(&retired_alive);
+    let worktree_projection =
+        desktop_worktrees_async(&input.project_root, input.topology, retired_alive).await;
+    let mut worktrees = worktree_projection.worktrees;
+    let retired_rows = split_off_retired_rows(&mut worktrees, &retired_identities);
     let mut worktree_by_path = worktree_lookup_by_identity(&worktrees);
-    add_retired_rows_still_alive(
-        &mut worktree_by_path,
-        input.topology,
-        &abandoned_worktree_paths,
-    );
+    add_rows_to_lookup(&mut worktree_by_path, retired_rows);
     let thread_stats = summarize_thread_stats(input.exchange);
     let workflow_stats = summarize_workflow_stats(input.exchange);
     let notification_stats = summarize_notification_stats(input.exchange);
@@ -856,9 +856,11 @@ struct DesktopWorktreeProjection {
 async fn desktop_worktrees_async(
     project_root: &str,
     topology: &Value,
+    retired_alive: Vec<Value>,
 ) -> DesktopWorktreeProjection {
-    let topology_worktrees =
+    let mut topology_worktrees =
         list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
+    topology_worktrees.extend(retired_alive);
     let root_identity = worktree_path_identity(project_root);
     let needs_main_branch_probe =
         main_branch_probe_needed(project_root, &topology_worktrees, &root_identity);
@@ -1271,25 +1273,24 @@ fn dashboard_service(
 ///   a RUNNING teammate off every surface with it.
 ///
 /// So a retired worktree is debris only when nothing in it is alive, and then
-/// all of it goes. It fails open for the same reason `worktree_checkout_state`
-/// has three answers rather than two: when tmux cannot be asked nothing is
-/// downgraded, and the durable status is what this reads anyway.
-fn abandoned_retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
+/// all of it goes. A tmux query that cannot be answered changes nothing here,
+/// because nothing here reads the projection's liveness at all.
+pub fn abandoned_retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
     let mut retired = retired_worktree_paths(topology);
     if retired.is_empty() {
         return retired;
     }
-    let sessions = array_field(topology, "sessions");
-    let services = array_field(topology, "services");
-    for item in sessions
-        .iter()
-        .filter(|session| {
-            LIVE_SESSION_STATUSES.contains(&string_field(session, "status").unwrap_or(""))
-        })
-        .chain(services.iter().filter(|service| {
-            LIVE_SERVICE_WINDOW_STATUSES.contains(&string_field(service, "status").unwrap_or(""))
-        }))
-    {
+    // Through `list_topology_*_states`, not the raw arrays: that is where a
+    // session with only a `nodeId` gets its `worktreePath` filled in from the
+    // node's `cwd`, and the filter below reads the projected row. Asking the
+    // raw row left such an agent unable to un-abandon its own worktree while
+    // still matching the filter -- a live agent on no surface at all.
+    //
+    // These are the same projections without the live-window downgrade, so the
+    // status here is the durable one, which is the whole point.
+    let sessions = list_topology_session_states(topology, Some(LIVE_SESSION_STATUSES));
+    let services = list_topology_service_states(topology, Some(LIVE_SERVICE_WINDOW_STATUSES));
+    for item in sessions.iter().chain(services.iter()) {
         if let Some(key) = item_worktree_group_key(item) {
             retired.remove(&key);
         }
@@ -1297,7 +1298,7 @@ fn abandoned_retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
     retired
 }
 
-fn item_is_in_abandoned_worktree(item: &Value, abandoned_paths: &BTreeSet<String>) -> bool {
+pub fn item_is_in_abandoned_worktree(item: &Value, abandoned_paths: &BTreeSet<String>) -> bool {
     // `item_worktree_group_key` canonicalizes, which the scale gate budgets per
     // agent, and a project with nothing abandoned has nothing to ask.
     if abandoned_paths.is_empty() {
@@ -1310,7 +1311,8 @@ fn item_is_in_abandoned_worktree(item: &Value, abandoned_paths: &BTreeSet<String
     item_worktree_group_key(item).is_some_and(|key| abandoned_paths.contains(&key))
 }
 
-/// Paths of worktrees the user has graveyarded or removed.
+/// Paths of worktrees in the graveyard, which is the only non-active status the
+/// schema has; a removed worktree's row is deleted outright.
 fn retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
     list_topology_worktree_states(topology, None)
         .iter()
@@ -1329,28 +1331,63 @@ fn retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
 /// them renders only in the TUI, whose navigation layer rebuilds a group the
 /// service never sent. The Expo app renders `worktreeGroups` and nothing else,
 /// so without this the same agent is on one surface and not the other.
-fn add_retired_rows_still_alive(
-    lookup: &mut BTreeMap<String, Value>,
-    topology: &Value,
-    abandoned_paths: &BTreeSet<String>,
-) {
-    for worktree in list_topology_worktree_states(topology, None) {
-        if string_field(&worktree, "status")
-            .is_none_or(|status| ACTIVE_WORKTREE_STATUSES.contains(&status))
-        {
-            continue;
-        }
-        let Some(path) = string_field(&worktree, "path") else {
+/// Retired rows something is still alive in, to be derived alongside the active
+/// ones.
+///
+/// They join `topology_worktrees` before the checkout probe rather than being
+/// bolted on afterwards: a row that skipped `desktop_worktree_item` carried no
+/// `pathMissing` and no `operationFailureClearable`, so a graveyarded worktree
+/// whose checkout is gone rendered as an ordinary group, and a failure recorded
+/// against it reached the dashboard with no clear key -- the invariant
+/// `dashboard_has_clearable_failures` states in so many words.
+fn retired_rows_still_alive(topology: &Value, abandoned_paths: &BTreeSet<String>) -> Vec<Value> {
+    list_topology_worktree_states(topology, None)
+        .into_iter()
+        .filter(|worktree| {
+            string_field(worktree, "status")
+                .is_some_and(|status| !ACTIVE_WORKTREE_STATUSES.contains(&status))
+        })
+        .filter(|worktree| {
+            string_field(worktree, "path")
+                .is_some_and(|path| !abandoned_paths.contains(&worktree_path_identity(path)))
+        })
+        .collect()
+}
+
+fn worktree_identities(rows: &[Value]) -> BTreeSet<String> {
+    rows.iter()
+        .filter_map(|row| string_field(row, "path").map(worktree_path_identity))
+        .collect()
+}
+
+/// `or_insert`, never overwrite: an active row for the same path is the one
+/// every other surface reads, and a retired row must not displace it.
+fn add_rows_to_lookup(lookup: &mut BTreeMap<String, Value>, rows: Vec<Value>) {
+    for row in rows {
+        let Some(path) = string_field(&row, "path") else {
             continue;
         };
-        let identity = worktree_path_identity(path);
-        if abandoned_paths.contains(&identity) {
-            continue;
-        }
-        // `or_insert`, never overwrite: an active row for the same path is the
-        // one every other surface reads, and a retired row must not displace it.
-        lookup.entry(identity).or_insert(worktree);
+        lookup.entry(worktree_path_identity(path)).or_insert(row);
     }
+}
+
+/// The retired rows out of a derived set, so they can feed the group index
+/// without reaching `state["worktrees"]` -- `aimux worktree list` must not
+/// start printing the graveyard.
+fn split_off_retired_rows(worktrees: &mut Vec<Value>, retired: &BTreeSet<String>) -> Vec<Value> {
+    if retired.is_empty() {
+        return Vec::new();
+    }
+    let mut taken = Vec::new();
+    worktrees.retain(|worktree| {
+        let is_retired = string_field(worktree, "path")
+            .is_some_and(|path| retired.contains(&worktree_path_identity(path)));
+        if is_retired {
+            taken.push(worktree.clone());
+        }
+        !is_retired
+    });
+    taken
 }
 
 /// Whether the main checkout's branch has to be asked of git at all.

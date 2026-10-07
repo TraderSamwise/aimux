@@ -1242,6 +1242,23 @@ fn a_running_agent_keeps_its_place_when_its_worktree_is_graveyarded() {
         .unwrap_or_else(|| panic!("no group for the live agent's worktree: {groups:#?}"));
     assert_eq!(group["branch"], "perf");
     assert_eq!(group["sessions"][0]["id"], "codex-perf");
+    // Through the same derivation the active rows get, in the same probe pass.
+    // A row bolted on afterwards carried no checkout verdict at all, so a
+    // graveyarded worktree whose checkout is gone rendered as an ordinary
+    // group -- which is two of the three Sam is looking at.
+    assert_eq!(
+        group["pathMissing"], true,
+        "the retired row skipped the checkout probe: {group:#?}"
+    );
+    assert!(
+        !state["worktrees"]
+            .as_array()
+            .expect("worktrees")
+            .iter()
+            .any(|row| row["name"] == "perf"),
+        "a graveyarded worktree reached the row list: {:#?}",
+        state["worktrees"]
+    );
     cleanup(project);
 }
 
@@ -1308,6 +1325,68 @@ fn an_agent_the_topology_still_calls_running_is_not_debris() {
             )
         });
     assert_eq!(session["status"], "offline", "the projection still applies");
+    cleanup(project);
+}
+
+/// A live agent attached through its node's `cwd` rather than a `worktreePath`.
+///
+/// The projection fills `worktreePath` from the node, so the filter saw the
+/// retired path while the liveness carve-out -- reading the raw row -- did not,
+/// and the agent could not un-abandon its own worktree. Live agent, no surface.
+#[cfg(unix)]
+#[test]
+fn a_live_agent_attached_through_its_node_keeps_its_worktree_alive() {
+    let project = temp_project("graveyarded-worktree-node-cwd");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    let root_path = root.to_string_lossy().into_owned();
+    let retired = format!("{root_path}/.aimux/worktrees/perf");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-perf", "rigId": "rig-1", "logicalId": "codex-perf", "toolConfigKey": "codex", "cwd": retired, "createdAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-perf", "nodeId": "node-perf", "tmuxSession": "aimux-repo", "tmuxWindowId": "@7", "tmuxWindowIndex": 7, "tmuxWindowName": "codex", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        // No `worktreePath` of its own: the node's `cwd` is the only record.
+        "sessions": [
+            { "id": "codex-perf", "nodeId": "node-perf", "status": "running", "command": "codex", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "wt-perf", "rigId": "rig-1", "path": retired, "name": "perf", "status": "graveyard", "branch": "perf", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z", "removedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+        "lifecycleOperations": [], "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_windows("aimux-repo", &["@7"])),
+    );
+
+    let sessions = state["sessions"].as_array().expect("sessions");
+    assert!(
+        sessions.iter().any(|session| session["id"] == "codex-perf"),
+        "a live agent was dropped because its worktree is named by its node: {sessions:#?}"
+    );
+    let groups = state["worktreeGroups"].as_array().expect("worktree groups");
+    assert!(
+        groups.iter().any(|group| group["name"] == "perf"),
+        "no group for the live agent's worktree: {groups:#?}"
+    );
     cleanup(project);
 }
 
