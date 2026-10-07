@@ -281,7 +281,10 @@ fn replace_aimux_bin(text: &str) -> String {
             std::env::current_exe()
                 .ok()
                 .map(|path| path.to_string_lossy().into_owned()),
-            Some(aimux::tmux::statusline_executable()).filter(|path| !path.is_empty()),
+            // Only when it is a PATH. With no shim installed -- which is CI --
+            // this resolves to the bare name `aimux`, and replacing that would
+            // rewrite the word everywhere it appears in the recorded calls.
+            Some(aimux::tmux::statusline_executable()).filter(|path| path.contains('/')),
         ]
         .into_iter()
         .flatten()
