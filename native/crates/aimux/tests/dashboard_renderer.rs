@@ -656,7 +656,34 @@ fn matches_node_library_subscreen_full_frame() {
     assert_same_frame(NODE_SUBSCREEN_LIBRARY_FRAME, &result.frame);
 }
 
+/// What these fixtures are the authority on, and what they are not.
+///
+/// They are byte-exact captures of the frames the Node TUI drew, and they pin
+/// every visible character, every SGR and every line break -- which is why they
+/// are worth keeping. They are NOT the authority on the frame's ENVELOPE: how
+/// the bytes get onto the screen. Node opened every frame with `\x1b[2J`, which
+/// blanks the whole screen before anything is redrawn; this repo deliberately
+/// does not, because that blank is the flicker on every keystroke.
+///
+/// So the envelope is normalised off both sides rather than recaptured. Pasting
+/// this renderer's own output into the fixtures would leave seven tests
+/// agreeing with whatever it happens to produce, which is the opposite of a
+/// parity gate. The envelope has its own tests, in `tests/tui_render.rs`:
+/// `screen_frame_scrolls_to_focused_card_and_renders_footer` for the per-row
+/// erase, and `a_narrow_terminal_gets_rows_that_fit_it` for the widths. An
+/// earlier version of this comment named a test that was never written.
+fn frame_content_only(frame: &str) -> String {
+    frame
+        .replace("\x1b[?2026h", "")
+        .replace("\x1b[?2026l", "")
+        .replace("\x1b[2J", "")
+        .replace("\x1b[H", "")
+        .replace("\x1b[m\x1b[K", "")
+}
+
 fn assert_same_frame(expected: &str, actual: &str) {
+    let expected = &frame_content_only(expected);
+    let actual = &frame_content_only(actual);
     if expected == actual {
         return;
     }
@@ -681,9 +708,13 @@ fn assert_same_frame(expected: &str, actual: &str) {
 }
 
 fn assert_frame_fits_viewport(frame: &str, width: usize) {
-    for (index, line) in frame.split("\r\n").enumerate() {
+    // Measured on the content, because `strip_ansi` only strips SGR: a row's
+    // `\x1b[K` tail and the frame's own `\x1b[H` would otherwise count as three
+    // visible characters each. That is also why the old version of this
+    // assertion had to exempt the first line.
+    for (index, line) in frame_content_only(frame).split("\r\n").enumerate() {
         assert!(
-            visible_width(line) <= width || line.starts_with("\x1b[2J\x1b[H"),
+            visible_width(line) <= width,
             "line {} exceeds viewport width {}: width={} line={:?}",
             index + 1,
             width,
@@ -735,8 +766,8 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     assert!(plain.contains("Ready"));
     assert!(plain.contains("thread 8/0/5"));
     assert!(plain.contains("step in"));
-    for line in result.frame.split("\r\n") {
-        assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
+    for line in frame_content_only(&result.frame).split("\r\n") {
+        assert!(visible_width(line) <= 140);
     }
 }
 
@@ -1207,8 +1238,8 @@ fn renders_selected_session_details_sidebar_when_visible() {
     assert!(plain.contains("State"));
     assert!(plain.contains("New activity"));
     assert!(plain.contains("Last"));
-    for line in result.frame.split("\r\n") {
-        assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
+    for line in frame_content_only(&result.frame).split("\r\n") {
+        assert!(visible_width(line) <= 140);
     }
 }
 
@@ -1555,8 +1586,8 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
     assert!(visible_plain.contains("Agents"));
     assert!(!hidden_plain.contains("WORKTREE"));
     assert_ne!(visible.frame, hidden.frame);
-    for line in visible.frame.split("\r\n") {
-        assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
+    for line in frame_content_only(&visible.frame).split("\r\n") {
+        assert!(visible_width(line) <= 140);
     }
 }
 
@@ -2390,6 +2421,44 @@ fn clearable_failure_render_input<'a>(
         preview_source: "output",
         scribe_preview_entries: &[],
     }
+}
+
+/// The dashboard renderer's own envelope, which the parity frames cannot pin.
+///
+/// `assert_same_frame` normalises the envelope off BOTH sides, so all seven
+/// byte-exact Node frames pass on a frame with no wrapper, no `\x1b[H` and no
+/// per-row erase at all. That is the right trade for them -- they are the
+/// authority on content -- but it left the envelope of this renderer gated
+/// nowhere: `tests/tui_render.rs` pins `compose_screen_frame` and never runs
+/// the dashboard.
+#[test]
+fn the_dashboard_frame_erases_row_by_row_rather_than_clearing() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = &fixture.runtime_full;
+    let frame = render_dashboard_frame(&clearable_failure_render_input(snapshot)).frame;
+
+    assert!(
+        !frame.contains("\x1b[2J"),
+        "a frame must not clear the whole screen"
+    );
+    assert!(
+        frame.starts_with("\x1b[?2026h\x1b[H"),
+        "and must open its synchronized update before drawing"
+    );
+    assert!(frame.ends_with("\x1b[?2026l"), "and close it after");
+    let rows = frame
+        .strip_prefix("\x1b[?2026h\x1b[H")
+        .and_then(|rest| rest.strip_suffix("\x1b[?2026l"))
+        .expect("a synchronized frame")
+        .split("\r\n")
+        .collect::<Vec<_>>();
+    assert!(rows.len() > 10, "the fixture should fill a screen");
+    assert!(
+        rows.iter().all(|row| row.starts_with("\x1b[m\x1b[K")),
+        "every row clears itself before drawing, or a shorter row leaves the \
+         last frame's tail behind"
+    );
 }
 
 #[test]

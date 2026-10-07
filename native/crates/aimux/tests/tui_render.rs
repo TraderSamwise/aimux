@@ -3,8 +3,8 @@ use aimux::tui_render::screen_frame::{
     ScreenFrameInput, compose_screen_frame, screen_content_width, screen_left_width,
 };
 use aimux::tui_render::text::{
-    compose_two_pane, strip_ansi, truncate, truncate_ansi, truncate_plain, wrap_key_value,
-    wrap_text,
+    compose_two_pane, strip_ansi, strip_terminal_control, truncate, truncate_ansi, truncate_plain,
+    wrap_key_value, wrap_text,
 };
 use aimux::tui_render::theme::{
     ChipTone, Column, PROGRESS_MARK, StatusKind, Tone, chip, cols, keycap, note_line, pad_visible,
@@ -183,11 +183,36 @@ fn screen_frame_scrolls_to_focused_card_and_renders_footer() {
     let plain = strip_ansi(&result.frame);
 
     assert!(result.scroll_offset > 0);
-    // The clear is wrapped in a synchronized update so the terminal never
-    // paints the cleared screen on its own -- that blank is the flicker.
+    // A repaint never blanks the screen. `\x1b[2J` used to open every frame and
+    // clears the WHOLE screen before any of the new one is drawn, so a terminal
+    // that does not honour the synchronized update -- or gives up on it part
+    // way through a slow write -- shows an empty screen on every keystroke.
+    // Each row clears only itself now, immediately before its own content, so
+    // at most one row is ever blank and only for the bytes until it is drawn.
     assert!(
-        plain.starts_with("\x1b[?2026h\x1b[2J\x1b[H"),
-        "frame must open a synchronized update before clearing"
+        !result.frame.contains("\x1b[2J"),
+        "a frame must not clear the whole screen: {:?}",
+        &result.frame[..result.frame.len().min(40)]
+    );
+    assert!(
+        result.frame.starts_with("\x1b[?2026h\x1b[H"),
+        "frame must open a synchronized update and home the cursor"
+    );
+    // Every row, and the erase BEFORE the content: after it, a row as wide as
+    // the terminal sits at the pending-wrap column where `\x1b[K` erases the
+    // cell the cursor is on and takes the character just drawn. The header and
+    // footer rules are `"─".repeat(cols)`, exactly that wide.
+    let rows = result
+        .frame
+        .strip_prefix("\x1b[?2026h\x1b[H")
+        .and_then(|rest| rest.strip_suffix("\x1b[?2026l"))
+        .expect("a synchronized frame")
+        .split("\r\n")
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().all(|row| row.starts_with("\x1b[m\x1b[K")),
+        "every row has to clear itself before drawing, or the last frame's \
+         longer rows leave their tails behind"
     );
     assert!(
         plain.ends_with("\x1b[?2026l"),
@@ -224,8 +249,193 @@ fn screen_frame_matches_dashboard_geometry_helpers_and_two_pane_body() {
 
     assert!(strip_ansi(&result.frame).contains("left"));
     assert!(strip_ansi(&result.frame).contains("right"));
-    let body_line = result.frame.split("\r\n").nth(1).unwrap_or("");
-    assert!(visible_width(body_line) <= 80);
+    // Measured on the content: the row carries its own `\x1b[m\x1b[K`, and
+    // `strip_ansi` is SGR-only, so it would count those five bytes as width.
+    let body_line = strip_terminal_control(result.frame.split("\r\n").nth(1).unwrap_or(""));
+    assert!(visible_width(&body_line) <= 80);
+}
+
+/// Every row fits the terminal, including one narrower than the content floor.
+///
+/// `screen_content_width` is `72.max(cols)` -- a MINIMUM content width -- so a
+/// two-pane body at 40 columns is composed 72 wide and every row of it wraps.
+/// The suite only ever composed at 80 and above, and the full-screen clear hid
+/// the consequence: the layout was scrambled but nothing was left behind. Each
+/// row erases only itself now, so a wrapped row leaves the tail of the last
+/// frame on the line below it.
+#[test]
+fn a_narrow_terminal_gets_rows_that_fit_it() {
+    let header = vec!["head".to_owned()];
+    let footer = vec!["q quit".to_owned()];
+    let left = (0..6).map(|n| format!("left row {n}")).collect::<Vec<_>>();
+    let right = (0..6).map(|n| format!("right row {n}")).collect::<Vec<_>>();
+    let result = compose_screen_frame(&ScreenFrameInput {
+        cols: 40,
+        rows: 12,
+        header: &header,
+        content: &left,
+        footer_lines: &footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: true,
+        right_panel: Some(&right),
+    });
+
+    assert_rows_fit(&result.frame, 40);
+
+    // And the plain path, which has no two-pane composer in front of it: the
+    // header title and the footer hints go through `center`, which pads to
+    // `72.max(cols)` and only ever pads. An earlier version of this fix
+    // truncated only the two-pane body, so these three row sources still came
+    // through wider than the screen.
+    let wide_header = vec!["a header line that is far wider than forty columns".to_owned()];
+    let wide_footer =
+        vec!["↑↓ select  Tab details  d/c/p/L/t/g screens  Esc dashboard  q quit".to_owned()];
+    let wide_content = vec!["a content row that is also far wider than forty columns".to_owned()];
+    let plain = compose_screen_frame(&ScreenFrameInput {
+        cols: 40,
+        rows: 8,
+        header: &wide_header,
+        content: &wide_content,
+        footer_lines: &wide_footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: false,
+        right_panel: None,
+    });
+    assert_rows_fit(&plain.frame, 40);
+}
+
+/// Every CSI sequence, not only the colours, and nothing swallowed wholesale.
+///
+/// `strip_ansi` is deliberately SGR-only -- it measures how wide a styled
+/// string is, and those strings carry nothing else -- so a composed frame's
+/// `\x1b[H` and `\x1b[m\x1b[K` counted as visible characters under it. This is
+/// the one that knows about the rest, and it had no test of its own: the only
+/// finals it ever sees in practice are `h`, `l`, `H`, `m` and `K`.
+#[test]
+fn stripping_terminal_control_leaves_only_what_is_drawn() {
+    assert_eq!(
+        strip_terminal_control("\x1b[?2026h\x1b[H\x1b[m\x1b[Krow\x1b[?2026l"),
+        "row"
+    );
+    // Private, intermediate and the far ends of the final-byte range.
+    assert_eq!(strip_terminal_control("a\x1b[>4;2mb"), "ab");
+    assert_eq!(strip_terminal_control("a\x1b[1 qb"), "ab");
+    assert_eq!(strip_terminal_control("a\x1b[@b\x1b[~c"), "abc");
+    // A sequence cut in half, which `truncate_ansi` can produce. The bare ESC
+    // and `[` are not two characters of width.
+    assert_eq!(strip_terminal_control("row\x1b["), "row");
+    assert_eq!(strip_terminal_control("row\x1b[38;5"), "row");
+    // Not a CSI at all: left alone rather than guessed at.
+    assert_eq!(strip_terminal_control("row\x1bOP"), "row\x1bOP");
+    // A byte outside every allowed range ends the sequence without consuming
+    // the text after it.
+    assert_eq!(
+        strip_terminal_control("a\x1b[1\u{00e9}b"),
+        "a\x1b[1\u{00e9}b"
+    );
+}
+
+/// A row exactly as wide as the terminal is left alone.
+///
+/// `truncate_ansi(row, cols - 1)` survived every other test here and all seven
+/// parity frames. The header and footer rules are `"─".repeat(cols)`, so an
+/// off-by-one in the truncation shortens both of them on every frame -- and
+/// that is also the width at which the trailing-erase form eats a character,
+/// which is why the erase goes before the content.
+#[test]
+fn a_row_the_width_of_the_terminal_keeps_all_of_it() {
+    let header: Vec<String> = Vec::new();
+    let footer: Vec<String> = Vec::new();
+    let content = vec!["x".repeat(40)];
+    let result = compose_screen_frame(&ScreenFrameInput {
+        cols: 40,
+        rows: 3,
+        header: &header,
+        content: &content,
+        footer_lines: &footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: false,
+        right_panel: None,
+    });
+
+    let rows = strip_terminal_control(&result.frame)
+        .split("\r\n")
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        visible_width(&rows[0]),
+        40,
+        "a row that is exactly the terminal's width has nothing to cut: {:?}",
+        rows[0]
+    );
+    // And the rule the real frames carry, which is the case that matters.
+    let ruled_footer = vec!["q quit".to_owned()];
+    let ruled = compose_screen_frame(&ScreenFrameInput {
+        cols: 40,
+        rows: 4,
+        header: &header,
+        content: &content,
+        footer_lines: &ruled_footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: false,
+        right_panel: None,
+    });
+    let rule = strip_terminal_control(&ruled.frame)
+        .split("\r\n")
+        .find(|row| row.starts_with('─'))
+        .map(str::to_owned)
+        .expect("the footer rule");
+    assert_eq!(
+        visible_width(&rule),
+        40,
+        "the footer rule spans the terminal: {rule:?}"
+    );
+
+    // And a row that really is too wide is cut to the terminal, not to one
+    // short of it. `truncate_ansi(row, cols - 1)` survived every other
+    // assertion here: a row of exactly `cols` is never truncated at all, so
+    // nothing saw the off-by-one.
+    let over = vec!["y".repeat(60)];
+    let cut = compose_screen_frame(&ScreenFrameInput {
+        cols: 40,
+        rows: 3,
+        header: &header,
+        content: &over,
+        footer_lines: &footer,
+        focus_line: -1,
+        scroll_offset: 0,
+        two_pane: false,
+        right_panel: None,
+    });
+    let cut_rows = strip_terminal_control(&cut.frame)
+        .split("\r\n")
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        visible_width(&cut_rows[0]),
+        40,
+        "an over-wide row fills the terminal exactly: {:?}",
+        cut_rows[0]
+    );
+}
+
+fn assert_rows_fit(frame: &str, cols: usize) {
+    for (index, row) in strip_terminal_control(frame).split("\r\n").enumerate() {
+        assert!(
+            visible_width(row) <= cols,
+            "row {} is {} wide in a {} column terminal and will wrap, shifting \
+             every row after it and orphaning the last frame's tail below it: \
+             {:?}",
+            index + 1,
+            visible_width(row),
+            cols,
+            strip_ansi(row)
+        );
+    }
 }
 
 fn positioned_rows(output: &str) -> Vec<&str> {

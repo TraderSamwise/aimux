@@ -2490,12 +2490,50 @@ fn render_dashboard_snapshot(
     frame
 }
 
+/// A dialog over a receded frame, composed INSIDE the synchronized update.
+///
+/// It used to be composed around it: `recede` prepends its own SGR ahead of the
+/// `\x1b[?2026h` that opens the frame, and the overlay was pushed on after the
+/// `\x1b[?2026l` that closes it. So a terminal honouring the wrapper drew the
+/// dimmed dashboard, ended the update, and then drew the dialog -- two visible
+/// passes for one frame, which is the same flicker the full-screen clear caused
+/// and which the wrapper exists to prevent.
 fn dashboard_overlay_frame(
     base: &crate::tui_render::screen_frame::ScreenFrameResult,
     overlay: String,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
-    let mut frame = recede(&base.frame);
+    compose_overlay_frame(base, overlay, OverlayBackground::Dimmed)
+}
+
+/// Whether the frame behind a dialog is dimmed.
+///
+/// Node dimmed in dashboard mode and not in a subscreen
+/// (`src/multiplexer/subscreens.ts` wrote the overlay alone over an undimmed
+/// screen), and this keeps that. Routing the subscreen through the dimming
+/// composer was a looks change nobody asked for in a change about flicker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OverlayBackground {
+    Dimmed,
+    AsDrawn,
+}
+
+fn compose_overlay_frame(
+    base: &crate::tui_render::screen_frame::ScreenFrameResult,
+    overlay: String,
+    background: OverlayBackground,
+) -> crate::tui_render::screen_frame::ScreenFrameResult {
+    let base_rows = crate::tui_render::screen_frame::unwrap_synchronized_frame(&base.frame);
+    let mut frame = String::with_capacity(base.frame.len() + overlay.len() + 16);
+    frame.push_str(crate::tui_render::screen_frame::SYNCHRONIZED_BEGIN);
+    match background {
+        OverlayBackground::Dimmed => frame.push_str(&recede(base_rows)),
+        OverlayBackground::AsDrawn => frame.push_str(base_rows),
+    }
     frame.push_str(&overlay);
+    // Always, and not whatever the base happened to end with: a frame without
+    // the markers used to leave this opening an update it never closed, and a
+    // terminal left inside one stops painting.
+    frame.push_str(crate::tui_render::screen_frame::SYNCHRONIZED_END);
     crate::tui_render::screen_frame::ScreenFrameResult {
         frame,
         scroll_offset: base.scroll_offset,
@@ -2636,16 +2674,17 @@ fn render_dashboard_subscreen_snapshot(
         version: Some(&dashboard_runtime_version()),
     });
     if let Some(reply) = controller.thread_reply.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_thread_reply_overlay(
-            reply,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        // Inside the synchronized update, and over the screen AS DRAWN. This
+        // site appended the reply box straight onto the frame, after the
+        // `\x1b[?2026l` that closes it -- the second visible pass the wrapper
+        // exists to prevent. The background is deliberately not dimmed: Node
+        // receded in dashboard mode only, and dimming a subscreen here would be
+        // a looks change nobody asked for in a change about flicker.
+        return compose_overlay_frame(
+            &frame,
+            render_thread_reply_overlay(reply, viewport.cols, viewport.rows),
+            OverlayBackground::AsDrawn,
+        );
     }
     frame
 }
@@ -3351,6 +3390,117 @@ fn drain_dashboard_request_outcomes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dialog is drawn in ONE pass, inside the synchronized update.
+    ///
+    /// It used to be composed around it: `recede` prepends its own SGR ahead of
+    /// the `\x1b[?2026h` that opens the frame, and the overlay was pushed on
+    /// after the `\x1b[?2026l` that closes it. A terminal honouring the wrapper
+    /// drew the dimmed dashboard, ended the update, and then drew the dialog --
+    /// two visible passes for one frame, from the mechanism that exists to
+    /// prevent exactly that.
+    ///
+    /// And it closes, always. Returning the base frame's own trailer meant a
+    /// frame without the markers opened an update nothing ever closed, which
+    /// leaves a terminal not painting at all.
+    #[test]
+    fn a_dialog_is_drawn_inside_one_synchronized_update() {
+        use crate::tui_render::screen_frame::{
+            SYNCHRONIZED_BEGIN, SYNCHRONIZED_END, ScreenFrameInput, ScreenFrameResult,
+            compose_screen_frame,
+        };
+
+        let header = vec!["head".to_owned()];
+        let footer = vec!["q quit".to_owned()];
+        let content = (0..4).map(|n| format!("row {n}")).collect::<Vec<_>>();
+        let base = compose_screen_frame(&ScreenFrameInput {
+            cols: 80,
+            rows: 10,
+            header: &header,
+            content: &content,
+            footer_lines: &footer,
+            focus_line: -1,
+            scroll_offset: 0,
+            two_pane: false,
+            right_panel: None,
+        });
+
+        let composed = dashboard_overlay_frame(&base, "DIALOG".to_owned());
+
+        assert_eq!(
+            composed.frame.matches(SYNCHRONIZED_BEGIN).count(),
+            1,
+            "one update opened, not one per layer"
+        );
+        assert_eq!(
+            composed.frame.matches(SYNCHRONIZED_END).count(),
+            1,
+            "and closed exactly once"
+        );
+        assert!(
+            composed.frame.starts_with(SYNCHRONIZED_BEGIN),
+            "the update has to open before anything is drawn, including \
+             `recede`'s own SGR"
+        );
+        assert!(
+            composed.frame.ends_with(SYNCHRONIZED_END),
+            "and close after everything"
+        );
+        let dialog_at = composed.frame.find("DIALOG").expect("the dialog");
+        let end_at = composed
+            .frame
+            .find(SYNCHRONIZED_END)
+            .expect("the update closes");
+        assert!(
+            dialog_at < end_at,
+            "the dialog has to be inside the update, not painted after it"
+        );
+        // Dimmed, and every row still erasing itself under the dimming. The
+        // `contains("\x1b[K")` this replaces was satisfied by one erase
+        // anywhere, and nothing asserted the dimming at all -- `recede` could
+        // have been dropped entirely.
+        assert!(
+            composed.frame.contains("\x1b[2;38;5;240m"),
+            "a dialog over the dashboard dims what is behind it"
+        );
+        let dimmed_rows = composed
+            .frame
+            .strip_prefix(SYNCHRONIZED_BEGIN)
+            .expect("the update opens")
+            .split("\r\n")
+            .count();
+        assert_eq!(
+            composed.frame.matches("\x1b[K").count(),
+            dimmed_rows,
+            "receding the base must not take any row's erase with it"
+        );
+
+        // And a subscreen dialog is drawn over the screen AS DRAWN. Node
+        // receded in dashboard mode only, so dimming here would be a looks
+        // change nobody asked for.
+        let plain = compose_overlay_frame(&base, "DIALOG".to_owned(), OverlayBackground::AsDrawn);
+        assert!(
+            !plain.frame.contains("\x1b[2;38;5;240m"),
+            "a subscreen dialog must not dim the screen behind it"
+        );
+        assert!(plain.frame.starts_with(SYNCHRONIZED_BEGIN));
+        assert!(plain.frame.ends_with(SYNCHRONIZED_END));
+        assert!(
+            plain.frame.find("DIALOG").expect("the dialog")
+                < plain.frame.find(SYNCHRONIZED_END).expect("it closes"),
+            "and is still drawn inside the update"
+        );
+
+        // A frame with no markers is wrapped whole rather than left open.
+        let bare = ScreenFrameResult {
+            frame: "plain".to_owned(),
+            scroll_offset: 0,
+        };
+        let wrapped = dashboard_overlay_frame(&bare, "DIALOG".to_owned());
+        assert!(wrapped.frame.starts_with(SYNCHRONIZED_BEGIN));
+        assert!(wrapped.frame.ends_with(SYNCHRONIZED_END));
+        assert!(wrapped.frame.contains("plain"), "and the frame is not lost");
+    }
 
     const GOLDEN_SNAPSHOT: &str =
         include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
@@ -5193,7 +5343,7 @@ mod tests {
             context,
         )
         .frame;
-        assert!(!plain.starts_with("\x1b[2;38;5;240m"));
+        assert!(!plain.contains("\x1b[2;38;5;240m"));
 
         let mut overlay_controller = DashboardController::new(&snapshot);
         overlay_controller.overseer_overlay_open = true;
@@ -5205,7 +5355,23 @@ mod tests {
             context,
         )
         .frame;
-        assert!(overlay.starts_with("\x1b[2;38;5;240m"));
+        // Receded, and INSIDE the synchronized update. This assertion used to
+        // read `starts_with`, which pinned the defect: `recede` prepends its
+        // SGR to whatever it is given, so receding the whole frame put that SGR
+        // ahead of the `\x1b[?2026h` and left the overlay after the
+        // `\x1b[?2026l` -- two visible passes for one frame.
+        assert!(
+            overlay.starts_with("\x1b[?2026h\x1b[2;38;5;240m"),
+            "the update opens first, then the dimmed base: {:?}",
+            &overlay[..overlay.len().min(32)]
+        );
+        assert!(overlay.ends_with("\x1b[?2026l"));
         assert!(overlay.contains("OVERSEER"));
+        let overseer_at = overlay.find("OVERSEER").expect("the overlay");
+        let closed_at = overlay.find("\x1b[?2026l").expect("the update closes");
+        assert!(
+            overseer_at < closed_at,
+            "the dialog has to be drawn inside the update, not after it"
+        );
     }
 }
