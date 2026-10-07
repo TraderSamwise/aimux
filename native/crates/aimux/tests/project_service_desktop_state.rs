@@ -2815,6 +2815,149 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
         );
     }
 
+    // AN AGENT MOVED TO ANOTHER CHECKOUT. The card groups by the stored
+    // worktree plane; the topology screen read `worktreePath` with raw string
+    // equality, so the same agent sat under one checkout on one screen and
+    // another on the other -- and the checkout answers followed it.
+    {
+        let mut topology = topology_fixture();
+        topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|session| session["id"] == "codex-live");
+        let session = topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .first_mut()
+            .expect("codex-live is in the fixture");
+        session["worktreePath"] = json!("/repo");
+        session["team"] = json!({ "role": "coder" });
+        session["lane"] = json!({
+            "kind": "worktree",
+            "worktreePath": "/repo/.aimux/worktrees/feature-a"
+        });
+        let mut metadata = metadata_fixture();
+        let entry = metadata
+            .entry("codex-live".to_owned())
+            .or_insert_with(|| json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }));
+        entry["derived"] = json!({ "lastOutputAt": recent.clone() });
+        let exchange = exchange_fixture();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&support::live_windows(
+                "aimux-repo",
+                &["@1", "@2", "@3", "@4"],
+            )),
+        );
+        let group_answer = |name: &str| {
+            state["worktreeGroups"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|group| group["name"] == name)
+                .map(|group| group["recentOutput"].clone())
+        };
+        assert_eq!(
+            group_answer("feature-a"),
+            Some(json!(true)),
+            "the card puts the moved agent in the checkout its plane names"
+        );
+        let topology_view =
+            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        for name in ["feature-a", "Main Checkout"] {
+            let row = find_topology_worktree_row(&topology_view, name)
+                .unwrap_or_else(|| panic!("{name} is in the topology view"));
+            assert_eq!(
+                Some(row["recentOutput"].clone()),
+                group_answer(name),
+                "{name} must read the same on both screens for a moved agent"
+            );
+        }
+        // And the agent's own row has to sit under the checkout its plane
+        // names, or the two screens file it differently however well their
+        // checkout answers agree.
+        let agent_row = find_topology_agent_row(&topology_view, "codex-live")
+            .expect("the moved agent has a row");
+        assert_eq!(
+            agent_row["worktreePath"].as_str(),
+            Some("/repo/.aimux/worktrees/feature-a"),
+            "the moved agent belongs to the checkout its stored plane names"
+        );
+    }
+
+    // A TEAMMATE. The card gives it no row of its own -- it is listed in the
+    // details panel -- but the topology screen does, so a checkout answer
+    // that left teammates out sat plain directly above a bold row.
+    {
+        let mut topology = topology_fixture();
+        topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            // `codex-live` stays, quiet: without a non-teammate agent the
+            // fold would be empty and the no-agents rule would answer.
+            .retain(|session| session["id"] == "reviewer" || session["id"] == "codex-live");
+        let mut metadata = metadata_fixture();
+        for (id, stamp) in [("reviewer", &recent), ("codex-live", &stale)] {
+            let entry = metadata.entry(id.to_owned()).or_insert_with(
+                || json!({ "derived": {}, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+            );
+            entry["derived"] = json!({ "lastOutputAt": stamp });
+        }
+        let exchange = exchange_fixture();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: "/repo".into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&support::live_windows(
+                "aimux-repo",
+                &["@1", "@2", "@3", "@4"],
+            )),
+        );
+        assert!(
+            state["teammates"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|session| session["id"] == "reviewer"),
+            "the subject has to be a teammate, or nothing is being asked"
+        );
+        let group = state["worktreeGroups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|group| group["name"] == "feature-a")
+            .cloned()
+            .expect("feature-a is a checkout");
+        assert_eq!(
+            group["sessions"].as_array().map(Vec::len),
+            Some(1),
+            "the checkout holds one ordinary agent, so the fold is answering \
+             the teammate question and not the empty-checkout one"
+        );
+        assert_eq!(
+            group["recentOutput"], true,
+            "a teammate that just produced output is recent activity in its \
+             checkout, whether or not the card gives it a row"
+        );
+        let topology_view =
+            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let row = find_topology_worktree_row(&topology_view, "feature-a")
+            .expect("feature-a is in the topology view");
+        assert_eq!(
+            row["recentOutput"].as_bool(),
+            Some(true),
+            "so the row above the teammate's own row must not say nothing happened"
+        );
+    }
+
     // An offline agent is still an agent. Skipping it in the fold turned a
     // checkout whose only agent is dead and quiet into "no agents to ask",
     // and the title went bold for a checkout with nothing happening in it.

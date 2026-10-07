@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
 
-use super::desktop_state::{desktop_state_for_context, worktree_path_identity};
+use super::desktop_state::{
+    desktop_state_for_context, item_worktree_group_key, worktree_path_identity,
+};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 
@@ -74,7 +76,16 @@ pub fn build_topology_worktrees_from_desktop_state(state: &Value) -> Vec<Value> 
     // group carries no `path` at all while its worktree row carries the
     // project root, so raw string equality matched neither -- and the main
     // checkout is where most agents live.
-    let main_identity = string_field(state, "mainCheckoutPath").map(worktree_path_identity);
+    // The project root when the payload names it, else the first checkout
+    // row -- which is what the index-based rule this replaced assumed, and
+    // what a payload that predates `mainCheckoutPath` still relies on.
+    let main_identity = string_field(state, "mainCheckoutPath")
+        .or_else(|| {
+            array_field(state, "worktrees")
+                .first()
+                .and_then(|worktree| string_field(worktree, "path"))
+        })
+        .map(worktree_path_identity);
     let group_recent_output = array_field(state, "worktreeGroups")
         .iter()
         .filter_map(|group| {
@@ -90,17 +101,22 @@ pub fn build_topology_worktrees_from_desktop_state(state: &Value) -> Vec<Value> 
     let services = array_field(state, "services");
     array_field(state, "worktrees")
         .iter()
-        .enumerate()
-        .map(|(index, worktree)| {
+        .map(|worktree| {
             let worktree_path = string_field(worktree, "path");
+            let worktree_identity = worktree_path.map(worktree_path_identity);
+            let worktree_identity = worktree_identity.as_deref();
             let worktree_sessions = sessions
                 .iter()
-                .filter(|session| belongs_to_worktree(session, worktree_path, index))
+                .filter(|session| {
+                    belongs_to_worktree(session, worktree_identity, main_identity.as_deref())
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             let worktree_services = services
                 .iter()
-                .filter(|service| belongs_to_worktree(service, worktree_path, index))
+                .filter(|service| {
+                    belongs_to_worktree(service, worktree_identity, main_identity.as_deref())
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             let mut next = object_value(worktree.clone());
@@ -121,8 +137,8 @@ pub fn build_topology_worktrees_from_desktop_state(state: &Value) -> Vec<Value> 
             // sessions the card renders. The list assembled here includes
             // teammates the card never holds, so folding it would answer a
             // different question.
-            if let Some(recent_output) = worktree_path
-                .and_then(|path| group_recent_output.get(&worktree_path_identity(path)))
+            if let Some(recent_output) =
+                worktree_identity.and_then(|identity| group_recent_output.get(identity))
             {
                 next.insert("recentOutput".into(), recent_output.clone());
             }
@@ -293,10 +309,21 @@ fn worktree_health(worktree: &Value, child_healths: &[&str]) -> &'static str {
     }
 }
 
-fn belongs_to_worktree(entry: &Value, worktree_path: Option<&str>, index: usize) -> bool {
-    match string_field(entry, "worktreePath") {
-        Some(path) => Some(path) == worktree_path,
-        None => index == 0,
+/// The same rule the dashboard groups by.
+///
+/// This read `worktreePath` with raw string equality, while the card asks
+/// `item_worktree_group_key`, which prefers a STORED worktree plane and keys
+/// by path identity. So an agent moved to another checkout kept its row in
+/// the one its directory happened to be in on this screen, and the two
+/// screens put the same agent under different checkouts.
+fn belongs_to_worktree(
+    entry: &Value,
+    worktree_identity: Option<&str>,
+    main_identity: Option<&str>,
+) -> bool {
+    match item_worktree_group_key(entry) {
+        Some(key) => Some(key.as_str()) == worktree_identity,
+        None => worktree_identity.is_some() && worktree_identity == main_identity,
     }
 }
 
