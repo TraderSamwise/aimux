@@ -4500,6 +4500,52 @@ fn worktree_graveyard_leaves_an_already_killed_agents_reason_alone() {
     );
 }
 
+/// Nothing moves while anything in the worktree is alive.
+///
+/// The guard refuses on an agent with a live WINDOW; a row whose status is live
+/// but whose window has gone gets through it. Retiring that agent's offline
+/// neighbour then took its row off the dashboard -- which is where a teammate
+/// is reached from -- leaving a running teammate on no surface at all.
+#[test]
+fn worktree_graveyard_leaves_the_agents_alone_while_one_is_still_live() {
+    let project = temp_project("worktree-graveyard-live-neighbour");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    add_topology_session(
+        &state_dir,
+        "codex-cold",
+        "offline",
+        &worktree.to_string_lossy(),
+    );
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    // tmux answered and `@agent` was gone, so the route is allowed -- but the
+    // row still claims `running`, which is not proof the agent is dead.
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    let topology = read_topology(&state_dir);
+    assert_eq!(session(&topology, "codex-live")["status"], "running");
+    assert_eq!(
+        session(&topology, "codex-cold")["status"],
+        "offline",
+        "a live agent's neighbour was retired out from under it"
+    );
+    cleanup(project);
+}
+
 /// An agent attached through its node's `cwd` rather than a `worktreePath`.
 ///
 /// `remove_worktree_dependents` already finds one that way, and the dashboard
@@ -6404,6 +6450,37 @@ fn published_worktree_group(project: &Path, topology: &Value) -> Value {
 
 fn read_topology(state_dir: &PathBuf) -> Value {
     read_runtime_topology(runtime_topology_path(state_dir)).unwrap()
+}
+
+fn add_topology_session(state_dir: &PathBuf, session_id: &str, status: &str, worktree_path: &str) {
+    update_runtime_topology(runtime_topology_path(state_dir), |mut topology| {
+        if let Some(nodes) = topology["nodes"].as_array_mut() {
+            nodes.push(json!({
+                "id": format!("agent:{session_id}"),
+                "rigId": "rig-1",
+                "logicalId": session_id,
+                "toolConfigKey": "codex",
+                "cwd": worktree_path,
+                "createdAt": "2026-01-01T00:00:00.000Z"
+            }));
+        }
+        if let Some(sessions) = topology["sessions"].as_array_mut() {
+            sessions.push(json!({
+                "id": session_id,
+                "nodeId": format!("agent:{session_id}"),
+                "tool": "codex",
+                "toolConfigKey": "codex",
+                "command": "codex",
+                "args": [],
+                "status": status,
+                "worktreePath": worktree_path,
+                "createdAt": "2026-01-01T00:00:01.000Z",
+                "updatedAt": "2026-01-01T00:00:01.000Z"
+            }));
+        }
+        topology
+    })
+    .unwrap();
 }
 
 fn set_topology_session_graveyard_reason(state_dir: &PathBuf, session_id: &str, reason: &str) {

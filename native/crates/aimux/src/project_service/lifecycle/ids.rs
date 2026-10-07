@@ -62,7 +62,7 @@ fn base36(mut value: u128) -> String {
     digits.into_iter().rev().collect()
 }
 
-pub(super) fn now_iso() -> String {
+pub(crate) fn now_iso() -> String {
     let now = time::OffsetDateTime::now_utc();
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",

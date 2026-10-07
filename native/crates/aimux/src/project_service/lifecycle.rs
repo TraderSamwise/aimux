@@ -37,6 +37,7 @@ use agent_management::*;
 use agent_session_launch::*;
 pub use default_scribe::ensure_default_scribe_agent;
 pub(crate) use default_scribe::is_scribe_session;
+pub(crate) use ids::now_iso;
 use ids::*;
 use json_helpers::*;
 use response_helpers::*;
@@ -58,7 +59,6 @@ use services::*;
 use session_state::*;
 use teammates::*;
 use topology_helpers::*;
-pub(crate) use worktrees::WORKTREE_GRAVEYARD_AGENT_REASON;
 pub(crate) use worktrees::clear_worktree_row_failure;
 use worktrees::*;
 

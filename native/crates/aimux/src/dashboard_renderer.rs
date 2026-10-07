@@ -10,6 +10,7 @@ use crate::dashboard_navigation::{
     DASHBOARD_QUICK_JUMP_LIMIT, DashboardNavigationGroup, DashboardNavigationGroupKind,
     dashboard_navigation_groups,
 };
+use crate::project_service::graveyard_contract::graveyard_reason_is_unrecoverable;
 use crate::project_service::work_outline::{WorkOutlineEntry, WorkOutlineStatus};
 use crate::project_service::worktree_colors_contract::worktree_color_ansi;
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
@@ -39,17 +40,8 @@ const RECENT_IDLE_MS: u128 = 2 * 60 * 1000;
 /// test rather than by intention.
 pub const WORKTREE_CHECKOUT_MISSING_LABEL: &str = "checkout missing";
 
-/// A graveyarded agent the user cannot bring back.
-///
-/// `graveyardReason` was read as the verdict itself, which was true while only
-/// a reap set it. A worktree now sends its own agents to the graveyard, and
-/// `graveyard.worktree.resurrect` brings exactly those back -- so painting them
-/// red and calling them unrecoverable names them as lost when one keypress
-/// returns them. Keyed on the reason the route writes, not on a spelling.
 fn graveyard_agent_is_unrecoverable(agent: &Value) -> bool {
-    string_at(agent, &["graveyardReason"]).is_some_and(|reason| {
-        reason != crate::project_service::lifecycle::WORKTREE_GRAVEYARD_AGENT_REASON
-    })
+    string_at(agent, &["graveyardReason"]).is_some_and(graveyard_reason_is_unrecoverable)
 }
 const COL_SELECT: usize = 2;
 const COL_DOT: usize = 2;
