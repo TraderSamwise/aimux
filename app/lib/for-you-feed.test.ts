@@ -18,6 +18,32 @@ function notification(input: Partial<NotificationRecord>): NotificationRecord {
 }
 
 describe("For You feed classifier", () => {
+  it("does not file a failed operation as something that went right", () => {
+    // The ledger's durable copy carries the operation's own words. "<op>
+    // completed after the caller disconnected" hits `complete` and files as
+    // shipped; a failed /set-activity correction hits `activity` and files as
+    // progress. Both report a failure as a success.
+    expect(
+      classifyNotification(
+        notification({
+          kind: "operation_failure",
+          title: "Lifecycle response was not delivered",
+          body: "agent.kill completed after the caller disconnected; refresh before retrying.",
+        }),
+      ),
+    ).toBe("action-required");
+
+    expect(
+      classifyNotification(
+        notification({
+          kind: "operation_failure",
+          title: "Transcript correction failed",
+          body: "POST /set-activity failed with HTTP 500: lock busy",
+        }),
+      ),
+    ).toBe("action-required");
+  });
+
   it("classifies notification language into OpenRig-style lenses", () => {
     expect(classifyNotification(notification({ kind: "approval_requested" }))).toBe("approval");
     expect(classifyNotification(notification({ body: "handoff waiting for human" }))).toBe(

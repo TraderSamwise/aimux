@@ -68,6 +68,13 @@ export function classifyNotification(record: NotificationRecord): ForYouKind {
     return record.interaction?.type === "permission" ? "approval" : "action-required";
   }
 
+  // Before the keyword pass: a failed operation says what it is, and the
+  // keywords read it wrong. "<operation> completed after the caller
+  // disconnected" lands in "shipped" on `complete`, and a failed
+  // /set-activity correction lands in "progress" on `activity` -- both file a
+  // failure as something that went right.
+  if (record.kind === "operation_failure") return "action-required";
+
   const haystack = [record.kind, record.targetKind, record.title, record.subtitle, record.body]
     .map(normalize)
     .join(" ");

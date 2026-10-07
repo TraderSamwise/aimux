@@ -101,9 +101,8 @@ fn apply_shell_state_transition(
             clear_notifications(
                 project_state_dir,
                 NotificationMutation {
-                    id: None,
-                    ids: None,
                     session_id: Some(session_id.to_owned()),
+                    ..NotificationMutation::default()
                 },
             )?;
             update_session_metadata(project_state_dir, session_id, |current| {

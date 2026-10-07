@@ -198,10 +198,18 @@ pub fn build_coordination_worklist(
             Value::Bool(bool_field(item, "actionable")),
         );
         row.insert("stale".into(), Value::Bool(bool_field(item, "stale")));
+        // Not only the unread one. A notification can be recorded read -- an
+        // operation failure's durable copy is -- and reading the timestamp off
+        // `latestUnread` alone rendered those rows with no time at all.
         insert_optional(
             &mut row,
             "when",
             item.get("latestUnread")
+                .or_else(|| {
+                    item.get("notifications")
+                        .and_then(Value::as_array)
+                        .and_then(|group| group.first())
+                })
                 .and_then(|latest| string_field(latest, "createdAt")),
         );
         row.insert("notification".into(), item.clone());

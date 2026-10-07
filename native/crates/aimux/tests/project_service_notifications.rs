@@ -78,8 +78,8 @@ fn mark_read_updates_matching_thread_inbox_entries() {
         &state_dir,
         NotificationMutation {
             id: Some("record-2".into()),
-            ids: None,
             session_id: Some("codex-2".into()),
+            ..NotificationMutation::default()
         },
     )
     .expect("mark notifications read");
@@ -103,9 +103,8 @@ fn clear_marks_matching_messages_cleared_and_inbox_done() {
     let cleared = clear_notifications(
         &state_dir,
         NotificationMutation {
-            id: None,
             ids: Some(vec!["record-1".into(), "record-2".into()]),
-            session_id: None,
+            ..NotificationMutation::default()
         },
     )
     .expect("clear notifications");

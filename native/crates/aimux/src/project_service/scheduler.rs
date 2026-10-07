@@ -17,7 +17,9 @@ use crate::paths::PathResolver;
 use crate::periodic_scheduler as periodic;
 
 use super::notifications::{NotificationWriteInput, add_notification};
-use super::operation_failures::{OperationFailureInput, add_dashboard_operation_failure};
+use super::operation_failures::{
+    OperationFailureInput, add_dashboard_operation_failure_without_notification,
+};
 use super::router::ProjectServiceRequestContext;
 
 pub use crate::periodic_scheduler::{
@@ -250,7 +252,7 @@ pub fn attach_project_scheduler_alert_sink(
                 &record,
             );
         }
-        add_dashboard_operation_failure(
+        add_dashboard_operation_failure_without_notification(
             &project_state_dir,
             OperationFailureInput {
                 target_kind: "scheduler-task".to_owned(),
