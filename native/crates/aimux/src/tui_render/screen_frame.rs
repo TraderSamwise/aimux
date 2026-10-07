@@ -92,14 +92,6 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
             compose_two_pane(&visible, right_panel, content_width, Some("   "))
                 .into_iter()
                 .take(viewport_height)
-                // Truncated to the terminal, the way the footer rows already
-                // are. `content_width` is `72.max(cols)`, a MINIMUM content
-                // width, so under 72 columns the two-pane body is composed
-                // wider than the screen and every row of it wraps. The
-                // full-screen clear hid the consequence: the layout was already
-                // scrambled, but nothing was left behind. Each row erases only
-                // itself now, so a wrapped row would leave the tail of the last
-                // frame below it.
                 .collect()
         } else {
             visible
@@ -109,17 +101,6 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
     };
 
     ScreenFrameResult {
-        // Still wrapped in a synchronized update (DECSET 2026), and no longer
-        // relying on it. The frame used to open with `\x1b[2J`, which blanks the
-        // WHOLE screen before a single character of the new one is drawn -- so
-        // any terminal that does not honour 2026, or that gives up on it part
-        // way through a slow write, shows an empty screen on every keystroke.
-        // That is the flicker.
-        //
-        // Each row now erases its own tail after it is drawn, so no part of the
-        // screen is ever blank: a row goes straight from the old content to the
-        // new. There is nothing to erase below, because the body is padded to
-        // the viewport and header + body + footer is exactly `rows`.
         frame: compose_rows(
             input.header.iter().chain(body.iter()).chain(footer.iter()),
             cols,
@@ -147,15 +128,20 @@ pub fn unwrap_synchronized_frame(frame: &str) -> &str {
 
 /// The bytes that put a frame on the screen, one row at a time.
 ///
-/// `\x1b[2J` used to open every frame. It blanks the WHOLE screen before a
-/// single character of the new one is drawn, so any terminal that does not
-/// honour the synchronized update, or that gives up on it part way through a
-/// slow write, shows an empty screen on every keystroke. That is the flicker.
+/// `\x1b[2J` used to open every frame, blanking the WHOLE screen before a single
+/// character of the new one was drawn. Each row now clears only itself,
+/// immediately before its own content, so the most that is ever blank is one
+/// row and only for the few bytes until that row is drawn. The synchronized
+/// wrapper stays -- four bytes, and it still helps where it is honoured -- but
+/// nothing depends on it any more.
 ///
-/// Each row now clears only itself, immediately before its own content, so the
-/// most that is ever blank is one row and only for the few bytes until that
-/// row is drawn. The synchronized wrapper stays -- it is four bytes and it
-/// still helps where it is honoured -- but nothing depends on it any more.
+/// NOT, as an earlier version of this comment said, "the flicker". A review of
+/// PR 407 established that tmux honours the synchronized update itself and
+/// emits its own cell diff, so inside tmux -- which is where this dashboard
+/// runs -- the clear never reached the terminal as a separate paint and taking
+/// it out changes nothing visible. It is removed because a repaint should not
+/// depend on a terminal feature to avoid blanking the screen, and that is the
+/// whole claim.
 ///
 /// `\x1b[m` before each erase, because `\x1b[K` fills with the CURRENT
 /// background: a row reached with a colour still open would paint it out to the

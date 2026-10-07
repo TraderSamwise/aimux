@@ -15,6 +15,10 @@ pub(crate) fn sgr_end(bytes: &[u8], start: usize) -> Option<usize> {
 
 /// Every CSI sequence gone, not only the colours.
 ///
+/// `pub` with no production caller on purpose: the frame assertions that need
+/// it live in integration tests, which cannot reach a `#[cfg(test)]` item in
+/// this crate.
+///
 /// `strip_ansi` is deliberately SGR-only: it is what measures how WIDE a styled
 /// string is, and the strings it measures carry nothing else. A composed frame
 /// does -- `\x1b[H` to home the cursor, `\x1b[m\x1b[K` to clear each row before
