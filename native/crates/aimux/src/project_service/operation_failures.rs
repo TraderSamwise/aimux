@@ -1,14 +1,19 @@
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::atomic_write::write_json_atomic;
 use crate::project_api_contract::routes;
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::notifications::{
+    NotificationMutation, NotificationWriteInput, clear_notifications, upsert_notification,
+};
 use super::router::ProjectServiceRequestContext;
 
 const MAX_FAILURES: usize = 100;
@@ -27,6 +32,45 @@ const _: () = assert!(
     ACTIVE_FAILURE_MAX_AGE_MS <= 30 * 60 * 1000,
     "a timestamped failed operation must not keep showing for more than thirty minutes"
 );
+/// The floor between two exchange writes for one failure key.
+///
+/// `agent_input_delivery` runs every 500ms and the transcript reconciler every
+/// 4s, and a notification write is a full read/compact/reserialize of the
+/// runtime exchange, so an unthrottled mirror is a rewrite storm. It is a
+/// floor and not a latch on purpose: a failure that is still happening keeps
+/// refreshing its durable copy, which is what keeps that copy inside the
+/// newest-N the exchange retains, and what restores it if it was evicted.
+const NOTIFICATION_REMIRROR_MIN_INTERVAL_MS: u128 = 60 * 1000;
+
+/// How long a key with no further failures is remembered. Only bounds the map;
+/// forgetting early costs one extra mirror, which `upsert_notification`
+/// collapses onto the same thread anyway.
+const MIRROR_THROTTLE_RETENTION_MS: u128 = 10 * NOTIFICATION_REMIRROR_MIN_INTERVAL_MS;
+
+/// A failure's identity in the notification store: what broke, not which
+/// record happened to carry it. `worktreePath` is part of it because
+/// `record_worktree_operation_failure` has no target id -- without the path,
+/// two worktrees' create failures would share one thread and the second would
+/// overwrite the first.
+pub fn operation_failure_notification_key(failure: &Value) -> String {
+    let field = |key: &str| {
+        failure
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("-")
+            .to_owned()
+    };
+    format!(
+        "operation-failure:{}:{}:{}:{}",
+        field("targetKind"),
+        field("operation"),
+        field("targetId"),
+        field("worktreePath"),
+    )
+}
+
 static FAILURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -122,21 +166,24 @@ pub fn clear_dashboard_operation_failures(
     project_state_dir: impl AsRef<Path>,
     matcher: OperationFailureMatch,
 ) -> Result<usize, String> {
+    let project_state_dir = project_state_dir.as_ref();
     let path = dashboard_operation_failures_path(project_state_dir);
     let mut state = load_state(&path)?;
     let Some(failures) = state.get_mut("failures").and_then(Value::as_array_mut) else {
         return Ok(0);
     };
-    let mut changed = 0;
+    let mut cleared_keys = Vec::new();
     for failure in failures.iter_mut() {
         if !failure_matches(failure, &matcher) {
             continue;
         }
+        let key = operation_failure_notification_key(failure);
         if let Value::Object(record) = failure {
             record.insert("cleared".into(), Value::Bool(true));
-            changed += 1;
+            cleared_keys.push(key);
         }
     }
+    let changed = cleared_keys.len();
     if changed > 0
         && let Err(error) = save_state(&path, state)
     {
@@ -144,6 +191,23 @@ pub fn clear_dashboard_operation_failures(
             "failed to persist dashboard operation failure clear at {}: {error}",
             path.display()
         ));
+    }
+    // The durable copy goes with the ledger entry. Without this a transient
+    // failure that recovers leaves a permanent notification, which is the
+    // reverse of the bug this mirror exists for.
+    if !cleared_keys.is_empty() {
+        cleared_keys.sort();
+        cleared_keys.dedup();
+        forget_mirror_throttle(project_state_dir, &cleared_keys);
+        if let Err(error) = clear_notifications(
+            project_state_dir,
+            NotificationMutation {
+                target_keys: Some(cleared_keys),
+                ..NotificationMutation::default()
+            },
+        ) {
+            eprintln!("aimux: cleared operation failures but not their notifications: {error}");
+        }
     }
     Ok(changed)
 }
@@ -187,12 +251,24 @@ pub fn try_add_dashboard_operation_failure(
     project_state_dir: impl AsRef<Path>,
     input: OperationFailureInput,
 ) -> Result<Value, (io::Error, Value)> {
-    add_dashboard_operation_failure_impl(project_state_dir.as_ref(), input)
+    add_dashboard_operation_failure_impl(project_state_dir.as_ref(), input, true)
+}
+
+/// For the one caller that already writes its own notification AND publishes a
+/// push alert from it (`scheduler.rs`). Mirroring would give the same event two
+/// entries, one of them poorer.
+pub fn add_dashboard_operation_failure_without_notification(
+    project_state_dir: impl AsRef<Path>,
+    input: OperationFailureInput,
+) -> Value {
+    add_dashboard_operation_failure_impl(project_state_dir.as_ref(), input, false)
+        .unwrap_or_else(|(_, failure)| failure)
 }
 
 fn add_dashboard_operation_failure_impl(
     project_state_dir: &Path,
     input: OperationFailureInput,
+    mirror_to_notifications: bool,
 ) -> Result<Value, (io::Error, Value)> {
     let path = dashboard_operation_failures_path(project_state_dir);
     let mut state = load_state(&path).unwrap_or_else(|error| {
@@ -232,6 +308,16 @@ fn add_dashboard_operation_failure_impl(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    if mirror_to_notifications
+        && mirror_is_due(
+            project_state_dir,
+            &operation_failure_notification_key(&failure),
+            failure_epoch_millis(&failure),
+        )
+        && let Err(error) = mirror_operation_failure_to_notifications(project_state_dir, &failure)
+    {
+        eprintln!("aimux: recorded operation failure but not its notification: {error}");
+    }
     failures.retain(|existing| {
         existing.get("cleared").and_then(Value::as_bool) == Some(true)
             || existing.get("targetKind") != failure.get("targetKind")
@@ -245,6 +331,96 @@ fn add_dashboard_operation_failure_impl(
         Ok(()) => Ok(failure),
         Err(error) => Err((error, failure)),
     }
+}
+
+/// When this failure happened. The record's own stamp, so a caller replaying
+/// history cannot be throttled by the wall clock, and an unparseable stamp
+/// falls back to now rather than to "never".
+fn failure_epoch_millis(failure: &Value) -> u128 {
+    failure
+        .get("createdAt")
+        .and_then(Value::as_str)
+        .and_then(parse_iso_millis)
+        .unwrap_or_else(now_epoch_millis)
+}
+
+fn mirror_throttle() -> &'static Mutex<HashMap<String, u128>> {
+    static THROTTLE: OnceLock<Mutex<HashMap<String, u128>>> = OnceLock::new();
+    THROTTLE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Whether this key may write the exchange again, recording that it did.
+///
+/// Process-local on purpose: this rate-limits OUR writes, so a restart
+/// re-mirroring once is right -- that is the run that would rebuild a copy the
+/// exchange had evicted.
+fn mirror_is_due(project_state_dir: &Path, key: &str, now: u128) -> bool {
+    let key = throttle_key(project_state_dir, key);
+    let key = key.as_str();
+    let Ok(mut throttle) = mirror_throttle().lock() else {
+        return true;
+    };
+    throttle
+        .retain(|_, mirrored_at| now.saturating_sub(*mirrored_at) < MIRROR_THROTTLE_RETENTION_MS);
+    if throttle.get(key).is_some_and(|mirrored_at| {
+        now.saturating_sub(*mirrored_at) < NOTIFICATION_REMIRROR_MIN_INTERVAL_MS
+    }) {
+        return false;
+    }
+    throttle.insert(key.to_owned(), now);
+    true
+}
+
+/// A cleared failure that comes back is news again, not a repeat.
+fn forget_mirror_throttle(project_state_dir: &Path, keys: &[String]) {
+    if let Ok(mut throttle) = mirror_throttle().lock() {
+        for key in keys {
+            throttle.remove(&throttle_key(project_state_dir, key));
+        }
+    }
+}
+
+/// One process can hold more than one project's state, and two projects can
+/// name the same agent. The exchange is per project, so the throttle is too.
+fn throttle_key(project_state_dir: &Path, key: &str) -> String {
+    format!("{}\0{key}", project_state_dir.display())
+}
+
+/// `session_id` is deliberately left unset even for an agent's failure.
+/// `session_viewed.rs` and `hooks.rs` clear notifications BY SESSION, so
+/// attaching one would delete the durable record the moment someone looked at
+/// the agent -- the record would survive longer by not naming its agent.
+fn mirror_operation_failure_to_notifications(
+    project_state_dir: &Path,
+    failure: &Value,
+) -> Result<(), String> {
+    let string = |key: &str| {
+        failure
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_default()
+    };
+    let optional = |key: &str| failure.get(key).and_then(Value::as_str).map(str::to_owned);
+    upsert_notification(
+        project_state_dir,
+        NotificationWriteInput {
+            title: string("title"),
+            body: string("message"),
+            target_key: Some(operation_failure_notification_key(failure)),
+            target_kind: Some("operation-failure".to_owned()),
+            kind: Some("operation_failure".to_owned()),
+            worktree_path: optional("worktreePath"),
+            worktree_name: optional("worktreeName"),
+            created_at: optional("createdAt"),
+            // The ledger is the surface that asks for attention; this copy is
+            // the record that outlives it. Marking it unread would inflate
+            // `unreadNotifications` for every failure, forever.
+            unread: false,
+            ..NotificationWriteInput::default()
+        },
+    )
+    .map(|_| ())
 }
 
 fn load_state(path: impl AsRef<Path>) -> Result<Value, String> {

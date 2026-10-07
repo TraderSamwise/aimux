@@ -282,7 +282,7 @@ pub(super) fn route_agent_kill(
         return json_error(500, error);
     }
     prune_restore_eligibility(&project_state_dir, &session_id);
-    clear_agent_kill_operation_failure(&project_state_dir, &session_id);
+    clear_agent_destructive_operation_failures(&project_state_dir, &session_id);
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
         "agent.kill",
@@ -348,7 +348,7 @@ pub(super) async fn route_agent_kill_async(
         return json_error(500, error);
     }
     prune_restore_eligibility(&project_state_dir, &session_id);
-    clear_agent_kill_operation_failure(&project_state_dir, &session_id);
+    clear_agent_destructive_operation_failures(&project_state_dir, &session_id);
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
         "agent.kill",
@@ -418,16 +418,22 @@ fn record_agent_destructive_operation_failure(
     }
 }
 
-fn clear_agent_kill_operation_failure(project_state_dir: &Path, session_id: &str) {
-    let _ = clear_dashboard_operation_failures(
-        project_state_dir,
-        OperationFailureMatch {
-            target_kind: Some("agent".into()),
-            operation: Some("agent.kill".into()),
-            target_id: Some(session_id.to_owned()),
-            worktree_path: WorktreePathMatch::Any,
-        },
-    );
+/// Both operations this route can record, not just the one it is finishing.
+/// A failed `agent.stop` was recorded and never cleared by anything, so it sat
+/// in the ledger until the window aged it off -- and now that a failure has a
+/// durable copy, "until the window aged it off" means forever.
+fn clear_agent_destructive_operation_failures(project_state_dir: &Path, session_id: &str) {
+    for operation in ["agent.kill", "agent.stop"] {
+        let _ = clear_dashboard_operation_failures(
+            project_state_dir,
+            OperationFailureMatch {
+                target_kind: Some("agent".into()),
+                operation: Some(operation.into()),
+                target_id: Some(session_id.to_owned()),
+                worktree_path: WorktreePathMatch::Any,
+            },
+        );
+    }
 }
 
 fn should_prune_restore_eligibility_after_stop(

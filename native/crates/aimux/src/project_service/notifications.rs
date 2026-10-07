@@ -51,6 +51,10 @@ pub struct NotificationMutation {
     pub id: Option<String>,
     pub ids: Option<Vec<String>>,
     pub session_id: Option<String>,
+    /// Match on what the notification is ABOUT rather than the record id it
+    /// happened to get. A record id is regenerated on every upsert, so a
+    /// caller holding one across a rewrite is holding a stale handle.
+    pub target_keys: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -431,6 +435,7 @@ fn parse_notification_mutation(body: &Value) -> Result<NotificationMutation, Str
         id: trimmed_string(body.get("id")),
         ids,
         session_id: trimmed_string(body.get("sessionId")),
+        target_keys: None,
     })
 }
 
@@ -631,6 +636,13 @@ fn mutate_notifications(
             }
             if let Some(session_id) = mutation.session_id.as_deref()
                 && string_field(record, "sessionId") != Some(session_id)
+            {
+                return false;
+            }
+            if let Some(target_keys) = mutation.target_keys.as_ref()
+                && !target_keys
+                    .iter()
+                    .any(|key| string_field(record, "targetKey") == Some(key.as_str()))
             {
                 return false;
             }

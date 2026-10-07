@@ -1,4 +1,5 @@
 use aimux::project_api_contract::routes;
+use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
 use aimux::project_service::operation_failures::{
     OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
     clear_dashboard_operation_failures, dashboard_operation_failures_path,
@@ -6,6 +7,7 @@ use aimux::project_service::operation_failures::{
     try_list_dashboard_operation_failures,
 };
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::runtime_exchange::runtime_exchange_path;
 use serde_json::json;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::PathBuf;
@@ -404,6 +406,248 @@ fn seed_failures(state_dir: &PathBuf) {
         .to_string(),
     )
     .expect("seed failures");
+}
+
+// --- the durable copy ---------------------------------------------------
+//
+// The ledger is read-filtered to fifteen minutes. Five of the seven call
+// sites write a log line and the ledger and nothing else, so after that
+// window those failures are on no surface at all. These pin the mirror that
+// gives them a home, and -- just as hard -- that it leaves when they do.
+
+#[test]
+fn a_failure_outlives_the_ledger_window_in_the_notification_store() {
+    let project = temp_project("mirror-durable");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    try_add_dashboard_operation_failure(
+        &state_dir,
+        OperationFailureInput {
+            target_kind: "agent".into(),
+            operation: "input.delivery".into(),
+            title: "Agent input was not delivered".into(),
+            message: "tmux window is gone".into(),
+            target_id: Some("codex-1".into()),
+            // Two hours ago: past the fifteen-minute read filter the moment
+            // it is written, which is the state the whole item is about.
+            created_at: Some(minutes_ago(120)),
+            ..OperationFailureInput::default()
+        },
+    )
+    .expect("record failure");
+
+    assert!(
+        list_dashboard_operation_failures(&state_dir).is_empty(),
+        "the ledger must have aged this off -- otherwise this test proves nothing"
+    );
+
+    let notifications = notification_bodies(&state_dir);
+    assert_eq!(
+        notifications,
+        vec!["tmux window is gone".to_owned()],
+        "the failure must still be readable after the ledger window closed"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn clearing_a_failure_takes_its_durable_copy_with_it() {
+    let project = temp_project("mirror-clear");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    record_delivery_failure(&state_dir, "codex-1", "tmux window is gone");
+    assert_eq!(notification_bodies(&state_dir).len(), 1);
+
+    clear_dashboard_operation_failures(
+        &state_dir,
+        OperationFailureMatch {
+            target_kind: Some("agent".into()),
+            operation: Some("input.delivery".into()),
+            target_id: Some("codex-1".into()),
+            worktree_path: WorktreePathMatch::Any,
+        },
+    )
+    .expect("clear");
+
+    assert!(
+        notification_bodies(&state_dir).is_empty(),
+        "a transient failure that recovered must not leave a permanent notification"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn two_worktrees_failing_the_same_way_keep_separate_records() {
+    let project = temp_project("mirror-worktrees");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    // `record_worktree_operation_failure` has no target id, so the worktree
+    // path is the only thing telling these apart.
+    for (path, message) in [
+        ("/repo/wt/alpha", "branch exists"),
+        ("/repo/wt/beta", "dir exists"),
+    ] {
+        try_add_dashboard_operation_failure(
+            &state_dir,
+            OperationFailureInput {
+                target_kind: "worktree".into(),
+                operation: "create".into(),
+                title: "Failed to create worktree".into(),
+                message: message.into(),
+                worktree_path: Some(path.into()),
+                ..OperationFailureInput::default()
+            },
+        )
+        .expect("record failure");
+    }
+
+    let mut bodies = notification_bodies(&state_dir);
+    bodies.sort();
+    assert_eq!(
+        bodies,
+        vec!["branch exists".to_owned(), "dir exists".to_owned()],
+        "one worktree's failure must not overwrite another's"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn a_failure_repeating_twice_a_second_writes_the_exchange_once() {
+    let project = temp_project("mirror-storm");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    // What `agent_input_delivery` does while a delivery stays stuck: the same
+    // failure, every 500ms. The exchange write is a full read, compact and
+    // reserialize, so a mirror without a guard is a rewrite storm.
+    record_delivery_failure(&state_dir, "codex-1", "tmux window is gone");
+    let after_first = exchange_bytes(&state_dir);
+    assert!(
+        after_first.is_some(),
+        "the first failure must have written an exchange to compare against"
+    );
+    for _ in 0..20 {
+        record_delivery_failure(&state_dir, "codex-1", "tmux window is gone");
+    }
+
+    // Byte-for-byte, not mtime: every write stamps a fresh `generatedAt`, so
+    // identical bytes is the one comparison a silent rewrite cannot pass.
+    assert_eq!(
+        exchange_bytes(&state_dir),
+        after_first,
+        "twenty repeats inside the floor must not rewrite the runtime exchange"
+    );
+    assert_eq!(notification_bodies(&state_dir).len(), 1);
+    cleanup(project);
+}
+
+#[test]
+fn a_message_that_varies_per_tick_does_not_buy_a_write_per_tick() {
+    let project = temp_project("mirror-floor");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    record_delivery_failure(&state_dir, "codex-1", "first error");
+    // `route_error_text` falls back to the whole response body when a route
+    // omits `error`, so a message that varies per tick is not hypothetical.
+    record_delivery_failure(&state_dir, "codex-1", "second error");
+    assert_eq!(
+        notification_bodies(&state_dir),
+        vec!["first error".to_owned()],
+        "a second message within the floor must not rewrite the exchange"
+    );
+
+    // The inverse: the floor is a floor, not a lock. Once the standing record
+    // is older than it, the newest message replaces the durable copy.
+    record_delivery_failure_at(&state_dir, "codex-2", "first error", minutes_ago(5));
+    record_delivery_failure(&state_dir, "codex-2", "second error");
+    let mut bodies = notification_bodies(&state_dir);
+    bodies.sort();
+    assert_eq!(
+        bodies,
+        vec!["first error".to_owned(), "second error".to_owned()],
+        "a changed message must reach the durable copy once the floor has passed"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn a_failure_that_comes_back_after_a_clear_is_mirrored_again() {
+    let project = temp_project("mirror-recur");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    record_delivery_failure(&state_dir, "codex-1", "tmux window is gone");
+    clear_dashboard_operation_failures(
+        &state_dir,
+        OperationFailureMatch {
+            target_kind: Some("agent".into()),
+            operation: Some("input.delivery".into()),
+            target_id: Some("codex-1".into()),
+            worktree_path: WorktreePathMatch::Any,
+        },
+    )
+    .expect("clear");
+    assert!(notification_bodies(&state_dir).is_empty());
+
+    // Immediately: inside the floor, but a cleared failure coming back is news
+    // again. Without this the recurrence is silent until the floor passes.
+    record_delivery_failure(&state_dir, "codex-1", "tmux window is gone");
+    assert_eq!(
+        notification_bodies(&state_dir),
+        vec!["tmux window is gone".to_owned()],
+        "a recurrence after a clear must restore the durable copy"
+    );
+    cleanup(project);
+}
+
+fn record_delivery_failure(state_dir: &PathBuf, session_id: &str, message: &str) {
+    record_delivery_failure_at(state_dir, session_id, message, minutes_ago(0));
+}
+
+fn record_delivery_failure_at(
+    state_dir: &PathBuf,
+    session_id: &str,
+    message: &str,
+    created_at: String,
+) {
+    try_add_dashboard_operation_failure(
+        state_dir,
+        OperationFailureInput {
+            target_kind: "agent".into(),
+            operation: "input.delivery".into(),
+            title: "Agent input was not delivered".into(),
+            message: message.into(),
+            target_id: Some(session_id.into()),
+            created_at: Some(created_at),
+            ..OperationFailureInput::default()
+        },
+    )
+    .expect("record failure");
+}
+
+fn notification_bodies(state_dir: &PathBuf) -> Vec<String> {
+    list_notification_snapshot(
+        state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: None,
+            limit: Some(50),
+        },
+    )
+    .notifications
+    .iter()
+    .filter(|record| record["targetKind"] == "operation-failure")
+    .map(|record| record["body"].as_str().unwrap_or_default().to_owned())
+    .collect()
+}
+
+fn exchange_bytes(state_dir: &PathBuf) -> Option<Vec<u8>> {
+    std::fs::read(runtime_exchange_path(state_dir)).ok()
 }
 
 fn temp_project(label: &str) -> PathBuf {

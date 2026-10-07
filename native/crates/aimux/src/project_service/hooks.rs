@@ -171,9 +171,8 @@ fn mark_hook_session_running(
     clear_notifications(
         context.project_state_dir(),
         NotificationMutation {
-            id: None,
-            ids: None,
             session_id: Some(session_id.to_owned()),
+            ..NotificationMutation::default()
         },
     )?;
     update_session_metadata(context.project_state_dir(), session_id, |current| {
