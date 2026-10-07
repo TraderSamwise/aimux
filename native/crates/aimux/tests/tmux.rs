@@ -1,18 +1,19 @@
 use aimux::tmux::{
     AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_MODIFIED_ENTER_FILTER, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
-    CapturePaneOptions, MANAGED_TMUX_AGENT_WINDOW_OPTIONS, MANAGED_TMUX_SESSION_OPTIONS,
-    MANAGED_TMUX_TERMINAL_FEATURES, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxCommandSpec,
-    append_session_option_argv, attach_session_argv, build_default_root_mouse_bindings_config,
-    build_default_root_mouse_bindings_install_config, capture_pane_argv, clear_history_argv,
-    is_dashboard_window_name, is_meta_dashboard_window_name, is_tmux_client_session_for_host,
-    is_tmux_client_session_name, kill_session_argv, kill_window_argv, legacy_project_session_name,
-    link_window_argv, list_clients_argv, list_windows_argv, modified_enter_binding_argv,
-    move_window_argv, new_dashboard_window_argv, new_session_argv, new_window_argv,
-    packed_argv_bytes, project_client_session_name, project_session, refresh_status_argv,
-    rename_session_argv, resize_window_argv, respawn_window_argv, select_window_argv,
-    send_carriage_return_argv, send_client_carriage_return_argv, send_client_enter_argv,
-    send_enter_argv, send_escape_argv, send_focus_in_argv, send_key_argv, send_modified_enter_argv,
-    send_text_argv, session_window_id_target, session_window_target, set_session_option_argv,
+    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, CapturePaneOptions, MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
+    MANAGED_TMUX_SESSION_OPTIONS, MANAGED_TMUX_TERMINAL_FEATURES, TMUX_SEND_TEXT_CHUNK_BYTES,
+    TmuxCommandSpec, append_session_option_argv, attach_session_argv,
+    build_default_root_mouse_bindings_config, build_default_root_mouse_bindings_install_config,
+    capture_pane_argv, clear_history_argv, is_dashboard_window_name, is_meta_dashboard_window_name,
+    is_tmux_client_session_for_host, is_tmux_client_session_name, kill_session_argv,
+    kill_window_argv, legacy_project_session_name, link_window_argv, list_clients_argv,
+    list_windows_argv, modified_enter_binding_argv, move_window_argv, new_dashboard_window_argv,
+    new_session_argv, new_window_argv, packed_argv_bytes, project_client_session_name,
+    project_session, refresh_status_argv, rename_session_argv, resize_window_argv,
+    respawn_window_argv, select_window_argv, send_carriage_return_argv,
+    send_client_carriage_return_argv, send_client_enter_argv, send_enter_argv, send_escape_argv,
+    send_focus_in_argv, send_key_argv, send_modified_enter_argv, send_text_argv,
+    session_window_id_target, session_window_target, set_session_option_argv,
     should_install_modified_enter_binding, split_text_for_tmux_send_keys, start_pane_pipe_argv,
     stop_pane_pipe_argv, swap_window_argv, switch_client_argv, switch_client_to_target_argv,
     unlink_window_argv,
@@ -243,6 +244,7 @@ fn mirrors_text_chunking_options_and_mouse_bindings() {
     let expected = [
         "bind-key -T root MouseDown1Pane if-shell \"open-pane-link\" \"\" \"select-pane -t = \\; send-keys -M\"".to_owned(),
         "bind-key -T root MouseDrag1Pane if-shell -F \"#{pane_in_mode}\" { send-keys -M } { copy-mode -M }".to_owned(),
+        "bind-key -T root M-MouseDrag1Pane send-keys -M".to_owned(),
         "bind-key -T root WheelUpPane if-shell -F \"#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}\" \"copy-mode -e \\; send-keys -X -N 1 scroll-up\" \"send-keys -M\"".to_owned(),
         "bind-key -T root WheelDownPane if-shell -F \"#{||:#{alternate_on},#{mouse_any_flag}}\" { send-keys -M } { send-keys -M }".to_owned(),
         "bind-key -T root DoubleClick1Pane if-shell \"open-pane-link\" \"\" \"send-keys -M\"".to_owned(),
@@ -446,40 +448,59 @@ fn mirrors_remaining_low_level_command_vectors() {
 /// turns it on -- so every drag over a codex pane went to codex and tmux began
 /// no selection, while claude panes, which do not, kept working. Nothing in
 /// aimux had changed, which is exactly why it read as aimux breaking.
-///
-/// Asserted on the condition rather than on the whole line, because what must
-/// not come back is `mouse_any_flag` deciding whether a drag can select.
 #[test]
 fn a_drag_selects_even_when_the_application_holds_the_mouse() {
     let config = build_default_root_mouse_bindings_config("open-pane-link", "open-status-pr");
-    let drag = config
-        .lines()
-        .find(|line| line.contains("MouseDrag1Pane"))
-        .expect("a drag binding");
+    let line = |needle: &str| {
+        config
+            .lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("no binding for {needle}"))
+            .to_owned()
+    };
 
-    assert!(
-        drag.contains("{ copy-mode -M }"),
-        "a drag outside copy-mode has to begin a selection: {drag}"
+    // The whole line, not substrings of it: every substring assertion worth
+    // writing here also passes with the two branches swapped, which is the
+    // same binding behaving backwards.
+    assert_eq!(
+        line("-T root MouseDrag1Pane"),
+        "bind-key -T root MouseDrag1Pane if-shell -F \"#{pane_in_mode}\" \
+         { send-keys -M } { copy-mode -M }"
     );
+    // Said separately because it is the thing that must not come back, and a
+    // future rewrite of that line should fail on this even if it is spelled
+    // some other way.
     assert!(
-        !drag.contains("mouse_any_flag"),
+        !line("-T root MouseDrag1Pane").contains("mouse_any_flag"),
         "an application holding the mouse must not decide whether a drag can \
-         select; that is what broke this: {drag}"
-    );
-    // Still forwarded once a selection is under way, so dragging inside
-    // copy-mode extends it rather than starting again.
-    assert!(
-        drag.contains("#{pane_in_mode}") && drag.contains("{ send-keys -M }"),
-        "{drag}"
+         select; that is what broke this"
     );
 
-    // Wheel and click are untouched: a TUI keeps its scrolling and its clicks,
-    // and only the drag -- which these agents do not use -- is taken.
-    let wheel = config
-        .lines()
-        .find(|line| line.contains("WheelUpPane") && line.contains("-T root"))
-        .expect("a wheel binding");
-    assert!(wheel.contains("mouse_any_flag"), "{wheel}");
+    // The way back for an application that genuinely wants a drag. Without it
+    // an editor with `mouse=a` loses drag-select and drag-to-resize for good.
+    assert_eq!(
+        line("-T root M-MouseDrag1Pane"),
+        "bind-key -T root M-MouseDrag1Pane send-keys -M"
+    );
+
+    // Wheel and click are untouched: a TUI keeps its scrolling and its clicks.
+    assert!(line("-T root WheelUpPane").contains("mouse_any_flag"));
+}
+
+/// A fix written into a session option reaches a session that is already up.
+///
+/// Both of these are applied by `configure_managed_session`, which runs only
+/// when the contract version on the session does not match -- so shipping
+/// either without a bump means installing the build and seeing no change at
+/// all. The file says so about the statusline path; it is just as true of a
+/// key binding.
+#[test]
+fn changing_what_a_session_is_configured_with_bumps_the_runtime_contract() {
+    assert_eq!(
+        AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, "7",
+        "the drag binding and copy-command both changed; a live session is \
+         only ever reconfigured on a bump"
+    );
 }
 
 #[test]

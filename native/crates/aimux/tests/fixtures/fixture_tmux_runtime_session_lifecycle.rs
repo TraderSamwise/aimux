@@ -268,18 +268,30 @@ fn normalize_text(text: &str) -> String {
 }
 
 /// Same reason as the tmux binary: the clipboard copy-command names this
-/// executable by absolute path, which is the test binary here.
+/// executable by absolute path.
+///
+/// Two paths, because the copy-command takes the stable shim where one exists
+/// and the test binary where it does not -- so a machine with `~/.local/bin/aimux`
+/// installed recorded a host path while CI recorded the test binary, and the
+/// fixture would have passed on exactly one of them.
 fn replace_aimux_bin(text: &str) -> String {
-    static AIMUX_BIN: OnceLock<Option<String>> = OnceLock::new();
-    let aimux_bin = AIMUX_BIN.get_or_init(|| {
-        std::env::current_exe()
-            .ok()
-            .map(|path| path.to_string_lossy().into_owned())
+    static AIMUX_BINS: OnceLock<Vec<String>> = OnceLock::new();
+    let aimux_bins = AIMUX_BINS.get_or_init(|| {
+        [
+            std::env::current_exe()
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned()),
+            Some(aimux::tmux::statusline_executable()).filter(|path| !path.is_empty()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     });
-    match aimux_bin {
-        Some(aimux_bin) => text.replace(aimux_bin.as_str(), "<aimux-bin>"),
-        None => text.to_owned(),
+    let mut text = text.to_owned();
+    for aimux_bin in aimux_bins {
+        text = text.replace(aimux_bin.as_str(), "<aimux-bin>");
     }
+    text
 }
 
 /// The resolved tmux binary is an absolute host path, so the recorded contract

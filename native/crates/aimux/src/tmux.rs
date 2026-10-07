@@ -54,7 +54,11 @@ pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-r
 /// 6: the window-change hook moved off pane-focus-in, which never fired
 ///    because focus-events is off. Hooks live on the session, so a live one
 ///    keeps the dead hook until it is reconfigured.
-pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "6";
+/// 7: a drag selects even where the application holds the mouse, and
+///    copy-command moved to the stable shim. Key bindings and that option are
+///    both written at configure time, so without this the fix ships and a
+///    running session keeps the binding that broke select-to-copy.
+pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "7";
 pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
 pub const AIMUX_TMUX_BIN_ENV: &str = "AIMUX_TMUX_BIN";
 pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-tool}}";
@@ -1363,9 +1367,13 @@ impl TmuxRuntimeManager {
             self.ensure_terminal_feature(session_name, feature)?;
         }
 
+        // Cleared before the config is sourced, so a key aimux no longer binds
+        // does not survive from an older build. `M-MouseDrag1Pane` is in the
+        // list for that reason, not because anything else binds it.
         for key in [
             "MouseDown1Pane",
             "MouseDrag1Pane",
+            "M-MouseDrag1Pane",
             "WheelUpPane",
             "WheelDownPane",
         ] {
@@ -2766,11 +2774,17 @@ pub fn build_default_root_mouse_bindings_config(
         // started no selection. Claude panes kept working, which is what made
         // it read as aimux breaking rather than an agent changing.
         //
-        // Only `pane_in_mode` decides now. Already in copy-mode means extend
-        // the selection; otherwise begin one. Wheel and click still go to the
-        // application, so a TUI keeps its scrolling and its clicks -- it is
-        // only the drag, which these agents do not use, that tmux takes.
+        // Only `pane_in_mode` decides. Already in copy-mode means extend the
+        // selection; otherwise begin one. Wheel and click still go to the
+        // application, so a TUI keeps its scrolling and its clicks.
+        //
+        // This does take drag away from an application that wants it -- an
+        // editor with `mouse=a` loses drag-select and drag-to-resize -- which
+        // is why the next line exists. Selecting text is the common case and
+        // gets the bare gesture; handing a drag to the application is the rare
+        // one and takes a modifier.
         "bind-key -T root MouseDrag1Pane if-shell -F \"#{pane_in_mode}\" { send-keys -M } { copy-mode -M }".to_owned(),
+        "bind-key -T root M-MouseDrag1Pane send-keys -M".to_owned(),
         "bind-key -T root WheelUpPane if-shell -F \"#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}\" \"copy-mode -e \\; send-keys -X -N 1 scroll-up\" \"send-keys -M\"".to_owned(),
         "bind-key -T root WheelDownPane if-shell -F \"#{||:#{alternate_on},#{mouse_any_flag}}\" { send-keys -M } { send-keys -M }".to_owned(),
         format!(r#"bind-key -T root DoubleClick1Pane if-shell "{open_pane_link_command}" "" "send-keys -M""#),
@@ -3559,10 +3573,16 @@ fn default_open_hyperlink_command() -> String {
 /// tmux's own OSC 52 carries an empty selector, which mosh drops. This writes
 /// the `c`-selector form to each attached client instead, so a copy lands on
 /// the clipboard of the machine the user is sitting at rather than the host's.
+/// The stable shim, for the same reason `statusline_executable` takes it: this
+/// is written into a session option once and a session is only reconfigured on
+/// a runtime-contract bump, so a versioned path outlives the build it names.
+/// `~/.aimux/native/local-<hash>` directories are pruned, and a `copy-command`
+/// pointing at a deleted one fails with 127 -- the selection reaches the tmux
+/// buffer and nothing reaches the clipboard, silently and for good.
 pub fn default_clipboard_copy_command() -> String {
     format!(
         "{} __tmux-clipboard-copy-internal",
-        shell_quote(&persistent_aimux_executable())
+        shell_quote(&statusline_executable())
     )
 }
 
@@ -3967,6 +3987,27 @@ mod tests {
             statusline_executable_from(String::new(), false, || "/versioned/aimux".to_owned()),
             "/versioned/aimux"
         );
+    }
+
+    /// And so does the clipboard copy, for the same reason.
+    ///
+    /// `copy-command` is written into a session option once. A versioned path
+    /// there outlives the build it names -- those directories get pruned --
+    /// and a `copy-command` pointing at a deleted one fails with 127: the
+    /// selection reaches the tmux buffer and nothing reaches the clipboard,
+    /// silently and for good.
+    ///
+    /// Asserted as "the same executable the statusline takes" rather than by
+    /// inspecting the string, because in a test both resolutions collapse to
+    /// the bare name and a spelling check passes while meaning nothing.
+    #[test]
+    fn the_clipboard_copy_runs_the_same_executable_the_statusline_does() {
+        let copy = default_clipboard_copy_command();
+        let expected = format!(
+            "{} __tmux-clipboard-copy-internal",
+            shell_quote(&statusline_executable())
+        );
+        assert_eq!(copy, expected);
     }
 
     #[test]

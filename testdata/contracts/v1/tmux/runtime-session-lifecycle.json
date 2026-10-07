@@ -48,7 +48,7 @@
             "cwd": "/repo/mobile"
           },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
           {
             "args": [
@@ -106,6 +106,7 @@
           },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "M-MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
@@ -427,7 +428,7 @@
               "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] }
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] }
         ],
         "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
       },
@@ -467,7 +468,7 @@
             "cwd": "/repo/mobile"
           },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
           {
             "args": [
@@ -525,6 +526,7 @@
           },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "M-MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
@@ -846,7 +848,7 @@
               "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
           { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
@@ -899,6 +901,7 @@
           { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "M-MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
@@ -1220,7 +1223,7 @@
               "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] }
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] }
         ],
         "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
       },
@@ -1303,6 +1306,7 @@
           },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "M-MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
@@ -1624,7 +1628,7 @@
               "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] }
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] }
         ],
         "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
       },
@@ -1639,7 +1643,7 @@
         "name": "skips final runtime contract stamp when existing session already has one",
         "projectRoot": "/repo/mobile",
         "sessionExists": true,
-        "currentContract": "6"
+        "currentContract": "7"
       },
       "output": {
         "thrown": null,
@@ -1694,7 +1698,7 @@
             "cwd": "/repo/mobile"
           },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
           { "args": ["list-sessions", "-F", "#{session_name}"] },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
@@ -1715,7 +1719,7 @@
             "cwd": "/repo/mobile"
           },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
           {
             "args": [
@@ -1773,6 +1777,7 @@
           },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "M-MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
@@ -2094,7 +2099,7 @@
               "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] }
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] }
         ],
         "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
       },
@@ -2138,7 +2143,7 @@
             "cwd": "/repo/mobile"
           },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
           { "args": ["list-sessions", "-F", "#{session_name}"] },
@@ -2160,7 +2165,7 @@
             "cwd": "/repo/mobile"
           },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
           {
             "args": [
@@ -2218,6 +2223,7 @@
           },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "M-MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
@@ -2539,7 +2545,7 @@
               "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] }
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] }
         ],
         "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
       },
@@ -2583,7 +2589,7 @@
             "cwd": "/repo/mobile"
           },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
           {
             "args": [
@@ -2641,6 +2647,7 @@
           },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "M-MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
@@ -2962,7 +2969,7 @@
               "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] }
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] }
         ],
         "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
       },
@@ -3002,7 +3009,7 @@
             "cwd": "/repo/mobile"
           },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
           {
             "args": [
@@ -3085,7 +3092,7 @@
             "cwd": "/repo/mobile"
           },
           { "args": ["has-session", "-t", "aimux-mobile-078d0ecd20ec"] },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] },
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] },
           { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-project-root", "/repo/mobile"] },
           {
             "args": [
@@ -3143,6 +3150,7 @@
           },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
+          { "args": ["unbind-key", "-T", "root", "M-MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
@@ -3464,7 +3472,7 @@
               "#[bg=colour236,fg=colour252] #(<aimux> '__tmux-statusline-internal' --line bottom --project-state-dir '<aimux-home>/projects/mobile-078d0ecd20ec' --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --width '#{client_width}' --client-id '#{client_tty}') #[default]"
             ]
           },
-          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "6"] }
+          { "args": ["set-option", "-t", "aimux-mobile-078d0ecd20ec", "@aimux-runtime-contract", "7"] }
         ],
         "terminalFeatures": "xterm*:ccolour\nxterm*:cstyle\nxterm*:RGB\nxterm*:extkeys\nxterm*:hyperlinks"
       },
