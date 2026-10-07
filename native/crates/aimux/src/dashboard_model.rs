@@ -1848,6 +1848,13 @@ impl DashboardKeptWorktrees {
     }
 }
 
+/// Not running, for the purpose of whether its worktree is empty.
+///
+/// `Stopped` is listed because the enum has it, not because the wire does:
+/// `dashboard_service_status` narrows every service in the payload to
+/// `running | exited | offline`, mapping a stopped one to `exited`. `Error` is
+/// deliberately absent on both sides -- a service that failed is a state to
+/// look at, not one to hide.
 fn is_dashboard_service_offline(service: &DashboardService) -> bool {
     if service.pending_action.is_some() {
         return false;

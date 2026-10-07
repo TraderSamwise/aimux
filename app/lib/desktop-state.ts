@@ -12,10 +12,9 @@ import type {
 } from "../../src/project-api-contract";
 
 export type DesktopSessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
-// Every status the project service actually emits. `stopped` and `error` were
-// missing, so a stopped service -- which is what graveyarding a worktree leaves
-// behind -- fell through `isDesktopServiceOffline` and read as running.
-export type DesktopServiceStatus = "running" | "exited" | "offline" | "stopped" | "error";
+// The three the project service actually sends: `dashboard_service_status`
+// narrows everything else, mapping a stopped service to `exited`.
+export type DesktopServiceStatus = "running" | "exited" | "offline";
 export type ExposePreviewSnapshotSource = "capture" | "tap";
 export type ExposeChatPreviewSource = "readAgentOutput";
 
@@ -199,12 +198,8 @@ export function isDesktopServiceOffline(
   service: Pick<DesktopService, "pendingAction" | "status">,
 ): boolean {
   if (service.pendingAction) return false;
-  // The same set `is_dashboard_service_offline` uses. `error` is deliberately
-  // not here on either side: a service that failed is a state to look at, not
-  // one to hide.
-  return (
-    service.status === "offline" || service.status === "exited" || service.status === "stopped"
-  );
+  // The same set `is_dashboard_service_offline` uses.
+  return service.status === "offline" || service.status === "exited";
 }
 
 export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): WorktreeBucket | null {

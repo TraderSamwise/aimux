@@ -332,42 +332,6 @@ describe("desktop state resource lifecycle", () => {
     expect(shown.map((bucket) => bucket.name).sort()).toEqual(["failed", "renaming"]);
   });
 
-  it("treats a stopped service as not running, the way the TUI does", () => {
-    // `stopped` is what graveyarding a worktree leaves on its services, and it
-    // was not in `DesktopServiceStatus` at all -- so it fell through
-    // `isDesktopServiceOffline` and kept its worktree on screen as though a dev
-    // server were still up.
-    const groups = groupByWorktree(
-      desktopState({
-        worktreeGroups: [
-          {
-            name: "stopped-service",
-            branch: "s",
-            path: "/repo/.aimux/worktrees/stopped-service",
-            status: "offline",
-            sessions: [],
-            services: [{ id: "web", status: "stopped" }],
-          },
-          {
-            name: "running-service",
-            branch: "r",
-            path: "/repo/.aimux/worktrees/running-service",
-            status: "active",
-            sessions: [],
-            services: [{ id: "api", status: "running" }],
-          },
-        ],
-      }),
-    );
-
-    const shown = groups.flatMap((bucket) => {
-      const activeBucket = filterWorktreeBucketToActiveEntries(bucket);
-      return activeBucket ? [activeBucket] : [];
-    });
-
-    expect(shown.map((bucket) => bucket.name)).toEqual(["running-service"]);
-  });
-
   it("keeps active supervisor lane entries in the compact sidebar projection", () => {
     const groups = groupByWorktree(
       desktopState({

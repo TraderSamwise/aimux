@@ -24,8 +24,9 @@ use crate::dashboard_model::{
     DashboardKeptWorktrees, DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus,
     filter_dashboard_visible_model, is_dashboard_overseer_session, is_dashboard_scribe_session,
 };
-use crate::dashboard_navigation::DashboardNavigationGroupKind;
-use crate::dashboard_navigation::{CarriedSelection, DashboardEntryRef};
+use crate::dashboard_navigation::{
+    CarriedSelection, DashboardEntryRef, DashboardNavigationGroupKind, dashboard_navigation_groups,
+};
 use crate::dashboard_pending_actions::{
     DashboardPendingActions, PendingTarget, pending_action_for_request,
 };
@@ -468,7 +469,7 @@ pub fn run_native_dashboard_with_seams(
     // A list, because two creates can be in flight -- a slow one from a PR and
     // a quick local one -- and a single slot meant the second to FINISH hid the
     // other, which is the bug this exists to fix arriving from the other side.
-    let mut pending_worktree_focus: Vec<String> = Vec::new();
+    let mut pending_worktree_focus: Vec<PendingWorktreeFocus> = Vec::new();
     let mut rendered_once = false;
     let mut viewport = DashboardViewport {
         cols: options.cols,
@@ -1096,7 +1097,10 @@ pub fn run_native_dashboard_with_seams(
                             .and_then(|group| group.path)
                             .map(str::to_owned);
                         let mut kept = DashboardKeptWorktrees {
-                            paths: pending_worktree_focus.clone(),
+                            paths: pending_worktree_focus
+                                .iter()
+                                .map(|entry| entry.path.clone())
+                                .collect(),
                             // The main checkout is a group like any other and
                             // the same emptiness test drops it, so the pointer
                             // has to be able to hold it too. On KIND, not on a
@@ -1215,19 +1219,16 @@ pub fn run_native_dashboard_with_seams(
                             == DashboardNavLevel::Worktrees
                             && controller.navigation.quick_jump_digits.is_empty()
                             && !returned_to_agent;
-                        pending_worktree_focus.retain(|path| {
-                            let arrived = worktree_is_on_screen(&visible_model.snapshot, path);
-                            if arrived && followable {
-                                controller
-                                    .navigation
-                                    .select_worktree(&visible_model.snapshot, path);
-                            }
-                            // The first one to arrive takes the pointer; the
-                            // rest are dropped rather than queued, because the
-                            // order creates FINISH in is not the order they were
-                            // asked for.
-                            !arrived
-                        });
+                        if let Some(path) = worktree_focus_to_follow(
+                            &mut pending_worktree_focus,
+                            Instant::now(),
+                            followable,
+                            &|path| worktree_is_on_screen(&visible_model.snapshot, path),
+                        ) {
+                            controller
+                                .navigation
+                                .select_worktree(&visible_model.snapshot, &path);
+                        }
                         let frame = render_dashboard_snapshot(
                             &options,
                             controller,
@@ -3411,11 +3412,61 @@ fn flush_deferred_dashboard_requests(
 }
 
 /// Whether a path is a group the pointer could be put on right now.
+///
+/// The same list `select_worktree` searches, not `snapshot.worktree_groups`:
+/// the navigation layer also renders a group for a path only an agent names, so
+/// asking the raw groups would have called a worktree absent that the pointer
+/// could in fact have reached -- and the entry would have waited for it forever.
 fn worktree_is_on_screen(snapshot: &DesktopStateSnapshot, path: &str) -> bool {
-    snapshot
-        .worktree_groups
+    dashboard_navigation_groups(snapshot)
         .iter()
-        .any(|group| group.path.as_deref() == Some(path))
+        .any(|group| group.path == Some(path))
+}
+
+/// How long a create keeps the pointer's attention.
+///
+/// Long enough for the checkout and its prepare step, and for the user to
+/// glance at something else in between; short enough that it cannot surface
+/// much later as a jump nobody connects to anything they did.
+const WORKTREE_FOCUS_TTL: Duration = Duration::from_secs(120);
+
+/// A worktree a create made, waiting for the pointer to be free to go to it.
+#[derive(Debug, Clone)]
+struct PendingWorktreeFocus {
+    path: String,
+    expires_at: Instant,
+}
+
+/// Which waiting worktree the pointer should move to, and what keeps waiting.
+///
+/// Pulled out of the loop because every bug in this feature has been in these
+/// three lines of bookkeeping, and inside the loop they were reachable only by
+/// prose: dropping an arrival the pointer was never free to take put the user
+/// back where the whole change started, with `w` producing nothing on screen.
+///
+/// - Nothing is offered while the pointer is busy, and nothing is discarded for
+///   it either. A create that lands while the user is inside an agent waits for
+///   them to come back out.
+/// - The first arrival takes the pointer. The others are on screen and there is
+///   one pointer, so they stop waiting rather than queue up behind it.
+/// - Everything expires. Without that, a path that never lands stays in the
+///   keep-set for the session and fires if that name is ever created again.
+fn worktree_focus_to_follow(
+    pending: &mut Vec<PendingWorktreeFocus>,
+    now: Instant,
+    followable: bool,
+    is_on_screen: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    pending.retain(|entry| entry.expires_at > now);
+    if !followable {
+        return None;
+    }
+    let arrived = pending
+        .iter()
+        .position(|entry| is_on_screen(&entry.path))
+        .map(|index| pending[index].path.clone());
+    pending.retain(|entry| !is_on_screen(&entry.path));
+    arrived
 }
 
 /// Where a worktree create actually landed.
@@ -3466,15 +3517,20 @@ fn drain_dashboard_request_outcomes(
     outcomes: &Receiver<DashboardRequestOutcome>,
     pending_actions: &mut DashboardPendingActions,
     mut controller: Option<&mut DashboardController>,
-    pending_worktree_focus: &mut Vec<String>,
+    pending_worktree_focus: &mut Vec<PendingWorktreeFocus>,
 ) -> bool {
     let mut changed = false;
     while let Ok(outcome) = outcomes.try_recv() {
         changed = true;
         if let Some(path) = outcome.created_worktree_path
-            && !pending_worktree_focus.contains(&path)
+            && !pending_worktree_focus
+                .iter()
+                .any(|entry| entry.path == path)
         {
-            pending_worktree_focus.push(path);
+            pending_worktree_focus.push(PendingWorktreeFocus {
+                expires_at: Instant::now() + WORKTREE_FOCUS_TTL,
+                path,
+            });
         }
         if let Some(message) = outcome.failure {
             if let Some(controller) = controller.as_deref_mut() {
@@ -3538,6 +3594,65 @@ fn drain_dashboard_request_outcomes(
 mod tests {
     use super::*;
 
+    /// The whole of the pointer-follows-a-create decision, in one place.
+    ///
+    /// Every defect in this feature has been in this bookkeeping, and inside
+    /// the loop it was reachable only by reading it.
+    #[test]
+    fn a_create_waits_for_the_pointer_to_be_free_then_takes_it_once() {
+        let now = Instant::now();
+        let on_screen = |path: &str| path != "/repo/.aimux/worktrees/not-yet";
+        let entry = |path: &str| PendingWorktreeFocus {
+            path: path.to_owned(),
+            expires_at: now + Duration::from_secs(60),
+        };
+
+        // Busy: nothing is offered, and nothing is thrown away for it either.
+        // Dropping an arrival the pointer was never free to take leaves the
+        // user with `w` having produced nothing on screen, which is the bug
+        // this feature exists to fix.
+        let mut pending = vec![entry("/repo/.aimux/worktrees/fresh")];
+        assert_eq!(
+            worktree_focus_to_follow(&mut pending, now, false, &on_screen),
+            None
+        );
+        assert_eq!(pending.len(), 1);
+
+        // Free: the FIRST arrival takes the pointer. The rest are on screen and
+        // there is one pointer, so they stop waiting rather than queue.
+        let mut pending = vec![
+            entry("/repo/.aimux/worktrees/fresh"),
+            entry("/repo/.aimux/worktrees/second"),
+        ];
+        assert_eq!(
+            worktree_focus_to_follow(&mut pending, now, true, &on_screen).as_deref(),
+            Some("/repo/.aimux/worktrees/fresh")
+        );
+        assert!(pending.is_empty());
+
+        // Not here yet: keeps waiting, and keeps the filter keeping its row.
+        let mut pending = vec![entry("/repo/.aimux/worktrees/not-yet")];
+        assert_eq!(
+            worktree_focus_to_follow(&mut pending, now, true, &on_screen),
+            None
+        );
+        assert_eq!(pending.len(), 1);
+
+        // And it does not wait forever. Without an expiry the entry sits in the
+        // keep-set for the session and fires if that name is ever made again.
+        let mut pending = vec![entry("/repo/.aimux/worktrees/not-yet")];
+        assert_eq!(
+            worktree_focus_to_follow(
+                &mut pending,
+                now + Duration::from_secs(61),
+                true,
+                &on_screen
+            ),
+            None
+        );
+        assert!(pending.is_empty());
+    }
+
     /// A worktree that is on screen takes its turn or loses it.
     ///
     /// The jump is suppressed while the user is inside an agent list, and
@@ -3598,7 +3713,13 @@ mod tests {
         })
         .expect("send");
         drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
-        assert_eq!(focus, vec!["/repo/.aimux/worktrees/fresh".to_owned()]);
+        assert_eq!(
+            focus
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/repo/.aimux/worktrees/fresh"]
+        );
 
         // A second create waits beside the first rather than replacing it: the
         // one to FINISH first is not the one the user asked for last, and a
@@ -3613,10 +3734,13 @@ mod tests {
         .expect("send");
         drain_dashboard_request_outcomes(&rx, &mut pending_actions, None, &mut focus);
         assert_eq!(
-            focus,
+            focus
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
             vec![
-                "/repo/.aimux/worktrees/fresh".to_owned(),
-                "/repo/.aimux/worktrees/second".to_owned()
+                "/repo/.aimux/worktrees/fresh",
+                "/repo/.aimux/worktrees/second"
             ]
         );
 
