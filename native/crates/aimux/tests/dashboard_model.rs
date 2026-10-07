@@ -349,6 +349,41 @@ fn the_filter_keeps_the_main_checkout_when_the_pointer_is_on_it() {
     );
 }
 
+/// Pointing at the supervisor row does not keep the main checkout.
+///
+/// The supervisor row has no path either, so keying on a missing one kept an
+/// unrelated empty main checkout on screen -- a row `a` is meant to hide, with
+/// nothing on screen to explain it.
+#[test]
+fn the_supervisor_row_is_not_the_main_checkout() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light;
+    let main = snapshot
+        .worktree_groups
+        .iter_mut()
+        .find(|group| group.path.is_none())
+        .expect("a main checkout group");
+    main.sessions.clear();
+    main.services.clear();
+    main.pending = false;
+    main.removing = false;
+    main.path_missing = false;
+    main.pending_action = None;
+    main.operation_failure = None;
+
+    // The live loop sets `main_checkout` only for a WORKTREE group with no
+    // path, so the supervisor case reaches the filter as a default keep-set.
+    assert!(
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default())
+            .snapshot
+            .worktree_groups
+            .iter()
+            .all(|group| group.path.is_some()),
+        "the main checkout was kept by a pointer that is not on it"
+    );
+}
+
 /// The same clauses the app's `filterWorktreeBucketToActiveEntries` applies.
 ///
 /// This rule had `pendingAction` and `operationFailure` where the app had only

@@ -24,6 +24,7 @@ use crate::dashboard_model::{
     DashboardKeptWorktrees, DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus,
     filter_dashboard_visible_model, is_dashboard_overseer_session, is_dashboard_scribe_session,
 };
+use crate::dashboard_navigation::DashboardNavigationGroupKind;
 use crate::dashboard_navigation::{CarriedSelection, DashboardEntryRef};
 use crate::dashboard_pending_actions::{
     DashboardPendingActions, PendingTarget, pending_action_for_request,
@@ -1098,10 +1099,14 @@ pub fn run_native_dashboard_with_seams(
                             paths: pending_worktree_focus.clone(),
                             // The main checkout is a group like any other and
                             // the same emptiness test drops it, so the pointer
-                            // has to be able to hold it too.
-                            main_checkout: focused_group
-                                .as_ref()
-                                .is_some_and(|group| group.path.is_none()),
+                            // has to be able to hold it too. On KIND, not on a
+                            // missing path: the supervisor row has no path
+                            // either, and pointing at it was keeping an
+                            // unrelated empty main checkout on screen.
+                            main_checkout: focused_group.as_ref().is_some_and(|group| {
+                                group.path.is_none()
+                                    && group.kind == DashboardNavigationGroupKind::Worktree
+                            }),
                         };
                         if let Some(path) = focused_worktree_path.clone() {
                             kept.paths.push(path);
@@ -1174,7 +1179,15 @@ pub fn run_native_dashboard_with_seams(
                         // one Down would land two rows further on. The Sessions
                         // level already follows its selection this way; the
                         // worktree level followed nothing.
+                        //
+                        // Not mid-chord: `select_worktree` clears the quick
+                        // jump, so a refresh between the two digits of `2` `1`
+                        // threw the first one away and the second then jumped to
+                        // worktree 1 instead of agent 1 inside worktree 2. The
+                        // anchor is what keeps a jump correct across a refresh,
+                        // and this would have been the one thing that erased it.
                         if controller.navigation.level == DashboardNavLevel::Worktrees
+                            && controller.navigation.quick_jump_digits.is_empty()
                             && let Some(path) = focused_worktree_path.as_deref()
                         {
                             controller
@@ -1192,15 +1205,29 @@ pub fn run_native_dashboard_with_seams(
                         // of an agent list they walked into in the meantime, or
                         // over the agent they just came back from, is the
                         // dashboard going somewhere nobody asked it to go.
-                        if controller.navigation.level == DashboardNavLevel::Worktrees
-                            && !returned_to_agent
-                        {
-                            pending_worktree_focus.retain(|path| {
-                                !controller
+                        //
+                        // And it is a chance, not a latch. A worktree that has
+                        // arrived while the user was busy elsewhere has had its
+                        // turn: holding the jump would fire it the next time
+                        // they happened to be back at this level, minutes later,
+                        // off the row they had just chosen.
+                        let followable = controller.navigation.level
+                            == DashboardNavLevel::Worktrees
+                            && controller.navigation.quick_jump_digits.is_empty()
+                            && !returned_to_agent;
+                        pending_worktree_focus.retain(|path| {
+                            let arrived = worktree_is_on_screen(&visible_model.snapshot, path);
+                            if arrived && followable {
+                                controller
                                     .navigation
-                                    .select_worktree(&visible_model.snapshot, path)
-                            });
-                        }
+                                    .select_worktree(&visible_model.snapshot, path);
+                            }
+                            // The first one to arrive takes the pointer; the
+                            // rest are dropped rather than queued, because the
+                            // order creates FINISH in is not the order they were
+                            // asked for.
+                            !arrived
+                        });
                         let frame = render_dashboard_snapshot(
                             &options,
                             controller,
@@ -3383,6 +3410,14 @@ fn flush_deferred_dashboard_requests(
     }
 }
 
+/// Whether a path is a group the pointer could be put on right now.
+fn worktree_is_on_screen(snapshot: &DesktopStateSnapshot, path: &str) -> bool {
+    snapshot
+        .worktree_groups
+        .iter()
+        .any(|group| group.path.as_deref() == Some(path))
+}
+
 /// Where a worktree create actually landed.
 ///
 /// `w` asks for a name and the route decides the path, so the response is the
@@ -3502,6 +3537,46 @@ fn drain_dashboard_request_outcomes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A worktree that is on screen takes its turn or loses it.
+    ///
+    /// The jump is suppressed while the user is inside an agent list, and
+    /// holding it instead of dropping it made it a latch: the create would fire
+    /// the next time they happened to be back at the worktree level, minutes
+    /// later, off the row they had just chosen.
+    #[test]
+    fn a_worktree_that_has_arrived_does_not_wait_for_a_second_chance() {
+        use crate::dashboard_model::{DesktopStateGoldenFixture, WorktreeGroup, WorktreeStatus};
+
+        let fixture: DesktopStateGoldenFixture = serde_json::from_str(include_str!(
+            "../../../../src/multiplexer/desktop-state-golden.fixture.json"
+        ))
+        .expect("valid desktop-state fixture");
+        let mut snapshot = fixture.runtime_light;
+        snapshot.worktree_groups = vec![WorktreeGroup {
+            name: "fresh".into(),
+            branch: "fresh".into(),
+            path: Some("/repo/.aimux/worktrees/fresh".into()),
+            status: WorktreeStatus::Active,
+            pending: false,
+            removing: false,
+            path_missing: false,
+            pending_action: None,
+            operation_failure: None,
+            sessions: Vec::new(),
+            services: Vec::new(),
+            extra: Default::default(),
+        }];
+
+        assert!(worktree_is_on_screen(
+            &snapshot,
+            "/repo/.aimux/worktrees/fresh"
+        ));
+        assert!(!worktree_is_on_screen(
+            &snapshot,
+            "/repo/.aimux/worktrees/not-yet"
+        ));
+    }
 
     /// The create's path reaches the loop that has to act on it.
     ///

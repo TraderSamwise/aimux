@@ -1804,34 +1804,27 @@ fn row_failure_is_clearable(extra: &BTreeMap<String, Value>) -> bool {
     extra.get("operationFailureClearable") == Some(&Value::Bool(true))
 }
 
-/// Which agentless worktrees `a` still shows.
-///
-/// `kept_paths` holds the one the pointer is on and the one a create is
-/// waiting for. A worktree made while the filter is on has no agents yet, so it
-/// was filtered out the moment it appeared and the pointer could never reach it
-/// -- `w` looked like it had done nothing. Keeping the pointed-at row visible
-/// for as long as it is pointed at is the user's own suggestion, and it makes
-/// the create case work without a special path for it.
-///
-/// A list rather than one path, because the two are not alternatives: a create
-/// whose worktree never lands would otherwise mask the pointer's own path for
-/// the rest of the session, which quietly turns the whole rule off.
-///
-/// `pathMissing` is here because the app's rule has it and this one did not:
-/// a worktree whose agents went offline BECAUSE its checkout went away is the
-/// one row worth seeing, and the two surfaces answered that differently.
-/// `optimistic` is gone -- nothing in the crate or the app ever set it on a
-/// GROUP, only on sessions and services.
 /// The worktrees `a` must not hide whatever their agents are doing.
 ///
-/// `paths` holds the one the pointer is on and the ones creates are waiting
-/// for. A list because the two are not alternatives: a create whose worktree
-/// never lands would otherwise mask the pointer's own path, which turns the
-/// whole rule off silently, and two creates in flight would mask each other.
+/// A worktree made while the filter is on has no agents yet, so it was filtered
+/// out the moment it appeared and the pointer could never reach it -- `w`
+/// looked like it had done nothing. Keeping the pointed-at row visible for as
+/// long as it is pointed at is Sam's own suggestion, and it makes the create
+/// case work without a special path for it.
 ///
-/// `main_checkout` is separate because that group's `path` is `None` -- it is a
+/// `paths` holds the one the pointer is on and the ones creates are waiting
+/// for. A list, because those are not alternatives: one path would let a create
+/// whose worktree never lands mask the pointer's own for the rest of the
+/// session, and two creates in flight would mask each other.
+///
+/// `main_checkout` is separate because that group's `path` is `None`. It is a
 /// group like any other and the same emptiness test drops it, so without this
 /// the rule would have an exception for the one worktree every project has.
+///
+/// The operational clauses live here too, so every caller gets them whatever it
+/// passes. `path_missing` is among them because the app's half had it and this
+/// one did not; `optimistic` is not, because nothing in the crate or the app
+/// has ever set it on a GROUP -- only on sessions and services.
 #[derive(Debug, Default, Clone)]
 pub struct DashboardKeptWorktrees {
     pub paths: Vec<String>,
