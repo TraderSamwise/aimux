@@ -6,6 +6,7 @@
 //! whose `run` did nothing at all would pass.
 
 use aimux::daemon_state::{load_metadata_state, metadata_state_path};
+use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
 use aimux::project_service::operation_failures::list_dashboard_operation_failures;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::scheduler::PeriodicTask;
@@ -115,6 +116,25 @@ impl TempProject {
 
     fn operation_failures(&self) -> Vec<Value> {
         list_dashboard_operation_failures(self.state_dir())
+    }
+
+    /// The durable half. The ledger above is read-filtered to fifteen
+    /// minutes, and a correction failure has no other home.
+    fn operation_failure_notifications(&self) -> Vec<String> {
+        list_notification_snapshot(
+            self.state_dir(),
+            NotificationQuery {
+                unread_only: false,
+                include_cleared: false,
+                session_id: None,
+                limit: Some(50),
+            },
+        )
+        .notifications
+        .iter()
+        .filter(|record| record["targetKind"] == "operation-failure")
+        .map(|record| record["body"].as_str().unwrap_or_default().to_owned())
+        .collect()
     }
 
     fn hold_metadata_update_lock(&self) -> PathBuf {
@@ -295,6 +315,13 @@ fn failed_activity_correction_is_reported_and_retried() {
     assert!(
         message.contains("POST /set-activity failed with HTTP 500"),
         "failure did not name the failed route/status: {message}"
+    );
+    assert!(
+        project
+            .operation_failure_notifications()
+            .iter()
+            .any(|body| body.contains("POST /set-activity failed with HTTP 500")),
+        "a correction failure must survive the ledger window"
     );
     assert!(
         message.contains("Could not take the state update lock"),

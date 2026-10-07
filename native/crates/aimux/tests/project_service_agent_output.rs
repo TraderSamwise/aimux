@@ -3054,6 +3054,16 @@ fn queued_probe_failure_stays_queued_and_visible_after_hold_budget() {
                 && failure["message"]
                     == "tmux client activity probe failed: tmux socket still busy")
     );
+    // The ledger is read-filtered to fifteen minutes and this class has no
+    // other home, so the card above is not the claim -- the durable copy is.
+    // It carries the first message of a burst rather than the latest: inside
+    // the re-mirror floor the ledger keeps updating and the exchange does not.
+    assert!(
+        operation_failure_notification_bodies(&state_dir)
+            .iter()
+            .any(|body| body.starts_with("tmux client activity probe failed: ")),
+        "a delivery failure must reach the notification store through the real task"
+    );
     cleanup(project);
 }
 
@@ -3888,4 +3898,21 @@ fn queued_max_deliver_at_ms(state_dir: &std::path::Path) -> i64 {
     value["pending"][0]["maxDeliverAtMs"]
         .as_i64()
         .expect("queued max deliver time")
+}
+
+fn operation_failure_notification_bodies(state_dir: &std::path::Path) -> Vec<String> {
+    list_notification_snapshot(
+        state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: None,
+            limit: Some(50),
+        },
+    )
+    .notifications
+    .iter()
+    .filter(|record| record["targetKind"] == "operation-failure")
+    .map(|record| record["body"].as_str().unwrap_or_default().to_owned())
+    .collect()
 }

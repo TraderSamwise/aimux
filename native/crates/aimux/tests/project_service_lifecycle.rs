@@ -7,6 +7,7 @@ use aimux::project_service::lifecycle::{
     SystemProjectLifecycleRuntime, ensure_default_scribe_agent,
     route_lifecycle_request_with_runtime,
 };
+use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
 use aimux::project_service::operation_failures::{
     OperationFailureInput, add_dashboard_operation_failure, dashboard_operation_failures_path,
     list_dashboard_operation_failures, normalize_dashboard_operation_failure_record,
@@ -345,6 +346,12 @@ fn agent_stop_reports_tmux_kill_failure_without_taking_session_offline() {
     assert_eq!(failures[0]["operation"], "agent.stop");
     assert_eq!(failures[0]["targetId"], "codex-live");
     assert_eq!(failures[0]["title"], "Failed to stop agent");
+    assert!(
+        operation_failure_notification_bodies(&state_dir)
+            .iter()
+            .any(|body| body.contains("tmux server refused kill-window")),
+        "a stop failure must survive the fifteen-minute ledger window"
+    );
     assert_eq!(
         failures[0]["message"],
         "tmux kill-window failed for session \"codex-live\": tmux server refused kill-window"
@@ -1131,6 +1138,12 @@ fn agent_spawn_failure_records_dashboard_operation_failure() {
     assert_eq!(failures[0]["targetId"], "mock-failed");
     assert_eq!(failures[0]["message"], "tmux failed to create window");
     assert_eq!(failures[0]["worktreePath"], worktree_path);
+    assert!(
+        operation_failure_notification_bodies(&state_dir)
+            .iter()
+            .any(|body| body == "tmux failed to create window"),
+        "a failed agent create must survive the fifteen-minute ledger window"
+    );
     cleanup(project);
 }
 
@@ -6982,4 +6995,23 @@ fn a_post_that_is_not_a_lifecycle_mutation_does_not_wait_for_the_queue() {
 
     holder.succeed(std::time::Instant::now());
     cleanup(project);
+}
+
+/// The durable half of a recorded failure. Five of the seven record sites
+/// have no second home, so the ledger card is not the whole claim.
+fn operation_failure_notification_bodies(state_dir: &std::path::Path) -> Vec<String> {
+    list_notification_snapshot(
+        state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: None,
+            limit: Some(50),
+        },
+    )
+    .notifications
+    .iter()
+    .filter(|record| record["targetKind"] == "operation-failure")
+    .map(|record| record["body"].as_str().unwrap_or_default().to_owned())
+    .collect()
 }
