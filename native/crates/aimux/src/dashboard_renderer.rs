@@ -38,6 +38,19 @@ const RECENT_IDLE_MS: u128 = 2 * 60 * 1000;
 /// them, and the app's copy of this word is pinned against this constant by a
 /// test rather than by intention.
 pub const WORKTREE_CHECKOUT_MISSING_LABEL: &str = "checkout missing";
+
+/// A graveyarded agent the user cannot bring back.
+///
+/// `graveyardReason` was read as the verdict itself, which was true while only
+/// a reap set it. A worktree now sends its own agents to the graveyard, and
+/// `graveyard.worktree.resurrect` brings exactly those back -- so painting them
+/// red and calling them unrecoverable names them as lost when one keypress
+/// returns them. Keyed on the reason the route writes, not on a spelling.
+fn graveyard_agent_is_unrecoverable(agent: &Value) -> bool {
+    string_at(agent, &["graveyardReason"]).is_some_and(|reason| {
+        reason != crate::project_service::lifecycle::WORKTREE_GRAVEYARD_AGENT_REASON
+    })
+}
 const COL_SELECT: usize = 2;
 const COL_DOT: usize = 2;
 const COL_INDEX: usize = 4;
@@ -3525,7 +3538,7 @@ fn render_graveyard_content(
                 let headline = string_at(agent, &["headline"])
                     .map(|headline| format!(" · {headline}"))
                     .unwrap_or_default();
-                let unrecoverable = if agent.get("graveyardReason").is_some() {
+                let unrecoverable = if graveyard_agent_is_unrecoverable(agent) {
                     format!(" {}", style("· unrecoverable", Tone::Danger))
                 } else {
                     String::new()
@@ -4148,7 +4161,12 @@ fn render_graveyard_details(
             lines.extend(wrap_key_value("Headline", headline, width));
         }
         if let Some(reason) = string_at(entry, &["graveyardReason"]) {
-            lines.extend(wrap_key_value("Unrecoverable", reason, width));
+            let key = if graveyard_agent_is_unrecoverable(entry) {
+                "Unrecoverable"
+            } else {
+                "Reason"
+            };
+            lines.extend(wrap_key_value(key, reason, width));
         }
         if let Some(command) = string_at(entry, &["command"]) {
             lines.extend(wrap_key_value("Command", command, width));

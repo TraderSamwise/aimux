@@ -24,6 +24,8 @@ use aimux::tui_render::text::strip_ansi;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, remove_dir_all};
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{
@@ -4395,6 +4397,104 @@ fn worktree_graveyard_takes_its_agents_with_it() {
     cleanup(project);
 }
 
+/// And comes back with it.
+///
+/// Graveyarding a worktree was a one-way door for its agents: the worktree
+/// returned empty and each agent had to be hunted down one at a time. Only the
+/// ones this route took, though -- an agent the user killed by hand keeps its
+/// own reason and stays where they put it.
+#[test]
+fn worktree_resurrect_brings_back_the_agents_its_graveyard_took() {
+    let project = temp_project("worktree-resurrect-agents");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    set_topology_session_status(&state_dir, "codex-live", "offline");
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let graveyarded = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(graveyarded.status, 200, "{:?}", graveyarded.body);
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-live")["status"],
+        "graveyard"
+    );
+
+    let resurrected = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_WORKTREE,
+        Some(&json!({ "path": worktree_path })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(resurrected.status, 200, "{:?}", resurrected.body);
+
+    let topology = read_topology(&state_dir);
+    assert_eq!(topology["worktrees"][0]["status"], "active");
+    let agent = session(&topology, "codex-live");
+    assert_eq!(agent["status"], "offline");
+    assert!(
+        agent["graveyardReason"].is_null(),
+        "a returned agent keeps no graveyard reason: {agent:?}"
+    );
+    cleanup(project);
+}
+
+/// One spelling of a path, across both halves of the fix.
+///
+/// Topology paths come from git as realpaths while a session's `worktreePath`
+/// is stored verbatim from the request that launched it, so `/tmp/x` and
+/// `/private/tmp/x` name one worktree. Matching raw strings here left the agent
+/// un-graveyarded while the dashboard -- which hides by the canonical identity
+/// -- hid it anyway: no surface, and no way back.
+#[cfg(unix)]
+#[test]
+fn worktree_graveyard_matches_an_agent_whose_path_is_spelled_differently() {
+    let project = temp_project("worktree-graveyard-path-spelling");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_active_worktree_topology(&state_dir, &worktree, true);
+    set_topology_session_status(&state_dir, "codex-live", "offline");
+    // A symlink rather than whatever `/tmp` happens to be on this platform:
+    // macOS gives `/private/...` for free and Linux does not, and a fixture
+    // that is only a real test on one of them is how the Linux lane breaks.
+    let alias = project.join("wt-alias");
+    symlink(&worktree, &alias).unwrap();
+    let lexical = worktree.to_string_lossy().into_owned();
+    set_topology_session_worktree_path(&state_dir, "codex-live", &alias.to_string_lossy());
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::GRAVEYARD,
+        Some(&json!({ "path": lexical })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    assert_eq!(
+        session(&read_topology(&state_dir), "codex-live")["status"],
+        "graveyard"
+    );
+    cleanup(project);
+}
+
 /// A dead window is not an attached agent.
 ///
 /// Topology status is durable: when a window dies without the service seeing it
@@ -6219,6 +6319,20 @@ fn published_worktree_group(project: &Path, topology: &Value) -> Value {
 
 fn read_topology(state_dir: &PathBuf) -> Value {
     read_runtime_topology(runtime_topology_path(state_dir)).unwrap()
+}
+
+fn set_topology_session_worktree_path(state_dir: &PathBuf, session_id: &str, path: &str) {
+    update_runtime_topology(runtime_topology_path(state_dir), |mut topology| {
+        if let Some(sessions) = topology["sessions"].as_array_mut() {
+            for session in sessions {
+                if session["id"] == session_id {
+                    session["worktreePath"] = Value::String(path.to_owned());
+                }
+            }
+        }
+        topology
+    })
+    .unwrap();
 }
 
 fn set_topology_session_status(state_dir: &PathBuf, session_id: &str, status: &str) {

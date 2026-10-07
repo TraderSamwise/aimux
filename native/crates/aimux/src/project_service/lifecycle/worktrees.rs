@@ -7,19 +7,23 @@ use crate::config::load_config_for_project;
 use crate::daemon_state::mutate_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
-use crate::project_service::desktop_state::worktree_checkout_is_present;
+use crate::project_service::desktop_state::{worktree_checkout_is_present, worktree_path_identity};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::graveyard_cleanup::build_graveyard_cleanup_plan;
 use crate::project_service::operation_failures::{
     OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
     clear_dashboard_operation_failures, try_add_dashboard_operation_failure,
 };
+use crate::project_service::prompt_context::clear_prompt_context;
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::project_service::worktree_cache_cleanup::run_worktree_cache_cleanup;
 use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
-use crate::runtime_topology_sessions::move_topology_session_to_graveyard;
+use crate::runtime_topology_sessions::{
+    move_topology_session_to_graveyard, resurrect_topology_session,
+};
 
 use super::json_helpers::*;
+use super::restore_snapshot::prune_restore_eligibility;
 use super::runtime_adapter::{
     PreparedPullRequestWorktree, PreparedRemoteBranchWorktree, PreparedRemoteSourceWorktree,
     ProjectLifecycleRuntime, prune_git_worktrees, remote_worktree_name_from_source,
@@ -54,6 +58,25 @@ impl PreparedWorktreeSource {
             Self::RemoteSource { prepared, .. } => prepared.branch.as_str(),
         }
     }
+}
+
+/// Why an agent is in the graveyard when its worktree took it there.
+///
+/// A marker, not a verdict: `route_graveyard_worktree_resurrect` reads it to
+/// bring back exactly the agents this route moved, and leaves an agent the user
+/// killed by hand where they put it.
+pub(crate) const WORKTREE_GRAVEYARD_AGENT_REASON: &str = "worktree-graveyarded";
+
+/// One spelling of a worktree path, because the two halves of a graveyard
+/// disagreed on which rows they were about.
+///
+/// Topology paths come from git as realpaths while a session's `worktreePath`
+/// is stored verbatim from the request that launched it, so `/tmp/x` and
+/// `/private/tmp/x` name one worktree. The dashboard already hides by the
+/// canonical identity; matching raw strings here left the agent un-graveyarded
+/// AND hidden, with no surface and no way back.
+fn same_worktree_path(left: &str, right: &str) -> bool {
+    left == right || worktree_path_identity(left) == worktree_path_identity(right)
 }
 
 pub(super) fn route_worktree_graveyard(
@@ -109,6 +132,18 @@ pub(super) fn route_worktree_graveyard(
         .filter(|service| string_field(service, "worktreePath") == path)
         .filter_map(|service| live_window_id_for_service(&topology, &service))
         .collect::<Vec<_>>();
+    // Named before the write, because the cleanups below have to run for the
+    // same ids and the closure can be re-run under contention.
+    let retired_session_ids = array_field(&topology, "sessions")
+        .into_iter()
+        .filter(|session| same_worktree_path(&string_field(session, "worktreePath"), &path))
+        .filter(|session| !LIVE_STATUSES.contains(&string_field(session, "status").as_str()))
+        .map(|session| string_field(&session, "id"))
+        .filter(|id| !id.is_empty())
+        .collect::<Vec<_>>();
+    for session_id in &retired_session_ids {
+        clear_prompt_context(&project_state_dir, session_id);
+    }
     if let Err(error) =
         update_runtime_topology(runtime_topology_path(&project_state_dir), |mut topology| {
             let now = now_iso();
@@ -133,21 +168,12 @@ pub(super) fn route_worktree_graveyard(
             // exactly those rows before it removes a checkout with uncommitted
             // work in it. Turning "could not confirm" into "dead" here would
             // take that guard away.
-            let retired_session_ids = array_field(&topology, "sessions")
-                .into_iter()
-                .filter(|session| string_field(session, "worktreePath") == path)
-                .filter(|session| {
-                    !LIVE_STATUSES.contains(&string_field(session, "status").as_str())
-                })
-                .map(|session| string_field(&session, "id"))
-                .filter(|id| !id.is_empty())
-                .collect::<Vec<_>>();
-            for session_id in retired_session_ids {
+            for session_id in &retired_session_ids {
                 move_topology_session_to_graveyard(
                     &mut topology,
-                    &session_id,
+                    session_id,
                     &now,
-                    Some("worktree-graveyarded"),
+                    Some(WORKTREE_GRAVEYARD_AGENT_REASON),
                 );
             }
             topology = map_topology_array(topology, "worktrees", |mut current| {
@@ -189,6 +215,12 @@ pub(super) fn route_worktree_graveyard(
     }
     for window_id in live_service_window_ids {
         let _ = runtime.kill_window(&window_id);
+    }
+    // What `route_agent_kill` does for one agent, for each of these. Without
+    // it the restore offer keeps proposing an agent in a checkout that is
+    // about to be deleted, and accepting it restores nothing.
+    for session_id in &retired_session_ids {
+        prune_restore_eligibility(&project_state_dir, session_id);
     }
     clear_all_worktree_operation_failures(&project_state_dir, &path);
     // This route keeps the row, moving it to `status: "graveyard"`, so a
@@ -884,6 +916,22 @@ pub(super) fn route_graveyard_worktree_resurrect(
                     "updatedAt": now,
                 }));
                 object_insert_mut(&mut topology, "worktrees", Value::Array(worktrees));
+            }
+            // The agents come back with it, and only the ones it took. An agent
+            // the user killed by hand keeps its own reason and stays where they
+            // put it. Without this the worktree returned empty and each agent
+            // had to be hunted down one at a time.
+            let returning = array_field(&topology, "sessions")
+                .into_iter()
+                .filter(|session| {
+                    string_field(session, "graveyardReason") == WORKTREE_GRAVEYARD_AGENT_REASON
+                })
+                .filter(|session| same_worktree_path(&string_field(session, "worktreePath"), &path))
+                .map(|session| string_field(&session, "id"))
+                .filter(|id| !id.is_empty())
+                .collect::<Vec<_>>();
+            for session_id in returning {
+                resurrect_topology_session(&mut topology, &session_id, &now);
             }
             let mut graveyard = array_field(&topology, "worktreeGraveyard");
             graveyard.retain(|entry| string_field(entry, "path") != path);
