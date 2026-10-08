@@ -45,7 +45,7 @@
     "version:set": "eas-release set",
     "version:sync": "eas-release sync",
     "verify:android-native": "bash scripts/verify-android-native.sh",
-    "check:android-release-lane": "node scripts/check-android-release-lane.mjs"
+    "check:android-release-lane": "./scripts/check-android-release-lane.mjs"
   },
   "dependencies": {
     "@clerk/clerk-expo": "^2.19.22",
