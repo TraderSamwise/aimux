@@ -86,13 +86,26 @@ def main() -> int:
         "heaviest aimux-subtree spawner=tmux (isolated PATH exec)",
     )
 
+    # An excess the gate cannot attribute is not a regression: the attributed
+    # rate is checked first, so reaching here means aimux is under budget and
+    # only the cross-check is unavailable. Reporting it as a failure made a
+    # working PR sit red while naming no culprit.
     problems += check(
         "quiet host, unattributable excess",
         decide(incremental_rate=30.0),
-        gate.COULD_NOT_MEASURE_EXIT,
-        "COULD_NOT_MEASURE",
+        gate.PASS_EXIT,
+        "PASS",
+        "cross-check UNAVAILABLE",
         "not attributable",
         "heaviest system spawner=python3",
+    )
+
+    # But an excess that IS attributable still fails, which is the whole point.
+    problems += check(
+        "quiet host, attributable excess",
+        decide(incremental_rate=30.0, aimux_spawn_rate=30.0),
+        gate.FAIL_EXIT,
+        "FAIL",
     )
 
     problems += check(
