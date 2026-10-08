@@ -1029,6 +1029,11 @@ export default function ChatScreen() {
     void refreshOutputSnapshot("history", {
       startLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
     }).catch(() => {});
+    // The paging cursor has to move with it, or the next scroll up asks for a
+    // SHALLOWER window than the one now stored and pages back to it.
+    setChatOutputHistoryStartLine((current) =>
+      Math.min(current, CHAT_OUTPUT_MAX_CAPTURE_START_LINE),
+    );
   }, [appVisible, refreshOutputSnapshot]);
 
   const requestChatHistoryPage = useCallback(

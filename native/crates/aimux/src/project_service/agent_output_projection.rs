@@ -1648,16 +1648,11 @@ fn stabilize_transcript_messages(existing: &[Value], incoming: &[Value]) -> Vec<
     }
     let matches = transcript_message_alignment(existing, incoming);
     if matches.is_empty() {
-        if existing.iter().any(is_settled_transcript_message) {
-            let mut merged = existing
-                .iter()
-                .filter(|message| is_settled_transcript_message(message))
-                .cloned()
-                .collect::<Vec<_>>();
-            strip_latest_markers(&mut merged);
-            merged.extend_from_slice(incoming);
-            return merged;
-        }
+        // Two captures of the same window sharing no message are not one
+        // transcript: this is the pane having moved on while nobody read it,
+        // and the lines between were never captured. Splicing them put a
+        // seamless join over that hole, and the cache then pinned the
+        // pre-gap half above the post-gap one for the process's life.
         return incoming.to_vec();
     }
 
@@ -3506,6 +3501,41 @@ pub fn insert_projection_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assistant(text: &str) -> Value {
+        json!({
+            "role": "assistant",
+            "text": text,
+            "parts": [{ "type": "text", "text": text }],
+            "settled": true,
+        })
+    }
+
+    /// 947602-98. The cache is keyed by window and lives for the process, so a
+    /// splice here outlives the client's own fix: the response itself carries
+    /// the join, and nothing downstream can see a gap inside one payload.
+    #[test]
+    fn two_captures_sharing_no_message_are_not_one_transcript() {
+        let before_sleep = vec![assistant("before 1"), assistant("before 2")];
+        let after_sleep = vec![assistant("after 1"), assistant("after 2")];
+        let stabilized = stabilize_transcript_messages(&before_sleep, &after_sleep);
+        assert_eq!(
+            stabilized, after_sleep,
+            "a capture sharing nothing with the last one must not be spliced onto it"
+        );
+    }
+
+    #[test]
+    fn a_capture_that_overlaps_is_still_stabilized_onto_the_last_one() {
+        let existing = vec![assistant("one"), assistant("two")];
+        let incoming = vec![assistant("two"), assistant("three")];
+        let stabilized = stabilize_transcript_messages(&existing, &incoming);
+        let texts: Vec<&str> = stabilized
+            .iter()
+            .filter_map(|message| message.get("text").and_then(Value::as_str))
+            .collect();
+        assert_eq!(texts, vec!["one", "two", "three"]);
+    }
 
     fn first_assistant_text_part(messages: &[Value]) -> &Value {
         messages

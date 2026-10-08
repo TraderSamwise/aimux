@@ -40,6 +40,9 @@ describe("returning from the background", () => {
     const effect = source.slice(at, at + 600);
     expect(effect).toContain("appVisible && !wasAppVisibleRef.current");
     expect(effect).toContain("startLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE");
+    // Without this the next scroll up asks for a shallower window than the one
+    // just stored and pages back to it.
+    expect(effect).toContain("setChatOutputHistoryStartLine");
     // A deeper start line than the stored one is what takes the wholesale
     // replace branch, so it must not be the live default.
     expect(effect).not.toContain("CHAT_OUTPUT_CAPTURE_START_LINE,");
@@ -56,11 +59,13 @@ describe("a transcript window that shares nothing with the stored one", () => {
     expect(transcriptWindowsAreDisjoint(BEFORE_SLEEP, [], 0)).toBe(false);
   });
 
-  it("is not spliced onto the old one by the paged-back path", () => {
+  it("does NOT drop a deeper transcript for a shallower window", () => {
+    // That path is only reached when the incoming window is shallower than the
+    // stored one, so zero overlap means re-chunked content, not missing
+    // history. Dropping it would throw away the 2000 lines Sam paged back to
+    // every poll -- worse than the join this change removes.
     const merged = mergeTranscriptMessages(BEFORE_SLEEP, AFTER_SLEEP);
-    expect(merged).toEqual(AFTER_SLEEP);
-    // The join is what made the hole invisible.
-    expect(merged.map((m) => m.id)).not.toEqual(["a", "b", "y", "z"]);
+    expect(merged.map((m) => m.id)).toEqual(["a", "b", "y", "z"]);
   });
 
   it("is not spliced onto the old one by the same-window path", () => {
