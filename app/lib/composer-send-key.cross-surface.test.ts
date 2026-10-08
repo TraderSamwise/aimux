@@ -67,15 +67,17 @@ describe("composer send key, across surfaces", () => {
     expect(SWIFT_SOURCE).toContain("isSendReturnKey(key)");
   });
 
-  it("gates web and Android on the one hardware answer", () => {
+  it("gates the web rule on the hardware answer, never on a literal", () => {
     expect(SCREEN_SOURCE).toContain("shouldSubmitComposerKey(keyEvent, hasHardwareKeyboard)");
-    // Android's editor action replaces the newline, so it may only be armed
-    // once a hardware keyboard is known.
-    const androidBranch = SCREEN_SOURCE.slice(
-      SCREEN_SOURCE.indexOf('if (Platform.OS === "android"'),
-    ).slice(0, 320);
-    expect(androidBranch).toContain("hasHardwareKeyboard");
-    expect(androidBranch).toContain('submitBehavior: "submit"');
+  });
+
+  it("arms no Enter-to-send on Android, which cannot be asked", () => {
+    // `submitBehavior: "submit"` hands Android's editor action the Enter key.
+    // It was armed from an inference that is unsound in both directions: under
+    // edge-to-edge the keyboard events can go missing entirely, and Android can
+    // show a soft keyboard alongside a hardware one.
+    expect(SCREEN_SOURCE).not.toContain("submitBehavior");
+    expect(SCREEN_SOURCE).not.toContain("onSubmitEditing");
   });
 
   it("asks one source for the hardware answer", () => {
@@ -83,6 +85,6 @@ describe("composer send key, across surfaces", () => {
     // and the send rule came to disagree on Android, where no such module
     // exists and the one-shot answered false forever.
     expect(SCREEN_SOURCE).not.toContain("getNativeHardwareKeyboardConnected");
-    expect(SCREEN_SOURCE).toContain("useHasHardwareKeyboard(composerFocused, keyboardVisible)");
+    expect(SCREEN_SOURCE).toContain("useHasHardwareKeyboard(keyboardVisible)");
   });
 });

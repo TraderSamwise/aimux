@@ -1,43 +1,68 @@
 import { describe, expect, it, vi } from "vitest";
 
-// The rule under test is pure; the module it lives in reaches for `Keyboard`
-// and `Platform` for the hook beside it, and react-native itself will not parse
-// here. Same shape as `native-app-commands.test.ts`.
+// The rules under test are pure; the module they live in reaches for `Platform`
+// for the hook beside them, and react-native itself will not parse here. Same
+// shape as `native-app-commands.test.ts`.
 vi.mock("react-native", () => ({
-  Keyboard: { addListener: () => ({ remove: () => {} }), isVisible: () => false },
   NativeEventEmitter: class {},
   NativeModules: {},
   Platform: { OS: "web" },
 }));
 
-import { hasHardwareKeyboard } from "@/lib/hardware-keyboard";
+import {
+  hasHardwareKeyboard,
+  SOFT_KEYBOARD_MIN_OCCLUSION_PX,
+  softKeyboardOccludes,
+} from "@/lib/hardware-keyboard";
 
 describe("hardware keyboard", () => {
-  it("reads a precise pointer as a keyboard on web", () => {
-    expect(hasHardwareKeyboard({ platform: "web", finePointer: true })).toBe(true);
-    expect(hasHardwareKeyboard({ platform: "web", finePointer: false })).toBe(false);
+  it("takes a native platform at its word", () => {
+    expect(hasHardwareKeyboard({ platform: "native", nativeConnected: true })).toBe(true);
+    expect(hasHardwareKeyboard({ platform: "native", nativeConnected: false })).toBe(false);
   });
 
-  it("takes iOS at its word", () => {
-    expect(hasHardwareKeyboard({ platform: "ios", nativeConnected: true })).toBe(true);
-    expect(hasHardwareKeyboard({ platform: "ios", nativeConnected: false })).toBe(false);
+  it("believes the measurement over the device class on web", () => {
+    // The two cases the device-class guess got backwards. A phone with a
+    // stylus reports a fine pointer and must still not send on a soft return;
+    // a keyboard folio with no trackpad reports none and must send.
+    expect(
+      hasHardwareKeyboard({
+        platform: "web",
+        finePointerWithHover: true,
+        softKeyboardOccludes: true,
+      }),
+    ).toBe(false);
+    expect(
+      hasHardwareKeyboard({
+        platform: "web",
+        finePointerWithHover: false,
+        softKeyboardOccludes: false,
+      }),
+    ).toBe(true);
   });
 
-  it("only calls Android a hardware keyboard once no soft one has arrived", () => {
-    const android = {
-      platform: "android" as const,
-      composerFocused: true,
-      settled: true,
-      softKeyboardVisible: false,
-    };
-    expect(hasHardwareKeyboard(android)).toBe(true);
-    // A soft keyboard that is up answers the question on its own.
-    expect(hasHardwareKeyboard({ ...android, softKeyboardVisible: true })).toBe(false);
-    // Before the settle window closes the answer is not yet known, and an
-    // unknown must take the soft-keyboard path or Enter eats the line break.
-    expect(hasHardwareKeyboard({ ...android, settled: false })).toBe(false);
-    // Nothing asked for a keyboard, so nothing can be concluded from its
-    // absence.
-    expect(hasHardwareKeyboard({ ...android, composerFocused: false })).toBe(false);
+  it("falls back to the pointer only where there is nothing to measure", () => {
+    expect(
+      hasHardwareKeyboard({
+        platform: "web",
+        finePointerWithHover: true,
+        softKeyboardOccludes: null,
+      }),
+    ).toBe(true);
+    expect(
+      hasHardwareKeyboard({
+        platform: "web",
+        finePointerWithHover: false,
+        softKeyboardOccludes: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("reads a keyboard-sized bite out of the viewport, not browser chrome", () => {
+    expect(softKeyboardOccludes(900, 900)).toBe(false);
+    // An address bar sliding in and out is tens of pixels, not hundreds.
+    expect(softKeyboardOccludes(900 - 60, 900)).toBe(false);
+    expect(softKeyboardOccludes(900 - SOFT_KEYBOARD_MIN_OCCLUSION_PX, 900)).toBe(true);
+    expect(softKeyboardOccludes(560, 900)).toBe(true);
   });
 });

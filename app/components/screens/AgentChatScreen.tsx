@@ -535,7 +535,7 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
-  const hasHardwareKeyboard = useHasHardwareKeyboard(composerFocused, keyboardVisible);
+  const hasHardwareKeyboard = useHasHardwareKeyboard(keyboardVisible);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
     projectPath: string;
@@ -1657,10 +1657,6 @@ export default function ChatScreen() {
     [canUseOwnerControls, handleInterrupt, handleSendMessage, hasHardwareKeyboard],
   );
 
-  const handleComposerSubmitEditing = useCallback(() => {
-    void handleSendMessage({ preserveFocus: true });
-  }, [handleSendMessage]);
-
   const handleComposerDraftChange = useCallback(
     (text: string) => {
       composerDraftTextRef.current = text;
@@ -1682,22 +1678,18 @@ export default function ChatScreen() {
   );
 
   // iOS routes a hardware Enter through the window's key handler, which a soft
-  // keyboard's return never reaches. Android has no such hook, so the editor
-  // action stands in -- and Android raises it only for an unmodified Enter.
-  const composerKeyboardProps = useMemo(() => {
-    if (Platform.OS === "web") {
-      return {
-        onKeyDown: handleComposerKeyboardEvent,
-      } as unknown as Partial<React.ComponentProps<typeof TextInput>>;
-    }
-    if (Platform.OS === "android" && hasHardwareKeyboard) {
-      return {
-        onSubmitEditing: handleComposerSubmitEditing,
-        submitBehavior: "submit",
-      } as Partial<React.ComponentProps<typeof TextInput>>;
-    }
-    return {};
-  }, [handleComposerKeyboardEvent, handleComposerSubmitEditing, hasHardwareKeyboard]);
+  // keyboard's return never reaches, so it needs nothing here. Android has no
+  // such hook and no way to ask whether a keyboard is attached, so it keeps the
+  // newline and sends from the control.
+  const composerKeyboardProps = useMemo(
+    () =>
+      Platform.OS === "web"
+        ? ({
+            onKeyDown: handleComposerKeyboardEvent,
+          } as unknown as Partial<React.ComponentProps<typeof TextInput>>)
+        : {},
+    [handleComposerKeyboardEvent],
+  );
 
   const setComposerNativeFocus = useCallback(
     (focused: boolean, updateFocusShell: () => void) => {
