@@ -15,13 +15,20 @@ describe("composer protocol", () => {
     expect(normalizeComposerDraft("  \n\t")).toBeNull();
   });
 
-  it("submits plain Enter and Shift+Enter, preserving other modified Enter keypresses", () => {
-    expect(shouldSubmitComposerKey({ key: "Enter" })).toBe(true);
-    expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true })).toBe(true);
-    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true })).toBe(false);
-    expect(shouldSubmitComposerKey({ key: "Enter", metaKey: true })).toBe(false);
-    expect(shouldSubmitComposerKey({ key: "Enter", altKey: true })).toBe(false);
-    expect(shouldSubmitComposerKey({ key: "a" })).toBe(false);
+  it("sends on a hardware Enter and breaks the line on Shift+Enter", () => {
+    expect(shouldSubmitComposerKey({ key: "Enter" }, true)).toBe(true);
+    expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", metaKey: true }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", altKey: true }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "a" }, true)).toBe(false);
+  });
+
+  it("never sends on Enter without a hardware keyboard", () => {
+    // A soft keyboard's return key is the newline key, and the send control is
+    // the only send. Sending here swallowed the line break mid-sentence.
+    expect(shouldSubmitComposerKey({ key: "Enter" }, false)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true }, false)).toBe(false);
   });
 
   it("blocks sends without a target or while a send is in flight", () => {

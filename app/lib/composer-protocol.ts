@@ -43,8 +43,17 @@ export function normalizeComposerDraft(draft: string): string | null {
   return text ? text : null;
 }
 
-export function shouldSubmitComposerKey(event: ComposerKeyEventLike): boolean {
-  return event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey;
+/// Enter sends only from a hardware keyboard, where Shift+Enter is the newline.
+/// A soft keyboard's return key IS the newline key, so there Enter never sends
+/// and the send control is the only way out.
+export function shouldSubmitComposerKey(
+  event: ComposerKeyEventLike,
+  hasHardwareKeyboard: boolean,
+): boolean {
+  if (!hasHardwareKeyboard) return false;
+  return (
+    event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+  );
 }
 
 export function getComposerSendText(state: ComposerSendState): string | null {

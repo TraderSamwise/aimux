@@ -131,8 +131,11 @@ class AimuxWindow: UIWindow {
     return nil
   }
 
+  /// Shift+Enter is a newline, so it must fall through to the text view rather
+  /// than be swallowed here. Only `pressesBegan` sees these, and only a
+  /// hardware keyboard raises them: a soft return never arrives as a UIKey.
   private func isSendReturnKey(_ key: UIKey) -> Bool {
-    let disallowedModifiers: UIKeyModifierFlags = [.command, .alternate, .control]
+    let disallowedModifiers: UIKeyModifierFlags = [.shift, .command, .alternate, .control]
     return isReturnKey(key) && key.modifierFlags.intersection(disallowedModifiers).isEmpty
   }
 

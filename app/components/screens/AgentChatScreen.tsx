@@ -182,6 +182,7 @@ import {
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
 import { worktreeIdentity, worktreeTone } from "@/lib/worktree-tone";
 import { buildMainTabHref } from "@/lib/main-tabs";
+import { useHasHardwareKeyboard } from "@/lib/hardware-keyboard";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import { isTransientRequestError } from "@/lib/request-errors";
 import {
@@ -535,6 +536,7 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
+  const hasHardwareKeyboard = useHasHardwareKeyboard(composerFocused);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
     projectPath: string;
@@ -1652,13 +1654,17 @@ export default function ChatScreen() {
         if (canUseOwnerControls) void handleInterrupt();
         return;
       }
-      if (shouldSubmitComposerKey(keyEvent)) {
+      if (shouldSubmitComposerKey(keyEvent, hasHardwareKeyboard)) {
         event.preventDefault?.();
         void handleSendMessage({ preserveFocus: true });
       }
     },
-    [canUseOwnerControls, handleInterrupt, handleSendMessage],
+    [canUseOwnerControls, handleInterrupt, handleSendMessage, hasHardwareKeyboard],
   );
+
+  const handleComposerSubmitEditing = useCallback(() => {
+    void handleSendMessage({ preserveFocus: true });
+  }, [handleSendMessage]);
 
   const handleComposerDraftChange = useCallback(
     (text: string) => {
@@ -1680,15 +1686,23 @@ export default function ChatScreen() {
     [handleComposerPaste],
   );
 
-  const composerKeyboardProps = useMemo(
-    () =>
-      Platform.OS === "web"
-        ? ({
-            onKeyDown: handleComposerKeyboardEvent,
-          } as unknown as Partial<React.ComponentProps<typeof TextInput>>)
-        : {},
-    [handleComposerKeyboardEvent],
-  );
+  // iOS routes a hardware Enter through the window's key handler, which a soft
+  // keyboard's return never reaches. Android has no such hook, so the editor
+  // action stands in -- and Android raises it only for an unmodified Enter.
+  const composerKeyboardProps = useMemo(() => {
+    if (Platform.OS === "web") {
+      return {
+        onKeyDown: handleComposerKeyboardEvent,
+      } as unknown as Partial<React.ComponentProps<typeof TextInput>>;
+    }
+    if (Platform.OS === "android" && hasHardwareKeyboard) {
+      return {
+        onSubmitEditing: handleComposerSubmitEditing,
+        submitBehavior: "submit",
+      } as Partial<React.ComponentProps<typeof TextInput>>;
+    }
+    return {};
+  }, [handleComposerKeyboardEvent, handleComposerSubmitEditing, hasHardwareKeyboard]);
 
   const setComposerNativeFocus = useCallback(
     (focused: boolean, updateFocusShell: () => void) => {
