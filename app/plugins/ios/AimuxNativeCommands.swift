@@ -16,10 +16,10 @@ class AimuxNativeCommands: RCTEventEmitter {
   }
 
   /// A keyboard attached after launch changes the answer, and nothing else
-  /// reports it: no keyboard is on screen, so no keyboard frame moves. Polling
-  /// off some other event missed exactly this case.
+  /// reports it: no keyboard is on screen, so no keyboard frame moves. These
+  /// notifications are iOS 14 and the deployment target is 15.1, so they need
+  /// no availability guard.
   private func observeHardwareKeyboardChanges() {
-    guard #available(iOS 14.0, *) else { return }
     keyboardObservers = [NSNotification.Name.GCKeyboardDidConnect, .GCKeyboardDidDisconnect]
       .map { name in
         NotificationCenter.default.addObserver(
