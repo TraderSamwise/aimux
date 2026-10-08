@@ -227,6 +227,23 @@ describe("composer send key, across surfaces", () => {
     );
   });
 
+  it("maps Escape to an interrupt on both native surfaces", () => {
+    // iOS answers `chatInterrupt` for Escape before the focus check, and it is
+    // also a window key command and an Edit-menu item -- an app-level
+    // accelerator. Android mirrors that rather than inventing a focus gate.
+    expect(SWIFT_SOURCE).toContain('return "chatInterrupt"');
+    const interrupt = kotlinRule("fun isInterruptKeyEvent(");
+    expect(interrupt).toContain("KeyEvent.KEYCODE_ESCAPE");
+    // The same hardware requirements as the send rule, or a synthesised
+    // Escape could interrupt a running agent.
+    expect(interrupt).toContain("event.repeatCount == 0");
+    expect(interrupt).toContain("isHardwareKeyboardEvent(event)");
+    // Ungated by focus, on purpose, on both sides.
+    const decision = kotlinRule("fun commandForKeyEvent(");
+    expect(decision).toContain("isInterruptKeyEvent(event) -> COMMAND_CHAT_INTERRUPT");
+    expect(decision).not.toMatch(/isChatComposerFocused && isInterruptKeyEvent/);
+  });
+
   it("asks one source for the hardware answer", () => {
     // Two callers asking the native bridge separately is how the auto-focus
     // and the send rule came to disagree on Android, back when nothing there
