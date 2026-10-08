@@ -8,7 +8,7 @@ use crate::dashboard_model::DesktopStateSnapshot;
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
 use crate::project_service::lifecycle_mutation_queue::{
-    QUEUED_LIFECYCLE_TIMEOUT_MS, lifecycle_transition_for_route,
+    lifecycle_transition_for_route, queued_lifecycle_timeout_ms,
 };
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
@@ -263,20 +263,12 @@ fn map_action_transport_error(path: &str, error: CoreCommandTransportError) -> a
 /// Asked of the route table rather than listed again here, so a lifecycle
 /// route added later cannot inherit a budget shorter than its own queue.
 fn dashboard_action_timeout_ms(path: &str) -> u64 {
-    match path {
-        // Longer than a queued mutation's wait, not shorter: these do real
-        // filesystem work once they have the permit.
-        routes::worktree_actions::CREATE
-        | routes::worktree_actions::CACHE_CLEANUP
-        | routes::worktree_actions::REMOVE
-        | routes::worktree_actions::GRAVEYARD => 180_000,
-        // One request that launches the whole offered fleet in turn. 35 agents
-        // took 12.4s on sam-strix, so the default budget expired a sixth of the
-        // way in and a working restore reported itself as a transport timeout.
-        routes::agents::RESTORE_PREVIOUS => 180_000,
-        _ if is_queued_lifecycle_mutation(path) => QUEUED_LIFECYCLE_TIMEOUT_MS,
-        _ => 2_000,
-    }
+    // Asked of the queue's own table so the dashboard, the daemon's proxy hop
+    // and the app cannot each carry a different number for the same route.
+    // Worktree work and a fleet restore are the long ones: 35 agents took 12.4s
+    // on sam-strix, so the default expired a sixth of the way in and a working
+    // restore reported itself as a transport timeout.
+    queued_lifecycle_timeout_ms(path).unwrap_or(2_000)
 }
 
 /// Whether this route queues behind the project service's lifecycle permit.
@@ -306,6 +298,7 @@ fn string_field(value: &Value, field: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project_service::lifecycle_mutation_queue::QUEUED_LIFECYCLE_TIMEOUT_MS;
     use serde_json::json;
 
     #[test]

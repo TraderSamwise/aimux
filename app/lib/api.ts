@@ -18,7 +18,8 @@ import type { ParsedAgentOutput } from "@/lib/events";
 import {
   isQueuedLifecycleRoute,
   PROJECT_API_ROUTES,
-  QUEUED_LIFECYCLE_TIMEOUT_MS,
+  QUEUED_LIFECYCLE_MAX_TIMEOUT_MS,
+  queuedLifecycleTimeoutMs,
   type GlobalExposeItemsResponse,
   type TeamConfigResponse,
   type ActiveWindowRequest,
@@ -245,7 +246,11 @@ function appendMachineNames(message: string, machines: unknown): string {
 }
 
 function apiTimeoutMs(opts?: ApiOpts): number {
-  return Math.max(1, opts?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
+  const requested = opts?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
+  // A non-finite delay does not mean "never": `setTimeout` coerces it and
+  // fires at once, so an infinite budget would abort immediately.
+  if (!Number.isFinite(requested)) return QUEUED_LIFECYCLE_MAX_TIMEOUT_MS;
+  return Math.max(1, requested);
 }
 
 function requestSignal(opts?: ApiOpts): { signal: AbortSignal; cleanup: () => void } {
@@ -418,8 +423,9 @@ export function shouldRouteViaRelay(): boolean {
 /// list would recognise.
 function withQueuedLifecycleTimeout(path: string, opts?: ApiOpts): ApiOpts | undefined {
   if (opts?.timeoutMs !== undefined) return opts;
-  if (!isQueuedLifecycleRoute(path)) return opts;
-  return { ...opts, timeoutMs: QUEUED_LIFECYCLE_TIMEOUT_MS };
+  const timeoutMs = queuedLifecycleTimeoutMs(path);
+  if (timeoutMs === null) return opts;
+  return { ...opts, timeoutMs };
 }
 
 async function callProjectJson<T>(

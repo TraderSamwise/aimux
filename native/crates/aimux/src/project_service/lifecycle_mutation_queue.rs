@@ -37,6 +37,29 @@ const WAIT_FOR_TURN_TIMEOUT: Duration = Duration::from_millis(150_000);
 /// turn has not come yet" into "your request failed".
 pub const QUEUED_LIFECYCLE_TIMEOUT_MS: u64 = 120_000;
 
+/// What the five routes that do real filesystem work once they hold the permit
+/// need instead. Each was raised only after it was caught reporting a working
+/// operation as a transport timeout.
+pub const QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS: u64 = 180_000;
+
+/// The budget for one queued route, or `None` when it takes no permit.
+///
+/// Lives here rather than in any one client because three of them read it: the
+/// dashboard's action table, the daemon's proxy hop (which is the whole budget
+/// a relay-mode client gets, whatever it asked for), and the Expo app via
+/// `testdata/contracts/v1/lifecycle-queue/queued-routes.json`.
+pub fn queued_lifecycle_timeout_ms(pathname: &str) -> Option<u64> {
+    lifecycle_transition_for_route(pathname, &Value::Null)?;
+    Some(match pathname {
+        routes::worktree_actions::CREATE
+        | routes::worktree_actions::CACHE_CLEANUP
+        | routes::worktree_actions::REMOVE
+        | routes::worktree_actions::GRAVEYARD
+        | routes::agents::RESTORE_PREVIOUS => QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS,
+        _ => QUEUED_LIFECYCLE_TIMEOUT_MS,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LifecycleTransitionInput {
     pub operation: String,

@@ -10,27 +10,29 @@
 //! The TS half asserts the same fixture in
 //! `src/project-api-contract.queued-routes.test.ts`.
 
-use aimux::project_service::lifecycle_mutation_queue::lifecycle_transition_for_route;
+use aimux::project_service::lifecycle_mutation_queue::{
+    lifecycle_transition_for_route, queued_lifecycle_timeout_ms,
+};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 const FIXTURE: &str =
     include_str!("../../../../testdata/contracts/v1/lifecycle-queue/queued-routes.json");
 const CONTRACT_SOURCE: &str = include_str!("../src/project_api_contract.rs");
+const DAEMON_JSON_SOURCE: &str = include_str!("../src/daemon/json.rs");
 
-fn fixture_timeout_ms() -> u64 {
+fn fixture_budgets() -> BTreeMap<String, u64> {
     let parsed: Value = serde_json::from_str(FIXTURE).expect("fixture is json");
-    parsed["timeoutMs"].as_u64().expect("timeoutMs")
+    parsed["routes"]
+        .as_object()
+        .expect("routes object")
+        .iter()
+        .map(|(route, budget)| (route.clone(), budget.as_u64().expect("budget")))
+        .collect()
 }
 
 fn fixture_routes() -> BTreeSet<String> {
-    let parsed: Value = serde_json::from_str(FIXTURE).expect("fixture is json");
-    parsed["routes"]
-        .as_array()
-        .expect("routes array")
-        .iter()
-        .map(|route| route.as_str().expect("route string").to_owned())
-        .collect()
+    fixture_budgets().into_keys().collect()
 }
 
 /// Every route literal the contract declares, so a NEW queued arm cannot be
@@ -74,15 +76,78 @@ fn the_published_queued_routes_are_the_ones_that_take_the_permit() {
     );
 }
 
-/// One number, three readers. The budget was written out twice -- once here
-/// and once in the TS contract -- and two copies of a timeout is how one of
-/// them ends up shorter than the wait it is promising to cover.
+/// One table, three readers: the dashboard's action budget, the daemon's proxy
+/// hop and the Expo app. The budget was written out twice before this, and two
+/// copies of a timeout is how one ends up shorter than the wait it covers --
+/// which is exactly what had happened to the five slow routes.
 #[test]
-fn every_client_is_told_the_same_budget() {
+fn every_reader_is_told_the_same_budget_per_route() {
+    let from_code: BTreeMap<String, u64> = fixture_routes()
+        .into_iter()
+        .map(|route| {
+            let budget = queued_lifecycle_timeout_ms(&route)
+                .unwrap_or_else(|| panic!("{route} is published as queued but takes no permit"));
+            (route, budget)
+        })
+        .collect();
+    assert_eq!(from_code, fixture_budgets());
+}
+
+/// The routes that do filesystem work must get MORE than the default, not the
+/// same. Flattening them is how the app came to give a worktree create 120s
+/// while the dashboard gave it 180s.
+#[test]
+fn the_slow_routes_are_actually_slower() {
+    let budgets = fixture_budgets();
+    let default = aimux::project_service::lifecycle_mutation_queue::QUEUED_LIFECYCLE_TIMEOUT_MS;
+    let slow: Vec<&String> = budgets
+        .iter()
+        .filter(|(_, budget)| **budget > default)
+        .map(|(route, _)| route)
+        .collect();
+    assert_eq!(slow.len(), 5, "expected five slow routes, got {slow:?}");
+    for route in slow {
+        assert!(route.starts_with("/worktrees/") || route == "/agents/restore-previous");
+    }
+}
+
+/// The proxy hop is the whole budget a relay-mode client gets, so it has to
+/// allow at least as long as the route needs. It used to be a flat 10s, which
+/// meant a phone could never wait out a spawn whatever the app asked for.
+#[test]
+fn the_daemon_proxy_hop_allows_what_the_route_needs() {
+    for (route, budget) in fixture_budgets() {
+        assert!(
+            budget > aimux::daemon::json::PROXY_TIMEOUT_MS,
+            "{route} needs {budget}ms, which the flat proxy budget would cut short"
+        );
+        assert_eq!(queued_lifecycle_timeout_ms(&route), Some(budget));
+    }
+}
+
+/// And actually asks for it. The budget being correct is no use if the proxy
+/// still passes the flat constant -- which is what it did, and no assertion
+/// about the numbers noticed.
+#[test]
+fn the_proxy_hop_asks_per_route_rather_than_passing_the_flat_budget() {
+    let calls = DAEMON_JSON_SOURCE
+        .matches("proxy_timeout_ms(&proxy.sub_path)")
+        .count();
     assert_eq!(
-        aimux::project_service::lifecycle_mutation_queue::QUEUED_LIFECYCLE_TIMEOUT_MS,
-        fixture_timeout_ms(),
+        calls, 2,
+        "both proxy json paths must ask per route; found {calls}"
     );
+    // The flat constant may still be the fallback inside that function, but it
+    // must not be handed straight to a request.
+    for lie in [
+        "proxy_json_request(&target_url, method, headers, body, PROXY_TIMEOUT_MS)",
+        "execute_proxy_json_request(&target_url, method, headers, body, PROXY_TIMEOUT_MS)",
+    ] {
+        assert!(
+            !DAEMON_JSON_SOURCE.contains(lie),
+            "a proxied json request still passes the flat budget: {lie}"
+        );
+    }
 }
 
 #[test]
