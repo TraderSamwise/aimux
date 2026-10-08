@@ -84,25 +84,44 @@ export type AgentOutputPayload = {
   tmuxUnavailable?: TmuxUnavailableMarker;
 };
 
-function mergeTranscriptMessages(
+/// Two windows of the SAME depth with nothing in common are not one transcript.
+///
+/// A capture is a tail of the pane, so after a long background the re-requested
+/// window shares no message with the stored one and the lines between were
+/// never fetched. Splicing them put a seamless join over that hole; keeping
+/// only what was actually read is the honest answer, and paging back then
+/// re-fetches contiguously.
+///
+/// Only for equal windows: against a DEEPER stored transcript, zero overlap
+/// means re-chunked content, and dropping it would lose real history.
+export function transcriptWindowsAreDisjoint(
+  existing: AgentTranscriptMessage[],
+  incoming: AgentTranscriptMessage[],
+  shared: number,
+): boolean {
+  return shared === 0 && existing.length > 0 && incoming.length > 0;
+}
+
+export function mergeTranscriptMessages(
   existing: AgentTranscriptMessage[],
   incoming: AgentTranscriptMessage[],
 ): AgentTranscriptMessage[] {
+  // No disjoint check here on purpose. This branch is only reached when the
+  // incoming window is SHALLOWER than the stored one, so zero overlap means the
+  // content was re-chunked, not that history is missing -- and replacing would
+  // throw away the deeper transcript the user had paged back to.
   const overlap = longestTranscriptOverlap(existing, incoming);
   return [...stripLatestMarkers(existing.slice(0, existing.length - overlap)), ...incoming];
 }
 
-function stabilizeSameWindowTranscriptMessages(
+export function stabilizeSameWindowTranscriptMessages(
   existing: AgentTranscriptMessage[],
   incoming: AgentTranscriptMessage[],
 ): AgentTranscriptMessage[] {
   if (existing.length === 0 || incoming.length === 0) return incoming;
   const matches = transcriptMessageAlignment(existing, incoming);
-  if (matches.length === 0) {
-    return existing.some((message) => !message.latest)
-      ? [...stripLatestMarkers(existing.filter((message) => !message.latest)), ...incoming]
-      : incoming;
-  }
+  if (transcriptWindowsAreDisjoint(existing, incoming, matches.length)) return incoming;
+  if (matches.length === 0) return incoming;
 
   const merged: AgentTranscriptMessage[] = [];
   let existingCursor = 0;
