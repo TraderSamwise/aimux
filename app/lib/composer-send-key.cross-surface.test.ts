@@ -49,6 +49,34 @@ const MODIFIERS = [
   { swift: ".control", web: "ctrlKey" as const },
 ];
 
+/// Code only. A commented-out call inside the body satisfied a plain
+/// `toContain` just as happily as a live one.
+function withoutComments(source: string): string {
+  return source
+    .split("\n")
+    .map((line) => line.replace(/\/\/.*$/, ""))
+    .join("\n");
+}
+
+/// The body of Kotlin's send rule, so an assertion cannot be satisfied by the
+/// prose above it. `hasNoModifiers()` appears in both.
+function kotlinSendRule(): string {
+  const start = KOTLIN_SOURCE.indexOf("fun isSendKeyEvent(");
+  expect(start, "Kotlin must still have a send rule").toBeGreaterThan(0);
+  const end = KOTLIN_SOURCE.indexOf("\n\n", start);
+  expect(end).toBeGreaterThan(start);
+  return withoutComments(KOTLIN_SOURCE.slice(start, end));
+}
+
+/// The body of Kotlin's hardware-identity check, for the same reason.
+function kotlinIdentityRule(): string {
+  const start = KOTLIN_SOURCE.indexOf("private fun isHardwareKeyboardEvent(");
+  expect(start, "Kotlin must still have an identity check").toBeGreaterThan(0);
+  const end = KOTLIN_SOURCE.indexOf("\n    }", start);
+  expect(end).toBeGreaterThan(start);
+  return withoutComments(KOTLIN_SOURCE.slice(start, end));
+}
+
 function iosDisallowedModifiers(): string {
   const match = SWIFT_SOURCE.match(/let disallowedModifiers: UIKeyModifierFlags = \[([^\]]*)\]/);
   expect(match, "iOS must still refuse a return key by a list of modifiers").toBeTruthy();
@@ -108,9 +136,12 @@ describe("composer send key, across surfaces", () => {
     // Kotlin does not spell the modifiers out: `hasNoModifiers()` is the very
     // predicate AOSP's `TextView.doKeyDown` gates the editor action on, so the
     // platform and this rule cannot drift. A hand-rolled shift check could.
-    expect(KOTLIN_SOURCE).toContain("event.hasNoModifiers()");
-    expect(KOTLIN_SOURCE).not.toContain("META_SHIFT");
-    expect(KOTLIN_SOURCE).not.toContain("isShiftPressed");
+    const rule = kotlinSendRule();
+    expect(rule).toContain("event.hasNoModifiers()");
+    // And names no individual modifier, because naming one is how it drifts.
+    for (const named of ["META_SHIFT", "META_ALT", "META_CTRL", "isShiftPressed"]) {
+      expect(KOTLIN_SOURCE).not.toContain(named);
+    }
     for (const modifier of MODIFIERS) {
       expect(
         shouldSubmitComposerKey({ key: "Enter", [modifier.web]: true }, true),
@@ -131,13 +162,14 @@ describe("composer send key, across surfaces", () => {
     // An IME injects as `VIRTUAL_KEYBOARD` (-1) and the built-in keypad is 0,
     // so this is the gate a soft keyboard cannot pass -- Android's equivalent
     // of iOS only ever seeing a `UIKey`.
-    expect(KOTLIN_SOURCE).toContain("event.deviceId > 0");
-    expect(KOTLIN_SOURCE).toContain("!device.isVirtual");
+    const identity = kotlinIdentityRule();
+    expect(identity).toContain("event.deviceId > 0");
+    expect(identity).toContain("!device.isVirtual");
+    expect(identity).toContain("InputDevice.KEYBOARD_TYPE_ALPHABETIC");
+    expect(identity).toContain("InputDevice.SOURCE_KEYBOARD");
     // Android repeats a held key as more ACTION_DOWNs where iOS fires once, so
     // without this one held Enter sends a message per repeat.
-    expect(KOTLIN_SOURCE).toContain("event.repeatCount == 0");
-    expect(KOTLIN_SOURCE).toContain("InputDevice.KEYBOARD_TYPE_ALPHABETIC");
-    expect(KOTLIN_SOURCE).toContain("InputDevice.SOURCE_KEYBOARD");
+    expect(kotlinSendRule()).toContain("event.repeatCount == 0");
   });
 
   it("declares the viewport the web measurement depends on", () => {
