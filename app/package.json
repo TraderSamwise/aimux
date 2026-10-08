@@ -32,6 +32,7 @@
     "format:check": "prettier --check .",
     "build": "eas env:exec production 'eas-release build testflight' --non-interactive",
     "build:testflight": "eas env:exec production 'eas-release build testflight' --non-interactive",
+    "build:testflight-android": "eas env:exec production 'eas-release build testflight --android --no-auto-submit' --non-interactive",
     "build:production": "eas env:exec production 'eas-release build production' --non-interactive",
     "preupdate": "../scripts/run-yarn --cwd app check:ota-native-deps",
     "update": "eas env:exec production 'eas-release update testflight' --non-interactive",
@@ -43,7 +44,8 @@
     "version:rollback": "eas-release rollback",
     "version:set": "eas-release set",
     "version:sync": "eas-release sync",
-    "verify:android-native": "bash scripts/verify-android-native.sh"
+    "verify:android-native": "bash scripts/verify-android-native.sh",
+    "check:android-release-lane": "node scripts/check-android-release-lane.mjs"
   },
   "dependencies": {
     "@clerk/clerk-expo": "^2.19.22",
@@ -96,7 +98,7 @@
     "tailwindcss": "3"
   },
   "devDependencies": {
-    "@tradersamwise/eas-release": "0.1.10",
+    "@tradersamwise/eas-release": "0.3.2",
     "@types/event-source-polyfill": "^1.0.5",
     "@types/react": "~19.1.0",
     "@types/react-dom": "~19.1.0",
