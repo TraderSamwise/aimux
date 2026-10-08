@@ -166,7 +166,7 @@ function patchKeyDispatch(contents) {
 
   override fun onConfigurationChanged(newConfig: Configuration) {
     super.onConfigurationChanged(newConfig)
-    AimuxNativeCommandsModule.emitHardwareKeyboardChanged()
+    AimuxNativeCommandsModule.emitHardwareKeyboardChanged(newConfig)
   }
 `;
   return AndroidConfig.CodeMod.addImports(

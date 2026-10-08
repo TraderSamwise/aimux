@@ -33,11 +33,18 @@ if [ -z "$java_major" ] || [ "$java_major" -lt 17 ] || [ "$java_major" -gt 24 ];
   exit 1
 fi
 
+# `--clean` is not optional, and costs a full build every run. Prebuild skips
+# the whole platform directory when `android/` exists, and the plugin's own
+# idempotency guards then decline to re-patch an already-patched MainActivity --
+# so without it the gate compiles the PREVIOUS plugin's output. That is not
+# hypothetical: it passed a stale `emitHardwareKeyboardChanged()` call here.
 echo "verify-android-native: prebuilding android (generated, gitignored)"
-yarn expo prebuild -p android --no-install
+# Bare `expo`, not `yarn expo`: the Volta yarn shim swallows child exit codes
+# and returns 126, so a real prebuild failure would read as "not executable".
+expo prebuild -p android --no-install --clean
 
-# Debug rather than release: the Kotlin is identical across variants and this
-# skips R8. Compile only -- packaging would want a signing config we do not have.
+# Release is the variant that ships, and a Kotlin compile never signs or runs
+# R8, so it costs nothing over debug.
 echo "verify-android-native: compiling kotlin"
 cd android
-./gradlew :app:compileDebugKotlin --console=plain "$@"
+./gradlew :app:compileReleaseKotlin --console=plain "$@"

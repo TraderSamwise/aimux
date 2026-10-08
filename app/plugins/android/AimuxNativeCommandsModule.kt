@@ -26,16 +26,9 @@ class AimuxNativeCommandsModule(
 
   override fun getName(): String = NAME
 
-  /// Android can be asked, unlike the web. `hardKeyboardHidden` is the usable
-  /// half: a keyboard can be attached and folded away, and then its keys
-  /// cannot be pressed.
   @ReactMethod
   fun getHardwareKeyboardConnected(promise: Promise) {
-    val config: Configuration = reactContext.resources.configuration
-    promise.resolve(
-      config.keyboard != Configuration.KEYBOARD_NOKEYS &&
-        config.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO
-    )
+    promise.resolve(isHardwareKeyboardConnected(reactContext.resources.configuration))
   }
 
   @ReactMethod
@@ -61,13 +54,16 @@ class AimuxNativeCommandsModule(
     var isChatComposerFocused: Boolean = false
       private set
 
+    @Volatile
+    private var lastHardwareKeyboardConnected: Boolean? = null
+
     fun emit(command: String) {
       val module = sharedEmitter?.get()
       val context = module?.reactContext
       if (context == null || !context.hasActiveReactInstance()) {
-        // Not an error: JS asks for the current answer when it mounts, so a
-        // notice with nobody to hear it is only worth saying out loud.
-        Log.i(NAME, "dropped $command: no active react instance")
+        // A dropped `chatSend` is a keystroke that produced neither a send nor
+        // a newline, so this is a warning and not a note, whatever the command.
+        Log.w(NAME, "dropped $command: no active react instance")
         return
       }
       val payload = Arguments.createMap().apply { putString("command", command) }
@@ -76,10 +72,22 @@ class AimuxNativeCommandsModule(
         .emit(EVENT, payload)
     }
 
-    /// A keyboard attached after launch changes the answer, and the manifest's
-    /// `configChanges` includes `keyboard|keyboardHidden`, so the activity is
-    /// told instead of recreated. The mirror of `GCKeyboardDidConnect`.
-    fun emitHardwareKeyboardChanged() = emit(COMMAND_HARDWARE_KEYBOARD_CHANGED)
+    /// Android can be asked, unlike the web. `hardKeyboardHidden` is the usable
+    /// half -- a keyboard can be attached and folded away -- and QWERTY rather
+    /// than any keyboard, to agree with `KEYBOARD_TYPE_ALPHABETIC` below.
+    fun isHardwareKeyboardConnected(configuration: Configuration): Boolean =
+      configuration.keyboard == Configuration.KEYBOARD_QWERTY &&
+        configuration.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO
+
+    /// The mirror of `GCKeyboardDidConnect`: the manifest's `configChanges`
+    /// includes `keyboard|keyboardHidden`, so the activity is told rather than
+    /// recreated. Only an actual change is worth saying -- a rotation is not.
+    fun emitHardwareKeyboardChanged(configuration: Configuration) {
+      val connected = isHardwareKeyboardConnected(configuration)
+      if (lastHardwareKeyboardConnected == connected) return
+      lastHardwareKeyboardConnected = connected
+      emit(COMMAND_HARDWARE_KEYBOARD_CHANGED)
+    }
 
     /// The mirror of Swift's `command(for:)`: the whole decision, including the
     /// composer-focus check, so no caller can make half of it. Null means the
@@ -93,6 +101,9 @@ class AimuxNativeCommandsModule(
     /// caps lock is outside `META_MODIFIER_MASK`, so it still sends.
     fun isSendKeyEvent(event: KeyEvent): Boolean =
       event.action == KeyEvent.ACTION_DOWN &&
+        // Android auto-repeats a held key as more ACTION_DOWNs; iOS fires once
+        // on `.began`. Without this, holding Enter sends once per repeat.
+        event.repeatCount == 0 &&
         isReturnKeyCode(event.keyCode) &&
         event.hasNoModifiers() &&
         isHardwareKeyboardEvent(event)
@@ -103,10 +114,13 @@ class AimuxNativeCommandsModule(
     /// Identity, not spelling. An IME injects events as
     /// `KeyCharacterMap.VIRTUAL_KEYBOARD` (-1) and the built-in keypad is 0, so
     /// only a real attached keyboard with letter keys gets past this.
-    private fun isHardwareKeyboardEvent(event: KeyEvent): Boolean =
-      event.deviceId > 0 &&
+    private fun isHardwareKeyboardEvent(event: KeyEvent): Boolean {
+      val device = event.device ?: return false
+      return event.deviceId > 0 &&
+        !device.isVirtual &&
         (event.source and InputDevice.SOURCE_KEYBOARD) == InputDevice.SOURCE_KEYBOARD &&
-        event.device?.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC
+        device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC
+    }
 
     private const val EVENT = "AimuxNativeCommand"
 

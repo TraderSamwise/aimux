@@ -119,11 +119,23 @@ describe("composer send key, across surfaces", () => {
     }
   });
 
+  it("asks and answers with the same idea of a keyboard on Android", () => {
+    // `KEYBOARD_12KEY` would pass a `!= KEYBOARD_NOKEYS` query while failing
+    // the event's `KEYBOARD_TYPE_ALPHABETIC`, so JS would call it a hardware
+    // keyboard and Enter would never send.
+    expect(KOTLIN_SOURCE).toContain("Configuration.KEYBOARD_QWERTY");
+    expect(KOTLIN_SOURCE).not.toContain("KEYBOARD_NOKEYS");
+  });
+
   it("needs a real key on Android, because only the event knows", () => {
     // An IME injects as `VIRTUAL_KEYBOARD` (-1) and the built-in keypad is 0,
     // so this is the gate a soft keyboard cannot pass -- Android's equivalent
     // of iOS only ever seeing a `UIKey`.
     expect(KOTLIN_SOURCE).toContain("event.deviceId > 0");
+    expect(KOTLIN_SOURCE).toContain("!device.isVirtual");
+    // Android repeats a held key as more ACTION_DOWNs where iOS fires once, so
+    // without this one held Enter sends a message per repeat.
+    expect(KOTLIN_SOURCE).toContain("event.repeatCount == 0");
     expect(KOTLIN_SOURCE).toContain("InputDevice.KEYBOARD_TYPE_ALPHABETIC");
     expect(KOTLIN_SOURCE).toContain("InputDevice.SOURCE_KEYBOARD");
   });
