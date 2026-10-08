@@ -65,4 +65,13 @@ describe("hardware keyboard", () => {
     expect(softKeyboardOccludes(900 - SOFT_KEYBOARD_MIN_OCCLUSION_PX, 900)).toBe(true);
     expect(softKeyboardOccludes(560, 900)).toBe(true);
   });
+
+  it("is not fooled by a rotation or a smaller window", () => {
+    // Both viewports change together, so there is no gap to mistake for a
+    // keyboard. Measuring against the tallest height seen instead would have
+    // read every landscape rotation, and every desktop window dragged
+    // shorter, as a keyboard that never went away.
+    expect(softKeyboardOccludes(400, 400)).toBe(false);
+    expect(softKeyboardOccludes(300, 300)).toBe(false);
+  });
 });

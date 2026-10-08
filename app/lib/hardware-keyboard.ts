@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Platform } from "react-native";
 
 import {
@@ -34,12 +34,15 @@ export function hasHardwareKeyboard(signal: HardwareKeyboardSignal): boolean {
   return signal.finePointerWithHover;
 }
 
-/// How much of the window something is covering, against the tallest the
-/// viewport has been. The tallest stands in for "nothing covering it", because
-/// whether a soft keyboard also shrinks the layout viewport is the browser's
-/// choice and not one this app pins.
-export function softKeyboardOccludes(viewportHeight: number, unoccludedHeight: number): boolean {
-  return unoccludedHeight - viewportHeight >= SOFT_KEYBOARD_MIN_OCCLUSION_PX;
+/// How much of the layout viewport the visual viewport is not showing.
+///
+/// A soft keyboard shrinks the visual viewport and leaves the layout viewport
+/// alone, so the gap between them is the keyboard. Measuring against the
+/// tallest the viewport had been instead would survive no rotation and no
+/// window resize: shrinking a desktop window past the threshold would read as
+/// a keyboard forever.
+export function softKeyboardOccludes(viewportHeight: number, layoutHeight: number): boolean {
+  return layoutHeight - viewportHeight >= SOFT_KEYBOARD_MIN_OCCLUSION_PX;
 }
 
 function finePointerQuery(): MediaQueryList | undefined {
@@ -47,24 +50,19 @@ function finePointerQuery(): MediaQueryList | undefined {
   return window.matchMedia?.(FINE_POINTER_QUERY);
 }
 
-function finePointerWithHover(): boolean {
-  return Boolean(finePointerQuery()?.matches);
-}
-
 export function useHasHardwareKeyboard(): boolean {
-  const [connected, setConnected] = useState(() => Platform.OS === "web" && finePointerWithHover());
-  const unoccludedHeight = useRef(0);
+  // Nothing is known before the first measurement, and an unknown must take
+  // the soft-keyboard path: starting false costs a desktop a newline on an
+  // Enter pressed before the effect runs, where starting true would send on a
+  // phone and eat the line break.
+  const [connected, setConnected] = useState(false);
 
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
     const viewport = window.visualViewport;
     const query = finePointerQuery();
     const apply = () => {
-      let occludes: boolean | null = null;
-      if (viewport) {
-        unoccludedHeight.current = Math.max(unoccludedHeight.current, viewport.height);
-        occludes = softKeyboardOccludes(viewport.height, unoccludedHeight.current);
-      }
+      const occludes = viewport ? softKeyboardOccludes(viewport.height, window.innerHeight) : null;
       setConnected(
         hasHardwareKeyboard({
           platform: "web",
@@ -74,10 +72,14 @@ export function useHasHardwareKeyboard(): boolean {
       );
     };
     apply();
+    // iOS Safari offsets the visual viewport for the keyboard as well as
+    // resizing it, and does not always report both.
     viewport?.addEventListener("resize", apply);
+    viewport?.addEventListener("scroll", apply);
     query?.addEventListener?.("change", apply);
     return () => {
       viewport?.removeEventListener("resize", apply);
+      viewport?.removeEventListener("scroll", apply);
       query?.removeEventListener?.("change", apply);
     };
   }, []);
