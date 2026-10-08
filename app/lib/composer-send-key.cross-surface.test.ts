@@ -27,7 +27,10 @@ const SWIFT_SOURCE = readFileSync(
   join(__dirname, "..", "plugins", "ios", "AimuxNativeCommands.swift"),
   "utf8",
 );
-const HTML_ROOT_SOURCE = readFileSync(join(__dirname, "..", "app", "+html.tsx"), "utf8");
+/// `output: "single"` builds `index.html` from this template, which is the only
+/// place a viewport declaration is honoured: `+html.tsx` is for
+/// `output: "static"` and is ignored here, silently.
+const HTML_TEMPLATE = readFileSync(join(__dirname, "..", "public", "index.html"), "utf8");
 const SCREEN_SOURCE = readFileSync(
   join(__dirname, "..", "components", "screens", "AgentChatScreen.tsx"),
   "utf8",
@@ -102,12 +105,15 @@ describe("composer send key, across surfaces", () => {
     // Which viewport a browser shrinks for a soft keyboard has been the UA's
     // choice. The measurement reads the gap between the two, so a browser that
     // shrinks both leaves none and Enter would send on glass.
-    // Read the declared value, not the file: the first version of this passed
-    // on the phrase appearing in the comment explaining it.
-    const declared = HTML_ROOT_SOURCE.match(/VIEWPORT_CONTENT =\s*"([^"]*)"/);
-    expect(declared, "the HTML root must declare one viewport string").toBeTruthy();
-    expect(declared![1]).toContain("interactive-widget=resizes-visual");
-    expect(HTML_ROOT_SOURCE).toContain("content={VIEWPORT_CONTENT}");
+    // Read the meta tag's own content, not the file: the first version of this
+    // passed on the phrase appearing in the comment explaining it.
+    const meta = HTML_TEMPLATE.match(/name="viewport"\s*content="([^"]*)"/);
+    expect(meta, "the template must carry one viewport meta").toBeTruthy();
+    expect(meta![1]).toContain("interactive-widget=resizes-visual");
+    // The placeholders Expo substitutes, so the template cannot drift into one
+    // that drops the title or the language.
+    expect(HTML_TEMPLATE).toContain("%WEB_TITLE%");
+    expect(HTML_TEMPLATE).toContain("%LANG_ISO_CODE%");
   });
 
   it("delivers every command the native side emits", () => {
