@@ -41,6 +41,10 @@ export function hasHardwareKeyboard(signal: HardwareKeyboardSignal): boolean {
 /// tallest the viewport had been instead would survive no rotation and no
 /// window resize: shrinking a desktop window past the threshold would read as
 /// a keyboard forever.
+///
+/// It cannot see a floating or split on-screen keyboard, which overlays the
+/// page and takes nothing from it. `shouldSubmitComposerKey` catches those
+/// from the event's empty `code` instead.
 export function softKeyboardOccludes(viewportHeight: number, layoutHeight: number): boolean {
   return layoutHeight - viewportHeight >= SOFT_KEYBOARD_MIN_OCCLUSION_PX;
 }
@@ -62,7 +66,11 @@ export function useHasHardwareKeyboard(): boolean {
     const viewport = window.visualViewport;
     const query = finePointerQuery();
     const apply = () => {
-      const occludes = viewport ? softKeyboardOccludes(viewport.height, window.innerHeight) : null;
+      // Scaled because a pinch zoom shrinks the visual viewport with nothing
+      // covering it, and that gap is not a keyboard.
+      const occludes = viewport
+        ? softKeyboardOccludes(viewport.height * viewport.scale, window.innerHeight)
+        : null;
       setConnected(
         hasHardwareKeyboard({
           platform: "web",

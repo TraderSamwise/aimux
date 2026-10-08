@@ -24,6 +24,18 @@ describe("composer protocol", () => {
     expect(shouldSubmitComposerKey({ key: "a" }, true)).toBe(false);
   });
 
+  it("refuses a key that does not physically exist", () => {
+    // A floating or split on-screen keyboard overlays the page instead of
+    // taking a bite out of the viewport, so no measurement can see it. The
+    // event can: `code` names the physical key, and there is not one.
+    expect(shouldSubmitComposerKey({ key: "Enter", code: "" }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", code: "Enter" }, true)).toBe(true);
+    expect(shouldSubmitComposerKey({ key: "Enter", code: "NumpadEnter" }, true)).toBe(true);
+    // A browser that does not report it has said nothing, which is not
+    // evidence that no key was pressed.
+    expect(shouldSubmitComposerKey({ key: "Enter" }, true)).toBe(true);
+  });
+
   it("never sends on Enter without a hardware keyboard", () => {
     // A soft keyboard's return key is the newline key, and the send control is
     // the only send. Sending here swallowed the line break mid-sentence.

@@ -1,5 +1,7 @@
 export interface ComposerKeyEventLike {
   key?: string;
+  /// The physical key, which a virtual keyboard does not have.
+  code?: string;
   shiftKey?: boolean;
   ctrlKey?: boolean;
   metaKey?: boolean;
@@ -46,11 +48,18 @@ export function normalizeComposerDraft(draft: string): string | null {
 /// Enter sends only from a hardware keyboard, where Shift+Enter is the newline.
 /// A soft keyboard's return key IS the newline key, so there Enter never sends
 /// and the send control is the only way out.
+///
+/// `code` names the physical key that was pressed, so an empty one is a key
+/// that does not physically exist. That catches the on-screen keyboards no
+/// measurement can see -- the floating and split ones, which overlay the page
+/// instead of taking a bite out of it. Absent rather than empty is a browser
+/// that does not report it, which is not evidence either way.
 export function shouldSubmitComposerKey(
   event: ComposerKeyEventLike,
   hasHardwareKeyboard: boolean,
 ): boolean {
   if (!hasHardwareKeyboard) return false;
+  if (event.code === "") return false;
   return (
     event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
   );

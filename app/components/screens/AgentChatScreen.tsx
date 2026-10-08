@@ -1623,12 +1623,14 @@ export default function ChatScreen() {
   const handleComposerKeyboardEvent = useCallback(
     (event: {
       key?: string;
+      code?: string;
       shiftKey?: boolean;
       ctrlKey?: boolean;
       metaKey?: boolean;
       altKey?: boolean;
       nativeEvent?: {
         key?: string;
+        code?: string;
         shiftKey?: boolean;
         ctrlKey?: boolean;
         metaKey?: boolean;
@@ -1639,6 +1641,7 @@ export default function ChatScreen() {
       if (Platform.OS !== "web") return;
       const keyEvent = {
         key: event.nativeEvent?.key ?? event.key,
+        code: event.nativeEvent?.code ?? event.code,
         shiftKey: event.nativeEvent?.shiftKey ?? event.shiftKey,
         ctrlKey: event.nativeEvent?.ctrlKey ?? event.ctrlKey,
         metaKey: event.nativeEvent?.metaKey ?? event.metaKey,
