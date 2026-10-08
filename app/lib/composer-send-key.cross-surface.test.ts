@@ -58,24 +58,20 @@ function withoutComments(source: string): string {
     .join("\n");
 }
 
-/// The body of Kotlin's send rule, so an assertion cannot be satisfied by the
-/// prose above it. `hasNoModifiers()` appears in both.
-function kotlinSendRule(): string {
-  const start = KOTLIN_SOURCE.indexOf("fun isSendKeyEvent(");
-  expect(start, "Kotlin must still have a send rule").toBeGreaterThan(0);
-  const end = KOTLIN_SOURCE.indexOf("\n\n", start);
-  expect(end).toBeGreaterThan(start);
+/// One Kotlin declaration's code, so an assertion cannot be satisfied by the
+/// prose above it -- `hasNoModifiers()` appears in both.
+function kotlinRule(declaration: string): string {
+  const start = KOTLIN_SOURCE.indexOf(declaration);
+  expect(start, `Kotlin must still declare ${declaration}`).toBeGreaterThan(0);
+  const blank = KOTLIN_SOURCE.indexOf("\n\n", start);
+  const brace = KOTLIN_SOURCE.indexOf("\n    }", start);
+  const end = Math.min(...[blank, brace].filter((at) => at > start));
+  expect(Number.isFinite(end)).toBe(true);
   return withoutComments(KOTLIN_SOURCE.slice(start, end));
 }
 
-/// The body of Kotlin's hardware-identity check, for the same reason.
-function kotlinIdentityRule(): string {
-  const start = KOTLIN_SOURCE.indexOf("private fun isHardwareKeyboardEvent(");
-  expect(start, "Kotlin must still have an identity check").toBeGreaterThan(0);
-  const end = KOTLIN_SOURCE.indexOf("\n    }", start);
-  expect(end).toBeGreaterThan(start);
-  return withoutComments(KOTLIN_SOURCE.slice(start, end));
-}
+const kotlinSendRule = () => kotlinRule("fun isSendKeyEvent(");
+const kotlinIdentityRule = () => kotlinRule("private fun isHardwareKeyboardEvent(");
 
 function iosDisallowedModifiers(): string {
   const match = SWIFT_SOURCE.match(/let disallowedModifiers: UIKeyModifierFlags = \[([^\]]*)\]/);
@@ -154,7 +150,9 @@ describe("composer send key, across surfaces", () => {
     // `KEYBOARD_12KEY` would pass a `!= KEYBOARD_NOKEYS` query while failing
     // the event's `KEYBOARD_TYPE_ALPHABETIC`, so JS would call it a hardware
     // keyboard and Enter would never send.
-    expect(KOTLIN_SOURCE).toContain("Configuration.KEYBOARD_QWERTY");
+    const query = kotlinRule("fun isHardwareKeyboardConnected(");
+    expect(query).toContain("Configuration.KEYBOARD_QWERTY");
+    expect(query).toContain("Configuration.HARDKEYBOARDHIDDEN_NO");
     expect(KOTLIN_SOURCE).not.toContain("KEYBOARD_NOKEYS");
   });
 
@@ -169,7 +167,14 @@ describe("composer send key, across surfaces", () => {
     expect(identity).toContain("InputDevice.SOURCE_KEYBOARD");
     // Android repeats a held key as more ACTION_DOWNs where iOS fires once, so
     // without this one held Enter sends a message per repeat.
-    expect(kotlinSendRule()).toContain("event.repeatCount == 0");
+    const rule = kotlinSendRule();
+    expect(rule).toContain("event.repeatCount == 0");
+    // Without this the UP matches too and one press sends twice -- the same
+    // failure `repeatCount` guards, from the other direction.
+    expect(rule).toContain("event.action == KeyEvent.ACTION_DOWN");
+    const returnKeys = kotlinRule("private fun isReturnKeyCode(");
+    expect(returnKeys).toContain("KeyEvent.KEYCODE_ENTER");
+    expect(returnKeys).toContain("KeyEvent.KEYCODE_NUMPAD_ENTER");
   });
 
   it("declares the viewport the web measurement depends on", () => {
@@ -192,13 +197,17 @@ describe("composer send key, across surfaces", () => {
     // emits that is missing from it is dropped in silence -- the
     // keyboard-connect notice would never arrive and the answer would stay
     // stale.
-    const emitted = [
-      ...SWIFT_SOURCE.matchAll(/emit\("([a-zA-Z]+)"\)/g),
-      ...KOTLIN_SOURCE.matchAll(/val COMMAND_[A-Z_]+ = "([a-zA-Z]+)"/g),
-    ].map((match) => match[1]);
-    expect(emitted.length).toBeGreaterThan(0);
-    for (const command of emitted) {
-      expect(NATIVE_APP_COMMANDS as readonly string[]).toContain(command);
+    // Each arm separately: a combined count is satisfied by the other one, so
+    // renaming the Kotlin constants would have contributed zero in silence.
+    const perSurface = {
+      ios: [...SWIFT_SOURCE.matchAll(/emit\("([a-zA-Z]+)"\)/g)].map((m) => m[1]),
+      android: [...KOTLIN_SOURCE.matchAll(/val COMMAND_[A-Z_]+ = "([a-zA-Z]+)"/g)].map((m) => m[1]),
+    };
+    for (const [surface, commands] of Object.entries(perSurface)) {
+      expect(commands.length, `${surface} must emit at least one command`).toBeGreaterThan(0);
+      for (const command of commands) {
+        expect(NATIVE_APP_COMMANDS as readonly string[], surface).toContain(command);
+      }
     }
   });
 

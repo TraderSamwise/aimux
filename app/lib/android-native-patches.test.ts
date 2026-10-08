@@ -7,7 +7,9 @@ const { patchKeyDispatch, patchPackageRegistration } = plugin as {
   patchPackageRegistration: (contents: string) => string;
 };
 
-/// The anchors Expo's own templates carry, which is what these patch.
+/// Approximations of the anchors Expo's templates carry. These fixtures pin the
+/// PATCHES, not the anchors: `yarn verify:android-native` prebuilds for real and
+/// the patches throw when an anchor moves, which is what pins those.
 const MAIN_ACTIVITY = `package app.aimux.mobile
 
 import com.facebook.react.ReactActivity

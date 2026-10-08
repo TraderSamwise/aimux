@@ -16,7 +16,11 @@ export type HardwareKeyboardSignal =
   | { platform: "web"; softKeyboardOccludes: boolean | null }
   | { platform: "native"; nativeConnected: boolean };
 
-/// Whether keys are arriving from a real keyboard rather than a glass one.
+/// Whether a hardware keyboard is attached.
+///
+/// Only web decides Enter from this. Both native platforms decide per event,
+/// from the device the key came from, and read this for the composer auto-focus
+/// -- so a wrong answer there costs a focus, never a swallowed line break.
 ///
 /// Native platforms are asked. The web cannot be asked, so it is measured: a
 /// keyboard occupying part of the window is a keyboard whatever the device
@@ -73,8 +77,9 @@ export function useHasHardwareKeyboard(): boolean {
     if (Platform.OS === "web") return;
     let active = true;
     // Both native platforms can be asked, each by its own identity check:
-    // `GCKeyboard` on iOS, `Configuration.hardKeyboardHidden` on Android. Only
-    // web has to measure, because only web cannot ask.
+    // `GCKeyboard` on iOS, `Configuration` on Android -- where this and the
+    // per-event check are two reads of one fact, aligned by QWERTY matching
+    // alphabetic. Only web has to measure, because only web cannot ask.
     const refresh = () => {
       void getNativeHardwareKeyboardConnected().then((nativeConnected) => {
         if (active) setConnected(hasHardwareKeyboard({ platform: "native", nativeConnected }));
