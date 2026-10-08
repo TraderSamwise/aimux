@@ -55,7 +55,10 @@ export async function getNativeHardwareKeyboardConnected(): Promise<boolean> {
   if (!module?.getHardwareKeyboardConnected) return false;
   try {
     return (await module.getHardwareKeyboardConnected()) === true;
-  } catch {
+  } catch (error) {
+    // Could not ask is not the same answer as no keyboard, and this one gates
+    // whether Enter sends. The caller still takes the soft-keyboard path.
+    console.warn("hardware keyboard query failed:", error);
     return false;
   }
 }

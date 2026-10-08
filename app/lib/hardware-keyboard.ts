@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Keyboard, Platform } from "react-native";
+import { Platform } from "react-native";
 
 import { getNativeHardwareKeyboardConnected } from "./native-app-commands";
 
@@ -43,9 +43,14 @@ function finePointerQuery(): MediaQueryList | undefined {
 
 /// Whether keys are arriving from a real keyboard rather than a glass one.
 ///
-/// `composerFocused` is only read on Android, where the inference needs to know
-/// that something asked for a keyboard and none came up.
-export function useHasHardwareKeyboard(composerFocused: boolean): boolean {
+/// `softKeyboardVisible` is the screen's own `useKeyboardVisible` value rather
+/// than a second subscription to the same events: on iOS a change to it is when
+/// a keyboard has been attached or detached, and on Android its absence while
+/// the composer holds focus is the only evidence available.
+export function useHasHardwareKeyboard(
+  composerFocused: boolean,
+  softKeyboardVisible: boolean,
+): boolean {
   const [connected, setConnected] = useState(
     () => Platform.OS === "web" && Boolean(finePointerQuery()?.matches),
   );
@@ -64,24 +69,13 @@ export function useHasHardwareKeyboard(composerFocused: boolean): boolean {
   useEffect(() => {
     if (Platform.OS !== "ios") return;
     let active = true;
-    const refresh = () => {
-      void getNativeHardwareKeyboardConnected().then((nativeConnected) => {
-        if (active) setConnected(hasHardwareKeyboard({ platform: "ios", nativeConnected }));
-      });
-    };
-    refresh();
-    // `keyboardWillChangeFrame` is the one event that reports a keyboard
-    // attaching or detaching mid-session, the same reason `useKeyboardHeight`
-    // listens to it rather than to `keyboardWillShow`.
-    const subscriptions = [
-      Keyboard.addListener("keyboardWillChangeFrame", refresh),
-      Keyboard.addListener("keyboardWillHide", refresh),
-    ];
+    void getNativeHardwareKeyboardConnected().then((nativeConnected) => {
+      if (active) setConnected(hasHardwareKeyboard({ platform: "ios", nativeConnected }));
+    });
     return () => {
       active = false;
-      for (const subscription of subscriptions) subscription.remove();
     };
-  }, []);
+  }, [softKeyboardVisible]);
 
   useEffect(() => {
     if (Platform.OS !== "android" || !composerFocused) return;
@@ -92,7 +86,7 @@ export function useHasHardwareKeyboard(composerFocused: boolean): boolean {
           platform: "android",
           composerFocused: true,
           settled,
-          softKeyboardVisible: Keyboard.isVisible(),
+          softKeyboardVisible,
         }),
       );
     // Unsettled reads as a soft keyboard, so the input keeps its newline
@@ -101,18 +95,13 @@ export function useHasHardwareKeyboard(composerFocused: boolean): boolean {
       settled = true;
       apply();
     }, SOFT_KEYBOARD_SETTLE_MS);
-    const subscriptions = [
-      Keyboard.addListener("keyboardDidShow", apply),
-      Keyboard.addListener("keyboardDidHide", apply),
-    ];
     return () => {
       clearTimeout(timer);
-      for (const subscription of subscriptions) subscription.remove();
       // Losing focus discards the inference, so the next focus settles again
       // instead of starting from the last answer.
       setConnected(false);
     };
-  }, [composerFocused]);
+  }, [composerFocused, softKeyboardVisible]);
 
   return connected;
 }

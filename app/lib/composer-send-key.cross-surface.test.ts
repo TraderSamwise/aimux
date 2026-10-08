@@ -1,0 +1,88 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+import { shouldSubmitComposerKey } from "@/lib/composer-protocol";
+
+// AGENTS.md "One Answer, Many Surfaces". Three surfaces decide whether Enter
+// sends, and only one of them is reachable from a unit test: web calls
+// `shouldSubmitComposerKey`, iOS matches modifier flags in Swift, Android hands
+// the decision to the platform's editor action. On 2026-09-13 `7adb41638`
+// changed the TS rule, the Swift modifier set AND the assertion that guarded
+// them, in one commit, and Shift+Enter became a second send key on every
+// surface at once. A per-surface test could not have caught that; this compares
+// them to each other.
+
+const SWIFT_SOURCE = readFileSync(
+  join(__dirname, "..", "plugins", "ios", "AimuxNativeCommands.swift"),
+  "utf8",
+);
+const SCREEN_SOURCE = readFileSync(
+  join(__dirname, "..", "components", "screens", "AgentChatScreen.tsx"),
+  "utf8",
+);
+
+/// Each modifier, in the spelling the web event uses and the spelling iOS uses
+/// for the same physical key.
+const MODIFIERS = [
+  { swift: ".shift", web: "shiftKey" as const },
+  { swift: ".command", web: "metaKey" as const },
+  { swift: ".alternate", web: "altKey" as const },
+  { swift: ".control", web: "ctrlKey" as const },
+];
+
+function iosDisallowedModifiers(): string {
+  const match = SWIFT_SOURCE.match(/let disallowedModifiers: UIKeyModifierFlags = \[([^\]]*)\]/);
+  expect(match, "iOS must still refuse a return key by a list of modifiers").toBeTruthy();
+  return match![1];
+}
+
+describe("composer send key, across surfaces", () => {
+  it("refuses the same modified Enter on web and on iOS", () => {
+    const disallowed = iosDisallowedModifiers();
+    for (const modifier of MODIFIERS) {
+      expect(
+        shouldSubmitComposerKey({ key: "Enter", [modifier.web]: true }, true),
+        `web must not send on ${modifier.web}+Enter`,
+      ).toBe(false);
+      expect(
+        disallowed.includes(modifier.swift),
+        `iOS must not send on ${modifier.swift}+Enter, so ${modifier.swift} belongs in disallowedModifiers`,
+      ).toBe(true);
+    }
+  });
+
+  it("sends an unmodified Enter on web and on iOS", () => {
+    expect(shouldSubmitComposerKey({ key: "Enter" }, true)).toBe(true);
+    // A denylist, so a flag nobody listed -- caps lock, the numeric pad -- is
+    // not silently turned into a refusal to send.
+    expect(SWIFT_SOURCE).toContain("key.modifierFlags.intersection(disallowedModifiers).isEmpty");
+  });
+
+  it("needs no keyboard detection on iOS, because only a real key arrives", () => {
+    // `pressesBegan`/`sendEvent` see `UIPressesEvent` only from a hardware
+    // keyboard; a soft return reaches the text view as text instead. That is
+    // why the iOS half carries no hardware check and must not grow one.
+    expect(SWIFT_SOURCE).toContain("if let pressesEvent = event as? UIPressesEvent,");
+    expect(SWIFT_SOURCE).toContain("isSendReturnKey(key)");
+  });
+
+  it("gates web and Android on the one hardware answer", () => {
+    expect(SCREEN_SOURCE).toContain("shouldSubmitComposerKey(keyEvent, hasHardwareKeyboard)");
+    // Android's editor action replaces the newline, so it may only be armed
+    // once a hardware keyboard is known.
+    const androidBranch = SCREEN_SOURCE.slice(
+      SCREEN_SOURCE.indexOf('if (Platform.OS === "android"'),
+    ).slice(0, 320);
+    expect(androidBranch).toContain("hasHardwareKeyboard");
+    expect(androidBranch).toContain('submitBehavior: "submit"');
+  });
+
+  it("asks one source for the hardware answer", () => {
+    // Two callers asking the native bridge separately is how the auto-focus
+    // and the send rule came to disagree on Android, where no such module
+    // exists and the one-shot answered false forever.
+    expect(SCREEN_SOURCE).not.toContain("getNativeHardwareKeyboardConnected");
+    expect(SCREEN_SOURCE).toContain("useHasHardwareKeyboard(composerFocused, keyboardVisible)");
+  });
+});

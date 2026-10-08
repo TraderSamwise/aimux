@@ -175,7 +175,6 @@ import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
 import {
-  getNativeHardwareKeyboardConnected,
   setNativeChatComposerFocused,
   subscribeNativeAppCommands,
 } from "@/lib/native-app-commands";
@@ -536,7 +535,7 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
-  const hasHardwareKeyboard = useHasHardwareKeyboard(composerFocused);
+  const hasHardwareKeyboard = useHasHardwareKeyboard(composerFocused, keyboardVisible);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
     projectPath: string;
@@ -1590,20 +1589,16 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS === "web" || !sessionId) return undefined;
+      if (!hasHardwareKeyboard || !chatViewportKey) return undefined;
       let active = true;
-      let task: { cancel: () => void } | null = null;
-      const focusTargetKey = chatViewportKey;
-      void getNativeHardwareKeyboardConnected().then((connected) => {
-        if (!active || !connected || !focusTargetKey) return;
-        task = InteractionManager.runAfterInteractions(() => {
-          if (active) composerInputRef.current?.focus();
-        });
+      const task = InteractionManager.runAfterInteractions(() => {
+        if (active) composerInputRef.current?.focus();
       });
       return () => {
         active = false;
-        task?.cancel();
+        task.cancel();
       };
-    }, [chatViewportKey, sessionId]),
+    }, [chatViewportKey, hasHardwareKeyboard, sessionId]),
   );
 
   useFocusEffect(
