@@ -105,8 +105,25 @@ class AimuxNativeCommandsModule(
     /// The mirror of Swift's `command(for:)`: the whole decision, including the
     /// composer-focus check, so no caller can make half of it. Null means the
     /// key is not ours and must fall through to the text view.
+    ///
+    /// Escape is NOT gated on focus, matching iOS, where it is also a window
+    /// key command and an Edit-menu item -- an app-level accelerator rather
+    /// than a composer one. The JS side decides whether an interrupt is allowed.
     fun commandForKeyEvent(event: KeyEvent): String? =
-      if (isChatComposerFocused && isSendKeyEvent(event)) COMMAND_CHAT_SEND else null
+      when {
+        isInterruptKeyEvent(event) -> COMMAND_CHAT_INTERRUPT
+        isChatComposerFocused && isSendKeyEvent(event) -> COMMAND_CHAT_SEND
+        else -> null
+      }
+
+    /// The same hardware-key requirements the send rule applies: a soft
+    /// keyboard's Escape, if an IME ever sent one, is not a key press.
+    fun isInterruptKeyEvent(event: KeyEvent): Boolean =
+      event.action == KeyEvent.ACTION_DOWN &&
+        event.repeatCount == 0 &&
+        event.keyCode == KeyEvent.KEYCODE_ESCAPE &&
+        event.hasNoModifiers() &&
+        isHardwareKeyboardEvent(event)
 
     /// The mirror of Swift's `isSendReturnKey`. `hasNoModifiers()` is the same
     /// predicate AOSP's `TextView.doKeyDown` uses to raise the editor action,
@@ -139,6 +156,7 @@ class AimuxNativeCommandsModule(
     /// Must stay in `NATIVE_APP_COMMANDS` in `lib/native-app-commands.ts`,
     /// which is an allowlist: a command missing from it is dropped in silence.
     private const val COMMAND_CHAT_SEND = "chatSend"
+    private const val COMMAND_CHAT_INTERRUPT = "chatInterrupt"
     private const val COMMAND_HARDWARE_KEYBOARD_CHANGED = "hardwareKeyboardChanged"
   }
 }
