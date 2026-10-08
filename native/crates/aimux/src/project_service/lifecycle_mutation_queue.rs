@@ -28,7 +28,21 @@ const DEFAULT_QUEUE_LIMIT: usize = 32;
 /// enough queue of legitimate mutations reaches this bound too -- which is why
 /// the refusal reports what it waited behind and how deep the queue was,
 /// rather than declaring the holder dead.
-const WAIT_FOR_TURN_TIMEOUT: Duration = Duration::from_millis(150_000);
+/// Derived so the refusal ARRIVES. It used to be 150s against a 120s client
+/// budget, so every caller gave up first and the message naming what it waited
+/// behind was never read by anyone -- the one thing this bound exists to say.
+/// The margin is for the answer to travel back.
+const WAIT_FOR_TURN_TIMEOUT: Duration =
+    Duration::from_millis(QUEUED_LIFECYCLE_TIMEOUT_MS - WAIT_FOR_TURN_ANSWER_MARGIN_MS);
+
+/// Room between giving up on the queue and the caller giving up on the request.
+const WAIT_FOR_TURN_ANSWER_MARGIN_MS: u64 = 30_000;
+
+/// The wait this queue will impose, for a gate that has to compare it with
+/// what clients allow.
+pub fn wait_for_turn_timeout_ms() -> u64 {
+    WAIT_FOR_TURN_TIMEOUT.as_millis() as u64
+}
 
 /// What a caller has to be willing to wait for a queued mutation.
 ///

@@ -128,6 +128,21 @@ fn the_cli_budget_is_not_a_fourth_copy() {
     );
 }
 
+/// The queue has to answer before the caller stops listening, or the refusal
+/// that names what it waited behind and how deep the queue was is written for
+/// nobody and the user sees a bare client timeout instead.
+#[test]
+fn the_queue_gives_up_before_the_caller_does() {
+    let budgets = fixture_budgets();
+    let shortest = budgets.values().copied().min().expect("a budget");
+    let wait = aimux::project_service::lifecycle_mutation_queue::wait_for_turn_timeout_ms();
+    assert!(
+        wait < shortest,
+        "the queue waits {wait}ms but the shortest client budget is {shortest}ms, \
+         so its refusal would never be read"
+    );
+}
+
 /// The routes that do filesystem work must get MORE than the default, not the
 /// same. Flattening them is how the app came to give a worktree create 120s
 /// while the dashboard gave it 180s.
