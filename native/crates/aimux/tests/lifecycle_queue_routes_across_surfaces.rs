@@ -20,6 +20,8 @@ const FIXTURE: &str =
     include_str!("../../../../testdata/contracts/v1/lifecycle-queue/queued-routes.json");
 const CONTRACT_SOURCE: &str = include_str!("../src/project_api_contract.rs");
 const DAEMON_JSON_SOURCE: &str = include_str!("../src/daemon/json.rs");
+const DAEMON_RELAY_SOURCE: &str = include_str!("../src/remote/daemon_relay.rs");
+const CLI_WORKTREES_SOURCE: &str = include_str!("../src/daemon/text/worktrees.rs");
 
 fn fixture_budgets() -> BTreeMap<String, u64> {
     let parsed: Value = serde_json::from_str(FIXTURE).expect("fixture is json");
@@ -91,6 +93,39 @@ fn every_reader_is_told_the_same_budget_per_route() {
         })
         .collect();
     assert_eq!(from_code, fixture_budgets());
+}
+
+/// Four hops carry a relayed mutation -- app, relay transport, daemon relay
+/// bridge, daemon proxy -- and the shortest one decides. The relay bridge
+/// answers 502 when it gives up, so a flat 30s there made the other three
+/// budgets irrelevant for a phone.
+#[test]
+fn the_relay_bridge_asks_per_route_too() {
+    assert!(
+        DAEMON_RELAY_SOURCE.contains("fn relay_request_timeout(path: &str) -> Duration"),
+        "the relay bridge must derive its budget from the route"
+    );
+    assert!(
+        DAEMON_RELAY_SOURCE.contains("let request_timeout = relay_request_timeout(path);"),
+        "the relay bridge must use it"
+    );
+    assert!(
+        !DAEMON_RELAY_SOURCE.contains("let deadline = Instant::now() + REQUEST_TIMEOUT;"),
+        "the relay bridge still deadlines on the flat control-traffic budget"
+    );
+}
+
+/// And the CLI reads the same number rather than keeping a fourth copy.
+#[test]
+fn the_cli_budget_is_not_a_fourth_copy() {
+    assert!(
+        CLI_WORKTREES_SOURCE.contains("QUEUED_LIFECYCLE_TIMEOUT_MS"),
+        "CLI_PROJECT_MUTATION_TIMEOUT_MS must derive from the queue's constant"
+    );
+    assert!(
+        !CLI_WORKTREES_SOURCE.contains("CLI_PROJECT_MUTATION_TIMEOUT_MS: u64 = 120_000;"),
+        "the CLI still carries its own literal"
+    );
 }
 
 /// The routes that do filesystem work must get MORE than the default, not the

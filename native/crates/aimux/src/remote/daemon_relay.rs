@@ -22,9 +22,12 @@ use tokio::net::TcpStream;
 use tokio::time::Instant;
 
 use crate::async_runtime::{spawn_blocking_named, task_name};
+use crate::daemon::routing::DaemonRouteUrl;
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
 use crate::machine_identity::MachineIdentity;
+use crate::project_service::lifecycle_mutation_queue::queued_lifecycle_timeout_ms;
+use crate::proxy_project_binding::parse_proxy_target;
 use crate::remote::relay_client::{project_event_frame, split_sse_frames};
 use crate::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem,
@@ -34,6 +37,17 @@ use crate::remote::websocket::{BoxFuture, TokioTungsteniteConnector};
 use crate::request_actor::RELAY_FORWARDED_HEADER;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A relayed lifecycle mutation needs the budget its queue will impose, not the
+/// control-traffic default. This hop answers 502 when it gives up, so a phone
+/// could never wait out a spawn however long the app and the proxy allowed.
+fn relay_request_timeout(path: &str) -> Duration {
+    let pathname = DaemonRouteUrl::parse(path).pathname().to_owned();
+    parse_proxy_target(&pathname)
+        .and_then(|proxy| queued_lifecycle_timeout_ms(&proxy.sub_path))
+        .map(Duration::from_millis)
+        .unwrap_or(REQUEST_TIMEOUT)
+}
 /// Relay request/response traffic is control JSON, not attachment bytes or bulk
 /// terminal history. Four MiB leaves room for large project lists and tails while
 /// refusing a relay-triggered bulk read into daemon memory.
@@ -253,7 +267,8 @@ impl DaemonRelayBridge for LoopbackRelayBridge {
         Box::pin(async move {
             let payload = (!body.is_null()).then(|| body.to_string());
             let port = self.port.clone();
-            let deadline = Instant::now() + REQUEST_TIMEOUT;
+            let request_timeout = relay_request_timeout(path);
+            let deadline = Instant::now() + request_timeout;
             let result = async {
                 let mut stream = tokio::time::timeout_at(
                     deadline,
@@ -271,7 +286,7 @@ impl DaemonRelayBridge for LoopbackRelayBridge {
                         body: payload.as_deref(),
                         port: &port,
                     },
-                    REQUEST_TIMEOUT,
+                    request_timeout,
                     deadline,
                 )
                 .await

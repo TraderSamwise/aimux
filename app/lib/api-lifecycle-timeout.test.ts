@@ -85,7 +85,14 @@ describe("the app waits as long as the lifecycle queue will make it wait", () =>
       source.indexOf("function projectProxyPath"),
     );
     expect(chokePoint).toContain("withQueuedLifecycleTimeout(path, opts)");
+    // Both branches must receive the decided opts. The relay branch was pinned
+    // by name; the direct branch was pinned by nothing, so swapping its third
+    // argument back to `opts` passed every assertion here.
     expect(chokePoint).not.toContain("callServiceViaRelay<T>(endpoint, method, path, opts, body)");
+    expect(chokePoint).toContain("callServiceViaRelay<T>(endpoint, method, path, timed, body)");
+    const directBranch = chokePoint.slice(chokePoint.indexOf("return callJson<T>("));
+    expect(directBranch).toContain("timed,");
+    expect(directBranch).not.toMatch(/\n {4}opts,\n/);
   });
 
   it("gives a queued route the queue's budget and leaves a read alone", () => {
