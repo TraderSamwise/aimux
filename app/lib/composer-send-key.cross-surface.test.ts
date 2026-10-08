@@ -1,8 +1,18 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The command allowlist is a plain array, but it lives beside the bridge, and
+// react-native itself will not parse here. Same shape as
+// `native-app-commands.test.ts`.
+vi.mock("react-native", () => ({
+  NativeEventEmitter: class {},
+  NativeModules: {},
+  Platform: { OS: "web" },
+}));
 
 import { shouldSubmitComposerKey } from "@/lib/composer-protocol";
+import { NATIVE_APP_COMMANDS } from "@/lib/native-app-commands";
 
 // AGENTS.md "One Answer, Many Surfaces". Three surfaces decide whether Enter
 // sends, and only one of them is reachable from a unit test: web calls
@@ -80,11 +90,32 @@ describe("composer send key, across surfaces", () => {
     expect(SCREEN_SOURCE).not.toContain("onSubmitEditing");
   });
 
+  it("delivers every command the native side emits", () => {
+    // `isNativeAppCommand` is an allowlist, so a command iOS emits that is
+    // missing from it is dropped in silence -- the keyboard-connect notice
+    // would simply never arrive and the answer would stay stale.
+    const emitted = [...SWIFT_SOURCE.matchAll(/emit\("([a-zA-Z]+)"\)/g)].map((match) => match[1]);
+    expect(emitted.length).toBeGreaterThan(0);
+    for (const command of emitted) {
+      expect(NATIVE_APP_COMMANDS as readonly string[]).toContain(command);
+    }
+  });
+
+  it("is told when a keyboard is attached rather than polling for it", () => {
+    // A keyboard attached after launch moves no keyboard frame and raises no
+    // keyboard event, so re-querying off one left the answer stale.
+    expect(SWIFT_SOURCE).toContain("GCKeyboardDidConnect");
+    expect(SWIFT_SOURCE).toContain('AimuxNativeCommands.emit("hardwareKeyboardChanged")');
+    expect(readFileSync(join(__dirname, "hardware-keyboard.ts"), "utf8")).toContain(
+      'command === "hardwareKeyboardChanged"',
+    );
+  });
+
   it("asks one source for the hardware answer", () => {
     // Two callers asking the native bridge separately is how the auto-focus
     // and the send rule came to disagree on Android, where no such module
     // exists and the one-shot answered false forever.
     expect(SCREEN_SOURCE).not.toContain("getNativeHardwareKeyboardConnected");
-    expect(SCREEN_SOURCE).toContain("useHasHardwareKeyboard(keyboardVisible)");
+    expect(SCREEN_SOURCE).toContain("useHasHardwareKeyboard()");
   });
 });

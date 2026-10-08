@@ -7,10 +7,37 @@ class AimuxNativeCommands: RCTEventEmitter {
   private static weak var sharedEmitter: AimuxNativeCommands?
   private static var chatComposerFocused = false
   private var isObserving = false
+  private var keyboardObservers: [NSObjectProtocol] = []
 
   override init() {
     super.init()
     AimuxNativeCommands.sharedEmitter = self
+    observeHardwareKeyboardChanges()
+  }
+
+  /// A keyboard attached after launch changes the answer, and nothing else
+  /// reports it: no keyboard is on screen, so no keyboard frame moves. Polling
+  /// off some other event missed exactly this case.
+  private func observeHardwareKeyboardChanges() {
+    guard #available(iOS 14.0, *) else { return }
+    keyboardObservers = [NSNotification.Name.GCKeyboardDidConnect, .GCKeyboardDidDisconnect]
+      .map { name in
+        NotificationCenter.default.addObserver(
+          forName: name,
+          object: nil,
+          queue: .main
+        ) { _ in
+          AimuxNativeCommands.emit("hardwareKeyboardChanged")
+        }
+      }
+  }
+
+  deinit {
+    // A reload recreates this module, and observers left behind would each
+    // emit again on the next keyboard connect.
+    for observer in keyboardObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
   }
 
   override static func requiresMainQueueSetup() -> Bool {

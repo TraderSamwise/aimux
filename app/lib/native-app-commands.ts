@@ -6,6 +6,7 @@ export const NATIVE_APP_COMMANDS = [
   "desktopZoomReset",
   "chatSend",
   "chatInterrupt",
+  "hardwareKeyboardChanged",
 ] as const;
 
 export type NativeAppCommand = (typeof NATIVE_APP_COMMANDS)[number];

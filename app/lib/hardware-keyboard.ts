@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 
-import { getNativeHardwareKeyboardConnected } from "./native-app-commands";
+import {
+  getNativeHardwareKeyboardConnected,
+  subscribeNativeAppCommands,
+} from "./native-app-commands";
 
 /// A soft keyboard takes a quarter of the screen or more. Browser chrome
 /// appearing and disappearing moves the viewport by far less than this, and a
@@ -48,11 +51,7 @@ function finePointerWithHover(): boolean {
   return Boolean(finePointerQuery()?.matches);
 }
 
-/// `softKeyboardVisible` is the screen's own `useKeyboardVisible` value rather
-/// than a second subscription to the same events: on iOS a change to it is when
-/// a keyboard has been attached or detached, which is when the native answer is
-/// worth asking for again. It is unused on web, which measures instead.
-export function useHasHardwareKeyboard(softKeyboardVisible: boolean): boolean {
+export function useHasHardwareKeyboard(): boolean {
   const [connected, setConnected] = useState(() => Platform.OS === "web" && finePointerWithHover());
   const unoccludedHeight = useRef(0);
 
@@ -91,13 +90,22 @@ export function useHasHardwareKeyboard(softKeyboardVisible: boolean): boolean {
     // the soft keyboard not appearing is not available: under edge-to-edge the
     // keyboard events can go missing entirely, and Android can show a soft
     // keyboard alongside a hardware one.
-    void getNativeHardwareKeyboardConnected().then((nativeConnected) => {
-      if (active) setConnected(hasHardwareKeyboard({ platform: "native", nativeConnected }));
+    const refresh = () => {
+      void getNativeHardwareKeyboardConnected().then((nativeConnected) => {
+        if (active) setConnected(hasHardwareKeyboard({ platform: "native", nativeConnected }));
+      });
+    };
+    refresh();
+    // A keyboard attached after launch moves no keyboard frame and raises no
+    // keyboard event, so the native side says when it happens instead.
+    const unsubscribe = subscribeNativeAppCommands((command) => {
+      if (command === "hardwareKeyboardChanged") refresh();
     });
     return () => {
       active = false;
+      unsubscribe();
     };
-  }, [softKeyboardVisible]);
+  }, []);
 
   return connected;
 }

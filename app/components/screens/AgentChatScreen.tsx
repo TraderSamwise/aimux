@@ -535,7 +535,7 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
-  const hasHardwareKeyboard = useHasHardwareKeyboard(keyboardVisible);
+  const hasHardwareKeyboard = useHasHardwareKeyboard();
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
     projectPath: string;
