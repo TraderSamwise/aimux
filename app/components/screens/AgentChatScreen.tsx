@@ -1680,10 +1680,9 @@ export default function ChatScreen() {
     [handleComposerPaste],
   );
 
-  // iOS routes a hardware Enter through the window's key handler, which a soft
-  // keyboard's return never reaches, so it needs nothing here. Android has no
-  // such hook and no way to ask whether a keyboard is attached, so it keeps the
-  // newline and sends from the control.
+  // Both native platforms route a hardware Enter through their own key handler,
+  // which a soft keyboard's return never reaches, and emit `chatSend`. Only web
+  // has to decide it here.
   const composerKeyboardProps = useMemo(
     () =>
       Platform.OS === "web"

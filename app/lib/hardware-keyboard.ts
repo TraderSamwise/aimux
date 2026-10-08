@@ -72,11 +72,9 @@ export function useHasHardwareKeyboard(): boolean {
   useEffect(() => {
     if (Platform.OS === "web") return;
     let active = true;
-    // Android has no such native module yet, so this answers false there and
-    // Android keeps Enter as a newline rather than guessing. An inference from
-    // the soft keyboard not appearing is not available: under edge-to-edge the
-    // keyboard events can go missing entirely, and Android can show a soft
-    // keyboard alongside a hardware one.
+    // Both native platforms can be asked, each by its own identity check:
+    // `GCKeyboard` on iOS, `Configuration.hardKeyboardHidden` on Android. Only
+    // web has to measure, because only web cannot ask.
     const refresh = () => {
       void getNativeHardwareKeyboardConnected().then((nativeConnected) => {
         if (active) setConnected(hasHardwareKeyboard({ platform: "native", nativeConnected }));

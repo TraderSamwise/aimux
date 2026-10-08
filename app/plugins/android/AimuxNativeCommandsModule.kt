@@ -79,13 +79,13 @@ class AimuxNativeCommandsModule(
     /// A keyboard attached after launch changes the answer, and the manifest's
     /// `configChanges` includes `keyboard|keyboardHidden`, so the activity is
     /// told instead of recreated. The mirror of `GCKeyboardDidConnect`.
-    fun emitHardwareKeyboardChanged() = emit(HARDWARE_KEYBOARD_CHANGED)
+    fun emitHardwareKeyboardChanged() = emit(COMMAND_HARDWARE_KEYBOARD_CHANGED)
 
     /// The mirror of Swift's `command(for:)`: the whole decision, including the
     /// composer-focus check, so no caller can make half of it. Null means the
     /// key is not ours and must fall through to the text view.
     fun commandForKeyEvent(event: KeyEvent): String? =
-      if (isChatComposerFocused && isSendKeyEvent(event)) CHAT_SEND else null
+      if (isChatComposerFocused && isSendKeyEvent(event)) COMMAND_CHAT_SEND else null
 
     /// The mirror of Swift's `isSendReturnKey`. `hasNoModifiers()` is the same
     /// predicate AOSP's `TextView.doKeyDown` uses to raise the editor action,
@@ -112,7 +112,7 @@ class AimuxNativeCommandsModule(
 
     /// Must stay in `NATIVE_APP_COMMANDS` in `lib/native-app-commands.ts`,
     /// which is an allowlist: a command missing from it is dropped in silence.
-    private const val CHAT_SEND = "chatSend"
-    private const val HARDWARE_KEYBOARD_CHANGED = "hardwareKeyboardChanged"
+    private const val COMMAND_CHAT_SEND = "chatSend"
+    private const val COMMAND_HARDWARE_KEYBOARD_CHANGED = "hardwareKeyboardChanged"
   }
 }

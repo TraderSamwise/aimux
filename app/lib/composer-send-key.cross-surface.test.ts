@@ -31,6 +31,10 @@ const SWIFT_SOURCE = readFileSync(
 /// place a viewport declaration is honoured: `+html.tsx` is for
 /// `output: "static"` and is ignored here, silently.
 const HTML_TEMPLATE = readFileSync(join(__dirname, "..", "public", "index.html"), "utf8");
+const KOTLIN_SOURCE = readFileSync(
+  join(__dirname, "..", "plugins", "android", "AimuxNativeCommandsModule.kt"),
+  "utf8",
+);
 const SCREEN_SOURCE = readFileSync(
   join(__dirname, "..", "components", "screens", "AgentChatScreen.tsx"),
   "utf8",
@@ -85,11 +89,10 @@ describe("composer send key, across surfaces", () => {
     expect(SCREEN_SOURCE).toContain("shouldSubmitComposerKey(keyEvent, hasHardwareKeyboard)");
   });
 
-  it("arms no Enter-to-send on Android, which cannot be asked", () => {
-    // `submitBehavior: "submit"` hands Android's editor action the Enter key.
-    // It was armed from an inference that is unsound in both directions: under
-    // edge-to-edge the keyboard events can go missing entirely, and Android can
-    // show a soft keyboard alongside a hardware one.
+  it("hands Android's Enter to no editor action", () => {
+    // Android sends from `dispatchKeyEvent`, which sees the device the key came
+    // from. `submitBehavior: "submit"` would instead hand the editor action
+    // every Enter, including a soft keyboard's, which is what eats a line break.
     //
     // Scoped to the composer's own props rather than the whole file, so an
     // unrelated input gaining a legitimate `onSubmitEditing` does not fail it.
@@ -99,6 +102,30 @@ describe("composer send key, across surfaces", () => {
     expect(props).not.toContain("submitBehavior");
     expect(props).not.toContain("onSubmitEditing");
     expect(props).not.toContain("returnKeyType");
+  });
+
+  it("refuses the same modified Enter on Android as on web", () => {
+    // Kotlin does not spell the modifiers out: `hasNoModifiers()` is the very
+    // predicate AOSP's `TextView.doKeyDown` gates the editor action on, so the
+    // platform and this rule cannot drift. A hand-rolled shift check could.
+    expect(KOTLIN_SOURCE).toContain("event.hasNoModifiers()");
+    expect(KOTLIN_SOURCE).not.toContain("META_SHIFT");
+    expect(KOTLIN_SOURCE).not.toContain("isShiftPressed");
+    for (const modifier of MODIFIERS) {
+      expect(
+        shouldSubmitComposerKey({ key: "Enter", [modifier.web]: true }, true),
+        `web must not send on ${modifier.web}+Enter`,
+      ).toBe(false);
+    }
+  });
+
+  it("needs a real key on Android, because only the event knows", () => {
+    // An IME injects as `VIRTUAL_KEYBOARD` (-1) and the built-in keypad is 0,
+    // so this is the gate a soft keyboard cannot pass -- Android's equivalent
+    // of iOS only ever seeing a `UIKey`.
+    expect(KOTLIN_SOURCE).toContain("event.deviceId > 0");
+    expect(KOTLIN_SOURCE).toContain("InputDevice.KEYBOARD_TYPE_ALPHABETIC");
+    expect(KOTLIN_SOURCE).toContain("InputDevice.SOURCE_KEYBOARD");
   });
 
   it("declares the viewport the web measurement depends on", () => {
@@ -120,7 +147,10 @@ describe("composer send key, across surfaces", () => {
     // `isNativeAppCommand` is an allowlist, so a command iOS emits that is
     // missing from it is dropped in silence -- the keyboard-connect notice
     // would simply never arrive and the answer would stay stale.
-    const emitted = [...SWIFT_SOURCE.matchAll(/emit\("([a-zA-Z]+)"\)/g)].map((match) => match[1]);
+    const emitted = [
+      ...SWIFT_SOURCE.matchAll(/emit\("([a-zA-Z]+)"\)/g),
+      ...KOTLIN_SOURCE.matchAll(/val COMMAND_[A-Z_]+ = "([a-zA-Z]+)"/g),
+    ].map((match) => match[1]);
     expect(emitted.length).toBeGreaterThan(0);
     for (const command of emitted) {
       expect(NATIVE_APP_COMMANDS as readonly string[]).toContain(command);
