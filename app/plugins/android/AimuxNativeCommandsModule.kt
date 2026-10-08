@@ -22,13 +22,22 @@ class AimuxNativeCommandsModule(
 
   init {
     sharedEmitter = WeakReference(this)
+    // A new instance means a new JS context, which has no focused composer yet.
+    // The flag is process-scoped and a JS fatal or reload runs no cleanup, so a
+    // stale `true` would make Enter consumed and dead app-wide.
+    isChatComposerFocused = false
   }
 
   override fun getName(): String = NAME
 
   @ReactMethod
   fun getHardwareKeyboardConnected(promise: Promise) {
-    promise.resolve(isHardwareKeyboardConnected(reactContext.resources.configuration))
+    // The activity's configuration, matching what `onConfigurationChanged`
+    // reports; the application's carries no per-display override.
+    val configuration =
+      reactContext.currentActivity?.resources?.configuration
+        ?: reactContext.resources.configuration
+    promise.resolve(isHardwareKeyboardConnected(configuration))
   }
 
   @ReactMethod
@@ -57,19 +66,21 @@ class AimuxNativeCommandsModule(
     @Volatile
     private var lastHardwareKeyboardConnected: Boolean? = null
 
-    fun emit(command: String) {
+    /// False when nobody could be told, so the caller can let the key through
+    /// rather than swallow it: a consumed `chatSend` that never arrives is a
+    /// keystroke that produced neither a send nor a newline.
+    fun emit(command: String): Boolean {
       val module = sharedEmitter?.get()
       val context = module?.reactContext
       if (context == null || !context.hasActiveReactInstance()) {
-        // A dropped `chatSend` is a keystroke that produced neither a send nor
-        // a newline, so this is a warning and not a note, whatever the command.
         Log.w(NAME, "dropped $command: no active react instance")
-        return
+        return false
       }
       val payload = Arguments.createMap().apply { putString("command", command) }
       context
         .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
         .emit(EVENT, payload)
+      return true
     }
 
     /// Android can be asked, unlike the web. `hardKeyboardHidden` is the usable
@@ -85,8 +96,10 @@ class AimuxNativeCommandsModule(
     fun emitHardwareKeyboardChanged(configuration: Configuration) {
       val connected = isHardwareKeyboardConnected(configuration)
       if (lastHardwareKeyboardConnected == connected) return
-      lastHardwareKeyboardConnected = connected
-      emit(COMMAND_HARDWARE_KEYBOARD_CHANGED)
+      // Recorded only once told, so a dropped notice is not consumed.
+      if (emit(COMMAND_HARDWARE_KEYBOARD_CHANGED)) {
+        lastHardwareKeyboardConnected = connected
+      }
     }
 
     /// The mirror of Swift's `command(for:)`: the whole decision, including the
@@ -111,13 +124,12 @@ class AimuxNativeCommandsModule(
     private fun isReturnKeyCode(keyCode: Int): Boolean =
       keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
 
-    /// Identity, not spelling. An IME injects events as
-    /// `KeyCharacterMap.VIRTUAL_KEYBOARD` (-1) and the built-in keypad is 0, so
-    /// only a real attached keyboard with letter keys gets past this.
+    /// Identity, not spelling. `isVirtual` is `id < 0`, which is what every
+    /// injected event carries -- an IME, `Instrumentation`, adb -- so a soft
+    /// keyboard cannot pass, and letter keys are then required.
     private fun isHardwareKeyboardEvent(event: KeyEvent): Boolean {
       val device = event.device ?: return false
-      return event.deviceId > 0 &&
-        !device.isVirtual &&
+      return !device.isVirtual &&
         (event.source and InputDevice.SOURCE_KEYBOARD) == InputDevice.SOURCE_KEYBOARD &&
         device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC
     }

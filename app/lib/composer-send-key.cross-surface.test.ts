@@ -63,9 +63,8 @@ function withoutComments(source: string): string {
 function kotlinRule(declaration: string): string {
   const start = KOTLIN_SOURCE.indexOf(declaration);
   expect(start, `Kotlin must still declare ${declaration}`).toBeGreaterThan(0);
-  const blank = KOTLIN_SOURCE.indexOf("\n\n", start);
-  const brace = KOTLIN_SOURCE.indexOf("\n    }", start);
-  const end = Math.min(...[blank, brace].filter((at) => at > start));
+  const ends = ["\n\n", "\n    }", "\n  }"].map((at) => KOTLIN_SOURCE.indexOf(at, start));
+  const end = Math.min(...ends.filter((at) => at > start));
   expect(Number.isFinite(end)).toBe(true);
   return withoutComments(KOTLIN_SOURCE.slice(start, end));
 }
@@ -156,12 +155,19 @@ describe("composer send key, across surfaces", () => {
     expect(KOTLIN_SOURCE).not.toContain("KEYBOARD_NOKEYS");
   });
 
+  it("forgets the focused composer when the JS context is replaced", () => {
+    // The flag is process-scoped and only JS writes it, so a JS fatal or an
+    // OTA reload leaves it set with no cleanup having run. `dispatchKeyEvent`
+    // would then consume every Enter app-wide and deliver it nowhere.
+    expect(kotlinRule("init {")).toContain("isChatComposerFocused = false");
+  });
+
   it("needs a real key on Android, because only the event knows", () => {
     // An IME injects as `VIRTUAL_KEYBOARD` (-1) and the built-in keypad is 0,
     // so this is the gate a soft keyboard cannot pass -- Android's equivalent
     // of iOS only ever seeing a `UIKey`.
     const identity = kotlinIdentityRule();
-    expect(identity).toContain("event.deviceId > 0");
+    // `isVirtual` is `id < 0`, which every injected event carries.
     expect(identity).toContain("!device.isVirtual");
     expect(identity).toContain("InputDevice.KEYBOARD_TYPE_ALPHABETIC");
     expect(identity).toContain("InputDevice.SOURCE_KEYBOARD");

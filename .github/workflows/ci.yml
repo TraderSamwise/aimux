@@ -96,6 +96,29 @@ jobs:
       - name: yarn --cwd app test
         run: yarn --cwd app test
 
+  app-android-native:
+    name: Android native compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: yarn --cwd app install --frozen-lockfile
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Nothing else compiles this Kotlin. `app/plugins/android/*.kt` reaches a
+      # build only through the config plugin at prebuild, so without this job a
+      # source that does not compile merges green.
+      - name: yarn --cwd app verify:android-native
+        run: yarn --cwd app verify:android-native
+
   rust-format:
     name: Rust format
     runs-on: ubuntu-latest

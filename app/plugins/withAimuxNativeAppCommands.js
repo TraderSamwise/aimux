@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const {
@@ -149,16 +150,12 @@ function patchPackageRegistration(contents) {
   return contents.replace(PACKAGE_ANCHOR, PACKAGE_REGISTRATION);
 }
 
-function patchKeyDispatch(contents) {
-  if (contents.includes("commandForKeyEvent")) return contents;
-  if (!contents.includes(ACTIVITY_ANCHOR)) {
-    throw new Error("Could not find MainActivity anchor for Aimux native commands");
-  }
-  const overrides = `
-  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+/// Only `true` when the command was delivered, so a key is never swallowed
+/// without something having happened: on a dead JS instance it falls through
+/// and the text view inserts a newline instead.
+const ACTIVITY_OVERRIDES = `  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     val command = AimuxNativeCommandsModule.commandForKeyEvent(event)
-    if (command != null) {
-      AimuxNativeCommandsModule.emit(command)
+    if (command != null && AimuxNativeCommandsModule.emit(command)) {
       return true
     }
     return super.dispatchKeyEvent(event)
@@ -167,13 +164,41 @@ function patchKeyDispatch(contents) {
   override fun onConfigurationChanged(newConfig: Configuration) {
     super.onConfigurationChanged(newConfig)
     AimuxNativeCommandsModule.emitHardwareKeyboardChanged(newConfig)
-  }
-`;
-  return AndroidConfig.CodeMod.addImports(
-    contents.replace(ACTIVITY_ANCHOR, `${ACTIVITY_ANCHOR}\n${overrides}`),
+  }`;
+
+const GENERATED_REGION =
+  /\n  \/\/ @generated begin aimux-native-commands[\s\S]*?\/\/ @generated end aimux-native-commands\n/;
+
+/// Expo's own marker shape, for Expo's own reason: `expo prebuild` reuses an
+/// existing `android/`, so a plain re-run re-patches an already-patched file.
+/// The hash is what makes a CHANGED block replace the old one instead of a
+/// "looks patched already" check declining forever.
+function generatedBlock() {
+  const hash = crypto.createHash("sha1").update(ACTIVITY_OVERRIDES).digest("hex").slice(0, 40);
+  return [
+    "",
+    `  // @generated begin aimux-native-commands - expo prebuild (DO NOT MODIFY) sync-${hash}`,
+    ACTIVITY_OVERRIDES,
+    "  // @generated end aimux-native-commands",
+    "",
+  ].join("\n");
+}
+
+function patchKeyDispatch(contents) {
+  const block = generatedBlock();
+  if (contents.includes(block)) return contents;
+  const withImports = AndroidConfig.CodeMod.addImports(
+    contents,
     ["android.content.res.Configuration", "android.view.KeyEvent"],
     false,
   );
+  if (GENERATED_REGION.test(withImports)) {
+    return withImports.replace(GENERATED_REGION, block);
+  }
+  if (!withImports.includes(ACTIVITY_ANCHOR)) {
+    throw new Error("Could not find MainActivity anchor for Aimux native commands");
+  }
+  return withImports.replace(ACTIVITY_ANCHOR, `${ACTIVITY_ANCHOR}\n${block}`);
 }
 
 module.exports = function withAimuxNativeAppCommands(config) {

@@ -36,7 +36,8 @@ describe("android native patches", () => {
     const patched = patchKeyDispatch(MAIN_ACTIVITY);
     expect(patched).toContain("override fun dispatchKeyEvent(event: KeyEvent): Boolean");
     expect(patched).toContain("AimuxNativeCommandsModule.commandForKeyEvent(event)");
-    expect(patched).toContain("AimuxNativeCommandsModule.emit(command)");
+    // `&& emit(...)`: a key is never swallowed unless something was told.
+    expect(patched).toContain("command != null && AimuxNativeCommandsModule.emit(command)");
     expect(patched).toContain("return super.dispatchKeyEvent(event)");
     expect(patched).toContain("import android.view.KeyEvent");
   });
@@ -55,10 +56,26 @@ describe("android native patches", () => {
     );
   });
 
+  it("replaces its own older block rather than declining forever", () => {
+    // `expo prebuild` reuses an existing `android/`, so a plain re-run patches
+    // an already-patched file. A "looks patched" check would then make every
+    // later edit to these overrides apply silently never; the generated
+    // region's hash is what lets a changed block replace the old one.
+    const stale = patchKeyDispatch(MAIN_ACTIVITY).replace(
+      "return super.dispatchKeyEvent(event)",
+      "return false // from an older version of this plugin",
+    );
+    const fresh = patchKeyDispatch(stale);
+    expect(fresh).toContain("return super.dispatchKeyEvent(event)");
+    expect(fresh).not.toContain("from an older version of this plugin");
+    expect(fresh.split("override fun dispatchKeyEvent").length - 1).toBe(1);
+  });
+
   it("patches once, because prebuild reuses an existing android directory", () => {
     const twice = patchKeyDispatch(patchKeyDispatch(MAIN_ACTIVITY));
     expect(twice.split("override fun dispatchKeyEvent").length - 1).toBe(1);
     expect(twice.split("import android.view.KeyEvent").length - 1).toBe(1);
+    expect(twice.split("@generated begin aimux-native-commands").length - 1).toBe(1);
     const appTwice = patchPackageRegistration(patchPackageRegistration(MAIN_APPLICATION));
     expect(appTwice.split("add(AimuxNativeCommandsPackage())").length - 1).toBe(1);
   });
