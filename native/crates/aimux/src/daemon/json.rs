@@ -9,11 +9,20 @@ use crate::daemon::jobs::{DaemonJobRouteRuntime, route_jobs_json_request};
 use crate::daemon::remote_control::route_remote_json_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::project_api_contract::routes as project_routes;
+use crate::project_service::lifecycle_mutation_queue::queued_lifecycle_timeout_ms;
 use crate::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub const PROXY_TIMEOUT_MS: u64 = 10_000;
+
+/// The proxy hop is the whole budget a relay-mode client gets, whatever it
+/// asked for: the daemon abandons the request and answers 504 regardless. So a
+/// queued lifecycle mutation needs its own budget here too, or a phone could
+/// never wait out a spawn no matter what the app allowed.
+fn proxy_timeout_ms(sub_path: &str) -> u64 {
+    queued_lifecycle_timeout_ms(sub_path).unwrap_or(PROXY_TIMEOUT_MS)
+}
 pub const PROXY_MAX_BINARY_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,7 +220,13 @@ pub fn route_json_daemon_request(
         return Some(route_binary_proxy(runtime, &target_url, method, headers));
     }
     Some(
-        match runtime.proxy_json_request(&target_url, method, headers, body, PROXY_TIMEOUT_MS) {
+        match runtime.proxy_json_request(
+            &target_url,
+            method,
+            headers,
+            body,
+            proxy_timeout_ms(&proxy.sub_path),
+        ) {
             Ok(response) => DaemonRouteResponse::json(response.status, response.json),
             Err(error) => proxy_error_response(error),
         },
@@ -250,7 +265,13 @@ pub fn route_stateless_proxy_daemon_request(
         )));
     }
     Some(
-        match execute_proxy_json_request(&target_url, method, headers, body, PROXY_TIMEOUT_MS) {
+        match execute_proxy_json_request(
+            &target_url,
+            method,
+            headers,
+            body,
+            proxy_timeout_ms(&proxy.sub_path),
+        ) {
             Ok(response) => DaemonRouteResponse::json(response.status, response.json),
             Err(error) => proxy_error_response(error),
         },

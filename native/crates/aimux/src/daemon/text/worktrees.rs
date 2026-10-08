@@ -18,7 +18,9 @@ use crate::daemon::text::params::{
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
 
-pub const CLI_PROJECT_MUTATION_TIMEOUT_MS: u64 = 120_000;
+/// The queue's own number, not a fourth copy of it.
+pub const CLI_PROJECT_MUTATION_TIMEOUT_MS: u64 =
+    crate::project_service::lifecycle_mutation_queue::QUEUED_LIFECYCLE_TIMEOUT_MS;
 
 pub trait DaemonWorktreeTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;

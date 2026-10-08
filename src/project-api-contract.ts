@@ -167,6 +167,74 @@ export const PROJECT_API_ROUTES = {
 
 export type ProjectApiRoute = `/${string}`;
 
+/// How long a caller must be willing to wait for each queued lifecycle route.
+///
+/// The queue holds ONE permit and waits up to 150s for a turn, on the stated
+/// assumption that callers allow 120s. Five routes do real filesystem work once
+/// they have it and get longer -- the dashboard raised each of those only after
+/// it was caught reporting a working operation as a transport timeout.
+///
+/// `dashboard_action_timeout_ms` in `dashboard_client.rs` is the other reader.
+/// Neither is the source: the fixture is, and both are asserted against it.
+export const QUEUED_LIFECYCLE_TIMEOUT_MS = 120_000;
+export const QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS = 180_000;
+
+/// Route to budget. `interrupt`, `restore-previous/dismiss` and
+/// `record-backend-session` sit in the lifecycle route GROUP but take no
+/// permit, so they are absent and keep the short default.
+export const PROJECT_API_QUEUED_LIFECYCLE_TIMEOUTS: Readonly<Record<string, number>> = {
+  [PROJECT_API_ROUTES.agents.spawn]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.fork]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.switchTool]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.stop]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.stopTeammate]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.kill]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.killTeammate]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.rename]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.migrate]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.resume]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.resumeTeammate]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.createTeammate]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.resurrectTeammate]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.services.create]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.services.resume]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.services.stop]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.services.remove]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.graveyardActions.resurrectAgent]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.graveyardActions.reapDeadAgents]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.graveyardActions.resurrectWorktree]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.graveyardActions.deleteWorktree]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.graveyardActions.cleanup]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.agents.restorePrevious]: QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.worktreeActions.create]: QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.worktreeActions.cacheCleanup]: QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.worktreeActions.graveyard]: QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.worktreeActions.remove]: QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS,
+};
+
+/// The longest any queued route may take, for the transports in between that
+/// need a cap of their own.
+export const QUEUED_LIFECYCLE_MAX_TIMEOUT_MS = Math.max(...Object.values(PROJECT_API_QUEUED_LIFECYCLE_TIMEOUTS));
+
+/// The service path a request target names, whether it arrives bare, as a full
+/// URL, or wrapped in the daemon's proxy prefix. Exact, not a suffix match: the
+/// map holds bare service paths and a loose match would claim unrelated ones.
+function queuedLifecyclePathname(target: string): string {
+  const withoutFragment = target.split("#")[0];
+  const withoutQuery = withoutFragment.split("?")[0];
+  const afterOrigin = withoutQuery.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, "");
+  const proxied = afterOrigin.match(/^\/proxy\/[^/]+\/[^/]+(\/.*)$/);
+  return proxied ? proxied[1] : afterOrigin;
+}
+
+/// The budget this target needs, or null when it takes no permit.
+export function queuedLifecycleTimeoutMs(target: string): number | null {
+  return PROJECT_API_QUEUED_LIFECYCLE_TIMEOUTS[queuedLifecyclePathname(target)] ?? null;
+}
+
+export function isQueuedLifecycleRoute(target: string): boolean {
+  return queuedLifecycleTimeoutMs(target) !== null;
+}
 export const PROJECT_API_EVENT_NAMES = {
   ready: "ready",
   alert: "alert",

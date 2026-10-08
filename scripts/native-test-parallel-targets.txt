@@ -77,6 +77,7 @@ git_delivery
 hosted_lock
 install_cleanup
 launcher_env
+lifecycle_queue_routes_across_surfaces
 logs
 loop_watcher_guards
 mobile_push_bridge

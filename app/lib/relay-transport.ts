@@ -1,3 +1,4 @@
+import { QUEUED_LIFECYCLE_MAX_TIMEOUT_MS } from "../../src/project-api-contract";
 import {
   getClientDeviceInfo,
   isClientDeviceStorageError,
@@ -71,7 +72,10 @@ type RelayMessage =
   | RelayProjectEventsError
   | RelayControl;
 
-const REQUEST_TIMEOUT_MS = 30_000;
+// Above the longest queued lifecycle budget, or this cap would reject a
+// worktree create at 30s and the caller's own timeout would never run -- so the
+// message would lose the one sentence that says the work may still be running.
+const REQUEST_TIMEOUT_MS = Math.max(30_000, QUEUED_LIFECYCLE_MAX_TIMEOUT_MS);
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
 const HANDSHAKE_FAILURE_AUTH_THRESHOLD = 3;
