@@ -11,14 +11,9 @@ import {
 /// pinch zoom that trips it reads as a soft keyboard, which is the safe answer.
 export const SOFT_KEYBOARD_MIN_OCCLUSION_PX = 120;
 
-/// Only reached where the visual viewport cannot be measured at all. It does
-/// not exclude a hovering stylus, so it is the weaker answer and not the
-/// primary one.
-export const FINE_POINTER_QUERY = "(any-pointer: fine) and (any-hover: hover)";
-
 export type HardwareKeyboardSignal =
   /// `softKeyboardOccludes` is null when the viewport cannot be measured.
-  | { platform: "web"; finePointerWithHover: boolean; softKeyboardOccludes: boolean | null }
+  | { platform: "web"; softKeyboardOccludes: boolean | null }
   | { platform: "native"; nativeConnected: boolean };
 
 /// Whether keys are arriving from a real keyboard rather than a glass one.
@@ -30,8 +25,10 @@ export type HardwareKeyboardSignal =
 /// no keyboard.
 export function hasHardwareKeyboard(signal: HardwareKeyboardSignal): boolean {
   if (signal.platform === "native") return signal.nativeConnected;
-  if (signal.softKeyboardOccludes !== null) return !signal.softKeyboardOccludes;
-  return signal.finePointerWithHover;
+  // Nothing to measure is not evidence of a keyboard. A pointer capability
+  // used to stand in here and called a stylus a keyboard, which is the one
+  // wrong answer that costs the user their line break.
+  return signal.softKeyboardOccludes === false;
 }
 
 /// How much of the layout viewport the visual viewport is not showing.
@@ -49,11 +46,6 @@ export function softKeyboardOccludes(viewportHeight: number, layoutHeight: numbe
   return layoutHeight - viewportHeight >= SOFT_KEYBOARD_MIN_OCCLUSION_PX;
 }
 
-function finePointerQuery(): MediaQueryList | undefined {
-  if (Platform.OS !== "web" || typeof window === "undefined") return undefined;
-  return window.matchMedia?.(FINE_POINTER_QUERY);
-}
-
 export function useHasHardwareKeyboard(): boolean {
   // Nothing is known before the first measurement, and an unknown must take
   // the soft-keyboard path: starting false costs a desktop a newline on an
@@ -64,32 +56,17 @@ export function useHasHardwareKeyboard(): boolean {
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
     const viewport = window.visualViewport;
-    const query = finePointerQuery();
     const apply = () => {
       // Scaled because a pinch zoom shrinks the visual viewport with nothing
       // covering it, and that gap is not a keyboard.
       const occludes = viewport
         ? softKeyboardOccludes(viewport.height * viewport.scale, window.innerHeight)
         : null;
-      setConnected(
-        hasHardwareKeyboard({
-          platform: "web",
-          finePointerWithHover: Boolean(query?.matches),
-          softKeyboardOccludes: occludes,
-        }),
-      );
+      setConnected(hasHardwareKeyboard({ platform: "web", softKeyboardOccludes: occludes }));
     };
     apply();
-    // iOS Safari offsets the visual viewport for the keyboard as well as
-    // resizing it, and does not always report both.
     viewport?.addEventListener("resize", apply);
-    viewport?.addEventListener("scroll", apply);
-    query?.addEventListener?.("change", apply);
-    return () => {
-      viewport?.removeEventListener("resize", apply);
-      viewport?.removeEventListener("scroll", apply);
-      query?.removeEventListener?.("change", apply);
-    };
+    return () => viewport?.removeEventListener("resize", apply);
   }, []);
 
   useEffect(() => {

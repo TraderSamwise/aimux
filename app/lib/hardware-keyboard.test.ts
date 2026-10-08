@@ -23,41 +23,15 @@ describe("hardware keyboard", () => {
     expect(hasHardwareKeyboard({ platform: "native", nativeConnected: false })).toBe(false);
   });
 
-  it("believes the measurement over the device class on web", () => {
-    // The two cases the device-class guess got backwards. A phone with a
-    // stylus reports a fine pointer and must still not send on a soft return;
-    // a keyboard folio with no trackpad reports none and must send.
-    expect(
-      hasHardwareKeyboard({
-        platform: "web",
-        finePointerWithHover: true,
-        softKeyboardOccludes: true,
-      }),
-    ).toBe(false);
-    expect(
-      hasHardwareKeyboard({
-        platform: "web",
-        finePointerWithHover: false,
-        softKeyboardOccludes: false,
-      }),
-    ).toBe(true);
+  it("believes the measurement and nothing else on web", () => {
+    expect(hasHardwareKeyboard({ platform: "web", softKeyboardOccludes: true })).toBe(false);
+    expect(hasHardwareKeyboard({ platform: "web", softKeyboardOccludes: false })).toBe(true);
   });
 
-  it("falls back to the pointer only where there is nothing to measure", () => {
-    expect(
-      hasHardwareKeyboard({
-        platform: "web",
-        finePointerWithHover: true,
-        softKeyboardOccludes: null,
-      }),
-    ).toBe(true);
-    expect(
-      hasHardwareKeyboard({
-        platform: "web",
-        finePointerWithHover: false,
-        softKeyboardOccludes: null,
-      }),
-    ).toBe(false);
+  it("treats nothing to measure as no keyboard", () => {
+    // A pointer capability used to answer here, and it called a stylus a
+    // keyboard: a Galaxy with an S Pen would have sent on its soft return.
+    expect(hasHardwareKeyboard({ platform: "web", softKeyboardOccludes: null })).toBe(false);
   });
 
   it("reads a keyboard-sized bite out of the viewport, not browser chrome", () => {

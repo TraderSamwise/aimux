@@ -27,6 +27,7 @@ const SWIFT_SOURCE = readFileSync(
   join(__dirname, "..", "plugins", "ios", "AimuxNativeCommands.swift"),
   "utf8",
 );
+const HTML_ROOT_SOURCE = readFileSync(join(__dirname, "..", "app", "+html.tsx"), "utf8");
 const SCREEN_SOURCE = readFileSync(
   join(__dirname, "..", "components", "screens", "AgentChatScreen.tsx"),
   "utf8",
@@ -86,8 +87,27 @@ describe("composer send key, across surfaces", () => {
     // It was armed from an inference that is unsound in both directions: under
     // edge-to-edge the keyboard events can go missing entirely, and Android can
     // show a soft keyboard alongside a hardware one.
-    expect(SCREEN_SOURCE).not.toContain("submitBehavior");
-    expect(SCREEN_SOURCE).not.toContain("onSubmitEditing");
+    //
+    // Scoped to the composer's own props rather than the whole file, so an
+    // unrelated input gaining a legitimate `onSubmitEditing` does not fail it.
+    const start = SCREEN_SOURCE.indexOf("const composerKeyboardProps");
+    expect(start).toBeGreaterThan(0);
+    const props = SCREEN_SOURCE.slice(start, SCREEN_SOURCE.indexOf("\n  );", start));
+    expect(props).not.toContain("submitBehavior");
+    expect(props).not.toContain("onSubmitEditing");
+    expect(props).not.toContain("returnKeyType");
+  });
+
+  it("declares the viewport the web measurement depends on", () => {
+    // Which viewport a browser shrinks for a soft keyboard has been the UA's
+    // choice. The measurement reads the gap between the two, so a browser that
+    // shrinks both leaves none and Enter would send on glass.
+    // Read the declared value, not the file: the first version of this passed
+    // on the phrase appearing in the comment explaining it.
+    const declared = HTML_ROOT_SOURCE.match(/VIEWPORT_CONTENT =\s*"([^"]*)"/);
+    expect(declared, "the HTML root must declare one viewport string").toBeTruthy();
+    expect(declared![1]).toContain("interactive-widget=resizes-visual");
+    expect(HTML_ROOT_SOURCE).toContain("content={VIEWPORT_CONTENT}");
   });
 
   it("delivers every command the native side emits", () => {
