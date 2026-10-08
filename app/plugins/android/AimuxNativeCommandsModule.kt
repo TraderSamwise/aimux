@@ -14,7 +14,8 @@ import java.lang.ref.WeakReference
 
 /// The Android half of the bridge `app/lib/native-app-commands.ts` talks to,
 /// mirroring `plugins/ios/AimuxNativeCommands.swift`. The send-key rule lives
-/// here rather than in the patched MainActivity so one file holds it.
+/// here rather than in the patched MainActivity so one file holds it. This file
+/// is COPIED into `android/` at prebuild; edit it here, not there.
 class AimuxNativeCommandsModule(
   private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
@@ -75,6 +76,11 @@ class AimuxNativeCommandsModule(
         .emit(EVENT, payload)
     }
 
+    /// A keyboard attached after launch changes the answer, and the manifest's
+    /// `configChanges` includes `keyboard|keyboardHidden`, so the activity is
+    /// told instead of recreated. The mirror of `GCKeyboardDidConnect`.
+    fun emitHardwareKeyboardChanged() = emit(HARDWARE_KEYBOARD_CHANGED)
+
     /// The mirror of Swift's `command(for:)`: the whole decision, including the
     /// composer-focus check, so no caller can make half of it. Null means the
     /// key is not ours and must fall through to the text view.
@@ -107,5 +113,6 @@ class AimuxNativeCommandsModule(
     /// Must stay in `NATIVE_APP_COMMANDS` in `lib/native-app-commands.ts`,
     /// which is an allowlist: a command missing from it is dropped in silence.
     private const val CHAT_SEND = "chatSend"
+    private const val HARDWARE_KEYBOARD_CHANGED = "hardwareKeyboardChanged"
   }
 }

@@ -1,9 +1,20 @@
 const fs = require("fs");
 const path = require("path");
-const { IOSConfig, withAppDelegate } = require("@expo/config-plugins");
+const {
+  AndroidConfig,
+  IOSConfig,
+  withAppDelegate,
+  withDangerousMod,
+  withMainActivity,
+  withMainApplication,
+} = require("@expo/config-plugins");
 
 const SWIFT_FILE = "AimuxNativeCommands.swift";
 const BRIDGE_FILE = "AimuxNativeCommands.m";
+const KOTLIN_FILES = ["AimuxNativeCommandsModule.kt", "AimuxNativeCommandsPackage.kt"];
+const PACKAGE_ANCHOR = "// add(MyReactNativePackage())";
+const PACKAGE_REGISTRATION = "add(AimuxNativeCommandsPackage())";
+const ACTIVITY_ANCHOR = '  override fun getMainComponentName(): String = "main"';
 
 function withNativeCommandSourceFiles(config) {
   const swiftContents = fs.readFileSync(path.join(__dirname, "ios", SWIFT_FILE), "utf8");
@@ -97,10 +108,87 @@ function patchMenu(contents) {
   return contents.replace(anchor, `${menuMethod}\n${anchor}`);
 }
 
+/// The Kotlin lives beside the Swift and is copied into the prebuild, because
+/// `android/` is generated and the repo tracks no sources there.
+function withKotlinSourceFiles(config) {
+  return withDangerousMod(config, [
+    "android",
+    async (config) => {
+      const mainApplication = await AndroidConfig.Paths.getMainApplicationAsync(
+        config.modRequest.projectRoot,
+      );
+      if (mainApplication.language !== "kt") {
+        throw new Error(
+          `Aimux native commands are Kotlin; MainApplication is ${mainApplication.language}`,
+        );
+      }
+      // Taken from the file we are writing beside rather than from
+      // android.package, so the declaration cannot disagree with the directory.
+      const declaration = mainApplication.contents.match(/^package .*$/m);
+      if (!declaration) {
+        throw new Error(`No package declaration in ${mainApplication.path}`);
+      }
+      const directory = path.dirname(mainApplication.path);
+      for (const file of KOTLIN_FILES) {
+        const contents = fs.readFileSync(path.join(__dirname, "android", file), "utf8");
+        fs.writeFileSync(
+          path.join(directory, file),
+          contents.replace(/^package .*$/m, declaration[0]),
+        );
+      }
+      return config;
+    },
+  ]);
+}
+
+function patchPackageRegistration(contents) {
+  if (contents.includes(PACKAGE_REGISTRATION)) return contents;
+  if (!contents.includes(PACKAGE_ANCHOR)) {
+    throw new Error("Could not find MainApplication package anchor for Aimux native commands");
+  }
+  return contents.replace(PACKAGE_ANCHOR, PACKAGE_REGISTRATION);
+}
+
+function patchKeyDispatch(contents) {
+  if (contents.includes("commandForKeyEvent")) return contents;
+  if (!contents.includes(ACTIVITY_ANCHOR)) {
+    throw new Error("Could not find MainActivity anchor for Aimux native commands");
+  }
+  const overrides = `
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    val command = AimuxNativeCommandsModule.commandForKeyEvent(event)
+    if (command != null) {
+      AimuxNativeCommandsModule.emit(command)
+      return true
+    }
+    return super.dispatchKeyEvent(event)
+  }
+
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
+    AimuxNativeCommandsModule.emitHardwareKeyboardChanged()
+  }
+`;
+  return AndroidConfig.CodeMod.addImports(
+    contents.replace(ACTIVITY_ANCHOR, `${ACTIVITY_ANCHOR}\n${overrides}`),
+    ["android.content.res.Configuration", "android.view.KeyEvent"],
+    false,
+  );
+}
+
 module.exports = function withAimuxNativeAppCommands(config) {
   config = withNativeCommandSourceFiles(config);
-  return withAppDelegate(config, (config) => {
+  config = withAppDelegate(config, (config) => {
     config.modResults.contents = patchMenu(patchWindowClass(config.modResults.contents));
+    return config;
+  });
+  config = withKotlinSourceFiles(config);
+  config = withMainApplication(config, (config) => {
+    config.modResults.contents = patchPackageRegistration(config.modResults.contents);
+    return config;
+  });
+  return withMainActivity(config, (config) => {
+    config.modResults.contents = patchKeyDispatch(config.modResults.contents);
     return config;
   });
 };
