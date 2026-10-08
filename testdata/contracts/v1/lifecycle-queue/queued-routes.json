@@ -1,0 +1,32 @@
+{
+  "timeoutMs": 120000,
+  "routes": [
+    "/agents/fork",
+    "/agents/kill",
+    "/agents/migrate",
+    "/agents/rename",
+    "/agents/restore-previous",
+    "/agents/resume",
+    "/agents/spawn",
+    "/agents/stop",
+    "/agents/switch-tool",
+    "/agents/teammates/create",
+    "/agents/teammates/kill",
+    "/agents/teammates/resume",
+    "/agents/teammates/resurrect",
+    "/agents/teammates/stop",
+    "/graveyard/cleanup",
+    "/graveyard/reap-dead-agents",
+    "/graveyard/resurrect",
+    "/graveyard/worktrees/delete",
+    "/graveyard/worktrees/resurrect",
+    "/services/create",
+    "/services/remove",
+    "/services/resume",
+    "/services/stop",
+    "/worktrees/cache-cleanup",
+    "/worktrees/create",
+    "/worktrees/graveyard",
+    "/worktrees/remove"
+  ]
+}

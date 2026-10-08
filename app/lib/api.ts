@@ -16,7 +16,9 @@ import type { RelayMachine, RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
 import type { ParsedAgentOutput } from "@/lib/events";
 import {
+  isQueuedLifecycleRoute,
   PROJECT_API_ROUTES,
+  QUEUED_LIFECYCLE_TIMEOUT_MS,
   type GlobalExposeItemsResponse,
   type TeamConfigResponse,
   type ActiveWindowRequest,
@@ -264,6 +266,15 @@ function requestSignal(opts?: ApiOpts): { signal: AbortSignal; cleanup: () => vo
   };
 }
 
+/// Abandoning a queued mutation does not undo it. Saying only that the request
+/// timed out invites a retry, and spawn is not idempotent -- that is a second
+/// agent. Same sentence the dashboard uses (`dashboard_client.rs`).
+function timedOutMessage(timeoutMs: string, target: string): string {
+  return isQueuedLifecycleRoute(target)
+    ? `Request timed out after ${timeoutMs}ms (${target}) — may still be running, check first`
+    : `Request timed out after ${timeoutMs}ms (${target})`;
+}
+
 function abortedRequest(
   signal: AbortSignal,
   url: string,
@@ -272,7 +283,7 @@ function abortedRequest(
   const reasonMessage = reason instanceof Error ? reason.message : String(reason ?? "");
   const timeout = reasonMessage.match(/^request timed out after (\d+)ms$/);
   if (timeout) {
-    return { message: `Request timed out after ${timeout[1]}ms (${url})`, kind: undefined };
+    return { message: timedOutMessage(timeout[1], url), kind: undefined };
   }
   return { message: `Request was cancelled (${url})`, kind: "cancelled" };
 }
@@ -325,7 +336,7 @@ async function withRelayRequestTimeout<T>(
   let abortListener: (() => void) | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     const rejectTimedOut = () => {
-      reject(new ApiError(0, null, `Request timed out after ${timeoutMs}ms (${path})`));
+      reject(new ApiError(0, null, timedOutMessage(String(timeoutMs), path)));
     };
     const rejectCancelled = () => {
       reject(new ApiError(0, null, `Request was cancelled (${path})`, "cancelled"));
@@ -402,6 +413,15 @@ export function shouldRouteViaRelay(): boolean {
   return _relay !== null || env.AIMUX_CONNECTION_MODE === "relay";
 }
 
+/// Decided here because this is the last place that holds the BARE route: the
+/// relay branch rewrites it to `/proxy/<host>/<port><path>`, which no route
+/// list would recognise.
+function withQueuedLifecycleTimeout(path: string, opts?: ApiOpts): ApiOpts | undefined {
+  if (opts?.timeoutMs !== undefined) return opts;
+  if (!isQueuedLifecycleRoute(path)) return opts;
+  return { ...opts, timeoutMs: QUEUED_LIFECYCLE_TIMEOUT_MS };
+}
+
 async function callProjectJson<T>(
   endpoint: ServiceEndpoint,
   method: string,
@@ -409,14 +429,15 @@ async function callProjectJson<T>(
   opts?: ApiOpts,
   body?: unknown,
 ): Promise<T> {
-  if (shouldRouteViaRelay()) return callServiceViaRelay<T>(endpoint, method, path, opts, body);
+  const timed = withQueuedLifecycleTimeout(path, opts);
+  if (shouldRouteViaRelay()) return callServiceViaRelay<T>(endpoint, method, path, timed, body);
   return callJson<T>(
     `${getServiceUrl(endpoint)}${path}`,
     {
       method,
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     },
-    opts,
+    timed,
   );
 }
 

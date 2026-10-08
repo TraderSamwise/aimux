@@ -167,6 +167,67 @@ export const PROJECT_API_ROUTES = {
 
 export type ProjectApiRoute = `/${string}`;
 
+/// How long the project service's lifecycle queue will make a caller wait.
+///
+/// It holds ONE permit and waits up to 150s for a turn, on the stated
+/// assumption that callers allow 120s. A client that gives up sooner reports a
+/// failure for work that is still running, and a retried spawn is a second
+/// agent.
+export const QUEUED_LIFECYCLE_TIMEOUT_MS = 120_000;
+
+/// The routes that take that permit, published once so every client waits the
+/// same amount. This is the set `lifecycle_transition_for_route` returns `Some`
+/// for, pinned against it by `testdata/contracts/v1/lifecycle-queue`.
+///
+/// `interrupt`, `restorePrevious/dismiss` and `recordBackendSession` are in the
+/// lifecycle route group but queue nothing, so they keep the short budget.
+export const PROJECT_API_QUEUED_LIFECYCLE_ROUTES: readonly string[] = [
+  PROJECT_API_ROUTES.agents.spawn,
+  PROJECT_API_ROUTES.agents.fork,
+  PROJECT_API_ROUTES.agents.switchTool,
+  PROJECT_API_ROUTES.agents.stop,
+  PROJECT_API_ROUTES.agents.stopTeammate,
+  PROJECT_API_ROUTES.agents.kill,
+  PROJECT_API_ROUTES.agents.killTeammate,
+  PROJECT_API_ROUTES.agents.rename,
+  PROJECT_API_ROUTES.agents.migrate,
+  PROJECT_API_ROUTES.agents.resume,
+  PROJECT_API_ROUTES.agents.resumeTeammate,
+  PROJECT_API_ROUTES.agents.restorePrevious,
+  PROJECT_API_ROUTES.agents.createTeammate,
+  PROJECT_API_ROUTES.agents.resurrectTeammate,
+  PROJECT_API_ROUTES.services.create,
+  PROJECT_API_ROUTES.services.resume,
+  PROJECT_API_ROUTES.services.stop,
+  PROJECT_API_ROUTES.services.remove,
+  PROJECT_API_ROUTES.worktreeActions.create,
+  PROJECT_API_ROUTES.worktreeActions.cacheCleanup,
+  PROJECT_API_ROUTES.worktreeActions.graveyard,
+  PROJECT_API_ROUTES.worktreeActions.remove,
+  PROJECT_API_ROUTES.graveyardActions.resurrectAgent,
+  PROJECT_API_ROUTES.graveyardActions.reapDeadAgents,
+  PROJECT_API_ROUTES.graveyardActions.resurrectWorktree,
+  PROJECT_API_ROUTES.graveyardActions.deleteWorktree,
+  PROJECT_API_ROUTES.graveyardActions.cleanup,
+];
+
+const QUEUED_LIFECYCLE_ROUTE_SET = new Set(PROJECT_API_QUEUED_LIFECYCLE_ROUTES);
+
+/// The service path a request target names, whether it arrives bare, as a full
+/// URL, or wrapped in the daemon's proxy prefix. Exact, not a suffix match: the
+/// set holds bare service paths and a loose match would claim unrelated ones.
+function queuedLifecyclePathname(target: string): string {
+  const withoutQuery = target.split("?")[0];
+  const afterOrigin = withoutQuery.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, "");
+  const proxied = afterOrigin.match(/^\/proxy\/[^/]+\/[^/]+(\/.*)$/);
+  return proxied ? proxied[1] : afterOrigin;
+}
+
+/// Whether this target takes the lifecycle permit.
+export function isQueuedLifecycleRoute(target: string): boolean {
+  return QUEUED_LIFECYCLE_ROUTE_SET.has(queuedLifecyclePathname(target));
+}
+
 export const PROJECT_API_EVENT_NAMES = {
   ready: "ready",
   alert: "alert",
