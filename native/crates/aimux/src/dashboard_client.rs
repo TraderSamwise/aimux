@@ -7,6 +7,9 @@ use crate::dashboard_actions::DashboardActionRequest;
 use crate::dashboard_model::DesktopStateSnapshot;
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
+use crate::project_service::lifecycle_mutation_queue::{
+    QUEUED_LIFECYCLE_TIMEOUT_MS, lifecycle_transition_for_route,
+};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -122,7 +125,8 @@ pub fn execute_dashboard_action(
         Some(action.body.clone()),
     )?;
     request.timeout_ms = Some(dashboard_action_timeout_ms(action.path));
-    let response = execute_loopback_json_request(&request).map_err(map_transport_error)?;
+    let response = execute_loopback_json_request(&request)
+        .map_err(|error| map_action_transport_error(action.path, error))?;
     if !(200..300).contains(&response.status)
         || response.json.get("ok").and_then(Value::as_bool) == Some(false)
     {
@@ -201,37 +205,93 @@ pub fn build_project_service_json_request(
         method,
         headers,
         body,
-        timeout_ms: Some(2_000),
+        timeout_ms: Some(PROJECT_SERVICE_READ_TIMEOUT_MS),
     })
 }
+
+/// What a read waits for the project service.
+///
+/// This was 2s, and `dashboard_internal` already documents that the service
+/// "misses the 2s budget routinely" under load -- which is how a busy moment
+/// put `request timed out after 2000ms` in the footer for a refresh that was
+/// merely slow, with the screen it already drew still correct underneath. A
+/// read is not a mutation: nothing is lost by waiting, and the Expo client
+/// already allows 10s for the same calls, so this is the two clients agreeing
+/// rather than one more number.
+const PROJECT_SERVICE_READ_TIMEOUT_MS: u64 = 10_000;
 
 fn map_transport_error(error: CoreCommandTransportError) -> anyhow::Error {
     anyhow!(error.to_string())
 }
 
+/// The same error, with the two things the banner left the reader to guess.
+///
+/// `request timed out after 2000ms` named no route and claimed nothing about
+/// the work, while a queued mutation that loses its listener keeps running --
+/// the project service finishes it and records that the reply was never
+/// delivered. So a user who read the banner as "that did not happen" and
+/// pressed the key again got a second agent, because spawn mints its own
+/// session id and is not idempotent.
+fn map_action_transport_error(path: &str, error: CoreCommandTransportError) -> anyhow::Error {
+    let CoreCommandTransportError::Timeout { timeout_ms } = &error else {
+        return map_transport_error(error);
+    };
+    if is_queued_lifecycle_mutation(path) {
+        // Short on purpose: the footer truncates to the terminal width on one
+        // line with no wrap, so a longer sentence lost the half that tells the
+        // reader what to do.
+        anyhow!("{path} timed out after {timeout_ms}ms — may still be running, check first")
+    } else {
+        anyhow!("{path} timed out after {timeout_ms}ms")
+    }
+}
+
+/// How long the dashboard waits for an action, which has to be at least as
+/// long as the project service is prepared to make it wait.
+///
+/// Every lifecycle mutation queues behind ONE permit, and the queue waits up
+/// to `WAIT_FOR_TURN_TIMEOUT` for its turn -- a budget picked because "the CLI
+/// gives a project mutation 120s, so past that no caller is still listening".
+/// The dashboard was not one of those callers: three routes had been raised by
+/// hand after each one was caught lying, and everything else kept the 2s
+/// default. So pressing a key on a project where any mutation was already
+/// running reported a failure for work that was merely waiting its turn --
+/// a brand-new checkout being the easy way to see it, because its row is
+/// written before the git work starts and the create holds the permit for the
+/// whole of it.
+///
+/// Asked of the route table rather than listed again here, so a lifecycle
+/// route added later cannot inherit a budget shorter than its own queue.
 fn dashboard_action_timeout_ms(path: &str) -> u64 {
     match path {
+        // Longer than a queued mutation's wait, not shorter: these do real
+        // filesystem work once they have the permit.
         routes::worktree_actions::CREATE
         | routes::worktree_actions::CACHE_CLEANUP
         | routes::worktree_actions::REMOVE
         | routes::worktree_actions::GRAVEYARD => 180_000,
-        routes::graveyard_actions::RESURRECT_AGENT
-        | routes::graveyard_actions::REAP_DEAD_AGENTS
-        | routes::graveyard_actions::RESURRECT_WORKTREE
-        | routes::graveyard_actions::DELETE_WORKTREE => 10_000,
         // One request that launches the whole offered fleet in turn. 35 agents
         // took 12.4s on sam-strix, so the default budget expired a sixth of the
         // way in and a working restore reported itself as a transport timeout.
         routes::agents::RESTORE_PREVIOUS => 180_000,
-        // Making one of these launches a tmux window and a backend process, on
-        // a machine that is usually running a dozen agents already. At the 2s
-        // default the client gave up on work that was going fine and raised a
-        // durable failure nothing would ever answer -- and the dashboard now
-        // reports all three in the footer, so the lie was on screen until it
-        // was dismissed.
-        routes::agents::SPAWN | routes::agents::FORK | routes::services::CREATE => 30_000,
+        _ if is_queued_lifecycle_mutation(path) => QUEUED_LIFECYCLE_TIMEOUT_MS,
         _ => 2_000,
     }
+}
+
+/// Whether this route queues behind the project service's lifecycle permit.
+///
+/// Asked of the function that actually takes the permit, not of the route
+/// GROUP. The two are not the same set: `interrupt`,
+/// `dismiss-restore-previous` and `record-backend-session` are in the
+/// lifecycle group and return `None` here, so they never queue and have no
+/// reason to wait; and a route put in another group would queue without the
+/// group ever saying so. Keying on the group would have been a second rule
+/// agreeing with the first by luck.
+pub fn is_queued_lifecycle_mutation(path: &str) -> bool {
+    // The transition carries ids read off the body, which this question does
+    // not depend on -- only on whether the route takes the permit at all.
+    lifecycle_transition_for_route(path, &Value::Null).is_some()
 }
 
 fn string_field(value: &Value, field: &str) -> Option<String> {
@@ -260,6 +320,104 @@ mod tests {
         );
     }
 
+    /// Every route that queues behind the lifecycle permit, asked of the route
+    /// table rather than listed here.
+    ///
+    /// The queue waits up to 150s for its turn and the CLI allows 120s, so a
+    /// client that gives up sooner reports "your request failed" for work that
+    /// is merely waiting. Three routes had been raised by hand, each after it
+    /// was caught lying; the rest kept 2s, which is every stop, resume, kill,
+    /// interrupt, rename, migrate, switch-tool and teammate action.
+    #[test]
+    fn no_lifecycle_action_gives_up_before_its_own_queue_does() {
+        // Every canonical route, asked of the function that takes the permit.
+        // Walking the lifecycle GROUP instead would pass while a queued route
+        // sat in another group on the 2s default.
+        let queued = crate::project_service::routes::canonical_project_api_routes()
+            .into_iter()
+            .filter(|path| is_queued_lifecycle_mutation(path))
+            .collect::<Vec<_>>();
+        assert!(
+            queued.len() > 10,
+            "the queue should hold the whole mutation surface, got {queued:?}"
+        );
+        for path in &queued {
+            let budget = dashboard_action_timeout_ms(path);
+            assert!(
+                budget >= QUEUED_LIFECYCLE_TIMEOUT_MS,
+                "{path} gives up after {budget}ms while its queue waits \
+                 {QUEUED_LIFECYCLE_TIMEOUT_MS}ms for a turn"
+            );
+        }
+        // And a route that does NOT queue keeps the short budget, so the fix
+        // is not "wait two minutes for everything".
+        assert!(
+            !is_queued_lifecycle_mutation(routes::agents::INTERRUPT),
+            "interrupt does not take the permit, so it must not wait for one"
+        );
+        assert_eq!(
+            dashboard_action_timeout_ms(routes::agents::INTERRUPT),
+            2_000
+        );
+    }
+
+    /// A timeout that abandons work has to say so.
+    ///
+    /// The banner read `request timed out after 2000ms`: no route, and no hint
+    /// that the mutation was still running. Spawn is not idempotent, so a user
+    /// who read that as "it did not happen" and pressed the key again got a
+    /// second agent.
+    #[test]
+    fn an_abandoned_mutation_says_it_may_still_be_running() {
+        let message = map_action_transport_error(
+            routes::agents::SPAWN,
+            CoreCommandTransportError::Timeout { timeout_ms: 2_000 },
+        )
+        .to_string();
+        assert!(
+            message.contains(routes::agents::SPAWN),
+            "names no route: {message}"
+        );
+        assert!(
+            message.contains("may still be running"),
+            "does not say the work outlives the request: {message}"
+        );
+        assert!(
+            message.contains("check first"),
+            "does not warn that a retry is not free: {message}"
+        );
+        // The footer truncates to the terminal width on ONE line with no wrap,
+        // so the clause telling the reader what to do has to fit after the
+        // route rather than past the edge. Measured without the route, which
+        // is as long as whatever route failed.
+        let tail = message.chars().count() - routes::agents::SPAWN.chars().count();
+        assert!(
+            tail <= 60,
+            "{tail} chars of explanation will be cut off on a narrow terminal: {message}"
+        );
+
+        // A read carries no such promise, so it must not make one.
+        let read = map_action_transport_error(
+            "/desktop-state",
+            CoreCommandTransportError::Timeout { timeout_ms: 2_000 },
+        )
+        .to_string();
+        assert!(read.contains("/desktop-state"), "names no route: {read}");
+        assert!(
+            !read.contains("may still be running"),
+            "a read does not keep running after the client leaves: {read}"
+        );
+    }
+
+    /// And a read is still answered promptly, so the budget did not simply
+    /// become "wait forever for everything".
+    #[test]
+    fn a_read_keeps_the_short_budget() {
+        assert_eq!(dashboard_action_timeout_ms("/does/not/queue"), 2_000);
+        assert!(!is_queued_lifecycle_mutation("/does/not/queue"));
+        assert!(is_queued_lifecycle_mutation(routes::agents::RESUME));
+    }
+
     // 35 agents took 12.4s on sam-strix. On the default budget the dashboard
     // gave up a sixth of the way in and reported a working restore as a
     // transport timeout, with every row still showing offline.
@@ -270,10 +428,18 @@ mod tests {
             restore >= 60_000,
             "restore launches every offered agent in one request; got {restore}ms"
         );
+        // `KILL` used to assert 2s here, as "a single-agent action keeps the
+        // short budget". Being one agent's action is not the question: it
+        // queues behind the same permit as the fleet restore, so 2s reported
+        // a failure whenever anything else held it.
+        assert!(
+            dashboard_action_timeout_ms(routes::agents::KILL) >= QUEUED_LIFECYCLE_TIMEOUT_MS,
+            "one agent's action still waits in the same queue"
+        );
         assert_eq!(
-            dashboard_action_timeout_ms(routes::agents::KILL),
+            dashboard_action_timeout_ms("/desktop-state"),
             2_000,
-            "a single-agent action keeps the short budget"
+            "a read that queues behind nothing keeps the short budget"
         );
     }
 

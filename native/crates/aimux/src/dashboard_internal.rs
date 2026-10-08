@@ -2297,6 +2297,20 @@ fn execute_overseer_watch_command(
                 DashboardActionKind::Enter,
             ) {
                 DashboardActionPlan::Request(focus_request) => {
+                    // Inline, on the key-effect thread. Focusing a running
+                    // window is a fast control call; RESUMING a stopped one is
+                    // a queued mutation that waits for the lifecycle permit,
+                    // and running that here froze the dashboard for as long as
+                    // the queue made it wait -- no repaint, no keys, no quit.
+                    // The overseer update has already landed by this point, so
+                    // the honest move is to say the window is not open rather
+                    // than to hold the whole TUI open waiting for it.
+                    if crate::dashboard_client::is_queued_lifecycle_mutation(focus_request.path) {
+                        controller.footer_alert = Some(DashboardFailureAlert::local(
+                            "Overseer updated. Its agent is not running — press Enter on it to start it.",
+                        ));
+                        return Ok(());
+                    }
                     if execute_dashboard_controller_action(endpoint, &focus_request).is_ok() {
                         return Ok(());
                     }
