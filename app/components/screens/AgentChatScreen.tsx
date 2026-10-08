@@ -175,13 +175,13 @@ import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
 import {
-  getNativeHardwareKeyboardConnected,
   setNativeChatComposerFocused,
   subscribeNativeAppCommands,
 } from "@/lib/native-app-commands";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
 import { worktreeIdentity, worktreeTone } from "@/lib/worktree-tone";
 import { buildMainTabHref } from "@/lib/main-tabs";
+import { useHasHardwareKeyboard } from "@/lib/hardware-keyboard";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import { isTransientRequestError } from "@/lib/request-errors";
 import {
@@ -535,6 +535,7 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
+  const hasHardwareKeyboard = useHasHardwareKeyboard();
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
     projectPath: string;
@@ -1588,20 +1589,16 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS === "web" || !sessionId) return undefined;
+      if (!hasHardwareKeyboard || !chatViewportKey) return undefined;
       let active = true;
-      let task: { cancel: () => void } | null = null;
-      const focusTargetKey = chatViewportKey;
-      void getNativeHardwareKeyboardConnected().then((connected) => {
-        if (!active || !connected || !focusTargetKey) return;
-        task = InteractionManager.runAfterInteractions(() => {
-          if (active) composerInputRef.current?.focus();
-        });
+      const task = InteractionManager.runAfterInteractions(() => {
+        if (active) composerInputRef.current?.focus();
       });
       return () => {
         active = false;
-        task?.cancel();
+        task.cancel();
       };
-    }, [chatViewportKey, sessionId]),
+    }, [chatViewportKey, hasHardwareKeyboard, sessionId]),
   );
 
   useFocusEffect(
@@ -1626,12 +1623,14 @@ export default function ChatScreen() {
   const handleComposerKeyboardEvent = useCallback(
     (event: {
       key?: string;
+      code?: string;
       shiftKey?: boolean;
       ctrlKey?: boolean;
       metaKey?: boolean;
       altKey?: boolean;
       nativeEvent?: {
         key?: string;
+        code?: string;
         shiftKey?: boolean;
         ctrlKey?: boolean;
         metaKey?: boolean;
@@ -1642,6 +1641,7 @@ export default function ChatScreen() {
       if (Platform.OS !== "web") return;
       const keyEvent = {
         key: event.nativeEvent?.key ?? event.key,
+        code: event.nativeEvent?.code ?? event.code,
         shiftKey: event.nativeEvent?.shiftKey ?? event.shiftKey,
         ctrlKey: event.nativeEvent?.ctrlKey ?? event.ctrlKey,
         metaKey: event.nativeEvent?.metaKey ?? event.metaKey,
@@ -1652,12 +1652,12 @@ export default function ChatScreen() {
         if (canUseOwnerControls) void handleInterrupt();
         return;
       }
-      if (shouldSubmitComposerKey(keyEvent)) {
+      if (shouldSubmitComposerKey(keyEvent, hasHardwareKeyboard)) {
         event.preventDefault?.();
         void handleSendMessage({ preserveFocus: true });
       }
     },
-    [canUseOwnerControls, handleInterrupt, handleSendMessage],
+    [canUseOwnerControls, handleInterrupt, handleSendMessage, hasHardwareKeyboard],
   );
 
   const handleComposerDraftChange = useCallback(
@@ -1680,6 +1680,10 @@ export default function ChatScreen() {
     [handleComposerPaste],
   );
 
+  // iOS routes a hardware Enter through the window's key handler, which a soft
+  // keyboard's return never reaches, so it needs nothing here. Android has no
+  // such hook and no way to ask whether a keyboard is attached, so it keeps the
+  // newline and sends from the control.
   const composerKeyboardProps = useMemo(
     () =>
       Platform.OS === "web"

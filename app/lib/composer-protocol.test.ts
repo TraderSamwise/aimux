@@ -15,13 +15,32 @@ describe("composer protocol", () => {
     expect(normalizeComposerDraft("  \n\t")).toBeNull();
   });
 
-  it("submits plain Enter and Shift+Enter, preserving other modified Enter keypresses", () => {
-    expect(shouldSubmitComposerKey({ key: "Enter" })).toBe(true);
-    expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true })).toBe(true);
-    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true })).toBe(false);
-    expect(shouldSubmitComposerKey({ key: "Enter", metaKey: true })).toBe(false);
-    expect(shouldSubmitComposerKey({ key: "Enter", altKey: true })).toBe(false);
-    expect(shouldSubmitComposerKey({ key: "a" })).toBe(false);
+  it("sends on a hardware Enter and breaks the line on Shift+Enter", () => {
+    expect(shouldSubmitComposerKey({ key: "Enter" }, true)).toBe(true);
+    expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", metaKey: true }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", altKey: true }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "a" }, true)).toBe(false);
+  });
+
+  it("refuses a key that does not physically exist", () => {
+    // A floating or split on-screen keyboard overlays the page instead of
+    // taking a bite out of the viewport, so no measurement can see it. The
+    // event can: `code` names the physical key, and there is not one.
+    expect(shouldSubmitComposerKey({ key: "Enter", code: "" }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", code: "Enter" }, true)).toBe(true);
+    expect(shouldSubmitComposerKey({ key: "Enter", code: "NumpadEnter" }, true)).toBe(true);
+    // A browser that does not report it has said nothing, which is not
+    // evidence that no key was pressed.
+    expect(shouldSubmitComposerKey({ key: "Enter" }, true)).toBe(true);
+  });
+
+  it("never sends on Enter without a hardware keyboard", () => {
+    // A soft keyboard's return key is the newline key, and the send control is
+    // the only send. Sending here swallowed the line break mid-sentence.
+    expect(shouldSubmitComposerKey({ key: "Enter" }, false)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true }, false)).toBe(false);
   });
 
   it("blocks sends without a target or while a send is in flight", () => {

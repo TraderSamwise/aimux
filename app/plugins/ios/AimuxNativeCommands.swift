@@ -7,10 +7,37 @@ class AimuxNativeCommands: RCTEventEmitter {
   private static weak var sharedEmitter: AimuxNativeCommands?
   private static var chatComposerFocused = false
   private var isObserving = false
+  private var keyboardObservers: [NSObjectProtocol] = []
 
   override init() {
     super.init()
     AimuxNativeCommands.sharedEmitter = self
+    observeHardwareKeyboardChanges()
+  }
+
+  /// A keyboard attached after launch changes the answer, and nothing else
+  /// reports it: no keyboard is on screen, so no keyboard frame moves. These
+  /// notifications are iOS 14 and the deployment target is 15.1, so they need
+  /// no availability guard.
+  private func observeHardwareKeyboardChanges() {
+    keyboardObservers = [NSNotification.Name.GCKeyboardDidConnect, .GCKeyboardDidDisconnect]
+      .map { name in
+        NotificationCenter.default.addObserver(
+          forName: name,
+          object: nil,
+          queue: .main
+        ) { _ in
+          AimuxNativeCommands.emit("hardwareKeyboardChanged")
+        }
+      }
+  }
+
+  deinit {
+    // A reload recreates this module, and observers left behind would each
+    // emit again on the next keyboard connect.
+    for observer in keyboardObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
   }
 
   override static func requiresMainQueueSetup() -> Bool {
@@ -131,8 +158,11 @@ class AimuxWindow: UIWindow {
     return nil
   }
 
+  /// Shift+Enter is a newline, so it must fall through to the text view rather
+  /// than be swallowed here. Only `pressesBegan` sees these, and only a
+  /// hardware keyboard raises them: a soft return never arrives as a UIKey.
   private func isSendReturnKey(_ key: UIKey) -> Bool {
-    let disallowedModifiers: UIKeyModifierFlags = [.command, .alternate, .control]
+    let disallowedModifiers: UIKeyModifierFlags = [.shift, .command, .alternate, .control]
     return isReturnKey(key) && key.modifierFlags.intersection(disallowedModifiers).isEmpty
   }
 

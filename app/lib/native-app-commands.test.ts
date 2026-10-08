@@ -20,7 +20,14 @@ import {
 describe("native app commands", () => {
   it("accepts desktop and chat commands emitted by the native bridge", () => {
     expect([...NATIVE_APP_COMMANDS].sort()).toEqual(
-      ["chatInterrupt", "chatSend", "desktopZoomIn", "desktopZoomOut", "desktopZoomReset"].sort(),
+      [
+        "chatInterrupt",
+        "chatSend",
+        "desktopZoomIn",
+        "desktopZoomOut",
+        "desktopZoomReset",
+        "hardwareKeyboardChanged",
+      ].sort(),
     );
     expect(isNativeAppCommand("chatSend")).toBe(true);
     expect(isNativeAppCommand("chatInterrupt")).toBe(true);
