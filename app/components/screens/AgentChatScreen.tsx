@@ -145,6 +145,7 @@ import { canUseChatSplitView, chatOutputPaneVisibility } from "@/lib/chat-output
 import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
 import {
   CHAT_OUTPUT_CAPTURE_START_LINE,
+  CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
   chatOutputHistoryStartLineForScroll,
 } from "@/lib/chat-output-constants";
 import {
@@ -1015,6 +1016,20 @@ export default function ChatScreen() {
     startLine: CHAT_OUTPUT_CAPTURE_START_LINE,
     token,
   });
+
+  // Coming back from a long background, re-read the deepest tail the service
+  // will serve rather than the 160-line default: a shallow window shares no
+  // message with the stored transcript, and the lines between were never
+  // fetched. `-2000 < currentStartLine` takes the wholesale-replace branch.
+  const wasAppVisibleRef = useRef(appVisible);
+  useEffect(() => {
+    const returned = appVisible && !wasAppVisibleRef.current;
+    wasAppVisibleRef.current = appVisible;
+    if (!returned) return;
+    void refreshOutputSnapshot("history", {
+      startLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
+    }).catch(() => {});
+  }, [appVisible, refreshOutputSnapshot]);
 
   const requestChatHistoryPage = useCallback(
     (metrics: ChatScrollMetrics) => {

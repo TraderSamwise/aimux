@@ -84,25 +84,38 @@ export type AgentOutputPayload = {
   tmuxUnavailable?: TmuxUnavailableMarker;
 };
 
-function mergeTranscriptMessages(
+/// Two windows with nothing in common are not one transcript.
+///
+/// A capture is a tail of the pane, so after a long background the re-requested
+/// window shares no message with the stored one and the lines between were
+/// never fetched. Splicing them put a seamless join over that hole; keeping
+/// only what was actually read is the honest answer, and paging back then
+/// re-fetches contiguously.
+export function transcriptWindowsAreDisjoint(
+  existing: AgentTranscriptMessage[],
+  incoming: AgentTranscriptMessage[],
+  shared: number,
+): boolean {
+  return shared === 0 && existing.length > 0 && incoming.length > 0;
+}
+
+export function mergeTranscriptMessages(
   existing: AgentTranscriptMessage[],
   incoming: AgentTranscriptMessage[],
 ): AgentTranscriptMessage[] {
   const overlap = longestTranscriptOverlap(existing, incoming);
+  if (transcriptWindowsAreDisjoint(existing, incoming, overlap)) return incoming;
   return [...stripLatestMarkers(existing.slice(0, existing.length - overlap)), ...incoming];
 }
 
-function stabilizeSameWindowTranscriptMessages(
+export function stabilizeSameWindowTranscriptMessages(
   existing: AgentTranscriptMessage[],
   incoming: AgentTranscriptMessage[],
 ): AgentTranscriptMessage[] {
   if (existing.length === 0 || incoming.length === 0) return incoming;
   const matches = transcriptMessageAlignment(existing, incoming);
-  if (matches.length === 0) {
-    return existing.some((message) => !message.latest)
-      ? [...stripLatestMarkers(existing.filter((message) => !message.latest)), ...incoming]
-      : incoming;
-  }
+  if (transcriptWindowsAreDisjoint(existing, incoming, matches.length)) return incoming;
+  if (matches.length === 0) return incoming;
 
   const merged: AgentTranscriptMessage[] = [];
   let existingCursor = 0;
