@@ -42,7 +42,8 @@
     "version:bump-ota": "eas-release bump-ota",
     "version:rollback": "eas-release rollback",
     "version:set": "eas-release set",
-    "version:sync": "eas-release sync"
+    "version:sync": "eas-release sync",
+    "verify:android-native": "bash scripts/verify-android-native.sh"
   },
   "dependencies": {
     "@clerk/clerk-expo": "^2.19.22",
