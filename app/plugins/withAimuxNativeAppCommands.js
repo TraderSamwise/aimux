@@ -192,3 +192,9 @@ module.exports = function withAimuxNativeAppCommands(config) {
     return config;
   });
 };
+
+/// Exported so `lib/android-native-patches.test.ts` can run them. Without a
+/// test that does, deleting the MainActivity overrides left every gate green
+/// while Android silently stopped sending.
+module.exports.patchKeyDispatch = patchKeyDispatch;
+module.exports.patchPackageRegistration = patchPackageRegistration;

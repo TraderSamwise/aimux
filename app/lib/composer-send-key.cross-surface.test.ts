@@ -16,8 +16,8 @@ import { NATIVE_APP_COMMANDS } from "@/lib/native-app-commands";
 
 // AGENTS.md "One Answer, Many Surfaces". Three surfaces decide whether Enter
 // sends, and only one of them is reachable from a unit test: web calls
-// `shouldSubmitComposerKey`, iOS matches modifier flags in Swift, Android hands
-// the decision to the platform's editor action. On 2026-09-13 `7adb41638`
+// `shouldSubmitComposerKey`, while iOS and Android each match the key against
+// the device it came from, in Swift and Kotlin. On 2026-09-13 `7adb41638`
 // changed the TS rule, the Swift modifier set AND the assertion that guarded
 // them, in one commit, and Shift+Enter became a second send key on every
 // surface at once. A per-surface test could not have caught that; this compares
@@ -156,9 +156,10 @@ describe("composer send key, across surfaces", () => {
   });
 
   it("delivers every command the native side emits", () => {
-    // `isNativeAppCommand` is an allowlist, so a command iOS emits that is
-    // missing from it is dropped in silence -- the keyboard-connect notice
-    // would simply never arrive and the answer would stay stale.
+    // `isNativeAppCommand` is an allowlist, so a command either native side
+    // emits that is missing from it is dropped in silence -- the
+    // keyboard-connect notice would never arrive and the answer would stay
+    // stale.
     const emitted = [
       ...SWIFT_SOURCE.matchAll(/emit\("([a-zA-Z]+)"\)/g),
       ...KOTLIN_SOURCE.matchAll(/val COMMAND_[A-Z_]+ = "([a-zA-Z]+)"/g),
@@ -181,8 +182,8 @@ describe("composer send key, across surfaces", () => {
 
   it("asks one source for the hardware answer", () => {
     // Two callers asking the native bridge separately is how the auto-focus
-    // and the send rule came to disagree on Android, where no such module
-    // exists and the one-shot answered false forever.
+    // and the send rule came to disagree on Android, back when nothing there
+    // answered and the one-shot returned false forever.
     expect(SCREEN_SOURCE).not.toContain("getNativeHardwareKeyboardConnected");
     expect(SCREEN_SOURCE).toContain("useHasHardwareKeyboard()");
   });
