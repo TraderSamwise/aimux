@@ -119,3 +119,62 @@ describe("resolveRouteShare", () => {
     });
   });
 });
+
+describe("a bare launch is not a shared route", () => {
+  // The reported bug, and the dominant half of it. `(main)/_layout.tsx` does
+  // `router.replace(sharedChatHref(activeShare))` for whatever this resolves,
+  // with no relay input, so resolving an unnamed share here opened the app on
+  // someone else's chat however healthy the user's own backend was.
+  it.each(["/", "/project", "/coordination", "/topology", "/library"])(
+    "resolves nothing at %s when the route names no share",
+    (pathname) => {
+      expect(
+        resolveRouteShare({
+          acceptedShares: [share],
+          currentUserId: "user_me",
+          legacyActiveShare: null,
+          pathname,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  // Route evidence is what makes it a shared route, and either half will do.
+  it("still resolves when the route names the session", () => {
+    expect(
+      resolveRouteShare({
+        acceptedShares: [share],
+        currentUserId: "user_me",
+        legacyActiveShare: null,
+        pathname: "/project",
+        sessionId: share.sessionId,
+      }),
+    ).toEqual(share);
+  });
+
+  it("still resolves when the route names the project", () => {
+    expect(
+      resolveRouteShare({
+        acceptedShares: [share],
+        currentUserId: "user_me",
+        legacyActiveShare: null,
+        pathname: "/project",
+        routeProjectPath: share.projectRoot,
+      }),
+    ).toEqual(share);
+  });
+
+  // A named route that does not match must not fall through to any other
+  // accepted share.
+  it("resolves nothing when the named session belongs to no accepted share", () => {
+    expect(
+      resolveRouteShare({
+        acceptedShares: [share],
+        currentUserId: "user_me",
+        legacyActiveShare: null,
+        pathname: "/project",
+        sessionId: "claude-someone-else",
+      }),
+    ).toBeNull();
+  });
+});

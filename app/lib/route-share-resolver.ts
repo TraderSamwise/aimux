@@ -39,6 +39,13 @@ export function resolveRouteShare({
   const legacyMatch = findLegacyPathShare(legacyActiveShare, sessionId, routeProjectPath);
   if (legacyMatch && legacyMatch.ownerUserId !== currentUserId) return legacyMatch;
 
+  // Route evidence required, the same discipline `findLegacyPathShare` keeps.
+  // Without it this predicate was just "a share that is not mine", so any
+  // accepted share matched a bare "/" -- and the layout then replaced the
+  // route with that chat, which is why the app always opened on someone
+  // else's conversation.
+  if (!sessionId && !routeProjectPath) return null;
+
   const acceptedMatch = acceptedShares.find(
     (share) =>
       share.ownerUserId !== currentUserId &&
