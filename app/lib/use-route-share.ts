@@ -3,7 +3,7 @@ import { useGlobalSearchParams, usePathname } from "expo-router";
 import { useAtomValue } from "jotai";
 import { useAuth } from "@/lib/auth";
 import { singleRouteParam } from "@/lib/route-params";
-import { resolveRouteShare, sharedChatHref } from "@/lib/route-share-resolver";
+import { resolveRouteShare, sharedChatHref, sharedChatRedirect } from "@/lib/route-share-resolver";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
   acceptedSharedSessionsAtom,
@@ -53,4 +53,4 @@ export function useRouteShare(): ActiveSharedSession | null {
   ]);
 }
 
-export { sharedChatHref };
+export { sharedChatHref, sharedChatRedirect };

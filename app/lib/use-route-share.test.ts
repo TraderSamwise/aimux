@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveRouteShare, sharedChatHref } from "./route-share-resolver";
+import { resolveRouteShare, sharedChatHref, sharedChatRedirect } from "./route-share-resolver";
 import type { ActiveSharedSession } from "@/stores/settings";
 
 const share: ActiveSharedSession = {
@@ -196,5 +196,31 @@ describe("a bare launch is not a shared route", () => {
         sessionId: "claude-someone-else",
       }),
     ).toBeNull();
+  });
+});
+
+describe("sharedChatRedirect", () => {
+  // This is the decision that actually opened someone else's chat: the layout
+  // replaces the route for whatever it returns, with no other input.
+  it("leaves the route alone when no share owns it", () => {
+    for (const pathname of ["/", "/project", "/shares", "/topology"]) {
+      expect(sharedChatRedirect(null, pathname), pathname).toBeNull();
+    }
+  });
+
+  it("sends a resolved share to its own chat", () => {
+    expect(sharedChatRedirect(share, "/project")).toEqual(sharedChatHref(share));
+  });
+
+  // Replacing a share route with a share route is how a redirect loop starts,
+  // and the canonical chat path is itself under /shares.
+  it("does not replace a route that is already a share route", () => {
+    for (const pathname of [
+      "/shares",
+      "/shares/user_owner/share_123/agent/claude-k4lihz/chat",
+      "/shares/invite/user_owner/tok/accept",
+    ]) {
+      expect(sharedChatRedirect(share, pathname), pathname).toBeNull();
+    }
   });
 });

@@ -34,7 +34,7 @@ import {
   sharedSessionsEqual,
   shouldApplySharedSessionHydrate,
 } from "@/lib/shared-sessions";
-import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
+import { sharedChatRedirect, useRouteShare } from "@/lib/use-route-share";
 import { projectRefFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
 import {
   applyDesktopStateFailureAtom,
@@ -244,9 +244,8 @@ export default function MainLayout() {
   }, [activeShare, explicitProjectSelection, selectedProjectRef, store, urlProjectRef]);
 
   useEffect(() => {
-    if (!activeShare) return;
-    if (pathname === "/shares" || pathname.startsWith("/shares/")) return;
-    router.replace(sharedChatHref(activeShare));
+    const target = sharedChatRedirect(activeShare, pathname);
+    if (target) router.replace(target);
   }, [activeShare, pathname, router]);
 
   useEffect(() => {

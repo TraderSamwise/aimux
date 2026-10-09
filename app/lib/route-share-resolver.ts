@@ -67,6 +67,24 @@ export function sharedChatHref(share: ActiveSharedSession) {
   } as const;
 }
 
+/**
+ * Where a resolved share says the app should be, or null to leave the route
+ * alone.
+ *
+ * Extracted because the effect that does this lives in a 500-line layout that
+ * no test reads, and it is the thing that actually opened someone else's chat:
+ * it replaces the route for whatever resolves, with no other input. Returning
+ * null on a share route is what stops it replacing its own destination.
+ */
+export function sharedChatRedirect(
+  activeShare: ActiveSharedSession | null,
+  pathname: string,
+): ReturnType<typeof sharedChatHref> | null {
+  if (!activeShare) return null;
+  if (pathname === "/shares" || pathname.startsWith("/shares/")) return null;
+  return sharedChatHref(activeShare);
+}
+
 function findMatchingShare(
   shares: readonly ActiveSharedSession[],
   match: { ownerUserId: string; shareId: string; sessionId?: string | null },
