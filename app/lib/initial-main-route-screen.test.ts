@@ -18,9 +18,9 @@ describe("the landing screen", () => {
     return readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
   })();
 
-  it("derives the relay signal instead of reading the raw status", () => {
-    expect(source, "the three-valued signal is the whole fix").toContain(
-      "relaySignal: relayLandingSignal(relayConfigured, relayStatus)",
+  it("derives the backend answer instead of reading the raw status", () => {
+    expect(source, "the three-valued answer is the whole fix").toContain(
+      "ownBackend: ownBackendSignal(relayConfigured, relayStatus, relayMachines.length)",
     );
     expect(source, "and the raw comparison must not come back").not.toMatch(
       /relayStatus\s*(!==|===)\s*"/,
@@ -29,9 +29,8 @@ describe("the landing screen", () => {
 
   it("passes the machines the relay reported, not a constant", () => {
     expect(source, "an empty fleet is how a guest is told apart").toContain(
-      "ownMachineCount: relayMachines.length",
+      "useAtomValue(relayMachinesAtom)",
     );
-    expect(source).toContain("useAtomValue(relayMachinesAtom)");
   });
 
   it("passes the real share count, not a constant", () => {

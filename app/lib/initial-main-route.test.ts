@@ -4,6 +4,7 @@ import type { RelayStatus } from "@/lib/relay-transport";
 
 import {
   initialMainRoute,
+  ownBackendSignal,
   relayLandingSignal,
   type InitialMainRouteInput,
   type RelayLandingSignal,
@@ -11,9 +12,8 @@ import {
 
 const base: InitialMainRouteInput = {
   isSignedIn: true,
-  ownMachineCount: 1,
+  ownBackend: "present",
   realSharedChatCount: 1,
-  relaySignal: "available",
   sharesHydrated: true,
   waitExpired: false,
 };
@@ -31,16 +31,10 @@ describe("initialMainRoute", () => {
   // there is no relay at all. Shared chats are not a fallback for a dead
   // backend; they are only somewhere to go if he actually has some.
   it("never routes to shared with no shared chats, however dead the relay is", () => {
-    for (const relaySignal of ["unavailable", "unknown"] as const) {
+    for (const ownBackend of ["absent", "unknown"] as const) {
       expect(
-        initialMainRoute({
-          ...base,
-          ownMachineCount: 0,
-          realSharedChatCount: 0,
-          relaySignal,
-          waitExpired: true,
-        }),
-        relaySignal,
+        initialMainRoute({ ...base, ownBackend, realSharedChatCount: 0, waitExpired: true }),
+        ownBackend,
       ).toBe("project");
     }
   });
@@ -55,27 +49,20 @@ describe("initialMainRoute", () => {
   // app connect as a guest socket, which is told nothing about any fleet, so
   // the machine list reads empty -- and the fleet genuinely is not theirs.
   it("routes a user with no machines of their own to their shared chats", () => {
-    expect(initialMainRoute({ ...base, ownMachineCount: 0 })).toBe("shared");
+    expect(initialMainRoute({ ...base, ownBackend: "absent" })).toBe("shared");
   });
 
   // The relay answers "do you have a backend" itself: `daemon_status` with no
   // daemon online becomes `daemon_offline`, which is unavailable.
   it("routes to shared when the relay says there is nothing of the user's own", () => {
-    expect(initialMainRoute({ ...base, relaySignal: "unavailable" })).toBe("shared");
-  });
-
-  // A machine that exists but whose relay is unreachable is still no backend.
-  it("does not let a remembered machine override an unreachable relay", () => {
-    expect(initialMainRoute({ ...base, ownMachineCount: 3, relaySignal: "unavailable" })).toBe(
-      "shared",
-    );
+    expect(initialMainRoute({ ...base, ownBackend: "absent" })).toBe("shared");
   });
 
   // The reported bug. `relayStatusAtom` starts at "disconnected", so this used
   // to be indistinguishable from a relay that is down, and every cold launch
   // landed on someone else's chats.
   it("waits rather than calling a relay that has not answered unavailable", () => {
-    expect(initialMainRoute({ ...base, relaySignal: "unknown" })).toBe("pending");
+    expect(initialMainRoute({ ...base, ownBackend: "unknown" })).toBe("pending");
   });
 
   // The other half of the bounce: stored shares start empty, so the count said
@@ -88,7 +75,7 @@ describe("initialMainRoute", () => {
 
   // A dead relay never answers, so the wait has to end in a decision.
   it("decides with what it has once the wait expires", () => {
-    expect(initialMainRoute({ ...base, relaySignal: "unknown", waitExpired: true })).toBe("shared");
+    expect(initialMainRoute({ ...base, ownBackend: "unknown", waitExpired: true })).toBe("shared");
     expect(
       initialMainRoute({
         ...base,
@@ -106,10 +93,40 @@ describe("initialMainRoute", () => {
       initialMainRoute({
         ...base,
         isSignedIn: false,
-        relaySignal: "unknown",
+        ownBackend: "unknown",
         sharesHydrated: false,
       }),
     ).toBe("project");
+  });
+});
+
+describe("ownBackendSignal", () => {
+  // Local mode never reports a fleet -- `relayMachinesAtom` is set to `[]` and
+  // never filled -- and a local daemon is the user's own backend anyway.
+  it("counts local mode as the user's own backend without asking", () => {
+    expect(ownBackendSignal(false, "disconnected", 0)).toBe("present");
+  });
+
+  it("is the user's own backend when the relay is reachable and names a machine", () => {
+    expect(ownBackendSignal(true, "connected", 1)).toBe("present");
+  });
+
+  // A guest socket is told nothing about any fleet, so an empty list is the
+  // right answer rather than a missing one.
+  it("is absent when a reachable relay names no machine of theirs", () => {
+    expect(ownBackendSignal(true, "connected", 0)).toBe("absent");
+  });
+
+  // `knownMachinesAtom` deliberately remembers machines that have gone away,
+  // so a count alone must not outvote the relay.
+  it("is absent when the relay is unreachable, whatever machines are remembered", () => {
+    expect(ownBackendSignal(true, "daemon_offline", 3)).toBe("absent");
+    expect(ownBackendSignal(true, "auth_failed", 3)).toBe("absent");
+  });
+
+  it("is unknown while the relay has not answered", () => {
+    expect(ownBackendSignal(true, "disconnected", 0)).toBe("unknown");
+    expect(ownBackendSignal(true, "connecting", 2)).toBe("unknown");
   });
 });
 

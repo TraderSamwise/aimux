@@ -4,7 +4,7 @@ import { Redirect, useGlobalSearchParams } from "expo-router";
 import { useAtomValue } from "jotai";
 import {
   initialMainRoute,
-  relayLandingSignal,
+  ownBackendSignal,
   RELAY_LANDING_WAIT_MS,
 } from "@/lib/initial-main-route";
 import { useAuth } from "@/lib/auth";
@@ -43,9 +43,8 @@ export default function DashboardIndex() {
 
   const route = initialMainRoute({
     isSignedIn,
-    ownMachineCount: relayMachines.length,
+    ownBackend: ownBackendSignal(relayConfigured, relayStatus, relayMachines.length),
     realSharedChatCount: acceptedShares.length,
-    relaySignal: relayLandingSignal(relayConfigured, relayStatus),
     sharesHydrated,
     waitExpired,
   });
