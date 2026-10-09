@@ -10,9 +10,7 @@ import {
 } from "./initial-main-route";
 
 const base: InitialMainRouteInput = {
-  activeProjectCount: 1,
   isSignedIn: true,
-  projectDiscoverySynced: true,
   realSharedChatCount: 1,
   relaySignal: "available",
   sharesHydrated: true,
@@ -28,20 +26,28 @@ describe("initialMainRoute", () => {
     expect(initialMainRoute({ ...base, realSharedChatCount: 0 })).toBe("project");
   });
 
-  it("defaults to project while project discovery has not proven there are no active projects", () => {
-    expect(
-      initialMainRoute({ ...base, activeProjectCount: 0, projectDiscoverySynced: false }),
-    ).toBe("project");
+  // Sam's second clause: no valid shared chats means his own surface even when
+  // there is no relay at all. Shared chats are not a fallback for a dead
+  // backend; they are only somewhere to go if he actually has some.
+  it("never routes to shared with no shared chats, however dead the relay is", () => {
+    for (const relaySignal of ["unavailable", "unknown"] as const) {
+      expect(
+        initialMainRoute({ ...base, realSharedChatCount: 0, relaySignal, waitExpired: true }),
+        relaySignal,
+      ).toBe("project");
+    }
   });
 
-  it("routes to shared for a signed-in user with shares and no active projects", () => {
-    expect(initialMainRoute({ ...base, activeProjectCount: 0 })).toBe("shared");
+  // The whole requirement: a reachable relay means the user's own surface,
+  // whatever their project list currently says.
+  it("lands on the user's own surface whenever the relay is reachable", () => {
+    expect(initialMainRoute(base)).toBe("project");
   });
 
-  it("routes to shared for a signed-in user with shares when the relay is unavailable", () => {
-    expect(initialMainRoute({ ...base, activeProjectCount: 2, relaySignal: "unavailable" })).toBe(
-      "shared",
-    );
+  // The relay answers "do you have a backend" itself: `daemon_status` with no
+  // daemon online becomes `daemon_offline`, which is unavailable.
+  it("routes to shared when the relay says there is nothing of the user's own", () => {
+    expect(initialMainRoute({ ...base, relaySignal: "unavailable" })).toBe("shared");
   });
 
   // The reported bug. `relayStatusAtom` starts at "disconnected", so this used
@@ -57,10 +63,6 @@ describe("initialMainRoute", () => {
     expect(initialMainRoute({ ...base, realSharedChatCount: 0, sharesHydrated: false })).toBe(
       "pending",
     );
-  });
-
-  it("lands on the user's own surface once the relay answers", () => {
-    expect(initialMainRoute({ ...base, relaySignal: "available" })).toBe("project");
   });
 
   // A dead relay never answers, so the wait has to end in a decision.

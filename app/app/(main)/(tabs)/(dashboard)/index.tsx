@@ -8,7 +8,7 @@ import {
   RELAY_LANDING_WAIT_MS,
 } from "@/lib/initial-main-route";
 import { useAuth } from "@/lib/auth";
-import { lastSyncAtAtom, projectsAtom, selectedProjectRefAtom } from "@/stores/projects";
+import { selectedProjectRefAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { buildViewHref, projectRefFromSearchOrLocation } from "@/lib/view-location";
 import { acceptedSharedSessionsAtom, settingsHydratedAtom } from "@/stores/settings";
@@ -22,9 +22,7 @@ export default function DashboardIndex() {
     machine?: string | string[];
   }>();
   const { isSignedIn } = useAuth();
-  const projects = useAtomValue(projectsAtom);
   const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
-  const lastSyncAt = useAtomValue(lastSyncAtAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const acceptedShares = useAtomValue(acceptedSharedSessionsAtom);
@@ -34,7 +32,6 @@ export default function DashboardIndex() {
     projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
     selectedProjectRef;
   const projectPath = projectRef?.path ?? null;
-  const activeProjectCount = projects.filter((project) => project.serviceAlive).length;
 
   // A dead relay never answers, so the wait needs an end. Armed once per mount
   // rather than per decision, so re-deciding cannot restart the clock.
@@ -44,9 +41,7 @@ export default function DashboardIndex() {
   }, []);
 
   const route = initialMainRoute({
-    activeProjectCount,
     isSignedIn,
-    projectDiscoverySynced: lastSyncAt !== null,
     realSharedChatCount: acceptedShares.length,
     relaySignal: relayLandingSignal(relayConfigured, relayStatus),
     sharesHydrated,

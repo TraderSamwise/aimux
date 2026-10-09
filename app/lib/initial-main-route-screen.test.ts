@@ -27,6 +27,11 @@ describe("the landing screen", () => {
     );
   });
 
+  it("passes the real share count, not a constant", () => {
+    expect(source).toContain("realSharedChatCount: acceptedShares.length");
+    expect(source).toContain("useAtomValue(acceptedSharedSessionsAtom)");
+  });
+
   it("tells the rule whether stored shares have been read", () => {
     expect(source).toContain("sharesHydrated");
     expect(source, "from the store, not a constant").toContain(

@@ -38,8 +38,6 @@ export interface InitialMainRouteInput {
   isSignedIn: boolean;
   realSharedChatCount: number;
   sharesHydrated: boolean;
-  activeProjectCount: number;
-  projectDiscoverySynced: boolean;
   relaySignal: RelayLandingSignal;
   waitExpired: boolean;
 }
@@ -50,7 +48,7 @@ export interface InitialMainRouteInput {
  *
  * Two facts arrive late and both used to read as settled: the relay's status
  * starts at "disconnected", and stored shares start empty while AsyncStorage
- * is still reading. Deciding on either produced the bounce Sam sees -- project
+ * is still reading. Deciding on either produced the bounce Sam saw -- project
  * for one frame, then shared. So an unknown is waited on, bounded by
  * {@link RELAY_LANDING_WAIT_MS}, and an expired wait decides with what it has.
  */
@@ -66,8 +64,11 @@ export function initialMainRoute(input: InitialMainRouteInput): InitialMainRoute
   // a relay that never answered is a relay that is not there.
   if (input.realSharedChatCount <= 0) return "project";
 
-  const relayUnavailable = input.relaySignal !== "available";
-  const noActiveProjects = input.projectDiscoverySynced && input.activeProjectCount === 0;
-
-  return relayUnavailable || noActiveProjects ? "shared" : "project";
+  // "No relay available AND you have shared chats" is the whole condition. The
+  // relay answers it itself: `daemon_status` reports whether a daemon is
+  // online, and a reply of no becomes `daemon_offline`, which is in the
+  // unavailable set. Counting active projects was a second, worse guess at the
+  // same question -- it sent a connected user whose daemon had not reported a
+  // project yet to someone else's chats.
+  return input.relaySignal === "available" ? "project" : "shared";
 }
