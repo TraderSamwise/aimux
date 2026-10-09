@@ -367,14 +367,13 @@ function SidebarPrimaryNav({
 
 export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boolean }) {
   const { width } = useWindowDimensions();
-  // With the keyboard up the list was cut off wherever the keyboard started --
-  // most of the agents unreachable without dismissing it first. Give the
-  // covered strip back as padding so the list scrolls past it.
+  // For the PERSISTENT sidebar, which sits beside the chat and keeps its frame
+  // while the keyboard covers its bottom rows. The drawer dismisses instead,
+  // in `shouldDismissKeyboardForSidebar` -- it is over the chat, not beside it.
   //
   // Snapped, not animated: AGENTS.md forbids animating a layout dimension in a
   // touch-critical scroll surface, and padding is one. `useKeyboardInset` is
-  // the UI-thread value for chrome that MOVES with the keyboard; this is
-  // layout that has to be there when the finger arrives.
+  // for chrome that MOVES with the keyboard; this has to be there already.
   const keyboardHeight = useKeyboardHeight();
   const listBottomInset = useMemo(() => ({ paddingBottom: keyboardHeight }), [keyboardHeight]);
   const projects = useAtomValue(projectsAtom);
