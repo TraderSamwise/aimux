@@ -33,7 +33,7 @@ import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { pairingPromptDeviceKey, shouldOpenPairingPrompt } from "@/lib/pairing-prompt";
 import { ResponsiveViewportProvider, useResponsiveViewportValue } from "@/lib/responsive-viewport";
 import { useRouteShare } from "@/lib/use-route-share";
-import { useSidebarKeyboardDismiss } from "@/lib/sidebar-keyboard-dismiss";
+import { useSidebarKeyboard } from "@/lib/sidebar-keyboard";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, desktopAppZoomScale, stepDesktopAppZoom } from "@/stores/settings";
 import { chatChromeVisibleAtom, sidebarOpenAtom } from "@/stores/ui";
@@ -84,7 +84,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Keyed on the atom rather than the one button that writes it, so a second
   // opener cannot be added without this.
-  useSidebarKeyboardDismiss(sidebarOpen, sidebarPresentation);
+  useSidebarKeyboard(sidebarOpen, sidebarPresentation);
 
   // Nothing loads until this device is approved, so the prompt opens itself
   // rather than waiting for a click on a banner above an empty app.

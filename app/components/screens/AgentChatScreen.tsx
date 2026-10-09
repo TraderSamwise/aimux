@@ -75,6 +75,7 @@ import {
 import { useAuth, useUser } from "@/lib/auth";
 import { agentActivityLabel, shouldShimmerAgentActivityLabel } from "@/lib/activity-label";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
+import { registerChatComposerFocus } from "@/lib/chat-composer-focus";
 import {
   createShareInvite,
   getShare,
@@ -1605,6 +1606,12 @@ export default function ChatScreen() {
       if (canUseOwnerControls) void handleInterrupt();
     };
   }, [canUseOwnerControls, handleInterrupt]);
+
+  // The sidebar takes this keyboard away when the drawer opens and owes it
+  // back when the drawer closes. Registered rather than called directly,
+  // because closing the drawer by tapping an agent navigates too, so the
+  // composer owed the keyboard is often the one mounting next.
+  useEffect(() => registerChatComposerFocus(() => composerInputRef.current?.focus()), []);
 
   useFocusEffect(
     useCallback(() => {

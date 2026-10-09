@@ -92,6 +92,16 @@ vi.mock("@/lib/hardware-keyboard", async (importOriginal) => ({
   useHasHardwareKeyboard: () => hardwareKeyboard,
 }));
 
+// The hook's own reading of "was a keyboard up", stubbed so the restore can be
+// driven both ways. `useSidebarListInset` keeps the real one, because the
+// module calls it through its own binding rather than this import.
+let keyboardVisible = true;
+vi.mock("@/lib/use-keyboard-visible", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/use-keyboard-visible")>()),
+  useKeyboardHeight: () => (keyboardVisible ? 336 : 0),
+  useKeyboardVisible: () => keyboardVisible,
+}));
+
 let platformOS = "ios";
 let windowWidth = 1200;
 const keyboardListeners = new Map<string, (event: unknown) => void>();
@@ -118,7 +128,10 @@ vi.mock("react-native", () => ({
   useWindowDimensions: () => ({ height: 800, width: windowWidth }),
 }));
 
-const { useSidebarKeyboardDismiss } = await import("@/lib/sidebar-keyboard-dismiss");
+const { useSidebarKeyboard } = await import("@/lib/sidebar-keyboard");
+const { registerChatComposerFocus, clearChatComposerFocusRequest } =
+  await import("@/lib/chat-composer-focus");
+type SidebarKeyboardHandlers = { dismiss: () => void; restore: () => boolean };
 const { useSidebarListInset } = await import("@/lib/use-keyboard-visible");
 
 type Mounted<T> = { last: () => T; render: () => T; unmount: () => void };
@@ -170,7 +183,11 @@ function mount<T>(render: () => T): Mounted<T> {
   };
 }
 
-type Render = { dismiss?: () => void; open: boolean; presentation?: "drawer" | "persistent" };
+type Render = {
+  handlers?: SidebarKeyboardHandlers;
+  open: boolean;
+  presentation?: "drawer" | "persistent";
+};
 
 /// Replays renders through one mounted hook, returning the blur count after
 /// each. Render 0 is the mount, which by definition opened nothing.
@@ -178,7 +195,7 @@ function blursPerRender(renders: Render[]): number[] {
   blurWebActiveElement.mockClear();
   let next = renders[0];
   const harness = mount(() => {
-    useSidebarKeyboardDismiss(next.open, next.presentation ?? "drawer", next.dismiss);
+    useSidebarKeyboard(next.open, next.presentation ?? "drawer", next.handlers);
     return blurWebActiveElement.mock.calls.length;
   });
   const counts = [harness.last()];
@@ -189,10 +206,12 @@ function blursPerRender(renders: Render[]): number[] {
   return counts;
 }
 
-describe("useSidebarKeyboardDismiss", () => {
+describe("useSidebarKeyboard", () => {
   beforeEach(() => {
     hardwareKeyboard = false;
     platformOS = "ios";
+    keyboardVisible = true;
+    clearChatComposerFocusRequest();
   });
 
   // The whole point, and the one case a gutted hook body passes silently.
@@ -223,10 +242,11 @@ describe("useSidebarKeyboardDismiss", () => {
 
   it("uses the dismiss it is handed instead, when handed one", () => {
     const dismiss = vi.fn();
+    const handlers = { dismiss, restore: () => true };
     expect(
       blursPerRender([
-        { dismiss, open: false },
-        { dismiss, open: true },
+        { handlers, open: false },
+        { handlers, open: true },
       ]),
     ).toEqual([0, 0]);
     expect(dismiss).toHaveBeenCalledTimes(1);
@@ -238,8 +258,8 @@ describe("useSidebarKeyboardDismiss", () => {
     const first = vi.fn();
     const second = vi.fn();
     blursPerRender([
-      { dismiss: first, open: false },
-      { dismiss: second, open: true },
+      { handlers: { dismiss: first, restore: () => true }, open: false },
+      { handlers: { dismiss: second, restore: () => true }, open: true },
     ]);
     expect(first, "the superseded one must not be called").not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledTimes(1);
@@ -250,6 +270,70 @@ describe("useSidebarKeyboardDismiss", () => {
   it("asks whether a hardware keyboard is attached, and obeys the answer", () => {
     hardwareKeyboard = true;
     expect(blursPerRender([{ open: false }, { open: true }])).toEqual([0, 0]);
+  });
+
+  // Sam's requirement: closing the drawer puts back a keyboard that was up,
+  // and the restore reaches whichever composer is registered -- which after a
+  // tap on an agent row is the one mounting next, not the one that was blurred.
+  it("puts the keyboard back when the drawer closes", () => {
+    const focus = vi.fn();
+    const unregister = registerChatComposerFocus(focus);
+    try {
+      blursPerRender([{ open: false }, { open: true }, { open: false }]);
+      expect(blurWebActiveElement, "it was dismissed on the way in").toHaveBeenCalledTimes(1);
+      expect(focus, "and restored on the way out").toHaveBeenCalledTimes(1);
+    } finally {
+      unregister();
+      clearChatComposerFocusRequest();
+    }
+  });
+
+  // The "iff" in the requirement. Opening the drawer with nothing focused must
+  // not raise a keyboard the user never had.
+  it("puts nothing back when no keyboard was up", () => {
+    const focus = vi.fn();
+    const unregister = registerChatComposerFocus(focus);
+    keyboardVisible = false;
+    try {
+      blursPerRender([{ open: false }, { open: true }, { open: false }]);
+      expect(focus).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+      clearChatComposerFocusRequest();
+    }
+  });
+
+  // Tapping a row closes the drawer AND navigates, so the composer owed the
+  // keyboard mounts after the close. The request has to wait for it.
+  it("reaches a composer that mounts after the drawer closed", () => {
+    blursPerRender([{ open: false }, { open: true }, { open: false }]);
+    const focus = vi.fn();
+    const unregister = registerChatComposerFocus(focus);
+    try {
+      expect(focus, "the request was waiting for a composer").toHaveBeenCalledTimes(1);
+    } finally {
+      unregister();
+      clearChatComposerFocusRequest();
+    }
+  });
+
+  // One debt per dismissal: a second close must not raise it again.
+  it("owes the keyboard back only once", () => {
+    const focus = vi.fn();
+    const unregister = registerChatComposerFocus(focus);
+    try {
+      blursPerRender([
+        { open: false },
+        { open: true },
+        { open: false },
+        { open: true, presentation: "persistent" },
+        { open: false, presentation: "persistent" },
+      ]);
+      expect(focus).toHaveBeenCalledTimes(1);
+    } finally {
+      unregister();
+      clearChatComposerFocusRequest();
+    }
   });
 
   it("never blurs for the persistent sidebar", () => {
@@ -283,8 +367,8 @@ describe("useSidebarKeyboardDismiss", () => {
     blurWebActiveElement.mockClear();
     let firstOpen = false;
     let secondOpen = false;
-    const first = mount(() => useSidebarKeyboardDismiss(firstOpen, "drawer"));
-    const second = mount(() => useSidebarKeyboardDismiss(secondOpen, "drawer"));
+    const first = mount(() => useSidebarKeyboard(firstOpen, "drawer"));
+    const second = mount(() => useSidebarKeyboard(secondOpen, "drawer"));
     expect(blurWebActiveElement).toHaveBeenCalledTimes(0);
 
     firstOpen = true;

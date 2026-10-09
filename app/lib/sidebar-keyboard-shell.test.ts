@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
-import { createSidebarKeyboardDismiss } from "@/lib/sidebar-keyboard-dismiss";
+import { createSidebarKeyboard } from "@/lib/sidebar-keyboard";
 
 vi.mock("react-native", () => ({
   Keyboard: { dismiss: () => {} },
@@ -24,12 +24,19 @@ type Step = { hasHardwareKeyboard?: boolean; open: boolean; presentation: "drawe
 // dismissed, so a test reads as the sequence a thumb actually produces. Step 0
 // is the mount, which by definition opened nothing.
 function dismissedAt(steps: Step[]): number[] {
-  const dismissOnOpen = createSidebarKeyboardDismiss();
+  const dismissOnOpen = createSidebarKeyboard();
   const dismiss = vi.fn();
   const dismissedSteps: number[] = [];
   steps.forEach((step, index) => {
     const before = dismiss.mock.calls.length;
-    const acted = dismissOnOpen({ hasHardwareKeyboard: false, ...step }, dismiss);
+    const acted =
+      dismissOnOpen(
+        { hasHardwareKeyboard: false, keyboardVisible: true, ...step },
+        {
+          dismiss,
+          restore: () => true,
+        },
+      ) === "dismissed";
     const calls = dismiss.mock.calls.length - before;
     expect(calls, `step ${index} must not dismiss more than once`).toBeLessThanOrEqual(1);
     expect(acted, `step ${index} must report what it did`).toBe(calls === 1);
@@ -155,12 +162,22 @@ describe("the shell runs it", () => {
     const source = readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
 
     expect(source, "the shell must run the hook").toContain(
-      "useSidebarKeyboardDismiss(sidebarOpen, sidebarPresentation)",
+      "useSidebarKeyboard(sidebarOpen, sidebarPresentation)",
     );
+    // Without a registered composer the restore has nobody to reach, so the
+    // keyboard never comes back -- which is the whole second half of the rule.
+    const chat = readFileSync(sourcePath("components/screens/AgentChatScreen.tsx"), "utf8").replace(
+      /^\s*\/\/.*$/gm,
+      "",
+    );
+    expect(chat, "the composer must register the focus the sidebar owes it").toMatch(
+      /registerChatComposerFocus\(\(\) =>[\s\S]*?composerInputRef\.current\?\.focus\(\)\)/,
+    );
+
     // A local of the same name keeps that substring verbatim while the real
     // hook is imported and never called.
     expect(source, "and must not shadow it with a local").not.toMatch(
-      /(const|let|var|function)\s+useSidebarKeyboardDismiss\b/,
+      /(const|let|var|function)\s+useSidebarKeyboard/,
     );
   });
 });
