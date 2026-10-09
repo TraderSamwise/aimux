@@ -303,6 +303,7 @@ describe("useSidebarKeyboardDismiss", () => {
 describe("useSidebarListInset", () => {
   beforeEach(() => {
     platformOS = "ios";
+    hardwareKeyboard = false;
     keyboardMetrics = undefined;
     windowWidth = 1200;
     keyboardListeners.clear();
@@ -353,6 +354,16 @@ describe("useSidebarListInset", () => {
     windowWidth = 430;
     keyboardMetrics = { height: 291 };
     expect(mount(() => useSidebarListInset()).last()).toEqual({ paddingBottom: 0 });
+  });
+
+  // Unless the dismissal is vetoed, which is the one drawer case that keeps a
+  // keyboard: an iPad in portrait with a Magic Keyboard, where iOS's shortcuts
+  // bar sits over the last row and nothing would scroll it up.
+  it("pads a drawer whose dismissal a hardware keyboard vetoed", () => {
+    windowWidth = 430;
+    hardwareKeyboard = true;
+    keyboardMetrics = { height: 55 };
+    expect(mount(() => useSidebarListInset()).last()).toEqual({ paddingBottom: 55 });
   });
 
   // Under Android's edge-to-edge the window resizes for the keyboard, so

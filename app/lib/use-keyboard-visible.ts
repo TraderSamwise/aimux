@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Keyboard, Platform, useWindowDimensions } from "react-native";
 
 import { getSidebarPresentation } from "@/lib/app-shell-layout";
-import { softKeyboardOcclusionPx } from "@/lib/hardware-keyboard";
+import { softKeyboardOcclusionPx, useHasHardwareKeyboard } from "@/lib/hardware-keyboard";
 
 /**
  * Whether the keyboard is up, for chrome that hides rather than moves.
@@ -127,11 +127,15 @@ export function keyboardHeightFromEvent(event: {
  */
 export function useSidebarListInset(): { paddingBottom: number } {
   const { width } = useWindowDimensions();
+  const hasHardwareKeyboard = useHasHardwareKeyboard();
   const keyboardHeight = useKeyboardHeight();
-  // Persistent only, and derived here so the three sidebars cannot each decide
-  // it. The drawer is over the chat and dismisses the keyboard instead, so
-  // padding it is dead weight that snaps 336 -> 0 mid-slide, re-laying out the
-  // list the user is watching move.
-  const covered = getSidebarPresentation(width) === "persistent" ? keyboardHeight : 0;
+  // The exact complement of `useSidebarKeyboardDismiss`: pad whatever is
+  // covered in the cases that do NOT dismiss, and nothing in the case that
+  // does. Padding a dismissing drawer snaps 336 -> 0 mid-slide and re-lays out
+  // a list in motion; not padding a vetoed one leaves iOS's shortcuts bar over
+  // its last row with no way to scroll up. Derived here, once, so the three
+  // sidebars cannot each decide it.
+  const dismisses = getSidebarPresentation(width) === "drawer" && !hasHardwareKeyboard;
+  const covered = dismisses ? 0 : keyboardHeight;
   return useMemo(() => ({ paddingBottom: covered }), [covered]);
 }
