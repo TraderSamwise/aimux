@@ -27,6 +27,8 @@ import { ChatTopEdgeFade } from "@/components/ChatTopEdgeFade";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
+import { shouldDismissKeyboardForSidebar } from "@/lib/app-shell-layout";
+import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import { chatTopBarReserveHeight } from "@/lib/chat-chrome-layout";
 import { isDesktopZoomCommand, subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { resolveChromeTopInset } from "@/lib/native-safe-area";
@@ -80,6 +82,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!usesPersistentSidebar) setSidebarOpen(false);
   }, [setSidebarOpen, usesPersistentSidebar]);
+
+  // Keyed on the open state rather than the button, so a swipe or a deep link
+  // that opens the drawer later cannot skip it.
+  useEffect(() => {
+    if (
+      !shouldDismissKeyboardForSidebar({ open: sidebarOpen, presentation: sidebarPresentation })
+    ) {
+      return;
+    }
+    blurWebActiveElement();
+  }, [sidebarOpen, sidebarPresentation]);
 
   // Nothing loads until this device is approved, so the prompt opens itself
   // rather than waiting for a click on a banner above an empty app.
