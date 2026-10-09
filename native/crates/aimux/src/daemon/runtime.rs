@@ -409,6 +409,11 @@ pub trait ProjectServiceHealthProbe: Send + Sync {
 const PROJECT_SERVICE_HEALTH_RECOVERY_GRACE_MULTIPLIER: u64 = 2;
 const PROJECT_SERVICE_HEALTH_WAIT_POLL_MS: u64 = 100;
 
+/// How long a pid gets to die after SIGKILL before the replacement gives up.
+/// A kill the kernel has accepted lands in milliseconds; this is only slack
+/// for an unkillable process, which is a different and reportable fact.
+const PROJECT_SERVICE_KILL_GRACE_MS: u64 = 2_000;
+
 fn project_service_health_recovery_grace_ms(startup_timeout_ms: u64) -> u64 {
     startup_timeout_ms.saturating_mul(PROJECT_SERVICE_HEALTH_RECOVERY_GRACE_MULTIPLIER)
 }
@@ -1473,7 +1478,14 @@ impl RealDaemonRuntime {
         if pids.is_empty() {
             return Ok(());
         }
-        let deadline = current_unix_millis() + u128::from(self.project_service_startup_timeout_ms);
+        // Both deadlines fixed up front and the giving-up check placed FIRST,
+        // so only the clock ends this loop. A mutation that never sets
+        // `escalated` then fails a test instead of spinning forever killing a
+        // pid, which is how this was caught.
+        let polite_deadline =
+            current_unix_millis() + u128::from(self.project_service_startup_timeout_ms);
+        let hard_deadline = polite_deadline + u128::from(PROJECT_SERVICE_KILL_GRACE_MS);
+        let mut escalated = false;
         loop {
             let live_pids = pids
                 .iter()
@@ -1483,9 +1495,12 @@ impl RealDaemonRuntime {
             if live_pids.is_empty() {
                 return Ok(());
             }
-            if self.project_service_startup_timeout_ms == 0 || current_unix_millis() >= deadline {
+            let now = current_unix_millis();
+            let out_of_time = self.project_service_startup_timeout_ms == 0 || now >= hard_deadline;
+            if out_of_time {
+                let survived = if escalated { " and SIGKILL" } else { "" };
                 let message = format!(
-                    "project service replacement blocked for {project_root} (projectId {project_id}): previous project service pids still live after {}ms: {:?}",
+                    "project service replacement blocked for {project_root} (projectId {project_id}): previous project service pids still live after {}ms{survived}: {:?}",
                     self.project_service_startup_timeout_ms, live_pids
                 );
                 log_lifecycle_always(
@@ -1496,10 +1511,43 @@ impl RealDaemonRuntime {
                         "projectRoot": project_root,
                         "pids": live_pids,
                         "timeoutMs": self.project_service_startup_timeout_ms,
+                        "escalated": escalated,
                         "error": message.clone(),
                     })),
                 );
                 return Err(message);
+            }
+            // A service wedged in its own runtime never polls the signal
+            // handler, so a polite stop is ignored forever. Escalate once --
+            // surviving SIGKILL is a different fact and still gets reported.
+            if now >= polite_deadline && !escalated {
+                for pid in &live_pids {
+                    let _ = self.project_service_launcher.terminate(
+                        &ProjectServiceState {
+                            project_id: project_id.to_owned(),
+                            project_root: project_root.to_owned(),
+                            pid: *pid,
+                            started_at: now_iso(),
+                            updated_at: now_iso(),
+                            status: Some(crate::daemon_state::ProjectServiceStatus::Running),
+                            restart_count: None,
+                            last_restart_at: None,
+                            last_exit: None,
+                        },
+                        true,
+                    );
+                }
+                log_lifecycle_always(
+                    "project service replacement escalating to sigkill",
+                    "project-service",
+                    Some(json!({
+                        "projectId": project_id,
+                        "projectRoot": project_root,
+                        "pids": live_pids.clone(),
+                        "graceMs": PROJECT_SERVICE_KILL_GRACE_MS,
+                    })),
+                );
+                escalated = true;
             }
             thread::sleep(Duration::from_millis(100));
         }
@@ -7617,6 +7665,98 @@ mod tests {
             ProjectServiceHealthWait::Ready(MetadataApiEndpoint { pid: 91_021, .. })
         ));
         assert_eq!(health.calls(), vec![91_021]);
+        fixture.cleanup();
+    }
+
+    // A wedged service ignores SIGTERM forever, so the replacement used to be
+    // blocked by the very process it was replacing.
+    #[test]
+    fn exit_wait_escalates_to_sigkill_when_a_pid_ignores_the_polite_stop() {
+        let fixture = restart_service_fixture("exit-wait-escalates");
+        let project = fixture.project_root.clone();
+        let project_id = compute_project_id(Path::new(&project));
+        let launcher = Arc::new(RestartTestLauncher::new(92_001));
+        let verifier = Arc::new(
+            // Outlives the 300ms deadline (~4 polls) and dies only after the
+            // escalation, which is what ignoring SIGTERM then taking SIGKILL
+            // looks like from here.
+            RestartTestProcessVerifier::current_native([92_000])
+                .with_pid_exiting_after_live_checks(92_000, 8),
+        );
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            300,
+        );
+
+        runtime
+            .wait_for_project_service_pids_to_exit(&project, &project_id, &BTreeSet::from([92_000]))
+            .expect("the kill lands and the replacement proceeds");
+
+        assert_eq!(
+            launcher.terminations(),
+            vec![(92_000, true)],
+            "escalated exactly once, with force"
+        );
+        fixture.cleanup();
+    }
+
+    // Surviving SIGKILL is a different fact from ignoring SIGTERM, and the
+    // error has to say so rather than blaming a polite stop.
+    #[test]
+    fn exit_wait_reports_a_pid_that_survives_even_sigkill() {
+        let fixture = restart_service_fixture("exit-wait-unkillable");
+        let project = fixture.project_root.clone();
+        let project_id = compute_project_id(Path::new(&project));
+        let launcher = Arc::new(RestartTestLauncher::new(92_011));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([92_010]));
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            150,
+        );
+
+        let error = runtime
+            .wait_for_project_service_pids_to_exit(&project, &project_id, &BTreeSet::from([92_010]))
+            .expect_err("an unkillable pid still blocks the replacement");
+
+        assert!(
+            error.contains("and SIGKILL"),
+            "the error must name the escalation: {error}"
+        );
+        assert!(error.contains("92010"), "and the pid: {error}");
+        assert_eq!(
+            launcher.terminations(),
+            vec![(92_010, true)],
+            "escalated once, not in a loop"
+        );
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn exit_wait_kills_nothing_when_the_pid_is_already_gone() {
+        let fixture = restart_service_fixture("exit-wait-already-gone");
+        let project = fixture.project_root.clone();
+        let project_id = compute_project_id(Path::new(&project));
+        let launcher = Arc::new(RestartTestLauncher::new(92_021));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            500,
+        );
+
+        runtime
+            .wait_for_project_service_pids_to_exit(&project, &project_id, &BTreeSet::from([92_020]))
+            .expect("nothing to wait for");
+
+        assert!(launcher.terminations().is_empty());
         fixture.cleanup();
     }
 
