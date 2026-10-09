@@ -382,6 +382,13 @@ pub trait ProjectServiceProcessVerifier: Send + Sync {
     fn is_live(&self, pid: i32) -> bool;
     fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool;
     fn live_project_service_pids(&self, project_id: &str, project_root: &str) -> Vec<i32>;
+    /// Whether this pid was started under the same `AIMUX_HOME` as the asking
+    /// daemon. Defaults to a refusal: a verifier that cannot answer must never
+    /// authorise a kill.
+    fn belongs_to_aimux_home(&self, pid: i32, expected_home: &Path) -> bool {
+        let _ = (pid, expected_home);
+        false
+    }
     fn exit_status_detail(&self, pid: i32) -> Option<String> {
         let _ = pid;
         None
@@ -416,6 +423,30 @@ const PROJECT_SERVICE_KILL_GRACE_MS: u64 = 2_000;
 
 fn project_service_health_recovery_grace_ms(startup_timeout_ms: u64) -> u64 {
     startup_timeout_ms.saturating_mul(PROJECT_SERVICE_HEALTH_RECOVERY_GRACE_MULTIPLIER)
+}
+
+/// Whether a pid belongs to THIS control plane, by the `AIMUX_HOME` it was
+/// started with.
+///
+/// The argv identity two daemons compare on is identical when they share a
+/// binary and a project root, so it cannot tell a stable daemon's service from
+/// a dev daemon's. Asking the process is the only thing that can. "Could not
+/// ask" is not "not ours": an unreadable environment declines the kill.
+fn process_belongs_to_this_aimux_home(pid: i32, expected_home: &Path) -> bool {
+    aimux_home_matches(
+        crate::process_inspector::try_read_process_aimux_home(pid),
+        expected_home,
+    )
+}
+
+/// Split from the read so every outcome is testable. "Could not ask" and
+/// "declared no home" both decline: neither is evidence that the process is
+/// ours, and the cost of being wrong is killing another daemon's service.
+fn aimux_home_matches(read: Result<Option<String>, String>, expected_home: &Path) -> bool {
+    match read {
+        Ok(Some(home)) => Path::new(&home) == expected_home,
+        Ok(None) | Err(_) => false,
+    }
 }
 
 /// Whether an ADOPTED service is wedged rather than merely slow.
@@ -504,6 +535,10 @@ pub struct SystemProjectServiceProcessVerifier;
 impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
     fn is_live(&self, pid: i32) -> bool {
         is_pid_alive(pid)
+    }
+
+    fn belongs_to_aimux_home(&self, pid: i32, expected_home: &Path) -> bool {
+        process_belongs_to_this_aimux_home(pid, expected_home)
     }
 
     fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool {
@@ -3390,7 +3425,11 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                             self.project_service_startup_timeout_ms,
                             &service.started_at,
                             wait_started_ms,
-                        ) && self.project_service_process_verifier.is_live(service.pid) =>
+                        ) && self.project_service_process_verifier.is_live(service.pid)
+                            && self.project_service_process_verifier.belongs_to_aimux_home(
+                                service.pid,
+                                &self.resolver.clone().global_aimux_dir(),
+                            ) =>
                     {
                         // SIGKILL, because the wedge is the runtime itself: the
                         // shutdown path is an async task on it, so SIGTERM is
@@ -7379,6 +7418,47 @@ mod tests {
         fixture.cleanup();
     }
 
+    #[test]
+    fn aimux_home_matches_only_an_identical_declared_home() {
+        let home = PathBuf::from("/Users/sam/.aimux");
+        assert!(aimux_home_matches(
+            Ok(Some("/Users/sam/.aimux".to_owned())),
+            &home
+        ));
+        assert!(
+            !aimux_home_matches(Ok(Some("/Users/sam/.aimux-dev".to_owned())), &home),
+            "a second control plane is not this one"
+        );
+        assert!(
+            !aimux_home_matches(Ok(None), &home),
+            "a process that declares no home is not evidence it is ours"
+        );
+        assert!(
+            !aimux_home_matches(Err("permission denied".to_owned()), &home),
+            "could not ask is not the same as not ours, and must not authorise a kill"
+        );
+    }
+
+    // The trait default has to refuse. A verifier that does not answer this
+    // question must never be read as authorising a kill.
+    #[test]
+    fn the_default_verifier_refuses_to_vouch_for_a_pid() {
+        struct SilentVerifier;
+        impl ProjectServiceProcessVerifier for SilentVerifier {
+            fn is_live(&self, _pid: i32) -> bool {
+                true
+            }
+            fn is_live_native_project_service(&self, _service: &ProjectServiceState) -> bool {
+                true
+            }
+            fn live_project_service_pids(&self, _id: &str, _root: &str) -> Vec<i32> {
+                Vec::new()
+            }
+        }
+
+        assert!(!SilentVerifier.belongs_to_aimux_home(1, Path::new("/Users/sam/.aimux")));
+    }
+
     fn wedged_failure(port: u16, pid: i32) -> ProjectServiceHealthWaitFailure {
         ProjectServiceHealthWaitFailure::HealthProbeNotReady {
             endpoint: MetadataApiEndpoint {
@@ -7829,6 +7909,56 @@ mod tests {
         assert!(
             !error.contains("/health probe not ready"),
             "the wedged service must no longer be reported as a health timeout: {error}"
+        );
+        fixture.cleanup();
+    }
+
+    // Two daemons under different homes share a binary and a project root, so
+    // their services' argv is identical. Only the home tells them apart, and
+    // killing another control plane's service is the worst outcome here.
+    #[test]
+    fn ensure_project_does_not_replace_a_service_from_another_aimux_home() {
+        let fixture = restart_service_fixture("ensure-foreign-home");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_451).with_endpoint(45_951));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::current_native([91_450]).with_foreign_aimux_home(),
+        );
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&project);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_950,
+                pid: 91_450,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        seed_adopted_service(&runtime, &project, 91_450, "2020-01-01T00:00:00.000Z");
+
+        let error =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
+                .expect_err("a foreign service is still an error, just not a corpse");
+
+        assert!(
+            launcher.terminations().is_empty(),
+            "another home's service must not be signalled: {:?}",
+            launcher.terminations()
+        );
+        assert!(
+            error.contains("/health probe not ready"),
+            "and the old error is what the user gets: {error}"
         );
         fixture.cleanup();
     }
@@ -9696,6 +9826,7 @@ mod tests {
     }
 
     struct RestartTestProcessVerifier {
+        foreign_aimux_home: bool,
         live: BTreeSet<i32>,
         current_native: BTreeSet<i32>,
         project_service_pids: BTreeMap<String, Vec<i32>>,
@@ -9709,6 +9840,7 @@ mod tests {
         fn current_native(pids: impl IntoIterator<Item = i32>) -> Self {
             let current_native = pids.into_iter().collect::<BTreeSet<_>>();
             Self {
+                foreign_aimux_home: false,
                 live: current_native.clone(),
                 current_native,
                 project_service_pids: BTreeMap::new(),
@@ -9721,6 +9853,7 @@ mod tests {
 
         fn previous_build(pids: impl IntoIterator<Item = i32>) -> Self {
             Self {
+                foreign_aimux_home: false,
                 live: pids.into_iter().collect(),
                 current_native: BTreeSet::new(),
                 project_service_pids: BTreeMap::new(),
@@ -9729,6 +9862,11 @@ mod tests {
                 batch_project_counts: Mutex::new(Vec::new()),
                 single_project_scan_count: Mutex::new(0),
             }
+        }
+
+        fn with_foreign_aimux_home(mut self) -> Self {
+            self.foreign_aimux_home = true;
+            self
         }
 
         fn with_pid_exiting_after_live_checks(mut self, pid: i32, checks: usize) -> Self {
@@ -9770,6 +9908,10 @@ mod tests {
     }
 
     impl ProjectServiceProcessVerifier for RestartTestProcessVerifier {
+        fn belongs_to_aimux_home(&self, _pid: i32, _expected_home: &Path) -> bool {
+            !self.foreign_aimux_home
+        }
+
         fn is_live(&self, pid: i32) -> bool {
             let mut live_checks = self
                 .live_checks_before_exit
