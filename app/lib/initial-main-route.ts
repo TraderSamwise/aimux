@@ -55,6 +55,11 @@ export function ownBackendSignal(
   ownMachineCount: number,
 ): OwnBackendSignal {
   if (!relayConfigured) return "present";
+  // A device awaiting approval is not an absent backend -- the fleet may be
+  // perfectly healthy and this device simply cannot speak to it yet. The
+  // project screen is where the approval instructions are; the shared list
+  // suppresses the pairing banner entirely.
+  if (relayStatus === "device_pending") return "present";
   const relay = relayLandingSignal(relayConfigured, relayStatus);
   if (relay === "unknown") return "unknown";
   if (relay === "unavailable") return "absent";
@@ -91,10 +96,17 @@ export function initialMainRoute(input: InitialMainRouteInput): InitialMainRoute
   // a relay that never answered is a relay that is not there.
   if (input.realSharedChatCount <= 0) return "project";
 
-  // "No relay available AND you have shared chats" is the whole condition, and
-  // {@link ownBackendSignal} is the half of it worth deriving. An expired wait
-  // reaches here with "unknown", which is no backend anyone could reach.
-  return input.ownBackend === "present" ? "project" : "shared";
+  // "No relay available AND you have shared chats" is the whole condition, so
+  // only a backend known to be ABSENT sends anyone to the shared list.
+  //
+  // An expired wait reaches here still "unknown", and that is not the same
+  // answer: a relay slow on a cold cellular launch has not said no. Sending
+  // that user to shared is unrecoverable, because the redirect unmounts this
+  // screen and the relay's later reply has nothing left to re-decide -- they
+  // end up on someone else's chats with a working backend. Their own surface
+  // is the safe side, and it carries its own copy when the relay really is
+  // unreachable.
+  return input.ownBackend === "absent" ? "shared" : "project";
 }
 
 /**

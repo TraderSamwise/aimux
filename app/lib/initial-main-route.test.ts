@@ -73,9 +73,16 @@ describe("initialMainRoute", () => {
     );
   });
 
-  // A dead relay never answers, so the wait has to end in a decision.
-  it("decides with what it has once the wait expires", () => {
-    expect(initialMainRoute({ ...base, ownBackend: "unknown", waitExpired: true })).toBe("shared");
+  // A dead relay never answers, so the wait has to end in a decision -- and
+  // the decision is the user's own surface, not someone else's chats. The
+  // redirect unmounts the landing screen, so a relay that was merely slow has
+  // nothing left to correct: expiring into "shared" is unrecoverable.
+  it("expires into the user's own surface, not into someone else's chats", () => {
+    expect(initialMainRoute({ ...base, ownBackend: "unknown", waitExpired: true })).toBe("project");
+    expect(
+      initialMainRoute({ ...base, ownBackend: "absent", waitExpired: true }),
+      "a backend known to be absent is still the shared list",
+    ).toBe("shared");
     expect(
       initialMainRoute({
         ...base,
@@ -127,6 +134,14 @@ describe("ownBackendSignal", () => {
   it("is unknown while the relay has not answered", () => {
     expect(ownBackendSignal(true, "disconnected", 0)).toBe("unknown");
     expect(ownBackendSignal(true, "connecting", 2)).toBe("unknown");
+  });
+
+  // Approval is a fact about THIS device, not about the fleet, and the project
+  // screen is the only surface that says how to grant it -- the shared list
+  // suppresses the pairing banner.
+  it("counts a device awaiting approval as having a backend", () => {
+    expect(ownBackendSignal(true, "device_pending", 0)).toBe("present");
+    expect(ownBackendSignal(true, "device_pending", 2)).toBe("present");
   });
 });
 
