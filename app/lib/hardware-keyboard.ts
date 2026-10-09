@@ -47,7 +47,16 @@ export function hasHardwareKeyboard(signal: HardwareKeyboardSignal): boolean {
 /// page and takes nothing from it. `shouldSubmitComposerKey` catches those
 /// from the event's empty `code` instead.
 export function softKeyboardOccludes(viewportHeight: number, layoutHeight: number): boolean {
-  return layoutHeight - viewportHeight >= SOFT_KEYBOARD_MIN_OCCLUSION_PX;
+  return softKeyboardOcclusionPx(viewportHeight, layoutHeight) > 0;
+}
+
+/// The same measurement in pixels, for the sidebar inset. One arithmetic and
+/// one threshold, so "a keyboard is up" and "how much it covers" cannot
+/// disagree -- they were two subtractions against one constant before.
+export function softKeyboardOcclusionPx(viewportHeight: number, layoutHeight: number): number {
+  if (!Number.isFinite(viewportHeight) || !Number.isFinite(layoutHeight)) return 0;
+  const covered = layoutHeight - viewportHeight;
+  return covered >= SOFT_KEYBOARD_MIN_OCCLUSION_PX ? Math.round(covered) : 0;
 }
 
 export function useHasHardwareKeyboard(): boolean {

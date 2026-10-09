@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Keyboard, Platform } from "react-native";
+import { Keyboard, Platform, useWindowDimensions } from "react-native";
 
-import { SOFT_KEYBOARD_MIN_OCCLUSION_PX } from "@/lib/hardware-keyboard";
+import { getSidebarPresentation } from "@/lib/app-shell-layout";
+import { softKeyboardOcclusionPx } from "@/lib/hardware-keyboard";
 
 /**
  * Whether the keyboard is up, for chrome that hides rather than moves.
@@ -58,15 +59,16 @@ export function useKeyboardHeight(): number {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
     const viewport = window.visualViewport;
     if (!viewport) return;
+    // Scaled, because `visualViewport.height` is in CSS pixels of the ZOOMED
+    // region while `innerHeight` stays the layout viewport: at 2x a 415pt
+    // keyboard-free region reports 207.5, and the unscaled gap would pad 664px.
     const apply = () =>
-      setHeight(webKeyboardHeight(viewport.height * viewport.scale, window.innerHeight));
+      setHeight(softKeyboardOcclusionPx(viewport.height * viewport.scale, window.innerHeight));
     apply();
+    // `resize` only: the viewport's height cannot change on a scroll, and this
+    // is the one event `useHasHardwareKeyboard` watches too.
     viewport.addEventListener("resize", apply);
-    viewport.addEventListener("scroll", apply);
-    return () => {
-      viewport.removeEventListener("resize", apply);
-      viewport.removeEventListener("scroll", apply);
-    };
+    return () => viewport.removeEventListener("resize", apply);
   }, []);
 
   useEffect(() => {
@@ -97,19 +99,6 @@ export function useKeyboardHeight(): number {
 }
 
 /**
- * How much of the page a web keyboard covers, from the two viewports.
- *
- * Below `SOFT_KEYBOARD_MIN_OCCLUSION_PX` nothing is treated as a keyboard, the
- * same threshold `hasHardwareKeyboard` uses, so browser chrome sliding away
- * does not pad the list by a toolbar.
- */
-export function webKeyboardHeight(viewportHeight: number, layoutHeight: number): number {
-  if (!Number.isFinite(viewportHeight) || !Number.isFinite(layoutHeight)) return 0;
-  const covered = layoutHeight - viewportHeight;
-  return covered >= SOFT_KEYBOARD_MIN_OCCLUSION_PX ? Math.round(covered) : 0;
-}
-
-/**
  * How much of the screen a keyboard event says is covered.
  *
  * `endCoordinates.height` rather than a window subtraction, which reports a
@@ -137,6 +126,12 @@ export function keyboardHeightFromEvent(event: {
  * cannot answer it differently. AGENTS.md "One Answer, Many Surfaces".
  */
 export function useSidebarListInset(): { paddingBottom: number } {
+  const { width } = useWindowDimensions();
   const keyboardHeight = useKeyboardHeight();
-  return useMemo(() => ({ paddingBottom: keyboardHeight }), [keyboardHeight]);
+  // Persistent only, and derived here so the three sidebars cannot each decide
+  // it. The drawer is over the chat and dismisses the keyboard instead, so
+  // padding it is dead weight that snaps 336 -> 0 mid-slide, re-laying out the
+  // list the user is watching move.
+  const covered = getSidebarPresentation(width) === "persistent" ? keyboardHeight : 0;
+  return useMemo(() => ({ paddingBottom: covered }), [covered]);
 }

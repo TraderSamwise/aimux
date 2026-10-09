@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
-import { keyboardHeightFromEvent, webKeyboardHeight } from "@/lib/use-keyboard-visible";
+import { softKeyboardOcclusionPx } from "@/lib/hardware-keyboard";
+import { keyboardHeightFromEvent } from "@/lib/use-keyboard-visible";
 
 // Resolved against this file, not the cwd: a run rooted at the repo instead of
 // `app/` would otherwise fail on a path rather than on the invariant.
@@ -42,22 +43,22 @@ describe("keyboardHeightFromEvent", () => {
   });
 });
 
-describe("webKeyboardHeight", () => {
+describe("softKeyboardOcclusionPx", () => {
   // iPad Safari landscape is 1024pt, so it draws the PERSISTENT sidebar, and
   // its keyboard overlays the page rather than resizing the layout viewport.
   it("reports the gap between the two viewports", () => {
-    expect(webKeyboardHeight(560, 900)).toBe(340);
-    expect(webKeyboardHeight(559.6, 900)).toBe(340);
+    expect(softKeyboardOcclusionPx(560, 900)).toBe(340);
+    expect(softKeyboardOcclusionPx(559.6, 900)).toBe(340);
   });
 
-  // The same threshold `hasHardwareKeyboard` uses, so a toolbar sliding away
-  // does not pad the list by a toolbar.
+  // One threshold shared with `softKeyboardOccludes`, so a toolbar sliding
+  // away neither pads the list nor reads as a soft keyboard.
   it("treats a gap too small to be a keyboard as nothing", () => {
-    expect(webKeyboardHeight(900, 900)).toBe(0);
-    expect(webKeyboardHeight(800, 900)).toBe(0);
-    expect(webKeyboardHeight(920, 900)).toBe(0);
-    expect(webKeyboardHeight(Number.NaN, 900)).toBe(0);
-    expect(webKeyboardHeight(560, Number.POSITIVE_INFINITY)).toBe(0);
+    expect(softKeyboardOcclusionPx(900, 900)).toBe(0);
+    expect(softKeyboardOcclusionPx(800, 900)).toBe(0);
+    expect(softKeyboardOcclusionPx(920, 900)).toBe(0);
+    expect(softKeyboardOcclusionPx(Number.NaN, 900)).toBe(0);
+    expect(softKeyboardOcclusionPx(560, Number.POSITIVE_INFINITY)).toBe(0);
   });
 });
 
