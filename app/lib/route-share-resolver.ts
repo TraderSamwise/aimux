@@ -42,15 +42,20 @@ export function resolveRouteShare({
   // own project of the same path -- which is what sharing between two of your
   // own accounts produces. Before that it matched on nothing at all, so a bare
   // "/" opened someone else's conversation on every launch.
-  if (!sessionId) return null;
+  // From the path, not the param. `useGlobalSearchParams` reports the global
+  // URL rather than the current route, so a `sessionId` left over from a share
+  // route could still be hanging around after navigating away -- and the only
+  // legacy shape that names a session is `/agent/<id>` anyway.
+  const legacySessionId = legacySessionIdFromPath(pathname);
+  if (!legacySessionId) return null;
 
-  const legacyMatch = findLegacyPathShare(legacyActiveShare, sessionId, routeProjectPath);
+  const legacyMatch = findLegacyPathShare(legacyActiveShare, legacySessionId, routeProjectPath);
   if (legacyMatch && legacyMatch.ownerUserId !== currentUserId) return legacyMatch;
 
   const acceptedMatch = acceptedShares.find(
     (share) =>
       share.ownerUserId !== currentUserId &&
-      share.sessionId === sessionId &&
+      share.sessionId === legacySessionId &&
       (!routeProjectPath || share.projectRoot === routeProjectPath),
   );
   return acceptedMatch ?? null;
@@ -111,6 +116,13 @@ function findLegacyPathShare(
   if (share.sessionId !== sessionId) return null;
   if (routeProjectPath && share.projectRoot !== routeProjectPath) return null;
   return share;
+}
+
+/// The one legacy shape that names a session: `/agent/<id>` and anything under
+/// it. Every other candidate path names a surface, never a conversation.
+export function legacySessionIdFromPath(pathname: string): string | null {
+  const match = /^\/agent\/([^/?#]+)/.exec(pathname);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 function isSharedLegacyCandidatePath(pathname: string) {

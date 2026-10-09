@@ -157,43 +157,59 @@ describe("a bare launch is not a shared route", () => {
     },
   );
 
-  // Route evidence is what makes it a shared route, and either half will do.
-  it("still resolves when the route names the session", () => {
+  // The legacy deep link still works, and it is the only shape that names a
+  // conversation.
+  it("still resolves the legacy agent path that names the session", () => {
     expect(
       resolveRouteShare({
         acceptedShares: [share],
         currentUserId: "user_me",
         legacyActiveShare: null,
-        pathname: "/project",
-        sessionId: share.sessionId,
+        pathname: `/agent/${share.sessionId}/chat`,
       }),
     ).toEqual(share);
   });
 
-  // A session id plus a project that contradicts it is still nothing.
-  it("resolves nothing when the named project contradicts the named session", () => {
+  // `useGlobalSearchParams` reports the global URL, not the current route, so
+  // a session id left over from a share route can still be hanging around
+  // after navigating away. The reviewer's sequence: a guest in a shared chat
+  // taps TopBar "Projects" and lands on their own project whose path happens
+  // to equal the share's -- a param-trusting rule would pin them in the share.
+  it("ignores a session id that the path does not carry", () => {
     expect(
       resolveRouteShare({
         acceptedShares: [share],
         currentUserId: "user_me",
         legacyActiveShare: null,
         pathname: "/project",
-        routeProjectPath: "/Users/sam/cs/somewhere-else",
+        routeProjectPath: share.projectRoot,
         sessionId: share.sessionId,
+      }),
+    ).toBeNull();
+  });
+
+  // A path-named session plus a project that contradicts it is still nothing.
+  it("resolves nothing when the named project contradicts the path's session", () => {
+    expect(
+      resolveRouteShare({
+        acceptedShares: [share],
+        currentUserId: "user_me",
+        legacyActiveShare: null,
+        pathname: `/agent/${share.sessionId}/chat`,
+        routeProjectPath: "/Users/sam/cs/somewhere-else",
       }),
     ).toBeNull();
   });
 
   // A named route that does not match must not fall through to any other
   // accepted share.
-  it("resolves nothing when the named session belongs to no accepted share", () => {
+  it("resolves nothing when the path's session belongs to no accepted share", () => {
     expect(
       resolveRouteShare({
         acceptedShares: [share],
         currentUserId: "user_me",
         legacyActiveShare: null,
-        pathname: "/project",
-        sessionId: "claude-someone-else",
+        pathname: "/agent/claude-someone-else/chat",
       }),
     ).toBeNull();
   });
