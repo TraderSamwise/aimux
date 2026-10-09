@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { createSidebarKeyboardDismiss } from "@/lib/sidebar-keyboard-dismiss";
@@ -8,7 +10,15 @@ vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
 }));
 
-type Step = { open: boolean; presentation: "drawer" | "persistent" };
+// Resolved against this file, not the cwd: a run rooted at the repo instead of
+// `app/` would otherwise fail on a path rather than on the invariant.
+const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+function sourcePath(relative: string): string {
+  return join(APP_ROOT, relative);
+}
+
+type Step = { hasHardwareKeyboard?: boolean; open: boolean; presentation: "drawer" | "persistent" };
 
 // Replays a render sequence through one watcher and reports which steps
 // dismissed, so a test reads as the sequence a thumb actually produces.
@@ -18,7 +28,7 @@ function dismissedAt(initiallyOpen: boolean, steps: Step[]): number[] {
   const dismissedSteps: number[] = [];
   steps.forEach((step, index) => {
     const before = dismiss.mock.calls.length;
-    const acted = dismissOnOpen(step, dismiss);
+    const acted = dismissOnOpen({ hasHardwareKeyboard: false, ...step }, dismiss);
     const calls = dismiss.mock.calls.length - before;
     expect(calls, `step ${index} must not dismiss more than once`).toBeLessThanOrEqual(1);
     expect(acted, `step ${index} must report what it did`).toBe(calls === 1);
@@ -81,6 +91,31 @@ describe("the drawer opening puts the keyboard away", () => {
     ).toEqual([]);
   });
 
+  // A hardware keyboard means there is no soft keyboard to put away, so the
+  // blur would only cost the composer its focus -- and nothing restores it,
+  // because the chat's refocus is keyed on navigation, not on the drawer.
+  it("does not dismiss when a hardware keyboard is attached", () => {
+    expect(
+      dismissedAt(false, [
+        { hasHardwareKeyboard: true, open: true, presentation: "drawer" },
+        { hasHardwareKeyboard: true, open: false, presentation: "drawer" },
+        { hasHardwareKeyboard: true, open: true, presentation: "drawer" },
+      ]),
+    ).toEqual([]);
+  });
+
+  // Unplugging it mid-session has to start dismissing again, so the veto is
+  // read per transition rather than latched at the first one.
+  it("dismisses again once the hardware keyboard goes away", () => {
+    expect(
+      dismissedAt(false, [
+        { hasHardwareKeyboard: true, open: true, presentation: "drawer" },
+        { open: false, presentation: "drawer" },
+        { open: true, presentation: "drawer" },
+      ]),
+    ).toEqual([2]);
+  });
+
   // And the reverse: widening to persistent while the drawer is open must not
   // leave the watcher thinking the next narrow render is an opening.
   it("does not dismiss when widening to persistent and back", () => {
@@ -100,8 +135,8 @@ describe("the shell runs it", () => {
   // (`WorktreeDashboard.test.tsx` calls components as plain functions), so the
   // behaviour is pinned above and this pins only that the shell is wired to it.
   it("hands the hook the sidebar's own state", () => {
-    const path = "components/AppShell.tsx";
-    expect(existsSync(path), `${path} is readable from the test cwd`).toBe(true);
+    const path = sourcePath("components/AppShell.tsx");
+    expect(existsSync(path), `${path} is readable`).toBe(true);
     const source = readFileSync(path, "utf8");
 
     expect(source, "the shell must run the hook").toContain(

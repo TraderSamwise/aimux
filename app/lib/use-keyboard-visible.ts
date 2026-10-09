@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Keyboard, Platform } from "react-native";
 
 /**
@@ -96,4 +96,13 @@ export function keyboardHeightFromEvent(event: {
   const screenY = event.endCoordinates?.screenY;
   if (typeof screenY === "number" && Number.isFinite(screenY) && screenY <= 0) return 0;
   return Math.max(0, Math.round(height));
+}
+
+/**
+ * The bottom inset every sidebar's scrolled list takes, so the three of them
+ * cannot answer it differently. AGENTS.md "One Answer, Many Surfaces".
+ */
+export function useSidebarListInset(): { paddingBottom: number } {
+  const keyboardHeight = useKeyboardHeight();
+  return useMemo(() => ({ paddingBottom: keyboardHeight }), [keyboardHeight]);
 }

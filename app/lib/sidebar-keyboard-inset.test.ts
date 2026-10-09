@@ -1,7 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { keyboardHeightFromEvent } from "@/lib/use-keyboard-visible";
+
+// Resolved against this file, not the cwd: a run rooted at the repo instead of
+// `app/` would otherwise fail on a path rather than on the invariant.
+const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+function sourcePath(relative: string): string {
+  return join(APP_ROOT, relative);
+}
 
 vi.mock("react-native", () => ({
   Keyboard: { addListener: () => ({ remove: () => {} }) },
@@ -32,23 +42,35 @@ describe("keyboardHeightFromEvent", () => {
   });
 });
 
-describe("the sidebar gives the covered strip back", () => {
-  // Source rather than render: the sidebar is a 700-line component with a dozen
-  // atoms, and the question is only whether every list it scrolls receives the
-  // inset. A new ScrollView added without one is the regression.
-  it("passes the inset to every list it scrolls", () => {
-    const path = "components/ProjectSidebar.tsx";
-    expect(existsSync(path), `${path} is readable from the test cwd`).toBe(true);
+describe("every sidebar gives the covered strip back", () => {
+  // Source rather than render: these are 700-line components with a dozen
+  // atoms each, and the question is only whether every list they scroll
+  // receives the inset. A new ScrollView added without one is the regression,
+  // and so is a fourth sidebar that answers the question its own way.
+  const SIDEBARS = ["ProjectSidebar.tsx", "SharedSidebar.tsx", "MonitorSidebar.tsx"];
+
+  it("covers every sidebar the shell can render", () => {
+    const shell = readFileSync(sourcePath("components/AppShell.tsx"), "utf8");
+    const imported = [...shell.matchAll(/from "@\/components\/(\w+Sidebar)"/g)];
+    expect(
+      new Set(imported.map((match) => `${match[1]}.tsx`)),
+      "a sidebar the shell renders but this gate does not read",
+    ).toEqual(new Set(SIDEBARS));
+  });
+
+  it.each(SIDEBARS)("passes the inset to every list %s scrolls", (sidebar) => {
+    const path = sourcePath(`components/${sidebar}`);
+    expect(existsSync(path), `${path} is readable`).toBe(true);
     const source = readFileSync(path, "utf8");
 
     // `[\s\S]` not `[^>]`, so a tag prettier wrapped over several lines is
     // still one match; and every scrolling primitive, not just ScrollView,
     // because the next list added here is the one that forgets.
     const tags = source.match(/<(ScrollView|FlatList|SectionList|FlashList)[\s\S]*?>/g) ?? [];
-    expect(tags.length, "the sidebar still scrolls something").toBeGreaterThan(0);
+    expect(tags.length, `${sidebar} still scrolls something`).toBeGreaterThan(0);
     for (const tag of tags) {
       expect(tag, "every scrolled list must inset past the keyboard").toContain(
-        "contentContainerStyle={listBottomInset}",
+        "contentContainerStyle={sidebarListInset}",
       );
       // The default swallows the first tap to dismiss the keyboard, so a row
       // the inset just made reachable would need two -- and the first collapses
@@ -57,8 +79,8 @@ describe("the sidebar gives the covered strip back", () => {
         'keyboardShouldPersistTaps="handled"',
       );
     }
-    expect(source, "and the inset must come from the keyboard, not a constant").toContain(
-      "useKeyboardHeight()",
+    expect(source, "and the inset must be the shared one, not a local copy").toContain(
+      "useSidebarListInset()",
     );
   });
 });

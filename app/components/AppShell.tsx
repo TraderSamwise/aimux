@@ -82,8 +82,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!usesPersistentSidebar) setSidebarOpen(false);
   }, [setSidebarOpen, usesPersistentSidebar]);
 
-  // Keyed on the sidebar's own state rather than the button, so a swipe or a
-  // deep link that opens the drawer later cannot skip it.
+  // Keyed on the atom rather than the one button that writes it, so a second
+  // opener cannot be added without this.
   useSidebarKeyboardDismiss(sidebarOpen, sidebarPresentation);
 
   // Nothing loads until this device is approved, so the prompt opens itself

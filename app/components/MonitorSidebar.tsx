@@ -3,11 +3,13 @@ import { ScrollView, View } from "react-native";
 import { Camera, Clock, Mic, Send } from "lucide-react-native";
 import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
+import { useSidebarListInset } from "@/lib/use-keyboard-visible";
 import { monitorSettingsAtom } from "@/stores/settings";
 
 const SIDEBAR_WIDTH = 320;
 
 export function MonitorSidebar() {
+  const sidebarListInset = useSidebarListInset();
   const settings = useAtomValue(monitorSettingsAtom);
   const targetLabel =
     settings.targetKind === "shared-chat" ? "Shared chat target" : "Project agent target";
@@ -24,7 +26,11 @@ export function MonitorSidebar() {
       className="border-r border-[#2a2b31] bg-[#161719]"
       style={{ width: SIDEBAR_WIDTH, height: "100%" }}
     >
-      <ScrollView className="flex-1">
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={sidebarListInset}
+        keyboardShouldPersistTaps="handled"
+      >
         <View className="border-b border-[#2a2b31] px-4 py-4">
           <Text className="text-[10px] font-bold uppercase tracking-widest text-[#787a83]">
             Monitor

@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { ChevronLeft, MessageSquare } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
+import { useSidebarListInset } from "@/lib/use-keyboard-visible";
 import { mergeActiveSharedSessions } from "@/lib/shared-sessions";
 import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,7 @@ function sharedName(share: ActiveSharedSession): string {
 }
 
 export function SharedSidebar() {
+  const sidebarListInset = useSidebarListInset();
   const router = useRouter();
   const pathname = usePathname();
   const shares = useAtomValue(acceptedSharedSessionsAtom);
@@ -28,7 +30,11 @@ export function SharedSidebar() {
       className="border-r border-[#2a2b31] bg-[#161719]"
       style={{ width: SIDEBAR_WIDTH, height: "100%" }}
     >
-      <ScrollView className="flex-1">
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={sidebarListInset}
+        keyboardShouldPersistTaps="handled"
+      >
         <View className="border-b border-[#2a2b31] px-4 py-4">
           {!onSharedIndex ? (
             <Pressable
