@@ -12,10 +12,27 @@ const LANDING = "app/(main)/(tabs)/(dashboard)/index.tsx";
 // acts on all three answers.
 describe("the landing screen", () => {
   const path = join(APP_ROOT, LANDING);
+  // The EXPORTED COMPONENT's body, not the file. A reviewer replaced the body
+  // with `return <Redirect href="/shares" />` and moved the real one into an
+  // uncalled function: every assertion below still matched, while the app
+  // opened on shared chats every time. Dead code cannot satisfy a gate that
+  // only reads what runs.
   const source = (() => {
     expect(existsSync(path), `${path} is readable`).toBe(true);
-    // Comments stripped: `toContain` is happy to match a call commented out.
-    return readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
+    // Comments stripped first: `toContain` is happy to match a call that has
+    // been commented out.
+    const file = readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
+    const opener = file.indexOf("export default function DashboardIndex() {");
+    expect(opener, "the route still exports a component by that name").toBeGreaterThan(-1);
+    let depth = 0;
+    for (let index = file.indexOf("{", opener); index < file.length; index += 1) {
+      if (file[index] === "{") depth += 1;
+      else if (file[index] === "}") {
+        depth -= 1;
+        if (depth === 0) return file.slice(opener, index + 1);
+      }
+    }
+    throw new Error("unbalanced braces in the landing component");
   })();
 
   it("derives the backend answer instead of reading the raw status", () => {
@@ -45,12 +62,11 @@ describe("the landing screen", () => {
     );
   });
 
-  it("ends the wait, so a relay that never answers cannot hold the app", () => {
-    expect(source).toContain("RELAY_LANDING_WAIT_MS");
-    expect(source, "a timer that is cleared on unmount").toMatch(
-      /setTimeout\([\s\S]*?setWaitExpired\(true\)[\s\S]*?RELAY_LANDING_WAIT_MS\)/,
-    );
-    expect(source).toContain("clearTimeout(timer)");
+  // The wait itself is driven for real in `landing-wait.test.ts`; a source
+  // match could not tell a timer from `setWaitExpired(true)` on first render.
+  it("ends the wait through the hook that is tested for it", () => {
+    expect(source).toContain("useLandingWaitExpired()");
+    expect(source, "and must not re-arm a timer of its own").not.toContain("setTimeout(");
   });
 
   it("acts on all three answers", () => {

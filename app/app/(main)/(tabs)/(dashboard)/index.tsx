@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { ActivityIndicator, View } from "react-native";
 import { Redirect, useGlobalSearchParams } from "expo-router";
 import { useAtomValue } from "jotai";
 import {
   initialMainRoute,
   ownBackendSignal,
-  RELAY_LANDING_WAIT_MS,
+  useLandingWaitExpired,
 } from "@/lib/initial-main-route";
 import { useAuth } from "@/lib/auth";
 import { selectedProjectRefAtom } from "@/stores/projects";
@@ -28,18 +28,11 @@ export default function DashboardIndex() {
   const relayMachines = useAtomValue(relayMachinesAtom);
   const acceptedShares = useAtomValue(acceptedSharedSessionsAtom);
   const sharesHydrated = useAtomValue(settingsHydratedAtom);
-  const [waitExpired, setWaitExpired] = useState(false);
+  const waitExpired = useLandingWaitExpired();
   const projectRef =
     projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
     selectedProjectRef;
   const projectPath = projectRef?.path ?? null;
-
-  // A dead relay never answers, so the wait needs an end. Armed once per mount
-  // rather than per decision, so re-deciding cannot restart the clock.
-  useEffect(() => {
-    const timer = setTimeout(() => setWaitExpired(true), RELAY_LANDING_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, []);
 
   const route = initialMainRoute({
     isSignedIn,

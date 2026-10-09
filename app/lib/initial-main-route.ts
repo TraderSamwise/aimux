@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import { isRelayUnavailableForProjectDiscovery } from "@/lib/project-connection-display";
 import type { RelayStatus } from "@/lib/relay-transport";
 
@@ -93,4 +95,26 @@ export function initialMainRoute(input: InitialMainRouteInput): InitialMainRoute
   // {@link ownBackendSignal} is the half of it worth deriving. An expired wait
   // reaches here with "unknown", which is no backend anyone could reach.
   return input.ownBackend === "present" ? "project" : "shared";
+}
+
+/**
+ * Whether the landing wait has run out, so the decision stops waiting and
+ * takes what it has.
+ *
+ * A hook rather than a `setTimeout` in the screen, because the screen is an
+ * Expo Router route no renderer in this app executes: a timer there could be
+ * reduced to `setWaitExpired(true)` on the first render -- which removes the
+ * wait entirely and restores the bounce -- with every gate green.
+ */
+export function useLandingWaitExpired(waitMs = RELAY_LANDING_WAIT_MS): boolean {
+  const [expired, setExpired] = useState(false);
+
+  // Armed once per mount rather than per decision, so re-deciding cannot
+  // restart the clock.
+  useEffect(() => {
+    const timer = setTimeout(() => setExpired(true), waitMs);
+    return () => clearTimeout(timer);
+  }, [waitMs]);
+
+  return expired;
 }
