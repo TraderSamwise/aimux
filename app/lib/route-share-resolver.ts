@@ -36,20 +36,21 @@ export function resolveRouteShare({
   if (!isSharedLegacyCandidatePath(pathname)) return null;
   if (!currentUserId) return null;
 
+  // The session id or nothing. What the caller does with a resolved share is
+  // open THAT chat, and a project root cannot name one: `ActiveSharedSession`
+  // carries no machine, so a share of `/Users/sam/cs/aimux` matched the user's
+  // own project of the same path -- which is what sharing between two of your
+  // own accounts produces. Before that it matched on nothing at all, so a bare
+  // "/" opened someone else's conversation on every launch.
+  if (!sessionId) return null;
+
   const legacyMatch = findLegacyPathShare(legacyActiveShare, sessionId, routeProjectPath);
   if (legacyMatch && legacyMatch.ownerUserId !== currentUserId) return legacyMatch;
-
-  // Route evidence required, the same discipline `findLegacyPathShare` keeps.
-  // Without it this predicate was just "a share that is not mine", so any
-  // accepted share matched a bare "/" -- and the layout then replaced the
-  // route with that chat, which is why the app always opened on someone
-  // else's conversation.
-  if (!sessionId && !routeProjectPath) return null;
 
   const acceptedMatch = acceptedShares.find(
     (share) =>
       share.ownerUserId !== currentUserId &&
-      (!sessionId || share.sessionId === sessionId) &&
+      share.sessionId === sessionId &&
       (!routeProjectPath || share.projectRoot === routeProjectPath),
   );
   return acceptedMatch ?? null;
@@ -80,15 +81,18 @@ function findMatchingShare(
   );
 }
 
+/// `sessionId` is required rather than optional: the caller has already
+/// refused a route without one, so an optional parameter here would be an
+/// unreachable branch pretending to be a second line of defence.
 function findLegacyPathShare(
   share: ActiveSharedSession | null,
-  sessionId?: string | null,
+  sessionId: string,
   routeProjectPath?: string | null,
 ) {
   if (!share) return null;
-  if (sessionId && share.sessionId !== sessionId) return null;
+  if (share.sessionId !== sessionId) return null;
   if (routeProjectPath && share.projectRoot !== routeProjectPath) return null;
-  return sessionId || routeProjectPath ? share : null;
+  return share;
 }
 
 function isSharedLegacyCandidatePath(pathname: string) {

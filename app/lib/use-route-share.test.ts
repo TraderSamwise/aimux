@@ -75,7 +75,11 @@ describe("resolveRouteShare", () => {
     ).toEqual(share);
   });
 
-  it("resolves leaked project routes only when they match the active shared session", () => {
+  // Deliberately narrower than it used to be. A project root cannot name a
+  // chat: `ActiveSharedSession` carries no machine, so a share of
+  // `/Users/sam/cs/aimux` matched the user's OWN project of the same path --
+  // which is what sharing between two of your own accounts produces.
+  it("does not resolve a leaked project route without a session id", () => {
     expect(
       resolveRouteShare({
         acceptedShares: [],
@@ -84,7 +88,7 @@ describe("resolveRouteShare", () => {
         pathname: "/project",
         routeProjectPath: share.projectRoot,
       }),
-    ).toEqual(share);
+    ).toBeNull();
 
     expect(
       resolveRouteShare({
@@ -92,6 +96,20 @@ describe("resolveRouteShare", () => {
         legacyActiveShare: null,
         pathname: "/project",
         routeProjectPath: "/Users/sam/cs/local",
+      }),
+    ).toBeNull();
+  });
+
+  // The collision the narrowing exists for, spelled out: same absolute path,
+  // different owner, healthy relay.
+  it("does not hand the user's own project route to a share of the same path", () => {
+    expect(
+      resolveRouteShare({
+        acceptedShares: [share],
+        currentUserId: "user_me",
+        legacyActiveShare: null,
+        pathname: "/project",
+        routeProjectPath: share.projectRoot,
       }),
     ).toBeNull();
   });
@@ -125,7 +143,7 @@ describe("a bare launch is not a shared route", () => {
   // `router.replace(sharedChatHref(activeShare))` for whatever this resolves,
   // with no relay input, so resolving an unnamed share here opened the app on
   // someone else's chat however healthy the user's own backend was.
-  it.each(["/", "/project", "/coordination", "/topology", "/library"])(
+  it.each(["/", "/project", "/coordination", "/topology", "/library", "/expose", "/threads"])(
     "resolves nothing at %s when the route names no share",
     (pathname) => {
       expect(
@@ -152,16 +170,18 @@ describe("a bare launch is not a shared route", () => {
     ).toEqual(share);
   });
 
-  it("still resolves when the route names the project", () => {
+  // A session id plus a project that contradicts it is still nothing.
+  it("resolves nothing when the named project contradicts the named session", () => {
     expect(
       resolveRouteShare({
         acceptedShares: [share],
         currentUserId: "user_me",
         legacyActiveShare: null,
         pathname: "/project",
-        routeProjectPath: share.projectRoot,
+        routeProjectPath: "/Users/sam/cs/somewhere-else",
+        sessionId: share.sessionId,
       }),
-    ).toEqual(share);
+    ).toBeNull();
   });
 
   // A named route that does not match must not fall through to any other
