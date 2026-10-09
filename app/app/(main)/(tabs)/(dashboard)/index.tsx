@@ -1,12 +1,17 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { ActivityIndicator, View } from "react-native";
 import { Redirect, useGlobalSearchParams } from "expo-router";
 import { useAtomValue } from "jotai";
-import { initialMainRoute } from "@/lib/initial-main-route";
+import {
+  initialMainRoute,
+  relayLandingSignal,
+  RELAY_LANDING_WAIT_MS,
+} from "@/lib/initial-main-route";
 import { useAuth } from "@/lib/auth";
 import { lastSyncAtAtom, projectsAtom, selectedProjectRefAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { buildViewHref, projectRefFromSearchOrLocation } from "@/lib/view-location";
-import { acceptedSharedSessionsAtom } from "@/stores/settings";
+import { acceptedSharedSessionsAtom, settingsHydratedAtom } from "@/stores/settings";
 
 // The worktree dashboard now lives as the default "Dashboard" section of the
 // Project screen. The legacy standalone route redirects there so every landing
@@ -23,23 +28,42 @@ export default function DashboardIndex() {
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const acceptedShares = useAtomValue(acceptedSharedSessionsAtom);
+  const sharesHydrated = useAtomValue(settingsHydratedAtom);
+  const [waitExpired, setWaitExpired] = useState(false);
   const projectRef =
     projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
     selectedProjectRef;
   const projectPath = projectRef?.path ?? null;
   const activeProjectCount = projects.filter((project) => project.serviceAlive).length;
 
-  if (
-    !projectPath &&
-    initialMainRoute({
-      isSignedIn,
-      realSharedChatCount: acceptedShares.length,
-      activeProjectCount,
-      projectDiscoverySynced: lastSyncAt !== null,
-      relayConfigured,
-      relayStatus,
-    }) === "shared"
-  ) {
+  // A dead relay never answers, so the wait needs an end. Armed once per mount
+  // rather than per decision, so re-deciding cannot restart the clock.
+  useEffect(() => {
+    const timer = setTimeout(() => setWaitExpired(true), RELAY_LANDING_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const route = initialMainRoute({
+    activeProjectCount,
+    isSignedIn,
+    projectDiscoverySynced: lastSyncAt !== null,
+    realSharedChatCount: acceptedShares.length,
+    relaySignal: relayLandingSignal(relayConfigured, relayStatus),
+    sharesHydrated,
+    waitExpired,
+  });
+
+  // An explicit project in the URL is the user's own answer, so it skips the
+  // wait entirely -- there is nothing a relay could say that would change it.
+  if (!projectPath && route === "pending") {
+    return (
+      <View className="flex-1 items-center justify-center bg-background p-6">
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  if (!projectPath && route === "shared") {
     return <Redirect href="/shares" />;
   }
 

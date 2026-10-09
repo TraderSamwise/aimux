@@ -1,3 +1,4 @@
+import { atom } from "jotai";
 import { atomWithStorage, unwrap } from "jotai/utils";
 import { focusAtom } from "jotai-optics";
 import { createSsrSafeMergingJsonStorage } from "@/lib/jotai-storage";
@@ -125,6 +126,13 @@ const asyncSettingsAtom = atomWithStorage<AppSettings>(
 );
 
 export const settingsAtom = unwrap(asyncSettingsAtom, (previous) => previous ?? defaultSettings);
+
+// `settingsAtom` falls back to defaults until storage resolves, so an EMPTY
+// `acceptedShares` means either "no shared chats" or "not read yet". Anything
+// deciding from that count has to know which, or it decides on a default.
+const resolvedSettingsAtom = unwrap(asyncSettingsAtom);
+
+export const settingsHydratedAtom = atom((get) => get(resolvedSettingsAtom) !== undefined);
 
 export const themePreferenceAtom = focusAtom(settingsAtom, (optic) => optic.prop("theme"));
 export const agentOutputViewModeAtom = focusAtom(settingsAtom, (optic) =>

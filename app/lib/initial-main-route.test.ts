@@ -10,12 +10,13 @@ import {
 } from "./initial-main-route";
 
 const base: InitialMainRouteInput = {
-  isSignedIn: true,
-  realSharedChatCount: 1,
   activeProjectCount: 1,
+  isSignedIn: true,
   projectDiscoverySynced: true,
-  relayConfigured: true,
-  relayStatus: "connected",
+  realSharedChatCount: 1,
+  relaySignal: "available",
+  sharesHydrated: true,
+  waitExpired: false,
 };
 
 describe("initialMainRoute", () => {
@@ -29,13 +30,7 @@ describe("initialMainRoute", () => {
 
   it("defaults to project while project discovery has not proven there are no active projects", () => {
     expect(
-      initialMainRoute({
-        ...base,
-        activeProjectCount: 0,
-        projectDiscoverySynced: false,
-        relayConfigured: false,
-        relayStatus: "disconnected",
-      }),
+      initialMainRoute({ ...base, activeProjectCount: 0, projectDiscoverySynced: false }),
     ).toBe("project");
   });
 
@@ -43,10 +38,55 @@ describe("initialMainRoute", () => {
     expect(initialMainRoute({ ...base, activeProjectCount: 0 })).toBe("shared");
   });
 
-  it("routes to shared for a signed-in user with shares when the relay CLI lane is unavailable", () => {
+  it("routes to shared for a signed-in user with shares when the relay is unavailable", () => {
+    expect(initialMainRoute({ ...base, activeProjectCount: 2, relaySignal: "unavailable" })).toBe(
+      "shared",
+    );
+  });
+
+  // The reported bug. `relayStatusAtom` starts at "disconnected", so this used
+  // to be indistinguishable from a relay that is down, and every cold launch
+  // landed on someone else's chats.
+  it("waits rather than calling a relay that has not answered unavailable", () => {
+    expect(initialMainRoute({ ...base, relaySignal: "unknown" })).toBe("pending");
+  });
+
+  // The other half of the bounce: stored shares start empty, so the count said
+  // "no shares" for a frame and then said otherwise.
+  it("waits rather than reading unread storage as having no shares", () => {
+    expect(initialMainRoute({ ...base, realSharedChatCount: 0, sharesHydrated: false })).toBe(
+      "pending",
+    );
+  });
+
+  it("lands on the user's own surface once the relay answers", () => {
+    expect(initialMainRoute({ ...base, relaySignal: "available" })).toBe("project");
+  });
+
+  // A dead relay never answers, so the wait has to end in a decision.
+  it("decides with what it has once the wait expires", () => {
+    expect(initialMainRoute({ ...base, relaySignal: "unknown", waitExpired: true })).toBe("shared");
     expect(
-      initialMainRoute({ ...base, activeProjectCount: 2, relayStatus: "device_pending" }),
-    ).toBe("shared");
+      initialMainRoute({
+        ...base,
+        realSharedChatCount: 0,
+        sharesHydrated: false,
+        waitExpired: true,
+      }),
+      "an unread share list expires to no shares, which is this user's own surface",
+    ).toBe("project");
+  });
+
+  // Nothing to wait for: shared chats are unreachable signed out.
+  it("never waits when signed out", () => {
+    expect(
+      initialMainRoute({
+        ...base,
+        isSignedIn: false,
+        relaySignal: "unknown",
+        sharesHydrated: false,
+      }),
+    ).toBe("project");
   });
 });
 
