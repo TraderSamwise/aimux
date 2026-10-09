@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createStore } from "jotai";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -33,6 +36,81 @@ afterAll(() => {
 
 beforeEach(async () => {
   await AsyncStorage.clear();
+});
+
+describe("whether settings have been read yet", () => {
+  // `settingsAtom` falls back to defaults while AsyncStorage is still reading,
+  // so an empty `acceptedShares` means either "no shared chats" or "not read
+  // yet". The landing screen decides from that count, and deciding on the
+  // default is what sent a connected user to someone else's chats.
+  it("flips true only once the stored shares are actually visible", async () => {
+    await AsyncStorage.setItem(
+      "aimux-settings",
+      JSON.stringify({
+        acceptedShares: [
+          {
+            shareId: "s1",
+            ownerUserId: "u1",
+            projectRoot: "/tmp/p",
+            sessionId: "sess",
+            serviceEndpoint: { host: "127.0.0.1", port: 1234 },
+            acceptedAt: new Date().toISOString(),
+          },
+        ],
+      }),
+    );
+    const store = createStore();
+    // Subscribed, because that is what a component does: an unmounted derived
+    // atom never settles its own promise.
+    const samples: { hydrated: boolean; shares: number }[] = [];
+    const sample = () =>
+      samples.push({
+        hydrated: store.get(settingsModule.settingsHydratedAtom),
+        shares: store.get(settingsModule.acceptedSharedSessionsAtom).length,
+      });
+    const unsubscribeShares = store.sub(settingsModule.acceptedSharedSessionsAtom, sample);
+    const unsubscribeHydrated = store.sub(settingsModule.settingsHydratedAtom, sample);
+    sample();
+
+    await vi.waitFor(() => {
+      expect(store.get(settingsModule.acceptedSharedSessionsAtom)).toHaveLength(1);
+    });
+    sample();
+    unsubscribeShares();
+    unsubscribeHydrated();
+
+    // The invariant, not the timing: the flag must never claim the settings
+    // were read while the stored share is still missing. An always-true flag
+    // reports the default as the truth and fails here.
+    expect(
+      samples.filter((entry) => entry.hydrated && entry.shares === 0),
+      `hydrated with no shares, from ${JSON.stringify(samples)}`,
+    ).toEqual([]);
+    expect(samples.at(-1)).toEqual({ hydrated: true, shares: 1 });
+  });
+
+  it("is true even when nothing was stored, so an empty list is answerable", async () => {
+    const store = createStore();
+    const unsubscribe = store.sub(settingsModule.settingsHydratedAtom, () => {});
+    await vi.waitFor(() => {
+      expect(store.get(settingsModule.settingsHydratedAtom)).toBe(true);
+    });
+    expect(store.get(settingsModule.acceptedSharedSessionsAtom)).toEqual([]);
+    unsubscribe();
+  });
+
+  // The derivation is the whole point and a constant cannot be caught by
+  // timing, so it is read from the source.
+  it("is derived from the unwrap that has no fallback", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "settings.ts"),
+      "utf8",
+    ).replace(/^\s*\/\/.*$/gm, "");
+    expect(source).toContain("const resolvedSettingsAtom = unwrap(asyncSettingsAtom);");
+    expect(source, "a fallback would make it true before anything was read").toContain(
+      "atom((get) => get(resolvedSettingsAtom) !== undefined)",
+    );
+  });
 });
 
 describe("settings store", () => {
