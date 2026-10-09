@@ -411,7 +411,29 @@ pub trait ProjectServiceProcessVerifier: Send + Sync {
 
 pub trait ProjectServiceHealthProbe: Send + Sync {
     fn is_ready(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool;
+    /// The same question with a timeout a loaded machine can still meet.
+    /// `is_ready` allows 500ms, which a busy service misses while being
+    /// perfectly alive; a wedged one is silent however long you wait.
+    fn is_ready_patiently(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool {
+        self.is_ready(endpoint, pid)
+    }
 }
+
+/// The routine probe's budget, and the last word's before a kill. The patient
+/// one must be long enough that a service merely starved of CPU answers;
+/// making them equal is what lets load read as a wedge.
+const PROJECT_SERVICE_PROBE_TIMEOUT_MS: u64 = 500;
+const PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS: u64 = 5_000;
+
+/// Compile-time, because a last word that waits no longer than the routine
+/// probe cannot tell a loaded service from a wedged one, and that mistake
+/// kills healthy processes.
+const _: () = assert!(PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS > PROJECT_SERVICE_PROBE_TIMEOUT_MS);
+
+/// Consecutive replacements before the daemon stops replacing and reports.
+/// A service that keeps wedging is a different problem from one that wedged,
+/// and killing it every budget forever is worse than saying so.
+const MAX_CONSECUTIVE_PROJECT_SERVICE_REPLACEMENTS: u32 = 3;
 
 const PROJECT_SERVICE_HEALTH_RECOVERY_GRACE_MULTIPLIER: u64 = 2;
 const PROJECT_SERVICE_HEALTH_WAIT_POLL_MS: u64 = 100;
@@ -507,7 +529,17 @@ enum ProjectServiceHealthWait {
 struct SystemProjectServiceHealthProbe;
 
 impl ProjectServiceHealthProbe for SystemProjectServiceHealthProbe {
+    fn is_ready_patiently(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool {
+        self.probe(endpoint, pid, PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS)
+    }
+
     fn is_ready(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool {
+        self.probe(endpoint, pid, PROJECT_SERVICE_PROBE_TIMEOUT_MS)
+    }
+}
+
+impl SystemProjectServiceHealthProbe {
+    fn probe(&self, endpoint: &MetadataApiEndpoint, pid: i32, timeout_ms: u64) -> bool {
         let request = DaemonJsonRequest {
             url: format!(
                 "http://{}:{}{}",
@@ -518,7 +550,7 @@ impl ProjectServiceHealthProbe for SystemProjectServiceHealthProbe {
             method: DaemonHttpMethod::Get,
             headers: BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]),
             body: None,
-            timeout_ms: Some(500),
+            timeout_ms: Some(timeout_ms),
         };
         let Ok(response) = execute_loopback_json_request(&request) else {
             return false;
@@ -1504,6 +1536,49 @@ impl RealDaemonRuntime {
         Ok(false)
     }
 
+    /// Every condition that has to hold before this daemon kills a service it
+    /// did not start in this call. Each term exists because getting it wrong
+    /// kills something healthy, so none of them is a formality.
+    fn wedged_service_may_be_replaced(
+        &self,
+        service: &ProjectServiceState,
+        failure: &ProjectServiceHealthWaitFailure,
+        wait_started_ms: u128,
+    ) -> bool {
+        if !adopted_project_service_is_wedged(
+            failure,
+            self.project_service_startup_timeout_ms,
+            &service.started_at,
+            wait_started_ms,
+        ) {
+            return false;
+        }
+        // Keeps wedging is a different problem from wedged, and killing it
+        // every budget forever is worse than reporting it.
+        if service.restart_count.unwrap_or(0) >= MAX_CONSECUTIVE_PROJECT_SERVICE_REPLACEMENTS {
+            return false;
+        }
+        // No liveness term here: the only caller enters this branch behind
+        // `is_live_native_project_service`, and a second copy would be an
+        // unreachable branch wearing the look of a safety check.
+        if !self
+            .project_service_process_verifier
+            .belongs_to_aimux_home(service.pid, &self.resolver.clone().global_aimux_dir())
+        {
+            return false;
+        }
+        // The last word, and the one that separates a wedge from a machine
+        // under load: `/health` builds scheduler diagnostics, so its latency
+        // tracks contention. A service starved of CPU misses 500ms every time
+        // and is indistinguishable from silence until something waits longer.
+        let ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint } = failure else {
+            return false;
+        };
+        !self
+            .project_service_health_probe
+            .is_ready_patiently(endpoint, service.pid)
+    }
+
     fn wait_for_project_service_pids_to_exit(
         &self,
         project_root: &str,
@@ -1521,6 +1596,7 @@ impl RealDaemonRuntime {
             current_unix_millis() + u128::from(self.project_service_startup_timeout_ms);
         let hard_deadline = polite_deadline + u128::from(PROJECT_SERVICE_KILL_GRACE_MS);
         let mut escalated = false;
+        let mut refused_escalations: Vec<String> = Vec::new();
         loop {
             let live_pids = pids
                 .iter()
@@ -1533,7 +1609,13 @@ impl RealDaemonRuntime {
             let now = current_unix_millis();
             let out_of_time = self.project_service_startup_timeout_ms == 0 || now >= hard_deadline;
             if out_of_time {
-                let survived = if escalated { " and SIGKILL" } else { "" };
+                let survived = if !refused_escalations.is_empty() {
+                    format!(" (SIGKILL refused: {})", refused_escalations.join("; "))
+                } else if escalated {
+                    " and SIGKILL".to_owned()
+                } else {
+                    String::new()
+                };
                 let message = format!(
                     "project service replacement blocked for {project_root} (projectId {project_id}): previous project service pids still live after {}ms{survived}: {:?}",
                     self.project_service_startup_timeout_ms, live_pids
@@ -1556,21 +1638,36 @@ impl RealDaemonRuntime {
             // handler, so a polite stop is ignored forever. Escalate once --
             // surviving SIGKILL is a different fact and still gets reported.
             if now >= polite_deadline && !escalated {
+                let mut escalation_errors: Vec<String> = Vec::new();
                 for pid in &live_pids {
-                    let _ = self.project_service_launcher.terminate(
-                        &ProjectServiceState {
-                            project_id: project_id.to_owned(),
-                            project_root: project_root.to_owned(),
-                            pid: *pid,
-                            started_at: now_iso(),
-                            updated_at: now_iso(),
-                            status: Some(crate::daemon_state::ProjectServiceStatus::Running),
-                            restart_count: None,
-                            last_restart_at: None,
-                            last_exit: None,
-                        },
-                        true,
-                    );
+                    let candidate = ProjectServiceState {
+                        project_id: project_id.to_owned(),
+                        project_root: project_root.to_owned(),
+                        pid: *pid,
+                        started_at: now_iso(),
+                        updated_at: now_iso(),
+                        status: Some(crate::daemon_state::ProjectServiceStatus::Running),
+                        restart_count: None,
+                        last_restart_at: None,
+                        last_exit: None,
+                    };
+                    // A polite stop that was ignored does not license a kill on
+                    // anything: the same identity bar as the replacement, so a
+                    // recycled pid or another control plane's service is left
+                    // alone and reported instead.
+                    if !self
+                        .project_service_process_verifier
+                        .is_live_native_project_service(&candidate)
+                        || !self
+                            .project_service_process_verifier
+                            .belongs_to_aimux_home(*pid, &self.resolver.clone().global_aimux_dir())
+                    {
+                        escalation_errors.push(format!("pid {pid}: not this daemon's service"));
+                        continue;
+                    }
+                    if let Err(error) = self.project_service_launcher.terminate(&candidate, true) {
+                        escalation_errors.push(format!("pid {pid}: {error}"));
+                    }
                 }
                 log_lifecycle_always(
                     "project service replacement escalating to sigkill",
@@ -1580,8 +1677,10 @@ impl RealDaemonRuntime {
                         "projectRoot": project_root,
                         "pids": live_pids.clone(),
                         "graceMs": PROJECT_SERVICE_KILL_GRACE_MS,
+                        "escalationErrors": escalation_errors.clone(),
                     })),
                 );
+                refused_escalations = escalation_errors;
                 escalated = true;
             }
             thread::sleep(Duration::from_millis(100));
@@ -3365,6 +3464,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             .map_err(|error| error.to_string())?;
         let project_state_dir = resolver.project_state_dir_for(&project_root);
         let mut signaled_pids = BTreeSet::new();
+        let mut replacement_restart_count = 0_u32;
         if let Some(mut service) = self.stored_project_service_state(&project_id)
             && service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
             && self.project_service_process_verifier.is_live(service.pid)
@@ -3420,16 +3520,11 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                         false
                     }
                     ProjectServiceHealthWait::NotReady(failure)
-                        if adopted_project_service_is_wedged(
+                        if self.wedged_service_may_be_replaced(
+                            &service,
                             &failure,
-                            self.project_service_startup_timeout_ms,
-                            &service.started_at,
                             wait_started_ms,
-                        ) && self.project_service_process_verifier.is_live(service.pid)
-                            && self.project_service_process_verifier.belongs_to_aimux_home(
-                                service.pid,
-                                &self.resolver.clone().global_aimux_dir(),
-                            ) =>
+                        ) =>
                     {
                         // SIGKILL, because the wedge is the runtime itself: the
                         // shutdown path is an async task on it, so SIGTERM is
@@ -3454,7 +3549,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                             &project_root,
                             ACTION_PROJECT_SERVICE_ENSURE,
                             "project-service-ensure",
-                            STATUS_REPAIRED,
+                            STATUS_STARTED,
                             Some(json!({
                                 "projectId": project_id.clone(),
                                 "pid": service.pid,
@@ -3462,7 +3557,18 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                                 "terminateError": terminate_error,
                             })),
                         );
-                        signaled_pids.insert(service.pid);
+                        // Only a signal that was actually delivered earns a
+                        // wait. `terminate` refuses an unverified pid, and
+                        // waiting for a process we declined to signal just
+                        // burns the budget and reports the wrong thing.
+                        if terminate_error.is_none() {
+                            signaled_pids.insert(service.pid);
+                        }
+                        replacement_restart_count = service.restart_count.unwrap_or(0) + 1;
+                        service.status =
+                            Some(crate::daemon_state::ProjectServiceStatus::Restarting);
+                        service.updated_at = now_iso();
+                        let _ = self.save_project_service_state(&service);
                         true
                     }
                     ProjectServiceHealthWait::NotReady(failure) => {
@@ -3587,7 +3693,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             started_at: now.clone(),
             updated_at: now,
             status: Some(crate::daemon_state::ProjectServiceStatus::Starting),
-            restart_count: Some(0),
+            restart_count: Some(replacement_restart_count),
             last_restart_at: None,
             last_exit: None,
         };
@@ -7817,6 +7923,46 @@ mod tests {
         fixture.cleanup();
     }
 
+    // A pid that outlived the polite stop but is not this daemon's service
+    // must be reported, not killed -- and the message must not claim a kill
+    // that never happened.
+    #[test]
+    fn exit_wait_refuses_to_escalate_against_a_pid_that_is_not_ours() {
+        let fixture = restart_service_fixture("exit-wait-foreign");
+        let project = fixture.project_root.clone();
+        let project_id = compute_project_id(Path::new(&project));
+        let launcher = Arc::new(RestartTestLauncher::new(92_031));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::current_native([]).with_live_but_not_native(92_030),
+        );
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            150,
+        );
+
+        let error = runtime
+            .wait_for_project_service_pids_to_exit(&project, &project_id, &BTreeSet::from([92_030]))
+            .expect_err("a foreign live pid still blocks the replacement");
+
+        assert!(
+            launcher.terminations().is_empty(),
+            "nothing of ours, nothing signalled: {:?}",
+            launcher.terminations()
+        );
+        assert!(
+            error.contains("SIGKILL refused"),
+            "the message must not claim a kill it did not make: {error}"
+        );
+        assert!(
+            error.contains("not this daemon's service"),
+            "and must say why: {error}"
+        );
+        fixture.cleanup();
+    }
+
     #[test]
     fn exit_wait_kills_nothing_when_the_pid_is_already_gone() {
         let fixture = restart_service_fixture("exit-wait-already-gone");
@@ -7911,6 +8057,145 @@ mod tests {
             "the wedged service must no longer be reported as a health timeout: {error}"
         );
         fixture.cleanup();
+    }
+
+    // The false positive that matters: `/health` builds scheduler diagnostics,
+    // so on a loaded machine a healthy service can miss the 500ms probe every
+    // time for the whole budget. Something has to wait longer before killing.
+    #[test]
+    fn ensure_project_does_not_replace_a_service_that_is_merely_slow() {
+        let fixture = restart_service_fixture("ensure-slow-but-healthy");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_461).with_endpoint(45_961));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_460]));
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(Arc::new(SlowButHealthyProbe));
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&project);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_960,
+                pid: 91_460,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        seed_adopted_service(&runtime, &project, 91_460, "2020-01-01T00:00:00.000Z");
+
+        let _ =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project);
+
+        assert!(
+            launcher.terminations().is_empty(),
+            "a service that answers when given time is not wedged: {:?}",
+            launcher.terminations()
+        );
+    }
+
+    // A service that keeps wedging must stop being killed, or a retrying
+    // client drives a kill every budget forever.
+    #[test]
+    fn ensure_project_stops_replacing_after_repeated_attempts() {
+        let fixture = restart_service_fixture("ensure-replacement-cap");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_471).with_endpoint(45_971));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_470]));
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&project);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_970,
+                pid: 91_470,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        runtime
+            .save_project_service_state(&ProjectServiceState {
+                project_id: compute_project_id(Path::new(&project)),
+                project_root: project.clone(),
+                pid: 91_470,
+                started_at: "2020-01-01T00:00:00.000Z".to_owned(),
+                updated_at: "2020-01-01T00:00:00.000Z".to_owned(),
+                status: Some(crate::daemon_state::ProjectServiceStatus::Running),
+                restart_count: Some(MAX_CONSECUTIVE_PROJECT_SERVICE_REPLACEMENTS),
+                last_restart_at: None,
+                last_exit: None,
+            })
+            .expect("seed a service already replaced to the cap");
+
+        let error =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
+                .expect_err("at the cap it reports instead of killing");
+
+        assert!(
+            launcher.terminations().is_empty(),
+            "nothing may be killed at the cap: {:?}",
+            launcher.terminations()
+        );
+        assert!(error.contains("/health probe not ready"), "{error}");
+    }
+
+    // `is_pid_alive` alone is satisfied by a recycled pid. The kill has to
+    // require the stronger identity: alive, right argv, this daemon's binary.
+    #[test]
+    fn ensure_project_does_not_replace_a_live_pid_that_is_not_our_service() {
+        let fixture = restart_service_fixture("ensure-not-native");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_481).with_endpoint(45_981));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::current_native([]).with_live_but_not_native(91_480),
+        );
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&project);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_980,
+                pid: 91_480,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        seed_adopted_service(&runtime, &project, 91_480, "2020-01-01T00:00:00.000Z");
+
+        let _ =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project);
+
+        assert!(
+            !launcher.terminations().contains(&(91_480, true)),
+            "a pid that is not our native service must not be SIGKILLed: {:?}",
+            launcher.terminations()
+        );
     }
 
     // Two daemons under different homes share a binary and a project root, so
@@ -9813,6 +10098,19 @@ mod tests {
         }
     }
 
+    /// Silent to the quick probe, answers the patient one -- a service under
+    /// load, which must never be killed.
+    struct SlowButHealthyProbe;
+
+    impl ProjectServiceHealthProbe for SlowButHealthyProbe {
+        fn is_ready(&self, _endpoint: &MetadataApiEndpoint, _pid: i32) -> bool {
+            false
+        }
+        fn is_ready_patiently(&self, _endpoint: &MetadataApiEndpoint, _pid: i32) -> bool {
+            true
+        }
+    }
+
     impl ProjectServiceHealthProbe for RestartTestHealthProbe {
         fn is_ready(&self, _endpoint: &MetadataApiEndpoint, pid: i32) -> bool {
             self.calls.lock().expect("health calls").push(pid);
@@ -9862,6 +10160,12 @@ mod tests {
                 batch_project_counts: Mutex::new(Vec::new()),
                 single_project_scan_count: Mutex::new(0),
             }
+        }
+
+        fn with_live_but_not_native(mut self, pid: i32) -> Self {
+            self.live.insert(pid);
+            self.current_native.remove(&pid);
+            self
         }
 
         fn with_foreign_aimux_home(mut self) -> Self {
