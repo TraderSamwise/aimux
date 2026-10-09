@@ -1,4 +1,4 @@
-import { PERSISTENT_SIDEBAR_MIN_WIDTH, type SidebarPresentation } from "@/lib/app-shell-layout";
+import { getSidebarPresentation, type SidebarPresentation } from "@/lib/app-shell-layout";
 import { CHAT_SPLIT_VIEW_MIN_WIDTH } from "@/lib/chat-output-mode";
 
 const TOP_BAR_COMPACT_WIDTH = 640;
@@ -38,8 +38,9 @@ export function createResponsiveViewportValue({
   const breakpointWidth = Math.max(0, width);
   const layoutWidth = bucketDimension(width, VIEWPORT_WIDTH_STEP);
   const layoutHeight = bucketDimension(height, VIEWPORT_HEIGHT_STEP);
-  const sidebarPresentation: SidebarPresentation =
-    breakpointWidth >= PERSISTENT_SIDEBAR_MIN_WIDTH ? "persistent" : "drawer";
+  // The same helper the sidebar's own callers use, not a second copy of the
+  // comparison: AGENTS.md "One Answer, Many Surfaces".
+  const sidebarPresentation = getSidebarPresentation(breakpointWidth);
   const chatSplitWidth =
     breakpointWidth >= CHAT_SPLIT_VIEW_MIN_WIDTH
       ? CHAT_SPLIT_VIEW_MIN_WIDTH

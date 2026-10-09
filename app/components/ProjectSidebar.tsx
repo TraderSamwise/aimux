@@ -367,13 +367,13 @@ function SidebarPrimaryNav({
 
 export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boolean }) {
   const { width } = useWindowDimensions();
-  // For the PERSISTENT sidebar, which sits beside the chat and keeps its frame
-  // while the keyboard covers its bottom rows. The drawer dismisses instead,
-  // in `shouldDismissKeyboardForSidebar` -- it is over the chat, not beside it.
+  // For the PERSISTENT sidebar, beside the chat and keeping its frame while an
+  // iOS keyboard covers its bottom rows. The drawer is over the chat instead,
+  // so `useSidebarKeyboardDismiss` dismisses there rather than padding.
   //
   // Snapped, not animated: AGENTS.md forbids animating a layout dimension in a
-  // touch-critical scroll surface, and padding is one. `useKeyboardInset` is
-  // for chrome that MOVES with the keyboard; this has to be there already.
+  // touch-critical scroll surface. `useKeyboardInset` is for chrome that MOVES
+  // with the keyboard; this has to be there when the finger arrives.
   const keyboardHeight = useKeyboardHeight();
   const listBottomInset = useMemo(() => ({ paddingBottom: keyboardHeight }), [keyboardHeight]);
   const projects = useAtomValue(projectsAtom);
