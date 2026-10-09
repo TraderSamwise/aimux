@@ -430,10 +430,12 @@ const PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS: u64 = 5_000;
 /// kills healthy processes.
 const _: () = assert!(PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS > PROJECT_SERVICE_PROBE_TIMEOUT_MS);
 
-/// Consecutive replacements before the daemon stops replacing and reports.
+/// How long after replacing a service the daemon refuses to replace it again.
 /// A service that keeps wedging is a different problem from one that wedged,
-/// and killing it every budget forever is worse than saying so.
-const MAX_CONSECUTIVE_PROJECT_SERVICE_REPLACEMENTS: u32 = 3;
+/// and killing it every budget forever is worse than saying so. A cooldown
+/// rather than a cap, so an hour later it is healed again instead of being
+/// permanently disqualified.
+const PROJECT_SERVICE_REPLACEMENT_COOLDOWN_MS: u64 = 600_000;
 
 const PROJECT_SERVICE_HEALTH_RECOVERY_GRACE_MULTIPLIER: u64 = 2;
 const PROJECT_SERVICE_HEALTH_WAIT_POLL_MS: u64 = 100;
@@ -1545,6 +1547,7 @@ impl RealDaemonRuntime {
         failure: &ProjectServiceHealthWaitFailure,
         wait_started_ms: u128,
     ) -> bool {
+        let now_ms = wait_started_ms;
         if !adopted_project_service_is_wedged(
             failure,
             self.project_service_startup_timeout_ms,
@@ -1555,7 +1558,20 @@ impl RealDaemonRuntime {
         }
         // Keeps wedging is a different problem from wedged, and killing it
         // every budget forever is worse than reporting it.
-        if service.restart_count.unwrap_or(0) >= MAX_CONSECUTIVE_PROJECT_SERVICE_REPLACEMENTS {
+        if let Some(last_restart) = service.last_restart_at.as_deref()
+            && let Some(last_ms) = crate::visual_client_leases::parse_iso_millis(last_restart)
+            && let Ok(last_ms) = u128::try_from(last_ms)
+            && now_ms.saturating_sub(last_ms) < u128::from(PROJECT_SERVICE_REPLACEMENT_COOLDOWN_MS)
+        {
+            return false;
+        }
+        // A SECOND opinion, from a previous ensure. The runtime serving
+        // `/health` has two worker threads, so two concurrent heavy requests
+        // starve it: threads parked, none in the poll, listener held, probes
+        // timing out -- indistinguishable from a wedge in one window. A
+        // transient starvation clears and the next ensure finds it Ready; only
+        // a failure that already persisted once gets to be fatal.
+        if service.status != Some(crate::daemon_state::ProjectServiceStatus::Starting) {
             return false;
         }
         // No liveness term here: the only caller enters this branch behind
@@ -3465,6 +3481,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         let project_state_dir = resolver.project_state_dir_for(&project_root);
         let mut signaled_pids = BTreeSet::new();
         let mut replacement_restart_count = 0_u32;
+        let mut replacement_restarted_at: Option<String> = None;
         if let Some(mut service) = self.stored_project_service_state(&project_id)
             && service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
             && self.project_service_process_verifier.is_live(service.pid)
@@ -3565,6 +3582,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                             signaled_pids.insert(service.pid);
                         }
                         replacement_restart_count = service.restart_count.unwrap_or(0) + 1;
+                        replacement_restarted_at = Some(now_iso());
                         service.status =
                             Some(crate::daemon_state::ProjectServiceStatus::Restarting);
                         service.updated_at = now_iso();
@@ -3694,7 +3712,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             updated_at: now,
             status: Some(crate::daemon_state::ProjectServiceStatus::Starting),
             restart_count: Some(replacement_restart_count),
-            last_restart_at: None,
+            last_restart_at: replacement_restarted_at,
             last_exit: None,
         };
         self.save_project_service_state(&service)?;
@@ -7992,6 +8010,22 @@ mod tests {
         pid: i32,
         started_at: &str,
     ) {
+        seed_adopted_service_with_status(
+            runtime,
+            project,
+            pid,
+            started_at,
+            crate::daemon_state::ProjectServiceStatus::Starting,
+        );
+    }
+
+    fn seed_adopted_service_with_status(
+        runtime: &RealDaemonRuntime,
+        project: &str,
+        pid: i32,
+        started_at: &str,
+        status: crate::daemon_state::ProjectServiceStatus,
+    ) {
         runtime
             .save_project_service_state(&ProjectServiceState {
                 project_id: compute_project_id(Path::new(project)),
@@ -7999,7 +8033,7 @@ mod tests {
                 pid,
                 started_at: started_at.to_owned(),
                 updated_at: started_at.to_owned(),
-                status: Some(crate::daemon_state::ProjectServiceStatus::Running),
+                status: Some(status),
                 restart_count: Some(0),
                 last_restart_at: None,
                 last_exit: None,
@@ -8101,9 +8135,10 @@ mod tests {
     }
 
     // A service that keeps wedging must stop being killed, or a retrying
-    // client drives a kill every budget forever.
+    // client drives a kill every budget forever. The cooldown expires, so an
+    // hour later it is healed again rather than disqualified for good.
     #[test]
-    fn ensure_project_stops_replacing_after_repeated_attempts() {
+    fn ensure_project_stops_replacing_during_the_cooldown() {
         let fixture = restart_service_fixture("ensure-replacement-cap");
         let project = fixture.project_root.clone();
         let launcher = Arc::new(RestartTestLauncher::new(91_471).with_endpoint(45_971));
@@ -8136,20 +8171,20 @@ mod tests {
                 pid: 91_470,
                 started_at: "2020-01-01T00:00:00.000Z".to_owned(),
                 updated_at: "2020-01-01T00:00:00.000Z".to_owned(),
-                status: Some(crate::daemon_state::ProjectServiceStatus::Running),
-                restart_count: Some(MAX_CONSECUTIVE_PROJECT_SERVICE_REPLACEMENTS),
-                last_restart_at: None,
+                status: Some(crate::daemon_state::ProjectServiceStatus::Starting),
+                restart_count: Some(1),
+                last_restart_at: Some(now_iso()),
                 last_exit: None,
             })
-            .expect("seed a service already replaced to the cap");
+            .expect("seed a service replaced moments ago");
 
         let error =
             <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
-                .expect_err("at the cap it reports instead of killing");
+                .expect_err("inside the cooldown it reports instead of killing");
 
         assert!(
             launcher.terminations().is_empty(),
-            "nothing may be killed at the cap: {:?}",
+            "nothing may be killed inside the cooldown: {:?}",
             launcher.terminations()
         );
         assert!(error.contains("/health probe not ready"), "{error}");
@@ -8244,6 +8279,66 @@ mod tests {
         assert!(
             error.contains("/health probe not ready"),
             "and the old error is what the user gets: {error}"
+        );
+        fixture.cleanup();
+    }
+
+    // One unresponsive window is not enough. The service runtime has two
+    // worker threads, so two heavy requests starve `/health` into looking
+    // exactly like a wedge; a transient spike must cost an error, not a kill.
+    #[test]
+    fn ensure_project_does_not_replace_on_the_first_unresponsive_window() {
+        let fixture = restart_service_fixture("ensure-first-window");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_491).with_endpoint(45_991));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_490]));
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&project);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_990,
+                pid: 91_490,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        seed_adopted_service_with_status(
+            &runtime,
+            &project,
+            91_490,
+            "2020-01-01T00:00:00.000Z",
+            crate::daemon_state::ProjectServiceStatus::Running,
+        );
+
+        let error =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
+                .expect_err("the first window reports");
+
+        assert!(
+            launcher.terminations().is_empty(),
+            "a healthy service starved for one window must survive: {:?}",
+            launcher.terminations()
+        );
+        assert!(error.contains("/health probe not ready"), "{error}");
+        // And the observation is recorded, so a second window can be fatal.
+        let stored = runtime
+            .stored_project_service_state(&compute_project_id(Path::new(&project)))
+            .expect("state");
+        assert_eq!(
+            stored.status,
+            Some(crate::daemon_state::ProjectServiceStatus::Starting),
+            "the failure has to be remembered or the second window learns nothing"
         );
         fixture.cleanup();
     }
