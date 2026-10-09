@@ -70,7 +70,9 @@ describe("every sidebar gives the covered strip back", () => {
 
   it("covers every sidebar the shell can render", () => {
     const shell = readFileSync(sourcePath("components/AppShell.tsx"), "utf8");
-    const imported = [...shell.matchAll(/from "@\/components\/(\w+Sidebar)"/g)];
+    // Any path, not just `@/components/X`: a relative import or a
+    // subdirectory added a fourth sidebar the gate never read.
+    const imported = [...shell.matchAll(/from "[^"]*?(\w+Sidebar)"/g)];
     expect(
       new Set(imported.map((match) => `${match[1]}.tsx`)),
       "a sidebar the shell renders but this gate does not read",
@@ -85,7 +87,7 @@ describe("every sidebar gives the covered strip back", () => {
     // `[\s\S]` not `[^>]`, so a tag prettier wrapped over several lines is
     // still one match; and every scrolling primitive, not just ScrollView,
     // because the next list added here is the one that forgets.
-    const tags = source.match(/<(ScrollView|FlatList|SectionList|FlashList)[\s\S]*?>/g) ?? [];
+    const tags = source.match(/<[\w.]*(ScrollView|FlatList|SectionList|FlashList)[\s\S]*?>/g) ?? [];
     expect(tags.length, `${sidebar} still scrolls something`).toBeGreaterThan(0);
     for (const tag of tags) {
       expect(tag, "every scrolled list must inset past the keyboard").toContain(
@@ -98,8 +100,13 @@ describe("every sidebar gives the covered strip back", () => {
         'keyboardShouldPersistTaps="handled"',
       );
     }
-    expect(source, "and the inset must be the shared one, not a local copy").toContain(
-      "useSidebarListInset()",
+    expect(source, "and the inset must come FROM the shared hook").toContain(
+      "const sidebarListInset = useSidebarListInset()",
+    );
+    // C2: an aliased import makes the tag name unrecognisable, so the alias
+    // itself is what has to be refused.
+    expect(source, "a scrolling primitive must not be imported under an alias").not.toMatch(
+      /(ScrollView|FlatList|SectionList|FlashList)\s+as\s+\w+/,
     );
   });
 });

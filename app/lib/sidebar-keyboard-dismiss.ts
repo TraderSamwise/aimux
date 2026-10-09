@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 
 import { type SidebarPresentation } from "@/lib/app-shell-layout";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
@@ -57,12 +57,12 @@ export function useSidebarKeyboardDismiss(
   dismiss: () => void = blurWebActiveElement,
 ): void {
   const hasHardwareKeyboard = useHasHardwareKeyboard();
-  // Seeded in the ref initialiser rather than with `??=` during render: React
-  // keeps the first value, so there is no nullable watcher and no `?.` turning
-  // a missing one into "nothing to do", and nothing render-scoped in the seed.
-  const dismissOnOpenRef = useRef<SidebarKeyboardDismiss>(createSidebarKeyboardDismiss());
+  // A lazy initialiser rather than a ref seeded during render: it runs once,
+  // allocates nothing on later renders, and leaves no nullable watcher for a
+  // `?.` to turn into "nothing to do".
+  const [dismissOnOpen] = useState(createSidebarKeyboardDismiss);
 
   useEffect(() => {
-    dismissOnOpenRef.current({ hasHardwareKeyboard, open, presentation }, dismiss);
-  }, [dismiss, hasHardwareKeyboard, open, presentation]);
+    dismissOnOpen({ hasHardwareKeyboard, open, presentation }, dismiss);
+  }, [dismiss, dismissOnOpen, hasHardwareKeyboard, open, presentation]);
 }

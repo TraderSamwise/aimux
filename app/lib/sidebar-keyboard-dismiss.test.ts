@@ -157,5 +157,10 @@ describe("the shell runs it", () => {
     expect(source, "the shell must run the hook").toContain(
       "useSidebarKeyboardDismiss(sidebarOpen, sidebarPresentation)",
     );
+    // A local of the same name keeps that substring verbatim while the real
+    // hook is imported and never called.
+    expect(source, "and must not shadow it with a local").not.toMatch(
+      /(const|let|var|function)\s+useSidebarKeyboardDismiss\b/,
+    );
   });
 });
