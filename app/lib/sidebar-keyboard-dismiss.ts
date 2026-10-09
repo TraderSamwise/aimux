@@ -38,8 +38,11 @@ export function dismissKeyboardForSidebarOpen(
  * default is open, so a level rule blurs on every mount. The sequence lives
  * here so a test can replay both.
  */
-export function createSidebarKeyboardDismiss(initiallyOpen: boolean): SidebarKeyboardDismiss {
-  let previouslyOpen = initiallyOpen;
+export function createSidebarKeyboardDismiss(): SidebarKeyboardDismiss {
+  // Mount opened nothing, whatever `open` says -- and seeding this from `open`
+  // instead is provably the same, since a first render can only act when
+  // `open && !previouslyOpen`, which `open` as the seed can never satisfy.
+  let previouslyOpen = true;
   return (state, dismiss) => {
     const acted = dismissKeyboardForSidebarOpen({ ...state, previouslyOpen }, dismiss);
     previouslyOpen = state.open;
@@ -54,10 +57,12 @@ export function useSidebarKeyboardDismiss(
   dismiss: () => void = blurWebActiveElement,
 ): void {
   const hasHardwareKeyboard = useHasHardwareKeyboard();
-  const dismissOnOpenRef = useRef<SidebarKeyboardDismiss | null>(null);
-  dismissOnOpenRef.current ??= createSidebarKeyboardDismiss(open);
+  // Seeded in the ref initialiser rather than with `??=` during render: React
+  // keeps the first value, so there is no nullable watcher and no `?.` turning
+  // a missing one into "nothing to do", and nothing render-scoped in the seed.
+  const dismissOnOpenRef = useRef<SidebarKeyboardDismiss>(createSidebarKeyboardDismiss());
 
   useEffect(() => {
-    dismissOnOpenRef.current?.({ hasHardwareKeyboard, open, presentation }, dismiss);
+    dismissOnOpenRef.current({ hasHardwareKeyboard, open, presentation }, dismiss);
   }, [dismiss, hasHardwareKeyboard, open, presentation]);
 }

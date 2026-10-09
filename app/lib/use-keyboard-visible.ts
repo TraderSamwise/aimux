@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Keyboard, Platform } from "react-native";
 
+import { SOFT_KEYBOARD_MIN_OCCLUSION_PX } from "@/lib/hardware-keyboard";
+
 /**
  * Whether the keyboard is up, for chrome that hides rather than moves.
  *
@@ -48,6 +50,25 @@ export function useKeyboardHeight(): number {
     Platform.OS === "ios" ? keyboardHeightFromEvent({ endCoordinates: Keyboard.metrics() }) : 0,
   );
 
+  // Web is MEASURED, not asked. iPad Safari in landscape is 1024pt, so it gets
+  // the persistent sidebar, and its keyboard overlays the page without
+  // resizing the layout viewport -- as does Android Chrome, because
+  // `interactive-widget=resizes-visual` in `public/index.html` asks it to.
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const apply = () =>
+      setHeight(webKeyboardHeight(viewport.height * viewport.scale, window.innerHeight));
+    apply();
+    viewport.addEventListener("resize", apply);
+    viewport.addEventListener("scroll", apply);
+    return () => {
+      viewport.removeEventListener("resize", apply);
+      viewport.removeEventListener("scroll", apply);
+    };
+  }, []);
+
   useEffect(() => {
     // iOS only, the same restriction `useKeyboardInset` carries. There the
     // window does not resize for the keyboard, so a view pinned to the bottom
@@ -73,6 +94,19 @@ export function useKeyboardHeight(): number {
   }, []);
 
   return height;
+}
+
+/**
+ * How much of the page a web keyboard covers, from the two viewports.
+ *
+ * Below `SOFT_KEYBOARD_MIN_OCCLUSION_PX` nothing is treated as a keyboard, the
+ * same threshold `hasHardwareKeyboard` uses, so browser chrome sliding away
+ * does not pad the list by a toolbar.
+ */
+export function webKeyboardHeight(viewportHeight: number, layoutHeight: number): number {
+  if (!Number.isFinite(viewportHeight) || !Number.isFinite(layoutHeight)) return 0;
+  const covered = layoutHeight - viewportHeight;
+  return covered >= SOFT_KEYBOARD_MIN_OCCLUSION_PX ? Math.round(covered) : 0;
 }
 
 /**

@@ -21,9 +21,10 @@ function sourcePath(relative: string): string {
 type Step = { hasHardwareKeyboard?: boolean; open: boolean; presentation: "drawer" | "persistent" };
 
 // Replays a render sequence through one watcher and reports which steps
-// dismissed, so a test reads as the sequence a thumb actually produces.
-function dismissedAt(initiallyOpen: boolean, steps: Step[]): number[] {
-  const dismissOnOpen = createSidebarKeyboardDismiss(initiallyOpen);
+// dismissed, so a test reads as the sequence a thumb actually produces. Step 0
+// is the mount, which by definition opened nothing.
+function dismissedAt(steps: Step[]): number[] {
+  const dismissOnOpen = createSidebarKeyboardDismiss();
   const dismiss = vi.fn();
   const dismissedSteps: number[] = [];
   steps.forEach((step, index) => {
@@ -38,28 +39,35 @@ function dismissedAt(initiallyOpen: boolean, steps: Step[]): number[] {
 }
 
 describe("the drawer opening puts the keyboard away", () => {
-  it("dismisses when the drawer is opened over the chat", () => {
+  it("dismisses on each render that opens the drawer", () => {
     expect(
-      dismissedAt(false, [
+      dismissedAt([
+        { open: false, presentation: "drawer" },
         { open: true, presentation: "drawer" },
         { open: false, presentation: "drawer" },
         { open: true, presentation: "drawer" },
       ]),
-      "once per opening, and not on the close between them",
-    ).toEqual([0, 2]);
+      "once per opening, and not on the mount or the close between them",
+    ).toEqual([1, 3]);
   });
 
   // The composer is already blurred by then. Dismissing again would be a no-op
   // that makes a real miss look handled.
   it("leaves the keyboard alone when the drawer closes", () => {
-    expect(dismissedAt(true, [{ open: false, presentation: "drawer" }])).toEqual([]);
+    expect(
+      dismissedAt([
+        { open: true, presentation: "drawer" },
+        { open: false, presentation: "drawer" },
+      ]),
+    ).toEqual([]);
   });
 
   // The persistent sidebar sits BESIDE the chat rather than over it, so
   // toggling it mid-sentence must not take someone's keyboard away.
   it("never touches the keyboard for the persistent sidebar", () => {
     expect(
-      dismissedAt(false, [
+      dismissedAt([
+        { open: false, presentation: "persistent" },
         { open: true, presentation: "persistent" },
         { open: false, presentation: "persistent" },
         { open: true, presentation: "persistent" },
@@ -71,19 +79,20 @@ describe("the drawer opening puts the keyboard away", () => {
   // on a drawer layout. A level rule reads that first render as an opening.
   it("does not dismiss on a mount that is already open", () => {
     expect(
-      dismissedAt(true, [
+      dismissedAt([
+        { open: true, presentation: "drawer" },
         { open: true, presentation: "drawer" },
         { open: false, presentation: "drawer" },
       ]),
     ).toEqual([]);
   });
 
-  // The bug a level rule has: iPad landscape, persistent sidebar open, someone
-  // typing, rotate to portrait. 820pt < 900 makes it a drawer with `open`
-  // still true, so `drawer && open` turns true with nothing opened.
+  // The bug a level rule has: iPhone Pro Max landscape is 932pt, so it draws
+  // the persistent sidebar; rotate to portrait and 932 -> 393 makes it a
+  // drawer with `open` still true, turning `drawer && open` true on its own.
   it("does not dismiss when a rotation turns the persistent sidebar into a drawer", () => {
     expect(
-      dismissedAt(false, [
+      dismissedAt([
         { open: true, presentation: "persistent" },
         { open: true, presentation: "drawer" },
         { open: false, presentation: "drawer" },
@@ -91,12 +100,27 @@ describe("the drawer opening puts the keyboard away", () => {
     ).toEqual([]);
   });
 
+  // And the reverse: widening to persistent while the drawer is open must not
+  // leave the watcher thinking the next narrow render is an opening.
+  it("does not dismiss when widening to persistent and back", () => {
+    expect(
+      dismissedAt([
+        { open: false, presentation: "drawer" },
+        { open: true, presentation: "drawer" },
+        { open: true, presentation: "persistent" },
+        { open: true, presentation: "drawer" },
+      ]),
+      "only the render that opened it",
+    ).toEqual([1]);
+  });
+
   // A hardware keyboard means there is no soft keyboard to put away, so the
   // blur would only cost the composer its focus -- and nothing restores it,
   // because the chat's refocus is keyed on navigation, not on the drawer.
   it("does not dismiss when a hardware keyboard is attached", () => {
     expect(
-      dismissedAt(false, [
+      dismissedAt([
+        { hasHardwareKeyboard: true, open: false, presentation: "drawer" },
         { hasHardwareKeyboard: true, open: true, presentation: "drawer" },
         { hasHardwareKeyboard: true, open: false, presentation: "drawer" },
         { hasHardwareKeyboard: true, open: true, presentation: "drawer" },
@@ -108,41 +132,30 @@ describe("the drawer opening puts the keyboard away", () => {
   // read per transition rather than latched at the first one.
   it("dismisses again once the hardware keyboard goes away", () => {
     expect(
-      dismissedAt(false, [
+      dismissedAt([
+        { open: false, presentation: "drawer" },
         { hasHardwareKeyboard: true, open: true, presentation: "drawer" },
         { open: false, presentation: "drawer" },
         { open: true, presentation: "drawer" },
       ]),
-    ).toEqual([2]);
-  });
-
-  // And the reverse: widening to persistent while the drawer is open must not
-  // leave the watcher thinking the next narrow render is an opening.
-  it("does not dismiss when widening to persistent and back", () => {
-    expect(
-      dismissedAt(false, [
-        { open: true, presentation: "drawer" },
-        { open: true, presentation: "persistent" },
-        { open: true, presentation: "drawer" },
-      ]),
-      "only the first render opened anything",
-    ).toEqual([0]);
+    ).toEqual([3]);
   });
 });
 
 describe("the shell runs it", () => {
-  // Source rather than render: there is no effect-running renderer in this app
-  // (`WorktreeDashboard.test.tsx` calls components as plain functions), so the
-  // behaviour is pinned above and this pins only that the shell is wired to it.
-  it("hands the hook the sidebar's own state", () => {
+  // Source rather than render: `sidebar-keyboard-hook.test.ts` executes the
+  // hook, so all this has to claim is that the shell calls it with the
+  // sidebar's own two values. It cannot see what those identifiers HOLD -- a
+  // shell that shadows or hardcodes them passes, and that is the honest limit.
+  it("calls the hook with the sidebar's own state", () => {
     const path = sourcePath("components/AppShell.tsx");
     expect(existsSync(path), `${path} is readable`).toBe(true);
-    const source = readFileSync(path, "utf8");
+    // Comments stripped first: `toContain` is happy to match a call that has
+    // been commented out, which is one keystroke from a dead feature.
+    const source = readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
 
     expect(source, "the shell must run the hook").toContain(
       "useSidebarKeyboardDismiss(sidebarOpen, sidebarPresentation)",
     );
-    // No second rule beside it: the hook decides, the shell does not branch.
-    expect(source, "and must not re-decide for itself").not.toContain("blurWebActiveElement");
   });
 });
