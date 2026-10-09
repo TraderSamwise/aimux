@@ -413,6 +413,42 @@ fn project_service_health_recovery_grace_ms(startup_timeout_ms: u64) -> u64 {
     startup_timeout_ms.saturating_mul(PROJECT_SERVICE_HEALTH_RECOVERY_GRACE_MULTIPLIER)
 }
 
+/// Whether an ADOPTED service is wedged rather than merely slow.
+///
+/// Only `HealthProbeNotReady` counts: the endpoint was there, its pid matched,
+/// and `/health` stayed silent for the whole budget. A missing or unreadable
+/// endpoint is a service still finding its feet, and a pid mismatch means the
+/// endpoint is somebody else's.
+///
+/// The service must also predate the budget. A zero budget means "do not
+/// wait", which is a configuration rather than a verdict, and a service
+/// younger than one budget has not yet been given the time this is measuring.
+/// An undatable record is not evidence either, so it declines.
+fn adopted_project_service_is_wedged(
+    failure: &ProjectServiceHealthWaitFailure,
+    startup_timeout_ms: u64,
+    started_at: &str,
+    now_ms: u128,
+) -> bool {
+    if startup_timeout_ms == 0 {
+        return false;
+    }
+    if !matches!(
+        failure,
+        ProjectServiceHealthWaitFailure::HealthProbeNotReady { .. }
+    ) {
+        return false;
+    }
+    let Some(started_ms) = crate::visual_client_leases::parse_iso_millis(started_at) else {
+        return false;
+    };
+    let Ok(started_ms) = u128::try_from(started_ms) else {
+        return false;
+    };
+    now_ms.saturating_sub(started_ms)
+        >= u128::from(project_service_health_wait_budget_ms(startup_timeout_ms))
+}
+
 fn project_service_health_wait_budget_ms(startup_timeout_ms: u64) -> u64 {
     startup_timeout_ms.saturating_add(project_service_health_recovery_grace_ms(startup_timeout_ms))
 }
@@ -3263,7 +3299,13 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                     &signaled_pids,
                     None,
                 );
-                match self.wait_for_live_project_service(&project_state_dir, service.pid) {
+                // Read before the wait, because the wait itself consumes a
+                // whole budget -- measured after it, every service looks old
+                // enough and a service launched seconds ago reads as wedged.
+                let wait_started_ms = current_unix_millis();
+                let replacing_wedged_service = match self
+                    .wait_for_live_project_service(&project_state_dir, service.pid)
+                {
                     ProjectServiceHealthWait::Ready(_) => {
                         service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
                         if !was_running {
@@ -3292,6 +3334,49 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                                 "status": "running",
                             })),
                         );
+                        false
+                    }
+                    ProjectServiceHealthWait::NotReady(failure)
+                        if adopted_project_service_is_wedged(
+                            &failure,
+                            self.project_service_startup_timeout_ms,
+                            &service.started_at,
+                            wait_started_ms,
+                        ) && self.project_service_process_verifier.is_live(service.pid) =>
+                    {
+                        // SIGKILL, because the wedge is the runtime itself: the
+                        // shutdown path is an async task on it, so SIGTERM is
+                        // never polled and the process outlives a polite stop.
+                        let terminate_error = self
+                            .project_service_launcher
+                            .terminate(&service, true)
+                            .err();
+                        log_lifecycle_always(
+                            "project service ensure replacing wedged service",
+                            "project-service",
+                            Some(json!({
+                                "projectId": project_id.clone(),
+                                "projectRoot": project_root.clone(),
+                                "pid": service.pid,
+                                "startedAt": service.started_at.clone(),
+                                "terminateError": terminate_error.clone(),
+                            })),
+                        );
+                        record_repair_event_for_project(
+                            &self.resolver,
+                            &project_root,
+                            ACTION_PROJECT_SERVICE_ENSURE,
+                            "project-service-ensure",
+                            STATUS_REPAIRED,
+                            Some(json!({
+                                "projectId": project_id.clone(),
+                                "pid": service.pid,
+                                "status": "replacing-wedged",
+                                "terminateError": terminate_error,
+                            })),
+                        );
+                        signaled_pids.insert(service.pid);
+                        true
                     }
                     ProjectServiceHealthWait::NotReady(failure) => {
                         service.status = Some(crate::daemon_state::ProjectServiceStatus::Starting);
@@ -3328,20 +3413,23 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                         );
                         return Err(error);
                     }
+                };
+                if !replacing_wedged_service {
+                    return serde_json::to_value(service).map_err(|error| error.to_string());
                 }
-                return serde_json::to_value(service).map_err(|error| error.to_string());
+            } else {
+                log_lifecycle_always(
+                    "project service ensure terminating invalid service",
+                    "project-service",
+                    Some(json!({
+                        "projectId": project_id.clone(),
+                        "projectRoot": project_root.clone(),
+                        "pid": service.pid,
+                    })),
+                );
+                let _ = self.project_service_launcher.terminate(&service, false);
+                signaled_pids.insert(service.pid);
             }
-            log_lifecycle_always(
-                "project service ensure terminating invalid service",
-                "project-service",
-                Some(json!({
-                    "projectId": project_id.clone(),
-                    "projectRoot": project_root.clone(),
-                    "pid": service.pid,
-                })),
-            );
-            let _ = self.project_service_launcher.terminate(&service, false);
-            signaled_pids.insert(service.pid);
         }
         let extra_pids = self.terminate_extra_project_services(
             &project_id,
@@ -7243,6 +7331,99 @@ mod tests {
         fixture.cleanup();
     }
 
+    fn wedged_failure(port: u16, pid: i32) -> ProjectServiceHealthWaitFailure {
+        ProjectServiceHealthWaitFailure::HealthProbeNotReady {
+            endpoint: MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port,
+                pid,
+                updated_at: "now".to_owned(),
+            },
+        }
+    }
+
+    // One budget after the service started, which is the earliest a silent
+    // `/health` can mean wedged rather than slow.
+    const WEDGE_STARTED_AT: &str = "2026-10-09T08:00:00.000Z";
+    const WEDGE_NOW_MS: u128 = 1_791_619_200_000 + 120_000;
+
+    #[test]
+    fn adopted_service_is_wedged_only_after_the_whole_budget_of_silence() {
+        let failure = wedged_failure(45_901, 91_020);
+        let started = crate::visual_client_leases::parse_iso_millis(WEDGE_STARTED_AT)
+            .expect("parseable start");
+        let started = u128::try_from(started).expect("positive start");
+        let budget = u128::from(project_service_health_wait_budget_ms(30_000));
+
+        assert!(
+            adopted_project_service_is_wedged(&failure, 30_000, WEDGE_STARTED_AT, started + budget),
+            "a service silent for a full budget is wedged"
+        );
+        assert!(
+            !adopted_project_service_is_wedged(
+                &failure,
+                30_000,
+                WEDGE_STARTED_AT,
+                started + budget - 1
+            ),
+            "one millisecond short is still starting up"
+        );
+    }
+
+    // A zero budget means "do not wait", which every test runtime uses, so it
+    // must never read as a verdict -- it would kill healthy services.
+    #[test]
+    fn adopted_service_is_not_wedged_when_the_budget_is_zero() {
+        assert!(!adopted_project_service_is_wedged(
+            &wedged_failure(45_901, 91_020),
+            0,
+            WEDGE_STARTED_AT,
+            WEDGE_NOW_MS,
+        ));
+    }
+
+    #[test]
+    fn adopted_service_is_not_wedged_for_any_other_failure() {
+        for failure in [
+            ProjectServiceHealthWaitFailure::EndpointMissing {
+                path: PathBuf::from("/tmp/endpoint.json"),
+            },
+            ProjectServiceHealthWaitFailure::EndpointLoadFailed {
+                error: crate::daemon_state::MetadataEndpointLoadError::Read {
+                    path: PathBuf::from("/tmp/endpoint.json"),
+                    error: "unreadable".to_owned(),
+                },
+            },
+            ProjectServiceHealthWaitFailure::EndpointPidMismatch {
+                expected_pid: 1,
+                actual_pid: 2,
+            },
+            ProjectServiceHealthWaitFailure::ProcessExited { exit_status: None },
+        ] {
+            assert!(
+                !adopted_project_service_is_wedged(
+                    &failure,
+                    30_000,
+                    WEDGE_STARTED_AT,
+                    WEDGE_NOW_MS
+                ),
+                "{failure:?} is not a wedge"
+            );
+        }
+    }
+
+    // An undatable record is not evidence of age, so it declines rather than
+    // killing something it cannot reason about.
+    #[test]
+    fn adopted_service_is_not_wedged_without_a_parseable_start() {
+        assert!(!adopted_project_service_is_wedged(
+            &wedged_failure(45_901, 91_020),
+            30_000,
+            "not-a-timestamp",
+            WEDGE_NOW_MS,
+        ));
+    }
+
     #[test]
     fn wait_for_live_project_service_requires_serving_health_endpoint() {
         let fixture = restart_service_fixture("wait-health-not-ready");
@@ -7436,6 +7617,127 @@ mod tests {
             ProjectServiceHealthWait::Ready(MetadataApiEndpoint { pid: 91_021, .. })
         ));
         assert_eq!(health.calls(), vec![91_021]);
+        fixture.cleanup();
+    }
+
+    fn seed_adopted_service(
+        runtime: &RealDaemonRuntime,
+        project: &str,
+        pid: i32,
+        started_at: &str,
+    ) {
+        runtime
+            .save_project_service_state(&ProjectServiceState {
+                project_id: compute_project_id(Path::new(project)),
+                project_root: project.to_owned(),
+                pid,
+                started_at: started_at.to_owned(),
+                updated_at: started_at.to_owned(),
+                status: Some(crate::daemon_state::ProjectServiceStatus::Running),
+                restart_count: Some(0),
+                last_restart_at: None,
+                last_exit: None,
+            })
+            .expect("seed stored service");
+    }
+
+    // The wedge Sam hit: a service adopted from a previous run, alive, holding
+    // its listener, `/health` silent. It used to be a 30s error handed to the
+    // user; it is replaced now.
+    #[test]
+    fn ensure_project_replaces_a_wedged_adopted_service_with_sigkill() {
+        let fixture = restart_service_fixture("ensure-replace-wedged");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_431).with_endpoint(45_931));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_430, 91_431]));
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&project);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_930,
+                pid: 91_430,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        seed_adopted_service(&runtime, &project, 91_430, "2020-01-01T00:00:00.000Z");
+
+        let error =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
+                .expect_err("the replacement is never healthy in this fixture either");
+
+        assert!(
+            launcher.terminations().contains(&(91_430, true)),
+            "the wedged service must be SIGKILLed, not asked politely: {:?}",
+            launcher.terminations()
+        );
+        // Past the adopt branch: the old error is gone. The launch itself is
+        // the pre-existing fall-through path, already covered; what is new is
+        // the decision to take it. This fixture's verifier keeps reporting the
+        // killed pid alive, so the exit wait stops the flow after that point.
+        assert!(
+            !error.contains("/health probe not ready"),
+            "the wedged service must no longer be reported as a health timeout: {error}"
+        );
+        fixture.cleanup();
+    }
+
+    // The other side of the same rule: a service younger than the budget is
+    // still starting up, and killing it would be a crash loop.
+    #[test]
+    fn ensure_project_does_not_replace_a_service_younger_than_the_budget() {
+        let fixture = restart_service_fixture("ensure-keep-young");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_441).with_endpoint(45_941));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_440]));
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&project);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_940,
+                pid: 91_440,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        seed_adopted_service(&runtime, &project, 91_440, &now_iso());
+
+        let error =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
+                .expect_err("a young unhealthy service is still an error");
+
+        assert!(
+            launcher.terminations().is_empty(),
+            "nothing may be killed: {:?}",
+            launcher.terminations()
+        );
+        assert!(launcher.calls().is_empty(), "and nothing relaunched");
+        assert!(
+            error.contains("pid 91440"),
+            "the error names the service we kept: {error}"
+        );
         fixture.cleanup();
     }
 
