@@ -11,6 +11,7 @@ import {
 
 const base: InitialMainRouteInput = {
   isSignedIn: true,
+  ownMachineCount: 1,
   realSharedChatCount: 1,
   relaySignal: "available",
   sharesHydrated: true,
@@ -32,22 +33,42 @@ describe("initialMainRoute", () => {
   it("never routes to shared with no shared chats, however dead the relay is", () => {
     for (const relaySignal of ["unavailable", "unknown"] as const) {
       expect(
-        initialMainRoute({ ...base, realSharedChatCount: 0, relaySignal, waitExpired: true }),
+        initialMainRoute({
+          ...base,
+          ownMachineCount: 0,
+          realSharedChatCount: 0,
+          relaySignal,
+          waitExpired: true,
+        }),
         relaySignal,
       ).toBe("project");
     }
   });
 
-  // The whole requirement: a reachable relay means the user's own surface,
-  // whatever their project list currently says.
-  it("lands on the user's own surface whenever the relay is reachable", () => {
+  // The whole requirement: a reachable relay with a machine of the user's own
+  // means the user's own surface, whatever their project list currently says.
+  it("lands on the user's own surface whenever their own backend is reachable", () => {
     expect(initialMainRoute(base)).toBe("project");
+  });
+
+  // A shared-chat receiver with no backend. A share resolving at "/" makes the
+  // app connect as a guest socket, which is told nothing about any fleet, so
+  // the machine list reads empty -- and the fleet genuinely is not theirs.
+  it("routes a user with no machines of their own to their shared chats", () => {
+    expect(initialMainRoute({ ...base, ownMachineCount: 0 })).toBe("shared");
   });
 
   // The relay answers "do you have a backend" itself: `daemon_status` with no
   // daemon online becomes `daemon_offline`, which is unavailable.
   it("routes to shared when the relay says there is nothing of the user's own", () => {
     expect(initialMainRoute({ ...base, relaySignal: "unavailable" })).toBe("shared");
+  });
+
+  // A machine that exists but whose relay is unreachable is still no backend.
+  it("does not let a remembered machine override an unreachable relay", () => {
+    expect(initialMainRoute({ ...base, ownMachineCount: 3, relaySignal: "unavailable" })).toBe(
+      "shared",
+    );
   });
 
   // The reported bug. `relayStatusAtom` starts at "disconnected", so this used

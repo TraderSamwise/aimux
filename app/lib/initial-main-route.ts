@@ -34,11 +34,36 @@ export function relayLandingSignal(configured: boolean, status: RelayStatus): Re
   return "unknown";
 }
 
+export type OwnBackendSignal = "present" | "absent" | "unknown";
+
+/**
+ * Whether the user has a backend of their own, which is what the landing
+ * choice turns on.
+ *
+ * Local mode has no fleet to report and a local daemon is the user's own by
+ * definition, so it is present without asking. With a relay, an empty machine
+ * list alongside a reachable relay is the answer: for an owner socket the
+ * fleet arrives in the same `daemon_status` message that flips the status, so
+ * the list is never merely late, and a guest socket is told nothing about any
+ * fleet -- correctly, because the fleet is not theirs.
+ */
+export function ownBackendSignal(
+  relayConfigured: boolean,
+  relayStatus: RelayStatus,
+  ownMachineCount: number,
+): OwnBackendSignal {
+  if (!relayConfigured) return "present";
+  const relay = relayLandingSignal(relayConfigured, relayStatus);
+  if (relay === "unknown") return "unknown";
+  if (relay === "unavailable") return "absent";
+  return ownMachineCount > 0 ? "present" : "absent";
+}
+
 export interface InitialMainRouteInput {
   isSignedIn: boolean;
   realSharedChatCount: number;
   sharesHydrated: boolean;
-  relaySignal: RelayLandingSignal;
+  ownBackend: OwnBackendSignal;
   waitExpired: boolean;
 }
 
@@ -57,18 +82,15 @@ export function initialMainRoute(input: InitialMainRouteInput): InitialMainRoute
   if (!input.isSignedIn) return "project";
 
   const sharesUnknown = !input.sharesHydrated;
-  const relayUnknown = input.relaySignal === "unknown";
-  if ((sharesUnknown || relayUnknown) && !input.waitExpired) return "pending";
+  const backendUnknown = input.ownBackend === "unknown";
+  if ((sharesUnknown || backendUnknown) && !input.waitExpired) return "pending";
 
   // Expiry decides rather than hangs: an unread share list is no shares, and
   // a relay that never answered is a relay that is not there.
   if (input.realSharedChatCount <= 0) return "project";
 
-  // "No relay available AND you have shared chats" is the whole condition. The
-  // relay answers it itself: `daemon_status` reports whether a daemon is
-  // online, and a reply of no becomes `daemon_offline`, which is in the
-  // unavailable set. Counting active projects was a second, worse guess at the
-  // same question -- it sent a connected user whose daemon had not reported a
-  // project yet to someone else's chats.
-  return input.relaySignal === "available" ? "project" : "shared";
+  // "No relay available AND you have shared chats" is the whole condition, and
+  // {@link ownBackendSignal} is the half of it worth deriving. An expired wait
+  // reaches here with "unknown", which is no backend anyone could reach.
+  return input.ownBackend === "present" ? "project" : "shared";
 }

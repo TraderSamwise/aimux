@@ -9,7 +9,7 @@ import {
 } from "@/lib/initial-main-route";
 import { useAuth } from "@/lib/auth";
 import { selectedProjectRefAtom } from "@/stores/projects";
-import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { relayConfiguredAtom, relayMachinesAtom, relayStatusAtom } from "@/stores/relay";
 import { buildViewHref, projectRefFromSearchOrLocation } from "@/lib/view-location";
 import { acceptedSharedSessionsAtom, settingsHydratedAtom } from "@/stores/settings";
 
@@ -25,6 +25,7 @@ export default function DashboardIndex() {
   const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
+  const relayMachines = useAtomValue(relayMachinesAtom);
   const acceptedShares = useAtomValue(acceptedSharedSessionsAtom);
   const sharesHydrated = useAtomValue(settingsHydratedAtom);
   const [waitExpired, setWaitExpired] = useState(false);
@@ -42,6 +43,7 @@ export default function DashboardIndex() {
 
   const route = initialMainRoute({
     isSignedIn,
+    ownMachineCount: relayMachines.length,
     realSharedChatCount: acceptedShares.length,
     relaySignal: relayLandingSignal(relayConfigured, relayStatus),
     sharesHydrated,

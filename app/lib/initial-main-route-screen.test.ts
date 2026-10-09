@@ -27,6 +27,13 @@ describe("the landing screen", () => {
     );
   });
 
+  it("passes the machines the relay reported, not a constant", () => {
+    expect(source, "an empty fleet is how a guest is told apart").toContain(
+      "ownMachineCount: relayMachines.length",
+    );
+    expect(source).toContain("useAtomValue(relayMachinesAtom)");
+  });
+
   it("passes the real share count, not a constant", () => {
     expect(source).toContain("realSharedChatCount: acceptedShares.length");
     expect(source).toContain("useAtomValue(acceptedSharedSessionsAtom)");
