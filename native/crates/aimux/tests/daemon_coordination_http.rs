@@ -15,12 +15,16 @@ use aimux::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs::{self, remove_dir_all};
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+mod support;
+
+use support::scripted_http::read_http_request;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1533,46 +1537,48 @@ fn text_body(response: &aimux::daemon::http::PreparedDaemonResponse) -> String {
     String::from_utf8(response.body.clone()).expect("text body")
 }
 
-fn read_http_request(stream: &mut TcpStream) -> String {
-    stream
-        .set_read_timeout(Some(Duration::from_millis(20)))
-        .expect("set test request timeout");
-    let mut buffer = Vec::new();
-    let mut chunk = [0_u8; 1024];
-    loop {
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(count) => buffer.extend_from_slice(&chunk[..count]),
-            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
-                break;
-            }
-            Err(error) => panic!("read request: {error}"),
-        }
-        if request_is_complete(&buffer) {
-            break;
-        }
-    }
-    String::from_utf8_lossy(&buffer).into_owned()
-}
+/// The CI flake this file produced, as a test. The scripted reader used to
+/// treat a 20ms read timeout as a complete request: it answered the headers and
+/// closed, so a body that arrived late on a loaded runner met a closed socket
+/// and `loop_done_returns_promptly_...` failed with `502 Broken pipe`.
+#[test]
+fn the_scripted_server_waits_for_a_body_that_arrives_after_the_first_poll() {
+    let server = ScriptedHttpServer::spawn(vec![json!({ "sessionId": "claude-1" })]);
+    let mut client =
+        TcpStream::connect(("127.0.0.1", server.port)).expect("connect to scripted server");
+    let body = json!({ "project": "/repo", "sessionId": "claude-1" }).to_string();
+    client
+        .write_all(
+            format!(
+                "POST /loop/add HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .expect("write request headers");
 
-fn request_is_complete(buffer: &[u8]) -> bool {
-    let Some(header_end) = find_header_end(buffer) else {
-        return false;
-    };
-    let headers = String::from_utf8_lossy(&buffer[..header_end]);
-    let Some(content_length) = headers.lines().find_map(|line| {
-        let (name, value) = line.split_once(':')?;
-        name.eq_ignore_ascii_case("content-length")
-            .then(|| value.trim().parse::<usize>().ok())
-            .flatten()
-    }) else {
-        return true;
-    };
-    buffer.len() >= header_end + 4 + content_length
-}
+    std::thread::sleep(Duration::from_millis(400));
+    client
+        .write_all(body.as_bytes())
+        .expect("the server must still be reading, not closed");
 
-fn find_header_end(buffer: &[u8]) -> Option<usize> {
-    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set client read timeout");
+    let mut response = String::new();
+    client.read_to_string(&mut response).expect("read response");
+    assert!(
+        response.starts_with("HTTP/1.1 200"),
+        "response: {response:?}"
+    );
+
+    let requests = server.join();
+    assert_eq!(requests.len(), 1, "requests: {requests:?}");
+    assert!(
+        requests[0].ends_with(&body),
+        "the server recorded a truncated request: {:?}",
+        requests[0]
+    );
 }
 
 fn assert_request_path(request: &str, method: &str, path: &str) {

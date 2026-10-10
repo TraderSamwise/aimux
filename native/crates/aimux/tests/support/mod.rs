@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod scripted_http;
+
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::tmux::LiveWindowIndex;
 use std::fs;
