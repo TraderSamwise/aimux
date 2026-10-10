@@ -2613,9 +2613,14 @@ describe("release workflow", () => {
     expect(workflow).toContain("scripts/build-homebrew-bottle.sh");
     expect(workflow).toContain("homebrew-bottles/*.bottle.tar.gz");
     expect(workflow).toContain("homebrew-bottles/*.bottles.tsv");
-    expect(bottleJob).toContain("runner: macos-14");
+    // macOS 15, not 14: Homebrew stopped bottling for sonoma, so `tmux`'s
+    // `libevent` has no bottle there and the live install gate cannot install
+    // the formula at all. That failed every tap job from v0.1.68.
+    expect(bottleJob).toContain("runner: macos-15");
+    expect(bottleJob).not.toContain("runner: macos-14");
     expect(bottleJob).not.toContain("macos-15-intel");
-    expect(tapJob).toContain("runs-on: macos-14");
+    expect(tapJob).toContain("runs-on: macos-15");
+    expect(tapJob).not.toContain("runs-on: macos-14");
     expect(tapJob).not.toContain("runs-on: macos-15-intel");
     // The tap job takes the darwin assets as a FILTER of the build matrix rather
     // than a list of its own, so a new darwin arch is picked up rather than
