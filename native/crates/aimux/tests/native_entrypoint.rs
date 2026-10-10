@@ -74,6 +74,7 @@ fn root_version_and_help_stay_native_even_when_node_fallback_is_configured() {
     assert!(stdout.contains("doctor"));
     for command in [
         "  spawn",
+        "  start",
         "  ui",
         "  logs",
         "  metadata",
