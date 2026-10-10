@@ -222,6 +222,13 @@ a broken release.
    only local assets, conflicts with the full formula, and still installs the
    command as `aimux`.
 
+   The bottle and tap jobs run on `macos-15`, newer than the asset builders.
+   Homebrew no longer bottles for macOS 14, so `tmux`'s `libevent` dependency
+   has no sonoma bottle and the live install gate cannot install the formula
+   there; Sequoia is the oldest macOS Homebrew still bottles. Check
+   `https://formulae.brew.sh/api/formula/libevent.json` before moving these jobs
+   to another runner.
+
 The npm and tap jobs both depend on the complete asset-set gate, so a failed
 build, missing asset, checksum mismatch, or corrupt archive publishes nothing.
 

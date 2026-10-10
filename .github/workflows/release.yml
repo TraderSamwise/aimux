@@ -370,6 +370,9 @@ jobs:
 
       - run: npm publish --access public --provenance
 
+  # Newer than the asset builders on purpose: Homebrew stopped bottling for
+  # macOS 14, so `tmux`'s own `libevent` has no sonoma bottle and the formula
+  # cannot install there at all. Sequoia is the oldest macOS it still bottles.
   homebrew-bottles:
     name: Build Homebrew bottles
     runs-on: ${{ matrix.runner }}
@@ -379,9 +382,9 @@ jobs:
       matrix:
         include:
           - formula: aimux
-            runner: macos-14
+            runner: macos-15
           - formula: aimux-local
-            runner: macos-14
+            runner: macos-15
 
     steps:
       - name: Checkout aimux
@@ -451,9 +454,11 @@ jobs:
             homebrew-bottles/*.bottle.json
             homebrew-bottles/*.bottles.tsv
 
+  # macOS 15 for the same reason as the bottle jobs: the live install gate needs
+  # a host Homebrew still bottles `libevent` for.
   update-homebrew-tap:
     name: Update Homebrew tap
-    runs-on: macos-14
+    runs-on: macos-15
     needs:
       - verify-release-assets
       - homebrew-bottles
