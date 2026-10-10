@@ -3,11 +3,12 @@ use crate::core_text::{
     render_core_agent_input_lines, render_core_agent_list_lines, render_core_agent_migrate_lines,
     render_core_agent_plane_lines, render_core_agent_ps_lines, render_core_agent_rename_lines,
     render_core_lifecycle_fork_lines, render_core_lifecycle_kill_lines,
-    render_core_lifecycle_spawn_lines, render_core_lifecycle_stop_lines,
-    render_core_loop_add_lines, render_core_loop_block_lines, render_core_loop_done_lines,
-    render_core_loop_list_lines, render_core_loop_pause_lines, render_core_loop_remove_lines,
-    render_core_loop_unpause_lines, render_core_overseer_status_lines,
-    render_core_scribe_status_lines, render_core_service_remove_lines,
+    render_core_lifecycle_spawn_lines, render_core_lifecycle_start_lines,
+    render_core_lifecycle_stop_lines, render_core_loop_add_lines, render_core_loop_block_lines,
+    render_core_loop_done_lines, render_core_loop_list_lines, render_core_loop_pause_lines,
+    render_core_loop_remove_lines, render_core_loop_unpause_lines,
+    render_core_overseer_status_lines, render_core_scribe_status_lines,
+    render_core_service_remove_lines,
 };
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, required_param, string_param, text_error,
@@ -133,6 +134,9 @@ pub fn route_agent_text_request(
                 render: render_core_service_remove_lines,
             },
         ));
+    }
+    if method == "POST" && pathname == CORE_API_ROUTES.lifecycle_start_text {
+        return Some(lifecycle_start_text_route(runtime, &route_url, body));
     }
     if method == "POST" && pathname == CORE_API_ROUTES.lifecycle_stop_text {
         return Some(lifecycle_status_text_route(
@@ -445,6 +449,94 @@ fn string_array_body_field(body: Option<&Value>, key: &str) -> Option<Vec<String
         .map(str::to_owned)
         .collect::<Vec<_>>();
     (!strings.is_empty()).then_some(strings)
+}
+
+/// Start an agent the way Enter starts it, from the snapshot the dashboard
+/// itself reads, so the two cannot answer differently about one agent.
+pub fn lifecycle_start_text_route(
+    runtime: &mut impl DaemonAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let session_id = match required_param(route_url, body, "sessionId") {
+        Ok(session_id) => session_id,
+        Err(response) => return response,
+    };
+    let (snapshot_json, project_root) = match unwrap_project_result(
+        runtime.get_project_service_json(&project, project_routes::DESKTOP_STATE),
+    ) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    let snapshot: crate::dashboard_model::DesktopStateSnapshot =
+        match serde_json::from_value(snapshot_json) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                return text_error(
+                    502,
+                    format!("Error: project service returned invalid desktop state: {error}"),
+                );
+            }
+        };
+    let Some(session) = snapshot.session(&session_id) else {
+        return text_error(404, format!("Error: no startable agent {session_id}"));
+    };
+    // `pending` itself is the dashboard's local optimistic overlay, which no
+    // payload carries; the published action is the half both surfaces see.
+    let state = crate::agent_enter_decision::AgentEnterState {
+        session_id: session.id.as_str(),
+        status: crate::dashboard_model::agent_enter_status(session),
+        tmux_window_id: session.tmux_window_id.as_deref(),
+        restore_state: session.restore_state.as_deref(),
+        restore_blocked_reason: session.restore_blocked_reason.as_deref(),
+        pending: session.pending || session.pending_action.is_some(),
+        pending_action: session.pending_action.as_deref(),
+    };
+    let (route_path, request, action) =
+        match crate::agent_enter_decision::decide_agent_enter(&state, || {
+            crate::dashboard_model::agent_display_name(session)
+        }) {
+            crate::agent_enter_decision::AgentEnterDecision::Busy(message)
+            | crate::agent_enter_decision::AgentEnterDecision::Blocked(message) => {
+                return text_error(409, format!("Error: {message}"));
+            }
+            // No client context: the dashboard switches ITS tmux client and a
+            // CLI has none, so the service selects the window where it lives.
+            // Same decision, delivered the only way this surface can.
+            crate::agent_enter_decision::AgentEnterDecision::Focus { window_id } => (
+                project_routes::controls::FOCUS_WINDOW,
+                json!({ "windowId": window_id, "focus": true }),
+                "focus",
+            ),
+            crate::agent_enter_decision::AgentEnterDecision::Resume => (
+                project_routes::agents::RESUME,
+                json!({ "sessionId": session_id }),
+                "resume",
+            ),
+        };
+    if let Err(response) = unwrap_project_result(runtime.post_project_service_json(
+        &project,
+        route_path,
+        request,
+        ProjectServicePostOptions::skip_ensure(),
+    )) {
+        return response;
+    }
+    let payload = json!({
+        "ok": true,
+        "projectRoot": project_root,
+        "sessionId": session_id,
+        "action": action,
+    });
+    text_or_json_lines(
+        route_url,
+        payload.clone(),
+        &render_core_lifecycle_start_lines(&payload),
+    )
 }
 
 pub fn lifecycle_status_text_route(

@@ -722,6 +722,21 @@ pub struct AgentRestoreSession {
 }
 
 impl DesktopStateSnapshot {
+    /// Every list that holds a session, because each one holds agents the
+    /// others do not: teammates are disjoint from the flat list, and the
+    /// dashboard's picker runs the same Enter on them.
+    pub fn session(&self, session_id: &str) -> Option<&DashboardSession> {
+        self.sessions
+            .iter()
+            .chain(self.teammates.iter())
+            .chain(
+                self.worktree_groups
+                    .iter()
+                    .flat_map(|group| group.sessions.iter()),
+            )
+            .find(|session| session.id == session_id)
+    }
+
     pub fn focused_worktree(&self, focused_worktree_path: Option<&str>) -> Option<&WorktreeGroup> {
         focused_worktree_path.and_then(|path| {
             self.worktree_groups

@@ -508,6 +508,14 @@ pub fn render_core_lifecycle_stop_lines(payload: &Value) -> Vec<String> {
         js_string(field(payload, "sessionId"))
     )]
 }
+/// Two outcomes, said apart: a window focused is not an agent started.
+pub fn render_core_lifecycle_start_lines(payload: &Value) -> Vec<String> {
+    let session_id = js_string(field(payload, "sessionId"));
+    match field(payload, "action").and_then(Value::as_str) {
+        Some("focus") => vec![format!("focused {session_id}")],
+        _ => vec![format!("started {session_id}")],
+    }
+}
 pub fn render_core_lifecycle_kill_lines(payload: &Value) -> Vec<String> {
     vec![format!(
         "graveyarded {}",

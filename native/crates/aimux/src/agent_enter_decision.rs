@@ -1,8 +1,6 @@
-//! What "open this agent" means, decided once.
-//!
-//! The dashboard's Enter key, the footer's verb and the CLI answer the same
-//! question, and a second copy of the rule is how they come to disagree about
-//! one agent. Per AGENTS.md "One Answer, Many Surfaces" it lives here.
+//! What "open this agent" means, decided once: Enter, the footer verb and
+//! `aimux start` ask the same question, and a second copy of the rule is how
+//! they come to disagree about one agent.
 
 /// Live or down, which is the only distinction this decision makes. Every
 /// `SessionStatus` maps onto one of the two: `Running|Idle|Waiting` are live,

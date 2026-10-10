@@ -798,6 +798,9 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             parse_core_service_status_args(args, "remove").is_some()
         }
         (Some("fork"), _) => true,
+        (Some("start" | "resume"), _) => {
+            parse_core_lifecycle_status_args(args, args[0].as_ref()).is_some()
+        }
         (Some("kill"), _) => true,
         (Some("stop"), _) => {
             parse_core_project_stop_args(args).is_some()
