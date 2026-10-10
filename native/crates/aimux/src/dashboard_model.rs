@@ -281,9 +281,7 @@ pub fn agent_display_name(session: &DashboardSession) -> String {
     .short_name()
 }
 
-/// How much of a restore reason a surface shows. The row chip settled on this
-/// first; the refusal uses the same number so the two read alike.
-pub const RESTORE_REASON_WIDTH: usize = 42;
+pub use crate::agent_enter_decision::RESTORE_REASON_WIDTH;
 
 /// Why Enter cannot resume this session, if it cannot.
 ///
@@ -297,33 +295,27 @@ pub const RESTORE_REASON_WIDTH: usize = 42;
 /// Derived once here rather than re-decided next to each renderer, per
 /// AGENTS.md "One Answer, Many Surfaces".
 pub fn dashboard_restore_block(session: &DashboardSession) -> Option<String> {
-    if !matches!(
-        session.status,
-        SessionStatus::Offline | SessionStatus::Exited
-    ) {
-        // A live-looking session with no tmux window is a stale record, and
-        // resuming it is the recovery. Only a session that is actually down
-        // can be refused here.
-        return None;
-    }
-    if session.restore_state.as_deref() != Some("blocked") {
-        return None;
-    }
-    let label = agent_display_name(session);
-    Some(
-        match session
-            .restore_blocked_reason
-            .as_deref()
-            .map(str::trim)
-            .filter(|reason| !reason.is_empty())
-        {
-            Some(reason) => format!(
-                "{label} cannot be resumed: {}",
-                crate::tui_render::text::truncate(reason, RESTORE_REASON_WIDTH)
-            ),
-            None => format!("{label} cannot be resumed"),
-        },
+    crate::agent_enter_decision::agent_restore_block(
+        agent_enter_status(session),
+        session.restore_state.as_deref(),
+        session.restore_blocked_reason.as_deref(),
+        || agent_display_name(session),
     )
+}
+
+/// Live or down, named once so the refusal and the focus branch cannot answer
+/// this differently for the same session.
+pub fn agent_enter_status(
+    session: &DashboardSession,
+) -> crate::agent_enter_decision::AgentEnterStatus {
+    match session.status {
+        SessionStatus::Running | SessionStatus::Idle | SessionStatus::Waiting => {
+            crate::agent_enter_decision::AgentEnterStatus::Live
+        }
+        SessionStatus::Offline | SessionStatus::Exited => {
+            crate::agent_enter_decision::AgentEnterStatus::Down
+        }
+    }
 }
 
 pub fn is_dashboard_overseer_session(session: &DashboardSession) -> bool {

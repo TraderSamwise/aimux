@@ -147,6 +147,43 @@ fn pending_entries_block_actions() {
         ),
         DashboardActionPlan::Busy("Session claude-0 is stopping".into())
     );
+
+    // "graveyarding" is the raw action and "Removing" is the word every
+    // surface shows for it, so this case is the one that proves the busy
+    // sentence goes through the shared label rather than echoing the route.
+    session.pending_action = Some("graveyarding".into());
+    assert_eq!(
+        plan_dashboard_action(
+            Some(DashboardEntryRef::Session(&session)),
+            DashboardActionKind::Enter
+        ),
+        DashboardActionPlan::Busy("Session claude-0 is removing".into())
+    );
+}
+
+/// The other direction of the stale-window rule: a session that is DOWN can
+/// still carry the window id it had before it died, and focusing that window
+/// is the 404 the live-record case already guards against.
+#[test]
+fn enter_resumes_a_down_session_that_still_names_a_window() {
+    let snapshot = snapshot();
+    let mut session = snapshot.worktree_groups[1].sessions[1].clone();
+    session.restore_state = Some("ready".into());
+    session.restore_blocked_reason = None;
+    session.tmux_window_id = Some("@9".into());
+
+    assert_eq!(
+        plan_dashboard_action(
+            Some(DashboardEntryRef::Session(&session)),
+            DashboardActionKind::Enter
+        ),
+        DashboardActionPlan::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::RESUME,
+            body: json!({ "sessionId": session.id }),
+        }),
+        "a dead agent's leftover window is not somewhere to send the user"
+    );
 }
 
 fn snapshot() -> DesktopStateSnapshot {

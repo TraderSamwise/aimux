@@ -1,3 +1,6 @@
+use crate::agent_enter_decision::{
+    AgentEnterDecision, AgentEnterState, busy_message, decide_agent_enter,
+};
 use crate::dashboard_model::{DashboardService, DashboardSession, ServiceStatus, SessionStatus};
 use crate::dashboard_navigation::DashboardEntryRef;
 use crate::project_api_contract::routes;
@@ -49,35 +52,31 @@ pub fn plan_dashboard_action(
 }
 
 fn plan_session_enter(session: &DashboardSession) -> DashboardActionPlan {
-    if let Some(blocked) = pending_block(
-        "Session",
-        &session.id,
-        session.pending,
-        session.pending_action.as_deref(),
-    ) {
-        return blocked;
-    }
-    // The footer already says "unavailable" for this; dispatching the resume
-    // anyway was the half that lied. The resume fails, nothing reports it, and
-    // the window-open path falls back to window index 0 of the project's
-    // shared tmux session -- so the user is moved off their own dashboard onto
-    // another one with no explanation.
-    if let Some(reason) = crate::dashboard_model::dashboard_restore_block(session) {
-        return DashboardActionPlan::Blocked(reason);
-    }
-    // A live-looking session with no tmux window is a stale record, not an
-    // error: focusing it 404s. Fall through and resume it instead.
-    if matches!(
-        session.status,
-        SessionStatus::Running | SessionStatus::Idle | SessionStatus::Waiting
-    ) && let Some(window_id) = session.tmux_window_id.as_ref()
-    {
-        return request(
+    let state = AgentEnterState {
+        session_id: session.id.as_str(),
+        status: crate::dashboard_model::agent_enter_status(session),
+        tmux_window_id: session.tmux_window_id.as_deref(),
+        restore_state: session.restore_state.as_deref(),
+        restore_blocked_reason: session.restore_blocked_reason.as_deref(),
+        pending: session.pending,
+        pending_action: session.pending_action.as_deref(),
+    };
+    // The decision is the CLI's too, so it is not made here. The footer
+    // already said "unavailable" for a blocked restore while Enter dispatched
+    // the resume anyway, which is the drift one rule removes.
+    match decide_agent_enter(&state, || {
+        crate::dashboard_model::agent_display_name(session)
+    }) {
+        AgentEnterDecision::Busy(message) => DashboardActionPlan::Busy(message),
+        AgentEnterDecision::Blocked(reason) => DashboardActionPlan::Blocked(reason),
+        AgentEnterDecision::Focus { window_id } => request(
             routes::controls::FOCUS_WINDOW,
             json!({ "windowId": window_id, "focus": true }),
-        );
+        ),
+        AgentEnterDecision::Resume => {
+            request(routes::agents::RESUME, json!({ "sessionId": session.id }))
+        }
     }
-    request(routes::agents::RESUME, json!({ "sessionId": session.id }))
 }
 
 fn plan_service_enter(service: &DashboardService) -> DashboardActionPlan {
@@ -136,13 +135,7 @@ fn pending_block(
     pending: bool,
     pending_action: Option<&str>,
 ) -> Option<DashboardActionPlan> {
-    pending.then(|| {
-        // The same word the row and the card use, rather than the raw action.
-        let action =
-            crate::transient_state::transient_state_label(pending_action.unwrap_or("pending"))
-                .to_lowercase();
-        DashboardActionPlan::Busy(format!("{label} {id} is {action}"))
-    })
+    pending.then(|| DashboardActionPlan::Busy(busy_message(label, id, pending_action)))
 }
 
 fn request(path: &'static str, body: Value) -> DashboardActionPlan {
