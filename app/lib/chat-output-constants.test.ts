@@ -41,6 +41,7 @@ describe("chat output history pagination", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      window: undefined,
       outputAvailable: true,
       startLine: CHAT_OUTPUT_CAPTURE_START_LINE,
       messages: [message("assistant:newer", "newer message")],
@@ -48,6 +49,7 @@ describe("chat output history pagination", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      window: undefined,
       outputAvailable: true,
       startLine: requestedStartLine ?? undefined,
       messages: [

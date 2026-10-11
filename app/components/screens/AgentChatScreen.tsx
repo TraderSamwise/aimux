@@ -173,6 +173,7 @@ import {
   mergeActiveSharedSessions,
   sharedSessionsEqual,
 } from "@/lib/shared-sessions";
+import { agentOutputHistoryFloorNotice } from "@/lib/agent-output-window";
 import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
@@ -196,6 +197,7 @@ import {
   outputBufferFamily,
   markOutputInterruptedAtom,
   transcriptFamily,
+  transcriptWindowFamily,
 } from "@/stores/chat";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
@@ -493,6 +495,7 @@ export default function ChatScreen() {
   const setGlobalChatChromeVisible = useSetAtom(chatChromeVisibleAtom);
   const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const transcript = useAtomValue(transcriptFamily(agentKey));
+  const transcriptWindow = useAtomValue(transcriptWindowFamily(agentKey));
   const transcriptLastError = useAtomValue(lastErrorFamily(agentKey));
   const activity = useAtomValue(activityFamily(agentKey));
   const activityText = useAtomValue(activityTextFamily(agentKey));
@@ -1081,6 +1084,12 @@ export default function ChatScreen() {
         shared: isSharedConversation,
       }),
     [transcript, sessionKey, isSharedConversation],
+  );
+  // Only once paging has stopped: before that, scrolling up fetches another
+  // page and a notice would be on screen for every chat from the first frame.
+  const transcriptWindowNotice = agentOutputHistoryFloorNotice(
+    transcriptWindow,
+    chatOutputHistoryStartLine <= CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
   );
   const parsedMessageCount = parsedMessages.length;
   const parsedUserMessageCount = useMemo(
@@ -2656,6 +2665,7 @@ export default function ChatScreen() {
                       newMessageBadgeBottomOffset={newMessageBadgeBottomOffset}
                       placeholderState={chatPlaceholderState}
                       ref={chatViewportRef}
+                      windowNotice={transcriptWindowNotice}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
                       onRequestHistoryPage={requestChatHistoryPage}
                       onRetryTranscriptLoad={handleRetryTranscriptLoad}
@@ -3147,6 +3157,7 @@ type AgentChatSessionViewportProps = {
   serviceEndpoint: ServiceEndpoint;
   agentKey: AgentStateKey;
   topContentInset: number;
+  windowNotice: string | null;
 };
 
 const AgentChatSessionViewport = React.memo(
@@ -3164,6 +3175,7 @@ const AgentChatSessionViewport = React.memo(
         serviceEndpoint,
         agentKey,
         topContentInset,
+        windowNotice,
       },
       ref,
     ) {
@@ -3450,6 +3462,7 @@ const AgentChatSessionViewport = React.memo(
             onScroll={handleChatScroll}
             placeholderState={placeholderState}
             ref={chatScrollRef}
+            windowNotice={windowNotice}
             serviceEndpoint={serviceEndpoint}
             dividerWidth={dividerWidth}
             bottomContentInset={bottomContentInset}
@@ -3486,6 +3499,9 @@ type AgentChatTranscriptProps = {
   placeholderState: ChatTranscriptPlaceholderState;
   serviceEndpoint: ServiceEndpoint;
   topContentInset: number;
+  /** "Showing last N lines", when the window the service served is not the
+   * whole pane. Null when it is. */
+  windowNotice: string | null;
 };
 
 const AgentChatTranscript = React.memo(
@@ -3501,6 +3517,7 @@ const AgentChatTranscript = React.memo(
       placeholderState,
       serviceEndpoint,
       topContentInset,
+      windowNotice,
     },
     ref,
   ) {
@@ -3518,6 +3535,13 @@ const AgentChatTranscript = React.memo(
         />
       ) : (
         <View className="w-full gap-1">
+          {windowNotice ? (
+            <View className="w-full items-center pb-2">
+              <View className="rounded-md border border-border bg-card px-3 py-2">
+                <Text className="text-xs text-muted-foreground">{windowNotice}</Text>
+              </View>
+            </View>
+          ) : null}
           {messages.map((message, index) => (
             <View
               key={message.id ?? message.clientMessageId ?? `message:${index}`}
