@@ -183,12 +183,6 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
                 "/repo",
                 json!({ "ok": true, "windowId": body["windowId"].clone() }),
             ),
-            project_routes::agents::RESUME if body["sessionId"] == "nobody" => {
-                ProjectServiceJsonResult::error(DaemonRouteResponse::text(
-                    404,
-                    "Error: Session \"nobody\" not found\n",
-                ))
-            }
             project_routes::agents::RESUME => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "sessionId": body["sessionId"].clone(), "status": "running" }),
@@ -290,7 +284,7 @@ fn start_route_focuses_resumes_and_refuses_like_the_dashboard() {
     assert_eq!(
         focus_call.ensure_project,
         Some(false),
-        "starting an agent must not boot a service as a side effect"
+        "the mutation skips ensure; the snapshot read is what may start a service"
     );
     assert_eq!(
         runtime.calls.len(),
@@ -360,7 +354,7 @@ fn start_route_focuses_resumes_and_refuses_like_the_dashboard() {
     assert_eq!(missing.status, 404);
     assert_eq!(
         text_body(missing),
-        "Error: no startable agent nobody; a graveyarded agent is restored with `aimux graveyard resurrect`\n"
+        "Error: no startable agent nobody; a graveyarded one comes back with `aimux graveyard resurrect`, or with its worktree if that went too\n"
     );
     assert_eq!(
         runtime.calls.len(),

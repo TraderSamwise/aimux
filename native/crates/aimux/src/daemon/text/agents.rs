@@ -521,7 +521,7 @@ pub fn lifecycle_start_text_route(
         return text_error(
             404,
             format!(
-                "Error: no startable agent {session_id}; a graveyarded agent is restored with `aimux graveyard resurrect`"
+                "Error: no startable agent {session_id}; a graveyarded one comes back with `aimux graveyard resurrect`, or with its worktree if that went too"
             ),
         );
     };
@@ -530,9 +530,9 @@ pub fn lifecycle_start_text_route(
         match crate::agent_enter_decision::decide_agent_enter(&state, || {
             crate::dashboard_model::agent_display_name(session)
         }) {
-            // Busy cannot reach this surface -- no published payload carries a
-            // session's in-flight mark -- but both must word a refusal the
-            // same way if one ever does, so they share the sentence.
+            // The dashboard's optimistic overlay is the only producer of a
+            // session's in-flight mark, so Enter can answer Busy and a CLI
+            // cannot. Shared so the two word it alike where both can.
             crate::agent_enter_decision::AgentEnterDecision::Busy(message)
             | crate::agent_enter_decision::AgentEnterDecision::Blocked(message) => {
                 return text_error(409, format!("Error: {message}"));
