@@ -65,6 +65,25 @@ impl Write for Sink {
     }
 }
 
+/// Keeps what was painted, for the one claim that is about the frame itself
+/// rather than about how many there were.
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<String>>);
+
+impl Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("captured frame")
+            .push_str(&String::from_utf8_lossy(buf));
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 struct Driven {
     loads: usize,
     frames: usize,
@@ -313,5 +332,119 @@ fn the_loop_returns_promptly_when_told_to_stop() {
     assert_eq!(
         frames, 1,
         "two idle passes should produce the first frame and no more"
+    );
+}
+
+/// `a` must not take the agent the pointer is on off the screen.
+///
+/// The filter's own tests call it directly; this is the only one that drives
+/// the key through the loop, so it is what proves the call site passes the
+/// pointed-at id at all. Replacing that argument with `None` fails here and
+/// nowhere else.
+#[test]
+fn toggling_offline_agents_keeps_the_agent_the_pointer_is_on() {
+    let painted = Captured::default();
+    let frames = Arc::clone(&painted.0);
+    let root = std::env::temp_dir().join(format!(
+        "aimux-render-loop-kept-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("project root");
+
+    // One offline agent and nothing else, so the only row the filter could
+    // keep is the one under the pointer.
+    let mut fixture = snapshot();
+    let mut offline = fixture.sessions[0].clone();
+    offline.id = "claude-pointed".into();
+    offline.label = Some("alpha".into());
+    offline.status = aimux::dashboard_model::SessionStatus::Offline;
+    offline.semantic = None;
+    offline.overseer = None;
+    offline.scribe = None;
+    offline.project_control = None;
+    offline.team = None;
+    offline.worktree_path = None;
+    // A second offline agent nobody is pointing at, so "the pointer kept it"
+    // and "it was the only row" are different outcomes.
+    let mut unpointed = offline.clone();
+    unpointed.id = "claude-unpointed".into();
+    unpointed.label = Some("beta".into());
+
+    // The kept one is SECOND, so reading the first session instead of the
+    // pointer is a different answer and this test can tell them apart.
+    fixture.sessions = vec![unpointed, offline];
+    fixture.teammates.clear();
+    fixture.services.clear();
+    fixture.worktree_groups.clear();
+
+    let script = Arc::new(Mutex::new(std::collections::VecDeque::from(vec![
+        // The first poll paints; keys are only dispatched once a frame is up.
+        (0_u64, vec![]),
+        (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
+        (NO_EXTRA_IDLE, vec![DashboardKey::ToggleOfflineAgents]),
+        (NO_EXTRA_IDLE, vec![]),
+    ])));
+    let key_script = Arc::clone(&script);
+    // Everything painted BEFORE the toggle shows the agent anyway, so the
+    // buffer is emptied as the toggle is dispatched and the assertion reads
+    // only what the filtered pass put up.
+    let before_toggle = Arc::clone(&painted.0);
+    let seam_snapshot = fixture.clone();
+    let seams = DashboardLoopSeams {
+        keys: Box::new(
+            move || match key_script.lock().expect("key script").pop_front() {
+                Some((idle_ms, keys)) => {
+                    std::thread::sleep(Duration::from_millis(idle_ms));
+                    if keys.contains(&DashboardKey::ToggleOfflineAgents) {
+                        before_toggle.lock().expect("captured frame").clear();
+                    }
+                    keys
+                }
+                None => Vec::new(),
+            },
+        ),
+        snapshot: Box::new(move || {
+            Ok(DashboardSnapshotLoad {
+                snapshot: seam_snapshot.clone(),
+                endpoint: None,
+            })
+        }),
+        stop: Box::new(move || script.lock().expect("stop script").is_empty()),
+        output: Box::new(painted.clone()),
+        frame: Box::new(|_| {}),
+        deferral: DashboardRefreshDeferral::PRODUCTION,
+    };
+
+    let options = NativeDashboardOptions {
+        project_root: root.clone(),
+        desktop_state_file: Some(root.join("desktop-state.json")),
+        cols: 120,
+        rows: 40,
+        once: false,
+    };
+    let outcome = run_native_dashboard_with_seams(options, Some(seams));
+    let _ = std::fs::remove_dir_all(&root);
+    outcome.expect("the driven loop returns");
+
+    let painted = frames.lock().expect("captured frames").clone();
+    assert!(
+        !painted.is_empty(),
+        "nothing was painted after the toggle, so this proves neither outcome"
+    );
+    assert!(
+        painted.contains("alpha"),
+        "the pointed-at agent went off screen when offline agents were hidden: {painted}"
+    );
+    assert!(
+        !painted.contains("beta"),
+        "the filter did not run: the agent nobody points at is still on screen"
+    );
+    assert!(
+        painted.contains("1 hidden"),
+        "the header must account for the one agent that was hidden: {painted}"
     );
 }

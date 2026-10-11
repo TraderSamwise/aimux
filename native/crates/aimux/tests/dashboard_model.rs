@@ -1,6 +1,6 @@
 use aimux::dashboard_model::{
-    DashboardKeptWorktrees, DashboardService, DesktopStateGoldenFixture, ServiceStatus,
-    SessionStatus, filter_dashboard_visible_model, is_dashboard_session_offline,
+    DashboardKept, DashboardService, DesktopStateGoldenFixture, ServiceStatus, SessionStatus,
+    filter_dashboard_visible_model, is_dashboard_session_offline,
 };
 use serde_json::json;
 
@@ -161,8 +161,7 @@ fn dashboard_visible_model_hides_offline_agents_and_keeps_related_services() {
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let snapshot = fixture.runtime_full;
 
-    let visible =
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default());
+    let visible = filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default());
 
     assert_eq!(visible.hidden_offline_agent_count, 2);
     assert_eq!(
@@ -212,8 +211,7 @@ fn the_filter_keeps_the_worktree_the_pointer_is_on() {
     empty.operation_failure = None;
     snapshot.worktree_groups.push(empty);
 
-    let unpointed =
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default());
+    let unpointed = filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default());
     assert!(
         unpointed
             .snapshot
@@ -226,7 +224,7 @@ fn the_filter_keeps_the_worktree_the_pointer_is_on() {
     let pointed = filter_dashboard_visible_model(
         &snapshot,
         true,
-        &DashboardKeptWorktrees {
+        &DashboardKept {
             paths: vec!["/repo/.aimux/worktrees/fresh".to_owned()],
             ..Default::default()
         },
@@ -245,7 +243,7 @@ fn the_filter_keeps_the_worktree_the_pointer_is_on() {
         filter_dashboard_visible_model(
             &snapshot,
             true,
-            &DashboardKeptWorktrees {
+            &DashboardKept {
                 paths: vec!["/repo/.aimux/worktrees/other".to_owned()],
                 ..Default::default()
             },
@@ -289,8 +287,7 @@ fn a_worktree_whose_only_occupant_is_a_running_service_survives_the_filter() {
     }];
     snapshot.worktree_groups.push(serving);
 
-    let visible =
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default());
+    let visible = filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default());
     assert!(
         visible
             .snapshot
@@ -325,7 +322,7 @@ fn the_filter_keeps_the_main_checkout_when_the_pointer_is_on_it() {
     main.operation_failure = None;
 
     assert!(
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default())
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default())
             .snapshot
             .worktree_groups
             .iter()
@@ -336,7 +333,7 @@ fn the_filter_keeps_the_main_checkout_when_the_pointer_is_on_it() {
         filter_dashboard_visible_model(
             &snapshot,
             true,
-            &DashboardKeptWorktrees {
+            &DashboardKept {
                 main_checkout: true,
                 ..Default::default()
             },
@@ -375,7 +372,7 @@ fn the_supervisor_row_is_not_the_main_checkout() {
     // The live loop sets `main_checkout` only for a WORKTREE group with no
     // path, so the supervisor case reaches the filter as a default keep-set.
     assert!(
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default())
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default())
             .snapshot
             .worktree_groups
             .iter()
@@ -407,12 +404,114 @@ fn a_worktree_whose_checkout_has_gone_survives_the_filter() {
     snapshot.worktree_groups.push(gone);
 
     assert!(
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default())
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default())
             .snapshot
             .worktree_groups
             .iter()
             .any(|group| group.name == "gone"),
         "the one row the user has to act on was hidden"
+    );
+}
+
+/// `a` must not move the pointer off the agent the user is looking at. The
+/// worktree half of this landed with 947602-90; the agent under the pointer
+/// was still dropped, and the pointer slid to its neighbour.
+#[test]
+fn the_filter_keeps_the_agent_the_pointer_is_on() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light;
+
+    let mut pointed = snapshot.sessions[0].clone();
+    pointed.id = "claude-pointed".into();
+    pointed.status = SessionStatus::Offline;
+    pointed.semantic = None;
+    pointed.overseer = None;
+    pointed.scribe = None;
+    pointed.project_control = None;
+    pointed.team = None;
+
+    let mut other = pointed.clone();
+    other.id = "claude-other".into();
+
+    snapshot.sessions = vec![pointed, other];
+    snapshot.worktree_groups.clear();
+    snapshot.services.clear();
+
+    let visible = filter_dashboard_visible_model(
+        &snapshot,
+        true,
+        &DashboardKept {
+            sessions: vec!["claude-pointed".to_owned()],
+            ..Default::default()
+        },
+    );
+    let ids = visible
+        .snapshot
+        .sessions
+        .iter()
+        .map(|session| session.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        vec!["claude-pointed"],
+        "the pointed-at agent stays and the other offline one still goes"
+    );
+    // The same decision twice: an agent kept on screen must not also be
+    // reported as hidden.
+    assert_eq!(
+        visible.hidden_offline_agent_count, 1,
+        "the footer must not count an agent the user can see"
+    );
+}
+
+/// Grouped mode reads `worktree_groups[].sessions`, which is a second filter
+/// over the same decision -- exempting only the flat list left the pointer
+/// sliding anywhere a worktree group was on screen.
+#[test]
+fn the_filter_keeps_the_pointed_at_agent_inside_its_worktree_group() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light;
+
+    let group_path = snapshot.worktree_groups[0].path.clone();
+    let mut pointed = snapshot.sessions[0].clone();
+    pointed.id = "claude-grouped".into();
+    pointed.status = SessionStatus::Offline;
+    pointed.semantic = None;
+    pointed.overseer = None;
+    pointed.scribe = None;
+    pointed.project_control = None;
+    pointed.team = None;
+    pointed.worktree_path = group_path.clone();
+
+    snapshot.sessions = vec![pointed.clone()];
+    snapshot.worktree_groups[0].sessions = vec![pointed];
+    snapshot.worktree_groups[0].services.clear();
+    snapshot.worktree_groups.truncate(1);
+    snapshot.services.clear();
+
+    let visible = filter_dashboard_visible_model(
+        &snapshot,
+        true,
+        &DashboardKept {
+            sessions: vec!["claude-grouped".to_owned()],
+            ..Default::default()
+        },
+    );
+    let group = visible
+        .snapshot
+        .worktree_groups
+        .iter()
+        .find(|group| group.path == group_path)
+        .expect("the group survives because its kept agent does");
+    assert_eq!(
+        group
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["claude-grouped"]
     );
 }
 
@@ -440,8 +539,7 @@ fn the_hidden_count_is_exactly_what_the_filter_removed() {
     snapshot.worktree_groups.clear();
     snapshot.services.clear();
 
-    let visible =
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default());
+    let visible = filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default());
 
     // The count and the list are two statements about one decision, and
     // nothing tied them together: the count exempted project-control sessions

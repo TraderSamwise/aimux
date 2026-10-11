@@ -21,7 +21,7 @@ use crate::dashboard_event_stream::{
 use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_launch_options::render_launch_options_overlay;
 use crate::dashboard_model::{
-    DashboardKeptWorktrees, DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus,
+    DashboardKept, DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus,
     filter_dashboard_visible_model, is_dashboard_overseer_session, is_dashboard_scribe_session,
 };
 use crate::dashboard_navigation::{
@@ -1096,7 +1096,7 @@ pub fn run_native_dashboard_with_seams(
                             .as_ref()
                             .and_then(|group| group.path)
                             .map(str::to_owned);
-                        let mut kept = DashboardKeptWorktrees {
+                        let mut kept = DashboardKept {
                             paths: pending_worktree_focus
                                 .iter()
                                 .map(|entry| entry.path.clone())
@@ -1111,21 +1111,30 @@ pub fn run_native_dashboard_with_seams(
                                 group.path.is_none()
                                     && group.kind == DashboardNavigationGroupKind::Worktree
                             }),
+                            ..Default::default()
                         };
                         if let Some(path) = focused_worktree_path.clone() {
                             kept.paths.push(path);
                         }
+                        // Read off the outgoing snapshot, before anything can
+                        // move the indices, so the pointer can be put back on
+                        // the same agent once this one is in place -- and so
+                        // the filter keeps the agent it will be put back on.
+                        let carried_selection = carried_dashboard_selection(
+                            controller.as_ref(),
+                            latest_snapshot.as_ref(),
+                        );
+                        // Both signals that name an agent the pointer is about
+                        // to be on: the row returned to from tmux wins, the way
+                        // it wins over the restored selection below.
+                        kept.sessions = pointed_at_sessions(
+                            pending_selection.as_deref(),
+                            carried_selection.as_ref(),
+                        );
                         let visible_model = filter_dashboard_visible_model(
                             &loaded.snapshot,
                             hide_offline_agents,
                             &kept,
-                        );
-                        // Read off the outgoing snapshot, before anything can
-                        // move the indices, so the pointer can be put back on
-                        // the same agent once this one is in place.
-                        let carried_selection = carried_dashboard_selection(
-                            controller.as_ref(),
-                            latest_snapshot.as_ref(),
                         );
                         let controller = controller.get_or_insert_with(|| {
                             let mut controller = DashboardController::new(&visible_model.snapshot);
@@ -2275,18 +2284,25 @@ fn execute_overseer_watch_command(
         Some(20_000),
     )?;
     let loaded = load_dashboard_snapshot(options)?;
-    // No prior filtered snapshot here, so nothing to resolve a pointer against.
-    let visible_model = filter_dashboard_visible_model(
-        &loaded.snapshot,
-        controller.hide_offline_agents,
-        &DashboardKeptWorktrees::default(),
-    );
-    if let Some(overseer_session_id) = response
+    let overseer_session_id = response
         .result
         .get("overseerSessionId")
         .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-    {
+        .filter(|value| !value.trim().is_empty());
+    // The pointer is about to be put on the overseer's agent, so the filter
+    // has to keep it: an overseer that is not running is exactly the case the
+    // "press Enter on it to start it" branch below exists for.
+    let visible_model = filter_dashboard_visible_model(
+        &loaded.snapshot,
+        controller.hide_offline_agents,
+        &DashboardKept {
+            sessions: overseer_session_id
+                .map(|id| vec![id.to_owned()])
+                .unwrap_or_default(),
+            ..Default::default()
+        },
+    );
+    if let Some(overseer_session_id) = overseer_session_id {
         if let (Some(endpoint), Some(session)) = (
             loaded.endpoint.as_ref(),
             find_dashboard_session(&visible_model.snapshot, overseer_session_id),
@@ -3257,6 +3273,25 @@ fn carried_dashboard_selection(
         .map(CarriedSelection::from_entry)
 }
 
+/// Every agent this pass may end up pointing at: the row being returned to
+/// from tmux and the row the pointer was on. Both, because the returned-to
+/// agent can be gone and the pointer still has to land somewhere it knows.
+fn pointed_at_sessions(
+    returned_to: Option<&str>,
+    carried: Option<&CarriedSelection>,
+) -> Vec<String> {
+    let mut kept = Vec::new();
+    if let Some(session_id) = returned_to {
+        kept.push(session_id.to_owned());
+    }
+    if let Some(CarriedSelection::Session(id)) = carried
+        && !kept.iter().any(|existing| existing == id)
+    {
+        kept.push(id.clone());
+    }
+    kept
+}
+
 fn restore_dashboard_navigation_for_render(
     ui_state: Option<&DashboardUiStatePersistence>,
     controller: &mut DashboardController,
@@ -3607,6 +3642,46 @@ fn drain_dashboard_request_outcomes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Which agents the filter must keep, from the two signals that name one.
+    ///
+    /// Both, not the better of the two: `select_session` runs against the
+    /// FILTERED snapshot, and the agent being returned to can have exited
+    /// while you were in it -- then the pointer has to fall back to the row it
+    /// was on, which has to still be there.
+    #[test]
+    fn both_the_returned_to_agent_and_the_pointed_at_one_are_kept() {
+        let carried = CarriedSelection::Session("claude-carried".into());
+
+        assert_eq!(
+            pointed_at_sessions(Some("claude-returned"), Some(&carried)),
+            vec!["claude-returned".to_owned(), "claude-carried".to_owned()],
+            "losing either one drops a row the pointer may land on"
+        );
+        assert_eq!(
+            pointed_at_sessions(None, Some(&carried)),
+            vec!["claude-carried".to_owned()]
+        );
+        assert_eq!(
+            pointed_at_sessions(Some("claude-returned"), None),
+            vec!["claude-returned".to_owned()]
+        );
+        assert!(pointed_at_sessions(None, None).is_empty());
+        // Named twice is kept once, so the keep-set cannot grow a duplicate
+        // every pass the pointer sits still.
+        assert_eq!(
+            pointed_at_sessions(
+                Some("claude-same"),
+                Some(&CarriedSelection::Session("claude-same".into()))
+            ),
+            vec!["claude-same".to_owned()]
+        );
+        // A service names no agent; its group is held by `focused_worktree_path`.
+        assert!(
+            pointed_at_sessions(None, Some(&CarriedSelection::Service("service-1".into())))
+                .is_empty()
+        );
+    }
 
     /// The whole of the pointer-follows-a-create decision, in one place.
     ///
