@@ -700,6 +700,13 @@ fn domain11_cli_command_help_is_command_scoped() {
             vec!["start", "--help"],
             "Usage: aimux start <sessionId> [options]",
         ),
+        // The effect, not just the usage: focusing moves the active window for
+        // every client on that tmux session, which a reader needs before they
+        // run it.
+        (
+            vec!["start", "--help"],
+            "moves the active window for every client attached to that session",
+        ),
         (
             vec!["resume", "--help"],
             "Usage: aimux start <sessionId> [options]",

@@ -22,22 +22,6 @@ pub struct AgentEnterState<'a> {
     pub pending_action: Option<&'a str>,
 }
 
-impl<'a> AgentEnterState<'a> {
-    /// The one place that says what the decision reads off a session, so a
-    /// third caller cannot quietly disagree about a field.
-    pub fn for_session(session: &'a crate::dashboard_model::DashboardSession) -> Self {
-        Self {
-            session_id: session.id.as_str(),
-            status: crate::dashboard_model::agent_enter_status(session),
-            tmux_window_id: session.tmux_window_id.as_deref(),
-            restore_state: session.restore_state.as_deref(),
-            restore_blocked_reason: session.restore_blocked_reason.as_deref(),
-            pending: session.pending,
-            pending_action: session.pending_action.as_deref(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentEnterDecision {
     /// Work is already in flight on this agent; it will be actionable again.
@@ -88,9 +72,12 @@ pub fn decide_agent_enter(
     AgentEnterDecision::Resume
 }
 
-/// Why this agent cannot be resumed, if it cannot. Only a session that is
-/// actually down can be refused: a live record whose window died is resumed,
-/// and taking that away leaves a dashboard the user cannot restart.
+/// Why this agent cannot be resumed, if it cannot. Dispatching the resume
+/// anyway failed silently and the window-open path fell back to window index
+/// 0 of the shared tmux session, moving the user off their own dashboard.
+/// Only a session that is actually down can be refused: a live record whose
+/// window died is resumed, and taking that away leaves a dashboard the user
+/// cannot restart.
 pub fn agent_restore_block(
     status: AgentEnterStatus,
     restore_state: Option<&str>,

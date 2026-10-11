@@ -1,6 +1,4 @@
-use crate::agent_enter_decision::{
-    AgentEnterDecision, AgentEnterState, busy_message, decide_agent_enter,
-};
+use crate::agent_enter_decision::{AgentEnterDecision, busy_message, decide_agent_enter};
 use crate::dashboard_model::{DashboardService, DashboardSession, ServiceStatus, SessionStatus};
 use crate::dashboard_navigation::DashboardEntryRef;
 use crate::project_api_contract::routes;
@@ -52,7 +50,7 @@ pub fn plan_dashboard_action(
 }
 
 fn plan_session_enter(session: &DashboardSession) -> DashboardActionPlan {
-    let state = AgentEnterState::for_session(session);
+    let state = crate::dashboard_model::agent_enter_state(session);
     // The decision is the CLI's too, so it is not made here. The footer
     // already said "unavailable" for a blocked restore while Enter dispatched
     // the resume anyway, which is the drift one rule removes.

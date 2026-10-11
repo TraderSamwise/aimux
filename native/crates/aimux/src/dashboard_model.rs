@@ -281,6 +281,22 @@ pub fn agent_display_name(session: &DashboardSession) -> String {
     .short_name()
 }
 
+/// What the shared Enter decision reads off a session, in one place, so a
+/// third caller cannot quietly disagree about a field.
+pub fn agent_enter_state(
+    session: &DashboardSession,
+) -> crate::agent_enter_decision::AgentEnterState<'_> {
+    crate::agent_enter_decision::AgentEnterState {
+        session_id: session.id.as_str(),
+        status: agent_enter_status(session),
+        tmux_window_id: session.tmux_window_id.as_deref(),
+        restore_state: session.restore_state.as_deref(),
+        restore_blocked_reason: session.restore_blocked_reason.as_deref(),
+        pending: session.pending,
+        pending_action: session.pending_action.as_deref(),
+    }
+}
+
 /// Why Enter cannot resume this session, if it cannot. The rule and its
 /// wording live in [`crate::agent_enter_decision::agent_restore_block`]; this
 /// is the name the controller and the renderer already pass around.

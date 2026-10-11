@@ -451,25 +451,6 @@ fn string_array_body_field(body: Option<&Value>, key: &str) -> Option<Vec<String
     (!strings.is_empty()).then_some(strings)
 }
 
-/// Resume without a decision, for an agent the dashboard's view does not
-/// carry. The project service owns whether it exists and whether it can start.
-fn start_by_resuming(
-    runtime: &mut impl DaemonAgentTextRuntime,
-    route_url: &DaemonRouteUrl,
-    project: &str,
-    session_id: &str,
-) -> DaemonRouteResponse {
-    post_start_action(
-        runtime,
-        route_url,
-        project,
-        session_id,
-        project_routes::agents::RESUME,
-        json!({ "sessionId": session_id }),
-        "resume",
-    )
-}
-
 /// The call and the line it prints, so the two cannot describe different acts.
 fn post_start_action(
     runtime: &mut impl DaemonAgentTextRuntime,
@@ -533,17 +514,25 @@ pub fn lifecycle_start_text_route(
                 );
             }
         };
-    // Absent from the dashboard's view is not absent: that snapshot hides a
-    // session whose status is `error` or `planned`, and resume handles those.
-    // With no decision input, the authority answers instead of this route.
+    // Refusing here rather than resuming blind: the snapshot also hides an
+    // agent whose worktree was graveyarded, and resume would relaunch it in a
+    // retired checkout -- which no dashboard key can do.
     let Some(session) = snapshot.session(&session_id) else {
-        return start_by_resuming(runtime, route_url, &project, &session_id);
+        return text_error(
+            404,
+            format!(
+                "Error: no startable agent {session_id}; a graveyarded agent is restored with `aimux graveyard resurrect`"
+            ),
+        );
     };
-    let state = crate::agent_enter_decision::AgentEnterState::for_session(session);
+    let state = crate::dashboard_model::agent_enter_state(session);
     let (route_path, request, action) =
         match crate::agent_enter_decision::decide_agent_enter(&state, || {
             crate::dashboard_model::agent_display_name(session)
         }) {
+            // Busy cannot reach this surface -- no published payload carries a
+            // session's in-flight mark -- but both must word a refusal the
+            // same way if one ever does, so they share the sentence.
             crate::agent_enter_decision::AgentEnterDecision::Busy(message)
             | crate::agent_enter_decision::AgentEnterDecision::Blocked(message) => {
                 return text_error(409, format!("Error: {message}"));

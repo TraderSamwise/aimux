@@ -360,13 +360,12 @@ fn start_route_focuses_resumes_and_refuses_like_the_dashboard() {
     assert_eq!(missing.status, 404);
     assert_eq!(
         text_body(missing),
-        "Error: Session \"nobody\" not found\n",
-        "the project service's answer, not one this route made up"
+        "Error: no startable agent nobody; a graveyarded agent is restored with `aimux graveyard resurrect`\n"
     );
     assert_eq!(
         runtime.calls.len(),
-        calls_before_missing + 2,
-        "absent from the view is not absent: the snapshot read, then the ask"
+        calls_before_missing + 1,
+        "it reads the snapshot and stops there, taking no lifecycle permit"
     );
 }
 

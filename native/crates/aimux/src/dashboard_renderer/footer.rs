@@ -420,9 +420,9 @@ pub(super) fn dashboard_enter_verb(
     let Some(session) = session else {
         return "focus";
     };
-    crate::agent_enter_decision::agent_enter_verb(
-        &crate::agent_enter_decision::AgentEnterState::for_session(session),
-    )
+    crate::agent_enter_decision::agent_enter_verb(&crate::dashboard_model::agent_enter_state(
+        session,
+    ))
 }
 
 fn has_live_scribe(input: &DashboardRenderInput<'_>) -> bool {
