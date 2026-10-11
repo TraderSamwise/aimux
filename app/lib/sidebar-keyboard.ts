@@ -29,6 +29,11 @@ type Memory = { previouslyOpen: boolean; restorable: boolean };
  * `restorable` is recorded at the dismissal, not re-measured at the close --
  * by then the keyboard is already gone, so the only honest answer to "was it
  * visible before?" is the one taken while it still was.
+ *
+ * Deliberately its own memory rather than `chatKeyboardIntent`, which expires.
+ * The drawer IS the chat switcher, so a close through it continues the switch
+ * however long the reader spent choosing -- unlike a detour through a screen
+ * with no composer, which is the only thing that TTL is bounding.
  */
 export function actOnSidebarKeyboard(
   state: SidebarKeyboardState,

@@ -5,6 +5,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import * as Notifications from "expo-notifications";
 import { markNotificationsRead } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { markProgrammaticComposerBlur } from "@/lib/chat-keyboard-intent";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { ensureSecurityNotificationChannel } from "@/lib/push-registration";
 import { observeNotificationStartup } from "@/lib/notification-startup";
@@ -105,6 +106,10 @@ export function NativeNotificationRouter() {
       if (tappedRef) selectProject(tappedRef);
       if (sessionId) {
         selectSession(sessionId);
+        // Marked, not dismissed: the navigation does the blurring, and a tap
+        // on the chat already open re-runs no focus effect -- so dismissing
+        // here would lose a keyboard with nothing left to restore it.
+        markProgrammaticComposerBlur();
         router.navigate({
           pathname: "/agent/[sessionId]/chat",
           params: {
