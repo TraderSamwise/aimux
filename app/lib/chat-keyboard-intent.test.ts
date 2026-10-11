@@ -104,6 +104,19 @@ describe("where a dismissal has to come from to count", () => {
     recordComposerFocusIntent(false, { appVisible: false });
     expect(chatKeyboardIntent()).toBe(true);
   });
+
+  // The same rule in the other direction. The keyboard coming back as the app
+  // returns to the foreground is the OS restoring it, not a decision, and the
+  // screen leans on this for the edge it re-arms from.
+  it("arms nothing from a screen that is not in front", () => {
+    recordComposerFocusIntent(true, { screenFocused: false });
+    expect(chatKeyboardIntent()).toBe(false);
+  });
+
+  it("arms nothing from a backgrounded app", () => {
+    recordComposerFocusIntent(true, { appVisible: false });
+    expect(chatKeyboardIntent()).toBe(false);
+  });
 });
 
 describe("which edge a keyboard change is", () => {

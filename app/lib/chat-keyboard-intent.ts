@@ -53,6 +53,10 @@ export function recordComposerFocusIntent(
     screenFocused?: boolean;
   } = {},
 ): void {
+  // Above both branches: backgrounding the app blurs the composer AND hides
+  // the keyboard, and a screen gone behind another is being left. Neither
+  // event is the reader deciding anything, whichever way it points.
+  if (!screenFocused || !appVisible) return;
   if (focused) {
     // Asked here, not when the next chat opens: by then the keyboard has been
     // dismissed, occlusion measures zero, and every device looks like it has
@@ -61,10 +65,6 @@ export function recordComposerFocusIntent(
     programmaticBlurAt = null;
     return;
   }
-  // Backgrounding the app blurs the composer and hides the keyboard, and a
-  // screen that has gone behind another is being left -- neither is anyone
-  // deciding to put the keyboard away.
-  if (!screenFocused || !appVisible) return;
   if (programmaticBlurAt !== null && now - programmaticBlurAt <= PROGRAMMATIC_BLUR_WINDOW_MS) {
     return;
   }

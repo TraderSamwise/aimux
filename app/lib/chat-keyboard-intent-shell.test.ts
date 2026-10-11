@@ -30,8 +30,8 @@ function chatScreenSource(): string {
  */
 describe("the chat screen runs the keyboard memory", () => {
   it("watches keyboard visibility per mount rather than from a module", () => {
-    expect(chatScreenSource(), "one watcher per mounted chat, like the sidebar's").toContain(
-      "useState(() => createChatKeyboardEdgeWatcher(keyboardVisible))",
+    expect(chatScreenSource(), "one watcher per mounted chat, like the sidebar's").toMatch(
+      /useState\(\s*\(\) => createChatKeyboardEdgeWatcher\(keyboardVisible\),?\s*\)/,
     );
   });
 
@@ -43,7 +43,21 @@ describe("the chat screen runs the keyboard memory", () => {
     // The other edge: an interactive dismiss the reader abandons fires a hide
     // and then a show, and without this the carry quietly stops.
     expect(source, "and one that came back").toMatch(
-      /recordComposerFocusIntent\(true, \{ \.\.\.where, hasHardwareKeyboard \}\)/,
+      /recordComposerFocusIntent\(\s*true,\s*\{[^}]*\.\.\.where[^}]*hasHardwareKeyboard/,
+    );
+  });
+
+  // Both facts are defaulted in the module, so deleting either line from the
+  // screen leaves every other gate green while backgrounding the app silently
+  // forgets the want again. `[^}]` rather than `[\s\S]`: an unbounded gap
+  // walked out of the object and found the other call site's fields.
+  it("tells the memory where each report came from", () => {
+    const source = chatScreenSource();
+    expect(source, "the edge path").toMatch(
+      /const where = \{[^}]*appVisible: isAppVisible\(\)[^}]*screenFocused: screenFocusedRef\.current[^}]*\}/,
+    );
+    expect(source, "and the focus-change path").toMatch(
+      /recordComposerFocusIntent\(\s*focused,\s*\{[^}]*appVisible: isAppVisible\(\)[^}]*screenFocused: screenFocusedRef\.current/,
     );
   });
 
