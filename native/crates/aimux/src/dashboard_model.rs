@@ -1830,7 +1830,7 @@ fn row_failure_is_clearable(extra: &BTreeMap<String, Value>) -> bool {
     extra.get("operationFailureClearable") == Some(&Value::Bool(true))
 }
 
-/// The worktrees `a` must not hide whatever their agents are doing.
+/// What `a` must not hide, whatever the agents in it are doing.
 ///
 /// A worktree made while the filter is on has no agents yet, so it was filtered
 /// out the moment it appeared and the pointer could never reach it -- `w`
@@ -1851,19 +1851,21 @@ fn row_failure_is_clearable(extra: &BTreeMap<String, Value>) -> bool {
 /// passes. `path_missing` is among them because the app's half had it and this
 /// one did not; `optimistic` is not, because nothing in the crate or the app
 /// has ever set it on a GROUP -- only on sessions and services.
-/// `session` is the agent the pointer is on, kept by the same rule and for the
-/// same reason as `paths`: pressing `a` must not take the row the user is
-/// looking at off the screen.
+///
+/// `sessions` holds the agents a pass may end up pointing at -- the one the
+/// pointer is on and the one being returned to. A list for the same reason
+/// `paths` is one: those are not alternatives, and keeping only the last named
+/// drops the other out from under the pointer.
 #[derive(Debug, Default, Clone)]
 pub struct DashboardKept {
     pub paths: Vec<String>,
     pub main_checkout: bool,
-    pub session: Option<String>,
+    pub sessions: Vec<String>,
 }
 
 impl DashboardKept {
     fn keeps_session(&self, session: &DashboardSession) -> bool {
-        self.session.as_deref() == Some(session.id.as_str())
+        self.sessions.iter().any(|kept| kept == &session.id)
     }
 
     fn keeps(&self, group: &WorktreeGroup) -> bool {

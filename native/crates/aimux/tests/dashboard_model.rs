@@ -442,7 +442,7 @@ fn the_filter_keeps_the_agent_the_pointer_is_on() {
         &snapshot,
         true,
         &DashboardKept {
-            session: Some("claude-pointed".into()),
+            sessions: vec!["claude-pointed".to_owned()],
             ..Default::default()
         },
     );
@@ -495,7 +495,7 @@ fn the_filter_keeps_the_pointed_at_agent_inside_its_worktree_group() {
         &snapshot,
         true,
         &DashboardKept {
-            session: Some("claude-grouped".into()),
+            sessions: vec!["claude-grouped".to_owned()],
             ..Default::default()
         },
     );

@@ -360,7 +360,7 @@ fn toggling_offline_agents_keeps_the_agent_the_pointer_is_on() {
     let mut fixture = snapshot();
     let mut offline = fixture.sessions[0].clone();
     offline.id = "claude-pointed".into();
-    offline.label = Some("pointed".into());
+    offline.label = Some("alpha".into());
     offline.status = aimux::dashboard_model::SessionStatus::Offline;
     offline.semantic = None;
     offline.overseer = None;
@@ -372,7 +372,7 @@ fn toggling_offline_agents_keeps_the_agent_the_pointer_is_on() {
     // and "it was the only row" are different outcomes.
     let mut unpointed = offline.clone();
     unpointed.id = "claude-unpointed".into();
-    unpointed.label = Some("unpointed".into());
+    unpointed.label = Some("beta".into());
 
     // The kept one is SECOND, so reading the first session instead of the
     // pointer is a different answer and this test can tell them apart.
@@ -436,11 +436,11 @@ fn toggling_offline_agents_keeps_the_agent_the_pointer_is_on() {
         "nothing was painted after the toggle, so this proves neither outcome"
     );
     assert!(
-        painted.contains("claude-pointed"),
+        painted.contains("alpha"),
         "the pointed-at agent went off screen when offline agents were hidden: {painted}"
     );
     assert!(
-        !painted.contains("claude-unpointed"),
+        !painted.contains("beta"),
         "the filter did not run: the agent nobody points at is still on screen"
     );
     assert!(
