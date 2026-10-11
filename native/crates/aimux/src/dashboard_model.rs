@@ -268,11 +268,11 @@ pub fn is_dashboard_supervisor_plane_session(session: &DashboardSession) -> bool
 /// navigation then invented a worktree row out of the orphans.
 fn dashboard_session_survives_hidden_offline(
     session: &DashboardSession,
-    kept_session: Option<&str>,
+    kept: &DashboardKept,
 ) -> bool {
     is_project_control_session(session)
         || !is_dashboard_session_offline(session)
-        || kept_session == Some(session.id.as_str())
+        || kept.keeps_session(session)
 }
 
 pub fn agent_display_name(session: &DashboardSession) -> String {
@@ -777,14 +777,10 @@ pub fn is_dashboard_session_offline(session: &DashboardSession) -> bool {
         )
 }
 
-/// `kept_session` is the agent the pointer is on, which survives the filter
-/// the way the pointed-at worktree already does -- otherwise pressing `a`
-/// moves the pointer off the agent the user was looking at.
 pub fn filter_dashboard_visible_model(
     snapshot: &DesktopStateSnapshot,
     hide_offline_agents: bool,
-    kept: &DashboardKeptWorktrees,
-    kept_session: Option<&str>,
+    kept: &DashboardKept,
 ) -> DashboardVisibleModel {
     if !hide_offline_agents {
         return DashboardVisibleModel {
@@ -796,12 +792,12 @@ pub fn filter_dashboard_visible_model(
     let hidden_offline_agent_count = snapshot
         .sessions
         .iter()
-        .filter(|session| !dashboard_session_survives_hidden_offline(session, kept_session))
+        .filter(|session| !dashboard_session_survives_hidden_offline(session, kept))
         .count();
     let sessions = snapshot
         .sessions
         .iter()
-        .filter(|session| dashboard_session_survives_hidden_offline(session, kept_session))
+        .filter(|session| dashboard_session_survives_hidden_offline(session, kept))
         .cloned()
         .collect::<Vec<_>>();
     let visible_session_worktrees = sessions
@@ -818,7 +814,7 @@ pub fn filter_dashboard_visible_model(
             let group_sessions = group
                 .sessions
                 .iter()
-                .filter(|session| dashboard_session_survives_hidden_offline(session, kept_session))
+                .filter(|session| dashboard_session_survives_hidden_offline(session, kept))
                 .cloned()
                 .collect::<Vec<_>>();
             // Services count, the way the app's half already counted them. The
@@ -1855,13 +1851,21 @@ fn row_failure_is_clearable(extra: &BTreeMap<String, Value>) -> bool {
 /// passes. `path_missing` is among them because the app's half had it and this
 /// one did not; `optimistic` is not, because nothing in the crate or the app
 /// has ever set it on a GROUP -- only on sessions and services.
+/// `session` is the agent the pointer is on, kept by the same rule and for the
+/// same reason as `paths`: pressing `a` must not take the row the user is
+/// looking at off the screen.
 #[derive(Debug, Default, Clone)]
-pub struct DashboardKeptWorktrees {
+pub struct DashboardKept {
     pub paths: Vec<String>,
     pub main_checkout: bool,
+    pub session: Option<String>,
 }
 
-impl DashboardKeptWorktrees {
+impl DashboardKept {
+    fn keeps_session(&self, session: &DashboardSession) -> bool {
+        self.session.as_deref() == Some(session.id.as_str())
+    }
+
     fn keeps(&self, group: &WorktreeGroup) -> bool {
         if group.pending
             || group.removing

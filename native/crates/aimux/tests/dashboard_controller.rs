@@ -5,9 +5,9 @@ use aimux::dashboard_controller::{
     parse_dashboard_key, parse_dashboard_keys,
 };
 use aimux::dashboard_model::{
-    DashboardKeptWorktrees, DashboardOperationFailure, DesktopStateGoldenFixture,
-    DesktopStateSnapshot, SessionSemanticState, SessionStatus, SessionTeamMetadata,
-    dashboard_has_clearable_failures, filter_dashboard_visible_model,
+    DashboardKept, DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
+    SessionSemanticState, SessionStatus, SessionTeamMetadata, dashboard_has_clearable_failures,
+    filter_dashboard_visible_model,
 };
 use aimux::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationGroupKind, dashboard_navigation_groups,
@@ -547,8 +547,7 @@ fn quick_jump_uses_filtered_worktrees_when_offline_agents_are_hidden() {
     snapshot.services.clear();
 
     let visible =
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default(), None)
-            .snapshot;
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default()).snapshot;
     let mut controller = DashboardController::new(&visible);
     controller.hide_offline_agents = true;
 
@@ -3785,8 +3784,7 @@ fn hiding_offline_agents_keeps_the_supervisor_lane() {
     let visible = aimux::dashboard_model::filter_dashboard_visible_model(
         &snapshot,
         true,
-        &DashboardKeptWorktrees::default(),
-        None,
+        &DashboardKept::default(),
     );
     let kept_group = visible
         .snapshot

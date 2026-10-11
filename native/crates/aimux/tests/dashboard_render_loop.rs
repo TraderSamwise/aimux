@@ -368,13 +368,23 @@ fn toggling_offline_agents_keeps_the_agent_the_pointer_is_on() {
     offline.project_control = None;
     offline.team = None;
     offline.worktree_path = None;
-    fixture.sessions = vec![offline];
+    // A second offline agent nobody is pointing at, so "the pointer kept it"
+    // and "it was the only row" are different outcomes.
+    let mut unpointed = offline.clone();
+    unpointed.id = "claude-unpointed".into();
+    unpointed.label = Some("unpointed".into());
+
+    // The kept one is SECOND, so reading the first session instead of the
+    // pointer is a different answer and this test can tell them apart.
+    fixture.sessions = vec![unpointed, offline];
     fixture.teammates.clear();
     fixture.services.clear();
     fixture.worktree_groups.clear();
 
     let script = Arc::new(Mutex::new(std::collections::VecDeque::from(vec![
-        (0_u64, vec![DashboardKey::Enter]),
+        // The first poll paints; keys are only dispatched once a frame is up.
+        (0_u64, vec![]),
+        (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
         (NO_EXTRA_IDLE, vec![DashboardKey::ToggleOfflineAgents]),
         (NO_EXTRA_IDLE, vec![]),
     ])));
@@ -422,7 +432,19 @@ fn toggling_offline_agents_keeps_the_agent_the_pointer_is_on() {
 
     let painted = frames.lock().expect("captured frames").clone();
     assert!(
-        painted.contains("pointed"),
-        "the pointed-at agent went off screen when offline agents were hidden"
+        !painted.is_empty(),
+        "nothing was painted after the toggle, so this proves neither outcome"
+    );
+    assert!(
+        painted.contains("claude-pointed"),
+        "the pointed-at agent went off screen when offline agents were hidden: {painted}"
+    );
+    assert!(
+        !painted.contains("claude-unpointed"),
+        "the filter did not run: the agent nobody points at is still on screen"
+    );
+    assert!(
+        painted.contains("1 hidden"),
+        "the header must account for the one agent that was hidden: {painted}"
     );
 }

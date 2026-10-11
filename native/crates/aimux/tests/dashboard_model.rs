@@ -1,6 +1,6 @@
 use aimux::dashboard_model::{
-    DashboardKeptWorktrees, DashboardService, DesktopStateGoldenFixture, ServiceStatus,
-    SessionStatus, filter_dashboard_visible_model, is_dashboard_session_offline,
+    DashboardKept, DashboardService, DesktopStateGoldenFixture, ServiceStatus, SessionStatus,
+    filter_dashboard_visible_model, is_dashboard_session_offline,
 };
 use serde_json::json;
 
@@ -161,8 +161,7 @@ fn dashboard_visible_model_hides_offline_agents_and_keeps_related_services() {
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let snapshot = fixture.runtime_full;
 
-    let visible =
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default(), None);
+    let visible = filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default());
 
     assert_eq!(visible.hidden_offline_agent_count, 2);
     assert_eq!(
@@ -212,8 +211,7 @@ fn the_filter_keeps_the_worktree_the_pointer_is_on() {
     empty.operation_failure = None;
     snapshot.worktree_groups.push(empty);
 
-    let unpointed =
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default(), None);
+    let unpointed = filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default());
     assert!(
         unpointed
             .snapshot
@@ -226,11 +224,10 @@ fn the_filter_keeps_the_worktree_the_pointer_is_on() {
     let pointed = filter_dashboard_visible_model(
         &snapshot,
         true,
-        &DashboardKeptWorktrees {
+        &DashboardKept {
             paths: vec!["/repo/.aimux/worktrees/fresh".to_owned()],
             ..Default::default()
         },
-        None,
     );
     assert!(
         pointed
@@ -246,11 +243,10 @@ fn the_filter_keeps_the_worktree_the_pointer_is_on() {
         filter_dashboard_visible_model(
             &snapshot,
             true,
-            &DashboardKeptWorktrees {
+            &DashboardKept {
                 paths: vec!["/repo/.aimux/worktrees/other".to_owned()],
                 ..Default::default()
             },
-            None,
         )
         .snapshot
         .worktree_groups
@@ -291,8 +287,7 @@ fn a_worktree_whose_only_occupant_is_a_running_service_survives_the_filter() {
     }];
     snapshot.worktree_groups.push(serving);
 
-    let visible =
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default(), None);
+    let visible = filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default());
     assert!(
         visible
             .snapshot
@@ -327,7 +322,7 @@ fn the_filter_keeps_the_main_checkout_when_the_pointer_is_on_it() {
     main.operation_failure = None;
 
     assert!(
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default(), None)
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default())
             .snapshot
             .worktree_groups
             .iter()
@@ -338,11 +333,10 @@ fn the_filter_keeps_the_main_checkout_when_the_pointer_is_on_it() {
         filter_dashboard_visible_model(
             &snapshot,
             true,
-            &DashboardKeptWorktrees {
+            &DashboardKept {
                 main_checkout: true,
                 ..Default::default()
             },
-            None,
         )
         .snapshot
         .worktree_groups
@@ -378,7 +372,7 @@ fn the_supervisor_row_is_not_the_main_checkout() {
     // The live loop sets `main_checkout` only for a WORKTREE group with no
     // path, so the supervisor case reaches the filter as a default keep-set.
     assert!(
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default(), None)
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default())
             .snapshot
             .worktree_groups
             .iter()
@@ -410,7 +404,7 @@ fn a_worktree_whose_checkout_has_gone_survives_the_filter() {
     snapshot.worktree_groups.push(gone);
 
     assert!(
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default(), None)
+        filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default())
             .snapshot
             .worktree_groups
             .iter()
@@ -447,8 +441,10 @@ fn the_filter_keeps_the_agent_the_pointer_is_on() {
     let visible = filter_dashboard_visible_model(
         &snapshot,
         true,
-        &DashboardKeptWorktrees::default(),
-        Some("claude-pointed"),
+        &DashboardKept {
+            session: Some("claude-pointed".into()),
+            ..Default::default()
+        },
     );
     let ids = visible
         .snapshot
@@ -498,8 +494,10 @@ fn the_filter_keeps_the_pointed_at_agent_inside_its_worktree_group() {
     let visible = filter_dashboard_visible_model(
         &snapshot,
         true,
-        &DashboardKeptWorktrees::default(),
-        Some("claude-grouped"),
+        &DashboardKept {
+            session: Some("claude-grouped".into()),
+            ..Default::default()
+        },
     );
     let group = visible
         .snapshot
@@ -541,8 +539,7 @@ fn the_hidden_count_is_exactly_what_the_filter_removed() {
     snapshot.worktree_groups.clear();
     snapshot.services.clear();
 
-    let visible =
-        filter_dashboard_visible_model(&snapshot, true, &DashboardKeptWorktrees::default(), None);
+    let visible = filter_dashboard_visible_model(&snapshot, true, &DashboardKept::default());
 
     // The count and the list are two statements about one decision, and
     // nothing tied them together: the count exempted project-control sessions
