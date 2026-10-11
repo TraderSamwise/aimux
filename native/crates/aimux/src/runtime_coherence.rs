@@ -944,7 +944,6 @@ fn git_checkout_report(checkout: GitCheckoutCoherence) -> Value {
                 "headBlob": file.head_blob,
                 "indexBlob": file.index_blob,
                 "worktreeBlob": file.worktree_blob,
-                "blobsInspected": file.blobs_inspected,
             })
         }).collect::<Vec<_>>(),
     })

@@ -1,6 +1,7 @@
 use std::fmt::{self, Display, Formatter};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitDeliveryCheck {
@@ -48,10 +49,6 @@ pub struct GitCheckoutFile {
     pub head_blob: Option<String>,
     pub index_blob: Option<String>,
     pub worktree_blob: Option<String>,
-    /// Whether the three blobs were looked up at all. Without it a skipped
-    /// lookup and a blob that genuinely does not exist are both `None`, and a
-    /// reader cannot tell "absent" from "never asked".
-    pub blobs_inspected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,18 +229,28 @@ pub fn inspect_git_checkout_coherence(
     let stale_candidates = stale_base_candidates(&repo_root, &head_sha)?;
     let mut files = Vec::new();
     let mut stale_base = None;
+    // Comparable entries only, resolved once for every candidate rather than
+    // four spawns per entry: a stale checkout of N files cost 8N spawns, and
+    // nothing capped it.
+    let comparable: Vec<&GitStatusEntry> = status_entries
+        .iter()
+        .take_while(|entry| entry.index_status != '?' && entry.worktree_status == ' ')
+        .collect();
+    let comparable_paths: Vec<String> = comparable.iter().map(|entry| entry.path.clone()).collect();
+    let stale_head_blobs = tree_blobs(&repo_root, "HEAD", &comparable_paths)?;
+    let stale_index_blobs = index_blobs(&repo_root, &comparable_paths)?;
+    let stale_worktree_blobs = worktree_blobs(&repo_root, &comparable_paths)?;
     for candidate in stale_candidates {
         let mut candidate_files = Vec::new();
-        let mut all_match = true;
-        for entry in &status_entries {
-            if entry.index_status == '?' || entry.worktree_status != ' ' {
-                all_match = false;
-                break;
-            }
-            let head_blob = tree_blob(&repo_root, "HEAD", &entry.path)?;
-            let base_blob = tree_blob(&repo_root, &candidate, &entry.path)?;
-            let index_blob = index_blob(&repo_root, &entry.path)?;
-            let worktree_blob = worktree_blob(&repo_root, &entry.path)?;
+        // A run shorter than every entry means some entry disqualified the
+        // checkout, exactly as the per-entry break did.
+        let mut all_match = comparable.len() == status_entries.len();
+        let base_blobs = tree_blobs(&repo_root, &candidate, &comparable_paths)?;
+        for (index, entry) in comparable.iter().enumerate() {
+            let head_blob = stale_head_blobs[index].clone();
+            let base_blob = base_blobs[index].clone();
+            let index_blob = stale_index_blobs[index].clone();
+            let worktree_blob = stale_worktree_blobs[index].clone();
             if index_blob != base_blob || worktree_blob != base_blob || head_blob == base_blob {
                 all_match = false;
                 break;
@@ -255,7 +262,6 @@ pub fn inspect_git_checkout_coherence(
                 head_blob,
                 index_blob,
                 worktree_blob,
-                blobs_inspected: true,
             });
         }
         if all_match && !candidate_files.is_empty() {
@@ -275,36 +281,25 @@ pub fn inspect_git_checkout_coherence(
         });
     }
 
-    let mut inspected = 0usize;
+    let paths: Vec<String> = status_entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect();
+    let head_blobs = tree_blobs(&repo_root, "HEAD", &paths)?;
+    let index_blobs = index_blobs(&repo_root, &paths)?;
+    let worktree_blobs = worktree_blobs(&repo_root, &paths)?;
     let files = status_entries
         .into_iter()
-        .map(|entry| {
-            if !blobs_are_worth_asking(&entry, inspected) {
-                return Ok(GitCheckoutFile {
-                    path: entry.path,
-                    index_status: entry.index_status,
-                    worktree_status: entry.worktree_status,
-                    head_blob: None,
-                    index_blob: None,
-                    worktree_blob: None,
-                    blobs_inspected: false,
-                });
-            }
-            inspected += 1;
-            let head_blob = tree_blob(&repo_root, "HEAD", &entry.path)?;
-            let index_blob = index_blob(&repo_root, &entry.path)?;
-            let worktree_blob = worktree_blob(&repo_root, &entry.path)?;
-            Ok(GitCheckoutFile {
-                path: entry.path,
-                index_status: entry.index_status,
-                worktree_status: entry.worktree_status,
-                head_blob,
-                index_blob,
-                worktree_blob,
-                blobs_inspected: true,
-            })
+        .enumerate()
+        .map(|(index, entry)| GitCheckoutFile {
+            path: entry.path,
+            index_status: entry.index_status,
+            worktree_status: entry.worktree_status,
+            head_blob: head_blobs[index].clone(),
+            index_blob: index_blobs[index].clone(),
+            worktree_blob: worktree_blobs[index].clone(),
         })
-        .collect::<Result<Vec<_>, GitDeliveryError>>()?;
+        .collect::<Vec<_>>();
 
     Ok(GitCheckoutCoherence {
         repo: repo_root,
@@ -367,7 +362,10 @@ fn git_status_entries(repo: &str) -> Result<Vec<GitStatusEntry>, GitDeliveryErro
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
-        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        // Not `--untracked-files=all`: the per-file detail fed nothing but a
+        // count, and collapsing untracked directories took one real checkout
+        // from 34,990 entries to a handful, with the scan itself 842ms faster.
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=normal"])
         .output()
         .map_err(|error| GitDeliveryError::GitCommand {
             cwd: repo.into(),
@@ -375,7 +373,7 @@ fn git_status_entries(repo: &str) -> Result<Vec<GitStatusEntry>, GitDeliveryErro
                 "status".into(),
                 "--porcelain=v1".into(),
                 "-z".into(),
-                "--untracked-files=all".into(),
+                "--untracked-files=normal".into(),
             ],
             message: error.to_string().into_boxed_str(),
         })?;
@@ -386,7 +384,7 @@ fn git_status_entries(repo: &str) -> Result<Vec<GitStatusEntry>, GitDeliveryErro
                 "status".into(),
                 "--porcelain=v1".into(),
                 "-z".into(),
-                "--untracked-files=all".into(),
+                "--untracked-files=normal".into(),
             ],
             message: String::from_utf8_lossy(&output.stderr)
                 .trim()
@@ -450,20 +448,209 @@ fn git_is_ancestor(repo: &str, ancestor: &str, descendant: &str) -> Result<bool,
     Ok(output.status.success())
 }
 
-/// How many files in one checkout get their blobs looked up.
+/// Resolve many blob ids in ONE git invocation.
 ///
-/// Every inspected file costs three git spawns, and the report renders a count
-/// plus the first ten entries -- so blobs past this were collected and never
-/// read. Uncapped, one `aimux doctor versions` over a monorepo with 35k
-/// untracked files cost ~105k spawns and held the daemon's runtime lock for
-/// around 26 minutes, which read as a dead daemon.
-pub const MAX_COHERENCE_FILE_BLOBS: usize = 25;
+/// A `rev-parse` per file is what wedged the daemon: a checkout reporting
+/// 34,990 status entries cost three spawns each, under the global runtime
+/// lock. `cat-file --batch-check` answers the whole list down one pipe, so the
+/// cost stops scaling with the number of changed files.
+///
+/// Answers come back in input order, one line per spec, and a spec git cannot
+/// resolve echoes itself followed by ` missing` -- which is the same `None`
+/// the per-file lookup returned for an absent blob.
+fn batch_blobs(repo: &str, specs: &[String]) -> Result<Vec<Option<String>>, GitDeliveryError> {
+    if specs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let args = ["cat-file", "--batch-check"];
+    let fail = |message: String| GitDeliveryError::GitCommand {
+        cwd: repo.into(),
+        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        message: message.into_boxed_str(),
+    };
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| fail(error.to_string()))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| fail("stdin not piped".into()))?;
+    let mut payload = Vec::new();
+    for spec in specs {
+        payload.extend_from_slice(spec.as_bytes());
+        payload.push(b'\n');
+    }
+    // Written from another thread because git answers while it reads: filling
+    // the output pipe while we still held the input would deadlock both ends.
+    let writer = std::thread::spawn(move || stdin.write_all(&payload));
+    let output = child
+        .wait_with_output()
+        .map_err(|error| fail(error.to_string()))?;
+    let written = writer
+        .join()
+        .map_err(|_| fail("stdin writer panicked".into()))?;
+    written.map_err(|error| fail(error.to_string()))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut blobs: Vec<Option<String>> = text
+        .lines()
+        .map(|line| {
+            if line.ends_with(" missing") || line == "missing" {
+                return None;
+            }
+            line.split_whitespace().next().map(str::to_owned)
+        })
+        .collect();
+    if blobs.len() != specs.len() {
+        // A short answer is not an answer of `None`s: say which call came back
+        // wrong rather than reporting every blob as absent.
+        return Err(fail(format!(
+            "cat-file answered {} of {} specs",
+            blobs.len(),
+            specs.len()
+        )));
+    }
+    blobs.truncate(specs.len());
+    Ok(blobs)
+}
 
-/// An untracked path is in neither HEAD nor the index, so both lookups spawn
-/// git to be told `None`, and its worktree hash answers nothing the status
-/// characters have not already said.
-fn blobs_are_worth_asking(entry: &GitStatusEntry, inspected: usize) -> bool {
-    entry.index_status != '?' && inspected < MAX_COHERENCE_FILE_BLOBS
+/// `cat-file` and `hash-object --stdin-paths` are both newline-delimited, so a
+/// path containing one cannot be asked for in a batch. Git allows it, so the
+/// rare case falls back to its own invocation rather than being reported absent.
+fn path_is_batchable(path: &str) -> bool {
+    !path.contains('\n')
+}
+
+fn tree_blobs(
+    repo: &str,
+    treeish: &str,
+    paths: &[String],
+) -> Result<Vec<Option<String>>, GitDeliveryError> {
+    resolved_in_batches(
+        repo,
+        paths,
+        |path| format!("{treeish}:{path}"),
+        |repo, path| tree_blob(repo, treeish, path),
+    )
+}
+
+fn index_blobs(repo: &str, paths: &[String]) -> Result<Vec<Option<String>>, GitDeliveryError> {
+    resolved_in_batches(repo, paths, |path| format!(":{path}"), index_blob)
+}
+
+fn resolved_in_batches(
+    repo: &str,
+    paths: &[String],
+    spec: impl Fn(&str) -> String,
+    single: impl Fn(&str, &str) -> Result<Option<String>, GitDeliveryError>,
+) -> Result<Vec<Option<String>>, GitDeliveryError> {
+    let batchable: Vec<String> = paths
+        .iter()
+        .filter(|path| path_is_batchable(path))
+        .map(|path| spec(path))
+        .collect();
+    let mut batched = batch_blobs(repo, &batchable)?.into_iter();
+    let mut blobs = Vec::with_capacity(paths.len());
+    for path in paths {
+        if path_is_batchable(path) {
+            blobs.push(batched.next().flatten());
+        } else {
+            blobs.push(single(repo, path)?);
+        }
+    }
+    Ok(blobs)
+}
+
+/// Worktree hashes come from the files themselves, so only paths that are
+/// present are asked about; the rest keep the `None` they always had.
+fn worktree_blobs(repo: &str, paths: &[String]) -> Result<Vec<Option<String>>, GitDeliveryError> {
+    let present: Vec<&String> = paths
+        .iter()
+        .filter(|path| Path::new(repo).join(path.as_str()).is_file())
+        .collect();
+    let batchable: Vec<String> = present
+        .iter()
+        .filter(|path| path_is_batchable(path))
+        .map(|path| (*path).clone())
+        .collect();
+    let mut hashed = hash_object_batch(repo, &batchable)?.into_iter();
+    let mut by_path = std::collections::BTreeMap::new();
+    for path in &present {
+        let hash = if path_is_batchable(path) {
+            hashed.next().flatten()
+        } else {
+            worktree_blob(repo, path)?
+        };
+        by_path.insert((*path).clone(), hash);
+    }
+    Ok(paths
+        .iter()
+        .map(|path| by_path.get(path).cloned().flatten())
+        .collect())
+}
+
+fn hash_object_batch(
+    repo: &str,
+    paths: &[String],
+) -> Result<Vec<Option<String>>, GitDeliveryError> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let args = ["hash-object", "--stdin-paths"];
+    let fail = |message: String| GitDeliveryError::GitCommand {
+        cwd: repo.into(),
+        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        message: message.into_boxed_str(),
+    };
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| fail(error.to_string()))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| fail("stdin not piped".into()))?;
+    let mut payload = Vec::new();
+    for path in paths {
+        payload.extend_from_slice(path.as_bytes());
+        payload.push(b'\n');
+    }
+    let writer = std::thread::spawn(move || stdin.write_all(&payload));
+    let output = child
+        .wait_with_output()
+        .map_err(|error| fail(error.to_string()))?;
+    let written = writer
+        .join()
+        .map_err(|_| fail("stdin writer panicked".into()))?;
+    written.map_err(|error| fail(error.to_string()))?;
+    if !output.status.success() {
+        return Err(fail(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let hashes: Vec<Option<String>> = text
+        .lines()
+        .map(|line| Some(line.trim().to_owned()))
+        .collect();
+    if hashes.len() != paths.len() {
+        return Err(fail(format!(
+            "hash-object answered {} of {} paths",
+            hashes.len(),
+            paths.len()
+        )));
+    }
+    Ok(hashes)
 }
 
 fn tree_blob(repo: &str, treeish: &str, path: &str) -> Result<Option<String>, GitDeliveryError> {

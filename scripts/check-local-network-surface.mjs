@@ -235,9 +235,10 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   {
     path: "native/crates/aimux/src/git_delivery.rs",
     marker: 'Command::new("git")',
-    count: 5,
+    count: 7,
     command: "git",
-    argv: "literal delivery-verification args",
+    argv:
+      "literal delivery-verification args, plus cat-file --batch-check and hash-object --stdin-paths, which take their per-file specs on stdin so the invocation count stops scaling with the number of changed files",
     input: "repo paths/refs supplied by delivery checker",
   },
   {
