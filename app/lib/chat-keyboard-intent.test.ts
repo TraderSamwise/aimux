@@ -3,6 +3,7 @@ import {
   CHAT_KEYBOARD_INTENT_TTL_MS,
   PROGRAMMATIC_BLUR_WINDOW_MS,
   chatKeyboardIntent,
+  createChatKeyboardEdgeWatcher,
   recordChatKeyboardHidden,
   markProgrammaticComposerBlur,
   recordComposerFocusIntent,
@@ -85,6 +86,51 @@ describe("what the reader last did with the keyboard", () => {
     recordComposerFocusIntent(true, { now: 1_050 });
     recordComposerFocusIntent(false, { now: 1_060 });
     expect(chatKeyboardIntent()).toBe(false);
+  });
+});
+
+describe("where a dismissal has to come from to count", () => {
+  // Backgrounding the app hides the keyboard AND blurs the composer. Reading
+  // either as the reader putting it away means coming back to a chat that has
+  // forgotten what you were doing in it.
+  it("ignores a keyboard that went away because the app did", () => {
+    recordComposerFocusIntent(true);
+    recordChatKeyboardHidden({ appVisible: false });
+    expect(chatKeyboardIntent()).toBe(true);
+  });
+
+  it("ignores a blur from a backgrounded app", () => {
+    recordComposerFocusIntent(true);
+    recordComposerFocusIntent(false, { appVisible: false });
+    expect(chatKeyboardIntent()).toBe(true);
+  });
+});
+
+describe("which edge a keyboard change is", () => {
+  it("calls the first change from up to down a hide", () => {
+    const edge = createChatKeyboardEdgeWatcher(true);
+    expect(edge(false)).toBe("hidden");
+  });
+
+  // The effect re-runs on renders that changed nothing, and a level rule
+  // would re-clear the want on every one of them.
+  it("calls an unchanged level neither edge", () => {
+    const edge = createChatKeyboardEdgeWatcher(true);
+    expect(edge(false)).toBe("hidden");
+    expect(edge(false)).toBe(null);
+  });
+
+  it("calls a mount with the keyboard already down neither edge", () => {
+    const edge = createChatKeyboardEdgeWatcher(false);
+    expect(edge(false)).toBe(null);
+  });
+
+  // An interactive dismiss the reader abandons fires a hide and then a show.
+  // The second edge is what re-arms the carry the first one cleared.
+  it("calls the keyboard coming back a raise", () => {
+    const edge = createChatKeyboardEdgeWatcher(true);
+    expect(edge(false)).toBe("hidden");
+    expect(edge(true)).toBe("raised");
   });
 });
 

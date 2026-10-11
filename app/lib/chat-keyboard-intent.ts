@@ -42,10 +42,16 @@ export function markProgrammaticComposerBlur(now = Date.now()): void {
 export function recordComposerFocusIntent(
   focused: boolean,
   {
+    appVisible = true,
     hasHardwareKeyboard = false,
     now = Date.now(),
     screenFocused = true,
-  }: { hasHardwareKeyboard?: boolean; now?: number; screenFocused?: boolean } = {},
+  }: {
+    appVisible?: boolean;
+    hasHardwareKeyboard?: boolean;
+    now?: number;
+    screenFocused?: boolean;
+  } = {},
 ): void {
   if (focused) {
     // Asked here, not when the next chat opens: by then the keyboard has been
@@ -55,7 +61,10 @@ export function recordComposerFocusIntent(
     programmaticBlurAt = null;
     return;
   }
-  if (!screenFocused) return;
+  // Backgrounding the app blurs the composer and hides the keyboard, and a
+  // screen that has gone behind another is being left -- neither is anyone
+  // deciding to put the keyboard away.
+  if (!screenFocused || !appVisible) return;
   if (programmaticBlurAt !== null && now - programmaticBlurAt <= PROGRAMMATIC_BLUR_WINDOW_MS) {
     return;
   }
@@ -68,9 +77,28 @@ export function recordComposerFocusIntent(
  * the next chat raises a keyboard the reader has just put away.
  */
 export function recordChatKeyboardHidden(
-  options: { now?: number; screenFocused?: boolean } = {},
+  options: { appVisible?: boolean; now?: number; screenFocused?: boolean } = {},
 ): void {
   recordComposerFocusIntent(false, options);
+}
+
+export type ChatKeyboardEdge = "raised" | "hidden" | null;
+
+/**
+ * Which edge a keyboard-visibility change is, or neither.
+ *
+ * `keyboardVisible` is a level, and an effect watching it re-runs on renders
+ * that changed nothing. Deciding here rather than from a ref in the screen
+ * means an inverted comparison fails a test instead of hiding in a mount.
+ */
+export function createChatKeyboardEdgeWatcher(initial: boolean) {
+  let wasVisible = initial;
+  return (visible: boolean): ChatKeyboardEdge => {
+    const was = wasVisible;
+    wasVisible = visible;
+    if (was === visible) return null;
+    return visible ? "raised" : "hidden";
+  };
 }
 
 export function chatKeyboardIntent(now = Date.now()): boolean {

@@ -78,6 +78,7 @@ import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import { registerChatComposerFocus } from "@/lib/chat-composer-focus";
 import {
   chatKeyboardIntent,
+  createChatKeyboardEdgeWatcher,
   markProgrammaticComposerBlur,
   recordChatKeyboardHidden,
   recordComposerFocusIntent,
@@ -769,7 +770,7 @@ export default function ChatScreen() {
     // The draft key resolves mid-mount, so this often runs after the new chat
     // has already taken the carried keyboard -- blurring then would drop the
     // very keyboard being carried. Leave it up when that is what was asked.
-    if (!chatKeyboardIntent()) {
+    if (!chatKeyboardIntent() && !composerFocusedRef.current) {
       markProgrammaticComposerBlur();
       composerInputRef.current?.blur();
     }
@@ -1641,13 +1642,12 @@ export default function ChatScreen() {
     };
   }, [canUseOwnerControls, handleInterrupt]);
 
-  // The sidebar takes this keyboard away when the drawer opens and owes it
-  // back when the drawer closes -- a round trip on THIS screen, where no focus
-  // effect runs, so it needs its own delivery. The focus effect below covers
-  // the other direction, a chat that is only now mounting. Overlapping on the
-  // tap that both closes the drawer and navigates is harmless: both land on
-  // one idempotent `focus()`.
-  useEffect(() => registerChatComposerFocus(() => composerInputRef.current?.focus()), []);
+  // The sidebar owes this keyboard back when the drawer closes, a round trip
+  // on THIS screen where no focus effect runs. Scoped to focus because the
+  // slot holds one composer: on mount, a pushed chat overwrote the one behind.
+  useFocusEffect(
+    useCallback(() => registerChatComposerFocus(() => composerInputRef.current?.focus()), []),
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -1774,24 +1774,30 @@ export default function ChatScreen() {
     [handleComposerKeyboardEvent],
   );
 
-  // Android's back gesture puts the keyboard away with the composer still
-  // focused, so `onBlur` never fires. The falling edge is the only sign.
-  const keyboardVisibleRef = useRef(keyboardVisible);
+  // Android's back gesture hides the keyboard with the composer still focused,
+  // so `onBlur` never fires. Both edges: an interactive dismiss the reader
+  // abandons fires a hide then a show, and the re-arm is what survives it.
+  const [keyboardEdge] = useState(() => createChatKeyboardEdgeWatcher(keyboardVisible));
   useEffect(() => {
-    const wasVisible = keyboardVisibleRef.current;
-    keyboardVisibleRef.current = keyboardVisible;
-    if (!wasVisible || keyboardVisible) return;
-    recordChatKeyboardHidden({
-      screenFocused: screenFocusedRef.current && isAppVisible(),
-    });
-  }, [keyboardVisible]);
+    const edge = keyboardEdge(keyboardVisible);
+    if (!edge) return;
+    const where = { appVisible: isAppVisible(), screenFocused: screenFocusedRef.current };
+    if (edge === "hidden") {
+      recordChatKeyboardHidden(where);
+      return;
+    }
+    if (composerFocusedRef.current) {
+      recordComposerFocusIntent(true, { ...where, hasHardwareKeyboard });
+    }
+  }, [hasHardwareKeyboard, keyboardEdge, keyboardVisible]);
 
   const setComposerNativeFocus = useCallback(
     (focused: boolean, updateFocusShell: () => void) => {
       composerFocusedRef.current = focused;
       recordComposerFocusIntent(focused, {
+        appVisible: isAppVisible(),
         hasHardwareKeyboard,
-        screenFocused: screenFocusedRef.current && isAppVisible(),
+        screenFocused: screenFocusedRef.current,
       });
       setComposerFocused((current) => (current === focused ? current : focused));
       setNativeChatComposerFocused(focused);
