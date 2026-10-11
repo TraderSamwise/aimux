@@ -27,10 +27,18 @@ export function useKeyboardVisible(enabled = true): boolean {
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
     const showSub = Keyboard.addListener(showEvent, () => setVisible(true));
     const hideSub = Keyboard.addListener(hideEvent, () => setVisible(false));
+    // `Keyboard.metrics()` clears on `keyboardDidHide`, so a mount seeded
+    // between `willHide` and `didHide` reads a keyboard that is leaving and
+    // would stay stuck up with no further event to correct it.
+    const settledSub =
+      Platform.OS === "ios"
+        ? Keyboard.addListener("keyboardDidHide", () => setVisible(false))
+        : null;
 
     return () => {
       showSub.remove();
       hideSub.remove();
+      settledSub?.remove();
     };
   }, [enabled]);
 

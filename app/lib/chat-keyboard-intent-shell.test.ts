@@ -86,7 +86,23 @@ describe("the chat screen runs the keyboard memory", () => {
   // event landed first.
   it("marks the chat switch a notification tap makes", () => {
     expect(strippedSource("components/NativeNotificationRouter.tsx")).toMatch(
-      /blurWebActiveElement\(\);\s*router\.navigate\(/,
+      /markProgrammaticComposerBlur\(\);\s*router\.navigate\(/,
+    );
+  });
+
+  // `keyboardVisibleAtMount` is tested directly, but a review showed reverting
+  // the hook's initializer to `useState(false)` left all 917 green -- the
+  // helper was gated and the wiring that calls it was not.
+  it("seeds the keyboard level from what is on screen", () => {
+    const source = strippedSource("lib/use-keyboard-visible.ts");
+    expect(source, "the hook must consult the seed").toMatch(
+      /useState\(\s*\(\) => keyboardVisibleAtMount\(enabled\),?\s*\)/,
+    );
+    // Without this the seed reads a keyboard that is leaving and stays stuck
+    // up, because `Keyboard.metrics()` only clears on the settled event. The
+    // listener call, not the name: `hideEvent` already holds that literal.
+    expect(source, "and correct itself once the keyboard has settled").toMatch(
+      /Keyboard\.addListener\(\s*"keyboardDidHide"/,
     );
   });
 
