@@ -14,7 +14,10 @@ import { softKeyboardOcclusionPx, useHasHardwareKeyboard } from "@/lib/hardware-
  * which is one continuous value on the UI thread.
  */
 export function useKeyboardVisible(enabled = true): boolean {
-  const [visible, setVisible] = useState(false);
+  // Seeded, not assumed down, like {@link useKeyboardHeight}: a chat that
+  // mounts carrying the keyboard gets no show event, and a `false` seed makes
+  // the next real hide a level that never changed -- so nothing hears it.
+  const [visible, setVisible] = useState(() => keyboardVisibleAtMount(enabled));
 
   useEffect(() => {
     if (!enabled) return;
@@ -32,6 +35,13 @@ export function useKeyboardVisible(enabled = true): boolean {
   }, [enabled]);
 
   return enabled ? visible : false;
+}
+
+/// iOS answers `Keyboard.metrics()`; Android does not, so there it stays false
+/// until the first event and a mount under a live keyboard is still blind.
+export function keyboardVisibleAtMount(enabled: boolean): boolean {
+  if (!enabled || Platform.OS !== "ios") return false;
+  return keyboardHeightFromEvent({ endCoordinates: Keyboard.metrics() }) > 0;
 }
 
 /**

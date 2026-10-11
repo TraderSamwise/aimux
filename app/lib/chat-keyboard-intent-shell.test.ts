@@ -81,6 +81,15 @@ describe("the chat screen runs the keyboard memory", () => {
     );
   });
 
+  // A foreground notification tap was the one chat switch that marked
+  // nothing, so whether the next chat kept the keyboard came down to which
+  // event landed first.
+  it("marks the chat switch a notification tap makes", () => {
+    expect(strippedSource("components/NativeNotificationRouter.tsx")).toMatch(
+      /blurWebActiveElement\(\);\s*router\.navigate\(/,
+    );
+  });
+
   // A single module slot holds the composer owed a restore, so a mount-scoped
   // registration let a pushed chat overwrite the one behind it and left that
   // chat unable to receive the restore after a pop.
