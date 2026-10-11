@@ -266,8 +266,13 @@ pub fn is_dashboard_supervisor_plane_session(session: &DashboardSession) -> bool
 /// vanished while its worktree stayed in `visible_session_worktrees` -- which
 /// kept that worktree's services alive with no group to hang them on, and
 /// navigation then invented a worktree row out of the orphans.
-fn dashboard_session_survives_hidden_offline(session: &DashboardSession) -> bool {
-    is_project_control_session(session) || !is_dashboard_session_offline(session)
+fn dashboard_session_survives_hidden_offline(
+    session: &DashboardSession,
+    kept_session: Option<&str>,
+) -> bool {
+    is_project_control_session(session)
+        || !is_dashboard_session_offline(session)
+        || kept_session == Some(session.id.as_str())
 }
 
 pub fn agent_display_name(session: &DashboardSession) -> String {
@@ -772,10 +777,14 @@ pub fn is_dashboard_session_offline(session: &DashboardSession) -> bool {
         )
 }
 
+/// `kept_session` is the agent the pointer is on, which survives the filter
+/// the way the pointed-at worktree already does -- otherwise pressing `a`
+/// moves the pointer off the agent the user was looking at.
 pub fn filter_dashboard_visible_model(
     snapshot: &DesktopStateSnapshot,
     hide_offline_agents: bool,
     kept: &DashboardKeptWorktrees,
+    kept_session: Option<&str>,
 ) -> DashboardVisibleModel {
     if !hide_offline_agents {
         return DashboardVisibleModel {
@@ -787,13 +796,12 @@ pub fn filter_dashboard_visible_model(
     let hidden_offline_agent_count = snapshot
         .sessions
         .iter()
-        .filter(|session| !is_project_control_session(session))
-        .filter(|session| is_dashboard_session_offline(session))
+        .filter(|session| !dashboard_session_survives_hidden_offline(session, kept_session))
         .count();
     let sessions = snapshot
         .sessions
         .iter()
-        .filter(|session| dashboard_session_survives_hidden_offline(session))
+        .filter(|session| dashboard_session_survives_hidden_offline(session, kept_session))
         .cloned()
         .collect::<Vec<_>>();
     let visible_session_worktrees = sessions
@@ -810,7 +818,7 @@ pub fn filter_dashboard_visible_model(
             let group_sessions = group
                 .sessions
                 .iter()
-                .filter(|session| dashboard_session_survives_hidden_offline(session))
+                .filter(|session| dashboard_session_survives_hidden_offline(session, kept_session))
                 .cloned()
                 .collect::<Vec<_>>();
             // Services count, the way the app's half already counted them. The

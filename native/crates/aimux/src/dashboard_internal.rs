@@ -1115,17 +1115,23 @@ pub fn run_native_dashboard_with_seams(
                         if let Some(path) = focused_worktree_path.clone() {
                             kept.paths.push(path);
                         }
+                        // Read off the outgoing snapshot, before anything can
+                        // move the indices, so the pointer can be put back on
+                        // the same agent once this one is in place -- and so
+                        // the filter keeps the agent it will be put back on.
+                        let carried_selection = carried_dashboard_selection(
+                            controller.as_ref(),
+                            latest_snapshot.as_ref(),
+                        );
+                        let kept_session = match carried_selection.as_ref() {
+                            Some(CarriedSelection::Session(id)) => Some(id.as_str()),
+                            _ => None,
+                        };
                         let visible_model = filter_dashboard_visible_model(
                             &loaded.snapshot,
                             hide_offline_agents,
                             &kept,
-                        );
-                        // Read off the outgoing snapshot, before anything can
-                        // move the indices, so the pointer can be put back on
-                        // the same agent once this one is in place.
-                        let carried_selection = carried_dashboard_selection(
-                            controller.as_ref(),
-                            latest_snapshot.as_ref(),
+                            kept_session,
                         );
                         let controller = controller.get_or_insert_with(|| {
                             let mut controller = DashboardController::new(&visible_model.snapshot);
@@ -2280,6 +2286,7 @@ fn execute_overseer_watch_command(
         &loaded.snapshot,
         controller.hide_offline_agents,
         &DashboardKeptWorktrees::default(),
+        None,
     );
     if let Some(overseer_session_id) = response
         .result

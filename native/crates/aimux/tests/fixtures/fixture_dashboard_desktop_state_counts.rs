@@ -93,6 +93,7 @@ fn run_case(input: CaseInput) -> Value {
         &snapshot,
         input.model.hide_offline_agents,
         &DashboardKeptWorktrees::default(),
+        None,
     );
     json!({
         "hiddenOfflineAgentCount": visible.hidden_offline_agent_count,
