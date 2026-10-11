@@ -9,7 +9,6 @@ import {
   ingestEventAtom,
   markOutputInterruptedAtom,
   transcriptFamily,
-  transcriptWindowFamily,
   lastErrorFamily,
   outputAnsiFamily,
   outputAvailableFamily,
@@ -34,7 +33,6 @@ describe("chat output store", () => {
       agentStateKey: agentKey("agent-1"),
       output: "hello",
       outputAnsi: undefined,
-      window: undefined,
       messages: [],
     });
 
@@ -48,7 +46,6 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       tmuxUnavailable: { ok: false, error: "tmux capture-pane timed out after 2s" },
     });
 
@@ -60,7 +57,6 @@ describe("chat output store", () => {
       agentStateKey: agentKey("agent-1"),
       output: "",
       outputAnsi: undefined,
-      window: undefined,
       messages: [],
     });
 
@@ -76,7 +72,6 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       activity: "running",
       activityText: "Working...",
     });
@@ -95,7 +90,6 @@ describe("chat output store", () => {
       agentStateKey: agentKey("agent-1"),
       output: "stale output",
       outputAnsi: undefined,
-      window: undefined,
     });
 
     expect(store.get(outputBufferFamily(agentKey("agent-1")))).toBe("stale output");
@@ -112,7 +106,6 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       activity: "done",
       activityText: "",
     });
@@ -131,7 +124,6 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       activity: "running",
       activityText: "Working...",
     });
@@ -150,7 +142,6 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       activity: "running",
       activityText: "Working...",
     });
@@ -175,7 +166,6 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "Published events: 21",
       outputAnsi: undefined,
-      window: undefined,
       messages: [message],
     });
 
@@ -188,14 +178,12 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "one",
       outputAnsi: undefined,
-      window: undefined,
       messages: [message],
     });
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       output: "two",
       outputAnsi: undefined,
-      window: undefined,
     });
 
     expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([]);
@@ -207,7 +195,6 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: "\x1b[31mplain",
-      window: undefined,
     });
 
     expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("\x1b[31mplain");
@@ -220,7 +207,6 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: undefined,
-      window: undefined,
     });
 
     expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("plain");
@@ -232,12 +218,10 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: "\x1b[32mplain",
-      window: undefined,
     });
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       messages: [message],
     });
 
@@ -365,47 +349,6 @@ describe("the projected transcript", () => {
     expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("");
   });
 
-  // The signal the TUI has shown for ages and the app did not read: a window
-  // that begins part-way through the pane. It rides with the start line, so
-  // the two cannot end up describing different windows.
-  it("carries what the service said about the window it served", () => {
-    const store = createStore();
-
-    store.set(ingestEventAtom, {
-      projectStateKey: TEST_PROJECT_KEY,
-      event: {
-        type: "agent_output",
-        sessionId: "agent-1",
-        startLine: -160,
-        outputTailOnly: true,
-        captureLineLimit: 2000,
-        messages: [message],
-      },
-    });
-
-    expect(store.get(transcriptWindowFamily(agentKey("agent-1")))).toEqual({
-      tailOnly: true,
-      startLineClamped: undefined,
-      captureLineLimit: 2000,
-    });
-
-    // Scrolling back replaces the window, so the description replaces with it
-    // -- a stale "showing last N" would outlive the window it described.
-    store.set(ingestEventAtom, {
-      projectStateKey: TEST_PROJECT_KEY,
-      event: {
-        type: "agent_output",
-        sessionId: "agent-1",
-        startLine: -480,
-        outputTailOnly: false,
-        captureLineLimit: 2000,
-        messages: [message],
-      },
-    });
-
-    expect(store.get(transcriptWindowFamily(agentKey("agent-1")))?.tailOnly).toBe(false);
-  });
-
   it("keeps an expanded transcript window when a smaller snapshot arrives", () => {
     const store = createStore();
     const older = {
@@ -431,7 +374,6 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       outputAvailable: true,
       startLine: -640,
       messages: [older, newer],
@@ -439,7 +381,6 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       outputAvailable: true,
       startLine: -160,
       messages: [newer, newest],
@@ -484,7 +425,6 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       outputAvailable: true,
       startLine: -640,
       messages: [repeatedA, repeatedB],
@@ -492,7 +432,6 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       outputAvailable: true,
       startLine: -160,
       messages: [smallerWindowRepeatedB, newest],
@@ -683,7 +622,6 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       activity: "running",
       activityText: "Perambulating...",
     });
@@ -691,7 +629,6 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
-      window: undefined,
       activity: "interrupted",
       activityText: "",
     });

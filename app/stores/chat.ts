@@ -1,4 +1,3 @@
-import type { AgentOutputWindow } from "@/lib/agent-output-window";
 import { atom, type Getter, type Setter } from "jotai";
 import { agentStateKey, type AgentStateKey, type ProjectStateKey } from "@/lib/project-key";
 import { atomFamily } from "jotai/utils";
@@ -39,14 +38,6 @@ export const transcriptFamily = atomFamily((_agentStateKey: AgentStateKey) =>
 export const transcriptStartLineFamily = atomFamily((_agentStateKey: AgentStateKey) =>
   atom<number | undefined>(undefined),
 );
-/**
- * What the service said about the window it served: a tail rather than the
- * whole pane, or a start line it would not go back past. Set beside the start
- * line so the two cannot describe different windows.
- */
-export const transcriptWindowFamily = atomFamily((_agentStateKey: AgentStateKey) =>
-  atom<AgentOutputWindow | undefined>(undefined),
-);
 export const streamingFamily = atomFamily((_agentStateKey: AgentStateKey) => atom<boolean>(false));
 /**
  * What the runtime says the session is doing, as opposed to what arriving bytes
@@ -86,12 +77,6 @@ export type AgentOutputPayload = {
   outputAnsi: string | undefined;
   outputAvailable?: boolean;
   startLine?: number;
-  /**
-   * Spelled out rather than optional, like `outputAnsi` above: a third
-   * constructor that forgets it would silently render a transcript as whole
-   * when its head was never loaded.
-   */
-  window: AgentOutputWindow | undefined;
   messages?: AgentTranscriptMessage[];
   activity?: AgentActivityState;
   activityText?: string;
@@ -252,15 +237,12 @@ function applyTranscriptMessages(
   agentStateKey: AgentStateKey,
   messages: AgentTranscriptMessage[],
   startLine: number | undefined,
-  window: AgentOutputWindow | undefined,
 ) {
   const startLineAtom = transcriptStartLineFamily(agentStateKey);
   const currentStartLine = get(startLineAtom);
   if (startLine === undefined || currentStartLine === undefined || startLine < currentStartLine) {
     set(transcriptFamily(agentStateKey), messages);
     set(startLineAtom, startLine);
-    // This window replaced the last one, so its description replaces too.
-    set(transcriptWindowFamily(agentStateKey), window);
     return;
   }
   if (startLine === currentStartLine) {
@@ -311,18 +293,10 @@ function applyAgentOutputPayload(
     set(outputAvailableFamily(payload.agentStateKey), payload.outputAvailable);
   }
   if (payload.messages !== undefined) {
-    applyTranscriptMessages(
-      get,
-      set,
-      payload.agentStateKey,
-      payload.messages,
-      payload.startLine,
-      payload.window,
-    );
+    applyTranscriptMessages(get, set, payload.agentStateKey, payload.messages, payload.startLine);
   } else if (payload.output !== undefined) {
     set(transcriptFamily(payload.agentStateKey), []);
     set(transcriptStartLineFamily(payload.agentStateKey), payload.startLine);
-    set(transcriptWindowFamily(payload.agentStateKey), payload.window);
   }
   if (!options.sparseActivity || payload.activity !== undefined) {
     if (!preserveLocalInterrupt) {
@@ -353,7 +327,6 @@ export const markOutputInterruptedAtom = atom(null, (_get, set, agentStateKey: A
   set(applyOutputSnapshotAtom, {
     agentStateKey,
     outputAnsi: undefined,
-    window: undefined,
     activity: "interrupted",
     activityText: "",
     attention: undefined,
@@ -374,11 +347,6 @@ function agentOutputEventPayload(
     outputAnsi: event.outputAnsi,
     outputAvailable: event.outputAvailable,
     startLine: event.startLine,
-    window: {
-      tailOnly: event.outputTailOnly,
-      startLineClamped: event.outputStartLineClamped,
-      captureLineLimit: event.captureLineLimit,
-    },
     messages: event.messages,
     activity: event.activity,
     activityText: event.activityText,

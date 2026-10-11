@@ -117,11 +117,6 @@ export function useAgentOutputFeed({
         outputAnsi: result.outputAnsi,
         outputAvailable: result.outputAvailable,
         startLine: result.startLine,
-        window: {
-          tailOnly: result.outputTailOnly,
-          startLineClamped: result.outputStartLineClamped,
-          captureLineLimit: result.captureLineLimit,
-        },
         messages: result.messages,
         activity: result.activity,
         activityText: result.activityText,

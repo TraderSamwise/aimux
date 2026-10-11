@@ -173,7 +173,7 @@ import {
   mergeActiveSharedSessions,
   sharedSessionsEqual,
 } from "@/lib/shared-sessions";
-import { agentOutputHistoryFloorNotice } from "@/lib/agent-output-window";
+import { chatHistoryAtFloor, chatHistoryFloorNotice } from "@/lib/chat-history-floor";
 import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
@@ -197,7 +197,6 @@ import {
   outputBufferFamily,
   markOutputInterruptedAtom,
   transcriptFamily,
-  transcriptWindowFamily,
 } from "@/stores/chat";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
@@ -495,7 +494,6 @@ export default function ChatScreen() {
   const setGlobalChatChromeVisible = useSetAtom(chatChromeVisibleAtom);
   const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const transcript = useAtomValue(transcriptFamily(agentKey));
-  const transcriptWindow = useAtomValue(transcriptWindowFamily(agentKey));
   const transcriptLastError = useAtomValue(lastErrorFamily(agentKey));
   const activity = useAtomValue(activityFamily(agentKey));
   const activityText = useAtomValue(activityTextFamily(agentKey));
@@ -697,6 +695,7 @@ export default function ChatScreen() {
   const [chatOutputHistoryStartLine, setChatOutputHistoryStartLine] = useState(
     CHAT_OUTPUT_CAPTURE_START_LINE,
   );
+  const [chatHistoryFloorReached, setChatHistoryFloorReached] = useState(false);
   const [pendingChatOutputHistoryStartLine, setPendingChatOutputHistoryStartLine] = useState<
     number | null
   >(null);
@@ -719,9 +718,10 @@ export default function ChatScreen() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session starts from the shallow live capture window
     setChatOutputHistoryStartLine(CHAT_OUTPUT_CAPTURE_START_LINE);
+    setChatHistoryFloorReached(false);
     pendingChatOutputHistoryStartLineRef.current = null;
     setPendingChatOutputHistoryStartLine(null);
-  }, [sessionKey]);
+  }, [agentKey]);
 
   useEffect(() => {
     pendingAttachmentsRef.current = pendingAttachments;
@@ -1049,7 +1049,12 @@ export default function ChatScreen() {
         pendingStartLine:
           pendingChatOutputHistoryStartLineRef.current ?? pendingChatOutputHistoryStartLine,
       });
-      if (nextStartLine === null) return;
+      if (nextStartLine === null) {
+        if (chatHistoryAtFloor({ currentStartLine: chatOutputHistoryStartLine, metrics })) {
+          setChatHistoryFloorReached(true);
+        }
+        return;
+      }
       pendingChatOutputHistoryStartLineRef.current = nextStartLine;
       setPendingChatOutputHistoryStartLine(nextStartLine);
       void refreshOutputSnapshot("history", { startLine: nextStartLine })
@@ -1085,12 +1090,7 @@ export default function ChatScreen() {
       }),
     [transcript, sessionKey, isSharedConversation],
   );
-  // Only once paging has stopped: before that, scrolling up fetches another
-  // page and a notice would be on screen for every chat from the first frame.
-  const transcriptWindowNotice = agentOutputHistoryFloorNotice(
-    transcriptWindow,
-    chatOutputHistoryStartLine <= CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
-  );
+  const transcriptWindowNotice = chatHistoryFloorNotice(chatHistoryFloorReached);
   const parsedMessageCount = parsedMessages.length;
   const parsedUserMessageCount = useMemo(
     () => parsedMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
@@ -3499,8 +3499,7 @@ type AgentChatTranscriptProps = {
   placeholderState: ChatTranscriptPlaceholderState;
   serviceEndpoint: ServiceEndpoint;
   topContentInset: number;
-  /** "Showing last N lines", when the window the service served is not the
-   * whole pane. Null when it is. */
+  /** Why scrolling up stopped loading more, or null while it has not. */
   windowNotice: string | null;
 };
 
