@@ -1,6 +1,6 @@
 use aimux::git_delivery::{
-    GitCheckoutCoherenceStatus, GitDeliveryError, inspect_git_checkout_coherence,
-    verify_git_delivery,
+    GitCheckoutCoherenceStatus, GitDeliveryError, MAX_COHERENCE_FILE_BLOBS,
+    inspect_git_checkout_coherence, verify_git_delivery,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -196,6 +196,82 @@ fn clean_checkout_is_coherent() {
     let checkout = inspect_git_checkout_coherence(path_str(&source)).expect("inspect checkout");
     assert_eq!(checkout.status, GitCheckoutCoherenceStatus::Coherent);
     assert!(checkout.files.is_empty());
+}
+
+/// The wedge this bounds: `aimux doctor versions` on a monorepo with 34,990
+/// untracked files spawned git three times per entry -- ~105k spawns, about 26
+/// minutes, all while holding the daemon's runtime lock, so every other
+/// request queued behind it and the daemon read as dead.
+#[test]
+fn untracked_files_cost_no_blob_lookups() {
+    let fixture = TempGitFixture::new("untracked-swarm");
+    let source = fixture.path("source");
+    create_source_repo(&source);
+    for index in 0..60 {
+        fs::write(source.join(format!("untracked-{index}.txt")), "noise\n")
+            .expect("write untracked file");
+    }
+
+    let checkout = inspect_git_checkout_coherence(path_str(&source)).expect("inspect checkout");
+    assert_eq!(checkout.status, GitCheckoutCoherenceStatus::Modified);
+    // Still counted -- the report renders `files.len()` as the uncommitted
+    // count, so dropping them would make that number lie.
+    assert_eq!(checkout.files.len(), 60);
+    assert!(
+        checkout.files.iter().all(|file| !file.blobs_inspected),
+        "an untracked path is in neither HEAD nor the index, so asking is a spawn to be told None"
+    );
+    assert!(
+        checkout
+            .files
+            .iter()
+            .all(|file| file.head_blob.is_none() && file.index_blob.is_none()),
+        "and the answer must still be None"
+    );
+}
+
+/// Tracked changes are load-bearing, so they ARE inspected -- but only up to
+/// the cap, because the renderer reads a count and the first ten.
+#[test]
+fn tracked_changes_are_inspected_only_up_to_the_cap() {
+    let fixture = TempGitFixture::new("tracked-swarm");
+    let source = fixture.path("source");
+    create_source_repo(&source);
+    let total = MAX_COHERENCE_FILE_BLOBS + 15;
+    for index in 0..total {
+        fs::write(source.join(format!("tracked-{index}.txt")), "base\n")
+            .expect("write tracked file");
+    }
+    run_git(&source, &["add", "."]);
+    run_git(&source, &["commit", "-m", "add tracked files"]);
+    for index in 0..total {
+        fs::write(source.join(format!("tracked-{index}.txt")), "changed\n")
+            .expect("modify tracked file");
+    }
+
+    let checkout = inspect_git_checkout_coherence(path_str(&source)).expect("inspect checkout");
+    assert_eq!(
+        checkout.files.len(),
+        total,
+        "every change is still reported"
+    );
+    let inspected = checkout
+        .files
+        .iter()
+        .filter(|file| file.blobs_inspected)
+        .count();
+    assert_eq!(
+        inspected, MAX_COHERENCE_FILE_BLOBS,
+        "blobs stop at the cap so a repo with thousands of changes cannot wedge the daemon"
+    );
+    assert!(
+        checkout
+            .files
+            .iter()
+            .filter(|file| file.blobs_inspected)
+            .all(|file| file.head_blob.is_some()),
+        "the inspected ones carry real blobs"
+    );
 }
 
 fn create_source_repo(path: &Path) {

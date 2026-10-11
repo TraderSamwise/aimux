@@ -48,6 +48,10 @@ pub struct GitCheckoutFile {
     pub head_blob: Option<String>,
     pub index_blob: Option<String>,
     pub worktree_blob: Option<String>,
+    /// Whether the three blobs were looked up at all. Without it a skipped
+    /// lookup and a blob that genuinely does not exist are both `None`, and a
+    /// reader cannot tell "absent" from "never asked".
+    pub blobs_inspected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,6 +255,7 @@ pub fn inspect_git_checkout_coherence(
                 head_blob,
                 index_blob,
                 worktree_blob,
+                blobs_inspected: true,
             });
         }
         if all_match && !candidate_files.is_empty() {
@@ -270,9 +275,22 @@ pub fn inspect_git_checkout_coherence(
         });
     }
 
+    let mut inspected = 0usize;
     let files = status_entries
         .into_iter()
         .map(|entry| {
+            if !blobs_are_worth_asking(&entry, inspected) {
+                return Ok(GitCheckoutFile {
+                    path: entry.path,
+                    index_status: entry.index_status,
+                    worktree_status: entry.worktree_status,
+                    head_blob: None,
+                    index_blob: None,
+                    worktree_blob: None,
+                    blobs_inspected: false,
+                });
+            }
+            inspected += 1;
             let head_blob = tree_blob(&repo_root, "HEAD", &entry.path)?;
             let index_blob = index_blob(&repo_root, &entry.path)?;
             let worktree_blob = worktree_blob(&repo_root, &entry.path)?;
@@ -283,6 +301,7 @@ pub fn inspect_git_checkout_coherence(
                 head_blob,
                 index_blob,
                 worktree_blob,
+                blobs_inspected: true,
             })
         })
         .collect::<Result<Vec<_>, GitDeliveryError>>()?;
@@ -429,6 +448,22 @@ fn git_is_ancestor(repo: &str, ancestor: &str, descendant: &str) -> Result<bool,
             message: error.to_string().into_boxed_str(),
         })?;
     Ok(output.status.success())
+}
+
+/// How many files in one checkout get their blobs looked up.
+///
+/// Every inspected file costs three git spawns, and the report renders a count
+/// plus the first ten entries -- so blobs past this were collected and never
+/// read. Uncapped, one `aimux doctor versions` over a monorepo with 35k
+/// untracked files cost ~105k spawns and held the daemon's runtime lock for
+/// around 26 minutes, which read as a dead daemon.
+pub const MAX_COHERENCE_FILE_BLOBS: usize = 25;
+
+/// An untracked path is in neither HEAD nor the index, so both lookups spawn
+/// git to be told `None`, and its worktree hash answers nothing the status
+/// characters have not already said.
+fn blobs_are_worth_asking(entry: &GitStatusEntry, inspected: usize) -> bool {
+    entry.index_status != '?' && inspected < MAX_COHERENCE_FILE_BLOBS
 }
 
 fn tree_blob(repo: &str, treeish: &str, path: &str) -> Result<Option<String>, GitDeliveryError> {
