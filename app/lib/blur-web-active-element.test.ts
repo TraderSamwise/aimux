@@ -11,6 +11,11 @@ vi.mock("react-native", () => ({
 }));
 
 import { blurWebActiveElement } from "./blur-web-active-element";
+import {
+  chatKeyboardIntent,
+  recordComposerFocusIntent,
+  resetChatKeyboardIntent,
+} from "./chat-keyboard-intent";
 
 describe("blurWebActiveElement", () => {
   beforeEach(() => {
@@ -43,5 +48,24 @@ describe("blurWebActiveElement", () => {
 
     expect(blur).toHaveBeenCalledTimes(1);
     expect(mocks.dismiss).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Every programmatic dismissal goes through here, and the one that matters is
+ * the sidebar's: it puts the keyboard away and THEN navigates, so the switch
+ * that should carry the keyboard forward is itself a blur.
+ */
+describe("a dismissal nobody asked for", () => {
+  beforeEach(() => {
+    mocks.platform.OS = "ios";
+    resetChatKeyboardIntent();
+  });
+
+  it("does not read as the reader putting the keyboard away", () => {
+    recordComposerFocusIntent(true);
+    blurWebActiveElement();
+    recordComposerFocusIntent(false);
+    expect(chatKeyboardIntent()).toBe(true);
   });
 });

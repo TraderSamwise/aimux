@@ -29,6 +29,10 @@ type Memory = { previouslyOpen: boolean; restorable: boolean };
  * `restorable` is recorded at the dismissal, not re-measured at the close --
  * by then the keyboard is already gone, so the only honest answer to "was it
  * visible before?" is the one taken while it still was.
+ *
+ * Deliberately its own memory rather than `chatKeyboardIntent`, which expires:
+ * the drawer is an interruption, and coming back from one restores what it
+ * interrupted however long the reader spent in there.
  */
 export function actOnSidebarKeyboard(
   state: SidebarKeyboardState,

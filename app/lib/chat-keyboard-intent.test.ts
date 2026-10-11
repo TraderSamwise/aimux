@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  CHAT_KEYBOARD_INTENT_TTL_MS,
   PROGRAMMATIC_BLUR_WINDOW_MS,
   chatKeyboardIntent,
   recordChatKeyboardHidden,
@@ -84,6 +85,31 @@ describe("what the reader last did with the keyboard", () => {
     recordComposerFocusIntent(true, { now: 1_050 });
     recordComposerFocusIntent(false, { now: 1_060 });
     expect(chatKeyboardIntent()).toBe(false);
+  });
+});
+
+describe("how long the memory speaks for", () => {
+  // Every way out of a chat is a programmatic dismissal, so nothing else ever
+  // clears this. Without a bound, opening a plan, reading it and coming back
+  // raises a keyboard the reader stopped thinking about minutes ago.
+  it("forgets a want that is no longer about what they were just doing", () => {
+    recordComposerFocusIntent(true, { now: 1_000 });
+    expect(chatKeyboardIntent(1_001 + CHAT_KEYBOARD_INTENT_TTL_MS)).toBe(false);
+  });
+
+  it("still speaks for a switch made at the edge of the window", () => {
+    recordComposerFocusIntent(true, { now: 1_000 });
+    expect(chatKeyboardIntent(1_000 + CHAT_KEYBOARD_INTENT_TTL_MS)).toBe(true);
+  });
+
+  // Carrying the keyboard focuses the next composer, which records a fresh
+  // want -- so the window rolls and switching chats all afternoon keeps
+  // working. Pinned because an absolute stamp would not do this.
+  it("rolls forward each time the keyboard is carried", () => {
+    const beyond = 2 * CHAT_KEYBOARD_INTENT_TTL_MS;
+    recordComposerFocusIntent(true, { now: 1_000 });
+    recordComposerFocusIntent(true, { now: 1_000 + CHAT_KEYBOARD_INTENT_TTL_MS });
+    expect(chatKeyboardIntent(1_000 + beyond)).toBe(true);
   });
 });
 

@@ -6,8 +6,17 @@
  * is the memory of what you were doing a moment ago, and it should die with
  * the process.
  */
-let wantsKeyboard = false;
+let wantsKeyboardAt: number | null = null;
 let programmaticBlurAt: number | null = null;
+
+/**
+ * How long "a moment ago" lasts. Every way out of a chat is a programmatic
+ * dismissal, so without a bound the memory never expires: open a plan, read
+ * it, come back a minute later and the keyboard returns unasked. Each carry
+ * re-focuses the composer, which re-arms this, so switching chats all
+ * afternoon keeps working.
+ */
+export const CHAT_KEYBOARD_INTENT_TTL_MS = 15_000;
 
 /**
  * How long a programmatic blur speaks for. Every one of them is immediately
@@ -42,7 +51,7 @@ export function recordComposerFocusIntent(
     // Asked here, not when the next chat opens: by then the keyboard has been
     // dismissed, occlusion measures zero, and every device looks like it has
     // a hardware keyboard.
-    wantsKeyboard = !hasHardwareKeyboard;
+    wantsKeyboardAt = hasHardwareKeyboard ? null : now;
     programmaticBlurAt = null;
     return;
   }
@@ -50,7 +59,7 @@ export function recordComposerFocusIntent(
   if (programmaticBlurAt !== null && now - programmaticBlurAt <= PROGRAMMATIC_BLUR_WINDOW_MS) {
     return;
   }
-  wantsKeyboard = false;
+  wantsKeyboardAt = null;
 }
 
 /**
@@ -64,12 +73,13 @@ export function recordChatKeyboardHidden(
   recordComposerFocusIntent(false, options);
 }
 
-export function chatKeyboardIntent(): boolean {
-  return wantsKeyboard;
+export function chatKeyboardIntent(now = Date.now()): boolean {
+  if (wantsKeyboardAt === null) return false;
+  return now - wantsKeyboardAt <= CHAT_KEYBOARD_INTENT_TTL_MS;
 }
 
 export function resetChatKeyboardIntent(): void {
-  wantsKeyboard = false;
+  wantsKeyboardAt = null;
   programmaticBlurAt = null;
 }
 

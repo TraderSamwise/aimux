@@ -77,6 +77,13 @@ import { agentActivityLabel, shouldShimmerAgentActivityLabel } from "@/lib/activ
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import { registerChatComposerFocus } from "@/lib/chat-composer-focus";
 import {
+  chatKeyboardIntent,
+  markProgrammaticComposerBlur,
+  recordChatKeyboardHidden,
+  recordComposerFocusIntent,
+  shouldFocusComposerOnOpen,
+} from "@/lib/chat-keyboard-intent";
+import {
   createShareInvite,
   getShare,
   leaveShare,
@@ -655,6 +662,7 @@ export default function ChatScreen() {
   const chatViewportRef = useRef<ChatSessionViewportHandle | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
   const composerFocusedRef = useRef(false);
+  const screenFocusedRef = useRef(false);
   const nativeChatSendRef = useRef<() => void>(() => {});
   const nativeChatInterruptRef = useRef<() => void>(() => {});
   const routeNotificationLocalReadKeyRef = useRef<string | null>(null);
@@ -758,7 +766,13 @@ export default function ChatScreen() {
     setPendingComposerAck(null);
     setAcceptedComposerMessages([]);
     setSendBusy(false);
-    composerInputRef.current?.blur();
+    // The draft key resolves mid-mount, so this often runs after the new chat
+    // has already taken the carried keyboard -- blurring then would drop the
+    // very keyboard being carried. Leave it up when that is what was asked.
+    if (!chatKeyboardIntent()) {
+      markProgrammaticComposerBlur();
+      composerInputRef.current?.blur();
+    }
     sendBusyRef.current = false;
     setSendError(null);
   }, [composerDraftKey, jotaiStore]);
@@ -1628,24 +1642,44 @@ export default function ChatScreen() {
   }, [canUseOwnerControls, handleInterrupt]);
 
   // The sidebar takes this keyboard away when the drawer opens and owes it
-  // back when the drawer closes. Registered rather than called directly,
-  // because closing the drawer by tapping an agent navigates too, so the
-  // composer owed the keyboard is often the one mounting next.
+  // back when the drawer closes -- a round trip on THIS screen, where no focus
+  // effect runs, so it needs its own delivery. The focus effect below covers
+  // the other direction, a chat that is only now mounting. Overlapping on the
+  // tap that both closes the drawer and navigates is harmless: both land on
+  // one idempotent `focus()`.
   useEffect(() => registerChatComposerFocus(() => composerInputRef.current?.focus()), []);
 
   useFocusEffect(
     useCallback(() => {
-      if (Platform.OS === "web" || !sessionId) return undefined;
-      if (!hasHardwareKeyboard || !chatViewportKey) return undefined;
+      screenFocusedRef.current = true;
+      if (Platform.OS === "web" || !sessionId) {
+        return () => {
+          screenFocusedRef.current = false;
+        };
+      }
+      // A hardware keyboard always takes the composer; a soft one only when
+      // that is what the reader was doing in the chat they came from.
+      const wanted =
+        hasHardwareKeyboard ||
+        shouldFocusComposerOnOpen({
+          hasComposer: showComposerFooter,
+          intent: chatKeyboardIntent(),
+        });
+      if (!wanted) {
+        return () => {
+          screenFocusedRef.current = false;
+        };
+      }
       let active = true;
       const task = InteractionManager.runAfterInteractions(() => {
         if (active) composerInputRef.current?.focus();
       });
       return () => {
+        screenFocusedRef.current = false;
         active = false;
         task.cancel();
       };
-    }, [chatViewportKey, hasHardwareKeyboard, sessionId]),
+    }, [hasHardwareKeyboard, sessionId, showComposerFooter]),
   );
 
   useFocusEffect(
@@ -1740,14 +1774,30 @@ export default function ChatScreen() {
     [handleComposerKeyboardEvent],
   );
 
+  // Android's back gesture puts the keyboard away with the composer still
+  // focused, so `onBlur` never fires. The falling edge is the only sign.
+  const keyboardVisibleRef = useRef(keyboardVisible);
+  useEffect(() => {
+    const wasVisible = keyboardVisibleRef.current;
+    keyboardVisibleRef.current = keyboardVisible;
+    if (!wasVisible || keyboardVisible) return;
+    recordChatKeyboardHidden({
+      screenFocused: screenFocusedRef.current && isAppVisible(),
+    });
+  }, [keyboardVisible]);
+
   const setComposerNativeFocus = useCallback(
     (focused: boolean, updateFocusShell: () => void) => {
       composerFocusedRef.current = focused;
+      recordComposerFocusIntent(focused, {
+        hasHardwareKeyboard,
+        screenFocused: screenFocusedRef.current && isAppVisible(),
+      });
       setComposerFocused((current) => (current === focused ? current : focused));
       setNativeChatComposerFocused(focused);
       updateFocusShell();
     },
-    [setComposerFocused],
+    [hasHardwareKeyboard, setComposerFocused],
   );
 
   useEffect(() => {
