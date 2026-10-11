@@ -239,7 +239,9 @@ pub fn inspect_git_checkout_coherence(
     // A run shorter than every entry means some entry already disqualified the
     // checkout, exactly as the per-entry break did -- and then there is
     // nothing worth asking git about either.
-    let comparable_explains_everything = comparable.len() == status_entries.len();
+    // Nothing to compare against means nothing worth asking git either.
+    let comparable_explains_everything =
+        comparable.len() == status_entries.len() && !stale_candidates.is_empty();
     let comparable_paths: Vec<String> = if comparable_explains_everything {
         comparable.iter().map(|entry| entry.path.clone()).collect()
     } else {

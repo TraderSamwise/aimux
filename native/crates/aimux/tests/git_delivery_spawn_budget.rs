@@ -59,6 +59,20 @@ fn untracked_files_are_never_fed_to_a_batch() {
         batched.contains("tracked-0.txt"),
         "sanity: the tracked files did go down the pipe, got {batched:?}"
     );
+    // Three batch calls each send every tracked path, so a log holding only
+    // one payload's worth means the capture is truncating rather than
+    // appending -- which is what `tee` without -a does where /dev/fd/3
+    // resolves back to the file. Then this test would be watching one batch
+    // and calling it all of them.
+    let lines = batched
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+    assert!(
+        lines >= SMALL * 2,
+        "only {lines} paths were captured for {SMALL} files across three batch calls; \
+         the stdin capture is truncating, so this gate sees less than it claims"
+    );
     assert!(
         !batched.contains("untracked-"),
         "an untracked path was handed to a batch call: {batched}"
@@ -164,7 +178,7 @@ impl GitSpy {
                 "#!/bin/sh\n\
                  printf '%s\\n' \"$*\" >> \"{log}\"\n\
                  case \"$*\" in\n\
-                 *--stdin-paths*|*--batch-check*) exec 3>>\"{stdin}\"; tee /dev/fd/3 | \"{git}\" \"$@\" ;;\n\
+                 *--stdin-paths*|*--batch-check*) exec 3>>\"{stdin}\"; tee -a /dev/fd/3 | \"{git}\" \"$@\" ;;\n\
                  *) exec \"{git}\" \"$@\" ;;\n\
                  esac\n",
                 log = log.display(),
