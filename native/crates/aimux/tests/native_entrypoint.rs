@@ -74,6 +74,7 @@ fn root_version_and_help_stay_native_even_when_node_fallback_is_configured() {
     assert!(stdout.contains("doctor"));
     for command in [
         "  spawn",
+        "  start",
         "  ui",
         "  logs",
         "  metadata",
@@ -694,6 +695,21 @@ fn domain11_cli_command_help_is_command_scoped() {
         (
             vec!["stop", "--help"],
             "Usage: aimux stop [sessionId] [options]",
+        ),
+        (
+            vec!["start", "--help"],
+            "Usage: aimux start <sessionId> [options]",
+        ),
+        // The effect, not just the usage: focusing moves the active window for
+        // every client on that tmux session, which a reader needs before they
+        // run it.
+        (
+            vec!["start", "--help"],
+            "moves the active window for every client attached to that session",
+        ),
+        (
+            vec!["resume", "--help"],
+            "Usage: aimux start <sessionId> [options]",
         ),
     ]
     .into_iter()

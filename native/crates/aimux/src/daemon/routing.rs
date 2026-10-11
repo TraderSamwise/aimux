@@ -292,6 +292,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.lifecycle_fork_text,
     crate::core_command_contract::CORE_API_ROUTES.lifecycle_kill_text,
     crate::core_command_contract::CORE_API_ROUTES.lifecycle_spawn_text,
+    crate::core_command_contract::CORE_API_ROUTES.lifecycle_start_text,
     crate::core_command_contract::CORE_API_ROUTES.lifecycle_stop_text,
     crate::native_cli_dispatch::CORE_SERVICE_REMOVE_TEXT_ROUTE,
     crate::core_command_contract::CORE_API_ROUTES.logs_clear_text,

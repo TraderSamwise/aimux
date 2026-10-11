@@ -410,7 +410,7 @@ fn has_supervisor_group(input: &DashboardRenderInput<'_>) -> bool {
         .any(|group| group.kind == DashboardNavigationGroupKind::Supervisor)
 }
 
-fn dashboard_enter_verb(
+pub(super) fn dashboard_enter_verb(
     session: Option<&DashboardSession>,
     service: Option<&DashboardService>,
 ) -> &'static str {
@@ -420,23 +420,9 @@ fn dashboard_enter_verb(
     let Some(session) = session else {
         return "focus";
     };
-    match session.status {
-        crate::dashboard_model::SessionStatus::Offline
-        | crate::dashboard_model::SessionStatus::Exited => {
-            if session.restore_state.as_deref().or_else(|| {
-                session
-                    .extra
-                    .get("restoreState")
-                    .and_then(serde_json::Value::as_str)
-            }) == Some("blocked")
-            {
-                "unavailable"
-            } else {
-                "resume"
-            }
-        }
-        _ => "focus",
-    }
+    crate::agent_enter_decision::agent_enter_verb(&crate::dashboard_model::agent_enter_state(
+        session,
+    ))
 }
 
 fn has_live_scribe(input: &DashboardRenderInput<'_>) -> bool {

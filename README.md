@@ -96,6 +96,7 @@ Common control-plane commands:
 ```bash
 aimux spawn --tool codex --project /path/to/repo
 aimux stop <sessionId> --project /path/to/repo
+aimux start <sessionId> --project /path/to/repo
 aimux kill <sessionId> --project /path/to/repo
 aimux graveyard resurrect <id> --project /path/to/repo
 aimux task assign "Audit the reconnect path" --project /path/to/repo

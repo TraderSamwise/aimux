@@ -68,6 +68,7 @@ pub enum CoreCliOperation {
     LifecycleSpawn,
     ServiceCreate,
     ServiceRemove,
+    LifecycleStart,
     LifecycleStop,
     LifecycleKill,
     LifecycleFork,
@@ -892,6 +893,31 @@ where
                     CoreCliFallback::None,
                 )
             }
+        }
+        ("start" | "resume", _) => {
+            let command = args[0].as_str();
+            let parsed = parse_core_lifecycle_status_args(&args, command).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: format!("error: invalid {command} arguments"),
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::LifecycleStart,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.lifecycle_start_text, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "sessionId": parsed.session_id,
+                    })),
+                },
+                CoreCliFallback::None,
+            )
         }
         ("kill", _) => {
             let parsed = parse_core_lifecycle_status_args(&args, "kill").ok_or_else(|| {

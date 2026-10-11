@@ -397,7 +397,7 @@ fn dashboard_alert_line(alert: &DashboardFooterAlert<'_>) -> String {
 fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterHint<'static>> {
     let selected_session = selected_session(input);
     let selected_service = selected_service(input);
-    let enter_verb = dashboard_enter_verb(selected_session, selected_service);
+    let enter_verb = footer::dashboard_enter_verb(selected_session, selected_service);
     let kill_verb = if selected_service.is_some() {
         Some("stop")
     } else if selected_session.is_some_and(|session| session.status == SessionStatus::Offline) {
@@ -1537,7 +1537,7 @@ fn restore_blocked_chip(session: &DashboardSession) -> String {
     chip(
         &format!(
             "restore blocked: {}",
-            truncate(reason, crate::dashboard_model::RESTORE_REASON_WIDTH)
+            truncate(reason, crate::agent_enter_decision::RESTORE_REASON_WIDTH)
         ),
         ChipTone::Danger,
     )
@@ -2639,29 +2639,6 @@ fn is_project_control_session(session: &DashboardSession) -> bool {
 
 fn is_scribe_session(session: &DashboardSession) -> bool {
     is_dashboard_scribe_session(session)
-}
-
-fn dashboard_enter_verb(
-    session: Option<&DashboardSession>,
-    service: Option<&DashboardService>,
-) -> &'static str {
-    if service.is_some() {
-        return "open";
-    }
-    let Some(session) = session else {
-        return "focus";
-    };
-    if crate::dashboard_model::dashboard_restore_block(session).is_some() {
-        return "unavailable";
-    }
-    if matches!(
-        session.status,
-        SessionStatus::Offline | SessionStatus::Exited
-    ) {
-        "resume"
-    } else {
-        "focus"
-    }
 }
 
 fn worktree_name_branch(name: Option<&str>, branch: Option<&str>) -> String {

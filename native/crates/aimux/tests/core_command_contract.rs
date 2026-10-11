@@ -36,6 +36,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("lifecycleForkText", "/core/lifecycle/fork-text"),
         ("lifecycleKillText", "/core/lifecycle/kill-text"),
         ("lifecycleSpawnText", "/core/lifecycle/spawn-text"),
+        ("lifecycleStartText", "/core/lifecycle/start-text"),
         ("lifecycleStopText", "/core/lifecycle/stop-text"),
         ("loopAddText", "/core/loop/add-text"),
         ("loopBlockText", "/core/loop/block-text"),

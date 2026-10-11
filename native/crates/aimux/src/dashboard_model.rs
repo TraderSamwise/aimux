@@ -281,49 +281,47 @@ pub fn agent_display_name(session: &DashboardSession) -> String {
     .short_name()
 }
 
-/// How much of a restore reason a surface shows. The row chip settled on this
-/// first; the refusal uses the same number so the two read alike.
-pub const RESTORE_REASON_WIDTH: usize = 42;
+/// What the shared Enter decision reads off a session, in one place, so a
+/// third caller cannot quietly disagree about a field.
+pub fn agent_enter_state(
+    session: &DashboardSession,
+) -> crate::agent_enter_decision::AgentEnterState<'_> {
+    crate::agent_enter_decision::AgentEnterState {
+        session_id: session.id.as_str(),
+        status: agent_enter_status(session),
+        tmux_window_id: session.tmux_window_id.as_deref(),
+        restore_state: session.restore_state.as_deref(),
+        restore_blocked_reason: session.restore_blocked_reason.as_deref(),
+        pending: session.pending,
+        pending_action: session.pending_action.as_deref(),
+    }
+}
 
-/// Why Enter cannot resume this session, if it cannot.
-///
-/// Both the footer hint and the action plan need this answer, and only the
-/// footer had it: it rendered `unavailable` from a blocked restore state while
-/// Enter dispatched the resume anyway. The resume then failed, nothing said
-/// so, and the window-open path fell back to window index 0 of the project's
-/// shared tmux session -- so pressing Enter on an agent that could not be
-/// resumed silently moved the user off their own dashboard onto another one.
-///
-/// Derived once here rather than re-decided next to each renderer, per
-/// AGENTS.md "One Answer, Many Surfaces".
+/// Why Enter cannot resume this session, if it cannot. The rule and its
+/// wording live in [`crate::agent_enter_decision::agent_restore_block`]; this
+/// is the name the controller and the renderer already pass around.
 pub fn dashboard_restore_block(session: &DashboardSession) -> Option<String> {
-    if !matches!(
-        session.status,
-        SessionStatus::Offline | SessionStatus::Exited
-    ) {
-        // A live-looking session with no tmux window is a stale record, and
-        // resuming it is the recovery. Only a session that is actually down
-        // can be refused here.
-        return None;
-    }
-    if session.restore_state.as_deref() != Some("blocked") {
-        return None;
-    }
-    let label = agent_display_name(session);
-    Some(
-        match session
-            .restore_blocked_reason
-            .as_deref()
-            .map(str::trim)
-            .filter(|reason| !reason.is_empty())
-        {
-            Some(reason) => format!(
-                "{label} cannot be resumed: {}",
-                crate::tui_render::text::truncate(reason, RESTORE_REASON_WIDTH)
-            ),
-            None => format!("{label} cannot be resumed"),
-        },
+    crate::agent_enter_decision::agent_restore_block(
+        agent_enter_status(session),
+        session.restore_state.as_deref(),
+        session.restore_blocked_reason.as_deref(),
+        || agent_display_name(session),
     )
+}
+
+/// Live or down, named once so the refusal and the focus branch cannot answer
+/// this differently for the same session.
+pub fn agent_enter_status(
+    session: &DashboardSession,
+) -> crate::agent_enter_decision::AgentEnterStatus {
+    match session.status {
+        SessionStatus::Running | SessionStatus::Idle | SessionStatus::Waiting => {
+            crate::agent_enter_decision::AgentEnterStatus::Live
+        }
+        SessionStatus::Offline | SessionStatus::Exited => {
+            crate::agent_enter_decision::AgentEnterStatus::Down
+        }
+    }
 }
 
 pub fn is_dashboard_overseer_session(session: &DashboardSession) -> bool {
@@ -730,6 +728,21 @@ pub struct AgentRestoreSession {
 }
 
 impl DesktopStateSnapshot {
+    /// Every list that holds a session, because each one holds agents the
+    /// others do not: teammates are disjoint from the flat list, and the
+    /// dashboard's picker runs the same Enter on them.
+    pub fn session(&self, session_id: &str) -> Option<&DashboardSession> {
+        self.sessions
+            .iter()
+            .chain(self.teammates.iter())
+            .chain(
+                self.worktree_groups
+                    .iter()
+                    .flat_map(|group| group.sessions.iter()),
+            )
+            .find(|session| session.id == session_id)
+    }
+
     pub fn focused_worktree(&self, focused_worktree_path: Option<&str>) -> Option<&WorktreeGroup> {
         focused_worktree_path.and_then(|path| {
             self.worktree_groups

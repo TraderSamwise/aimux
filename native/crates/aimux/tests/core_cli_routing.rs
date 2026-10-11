@@ -24,6 +24,7 @@ use aimux::core_cli_routing::{
     parse_core_team_args, parse_core_thread_args, parse_core_thread_args_result,
     parse_core_worktree_args,
 };
+use aimux::native_cli_dispatch::is_known_aimux_command_word;
 
 #[test]
 fn core_command_args_matches_node_prefix_and_logging_normalization() {
@@ -564,6 +565,24 @@ fn lifecycle_parsers_match_spawn_stop_kill_and_fork_forms() {
         .expect("kill args");
     assert_eq!(kill.session_id, "claude-1");
     assert!(kill.json);
+
+    // `start` reuses the lifecycle parser, and `resume` is the same verb under
+    // the word the route and the dashboard already use.
+    for command in ["start", "resume"] {
+        let parsed = parse_core_lifecycle_status_args(&[command, "codex-1", "--json"], command)
+            .unwrap_or_else(|| panic!("{command} args"));
+        assert_eq!(parsed.session_id, "codex-1");
+        assert!(parsed.json);
+        assert!(is_core_cli_command(&[command, "codex-1"]), "{command}");
+        assert!(
+            is_known_aimux_command_word(command),
+            "{command} must be a command word, not a guessed tool"
+        );
+        assert!(
+            !is_core_cli_command(&[command]),
+            "{command} without an agent is not a command this can route"
+        );
+    }
 
     let fork = parse_core_lifecycle_fork_args(&[
         "fork",

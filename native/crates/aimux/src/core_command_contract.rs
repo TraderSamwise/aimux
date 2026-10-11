@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    115,
+    116,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -63,6 +63,7 @@ define_string_contract!(
         lifecycle_fork_text => ("lifecycleForkText", "/core/lifecycle/fork-text"),
         lifecycle_kill_text => ("lifecycleKillText", "/core/lifecycle/kill-text"),
         lifecycle_spawn_text => ("lifecycleSpawnText", "/core/lifecycle/spawn-text"),
+        lifecycle_start_text => ("lifecycleStartText", "/core/lifecycle/start-text"),
         lifecycle_stop_text => ("lifecycleStopText", "/core/lifecycle/stop-text"),
         loop_add_text => ("loopAddText", "/core/loop/add-text"),
         loop_block_text => ("loopBlockText", "/core/loop/block-text"),

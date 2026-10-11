@@ -2147,6 +2147,26 @@ fn lifecycle_commands_plan_native_text_routes() {
             body: Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
         }
     );
+    // Both words plan the same call: `resume` is the route's own name for it
+    // and `start` is the one the footer puts on the key.
+    for command in ["start", "resume"] {
+        let plan = classify_core_cli(&[command, "codex-1", "--json"], &context(true, true))
+            .unwrap_or_else(|_| panic!("{command} plan"));
+        assert_eq!(
+            plan.operation,
+            CoreCliOperation::LifecycleStart,
+            "{command}"
+        );
+        assert_eq!(
+            plan.action,
+            CoreCliAction::TextRoute {
+                path: "/core/lifecycle/start-text?json=1".into(),
+                body: Some(json!({ "project": "/repo", "sessionId": "codex-1" })),
+            },
+            "{command}"
+        );
+    }
+
     let project_stop =
         classify_core_cli(&["stop", "--json"], &context(true, true)).expect("project stop plan");
     assert_eq!(project_stop.operation, CoreCliOperation::HostStop);

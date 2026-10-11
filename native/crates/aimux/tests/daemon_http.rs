@@ -153,6 +153,9 @@ fn text_routes_and_auth_routes_are_grouped_for_daemon_split() {
     assert!(local_cli_text_routes().contains(&CORE_API_ROUTES.task_cancel_text));
     assert!(local_cli_text_routes().contains(&CORE_API_ROUTES.host_agent_stream_text));
     assert!(local_cli_text_routes().contains(&CORE_API_ROUTES.worktree_resurrect_text));
+    // Starting an agent is a local-CLI verb: this list is the gate that 403s
+    // it for a remote actor or any request carrying an Origin.
+    assert!(local_cli_text_routes().contains(&CORE_API_ROUTES.lifecycle_start_text));
 }
 
 #[test]

@@ -88,6 +88,53 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
                     }]
                 }),
             ),
+            project_routes::DESKTOP_STATE => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({
+                    "ok": true,
+                    "sessions": [
+                        {
+                            "index": 0,
+                            "id": "claude-1",
+                            "command": "claude",
+                            "status": "running",
+                            "active": true,
+                            "tmuxWindowId": "@1"
+                        },
+                        {
+                            "index": 1,
+                            "id": "codex-offline",
+                            "command": "codex",
+                            "status": "offline",
+                            "active": false,
+                            "restoreState": "ready"
+                        },
+                        {
+                            "index": 2,
+                            "id": "codex-blocked",
+                            "command": "codex",
+                            "status": "offline",
+                            "active": false,
+                            "restoreState": "blocked",
+                            "restoreBlockedReason": "missing exact resumable backend session id"
+                        }
+                    ],
+                    "teammates": [
+                        {
+                            "index": 3,
+                            "id": "claude-teammate",
+                            "command": "claude",
+                            "status": "offline",
+                            "active": false,
+                            "restoreState": "ready"
+                        }
+                    ],
+                    "services": [],
+                    "worktrees": [],
+                    "worktreeGroups": [],
+                    "mainCheckoutInfo": { "name": "repo", "branch": "master" }
+                }),
+            ),
             _ => ProjectServiceJsonResult::error(DaemonRouteResponse::text(404, "not found\n")),
         }
     }
@@ -131,6 +178,14 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             project_routes::services::REMOVE => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "serviceId": body["serviceId"].clone(), "status": "removed" }),
+            ),
+            project_routes::controls::FOCUS_WINDOW => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({ "ok": true, "windowId": body["windowId"].clone() }),
+            ),
+            project_routes::agents::RESUME => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({ "sessionId": body["sessionId"].clone(), "status": "running" }),
             ),
             project_routes::agents::STOP => ProjectServiceJsonResult::ok(
                 "/repo",
@@ -204,6 +259,108 @@ fn json_body(response: DaemonRouteResponse) -> Value {
         DaemonResponseBody::Json(value) => value,
         other => panic!("expected json body, got {other:?}"),
     }
+}
+
+/// `aimux start` is the CLI's Enter key: the same snapshot, the same decision.
+/// A live agent gets its window focused, a resumable one gets resumed, and one
+/// whose restore is blocked is refused with the reason the dashboard shows.
+#[test]
+fn start_route_focuses_resumes_and_refuses_like_the_dashboard() {
+    let mut runtime = FakeAgentRuntime::default();
+
+    let focused = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.lifecycle_start_text,
+        Some(&json!({ "project": "/repo", "sessionId": "claude-1" })),
+    )
+    .expect("start route");
+    assert_eq!(text_body(focused), "focused claude-1\n");
+    let focus_call = runtime.calls.last().expect("focus call");
+    assert_eq!(
+        focus_call.route_path,
+        project_routes::controls::FOCUS_WINDOW
+    );
+    assert_eq!(
+        focus_call.ensure_project,
+        Some(false),
+        "the mutation skips ensure; the snapshot read is what may start a service"
+    );
+    assert_eq!(
+        runtime.calls.len(),
+        2,
+        "one read and one mutation, not a second write nobody asked for"
+    );
+    assert_eq!(
+        focus_call.body.as_ref().unwrap(),
+        &json!({ "windowId": "@1", "focus": true })
+    );
+
+    let started = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.lifecycle_start_text,
+        Some(&json!({ "project": "/repo", "sessionId": "codex-offline" })),
+    )
+    .expect("start route");
+    assert_eq!(text_body(started), "started codex-offline\n");
+    let resume_call = runtime.calls.last().expect("resume call");
+    assert_eq!(resume_call.route_path, project_routes::agents::RESUME);
+    assert_eq!(
+        resume_call.body.as_ref().unwrap(),
+        &json!({ "sessionId": "codex-offline" })
+    );
+
+    let refused = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.lifecycle_start_text,
+        Some(&json!({ "project": "/repo", "sessionId": "codex-blocked" })),
+    )
+    .expect("start route");
+    assert_eq!(refused.status, 409);
+    assert_eq!(
+        text_body(refused),
+        "Error: codex cannot be resumed: missing exact resumable backend session id\n",
+        "the refusal the dashboard shows, not a resume that fails later"
+    );
+    // A teammate is in its own list, and the dashboard's picker runs this same
+    // decision on one. Walking only the flat list answered 404 for an agent
+    // the TUI starts.
+    let teammate = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.lifecycle_start_text,
+        Some(&json!({ "project": "/repo", "sessionId": "claude-teammate" })),
+    )
+    .expect("start route");
+    assert_eq!(text_body(teammate), "started claude-teammate\n");
+    let teammate_call = runtime.calls.last().expect("teammate resume call");
+    assert_eq!(teammate_call.route_path, project_routes::agents::RESUME);
+    assert_eq!(
+        teammate_call.body.as_ref().unwrap(),
+        &json!({ "sessionId": "claude-teammate" }),
+        "the same route the dashboard's picker posts for a teammate"
+    );
+
+    let calls_before_missing = runtime.calls.len();
+    let missing = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.lifecycle_start_text,
+        Some(&json!({ "project": "/repo", "sessionId": "nobody" })),
+    )
+    .expect("start route");
+    assert_eq!(missing.status, 404);
+    assert_eq!(
+        text_body(missing),
+        "Error: no startable agent nobody; a graveyarded one comes back with `aimux graveyard resurrect`, or with its worktree if that went too\n"
+    );
+    assert_eq!(
+        runtime.calls.len(),
+        calls_before_missing + 1,
+        "it reads the snapshot and stops there, taking no lifecycle permit"
+    );
 }
 
 #[test]
