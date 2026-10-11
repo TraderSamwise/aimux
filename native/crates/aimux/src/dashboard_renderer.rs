@@ -1537,7 +1537,7 @@ fn restore_blocked_chip(session: &DashboardSession) -> String {
     chip(
         &format!(
             "restore blocked: {}",
-            truncate(reason, crate::dashboard_model::RESTORE_REASON_WIDTH)
+            truncate(reason, crate::agent_enter_decision::RESTORE_REASON_WIDTH)
         ),
         ChipTone::Danger,
     )

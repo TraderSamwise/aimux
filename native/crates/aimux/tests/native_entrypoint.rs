@@ -696,6 +696,14 @@ fn domain11_cli_command_help_is_command_scoped() {
             vec!["stop", "--help"],
             "Usage: aimux stop [sessionId] [options]",
         ),
+        (
+            vec!["start", "--help"],
+            "Usage: aimux start <sessionId> [options]",
+        ),
+        (
+            vec!["resume", "--help"],
+            "Usage: aimux start <sessionId> [options]",
+        ),
     ]
     .into_iter()
     .enumerate()

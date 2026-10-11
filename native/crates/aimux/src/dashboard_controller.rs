@@ -3697,16 +3697,7 @@ fn find_session<'a>(
     snapshot: &'a DesktopStateSnapshot,
     session_id: &str,
 ) -> Option<&'a DashboardSession> {
-    snapshot
-        .sessions
-        .iter()
-        .chain(
-            snapshot
-                .worktree_groups
-                .iter()
-                .flat_map(|group| group.sessions.iter()),
-        )
-        .find(|session| session.id == session_id)
+    snapshot.session(session_id)
 }
 
 fn find_service<'a>(

@@ -451,6 +451,57 @@ fn string_array_body_field(body: Option<&Value>, key: &str) -> Option<Vec<String
     (!strings.is_empty()).then_some(strings)
 }
 
+/// Resume without a decision, for an agent the dashboard's view does not
+/// carry. The project service owns whether it exists and whether it can start.
+fn start_by_resuming(
+    runtime: &mut impl DaemonAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    project: &str,
+    session_id: &str,
+) -> DaemonRouteResponse {
+    post_start_action(
+        runtime,
+        route_url,
+        project,
+        session_id,
+        project_routes::agents::RESUME,
+        json!({ "sessionId": session_id }),
+        "resume",
+    )
+}
+
+/// The call and the line it prints, so the two cannot describe different acts.
+fn post_start_action(
+    runtime: &mut impl DaemonAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    project: &str,
+    session_id: &str,
+    route_path: &str,
+    request: Value,
+    action: &str,
+) -> DaemonRouteResponse {
+    let project_root = match unwrap_project_result(runtime.post_project_service_json(
+        project,
+        route_path,
+        request,
+        ProjectServicePostOptions::skip_ensure(),
+    )) {
+        Ok((_, project_root)) => project_root,
+        Err(response) => return response,
+    };
+    let payload = json!({
+        "ok": true,
+        "projectRoot": project_root,
+        "sessionId": session_id,
+        "action": action,
+    });
+    text_or_json_lines(
+        route_url,
+        payload.clone(),
+        &render_core_lifecycle_start_lines(&payload),
+    )
+}
+
 /// Start an agent the way Enter starts it, from the snapshot the dashboard
 /// itself reads, so the two cannot answer differently about one agent.
 pub fn lifecycle_start_text_route(
@@ -466,7 +517,7 @@ pub fn lifecycle_start_text_route(
         Ok(session_id) => session_id,
         Err(response) => return response,
     };
-    let (snapshot_json, project_root) = match unwrap_project_result(
+    let (snapshot_json, _) = match unwrap_project_result(
         runtime.get_project_service_json(&project, project_routes::DESKTOP_STATE),
     ) {
         Ok(result) => result,
@@ -482,20 +533,13 @@ pub fn lifecycle_start_text_route(
                 );
             }
         };
+    // Absent from the dashboard's view is not absent: that snapshot hides a
+    // session whose status is `error` or `planned`, and resume handles those.
+    // With no decision input, the authority answers instead of this route.
     let Some(session) = snapshot.session(&session_id) else {
-        return text_error(404, format!("Error: no startable agent {session_id}"));
+        return start_by_resuming(runtime, route_url, &project, &session_id);
     };
-    // `pending` itself is the dashboard's local optimistic overlay, which no
-    // payload carries; the published action is the half both surfaces see.
-    let state = crate::agent_enter_decision::AgentEnterState {
-        session_id: session.id.as_str(),
-        status: crate::dashboard_model::agent_enter_status(session),
-        tmux_window_id: session.tmux_window_id.as_deref(),
-        restore_state: session.restore_state.as_deref(),
-        restore_blocked_reason: session.restore_blocked_reason.as_deref(),
-        pending: session.pending || session.pending_action.is_some(),
-        pending_action: session.pending_action.as_deref(),
-    };
+    let state = crate::agent_enter_decision::AgentEnterState::for_session(session);
     let (route_path, request, action) =
         match crate::agent_enter_decision::decide_agent_enter(&state, || {
             crate::dashboard_model::agent_display_name(session)
@@ -514,28 +558,18 @@ pub fn lifecycle_start_text_route(
             ),
             crate::agent_enter_decision::AgentEnterDecision::Resume => (
                 project_routes::agents::RESUME,
-                json!({ "sessionId": session_id }),
+                json!({ "sessionId": session.id }),
                 "resume",
             ),
         };
-    if let Err(response) = unwrap_project_result(runtime.post_project_service_json(
+    post_start_action(
+        runtime,
+        route_url,
         &project,
+        &session_id,
         route_path,
         request,
-        ProjectServicePostOptions::skip_ensure(),
-    )) {
-        return response;
-    }
-    let payload = json!({
-        "ok": true,
-        "projectRoot": project_root,
-        "sessionId": session_id,
-        "action": action,
-    });
-    text_or_json_lines(
-        route_url,
-        payload.clone(),
-        &render_core_lifecycle_start_lines(&payload),
+        action,
     )
 }
 

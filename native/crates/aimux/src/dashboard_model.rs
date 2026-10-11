@@ -281,19 +281,9 @@ pub fn agent_display_name(session: &DashboardSession) -> String {
     .short_name()
 }
 
-pub use crate::agent_enter_decision::RESTORE_REASON_WIDTH;
-
-/// Why Enter cannot resume this session, if it cannot.
-///
-/// Both the footer hint and the action plan need this answer, and only the
-/// footer had it: it rendered `unavailable` from a blocked restore state while
-/// Enter dispatched the resume anyway. The resume then failed, nothing said
-/// so, and the window-open path fell back to window index 0 of the project's
-/// shared tmux session -- so pressing Enter on an agent that could not be
-/// resumed silently moved the user off their own dashboard onto another one.
-///
-/// Derived once here rather than re-decided next to each renderer, per
-/// AGENTS.md "One Answer, Many Surfaces".
+/// Why Enter cannot resume this session, if it cannot. The rule and its
+/// wording live in [`crate::agent_enter_decision::agent_restore_block`]; this
+/// is the name the controller and the renderer already pass around.
 pub fn dashboard_restore_block(session: &DashboardSession) -> Option<String> {
     crate::agent_enter_decision::agent_restore_block(
         agent_enter_status(session),

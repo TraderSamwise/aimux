@@ -513,7 +513,11 @@ pub fn render_core_lifecycle_start_lines(payload: &Value) -> Vec<String> {
     let session_id = js_string(field(payload, "sessionId"));
     match field(payload, "action").and_then(Value::as_str) {
         Some("focus") => vec![format!("focused {session_id}")],
-        _ => vec![format!("started {session_id}")],
+        Some("resume") => vec![format!("started {session_id}")],
+        other => vec![format!(
+            "{} {session_id}",
+            js_string(other.map(Value::from).as_ref())
+        )],
     }
 }
 pub fn render_core_lifecycle_kill_lines(payload: &Value) -> Vec<String> {

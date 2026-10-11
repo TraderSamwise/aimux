@@ -420,15 +420,9 @@ pub(super) fn dashboard_enter_verb(
     let Some(session) = session else {
         return "focus";
     };
-    crate::agent_enter_decision::agent_enter_verb(&crate::agent_enter_decision::AgentEnterState {
-        session_id: session.id.as_str(),
-        status: crate::dashboard_model::agent_enter_status(session),
-        tmux_window_id: session.tmux_window_id.as_deref(),
-        restore_state: session.restore_state.as_deref(),
-        restore_blocked_reason: session.restore_blocked_reason.as_deref(),
-        pending: false,
-        pending_action: None,
-    })
+    crate::agent_enter_decision::agent_enter_verb(
+        &crate::agent_enter_decision::AgentEnterState::for_session(session),
+    )
 }
 
 fn has_live_scribe(input: &DashboardRenderInput<'_>) -> bool {

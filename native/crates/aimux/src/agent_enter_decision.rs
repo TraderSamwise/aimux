@@ -22,6 +22,22 @@ pub struct AgentEnterState<'a> {
     pub pending_action: Option<&'a str>,
 }
 
+impl<'a> AgentEnterState<'a> {
+    /// The one place that says what the decision reads off a session, so a
+    /// third caller cannot quietly disagree about a field.
+    pub fn for_session(session: &'a crate::dashboard_model::DashboardSession) -> Self {
+        Self {
+            session_id: session.id.as_str(),
+            status: crate::dashboard_model::agent_enter_status(session),
+            tmux_window_id: session.tmux_window_id.as_deref(),
+            restore_state: session.restore_state.as_deref(),
+            restore_blocked_reason: session.restore_blocked_reason.as_deref(),
+            pending: session.pending,
+            pending_action: session.pending_action.as_deref(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentEnterDecision {
     /// Work is already in flight on this agent; it will be actionable again.
@@ -81,10 +97,7 @@ pub fn agent_restore_block(
     restore_blocked_reason: Option<&str>,
     label: impl FnOnce() -> String,
 ) -> Option<String> {
-    if status != AgentEnterStatus::Down {
-        return None;
-    }
-    if restore_state != Some("blocked") {
+    if !restore_is_blocked(status, restore_state) {
         return None;
     }
     let label = label();
@@ -106,20 +119,19 @@ pub fn agent_restore_block(
 /// same live/down split the key itself uses. It stays coarser than the action
 /// in one case: a live record with no window reads "focus" and Enter resumes.
 pub fn agent_enter_verb(state: &AgentEnterState<'_>) -> &'static str {
-    if agent_restore_block(
-        state.status,
-        state.restore_state,
-        state.restore_blocked_reason,
-        String::new,
-    )
-    .is_some()
-    {
+    if restore_is_blocked(state.status, state.restore_state) {
         return "unavailable";
     }
     match state.status {
         AgentEnterStatus::Live => "focus",
         AgentEnterStatus::Down => "resume",
     }
+}
+
+/// Blocked is a fact about the session; the sentence that explains it costs a
+/// format and a truncation, which the footer verb must not pay per frame.
+fn restore_is_blocked(status: AgentEnterStatus, restore_state: Option<&str>) -> bool {
+    status == AgentEnterStatus::Down && restore_state == Some("blocked")
 }
 
 /// The same word the row and the card use, rather than the raw action.

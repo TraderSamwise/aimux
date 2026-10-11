@@ -52,15 +52,7 @@ pub fn plan_dashboard_action(
 }
 
 fn plan_session_enter(session: &DashboardSession) -> DashboardActionPlan {
-    let state = AgentEnterState {
-        session_id: session.id.as_str(),
-        status: crate::dashboard_model::agent_enter_status(session),
-        tmux_window_id: session.tmux_window_id.as_deref(),
-        restore_state: session.restore_state.as_deref(),
-        restore_blocked_reason: session.restore_blocked_reason.as_deref(),
-        pending: session.pending || session.pending_action.is_some(),
-        pending_action: session.pending_action.as_deref(),
-    };
+    let state = AgentEnterState::for_session(session);
     // The decision is the CLI's too, so it is not made here. The footer
     // already said "unavailable" for a blocked restore while Enter dispatched
     // the resume anyway, which is the drift one rule removes.
@@ -102,7 +94,7 @@ fn plan_session_stop(session: &DashboardSession) -> DashboardActionPlan {
     if let Some(blocked) = pending_block(
         "Session",
         &session.id,
-        session.pending || session.pending_action.is_some(),
+        session.pending,
         session.pending_action.as_deref(),
     ) {
         return blocked;

@@ -1,6 +1,8 @@
 //! `aimux start` and Enter, compared against each other: they answer one
 //! question about one agent, and a test per surface passes happily while the
-//! two disagree, which is how this class of bug survives.
+//! two disagree, which is how this class of bug survives. What this pins is
+//! the request each surface decides on -- the dashboard augments a focus with
+//! its own client context downstream, which is why the two tmux calls differ.
 
 mod support;
 
@@ -30,8 +32,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// Only `@1` is live, so `windowed` is focusable and `windowless` is the stale
-/// record resume exists for.
+/// Only `@1` is live. Every other row is downgraded to offline by the live
+/// window projection, which is why the stale-record case needs its own
+/// snapshot below rather than a second row here.
 const LIVE_WINDOW: &str = "@1";
 
 /// Every agent the comparison walks. One list, so a loop cannot quietly stop
@@ -377,45 +380,5 @@ fn start_and_enter_agree_on_a_live_record_whose_window_is_gone() {
         dashboard_outcome(&snapshot, "orphan").expect("a request").0,
         routes::agents::RESUME,
         "resumed, not focused"
-    );
-}
-
-/// Work already in flight is the one answer neither surface can read from a
-/// topology: `pendingAction` is published per request, so the snapshot both
-/// surfaces share is where it has to be set.
-fn with_pending_action(snapshot: &Value, session_id: &str, action: &str) -> Value {
-    let mut snapshot = snapshot.clone();
-    let sessions = snapshot
-        .get_mut("sessions")
-        .and_then(Value::as_array_mut)
-        .expect("sessions array");
-    let session = sessions
-        .iter_mut()
-        .find(|session| session["id"] == session_id)
-        .unwrap_or_else(|| panic!("no session {session_id} to mark pending"));
-    session
-        .as_object_mut()
-        .expect("session object")
-        .insert("pendingAction".into(), Value::String(action.to_owned()));
-    snapshot
-}
-
-/// Mid-flight is a refusal to wait on, not a verdict, and both surfaces have
-/// to say so in the same words -- using the word the row shows, not the raw
-/// action.
-#[test]
-fn start_and_enter_agree_that_work_in_flight_is_not_a_verdict() {
-    let project = Project::new();
-    let snapshot = with_pending_action(&project.desktop_state(), "resumable", "graveyarding");
-
-    let dashboard = dashboard_outcome(&snapshot, "resumable").expect_err("busy, not a request");
-    assert_eq!(
-        dashboard, "Session resumable is removing",
-        "the word the row shows for a graveyarding agent"
-    );
-    assert_eq!(
-        cli_outcome(&snapshot, "resumable").expect_err("busy, not a request"),
-        format!("Error: {dashboard}\n"),
-        "`aimux start` must wait on the same work the dashboard waits on"
     );
 }

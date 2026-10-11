@@ -183,6 +183,12 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
                 "/repo",
                 json!({ "ok": true, "windowId": body["windowId"].clone() }),
             ),
+            project_routes::agents::RESUME if body["sessionId"] == "nobody" => {
+                ProjectServiceJsonResult::error(DaemonRouteResponse::text(
+                    404,
+                    "Error: Session \"nobody\" not found\n",
+                ))
+            }
             project_routes::agents::RESUME => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "sessionId": body["sessionId"].clone(), "status": "running" }),
@@ -282,6 +288,16 @@ fn start_route_focuses_resumes_and_refuses_like_the_dashboard() {
         project_routes::controls::FOCUS_WINDOW
     );
     assert_eq!(
+        focus_call.ensure_project,
+        Some(false),
+        "starting an agent must not boot a service as a side effect"
+    );
+    assert_eq!(
+        runtime.calls.len(),
+        2,
+        "one read and one mutation, not a second write nobody asked for"
+    );
+    assert_eq!(
         focus_call.body.as_ref().unwrap(),
         &json!({ "windowId": "@1", "focus": true })
     );
@@ -342,11 +358,15 @@ fn start_route_focuses_resumes_and_refuses_like_the_dashboard() {
     )
     .expect("start route");
     assert_eq!(missing.status, 404);
-    assert_eq!(text_body(missing), "Error: no startable agent nobody\n");
+    assert_eq!(
+        text_body(missing),
+        "Error: Session \"nobody\" not found\n",
+        "the project service's answer, not one this route made up"
+    );
     assert_eq!(
         runtime.calls.len(),
-        calls_before_missing + 1,
-        "a refusal and an unknown agent each read the snapshot and stop there"
+        calls_before_missing + 2,
+        "absent from the view is not absent: the snapshot read, then the ask"
     );
 }
 
