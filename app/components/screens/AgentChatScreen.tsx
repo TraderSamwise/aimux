@@ -696,6 +696,9 @@ export default function ChatScreen() {
     CHAT_OUTPUT_CAPTURE_START_LINE,
   );
   const [chatHistoryFloorReached, setChatHistoryFloorReached] = useState(false);
+  // Set only where a page actually arrived, so the two paths that move the
+  // cursor without fetching cannot make the view claim it reached a floor.
+  const chatHistoryPagedRef = useRef(false);
   const [pendingChatOutputHistoryStartLine, setPendingChatOutputHistoryStartLine] = useState<
     number | null
   >(null);
@@ -719,6 +722,7 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session starts from the shallow live capture window
     setChatOutputHistoryStartLine(CHAT_OUTPUT_CAPTURE_START_LINE);
     setChatHistoryFloorReached(false);
+    chatHistoryPagedRef.current = false;
     pendingChatOutputHistoryStartLineRef.current = null;
     setPendingChatOutputHistoryStartLine(null);
   }, [agentKey]);
@@ -1050,7 +1054,13 @@ export default function ChatScreen() {
           pendingChatOutputHistoryStartLineRef.current ?? pendingChatOutputHistoryStartLine,
       });
       if (nextStartLine === null) {
-        if (chatHistoryAtFloor({ currentStartLine: chatOutputHistoryStartLine, metrics })) {
+        if (
+          chatHistoryAtFloor({
+            currentStartLine: chatOutputHistoryStartLine,
+            metrics,
+            pagedAtLeastOnce: chatHistoryPagedRef.current,
+          })
+        ) {
           setChatHistoryFloorReached(true);
         }
         return;
@@ -1058,7 +1068,8 @@ export default function ChatScreen() {
       pendingChatOutputHistoryStartLineRef.current = nextStartLine;
       setPendingChatOutputHistoryStartLine(nextStartLine);
       void refreshOutputSnapshot("history", { startLine: nextStartLine })
-        .then(() => {
+        .then((fetched) => {
+          if (fetched) chatHistoryPagedRef.current = true;
           setChatOutputHistoryStartLine((current) => Math.min(current, nextStartLine));
         })
         .catch(() => {

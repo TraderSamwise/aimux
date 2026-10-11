@@ -29,21 +29,27 @@ export function chatHistoryFloorNotice(atHistoryFloor: boolean): string | null {
 }
 
 /**
- * Whether a declined page was declined BECAUSE there is no further to go.
+ * Whether a declined page means there is no further to go.
  *
- * The pager also declines while another page is in flight, while the view is
- * disabled, and whenever the user is not near the top -- none of which mean
- * anything to the reader. Only the floor does, and only when they were asking
- * for more: the resume path drives the cursor to the floor on its own, with
- * no scrolling at all.
+ * Three things have to hold, because two paths move the cursor to the floor
+ * without fetching anything: the resume read advances it before its own
+ * request resolves, and a refresh with no endpoint returns immediately.
  */
 export function chatHistoryAtFloor({
   currentStartLine,
   metrics,
+  pagedAtLeastOnce,
 }: {
   currentStartLine: number;
   metrics: ChatOutputHistoryScrollMetrics;
+  pagedAtLeastOnce: boolean;
 }): boolean {
+  // A transcript shorter than the viewport sits at offset 0 forever, so "near
+  // the top" is not evidence of anything until there is something to scroll.
+  if (metrics.contentHeight <= metrics.viewportHeight) return false;
   if (metrics.offsetY > CHAT_OUTPUT_HISTORY_PAGE_TOP_THRESHOLD_PX) return false;
+  // The reader has to have actually been given a page, or the cursor's value
+  // says only that something else moved it.
+  if (!pagedAtLeastOnce) return false;
   return currentStartLine <= CHAT_OUTPUT_MAX_CAPTURE_START_LINE;
 }

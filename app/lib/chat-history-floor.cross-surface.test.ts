@@ -20,6 +20,8 @@ describe("the history depth, across the app and the service", () => {
     const match = /pub const MAX_AGENT_OUTPUT_CAPTURE_LINES: i64 = ([\d_]+);/.exec(source);
     expect(match, "the service's cap moved or was renamed").not.toBeNull();
     const serviceLimit = Number(match?.[1].replaceAll("_", ""));
-    expect(CHAT_HISTORY_FLOOR_LINES).toBe(serviceLimit);
+    // Not equality: the view may deliberately page less deep than the service
+    // will serve. Asking for more than it serves is the drift that breaks.
+    expect(CHAT_HISTORY_FLOOR_LINES).toBeLessThanOrEqual(serviceLimit);
   });
 });

@@ -23,29 +23,62 @@ describe("why scrolling up stopped", () => {
   });
 });
 
-describe("whether a declined page was declined by the floor", () => {
-  const atTop = { contentHeight: 4000, offsetY: 0, viewportHeight: 800 };
+describe("whether a declined page means there is no further to go", () => {
+  const scrolledToTop = { contentHeight: 4000, offsetY: 0, viewportHeight: 800 };
+  const floor = CHAT_OUTPUT_MAX_CAPTURE_START_LINE;
 
-  it("is the floor only when the reader was asking for more", () => {
+  it("is the floor when the reader paged there and asked for more", () => {
     expect(
-      chatHistoryAtFloor({ currentStartLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE, metrics: atTop }),
+      chatHistoryAtFloor({
+        currentStartLine: floor,
+        metrics: scrolledToTop,
+        pagedAtLeastOnce: true,
+      }),
     ).toBe(true);
   });
 
-  // The resume path drives the cursor to the floor with no scrolling, so the
-  // cursor alone would caption a chat nobody paged.
-  it("is not the floor when the reader is nowhere near the top", () => {
+  // The resume read advances the cursor before its own request resolves, and
+  // a refresh with no endpoint returns without fetching, so the cursor alone
+  // would caption a chat nobody paged.
+  it("is not the floor when no page ever arrived", () => {
     expect(
       chatHistoryAtFloor({
-        currentStartLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
-        metrics: { ...atTop, offsetY: 2400 },
+        currentStartLine: floor,
+        metrics: scrolledToTop,
+        pagedAtLeastOnce: false,
       }),
     ).toBe(false);
   });
 
-  // Declined for another reason -- a page already in flight, or the view
-  // disabled -- while there is still history to fetch.
+  // A transcript shorter than the viewport sits at offset 0 forever, so being
+  // "near the top" says nothing about what the reader wanted.
+  it("is not the floor when there is nothing to scroll", () => {
+    expect(
+      chatHistoryAtFloor({
+        currentStartLine: floor,
+        metrics: { contentHeight: 400, offsetY: 0, viewportHeight: 800 },
+        pagedAtLeastOnce: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("is not the floor when the reader is nowhere near the top", () => {
+    expect(
+      chatHistoryAtFloor({
+        currentStartLine: floor,
+        metrics: { ...scrolledToTop, offsetY: 2400 },
+        pagedAtLeastOnce: true,
+      }),
+    ).toBe(false);
+  });
+
   it("is not the floor while there are pages left", () => {
-    expect(chatHistoryAtFloor({ currentStartLine: -480, metrics: atTop })).toBe(false);
+    expect(
+      chatHistoryAtFloor({
+        currentStartLine: -480,
+        metrics: scrolledToTop,
+        pagedAtLeastOnce: true,
+      }),
+    ).toBe(false);
   });
 });
