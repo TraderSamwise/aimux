@@ -79,7 +79,6 @@ import { registerChatComposerFocus } from "@/lib/chat-composer-focus";
 import {
   chatKeyboardIntent,
   createChatKeyboardEdgeWatcher,
-  markProgrammaticComposerBlur,
   recordChatKeyboardHidden,
   recordComposerFocusIntent,
   shouldFocusComposerOnOpen,
@@ -767,13 +766,6 @@ export default function ChatScreen() {
     setPendingComposerAck(null);
     setAcceptedComposerMessages([]);
     setSendBusy(false);
-    // The draft key resolves mid-mount, so this often runs after the new chat
-    // has already taken the carried keyboard -- blurring then would drop the
-    // very keyboard being carried. Leave it up when that is what was asked.
-    if (!chatKeyboardIntent() && !composerFocusedRef.current) {
-      markProgrammaticComposerBlur();
-      composerInputRef.current?.blur();
-    }
     sendBusyRef.current = false;
     setSendError(null);
   }, [composerDraftKey, jotaiStore]);
@@ -1657,14 +1649,11 @@ export default function ChatScreen() {
           screenFocusedRef.current = false;
         };
       }
-      // A hardware keyboard always takes the composer; a soft one only when
-      // that is what the reader was doing in the chat they came from.
-      const wanted =
-        hasHardwareKeyboard ||
-        shouldFocusComposerOnOpen({
-          hasComposer: showComposerFooter,
-          intent: chatKeyboardIntent(),
-        });
+      const wanted = shouldFocusComposerOnOpen({
+        hasComposer: showComposerFooter,
+        hasHardwareKeyboard,
+        intent: chatKeyboardIntent(),
+      });
       if (!wanted) {
         return () => {
           screenFocusedRef.current = false;

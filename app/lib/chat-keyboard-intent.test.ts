@@ -173,7 +173,7 @@ describe("how long the memory speaks for", () => {
 });
 
 describe("whether a chat that just opened takes the keyboard", () => {
-  const wants = { hasComposer: true, intent: true };
+  const wants = { hasComposer: true, hasHardwareKeyboard: false, intent: true };
 
   it("does when that is what the reader was doing", () => {
     expect(shouldFocusComposerOnOpen(wants)).toBe(true);
@@ -185,5 +185,20 @@ describe("whether a chat that just opened takes the keyboard", () => {
 
   it("does not when the screen has no composer to focus", () => {
     expect(shouldFocusComposerOnOpen({ ...wants, hasComposer: false })).toBe(false);
+  });
+
+  // Nothing is occluded and the composer is where typing goes, so there is no
+  // want to consult -- which is also why a focus against one records none.
+  it("does with a hardware keyboard whatever the reader last did", () => {
+    expect(shouldFocusComposerOnOpen({ ...wants, hasHardwareKeyboard: true, intent: false })).toBe(
+      true,
+    );
+  });
+
+  // A composer that is not rendered has nothing to focus, hardware or not.
+  it("does not with a hardware keyboard and no composer", () => {
+    expect(
+      shouldFocusComposerOnOpen({ hasComposer: false, hasHardwareKeyboard: true, intent: true }),
+    ).toBe(false);
   });
 });

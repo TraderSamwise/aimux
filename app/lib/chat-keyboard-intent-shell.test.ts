@@ -15,12 +15,16 @@ import {
 // `app/` would otherwise fail on a path rather than on the invariant.
 const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-function chatScreenSource(): string {
-  const path = join(APP_ROOT, "components/screens/AgentChatScreen.tsx");
+// Comments stripped: `toContain` is happy to match a call that has been
+// commented out, which is one keystroke from a dead feature.
+function strippedSource(relative: string): string {
+  const path = join(APP_ROOT, relative);
   expect(existsSync(path), `${path} is readable`).toBe(true);
-  // Comments stripped first: `toContain` is happy to match a call that has
-  // been commented out, which is one keystroke from a dead feature.
   return readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
+}
+
+function chatScreenSource(): string {
+  return strippedSource("components/screens/AgentChatScreen.tsx");
 }
 
 /**
@@ -47,10 +51,9 @@ describe("the chat screen runs the keyboard memory", () => {
     );
   });
 
-  // Both facts are defaulted in the module, so deleting either line from the
-  // screen leaves every other gate green while backgrounding the app silently
-  // forgets the want again. `[^}]` rather than `[\s\S]`: an unbounded gap
-  // walked out of the object and found the other call site's fields.
+  // Both facts are defaulted in the module, so deleting either line stays
+  // green everywhere else. `[^}]` rather than `[\s\S]`: an unbounded gap
+  // walked out of the object and matched the other call site's fields.
   it("tells the memory where each report came from", () => {
     const source = chatScreenSource();
     expect(source, "the edge path").toMatch(
@@ -61,13 +64,20 @@ describe("the chat screen runs the keyboard memory", () => {
     );
   });
 
+  // One helper owns the whole open-time rule, so the screen must hand it all
+  // three facts. The shorthand, not just the name: `hasHardwareKeyboard:
+  // false` reads the same to a looser pattern and answers the question wrong.
   it("asks the memory whether an opening chat takes the keyboard", () => {
-    expect(chatScreenSource()).toMatch(/intent:\s*chatKeyboardIntent\(\)/);
+    expect(chatScreenSource()).toMatch(
+      /shouldFocusComposerOnOpen\(\{[^}]*hasComposer: showComposerFooter[^}]*hasHardwareKeyboard\s*,[^}]*intent: chatKeyboardIntent\(\)[^}]*\}/,
+    );
   });
 
-  it("tells the memory when a dismissal was not the reader's", () => {
-    expect(chatScreenSource(), "the re-seed blur must not read as a dismissal").toContain(
-      "markProgrammaticComposerBlur()",
+  // Marked in the one shared dismissal rather than at each of its thirteen
+  // call sites, so this is where the claim has to hold.
+  it("marks every dismissal nobody asked for", () => {
+    expect(strippedSource("lib/blur-web-active-element.ts")).toMatch(
+      /markProgrammaticComposerBlur\(\);[\s\S]*?Platform\.OS/,
     );
   });
 

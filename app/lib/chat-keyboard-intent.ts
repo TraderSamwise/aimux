@@ -112,16 +112,21 @@ export function resetChatKeyboardIntent(): void {
 }
 
 /**
- * Whether a chat that has just opened should take the keyboard with it. The
- * hardware question was settled when the intent was recorded; what is left is
- * whether this screen has anything to focus.
+ * Whether a chat that has just opened should take the keyboard with it.
+ *
+ * A hardware keyboard always takes it: nothing is occluded and the composer is
+ * where typing goes. A soft one only when that is what the reader was doing in
+ * the chat they came from -- which is why no want is recorded against one.
  */
 export function shouldFocusComposerOnOpen({
   hasComposer,
+  hasHardwareKeyboard,
   intent,
 }: {
   hasComposer: boolean;
+  hasHardwareKeyboard: boolean;
   intent: boolean;
 }): boolean {
-  return intent && hasComposer;
+  if (!hasComposer) return false;
+  return hasHardwareKeyboard || intent;
 }
