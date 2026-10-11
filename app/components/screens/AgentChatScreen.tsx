@@ -173,6 +173,7 @@ import {
   mergeActiveSharedSessions,
   sharedSessionsEqual,
 } from "@/lib/shared-sessions";
+import { chatHistoryAtFloor, chatHistoryFloorNotice } from "@/lib/chat-history-floor";
 import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
@@ -694,6 +695,10 @@ export default function ChatScreen() {
   const [chatOutputHistoryStartLine, setChatOutputHistoryStartLine] = useState(
     CHAT_OUTPUT_CAPTURE_START_LINE,
   );
+  const [chatHistoryFloorReached, setChatHistoryFloorReached] = useState(false);
+  // Set only where a page actually arrived, so the two paths that move the
+  // cursor without fetching cannot make the view claim it reached a floor.
+  const chatHistoryPagedRef = useRef(false);
   const [pendingChatOutputHistoryStartLine, setPendingChatOutputHistoryStartLine] = useState<
     number | null
   >(null);
@@ -716,9 +721,11 @@ export default function ChatScreen() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session starts from the shallow live capture window
     setChatOutputHistoryStartLine(CHAT_OUTPUT_CAPTURE_START_LINE);
+    setChatHistoryFloorReached(false);
+    chatHistoryPagedRef.current = false;
     pendingChatOutputHistoryStartLineRef.current = null;
     setPendingChatOutputHistoryStartLine(null);
-  }, [sessionKey]);
+  }, [agentKey]);
 
   useEffect(() => {
     pendingAttachmentsRef.current = pendingAttachments;
@@ -1046,11 +1053,23 @@ export default function ChatScreen() {
         pendingStartLine:
           pendingChatOutputHistoryStartLineRef.current ?? pendingChatOutputHistoryStartLine,
       });
-      if (nextStartLine === null) return;
+      if (nextStartLine === null) {
+        if (
+          chatHistoryAtFloor({
+            currentStartLine: chatOutputHistoryStartLine,
+            metrics,
+            pagedAtLeastOnce: chatHistoryPagedRef.current,
+          })
+        ) {
+          setChatHistoryFloorReached(true);
+        }
+        return;
+      }
       pendingChatOutputHistoryStartLineRef.current = nextStartLine;
       setPendingChatOutputHistoryStartLine(nextStartLine);
       void refreshOutputSnapshot("history", { startLine: nextStartLine })
-        .then(() => {
+        .then((fetched) => {
+          if (fetched) chatHistoryPagedRef.current = true;
           setChatOutputHistoryStartLine((current) => Math.min(current, nextStartLine));
         })
         .catch(() => {
@@ -1082,6 +1101,7 @@ export default function ChatScreen() {
       }),
     [transcript, sessionKey, isSharedConversation],
   );
+  const transcriptWindowNotice = chatHistoryFloorNotice(chatHistoryFloorReached);
   const parsedMessageCount = parsedMessages.length;
   const parsedUserMessageCount = useMemo(
     () => parsedMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
@@ -2656,6 +2676,7 @@ export default function ChatScreen() {
                       newMessageBadgeBottomOffset={newMessageBadgeBottomOffset}
                       placeholderState={chatPlaceholderState}
                       ref={chatViewportRef}
+                      windowNotice={transcriptWindowNotice}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
                       onRequestHistoryPage={requestChatHistoryPage}
                       onRetryTranscriptLoad={handleRetryTranscriptLoad}
@@ -3147,6 +3168,7 @@ type AgentChatSessionViewportProps = {
   serviceEndpoint: ServiceEndpoint;
   agentKey: AgentStateKey;
   topContentInset: number;
+  windowNotice: string | null;
 };
 
 const AgentChatSessionViewport = React.memo(
@@ -3164,6 +3186,7 @@ const AgentChatSessionViewport = React.memo(
         serviceEndpoint,
         agentKey,
         topContentInset,
+        windowNotice,
       },
       ref,
     ) {
@@ -3450,6 +3473,7 @@ const AgentChatSessionViewport = React.memo(
             onScroll={handleChatScroll}
             placeholderState={placeholderState}
             ref={chatScrollRef}
+            windowNotice={windowNotice}
             serviceEndpoint={serviceEndpoint}
             dividerWidth={dividerWidth}
             bottomContentInset={bottomContentInset}
@@ -3486,6 +3510,8 @@ type AgentChatTranscriptProps = {
   placeholderState: ChatTranscriptPlaceholderState;
   serviceEndpoint: ServiceEndpoint;
   topContentInset: number;
+  /** Why scrolling up stopped loading more, or null while it has not. */
+  windowNotice: string | null;
 };
 
 const AgentChatTranscript = React.memo(
@@ -3501,6 +3527,7 @@ const AgentChatTranscript = React.memo(
       placeholderState,
       serviceEndpoint,
       topContentInset,
+      windowNotice,
     },
     ref,
   ) {
@@ -3518,6 +3545,13 @@ const AgentChatTranscript = React.memo(
         />
       ) : (
         <View className="w-full gap-1">
+          {windowNotice ? (
+            <View className="w-full items-center pb-2">
+              <View className="rounded-md border border-border bg-card px-3 py-2">
+                <Text className="text-xs text-muted-foreground">{windowNotice}</Text>
+              </View>
+            </View>
+          ) : null}
           {messages.map((message, index) => (
             <View
               key={message.id ?? message.clientMessageId ?? `message:${index}`}
