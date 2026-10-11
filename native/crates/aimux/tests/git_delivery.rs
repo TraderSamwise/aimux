@@ -224,6 +224,67 @@ fn untracked_files_are_reported_without_tracked_blobs() {
     );
 }
 
+/// A quoted or carriage-returned path cannot ride the batch pipe:
+/// `hash-object --stdin-paths` C-unquotes a line starting with `"`, so the
+/// batch would answer with the hash of a different file entirely.
+#[test]
+fn a_quoted_path_is_hashed_as_itself() {
+    let fixture = TempGitFixture::new("quoted-path");
+    let repo = fixture.path("source");
+    create_bare_repo(&repo);
+    let quoted = "\"q.txt\"";
+    fs::write(repo.join(quoted), "quoted\n").expect("write quoted file");
+    fs::write(repo.join("q.txt"), "decoy\n").expect("write decoy file");
+    run_git(&repo, &["add", "."]);
+    run_git(&repo, &["commit", "-m", "seed"]);
+    fs::write(repo.join(quoted), "quoted changed\n").expect("modify quoted file");
+    let truth = git_output(&repo, &["hash-object", "--", quoted]);
+
+    let checkout = inspect_git_checkout_coherence(path_str(&repo)).expect("inspect checkout");
+    let file = checkout
+        .files
+        .iter()
+        .find(|file| file.path == quoted)
+        .expect("the quoted path is reported");
+    assert_eq!(
+        file.worktree_blob.as_deref(),
+        Some(truth.as_str()),
+        "the quoted path must hash as itself, not as q.txt"
+    );
+}
+
+/// `--untracked-files=normal` is load-bearing for the cost: `all` enumerated
+/// every file under an untracked directory, which is what reached 34,990
+/// entries on the checkout that wedged.
+#[test]
+fn an_untracked_directory_collapses_to_one_entry() {
+    let fixture = TempGitFixture::new("untracked-collapse");
+    let repo = fixture.path("source");
+    create_bare_repo(&repo);
+    fs::write(repo.join("tracked.txt"), "base\n").expect("seed file");
+    run_git(&repo, &["add", "."]);
+    run_git(&repo, &["commit", "-m", "seed"]);
+    let nest = repo.join("nest");
+    fs::create_dir_all(&nest).expect("create untracked dir");
+    for index in 0..50 {
+        fs::write(nest.join(format!("file-{index}.txt")), "noise\n").expect("write nested file");
+    }
+
+    let checkout = inspect_git_checkout_coherence(path_str(&repo)).expect("inspect checkout");
+    assert_eq!(
+        checkout.files.len(),
+        1,
+        "fifty files under one untracked directory is one entry, not fifty"
+    );
+    assert_eq!(checkout.files[0].index_status, '?');
+}
+
+fn create_bare_repo(path: &Path) {
+    fs::create_dir_all(path).expect("create repo");
+    run_git(path, &["init", "--initial-branch=master"]);
+    configure_git_user(path);
+}
+
 fn create_source_repo(path: &Path) {
     fs::create_dir_all(path).expect("create source repo");
     run_git(path, &["init", "--initial-branch=master"]);

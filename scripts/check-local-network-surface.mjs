@@ -239,7 +239,8 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     command: "git",
     argv:
       "literal delivery-verification args, plus cat-file --batch-check and hash-object --stdin-paths, which take their per-file specs on stdin so the invocation count stops scaling with the number of changed files",
-    input: "repo paths/refs supplied by delivery checker",
+    input:
+      "repo paths/refs supplied by delivery checker; the two batch calls take their per-file specs on STDIN rather than argv, one line per spec, and paths that cannot ride that protocol fall back to a single-path invocation",
   },
   {
     path: "native/crates/aimux/src/jobs/runner.rs",

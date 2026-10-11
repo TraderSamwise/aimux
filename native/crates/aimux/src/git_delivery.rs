@@ -236,15 +236,24 @@ pub fn inspect_git_checkout_coherence(
         .iter()
         .take_while(|entry| entry.index_status != '?' && entry.worktree_status == ' ')
         .collect();
-    let comparable_paths: Vec<String> = comparable.iter().map(|entry| entry.path.clone()).collect();
+    // A run shorter than every entry means some entry already disqualified the
+    // checkout, exactly as the per-entry break did -- and then there is
+    // nothing worth asking git about either.
+    let comparable_explains_everything = comparable.len() == status_entries.len();
+    let comparable_paths: Vec<String> = if comparable_explains_everything {
+        comparable.iter().map(|entry| entry.path.clone()).collect()
+    } else {
+        Vec::new()
+    };
     let stale_head_blobs = tree_blobs(&repo_root, "HEAD", &comparable_paths)?;
     let stale_index_blobs = index_blobs(&repo_root, &comparable_paths)?;
     let stale_worktree_blobs = worktree_blobs(&repo_root, &comparable_paths)?;
     for candidate in stale_candidates {
+        if !comparable_explains_everything {
+            break;
+        }
         let mut candidate_files = Vec::new();
-        // A run shorter than every entry means some entry disqualified the
-        // checkout, exactly as the per-entry break did.
-        let mut all_match = comparable.len() == status_entries.len();
+        let mut all_match = true;
         let base_blobs = tree_blobs(&repo_root, &candidate, &comparable_paths)?;
         for (index, entry) in comparable.iter().enumerate() {
             let head_blob = stale_head_blobs[index].clone();
@@ -281,23 +290,41 @@ pub fn inspect_git_checkout_coherence(
         });
     }
 
-    let paths: Vec<String> = status_entries
+    // Tracked paths only. An untracked one is in neither HEAD nor the index,
+    // and hashing its contents answers nothing the status characters have not
+    // -- while streaming an arbitrarily large file through git under the lock.
+    let tracked: Vec<String> = status_entries
         .iter()
+        .filter(|entry| entry.index_status != '?')
         .map(|entry| entry.path.clone())
         .collect();
-    let head_blobs = tree_blobs(&repo_root, "HEAD", &paths)?;
-    let index_blobs = index_blobs(&repo_root, &paths)?;
-    let worktree_blobs = worktree_blobs(&repo_root, &paths)?;
+    let head_blobs = tree_blobs(&repo_root, "HEAD", &tracked)?;
+    let index_blobs = index_blobs(&repo_root, &tracked)?;
+    let worktree_blobs = worktree_blobs(&repo_root, &tracked)?;
+    let mut answered = 0usize;
     let files = status_entries
         .into_iter()
-        .enumerate()
-        .map(|(index, entry)| GitCheckoutFile {
-            path: entry.path,
-            index_status: entry.index_status,
-            worktree_status: entry.worktree_status,
-            head_blob: head_blobs[index].clone(),
-            index_blob: index_blobs[index].clone(),
-            worktree_blob: worktree_blobs[index].clone(),
+        .map(|entry| {
+            if entry.index_status == '?' {
+                return GitCheckoutFile {
+                    path: entry.path,
+                    index_status: entry.index_status,
+                    worktree_status: entry.worktree_status,
+                    head_blob: None,
+                    index_blob: None,
+                    worktree_blob: None,
+                };
+            }
+            let index = answered;
+            answered += 1;
+            GitCheckoutFile {
+                path: entry.path,
+                index_status: entry.index_status,
+                worktree_status: entry.worktree_status,
+                head_blob: head_blobs[index].clone(),
+                index_blob: index_blobs[index].clone(),
+                worktree_blob: worktree_blobs[index].clone(),
+            }
         })
         .collect::<Vec<_>>();
 
@@ -497,7 +524,7 @@ fn batch_blobs(repo: &str, specs: &[String]) -> Result<Vec<Option<String>>, GitD
         .map_err(|_| fail("stdin writer panicked".into()))?;
     written.map_err(|error| fail(error.to_string()))?;
     let text = String::from_utf8_lossy(&output.stdout);
-    let mut blobs: Vec<Option<String>> = text
+    let blobs: Vec<Option<String>> = text
         .lines()
         .map(|line| {
             if line.ends_with(" missing") || line == "missing" {
@@ -515,15 +542,19 @@ fn batch_blobs(repo: &str, specs: &[String]) -> Result<Vec<Option<String>>, GitD
             specs.len()
         )));
     }
-    blobs.truncate(specs.len());
     Ok(blobs)
 }
 
-/// `cat-file` and `hash-object --stdin-paths` are both newline-delimited, so a
-/// path containing one cannot be asked for in a batch. Git allows it, so the
-/// rare case falls back to its own invocation rather than being reported absent.
+/// Whether a path can be asked for down a batch pipe at all.
+///
+/// Newlines delimit the protocol. Worse, `hash-object --stdin-paths` runs a
+/// line starting with `"` through C-unquoting, so a file literally named
+/// `"q.txt"` would be answered with the hash of `q.txt` -- the right shape of
+/// answer for the wrong file -- and `strbuf_getline` strips a trailing `\r`,
+/// turning the path into one git cannot open. Those fall back to their own
+/// invocation rather than being silently mis-hashed.
 fn path_is_batchable(path: &str) -> bool {
-    !path.contains('\n')
+    !path.contains('\n') && !path.contains('\r') && !path.starts_with('"')
 }
 
 fn tree_blobs(

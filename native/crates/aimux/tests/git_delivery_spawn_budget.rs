@@ -1,48 +1,83 @@
 //! What a coherence inspection costs in git invocations.
 //!
-//! The field-based assertions this replaces could be satisfied by a change
-//! that set the flag correctly and still spawned git per file. Only counting
-//! execs can prove it does not, so this puts a shim ahead of git on `PATH`
-//! and reads the log. It mutates process-global `PATH`, which is why the
-//! target is classified serial.
+//! Field assertions could be satisfied by a change that set the flag correctly
+//! and still spawned git per file, so this counts execs: a shim named `git`
+//! goes ahead of the real one on `PATH` and logs every call.
+//!
+//! The claim is scale invariance, not a ceiling. A cap measured at one fixture
+//! size cannot see a cost that still grows with the files, and a generous one
+//! passes a chunked batch that spawns per 32 paths -- so the gate runs two
+//! sizes and demands the same count.
 
 use aimux::git_delivery::{GitCheckoutCoherenceStatus, inspect_git_checkout_coherence};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// A checkout with this many changed files costs the same as one with a few:
-/// the point of the batch is that the count stops scaling with the files.
-const FILES: usize = 120;
+const SMALL: usize = 40;
+const LARGE: usize = 160;
 
-/// Headroom over the handful of invocations an inspection actually makes, so
-/// the gate fails on a return to per-file spawning rather than on a tweak.
-const BUDGET: usize = 40;
+/// Below this the shim cannot have been on `PATH` at all: an inspection makes
+/// several calls before it reaches any blob. Without a floor, a spy that
+/// silently failed to install reports zero and passes every ceiling.
+const MINIMUM_PLAUSIBLE: usize = 4;
 
 #[test]
-fn inspecting_a_modified_checkout_stays_inside_its_spawn_budget() {
-    let spy = GitSpy::new("modified-budget");
+fn a_modified_checkout_costs_the_same_however_many_files_changed() {
+    let small = inspect_modified(SMALL).0;
+    let large = inspect_modified(LARGE).0;
+    assert_eq!(
+        small, large,
+        "{SMALL} and {LARGE} changed files must cost the same; a per-file lookup would scale"
+    );
+}
+
+/// The path a review found: HEAD at B with index and worktree at an ancestor,
+/// so every entry matches the base and nothing breaks the loop early. That
+/// cost four spawns per entry per candidate, and nothing capped it.
+#[test]
+fn a_stale_checkout_costs_the_same_however_many_files_are_behind() {
+    let small = count_stale_inspection(SMALL);
+    let large = count_stale_inspection(LARGE);
+    assert_eq!(
+        small, large,
+        "a stale checkout of {SMALL} and of {LARGE} files must cost the same"
+    );
+}
+
+/// An untracked file's content answers nothing the status characters have not,
+/// and reading it means streaming an arbitrarily large file through git while
+/// the daemon holds its runtime lock. Reading one changes neither the report
+/// nor the invocation count, so the only place it shows is what went down the
+/// pipe.
+#[test]
+fn untracked_files_are_never_fed_to_a_batch() {
+    let (_, batched) = inspect_modified(SMALL);
+    assert!(
+        batched.contains("tracked-0.txt"),
+        "sanity: the tracked files did go down the pipe, got {batched:?}"
+    );
+    assert!(
+        !batched.contains("untracked-"),
+        "an untracked path was handed to a batch call: {batched}"
+    );
+}
+
+fn inspect_modified(files: usize) -> (usize, String) {
+    let spy = GitSpy::new("modified");
     let repo = spy.dir.join("repo");
-    create_repo(&repo);
-    for index in 0..FILES {
-        fs::write(repo.join(format!("tracked-{index}.txt")), "base\n").expect("seed file");
-    }
-    run_git(&repo, &["add", "."]);
-    run_git(&repo, &["commit", "-m", "seed"]);
-    for index in 0..FILES {
+    seed_tracked(&repo, files);
+    for index in 0..files {
         fs::write(repo.join(format!("tracked-{index}.txt")), "changed\n").expect("modify file");
-    }
-    for index in 0..FILES {
         fs::write(repo.join(format!("untracked-{index}.txt")), "noise\n").expect("untracked file");
     }
-
     let counted = spy.count_while(|| {
         let checkout = inspect_git_checkout_coherence(path_str(&repo)).expect("inspect checkout");
         assert_eq!(checkout.status, GitCheckoutCoherenceStatus::Modified);
         assert!(
-            checkout.files.len() >= FILES,
+            checkout.files.len() >= files,
             "every modified file is still reported, got {}",
             checkout.files.len()
         );
@@ -50,40 +85,35 @@ fn inspecting_a_modified_checkout_stays_inside_its_spawn_budget() {
             checkout
                 .files
                 .iter()
-                .filter(|file| file.index_status == 'M')
+                .filter(|file| file.index_status != '?')
                 .all(|file| file.head_blob.is_some()),
-            "and tracked modifications still carry real blobs"
+            "tracked modifications still carry real blobs"
+        );
+        assert!(
+            checkout
+                .files
+                .iter()
+                .filter(|file| file.index_status == '?')
+                .all(|file| file.worktree_blob.is_none()),
+            "and an untracked file is never reported with a content hash"
         );
     });
-    assert!(
-        counted <= BUDGET,
-        "{FILES} changed files cost {counted} git invocations; a per-file lookup would be in the hundreds"
-    );
+    (counted, spy.batched_paths())
 }
 
-/// The path the review found: HEAD at B with index and worktree at an
-/// ancestor, so every entry matches the base and nothing broke the loop early.
-/// That cost four spawns per entry per candidate, uncapped.
-#[test]
-fn inspecting_a_stale_checkout_stays_inside_its_spawn_budget() {
-    let spy = GitSpy::new("stale-budget");
+fn count_stale_inspection(files: usize) -> usize {
+    let spy = GitSpy::new("stale");
     let repo = spy.dir.join("repo");
-    create_repo(&repo);
-    for index in 0..FILES {
-        fs::write(repo.join(format!("tracked-{index}.txt")), "base\n").expect("seed file");
-    }
-    run_git(&repo, &["add", "."]);
-    run_git(&repo, &["commit", "-m", "base"]);
+    seed_tracked(&repo, files);
     let base = git_stdout(&repo, &["rev-parse", "--verify", "HEAD"]);
-    for index in 0..FILES {
+    for index in 0..files {
         fs::write(repo.join(format!("tracked-{index}.txt")), "advanced\n").expect("advance file");
     }
     run_git(&repo, &["add", "."]);
     run_git(&repo, &["commit", "-m", "advance"]);
     // Index and worktree back at the ancestor, HEAD left ahead of them.
     run_git(&repo, &["checkout", &base, "--", "."]);
-
-    let counted = spy.count_while(|| {
+    spy.count_while(|| {
         let checkout = inspect_git_checkout_coherence(path_str(&repo)).expect("inspect checkout");
         assert_eq!(
             checkout.status,
@@ -91,22 +121,33 @@ fn inspecting_a_stale_checkout_stays_inside_its_spawn_budget() {
             "the staleness signal delivery refusals depend on must survive batching"
         );
         assert_eq!(checkout.stale_base.as_deref(), Some(base.as_str()));
-        assert_eq!(checkout.files.len(), FILES);
-    });
-    assert!(
-        counted <= BUDGET,
-        "a stale checkout of {FILES} files cost {counted} git invocations; the per-entry loop would be over 900"
-    );
+        assert_eq!(checkout.files.len(), files);
+    })
 }
 
 struct GitSpy {
     dir: PathBuf,
     bin: PathBuf,
     log: PathBuf,
+    /// What the batch calls were fed. The specs travel on stdin, so argv
+    /// cannot show which files were actually read.
+    stdin_log: PathBuf,
+    _guard: MutexGuard<'static, ()>,
+}
+
+/// Held for a spy's whole life, not just the counted body: a sibling fixture
+/// spawning git while our shim is installed both races `set_var` and lands in
+/// our log. Locking only the body reported 1 invocation where there were 8.
+fn spy_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl GitSpy {
     fn new(label: &str) -> Self {
+        let guard = spy_lock();
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -115,14 +156,20 @@ impl GitSpy {
         let bin = dir.join("bin");
         fs::create_dir_all(&bin).expect("create shim dir");
         let log = dir.join("git-invocations.log");
-        let real = real_git();
+        let stdin_log = dir.join("git-stdin.log");
         let shim = bin.join("git");
         fs::write(
             &shim,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexec \"{}\" \"$@\"\n",
-                log.display(),
-                real.display()
+                "#!/bin/sh\n\
+                 printf '%s\\n' \"$*\" >> \"{log}\"\n\
+                 case \"$*\" in\n\
+                 *--stdin-paths*|*--batch-check*) exec 3>>\"{stdin}\"; tee /dev/fd/3 | \"{git}\" \"$@\" ;;\n\
+                 *) exec \"{git}\" \"$@\" ;;\n\
+                 esac\n",
+                log = log.display(),
+                stdin = stdin_log.display(),
+                git = real_git().display()
             ),
         )
         .expect("write shim");
@@ -131,31 +178,39 @@ impl GitSpy {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("chmod shim");
         }
-        Self { dir, bin, log }
+        Self {
+            dir,
+            bin,
+            log,
+            stdin_log,
+            _guard: guard,
+        }
     }
 
-    /// Counts only what `body` spawns: the fixture's own setup runs before the
-    /// shim is on `PATH`, so it cannot pad the budget.
-    ///
-    /// Serialised across tests in this binary. Cargo runs them on threads and
-    /// `PATH` is process-global, so two overlapping spies logged into each
-    /// other's files and both counts were wrong.
+    /// Counts only what `body` spawns. The fixture's own setup runs before the
+    /// shim is on `PATH`, so it cannot pad the count.
     fn count_while(&self, body: impl FnOnce()) -> usize {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let _guard = LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("spy lock poisoned");
-        let previous = std::env::var("PATH").unwrap_or_default();
-        let _ = fs::remove_file(&self.log);
-        // SAFETY-adjacent: PATH is process-global, which is why this target is
-        // in native-test-serial-targets.txt.
-        unsafe { std::env::set_var("PATH", format!("{}:{previous}", self.bin.display())) };
-        body();
-        unsafe { std::env::set_var("PATH", &previous) };
-        fs::read_to_string(&self.log)
-            .map(|text| text.lines().filter(|line| !line.trim().is_empty()).count())
-            .unwrap_or(0)
+        let logged = {
+            let _path = PathShim::install(&self.bin, &self.log, &self.stdin_log);
+            body();
+            fs::read_to_string(&self.log).unwrap_or_default()
+        };
+        let counted = logged
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
+        assert!(
+            counted >= MINIMUM_PLAUSIBLE,
+            "only {counted} git invocations were logged, so the shim cannot have been on PATH -- \
+             this gate was measuring nothing"
+        );
+        counted
+    }
+
+    /// Every path handed to a batch call, which is the only place the files
+    /// actually read are visible.
+    fn batched_paths(&self) -> String {
+        fs::read_to_string(&self.stdin_log).unwrap_or_default()
     }
 }
 
@@ -165,18 +220,57 @@ impl Drop for GitSpy {
     }
 }
 
-fn real_git() -> PathBuf {
-    for candidate in [
-        "/opt/homebrew/bin/git",
-        "/usr/bin/git",
-        "/usr/local/bin/git",
-    ] {
-        let path = PathBuf::from(candidate);
-        if path.is_file() {
-            return path;
-        }
+/// Restores `PATH` on the way out even if the body panics, so one failing
+/// assertion cannot leave the shim installed for everything after it.
+struct PathShim {
+    previous: String,
+}
+
+impl PathShim {
+    fn install(bin: &Path, log: &Path, stdin_log: &Path) -> Self {
+        let previous = std::env::var("PATH").unwrap_or_default();
+        let _ = fs::remove_file(log);
+        let _ = fs::remove_file(stdin_log);
+        // PATH is process-global, which is why this target is listed in
+        // scripts/native-test-serial-targets.txt and why the spy holds a lock.
+        unsafe { std::env::set_var("PATH", format!("{}:{previous}", bin.display())) };
+        Self { previous }
     }
-    panic!("no real git found to shim");
+}
+
+impl Drop for PathShim {
+    fn drop(&mut self) {
+        unsafe { std::env::set_var("PATH", &self.previous) };
+    }
+}
+
+/// Resolved from `PATH` once, before any shim is installed, so the shim cannot
+/// end up exec'ing itself. Read rather than hardcoded, because the answer
+/// differs between this machine and the Linux runners.
+fn real_git() -> &'static Path {
+    static GIT: OnceLock<PathBuf> = OnceLock::new();
+    GIT.get_or_init(|| {
+        let path = std::env::var("PATH").unwrap_or_default();
+        for dir in path.split(':').filter(|dir| !dir.is_empty()) {
+            if dir.contains("aimux-git-spy-") {
+                continue;
+            }
+            let candidate = Path::new(dir).join("git");
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+        panic!("no git on PATH to shim");
+    })
+}
+
+fn seed_tracked(repo: &Path, files: usize) {
+    create_repo(repo);
+    for index in 0..files {
+        fs::write(repo.join(format!("tracked-{index}.txt")), "base\n").expect("seed file");
+    }
+    run_git(repo, &["add", "."]);
+    run_git(repo, &["commit", "-m", "seed"]);
 }
 
 fn create_repo(path: &Path) {
