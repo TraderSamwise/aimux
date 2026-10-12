@@ -188,6 +188,28 @@ pub struct SpendBaseline {
     /// Which transcript this describes. A resumed session forks a new file, so
     /// a different path means the baseline belongs to somebody else.
     pub transcript: Option<String>,
+    /// Which GOAL this describes. A session can hold one token goal after
+    /// another without its loop ever going inactive, and the spend of the one
+    /// before is not this one's.
+    pub episode: Option<String>,
+}
+
+/// Start again when the goal changed under a session that never stopped
+/// looping.
+///
+/// Without this the count carries over, so a fresh 50,000 budget on a session
+/// that already spent 60,000 reads as met the moment it is set and the
+/// reminders never fire -- the opposite of "measured from when the goal
+/// started". Returns whether it reset, so a caller can say that it did.
+pub fn rebaseline_for_new_episode(baseline: &mut SpendBaseline, episode: &str) -> bool {
+    if baseline.episode.as_deref() == Some(episode) {
+        return false;
+    }
+    *baseline = SpendBaseline {
+        episode: Some(episode.to_owned()),
+        ..SpendBaseline::default()
+    };
+    true
 }
 
 /// Fold a newly read chunk into a baseline, for a runtime that reports
@@ -205,6 +227,7 @@ pub fn advance_summed_baseline(
         *baseline = SpendBaseline {
             offset: file_len,
             transcript: Some(transcript.to_owned()),
+            episode: baseline.episode.clone(),
             ..SpendBaseline::default()
         };
         return;
@@ -227,6 +250,7 @@ pub fn advance_cumulative_baseline(
         *baseline = SpendBaseline {
             transcript: Some(transcript.to_owned()),
             cumulative_at_baseline: current,
+            episode: baseline.episode.clone(),
             ..SpendBaseline::default()
         };
         return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);

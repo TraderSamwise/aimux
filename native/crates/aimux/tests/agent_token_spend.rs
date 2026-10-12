@@ -4,7 +4,8 @@ use aimux::agent_token_spend::{
     BASELINE_JUST_TAKEN, ClaudeSpendChunk, MAX_CHUNK_BYTES, NO_TRANSCRIPT_YET, SpendBaseline,
     SpendSinceBaseline, advance_cumulative_baseline, advance_summed_baseline,
     chunk_spans_an_oversized_record, claude_spend_chunk, codex_cumulative_billed,
-    cumulative_spend_since, offset_still_valid, runtime_reports_usage, spend_for_session,
+    cumulative_spend_since, offset_still_valid, rebaseline_for_new_episode, runtime_reports_usage,
+    spend_for_session,
 };
 
 fn claude_line(id: &str, input: u64, cache_read: u64, cache_creation: u64, output: u64) -> String {
@@ -317,4 +318,79 @@ fn a_record_longer_than_the_window_is_stepped_over_rather_than_re_read() {
     );
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A session can hold one token goal after another without its loop ever going
+/// inactive, and the spend of the one before is not this one's. Carrying it
+/// over made a fresh 50,000 budget read as met the moment it was set, on a
+/// session that had already spent more than that, and the reminders never
+/// fired again.
+#[test]
+fn a_replaced_goal_starts_counting_again() {
+    let mut baseline = SpendBaseline {
+        billed: 60_000,
+        offset: 4_096,
+        last_id: Some("msg-9".into()),
+        transcript: Some("/t.jsonl".into()),
+        episode: Some("2026-10-12T00:00:00.000Z|250000".into()),
+        cumulative_at_baseline: Some(1_000),
+    };
+
+    assert!(
+        rebaseline_for_new_episode(&mut baseline, "2026-10-12T09:00:00.000Z|50000"),
+        "a different goal is a different count"
+    );
+    assert_eq!(
+        baseline.billed, 0,
+        "the previous goal's spend is not this one's"
+    );
+    assert_eq!(baseline.offset, 0);
+    assert_eq!(baseline.last_id, None);
+    assert_eq!(baseline.cumulative_at_baseline, None);
+    assert_eq!(
+        baseline.transcript, None,
+        "cleared so the next read takes a fresh position rather than summing \
+         forward from the old goal's"
+    );
+
+    // Re-adding the SAME budget at a new time is still a new goal, because the
+    // start moved.
+    assert!(rebaseline_for_new_episode(
+        &mut baseline,
+        "2026-10-12T10:00:00.000Z|50000"
+    ));
+
+    // And an unchanged goal is not disturbed tick after tick.
+    baseline.billed = 1_234;
+    assert!(!rebaseline_for_new_episode(
+        &mut baseline,
+        "2026-10-12T10:00:00.000Z|50000"
+    ));
+    assert_eq!(baseline.billed, 1_234, "an unchanged goal keeps counting");
+}
+
+/// The episode survives the OTHER two resets, which are about the file rather
+/// than the goal: a truncated or forked transcript still belongs to the goal
+/// that was running.
+#[test]
+fn a_forked_transcript_does_not_look_like_a_new_goal() {
+    let mut baseline = SpendBaseline {
+        episode: Some("since|500".into()),
+        transcript: Some("/old.jsonl".into()),
+        billed: 10,
+        ..SpendBaseline::default()
+    };
+    advance_summed_baseline(
+        &mut baseline,
+        "/new.jsonl",
+        4_096,
+        ClaudeSpendChunk::default(),
+    );
+    assert_eq!(
+        baseline.episode.as_deref(),
+        Some("since|500"),
+        "a new file is not a new goal"
+    );
+    assert_eq!(baseline.billed, 0, "but it does restart the count");
+    assert!(!rebaseline_for_new_episode(&mut baseline, "since|500"));
 }

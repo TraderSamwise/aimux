@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use crate::agent_token_spend::{SpendBaseline, SpendSinceBaseline, spend_for_session};
+use crate::agent_token_spend::{
+    SpendBaseline, SpendSinceBaseline, rebaseline_for_new_episode, spend_for_session,
+};
 use crate::backend_session_ids::claude_transcript_path;
 use crate::daemon_state::{MetadataState, metadata_state_path};
 use crate::debug_logging::{LogLevel, log_at};
@@ -118,6 +120,10 @@ impl LoopWatcherTask {
         }
         for session in sessions {
             let baseline = self.spend_baselines.entry(session.id.clone()).or_default();
+            // A session can hold one token goal after another without its loop
+            // ever going inactive, so the key alone does not say the count is
+            // still this goal's.
+            rebaseline_for_new_episode(baseline, &session.episode);
             let spend = spend_for_session(&session.tool, session.transcript.as_deref(), baseline);
             apply_token_spend_to_input(input, &session.id, &spend);
             let published = token_spend_value(&spend);
@@ -610,6 +616,10 @@ struct TokenGoalSession {
     id: String,
     tool: String,
     transcript: Option<PathBuf>,
+    /// Which goal this is: its start and its budget. Both move when a goal is
+    /// replaced, and the budget alone is not enough because re-adding the same
+    /// number is still a new goal.
+    episode: String,
 }
 
 /// Sessions whose loop entry names a token budget. Nothing else is read.
@@ -625,10 +635,15 @@ fn token_goal_sessions(input: &Value) -> Vec<TokenGoalSession> {
             if loop_meta.get("active").and_then(Value::as_bool) != Some(true) {
                 return None;
             }
-            loop_meta.get("tokenBudget").and_then(Value::as_u64)?;
+            let budget = loop_meta.get("tokenBudget").and_then(Value::as_u64)?;
+            let since = loop_meta
+                .get("since")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let tool = session_tool(input, id).unwrap_or_default();
             Some(TokenGoalSession {
                 transcript: session_transcript_path(input, id, &tool, meta),
+                episode: format!("{since}|{budget}"),
                 id: id.clone(),
                 tool,
             })
