@@ -248,16 +248,31 @@ pub fn advance_cumulative_baseline(
 /// been busy, and the rest is picked up next tick rather than in one read.
 pub const MAX_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
 
-pub fn read_appended(path: &Path, offset: u64) -> Result<(String, u64), String> {
+/// One tick's worth of a transcript.
+pub struct AppendedChunk {
+    pub text: String,
+    /// The file's length when it was read, for the stale-offset check.
+    pub len: u64,
+    /// Bytes actually taken. Compared against the cap rather than `text.len()`,
+    /// which lossy decoding can change.
+    pub read: u64,
+}
+
+pub fn read_appended(path: &Path, offset: u64) -> Result<AppendedChunk, String> {
     let len = metadata(path)
         .map_err(|error| format!("stat {}: {error}", path.display()))?
         .len();
+    let empty = |len| AppendedChunk {
+        text: String::new(),
+        len,
+        read: 0,
+    };
     if !offset_still_valid(offset, len) {
-        return Ok((String::new(), len));
+        return Ok(empty(len));
     }
     let take = (len - offset).min(MAX_CHUNK_BYTES);
     if take == 0 {
-        return Ok((String::new(), len));
+        return Ok(empty(len));
     }
     let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     file.seek(SeekFrom::Start(offset))
@@ -267,7 +282,22 @@ pub fn read_appended(path: &Path, offset: u64) -> Result<(String, u64), String> 
         .map_err(|error| format!("read {}: {error}", path.display()))?;
     // Lossy on purpose: a chunk boundary can split a multi-byte character, and
     // one mangled character must not stop a goal being measured.
-    Ok((String::from_utf8_lossy(&bytes).into_owned(), len))
+    Ok(AppendedChunk {
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+        len,
+        read: take,
+    })
+}
+
+/// Whether a full window arrived with no complete line in it.
+///
+/// That means one record is longer than the window, and the reader must step
+/// over it: leaving the offset where it is re-reads the same bytes every tick
+/// for ever, which freezes the spend and leaves the goal reminding as unmet
+/// until someone notices. The longest line in the transcript this was built
+/// against is 2,992,506 bytes, so the case is one large tool result away.
+pub fn chunk_spans_an_oversized_record(consumed: u64, read: u64) -> bool {
+    consumed == 0 && read >= MAX_CHUNK_BYTES
 }
 
 /// Spend for one session, folding whatever its runtime reports into the
@@ -290,7 +320,7 @@ pub fn spend_for_session(
         return advance_cumulative_baseline(baseline, &name, codex_cumulative_billed(&tail));
     }
     let fresh = baseline.transcript.as_deref() != Some(name.as_str());
-    let (text, len) = match read_appended(transcript, baseline.offset) {
+    let appended = match read_appended(transcript, baseline.offset) {
         Ok(read) => read,
         // A read that failed is not a session that spent nothing.
         Err(reason) => {
@@ -298,8 +328,15 @@ pub fn spend_for_session(
             return SpendSinceBaseline::Unmeasured(NO_TRANSCRIPT_YET);
         }
     };
-    let chunk = claude_spend_chunk(&text, baseline.last_id.as_deref());
-    advance_summed_baseline(baseline, &name, len, chunk);
+    let mut chunk = claude_spend_chunk(&appended.text, baseline.last_id.as_deref());
+    if chunk_spans_an_oversized_record(chunk.consumed, appended.read) {
+        // Stepped over, not re-read: the tokens in that one record are lost,
+        // which is a smaller lie than a budget that never moves again. The
+        // next chunk starts mid-record and its unparseable tail is consumed
+        // the same way, so the reader recovers on its own.
+        chunk.consumed = appended.read;
+    }
+    advance_summed_baseline(baseline, &name, appended.len, chunk);
     if fresh {
         return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
     }

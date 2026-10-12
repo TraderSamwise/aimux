@@ -1,9 +1,10 @@
 //! Billed-equivalent token spend, and the traps in getting there.
 
 use aimux::agent_token_spend::{
-    BASELINE_JUST_TAKEN, ClaudeSpendChunk, NO_TRANSCRIPT_YET, SpendBaseline, SpendSinceBaseline,
-    advance_cumulative_baseline, advance_summed_baseline, claude_spend_chunk,
-    codex_cumulative_billed, cumulative_spend_since, offset_still_valid, runtime_reports_usage,
+    BASELINE_JUST_TAKEN, ClaudeSpendChunk, MAX_CHUNK_BYTES, NO_TRANSCRIPT_YET, SpendBaseline,
+    SpendSinceBaseline, advance_cumulative_baseline, advance_summed_baseline,
+    chunk_spans_an_oversized_record, claude_spend_chunk, codex_cumulative_billed,
+    cumulative_spend_since, offset_still_valid, runtime_reports_usage, spend_for_session,
 };
 
 fn claude_line(id: &str, input: u64, cache_read: u64, cache_creation: u64, output: u64) -> String {
@@ -247,4 +248,73 @@ fn a_cumulative_baseline_measures_from_first_sight() {
         SpendSinceBaseline::Measured(250)
     );
     assert_eq!(baseline.billed, 250);
+}
+
+/// A full window with no complete line in it is one record longer than the
+/// window, not a quiet file. Leaving the offset alone re-reads the same bytes
+/// every tick for ever.
+#[test]
+fn a_full_window_with_no_line_in_it_is_an_oversized_record() {
+    assert!(chunk_spans_an_oversized_record(0, MAX_CHUNK_BYTES));
+    // A short read with nothing complete in it is a record still being
+    // written, which MUST be waited for rather than stepped over.
+    assert!(!chunk_spans_an_oversized_record(0, 64));
+    // And a window that did yield lines is just a busy session.
+    assert!(!chunk_spans_an_oversized_record(4_096, MAX_CHUNK_BYTES));
+}
+
+/// The stall this exists to stop: one record bigger than the window froze the
+/// offset, so spend never moved again and the goal reminded as unmet for ever.
+/// The longest line in the transcript this was built against is 2,992,506
+/// bytes, so it is one large tool result away.
+#[test]
+fn a_record_longer_than_the_window_is_stepped_over_rather_than_re_read() {
+    let dir = std::env::temp_dir().join(format!("aimux-oversized-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("transcript.jsonl");
+    std::fs::write(&path, claude_line("msg-1", 10, 0, 0, 5)).expect("seed transcript");
+
+    let mut baseline = SpendBaseline::default();
+    // First sight only takes the baseline; nothing before it is this goal's.
+    assert_eq!(
+        spend_for_session("claude", Some(path.as_path()), &mut baseline),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)
+    );
+
+    let oversized = format!(
+        "{{\"type\":\"assistant\",\"pad\":\"{}\"}}\n",
+        "x".repeat(MAX_CHUNK_BYTES as usize + 1_024)
+    );
+    let appended = format!("{oversized}{}", claude_line("msg-2", 100, 9_000, 20, 30));
+    std::fs::write(
+        &path,
+        format!("{}{appended}", claude_line("msg-1", 10, 0, 0, 5)),
+    )
+    .expect("append transcript");
+
+    // Ten ticks is far more than the two it takes to step over a record this
+    // size, and the point is that the offset MOVES every time.
+    let mut offsets = Vec::new();
+    for _ in 0..10 {
+        spend_for_session("claude", Some(path.as_path()), &mut baseline);
+        offsets.push(baseline.offset);
+    }
+    assert!(
+        offsets.windows(2).any(|pair| pair[0] != pair[1]),
+        "the offset must advance past an oversized record, got {offsets:?}"
+    );
+    assert_eq!(
+        baseline.offset,
+        std::fs::metadata(&path).expect("stat").len(),
+        "and it must end up at the end of the file"
+    );
+    // The oversized record's own tokens are lost -- it was never parsed -- but
+    // the record AFTER it is counted, which is what proves the reader
+    // recovered instead of being left mid-line for ever.
+    assert_eq!(
+        baseline.billed, 150,
+        "100 input + 20 cache creation + 30 output, with the 9000 cache reads excluded"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }
