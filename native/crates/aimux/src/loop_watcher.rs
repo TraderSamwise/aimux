@@ -160,6 +160,11 @@ pub struct LoopWatcher {
     /// Token budgets whose "you have reached it" has already been said, keyed
     /// by session and budget so raising the budget arms it again.
     announced_token_goals: BTreeSet<String>,
+    /// Announcements planned but not yet delivered, by send signature. Said
+    /// and attempted are different things: recording an announcement before
+    /// the send lands loses it for ever if the send fails, and this file
+    /// already keeps that distinction for the briefings.
+    pending_token_goal_announcements: BTreeMap<String, String>,
     scan_records: Vec<LoopScanRecord>,
 }
 
@@ -317,7 +322,7 @@ impl LoopWatcher {
             let Some(key) = token_goal_announcement_key(&candidate.value) else {
                 continue;
             };
-            if !self.announced_token_goals.insert(key) {
+            if self.announced_token_goals.contains(&key) {
                 continue;
             }
             if !session_can_receive_loop_send(input, &id) {
@@ -326,6 +331,10 @@ impl LoopWatcher {
             let signature = candidate_signature(std::slice::from_ref(&candidate.value));
             self.pending_send_keys
                 .insert(signature.clone(), vec![candidate.key.clone()]);
+            // Marked as said only once it lands, so a failed send is retried
+            // rather than silently counted as delivered.
+            self.pending_token_goal_announcements
+                .insert(signature.clone(), key);
             sends.push(LoopSend {
                 session_id: id,
                 text: build_token_goal_met_notice(&candidate.value),
@@ -489,6 +498,13 @@ impl LoopWatcher {
             }
         }
         let delivered = matches!(outcome, LoopDeliveryOutcome::Delivered);
+        if let Some(key) = self
+            .pending_token_goal_announcements
+            .remove(&send.signature)
+            && delivered
+        {
+            self.announced_token_goals.insert(key);
+        }
         if let Some(keys) = self.pending_send_keys.remove(&send.signature) {
             for key in keys {
                 if let Some(state) = self.stopped_since.get_mut(&key) {
@@ -1285,6 +1301,9 @@ impl PersistentLoopWatcherState {
             idle_fleet_condition_since_ms: self.idle_fleet_condition_since_ms,
             reported_loop_exits: self.reported_loop_exits.into_iter().collect(),
             announced_token_goals: self.announced_token_goals.into_iter().collect(),
+            // Not persisted: a send in flight when the service restarted was
+            // never delivered, so the announcement is planned again.
+            pending_token_goal_announcements: BTreeMap::new(),
             scan_records: self.scan_records,
         })
     }

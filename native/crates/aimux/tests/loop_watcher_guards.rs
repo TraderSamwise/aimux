@@ -2797,6 +2797,48 @@ fn a_met_token_budget_is_announced_once_and_then_stops_reminding() {
     );
 }
 
+/// Said and attempted are different things. Recording the announcement at plan
+/// time meant a send that never landed was counted as delivered, and the agent
+/// was never told at all.
+#[test]
+fn a_met_budget_whose_send_fails_is_announced_again() {
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    worker_meta["loop"]["goalKind"] = json!("tokens");
+    worker_meta["loop"]["tokenBudget"] = json!(10_000);
+    worker_meta["tokenSpend"] = json!({ "billed": 10_000 });
+    let input = input_with_config(
+        vec![worker],
+        json!({ "sessions": { "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 0,
+            "autoNudgeWithoutOverseer": true
+        }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut refuse = |_: &LoopSend| false;
+    assert!(
+        watcher
+            .scan(&input, NOW, &mut refuse)
+            .iter()
+            .any(|send| send.session_id == "worker"),
+        "it is planned"
+    );
+    let mut accept = |_: &LoopSend| true;
+    assert!(
+        watcher
+            .scan(&input, NOW + 120_000, &mut accept)
+            .iter()
+            .any(|send| send.session_id == "worker"),
+        "and planned again, because the first one never landed"
+    );
+    assert!(
+        watcher.scan(&input, NOW + 240_000, &mut accept).is_empty(),
+        "and not a third time, now that it has"
+    );
+}
+
 /// Sam's rule for every nudge, and the announcement is no exception: "dont
 /// ping while its not idle, pointless". The budget is still announced, just
 /// not into the middle of a turn.
