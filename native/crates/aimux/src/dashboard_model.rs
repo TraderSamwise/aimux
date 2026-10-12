@@ -117,6 +117,11 @@ pub struct DashboardSession {
     pub restore_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub restore_blocked_reason: Option<String>,
+    /// The runtime this session runs, as the project service names it. The
+    /// watcher decides measurability from this field, so the dialog must read
+    /// the same one rather than the normalized config key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_config_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

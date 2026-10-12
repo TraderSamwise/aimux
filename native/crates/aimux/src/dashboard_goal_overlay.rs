@@ -7,6 +7,7 @@
 use serde_json::Value;
 
 use crate::agent_goal::{GoalKind, TokenGoalStatus, token_goal_status};
+use crate::agent_token_spend::runtime_reports_usage;
 use crate::dashboard_model::DashboardSessionLoop;
 
 /// What the dialog is looking at.
@@ -41,7 +42,7 @@ pub fn goal_overlay_from_session(
     session_id: &str,
     loop_state: Option<&DashboardSessionLoop>,
     token_spend: Option<&Value>,
-    tool: &str,
+    tool: Option<&str>,
 ) -> DashboardGoalOverlayState {
     let active = loop_state.map(|state| state.active).unwrap_or(false);
     let kind = GoalKind::parse(
@@ -64,9 +65,21 @@ pub fn goal_overlay_from_session(
             .map(str::to_owned)
             .or_else(|| {
                 // Worth naming even before anything has written a spend
-                // record: these runtimes will never write one.
-                (!matches!(tool.trim(), "claude" | "codex"))
-                    .then(|| format!("{tool} does not report token usage"))
+                // record: these runtimes will never write one. Asked through
+                // the same helper the watcher uses, on the same field, so the
+                // dialog cannot disagree with what is actually measured.
+                let tool = tool.map(str::trim).filter(|tool| !tool.is_empty());
+                match tool {
+                    Some(tool) if !runtime_reports_usage(tool) => {
+                        Some(format!("{tool} does not report token usage"))
+                    }
+                    // Named as unknown rather than interpolated as an empty
+                    // string, which read as " does not report token usage".
+                    None => Some(String::from(
+                        "this runtime is unknown, so spend is not measured",
+                    )),
+                    Some(_) => None,
+                }
             }),
     }
 }

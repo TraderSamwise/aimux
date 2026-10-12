@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { agentGoalKind, agentGoalKindIsChangeable, agentGoalLabel } from "./agent-goal-label";
+import {
+  agentGoalKind,
+  agentGoalKindIsChangeable,
+  agentGoalLabel,
+  agentGoalTokenStatus,
+} from "./agent-goal-label";
 
 describe("how a goal reads at a glance", () => {
   it("says nothing special about the kind the loop always had", () => {
@@ -77,6 +82,21 @@ describe("how a goal reads at a glance", () => {
     expect(agentGoalKind({ loop: { active: true, goalKind: "tokens", tokenBudget: 0 } })).toBe(
       "user",
     );
+  });
+
+  // The app had no met branch, so a reached budget read as "50,000 of 50,000
+  // tokens" while the dialog said "met" and the agent had already been told.
+  it("says a reached budget is met, the way the dialog does", () => {
+    const met = {
+      loop: { active: true, goal: "spend down", goalKind: "tokens", tokenBudget: 50000 },
+      tokenSpend: { billed: 50000 },
+    };
+    expect(agentGoalTokenStatus(met)).toBe("met");
+    expect(agentGoalLabel(met)).toBe("spend down — met: 50,000 tokens spent");
+    // Over the line is still met, not a bigger unmet number.
+    expect(agentGoalTokenStatus({ ...met, tokenSpend: { billed: 60000 } })).toBe("met");
+    expect(agentGoalTokenStatus({ ...met, tokenSpend: { billed: 49999 } })).toBe("unmet");
+    expect(agentGoalTokenStatus({ ...met, tokenSpend: { unmeasured: "no" } })).toBe("unmeasured");
   });
 
   it("does not claim a goal for a session that is not in a loop", () => {

@@ -44,18 +44,36 @@ export function agentGoalKindIsChangeable(kind: AgentGoalKind): boolean {
  * find out. Derived once here because the loops list and the agent panel both
  * show it, and a second copy of the rule would drift.
  */
+/** Whether a token goal has been reached, unmet, or cannot be measured. */
+export type AgentGoalTokenStatus = "met" | "unmet" | "unmeasured";
+
+/**
+ * The same verdict `token_goal_status` reaches in Rust.
+ *
+ * The app had no met branch at all, so a budget that was reached rendered as
+ * "50,000 of 50,000 tokens" while the dialog said "met" and the agent had
+ * already been told its budget was reached.
+ */
+export function agentGoalTokenStatus(session: GoalSession): AgentGoalTokenStatus {
+  const budget = agentGoalBudget(session);
+  const billed = session.tokenSpend?.billed;
+  if (budget === null || typeof billed !== "number") return "unmeasured";
+  return billed >= budget ? "met" : "unmet";
+}
+
 export function agentGoalLabel(session: GoalSession): string {
   if (!session.loop?.active) return "Not in a loop";
   const goal = session.loop.goal?.trim();
   const kind = agentGoalKind(session);
   if (kind === "tokens") {
     const budget = agentGoalBudget(session) ?? 0;
-    const spend = session.tokenSpend;
-    const standing =
-      typeof spend?.billed === "number"
-        ? `${spend.billed.toLocaleString()} of ${budget.toLocaleString()} tokens`
-        : // Said, not shown as zero: aider and shell report no usage at all.
-          "spend not measured";
+    const billed = session.tokenSpend?.billed ?? 0;
+    const standing = {
+      met: `met: ${billed.toLocaleString()} tokens spent`,
+      unmet: `${billed.toLocaleString()} of ${budget.toLocaleString()} tokens`,
+      // Said, not shown as zero: aider and shell report no usage at all.
+      unmeasured: "spend not measured",
+    }[agentGoalTokenStatus(session)];
     return goal ? `${goal} — ${standing}` : standing;
   }
   const prefix = kind === "user" ? "Yours to close" : null;

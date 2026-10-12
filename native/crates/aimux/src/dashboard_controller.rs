@@ -1872,7 +1872,7 @@ impl DashboardController {
             &selected.id,
             selected.loop_state.as_ref(),
             selected.token_spend.as_ref(),
-            selected.tool_config_key.as_deref().unwrap_or_default(),
+            selected.tool.as_deref(),
         ));
         DashboardControllerEffect::Render
     }

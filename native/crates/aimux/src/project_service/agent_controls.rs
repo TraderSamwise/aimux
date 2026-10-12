@@ -652,7 +652,19 @@ fn route_loop(
         if let Some(budget) = kind.token_budget() {
             loop_metadata.insert("tokenBudget".into(), Value::from(budget));
         }
-        loop_metadata.insert("since".into(), Value::String(now.clone()));
+        // `since` is when the loop became active, not when its record was
+        // last written. It is also the alert-pause KEY and part of the spend
+        // episode, so rewriting it on every `active: true` meant a kind-only
+        // hand-over cancelled a pause Sam had set, restarted the dwell window
+        // and re-baselined the token spend.
+        let since = stored_loop
+            .as_ref()
+            .filter(|loop_meta| loop_meta.get("active").and_then(Value::as_bool) == Some(true))
+            .and_then(|loop_meta| loop_meta.get("since"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| now.clone());
+        loop_metadata.insert("since".into(), Value::String(since));
         let mut loop_last_action = Map::new();
         loop_last_action.insert("action".into(), Value::String("add".into()));
         loop_last_action.insert("at".into(), Value::String(now));

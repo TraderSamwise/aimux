@@ -1470,6 +1470,54 @@ fn changing_only_the_kind_keeps_the_goal_it_was_written_as() {
     );
 }
 
+/// `since` is the alert-pause key and part of the spend episode, so rewriting
+/// it on every `active: true` meant the dashboard's `k` cancelled a pause Sam
+/// had set and re-baselined the token spend. Found by review.
+#[test]
+fn a_rewrite_of_a_running_loop_keeps_when_it_started() {
+    let project = temp_project("user-goal-since");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let post = |body: Value| {
+        route_project_service_request(&context, "POST", routes::agents::LOOP, Some(&body))
+    };
+    let first = post(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "goal": "the long migration",
+        "goalKind": "user",
+        "source": "dashboard"
+    }));
+    let started = first.body["loop"]["since"]
+        .as_str()
+        .expect("a start time")
+        .to_owned();
+
+    let handed_over = post(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "goalKind": "agent",
+        "source": "dashboard"
+    }));
+    assert_eq!(
+        handed_over.body["loop"]["since"], started,
+        "a hand-over is not a new loop, and `since` is what a pause is keyed on"
+    );
+
+    // A loop that was NOT running starts now.
+    post(json!({ "sessionId": "worker-1", "active": false, "source": "dashboard" }));
+    let restarted = post(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "goal": "again",
+        "source": "dashboard"
+    }));
+    assert_ne!(
+        restarted.body["loop"]["since"], started,
+        "but a loop started again is genuinely new"
+    );
+}
+
 /// An omitted goal and a cleared one are different requests. Preserving the
 /// stored text on BOTH meant clearing the goal in the app reported success and
 /// silently brought the old sentence back.
