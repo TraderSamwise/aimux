@@ -1562,7 +1562,9 @@ fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
                 Some(json!({
                     "project": "/repo",
                     "sessionId": "claude-1",
-                    "source": "human",
+                    // `remove` ends the reminders, so an unattributed shell is
+                    // not Sam without saying so: `--as-me` is what asserts it.
+                    "source": "unknown",
                 })),
             ),
             (format!("{CORE_LOOP_LIST_TEXT_ROUTE}?project=%2Frepo"), None,),
