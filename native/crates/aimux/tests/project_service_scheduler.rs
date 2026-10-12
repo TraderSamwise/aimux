@@ -2140,6 +2140,60 @@ fn token_spend_is_published_where_every_surface_reads_it() {
     );
 }
 
+/// A goal removed while the project service was down leaves no baseline for
+/// the next process to notice, so the published spend sat in metadata for ever
+/// and every surface reported it against a budget nobody held. Found by review:
+/// the earlier cleanup only looked at baselines held in memory.
+#[test]
+fn a_spend_left_by_a_previous_process_is_cleared_without_a_baseline() {
+    let root = unique_temp_dir("aimux-loop-watcher-token-spend-orphan");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    let mut topology = topology_with_live_session();
+    topology["sessions"][0]["tool"] = json!("aider");
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).expect("write topology");
+    // No loop at all, but a spend a previous process published. This is a
+    // FRESH task, so it holds no baseline for this session.
+    fs::write(
+        metadata_state_path(&state_dir),
+        serde_json::to_string(&json!({
+            "version": 1,
+            "sessions": {
+                "worker": {
+                    "tokenSpend": { "billed": 42_000 },
+                    "derived": { "activity": "running", "attention": "normal" }
+                }
+            }
+        }))
+        .expect("metadata json"),
+    )
+    .expect("write metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(metadata_state_path(&state_dir)).expect("metadata read"),
+    )
+    .expect("metadata json");
+    assert!(
+        state["sessions"]["worker"].get("tokenSpend").is_none(),
+        "an orphaned spend must be cleared, got {}",
+        state["sessions"]["worker"]
+    );
+}
+
 /// Clearing a spend must not RESURRECT a session. The metadata update creates
 /// an entry when one is absent, so a cleanup for a session whose metadata is
 /// gone could have written it back as a ghost row that every surface then

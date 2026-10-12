@@ -16,9 +16,10 @@
 //! # Measured from when the goal started, not from the dawn of the session
 //!
 //! A budget is for this goal, and a transcript outlives it: the one in front
-//! of me is 415MB. So the reader takes a baseline at first sight and only ever
-//! counts forward. That also means a cold start never parses history, which it
-//! could not afford to do inside a tick budget.
+//! of me is 415MB. So the reader takes a baseline at first sight -- the file's
+//! current length, from a stat, reading nothing -- and only ever counts
+//! forward. A cold start therefore parses no history at all, which it could
+//! not afford to do inside a tick budget.
 //!
 //! # What a restart costs
 //!
@@ -365,7 +366,23 @@ pub fn spend_for_session(
         };
         return advance_cumulative_baseline(baseline, &name, codex_cumulative_billed(&tail));
     }
-    let fresh = baseline.transcript.as_deref() != Some(name.as_str());
+    if baseline.transcript.as_deref() != Some(name.as_str()) {
+        // Measured from HERE, so first sight reads nothing at all. The old
+        // code called `read_appended` at offset 0 and then discarded the
+        // chunk, which parsed up to 4MB of a 418MB file on the tick thread
+        // while the module header claimed a cold start never parses history.
+        let len = match metadata(transcript) {
+            Ok(stat) => stat.len(),
+            Err(error) => return unreadable(transcript, &error.to_string()),
+        };
+        *baseline = SpendBaseline {
+            offset: len,
+            transcript: Some(name),
+            episode: baseline.episode.clone(),
+            ..SpendBaseline::default()
+        };
+        return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
+    }
     let appended = match read_appended(transcript, baseline.offset) {
         Ok(read) => read,
         // A read that failed is not a session that spent nothing, and it is
@@ -389,12 +406,11 @@ pub fn spend_for_session(
         );
         chunk.consumed = appended.read;
     }
-    let rebased = advance_summed_baseline(baseline, &name, appended.len, chunk);
-    if fresh || rebased {
-        // `rebased` here means the file was truncated or replaced under the
-        // same name, so the count restarted. Reporting `Measured(0)` for that
-        // told a goal at 480,000 of a 500,000 budget that it had spent
-        // nothing, and called it a measurement.
+    if advance_summed_baseline(baseline, &name, appended.len, chunk) {
+        // The file was truncated or replaced under the same name, so the count
+        // restarted. Reporting `Measured(0)` for that told a goal at 480,000
+        // of a 500,000 budget that it had spent nothing, and called it a
+        // measurement.
         return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
     }
     SpendSinceBaseline::Measured(baseline.billed)

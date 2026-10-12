@@ -2856,6 +2856,58 @@ fn a_met_budget_is_not_announced_again_after_the_agent_gets_back_to_work() {
     }
 }
 
+/// Under the PRODUCTION dwell and cooldown, an overseer holding its own goal
+/// is nudged on a cadence, not on every tick. A review measured the failing
+/// shape: with the dwell bookkeeping removed this path fired on ticks
+/// [2,3,4,...,39] instead of [2,6,10,...,38], and every test stayed green
+/// because none of them scanned past a delivered send.
+#[test]
+fn an_overseer_own_goal_nudge_keeps_to_a_cadence_at_production_dwell() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = non_loop_session("worker", "running");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 60_000,
+            "stoppedDwellMs": 30_000,
+            "unchangedReminderTicks": 4
+        }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let mut fired = Vec::new();
+    for tick in 0..40 {
+        let now = NOW + tick * 15_000;
+        if watcher
+            .scan(&input, now, &mut ok)
+            .iter()
+            .any(|send| send.session_id == "boss" && send.kind == LoopSendKind::DirectNudge)
+        {
+            fired.push(tick);
+        }
+    }
+
+    assert!(
+        !fired.is_empty(),
+        "the overseer's own goal must be nudged at all"
+    );
+    let gaps = fired
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect::<Vec<_>>();
+    assert!(
+        gaps.iter().all(|gap| *gap >= 4),
+        "every gap must be at least the reminder cadence, got {fired:?}"
+    );
+    assert!(
+        fired.len() <= 12,
+        "forty ticks must not produce a nudge on nearly every one, got {fired:?}"
+    );
+}
+
 /// The prune is what makes a NEW goal announceable again. Without it the key
 /// of a goal that is long gone sits there for ever and the next goal with the
 /// same budget is never announced. A review showed replacing the prune with a

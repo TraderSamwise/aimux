@@ -251,6 +251,43 @@ fn a_cumulative_baseline_measures_from_first_sight() {
     assert_eq!(baseline.billed, 250);
 }
 
+/// First sight reads NOTHING: the baseline is the file's current end, taken
+/// from a stat. The old code called the reader at offset 0 and discarded the
+/// chunk, parsing up to 4MB of a 418MB file on the tick thread while the
+/// module header claimed a cold start never parses history. Found by review.
+#[test]
+fn first_sight_takes_the_end_of_the_file_without_reading_it() {
+    let dir = scratch("first-sight");
+    let path = dir.join("transcript.jsonl");
+    let history = format!(
+        "{}{}",
+        claude_line("old-1", 900_000, 0, 0, 100_000),
+        claude_line("old-2", 800_000, 0, 0, 100_000)
+    );
+    std::fs::write(&path, &history).expect("seed history");
+
+    let mut baseline = SpendBaseline::default();
+    assert_eq!(
+        spend_for_session("claude", Some(path.as_path()), &mut baseline),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)
+    );
+    assert_eq!(
+        baseline.offset,
+        history.len() as u64,
+        "the baseline is the end of the file"
+    );
+    assert_eq!(
+        baseline.billed, 0,
+        "and nothing written before the goal is charged to it"
+    );
+    assert_eq!(
+        baseline.last_id, None,
+        "nothing was parsed, so no id was carried"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A full window with no complete line in it is one record longer than the
 /// window, not a quiet file. Leaving the offset alone re-reads the same bytes
 /// every tick for ever.
@@ -454,6 +491,23 @@ fn an_unreadable_transcript_is_not_reported_as_one_that_was_never_written() {
     let dir = scratch("unreadable");
     let path = dir.join("transcript.jsonl");
     std::fs::write(&path, claude_line("msg-1", 10, 0, 0, 5)).expect("seed");
+
+    // The baseline is taken from a stat, so the failure has to happen on a
+    // tick that actually reads -- which is every tick after the first.
+    let mut baseline = SpendBaseline::default();
+    assert_eq!(
+        spend_for_session("claude", Some(path.as_path()), &mut baseline),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)
+    );
+    std::fs::write(
+        &path,
+        format!(
+            "{}{}",
+            claude_line("msg-1", 10, 0, 0, 5),
+            claude_line("msg-2", 20, 0, 0, 5)
+        ),
+    )
+    .expect("append");
     let mut permissions = std::fs::metadata(&path).expect("stat").permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o000);
     std::fs::set_permissions(&path, permissions).expect("chmod");
@@ -461,12 +515,10 @@ fn an_unreadable_transcript_is_not_reported_as_one_that_was_never_written() {
     // Asked directly rather than inferred from the result: a test that
     // accepted NO_TRANSCRIPT_YET as "probably root" could never fail, which is
     // the whole class of bug this file exists to catch.
-    let denied = std::fs::File::open(&path).is_err();
     assert!(
-        denied,
+        std::fs::File::open(&path).is_err(),
         "this process can read a 0o000 file, so the case cannot be set up here"
     );
-    let mut baseline = SpendBaseline::default();
     assert_eq!(
         spend_for_session("claude", Some(path.as_path()), &mut baseline),
         SpendSinceBaseline::Unmeasured(TRANSCRIPT_UNREADABLE),

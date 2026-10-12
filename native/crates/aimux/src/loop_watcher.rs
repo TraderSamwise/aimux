@@ -353,9 +353,18 @@ impl LoopWatcher {
         if let Some(send) = loop_exit_summary {
             sends.push(send);
         }
+        let own_goal_cooldown = config_i64(input, "nudgeCooldownMs", 60_000).max(0);
         for candidate in own_goal {
             let id = str_field(&candidate.value, "id").to_owned();
             if !session_can_receive_loop_send(input, &id) {
+                continue;
+            }
+            // The same cooldown the fleet nudges honour. Without it this
+            // path's only brake was the dwell bookkeeping below, so losing
+            // that bookkeeping turned the overseer's own nudge into one every
+            // tick -- and nothing failed, because nothing scanned past a
+            // delivered send.
+            if now_ms - self.last_nudge_at.get(&id).copied().unwrap_or(0) < own_goal_cooldown {
                 continue;
             }
             let signature = candidate_signature(std::slice::from_ref(&candidate.value));
