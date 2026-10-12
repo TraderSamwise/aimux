@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { agentGoalLabel } from "./agent-goal-label";
+import { agentGoalKind, agentGoalKindIsChangeable, agentGoalLabel } from "./agent-goal-label";
 
 describe("how a goal reads at a glance", () => {
   it("says nothing special about the kind the loop always had", () => {
@@ -53,6 +53,30 @@ describe("how a goal reads at a glance", () => {
         loop: { active: true, goal: "spend down", goalKind: "tokens", tokenBudget: 0 },
       }),
     ).toBe("Yours to close: spend down");
+  });
+
+  // The panel hid the hand-over control on any running goal, on the same wrong
+  // belief the TUI had: the route takes a kind change from Sam on a running
+  // goal. The only kind that declines is a budget, which would be discarded.
+  it("offers a hand-over on every kind except a token budget", () => {
+    expect(agentGoalKindIsChangeable("agent")).toBe(true);
+    expect(agentGoalKindIsChangeable("user")).toBe(true);
+    expect(agentGoalKindIsChangeable("tokens")).toBe(false);
+  });
+
+  it("resolves a kind the same way the label reads it", () => {
+    expect(agentGoalKind({ loop: { active: true } })).toBe("agent");
+    expect(agentGoalKind({ loop: { active: true, goalKind: "user" } })).toBe("user");
+    expect(agentGoalKind({ loop: { active: true, goalKind: "whenever" } })).toBe("user");
+    expect(agentGoalKind({ loop: { active: true, goalKind: "tokens", tokenBudget: 50000 } })).toBe(
+      "tokens",
+    );
+    // A budget that did not survive is not a token goal, so its hand-over is
+    // offered again -- and it is not the agent's to close either.
+    expect(agentGoalKind({ loop: { active: true, goalKind: "tokens" } })).toBe("user");
+    expect(agentGoalKind({ loop: { active: true, goalKind: "tokens", tokenBudget: 0 } })).toBe(
+      "user",
+    );
   });
 
   it("does not claim a goal for a session that is not in a loop", () => {

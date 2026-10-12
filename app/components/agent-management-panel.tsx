@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
-import { agentGoalLabel } from "@/lib/agent-goal-label";
+import { agentGoalKind, agentGoalKindIsChangeable, agentGoalLabel } from "@/lib/agent-goal-label";
 import { migrateAgent, renameAgent, setAgentLoop, setAgentOverseer } from "@/lib/api";
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -40,9 +40,13 @@ export function AgentManagementPanel({
   const [label, setLabel] = useState(session.label || "");
   const sessionLoopGoal = getLoopGoal(session.loop) ?? "";
   const [loopGoal, setLoopGoal] = useState(sessionLoopGoal);
+  const storedGoalKind = agentGoalKind(session);
   const [loopKind, setLoopKind] = useState<"agent" | "user">(
-    session.loop?.goalKind === "user" ? "user" : "agent",
+    storedGoalKind === "agent" ? "agent" : "user",
   );
+  // A token budget's kind IS its budget, so handing it over would discard the
+  // number. Every other kind is Sam's to change, running or not.
+  const canChangeGoalKind = agentGoalKindIsChangeable(storedGoalKind);
   const lastSyncedLoopGoalRef = useRef(sessionLoopGoal);
   const [targetWorktreePath, setTargetWorktreePath] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<AgentManagementAction | null>(null);
@@ -267,10 +271,7 @@ export function AgentManagementPanel({
           <PanelLabel icon={Repeat2} label="Loop" />
           <Text className="mt-1 text-xs text-muted-foreground">{agentGoalLabel(session)}</Text>
           <View className="mt-2 flex-row gap-2">
-            {/* Only on a goal that is not running yet: the route refuses a
-                kind change on an existing goal, because relabelling one is a
-                close in disguise. */}
-            {!loopActive ? (
+            {canChangeGoalKind ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -302,9 +303,9 @@ export function AgentManagementPanel({
                       sessionId: session.id,
                       active: true,
                       goal: trimmedGoal || undefined,
-                      // Only sent when starting one: the route refuses a
-                      // change, so sending it on a save would 409 a no-op.
-                      goalKind: loopActive ? undefined : loopKind,
+                      // Withheld only on a token goal, where sending a plain
+                      // kind would throw the budget away.
+                      goalKind: canChangeGoalKind ? loopKind : undefined,
                       source: "dashboard",
                     },
                     { token },
