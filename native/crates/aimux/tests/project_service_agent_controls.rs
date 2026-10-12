@@ -1463,6 +1463,60 @@ fn changing_only_the_kind_keeps_the_goal_it_was_written_as() {
     );
 }
 
+/// An omitted goal and a cleared one are different requests. Preserving the
+/// stored text on BOTH meant clearing the goal in the app reported success and
+/// silently brought the old sentence back.
+#[test]
+fn an_explicitly_empty_goal_clears_it_while_an_omitted_one_is_kept() {
+    let project = temp_project("user-goal-clear");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let add = |body: Value| {
+        route_project_service_request(&context, "POST", routes::agents::LOOP, Some(&body))
+    };
+    add(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "goal": "move every call site off the old client",
+        "source": "dashboard"
+    }));
+
+    let kept = add(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "goalKind": "user",
+        "source": "dashboard"
+    }));
+    assert_eq!(
+        kept.body["loop"]["goal"], "move every call site off the old client",
+        "a request that never mentions a goal keeps the stored one"
+    );
+
+    let cleared = add(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "goal": "",
+        "source": "dashboard"
+    }));
+    assert_eq!(cleared.status, 200);
+    assert!(
+        cleared.body["loop"].get("goal").is_none(),
+        "an empty goal that was SENT clears it, got {}",
+        cleared.body["loop"]
+    );
+    // And it stayed cleared, rather than the response merely omitting it.
+    let reread = add(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "source": "dashboard"
+    }));
+    assert!(
+        reread.body["loop"].get("goal").is_none(),
+        "nothing resurrects it on the next rewrite, got {}",
+        reread.body["loop"]
+    );
+}
+
 /// The hole a review found: pausing silences the same reminders a close would,
 /// and this route used to ask nobody whose goal it was.
 #[test]

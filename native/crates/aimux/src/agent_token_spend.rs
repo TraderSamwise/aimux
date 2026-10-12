@@ -19,6 +19,15 @@
 //! of me is 415MB. So the reader takes a baseline at first sight and only ever
 //! counts forward. That also means a cold start never parses history, which it
 //! could not afford to do inside a tick budget.
+//!
+//! # What a restart costs
+//!
+//! The baselines live in the loop-watcher task, in memory only. A project
+//! service that restarts takes a fresh baseline at the current end of each
+//! transcript, so spend counted before the restart is gone and a budget starts
+//! again from zero. A long budget on a service that restarts often can
+//! therefore never be reached. Persisting them would fix it and is not done
+//! here; the limit is written down rather than discovered.
 
 use serde_json::Value;
 use std::fs::{File, metadata};

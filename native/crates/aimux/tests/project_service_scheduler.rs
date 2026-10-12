@@ -2140,6 +2140,75 @@ fn token_spend_is_published_where_every_surface_reads_it() {
     );
 }
 
+/// Clearing a spend must not RESURRECT a session. The metadata update creates
+/// an entry when one is absent, so a cleanup for a session whose metadata is
+/// gone could have written it back as a ghost row that every surface then
+/// lists. It does not, because the update compares the payload and a removal
+/// from an entry that never had the key changes nothing -- asserted here
+/// rather than assumed, since the wrong answer is a session reappearing.
+#[test]
+fn clearing_a_spend_does_not_recreate_a_session_that_is_gone() {
+    let root = unique_temp_dir("aimux-loop-watcher-token-spend-ghost");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    let mut topology = topology_with_live_session();
+    topology["sessions"][0]["tool"] = json!("aider");
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).expect("write topology");
+    fs::write(
+        metadata_state_path(&state_dir),
+        serde_json::to_string(&json!({
+            "version": 1,
+            "sessions": {
+                "worker": {
+                    "loop": {
+                        "active": true,
+                        "goal": "spend down",
+                        "goalKind": "tokens",
+                        "tokenBudget": 50_000,
+                        "since": "2026-09-13T00:00:00.000Z"
+                    },
+                    "derived": { "activity": "running", "attention": "normal" }
+                }
+            }
+        }))
+        .expect("metadata json"),
+    )
+    .expect("write metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    // The session is gone entirely, the way a killed agent's row is reaped.
+    fs::write(
+        metadata_state_path(&state_dir),
+        serde_json::to_string(&json!({ "version": 1, "sessions": {} })).expect("metadata json"),
+    )
+    .expect("remove session");
+    run_due_at(&mut scheduler, &context, 45_000);
+
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(metadata_state_path(&state_dir)).expect("metadata read"),
+    )
+    .expect("metadata json");
+    assert_eq!(
+        state["sessions"],
+        json!({}),
+        "no ghost row may come back from clearing a spend, got {}",
+        state["sessions"]
+    );
+}
+
 fn topology_with_live_session() -> serde_json::Value {
     json!({
         "version": 1,
