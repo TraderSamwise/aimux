@@ -2728,25 +2728,139 @@ fn a_paused_overseer_goal_stops_nudging() {
     );
 }
 
-/// A token budget that has been reached is not an unmet goal, so there is
-/// nothing left to remind anyone of.
+/// A reached budget is said ONCE and then goes quiet. Reminders simply
+/// stopping would be indistinguishable from the watcher failing, and the agent
+/// has no other way to learn the number was hit.
 #[test]
-fn a_met_token_budget_stops_the_reminders() {
-    let (worker, mut worker_meta) = looping_session("worker", "idle");
+fn a_met_token_budget_is_announced_once_and_then_stops_reminding() {
+    let met = |spend: u64| {
+        let (worker, mut worker_meta) = looping_session("worker", "idle");
+        worker_meta["loop"]["goalKind"] = json!("tokens");
+        worker_meta["loop"]["tokenBudget"] = json!(10_000);
+        worker_meta["tokenSpend"] = json!({ "billed": spend });
+        input_with_config(
+            vec![worker],
+            json!({ "sessions": { "worker": worker_meta } }),
+            json!({
+                "nudgeCooldownMs": 0,
+                "stoppedDwellMs": 0,
+                "autoNudgeWithoutOverseer": true
+            }),
+        )
+    };
+    let input = met(10_000);
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let announced = watcher.scan(&input, NOW, &mut ok);
+    let notice = announced
+        .iter()
+        .find(|send| send.session_id == "worker")
+        .expect("a reached budget must be said out loud");
+    assert!(
+        notice.text.contains("10000-token budget has been reached"),
+        "it must name the budget it reached, got {:?}",
+        notice.text
+    );
+    assert!(
+        !notice
+            .text
+            .contains("You stopped, but you're in a managed loop"),
+        "a reached budget is news, not another reminder: {:?}",
+        notice.text
+    );
+
+    // The cooldown is zero and the dwell is zero, so anything that re-fires
+    // would re-fire here.
+    for tick in 1..4 {
+        assert!(
+            watcher
+                .scan(&input, NOW + tick * 120_000, &mut ok)
+                .is_empty(),
+            "a met budget must be said once, not on every beat (tick {tick})"
+        );
+    }
+
+    // And a budget RAISED above what was spent is a new goal to work toward,
+    // not one already announced.
+    let mut raised = met(10_000);
+    raised["metadata"]["sessions"]["worker"]["loop"]["tokenBudget"] = json!(20_000);
+    let sends = watcher.scan(&raised, NOW + 600_000, &mut ok);
+    let nudge = sends
+        .iter()
+        .find(|send| send.session_id == "worker")
+        .expect("an unmet budget reminds again");
+    assert!(
+        nudge.text.contains("10000 of 20000"),
+        "and it reports the new standing, got {:?}",
+        nudge.text
+    );
+}
+
+/// Sam's rule for every nudge, and the announcement is no exception: "dont
+/// ping while its not idle, pointless". The budget is still announced, just
+/// not into the middle of a turn.
+#[test]
+fn a_met_budget_waits_for_the_agent_to_stop_before_announcing() {
+    let scan_with = |activity: &str| {
+        let (worker, mut worker_meta) = looping_session("worker", activity);
+        worker_meta["loop"]["goalKind"] = json!("tokens");
+        worker_meta["loop"]["tokenBudget"] = json!(10_000);
+        worker_meta["tokenSpend"] = json!({ "billed": 10_000 });
+        input_with_config(
+            vec![worker],
+            json!({ "sessions": { "worker": worker_meta } }),
+            json!({
+                "nudgeCooldownMs": 0,
+                "stoppedDwellMs": 0,
+                "autoNudgeWithoutOverseer": true
+            }),
+        )
+    };
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(
+        watcher.scan(&scan_with("running"), NOW, &mut ok).is_empty(),
+        "a working agent is not interrupted to be told its budget is spent"
+    );
+    assert!(
+        watcher
+            .scan(&scan_with("idle"), NOW + 120_000, &mut ok)
+            .iter()
+            .any(|send| send.session_id == "worker"),
+        "and it is told once it stops"
+    );
+}
+
+/// An offline session is a candidate -- that is how a dead loop gets
+/// reported -- but it cannot be sent to, and "your budget is spent" delivered
+/// into a window that is gone is a send that goes nowhere while being recorded
+/// as said.
+#[test]
+fn a_met_budget_on_a_dead_session_is_not_announced_to_it() {
+    let (worker, mut worker_meta) = looping_session_with_status("worker", Some("offline"), "idle");
     worker_meta["loop"]["goalKind"] = json!("tokens");
     worker_meta["loop"]["tokenBudget"] = json!(10_000);
     worker_meta["tokenSpend"] = json!({ "billed": 10_000 });
     let input = input_with_config(
         vec![worker],
         json!({ "sessions": { "worker": worker_meta } }),
-        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "autoNudgeWithoutOverseer": true }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 0,
+            "autoNudgeWithoutOverseer": true
+        }),
     );
 
     let mut watcher = LoopWatcher::new();
     let mut ok = |_: &LoopSend| true;
     assert!(
-        watcher.scan(&input, NOW, &mut ok).is_empty(),
-        "a spent budget is a met goal"
+        !watcher
+            .scan(&input, NOW, &mut ok)
+            .iter()
+            .any(|send| send.session_id == "worker"),
+        "nothing is sent to a session that is gone"
     );
 }
 

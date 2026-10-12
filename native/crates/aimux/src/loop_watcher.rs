@@ -157,6 +157,9 @@ pub struct LoopWatcher {
     unchanged_idle_fleet_ticks: u64,
     idle_fleet_condition_since_ms: Option<i64>,
     reported_loop_exits: BTreeSet<String>,
+    /// Token budgets whose "you have reached it" has already been said, keyed
+    /// by session and budget so raising the budget arms it again.
+    announced_token_goals: BTreeSet<String>,
     scan_records: Vec<LoopScanRecord>,
 }
 
@@ -277,6 +280,17 @@ impl LoopWatcher {
         if let Some(id) = overseer_id.as_deref() {
             raw_candidates.extend(find_loop_candidates_only(input, id));
         }
+        // Taken before paused extraction and before dwelling: pruning against
+        // the candidates that merely SURVIVED this tick's cooldown would drop
+        // the key of a budget already announced and announce it again on every
+        // reminder beat.
+        let live_token_goals = raw_candidates
+            .iter()
+            .filter(|candidate| candidate_token_goal_reached(candidate))
+            .filter_map(token_goal_announcement_key)
+            .collect::<BTreeSet<_>>();
+        self.announced_token_goals
+            .retain(|key| live_token_goals.contains(key));
         let paused_candidates = self.extract_paused_candidates(&mut raw_candidates);
         let paused_summary =
             self.plan_paused_summary(&paused_candidates, overseer_id.as_deref(), input);
@@ -293,6 +307,32 @@ impl LoopWatcher {
             config_i64(input, "nudgeCooldownMs", 60_000),
             config_u64(input, "unchangedReminderTicks"),
         );
+        // A reached budget leaves the reminder path here: it is said once, and
+        // then the goal goes quiet until Sam closes it.
+        let (budget_reached, candidates): (Vec<_>, Vec<_>) = candidates
+            .into_iter()
+            .partition(|candidate| candidate_token_goal_reached(&candidate.value));
+        for candidate in budget_reached {
+            let id = str_field(&candidate.value, "id").to_owned();
+            let Some(key) = token_goal_announcement_key(&candidate.value) else {
+                continue;
+            };
+            if !self.announced_token_goals.insert(key) {
+                continue;
+            }
+            if !session_can_receive_loop_send(input, &id) {
+                continue;
+            }
+            let signature = candidate_signature(std::slice::from_ref(&candidate.value));
+            self.pending_send_keys
+                .insert(signature.clone(), vec![candidate.key.clone()]);
+            sends.push(LoopSend {
+                session_id: id,
+                text: build_token_goal_met_notice(&candidate.value),
+                signature,
+                kind: LoopSendKind::DirectNudge,
+            });
+        }
         // Split after dwelling, not before: its own goal is not news about the
         // fleet, so it is a direct nudge rather than a line in a briefing the
         // overseer is meant to act on.
@@ -1095,6 +1135,8 @@ struct PersistentLoopWatcherState {
     #[serde(default)]
     reported_loop_exits: Vec<String>,
     #[serde(default)]
+    announced_token_goals: Vec<String>,
+    #[serde(default)]
     scan_records: Vec<LoopScanRecord>,
 }
 
@@ -1170,6 +1212,7 @@ impl PersistentLoopWatcherState {
             unchanged_idle_fleet_ticks: watcher.unchanged_idle_fleet_ticks,
             idle_fleet_condition_since_ms: watcher.idle_fleet_condition_since_ms,
             reported_loop_exits: watcher.reported_loop_exits.iter().cloned().collect(),
+            announced_token_goals: watcher.announced_token_goals.iter().cloned().collect(),
             scan_records: watcher.scan_records.clone(),
         }
     }
@@ -1241,6 +1284,7 @@ impl PersistentLoopWatcherState {
             unchanged_idle_fleet_ticks: self.unchanged_idle_fleet_ticks,
             idle_fleet_condition_since_ms: self.idle_fleet_condition_since_ms,
             reported_loop_exits: self.reported_loop_exits.into_iter().collect(),
+            announced_token_goals: self.announced_token_goals.into_iter().collect(),
             scan_records: self.scan_records,
         })
     }
@@ -1414,12 +1458,13 @@ pub fn find_loop_candidates_excluding(input: &Value, excluded: Option<&str>) -> 
                 .and_then(|derived| derived.get("activity"))
                 .and_then(Value::as_str);
             let condition = loop_candidate_condition(session, activity)?;
-            // A token budget that has been reached is not an unmet goal, so
-            // there is nothing to remind anyone of. `Unmeasured` is NOT met:
-            // it keeps reminding, and the text says it cannot measure.
-            if candidate_token_goal_met(loop_meta, meta.get("tokenSpend")) {
-                return None;
-            }
+            // A reached budget is not an unmet goal, so it stops being a
+            // reminder -- but it is carried as a candidate once so the agent is
+            // TOLD, through the same idle, dwell and pause gate every other
+            // nudge goes through. A budget that fired in silence is
+            // indistinguishable from a watcher that broke. `Unmeasured` is NOT
+            // met: it keeps reminding, and the text says it cannot measure.
+            let token_goal_met = candidate_token_goal_met(loop_meta, meta.get("tokenSpend"));
             if condition == LoopCandidateCondition::Stopped {
                 let attention = meta
                     .get("derived")
@@ -1443,6 +1488,9 @@ pub fn find_loop_candidates_excluding(input: &Value, excluded: Option<&str>) -> 
             }
             if let Some(spend) = meta.get("tokenSpend") {
                 candidate.insert("tokenSpend".into(), spend.clone());
+            }
+            if token_goal_met {
+                candidate.insert("tokenGoalMet".into(), Value::Bool(true));
             }
             if condition == LoopCandidateCondition::Dead {
                 insert_str(&mut candidate, "condition", Some(condition.as_str()));
@@ -2427,6 +2475,49 @@ fn empty_object() -> &'static Map<String, Value> {
 }
 
 /// Billed spend recorded against a candidate, if it could be measured.
+/// Whether this candidate is a budget that has been reached.
+fn candidate_token_goal_reached(candidate: &Value) -> bool {
+    candidate
+        .get("tokenGoalMet")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// What a reached budget is remembered as. Keyed on the budget as well as the
+/// session, so raising it is a new thing to announce rather than one already
+/// said.
+fn token_goal_announcement_key(candidate: &Value) -> Option<String> {
+    let budget = candidate.get("tokenBudget").and_then(Value::as_u64)?;
+    Some(format!("{}:{budget}", str_field(candidate, "id")))
+}
+
+/// What an agent is told once, when its budget is reached.
+///
+/// Said rather than left to silence: the reminders simply stopping is
+/// indistinguishable from the watcher failing, and the agent has no other way
+/// to learn the number was hit.
+pub fn build_token_goal_met_notice(candidate: &Value) -> String {
+    let budget = candidate
+        .get("tokenBudget")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let spent = candidate_token_spend(candidate)
+        .map(|billed| format!("{billed} billed tokens spent"))
+        .unwrap_or_else(|| String::from("the budget was reached"));
+    let goal = optional_str(candidate, "goal")
+        .map(|goal| format!(" ({goal})"))
+        .unwrap_or_default();
+    [
+        format!(
+            "[aimux loop] Your {budget}-token budget has been reached{goal}: {spent}."
+        ),
+        String::from(
+            "The reminders stop here. The goal stays open until Sam closes it, so wrap up what you are mid-way through, say where you got to, and stop.",
+        ),
+    ]
+    .join("\n")
+}
+
 pub fn candidate_token_spend(candidate: &Value) -> Option<u64> {
     candidate
         .get("tokenSpend")
