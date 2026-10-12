@@ -90,8 +90,12 @@ export interface DesktopSession {
     active?: boolean;
     goal?: string;
     since?: string;
-    /** Who may end it. Absent is the old agent-closable loop. */
-    goalKind?: "agent" | "user" | "tokens";
+    /**
+     * Who may end it: `agent`, `user` or `tokens`. Absent is the old
+     * agent-closable loop; anything else is a newer build's kind and reads as
+     * user-managed, never as the permissive one.
+     */
+    goalKind?: string;
     tokenBudget?: number;
   } | null;
   /** Billed spend against a token goal, or why it could not be measured. */

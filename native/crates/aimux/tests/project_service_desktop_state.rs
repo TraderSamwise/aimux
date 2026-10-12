@@ -207,6 +207,12 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
     assert_eq!(live["semantic"]["pendingDeliveryCount"], 1);
     assert_eq!(live["semantic"]["waitingOnThemCount"], 1);
     assert_eq!(live["loop"]["active"], true);
+    assert_eq!(live["loop"]["goalKind"], "tokens");
+    assert_eq!(live["loop"]["tokenBudget"], 50000);
+    // The loop watcher is the only thing that measures spend, so if the
+    // projection drops it the dialog and the app can only ever say
+    // "not measured" for a goal that is being measured every tick.
+    assert_eq!(live["tokenSpend"]["billed"], 12500);
     assert_eq!(live["overseer"], false);
     assert_eq!(live["scribe"], false);
 
@@ -3471,7 +3477,8 @@ fn metadata_fixture() -> BTreeMap<String, Value> {
                     "threadId": "thread-derived",
                     "threadName": "Derived Thread"
                 },
-                "loop": { "active": true },
+                "loop": { "active": true, "goalKind": "tokens", "tokenBudget": 50000 },
+                "tokenSpend": { "billed": 12500 },
                 "loopLastAction": { "action": "continue" },
                 "scribe": false,
                 "updatedAt": "2026-09-05T00:00:01.000Z"

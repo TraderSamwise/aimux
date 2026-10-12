@@ -1914,8 +1914,12 @@ impl DashboardController {
         let Some(state) = self.goal_overlay.clone() else {
             return DashboardControllerEffect::Ignored;
         };
-        // Said rather than attempted: the route refuses a kind change on a
-        // running goal, so offering a key that 409s would be a lie.
+        // Without this, `k` on an agent that is not watching sends
+        // `active: true` and STARTS a loop that has no goal in it.
+        if !state.active {
+            self.set_note("That agent is not in a loop".into());
+            return DashboardControllerEffect::Render;
+        }
         if let Some(refusal) = kind_change_refusal(&state) {
             self.set_note(refusal);
             return DashboardControllerEffect::Render;

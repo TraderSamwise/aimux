@@ -2049,6 +2049,97 @@ fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
     ))
 }
 
+/// Spend is measured only here, so if it is not published nothing else can
+/// ever show it: the dialog and the app would say "not measured" for a goal
+/// being measured every tick. Written with aider because it reports no usage,
+/// which is the answer that must still be published rather than dropped.
+#[test]
+fn token_spend_is_published_where_every_surface_reads_it() {
+    let root = unique_temp_dir("aimux-loop-watcher-token-spend-publish");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    let mut topology = topology_with_live_session();
+    topology["sessions"][0]["tool"] = json!("aider");
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).expect("write topology");
+    let metadata = || {
+        serde_json::to_string(&json!({
+            "version": 1,
+            "sessions": {
+                "worker": {
+                    "loop": {
+                        "active": true,
+                        "goal": "spend down",
+                        "goalKind": "tokens",
+                        "tokenBudget": 50_000,
+                        "since": "2026-09-13T00:00:00.000Z"
+                    },
+                    "derived": { "activity": "running", "attention": "normal" }
+                }
+            }
+        }))
+        .expect("metadata json")
+    };
+    fs::write(metadata_state_path(&state_dir), metadata()).expect("write metadata");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    let stored = |state_dir: &std::path::Path| -> serde_json::Value {
+        serde_json::from_str(
+            &fs::read_to_string(metadata_state_path(state_dir)).expect("metadata read"),
+        )
+        .expect("metadata json")
+    };
+    let published = stored(&state_dir);
+    let reason = published["sessions"]["worker"]["tokenSpend"]["unmeasured"]
+        .as_str()
+        .expect("an unmeasured reason, not a silent absence");
+    assert!(
+        reason.contains("does not report token usage"),
+        "the reason must name why, got {reason:?}"
+    );
+    assert!(
+        published["sessions"]["worker"]["tokenSpend"]
+            .get("billed")
+            .is_none(),
+        "a runtime that reports nothing must not read as zero spent"
+    );
+
+    // A goal that ended must stop showing its last number, or the panel keeps
+    // reporting spend against a budget nobody holds. Flipped in place rather
+    // than rewritten, so the published spend is still in the file and its
+    // removal is the thing being observed.
+    let mut ended = published.clone();
+    ended["sessions"]["worker"]["loop"]["active"] = json!(false);
+    assert!(
+        ended["sessions"]["worker"]["tokenSpend"].is_object(),
+        "the spend must still be on disk, or its removal proves nothing"
+    );
+    fs::write(
+        metadata_state_path(&state_dir),
+        serde_json::to_string(&ended).expect("metadata json"),
+    )
+    .expect("rewrite metadata");
+    run_due_at(&mut scheduler, &context, 45_000);
+    assert!(
+        stored(&state_dir)["sessions"]["worker"]
+            .get("tokenSpend")
+            .is_none(),
+        "the spend must be removed once the token goal is gone"
+    );
+}
+
 fn topology_with_live_session() -> serde_json::Value {
     json!({
         "version": 1,

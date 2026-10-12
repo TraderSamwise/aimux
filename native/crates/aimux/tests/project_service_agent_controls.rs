@@ -1408,6 +1408,61 @@ fn a_re_add_without_a_kind_keeps_the_stored_one() {
     assert_eq!(edit.body["loop"]["goal"], "long haul, revised");
 }
 
+/// The dashboard's `k` sends only the new kind, so a rewrite that carries no
+/// goal must keep the sentence the goal was written as. Without this, handing a
+/// week-long migration to the agent erased what the migration was.
+#[test]
+fn changing_only_the_kind_keeps_the_goal_it_was_written_as() {
+    let project = temp_project("user-goal-text-keep");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "move every call site off the old client",
+            "goalKind": "user",
+            "source": "dashboard"
+        })),
+    );
+    let handed_over = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goalKind": "agent",
+            "source": "dashboard"
+        })),
+    );
+    assert_eq!(handed_over.status, 200, "Sam may hand a running goal over");
+    assert_eq!(handed_over.body["loop"]["goalKind"], "agent");
+    assert_eq!(
+        handed_over.body["loop"]["goal"], "move every call site off the old client",
+        "the goal text must survive a kind-only rewrite"
+    );
+    // And it is the STORED goal that survived, not just the response echoing
+    // the request back.
+    let stored = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "source": "dashboard"
+        })),
+    );
+    assert_eq!(
+        stored.body["loop"]["goal"], "move every call site off the old client",
+        "a later rewrite still reads the stored goal"
+    );
+}
+
 /// The hole a review found: pausing silences the same reminders a close would,
 /// and this route used to ask nobody whose goal it was.
 #[test]

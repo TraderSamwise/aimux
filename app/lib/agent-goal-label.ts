@@ -13,18 +13,22 @@ export function agentGoalLabel(session: Pick<DesktopSession, "loop" | "tokenSpen
   if (!loop?.active) return "Not in a loop";
   const goal = loop.goal?.trim();
   const kind = loop.goalKind ?? "agent";
-  if (kind === "tokens") {
-    const budget = loop.tokenBudget;
+  // A budget that did not survive is not a token goal, which is the same
+  // verdict the Rust rule reaches: it falls back to yours-to-close.
+  const budget =
+    typeof loop.tokenBudget === "number" && loop.tokenBudget > 0 ? loop.tokenBudget : null;
+  if (kind === "tokens" && budget !== null) {
     const spend = session.tokenSpend;
     const standing =
-      typeof spend?.billed === "number" && typeof budget === "number"
+      typeof spend?.billed === "number"
         ? `${spend.billed.toLocaleString()} of ${budget.toLocaleString()} tokens`
         : // Said, not shown as zero: aider and shell report no usage at all.
           "spend not measured";
     return goal ? `${goal} — ${standing}` : standing;
   }
-  // Only the kind that changes what the reader can do is called out.
-  const prefix = kind === "user" ? "Yours to close" : null;
+  // Unknown falls back closed, the way the Rust rule does: a newer build's
+  // kind must not read here as the permissive one.
+  const prefix = kind === "agent" ? null : "Yours to close";
   if (!goal) return prefix ? `${prefix}, no goal set` : "Watching without a goal";
   return prefix ? `${prefix}: ${goal}` : goal;
 }

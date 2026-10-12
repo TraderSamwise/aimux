@@ -1427,6 +1427,38 @@ fn shifted_p_opens_work_outline_overlay_for_selected_session() {
     );
 }
 
+/// `k` is a hand-over, not a loop starter. Without the active check it sent
+/// `active: true` with a kind and no goal, which STARTS a watch on an agent
+/// Sam only wanted to look at.
+#[test]
+fn the_goal_dialog_does_not_start_a_loop_on_an_agent_that_has_none() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    focus_session(&mut controller, &snapshot, "claude-0");
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('G')),
+        DashboardControllerEffect::Render
+    );
+    let overlay = controller.goal_overlay.as_ref().expect("the goal dialog");
+    assert!(
+        !overlay.active,
+        "the fixture agent must not be in a loop, or this proves nothing"
+    );
+
+    for key in ['k', 'd'] {
+        assert_eq!(
+            controller.handle_key(&snapshot, DashboardKey::Printable(key)),
+            DashboardControllerEffect::Render,
+            "{key} must report rather than send a request"
+        );
+        assert!(
+            controller.goal_overlay.is_some(),
+            "{key} must leave the dialog open to show what it said"
+        );
+    }
+}
+
 #[test]
 fn shifted_o_opens_overseer_overlay_and_overlay_keys_follow_node_actions() {
     let mut snapshot = snapshot();
@@ -1491,6 +1523,9 @@ fn shifted_o_opens_overseer_overlay_and_overlay_keys_follow_node_actions() {
         json!({
             "global": true,
             "paused": true,
+            // The route routes a global pause only for a human source, so the
+            // dashboard has to say who it is or the pause is refused.
+            "source": "dashboard",
             "updatedBy": "dashboard",
             "reason": "human paused loop alerts"
         })

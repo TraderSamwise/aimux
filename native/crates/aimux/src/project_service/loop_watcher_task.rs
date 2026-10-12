@@ -27,6 +27,7 @@ use crate::transcript_turn_state::{default_codex_sessions_dir, find_codex_transc
 use super::agent_output::AgentOutputResponseMode;
 use super::coordination_worklist::{build_coordination_thread_entries, build_coordination_view};
 use super::interactions::pending_interactions_for_stream;
+use super::metadata::update_session_metadata;
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::scheduler::{CachedProjectConfig, PeriodicTask, PeriodicTaskFuture};
@@ -92,23 +93,64 @@ impl LoopWatcherTask {
 }
 
 impl LoopWatcherTask {
-    /// Put each token goal's spend on the scan input.
+    /// Put each token goal's spend on the scan input, and publish it.
     ///
     /// Only sessions that actually have a token budget are read, so a project
     /// without one pays nothing, and a runtime that reports no usage says so
     /// rather than reporting zero spent.
+    ///
+    /// Published to session metadata because this task is the only thing that
+    /// holds the baselines, and the dialog, the app and the nudge must all
+    /// read one answer rather than each re-reading a 415MB transcript.
     fn apply_token_spend(&mut self, input: &mut Value) {
         let sessions = token_goal_sessions(input);
-        if sessions.is_empty() {
-            self.spend_baselines.clear();
-            return;
+        let stale = self
+            .spend_baselines
+            .keys()
+            .filter(|id| !sessions.iter().any(|session| &&session.id == id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for id in &stale {
+            self.spend_baselines.remove(id);
+            // A goal that ended must stop showing its last number, or the
+            // panel keeps reporting spend against a budget nobody holds.
+            self.publish_token_spend(&id.clone(), None);
         }
-        self.spend_baselines
-            .retain(|id, _| sessions.iter().any(|session| &session.id == id));
         for session in sessions {
             let baseline = self.spend_baselines.entry(session.id.clone()).or_default();
             let spend = spend_for_session(&session.tool, session.transcript.as_deref(), baseline);
             apply_token_spend_to_input(input, &session.id, &spend);
+            let published = token_spend_value(&spend);
+            self.publish_token_spend(&session.id, Some(published));
+        }
+    }
+
+    /// Write the spend where every surface already reads session metadata.
+    ///
+    /// Unchanged values cost no disk write: the metadata update compares the
+    /// payload and reports `changed: false` without saving.
+    fn publish_token_spend(&self, session_id: &str, spend: Option<Value>) {
+        let result =
+            update_session_metadata(self.context.project_state_dir(), session_id, |current| {
+                let mut current = match current {
+                    Value::Object(map) => map,
+                    _ => Map::new(),
+                };
+                match &spend {
+                    Some(value) => current.insert("tokenSpend".into(), value.clone()),
+                    None => current.remove("tokenSpend"),
+                };
+                Value::Object(current)
+            });
+        if let Err(error) = result {
+            // Not swallowed: a goal whose spend cannot be published reads as
+            // unmeasured on every surface, and that needs a cause on record.
+            log_at(
+                LogLevel::Warn,
+                "token spend could not be published to session metadata",
+                "loop-watcher",
+                Some(json!({ "sessionId": session_id, "error": error })),
+            );
         }
     }
 }
@@ -633,15 +675,21 @@ fn session_transcript_path(
     }
 }
 
+/// The one shape a spend is rendered in, read by the nudge, the dialog and the
+/// app. `unmeasured` carries the reason rather than a zero nobody measured.
+fn token_spend_value(spend: &SpendSinceBaseline) -> Value {
+    match spend {
+        SpendSinceBaseline::Measured(billed) => json!({ "billed": billed }),
+        SpendSinceBaseline::Unmeasured(reason) => json!({ "unmeasured": reason }),
+    }
+}
+
 /// Write the spend onto the scan input, the way live activity is overridden.
 ///
 /// `Unmeasured` is recorded with its reason rather than dropped: the nudge has
 /// to be able to say it cannot measure instead of implying nothing was spent.
 fn apply_token_spend_to_input(input: &mut Value, session_id: &str, spend: &SpendSinceBaseline) {
-    let value = match spend {
-        SpendSinceBaseline::Measured(billed) => json!({ "billed": billed }),
-        SpendSinceBaseline::Unmeasured(reason) => json!({ "unmeasured": reason }),
-    };
+    let value = token_spend_value(spend);
     if let Some(session) = input
         .get_mut("metadata")
         .and_then(|metadata| metadata.get_mut("sessions"))

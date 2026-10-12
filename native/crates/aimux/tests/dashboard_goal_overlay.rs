@@ -117,28 +117,41 @@ fn the_dialog_offers_the_action_a_user_managed_goal_needs() {
     assert_eq!(goal_overlay_key('z'), None);
 }
 
-/// The route refuses a kind change on a running goal, so the dialog says so
-/// rather than offering a key that 409s.
+/// Handing a goal over is the key's whole job, and Sam is allowed to do it on
+/// a RUNNING goal -- a dialog that refused that would make `k` dead for the one
+/// person the route permits.
 #[test]
-fn changing_the_kind_of_a_running_goal_is_refused_with_a_reason() {
-    let running = goal_overlay_from_session(
+fn sam_may_hand_a_running_goal_over_either_way() {
+    for kind in ["user", "agent"] {
+        let running = goal_overlay_from_session(
+            "worker-1",
+            Some(&loop_state("the long migration", Some(kind), None)),
+            None,
+            "claude",
+        );
+        assert!(running.active, "the fixture must be a running goal");
+        assert_eq!(
+            kind_change_refusal(&running),
+            None,
+            "a running {kind}-managed goal is still Sam's to hand over"
+        );
+    }
+}
+
+/// The one change the dialog declines, because a token goal's kind IS its
+/// budget and handing it to the agent would silently throw the number away.
+#[test]
+fn handing_over_a_token_goal_is_refused_because_it_would_discard_the_budget() {
+    let budgeted = goal_overlay_from_session(
         "worker-1",
-        Some(&loop_state("the long migration", Some("user"), None)),
+        Some(&loop_state("spend down", Some("tokens"), Some(50_000))),
         None,
         "claude",
     );
-    let refusal = kind_change_refusal(&running).expect("a running goal refuses a relabel");
-    assert!(refusal.contains("already running"), "{refusal}");
-    assert!(refusal.contains("user"), "{refusal}");
-
-    let stopped = DashboardGoalOverlayState {
-        active: false,
-        ..running
-    };
-    assert_eq!(
-        kind_change_refusal(&stopped),
-        None,
-        "a goal that is not running can be relabelled"
+    let refusal = kind_change_refusal(&budgeted).expect("a token goal refuses a hand-over");
+    assert!(
+        refusal.contains("50000") && refusal.contains("budget"),
+        "the refusal must name the budget it would discard, got {refusal:?}"
     );
 }
 

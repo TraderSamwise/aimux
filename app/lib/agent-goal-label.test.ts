@@ -34,6 +34,27 @@ describe("how a goal reads at a glance", () => {
     expect(label).not.toContain("0 of");
   });
 
+  // The Rust rule falls back CLOSED on a word it does not know, so that a
+  // newer build's user-managed goal is not shown here as the agent's to end.
+  it("reads a kind it does not know as yours to close", () => {
+    expect(
+      agentGoalLabel({ loop: { active: true, goal: "whatever this is", goalKind: "whenever" } }),
+    ).toBe("Yours to close: whatever this is");
+  });
+
+  // Same verdict the Rust rule reaches: a token kind whose budget did not
+  // survive is not a free-for-all.
+  it("reads a token goal with no surviving budget as yours to close", () => {
+    expect(agentGoalLabel({ loop: { active: true, goal: "spend down", goalKind: "tokens" } })).toBe(
+      "Yours to close: spend down",
+    );
+    expect(
+      agentGoalLabel({
+        loop: { active: true, goal: "spend down", goalKind: "tokens", tokenBudget: 0 },
+      }),
+    ).toBe("Yours to close: spend down");
+  });
+
   it("does not claim a goal for a session that is not in a loop", () => {
     expect(agentGoalLabel({ loop: { active: false, goal: "stale" } })).toBe("Not in a loop");
     expect(agentGoalLabel({})).toBe("Not in a loop");

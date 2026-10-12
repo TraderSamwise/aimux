@@ -132,15 +132,17 @@ pub fn goal_overlay_key(key: char) -> Option<DashboardGoalOverlayAction> {
     }
 }
 
-/// Whether the dialog should even offer to change the kind.
+/// Whether the dialog should offer to change the kind.
 ///
-/// The route refuses a kind change on a running goal, because relabelling one
-/// is a close in disguise. Saying so beats offering a key that 409s.
+/// The route takes a kind change from Sam on a running goal -- that is the
+/// whole point of the key -- so the only thing the dialog declines is the one
+/// that would throw information away: a token goal's kind IS its budget, and
+/// handing it to the agent would silently discard the number.
 pub fn kind_change_refusal(state: &DashboardGoalOverlayState) -> Option<String> {
-    state.active.then(|| {
-        format!(
-            "this goal is already running as {}-managed; stop it first to change that",
-            state.kind.as_str()
-        )
-    })
+    match state.kind {
+        GoalKind::TokenBudget(budget) => Some(format!(
+            "this goal is a {budget} token budget; close it and add a new goal to change that"
+        )),
+        GoalKind::AgentManaged | GoalKind::UserManaged => None,
+    }
 }

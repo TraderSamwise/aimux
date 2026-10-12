@@ -621,6 +621,18 @@ fn route_loop(
         }
         let mut loop_metadata = provenance(body);
         loop_metadata.insert("active".into(), Value::Bool(true));
+        // The stored goal survives a rewrite that does not carry one, the same
+        // way the stored kind does. Without this, changing only the kind -- the
+        // dashboard's `k` -- erases the sentence the goal was written as.
+        let goal = goal.clone().or_else(|| {
+            stored_loop
+                .as_ref()
+                .and_then(|loop_meta| loop_meta.get("goal"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|goal| !goal.is_empty())
+                .map(str::to_owned)
+        });
         if let Some(goal) = goal.clone() {
             loop_metadata.insert("goal".into(), Value::String(goal));
         }
