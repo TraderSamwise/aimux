@@ -994,6 +994,12 @@ where
             if let Some(goal) = parsed.goal {
                 body.insert("goal".into(), Value::String(goal));
             }
+            if let Some(kind) = parsed.goal_kind {
+                body.insert("goalKind".into(), Value::String(kind));
+            }
+            if let Some(budget) = parsed.token_budget {
+                body.insert("tokenBudget".into(), Value::from(budget));
+            }
             if let Some(reason) = parsed.reason {
                 body.insert("reason".into(), Value::String(reason));
             }

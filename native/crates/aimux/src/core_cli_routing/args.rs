@@ -169,6 +169,11 @@ pub struct CoreLoopMutationArgs {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal: Option<String>,
+    /// Who may end the goal: `agent`, `user`, or `tokens` with a budget.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -86,7 +86,16 @@ export interface DesktopSession {
   previewLine?: string;
   pendingAction?: string;
   pendingStartedAt?: string;
-  loop?: { active?: boolean; goal?: string; since?: string } | null;
+  loop?: {
+    active?: boolean;
+    goal?: string;
+    since?: string;
+    /** Who may end it. Absent is the old agent-closable loop. */
+    goalKind?: "agent" | "user" | "tokens";
+    tokenBudget?: number;
+  } | null;
+  /** Billed spend against a token goal, or why it could not be measured. */
+  tokenSpend?: { billed?: number; unmeasured?: string } | null;
   projectControl?: boolean;
   overseer?: boolean;
   scribe?: boolean;

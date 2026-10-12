@@ -14,6 +14,8 @@ pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLo
     }
     let mut session_id = None;
     let mut goal = None;
+    let mut goal_kind = None;
+    let mut token_budget = None;
     let mut reason = None;
     let mut project = None;
     let mut json = false;
@@ -35,6 +37,34 @@ pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLo
                 return None;
             }
             goal = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        // Only on `add`: changing a kind later is a close in disguise and the
+        // route refuses it, so there is no flag that looks like it would work.
+        if arg == "--kind" && subcommand == "add" {
+            goal_kind = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--kind=") {
+            if subcommand != "add" {
+                return None;
+            }
+            goal_kind = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--budget" && subcommand == "add" {
+            token_budget = Some(required_value(args, index)?.parse().ok()?);
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--budget=") {
+            if subcommand != "add" {
+                return None;
+            }
+            token_budget = Some(value.parse().ok()?);
             index += 1;
             continue;
         }
@@ -78,6 +108,8 @@ pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLo
         subcommand: subcommand.to_owned(),
         session_id: session_id?,
         goal,
+        goal_kind,
+        token_budget,
         reason,
         project,
         json,

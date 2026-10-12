@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
+import { agentGoalLabel } from "@/lib/agent-goal-label";
 import { migrateAgent, renameAgent, setAgentLoop, setAgentOverseer } from "@/lib/api";
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -39,6 +40,9 @@ export function AgentManagementPanel({
   const [label, setLabel] = useState(session.label || "");
   const sessionLoopGoal = getLoopGoal(session.loop) ?? "";
   const [loopGoal, setLoopGoal] = useState(sessionLoopGoal);
+  const [loopKind, setLoopKind] = useState<"agent" | "user">(
+    session.loop?.goalKind === "user" ? "user" : "agent",
+  );
   const lastSyncedLoopGoalRef = useRef(sessionLoopGoal);
   const [targetWorktreePath, setTargetWorktreePath] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<AgentManagementAction | null>(null);
@@ -261,7 +265,23 @@ export function AgentManagementPanel({
 
         <View className="min-w-[280px] flex-[1.3]">
           <PanelLabel icon={Repeat2} label="Loop" />
+          <Text className="mt-1 text-xs text-muted-foreground">{agentGoalLabel(session)}</Text>
           <View className="mt-2 flex-row gap-2">
+            {/* Only on a goal that is not running yet: the route refuses a
+                kind change on an existing goal, because relabelling one is a
+                close in disguise. */}
+            {!loopActive ? (
+              <Button
+                variant="outline"
+                size="sm"
+                accessibilityLabel="Goal kind"
+                onPress={() => setLoopKind((current) => (current === "user" ? "agent" : "user"))}
+              >
+                <Text className="text-sm text-foreground">
+                  {loopKind === "user" ? "Yours" : "Agent's"}
+                </Text>
+              </Button>
+            ) : null}
             <Input
               nativeID={`${fieldIdPrefix}-loop-goal`}
               accessibilityLabel="Loop goal"
@@ -282,6 +302,9 @@ export function AgentManagementPanel({
                       sessionId: session.id,
                       active: true,
                       goal: trimmedGoal || undefined,
+                      // Only sent when starting one: the route refuses a
+                      // change, so sending it on a save would 409 a no-op.
+                      goalKind: loopActive ? undefined : loopKind,
                       source: "dashboard",
                     },
                     { token },
