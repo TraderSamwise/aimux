@@ -21,6 +21,9 @@
 //! could not afford to do inside a tick budget.
 
 use serde_json::Value;
+use std::fs::{File, metadata};
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 
 /// Billed-equivalent tokens from one claude `usage` object.
 ///
@@ -164,4 +167,141 @@ pub fn cumulative_spend_since(baseline: Option<u64>, current: Option<u64>) -> Sp
 /// position would sum somebody else's tokens into this goal.
 pub fn offset_still_valid(offset: u64, len: u64) -> bool {
     len >= offset
+}
+
+/// What a session's spend is measured against, carried between ticks.
+///
+/// Held in the task rather than persisted: it is derived per tick, and the
+/// loop watcher state hard-errors on an unknown version, so adding a field
+/// there would be a migration for something that can be recomputed.
+#[derive(Debug, Clone, Default)]
+pub struct SpendBaseline {
+    /// Bytes already counted, for the runtime that has no running total.
+    pub offset: u64,
+    /// The last message id counted, so a message split across a tick boundary
+    /// is not charged twice.
+    pub last_id: Option<String>,
+    /// Billed tokens counted since the baseline was taken.
+    pub billed: u64,
+    /// The cumulative figure at baseline, for the runtime that keeps one.
+    pub cumulative_at_baseline: Option<u64>,
+    /// Which transcript this describes. A resumed session forks a new file, so
+    /// a different path means the baseline belongs to somebody else.
+    pub transcript: Option<String>,
+}
+
+/// Fold a newly read chunk into a baseline, for a runtime that reports
+/// per-message usage and no total.
+pub fn advance_summed_baseline(
+    baseline: &mut SpendBaseline,
+    transcript: &str,
+    file_len: u64,
+    chunk: ClaudeSpendChunk,
+) {
+    let same_file = baseline.transcript.as_deref() == Some(transcript);
+    if !same_file || !offset_still_valid(baseline.offset, file_len) {
+        // A new or truncated transcript: start again from here rather than
+        // charging this goal for a file it never wrote.
+        *baseline = SpendBaseline {
+            offset: file_len,
+            transcript: Some(transcript.to_owned()),
+            ..SpendBaseline::default()
+        };
+        return;
+    }
+    baseline.offset += chunk.consumed;
+    baseline.billed += chunk.billed;
+    if chunk.last_id.is_some() {
+        baseline.last_id = chunk.last_id;
+    }
+}
+
+/// Fold a cumulative reading into a baseline, for a runtime that keeps a total.
+pub fn advance_cumulative_baseline(
+    baseline: &mut SpendBaseline,
+    transcript: &str,
+    current: Option<u64>,
+) -> SpendSinceBaseline {
+    let same_file = baseline.transcript.as_deref() == Some(transcript);
+    if !same_file {
+        *baseline = SpendBaseline {
+            transcript: Some(transcript.to_owned()),
+            cumulative_at_baseline: current,
+            ..SpendBaseline::default()
+        };
+        return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
+    }
+    let spend = cumulative_spend_since(baseline.cumulative_at_baseline, current);
+    if matches!(spend, SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)) {
+        baseline.cumulative_at_baseline = current;
+    }
+    if let SpendSinceBaseline::Measured(billed) = spend {
+        baseline.billed = billed;
+    }
+    spend
+}
+
+/// Read the bytes a summing runtime has appended since `offset`.
+///
+/// Bounded per tick: a transcript here is 415MB, and a goal only needs what
+/// arrived since the last look. A chunk larger than this is a session that has
+/// been busy, and the rest is picked up next tick rather than in one read.
+pub const MAX_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
+
+pub fn read_appended(path: &Path, offset: u64) -> Result<(String, u64), String> {
+    let len = metadata(path)
+        .map_err(|error| format!("stat {}: {error}", path.display()))?
+        .len();
+    if !offset_still_valid(offset, len) {
+        return Ok((String::new(), len));
+    }
+    let take = (len - offset).min(MAX_CHUNK_BYTES);
+    if take == 0 {
+        return Ok((String::new(), len));
+    }
+    let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|error| format!("seek {}: {error}", path.display()))?;
+    let mut bytes = vec![0; take as usize];
+    file.read_exact(&mut bytes)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    // Lossy on purpose: a chunk boundary can split a multi-byte character, and
+    // one mangled character must not stop a goal being measured.
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), len))
+}
+
+/// Spend for one session, folding whatever its runtime reports into the
+/// baseline it carries between ticks.
+pub fn spend_for_session(
+    tool: &str,
+    transcript: Option<&Path>,
+    baseline: &mut SpendBaseline,
+) -> SpendSinceBaseline {
+    if !runtime_reports_usage(tool) {
+        return SpendSinceBaseline::Unmeasured(NO_USAGE_FOR_RUNTIME);
+    }
+    let Some(transcript) = transcript.filter(|path| path.is_file()) else {
+        return SpendSinceBaseline::Unmeasured(NO_TRANSCRIPT_YET);
+    };
+    let name = transcript.to_string_lossy().into_owned();
+    if tool.trim() == "codex" {
+        let tail =
+            crate::transcript_turn_state::read_file_tail(transcript, None).unwrap_or_default();
+        return advance_cumulative_baseline(baseline, &name, codex_cumulative_billed(&tail));
+    }
+    let fresh = baseline.transcript.as_deref() != Some(name.as_str());
+    let (text, len) = match read_appended(transcript, baseline.offset) {
+        Ok(read) => read,
+        // A read that failed is not a session that spent nothing.
+        Err(reason) => {
+            let _ = reason;
+            return SpendSinceBaseline::Unmeasured(NO_TRANSCRIPT_YET);
+        }
+    };
+    let chunk = claude_spend_chunk(&text, baseline.last_id.as_deref());
+    advance_summed_baseline(baseline, &name, len, chunk);
+    if fresh {
+        return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
+    }
+    SpendSinceBaseline::Measured(baseline.billed)
 }

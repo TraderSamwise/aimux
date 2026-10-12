@@ -1414,6 +1414,12 @@ pub fn find_loop_candidates_excluding(input: &Value, excluded: Option<&str>) -> 
                 .and_then(|derived| derived.get("activity"))
                 .and_then(Value::as_str);
             let condition = loop_candidate_condition(session, activity)?;
+            // A token budget that has been reached is not an unmet goal, so
+            // there is nothing to remind anyone of. `Unmeasured` is NOT met:
+            // it keeps reminding, and the text says it cannot measure.
+            if candidate_token_goal_met(loop_meta, meta.get("tokenSpend")) {
+                return None;
+            }
             if condition == LoopCandidateCondition::Stopped {
                 let attention = meta
                     .get("derived")
@@ -1434,6 +1440,9 @@ pub fn find_loop_candidates_excluding(input: &Value, excluded: Option<&str>) -> 
             );
             if let Some(budget) = loop_meta.get("tokenBudget").and_then(Value::as_u64) {
                 candidate.insert("tokenBudget".into(), Value::from(budget));
+            }
+            if let Some(spend) = meta.get("tokenSpend") {
+                candidate.insert("tokenSpend".into(), spend.clone());
             }
             if condition == LoopCandidateCondition::Dead {
                 insert_str(&mut candidate, "condition", Some(condition.as_str()));
@@ -2152,8 +2161,16 @@ pub fn build_canned_nudge(candidate: &Value) -> String {
             ));
         }
         GoalKind::TokenBudget(budget) => {
+            let standing = match candidate_token_spend(candidate) {
+                Some(billed) => format!(" {billed} of {budget} spent so far."),
+                // Said out loud rather than shown as zero: aider and shell
+                // report no usage, and a fresh baseline has nothing yet.
+                None => format!(
+                    " Spend is not measured on this runtime, so the {budget}-token mark cannot be checked."
+                ),
+            };
             lines.push(format!(
-                "This goal is met at {budget} tokens of spend, measured rather than declared, so it is not yours to close."
+                "This goal is met at {budget} tokens of spend, measured rather than declared, so it is not yours to close.{standing}"
             ));
             lines.push(String::from(
                 "Keep working toward it, or say what you are waiting on if there is nothing left to do.",
@@ -2407,4 +2424,30 @@ fn optional_str<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
 fn empty_object() -> &'static Map<String, Value> {
     static EMPTY: std::sync::LazyLock<Map<String, Value>> = std::sync::LazyLock::new(Map::new);
     &EMPTY
+}
+
+/// Billed spend recorded against a candidate, if it could be measured.
+pub fn candidate_token_spend(candidate: &Value) -> Option<u64> {
+    candidate
+        .get("tokenSpend")
+        .and_then(|spend| spend.get("billed"))
+        .and_then(Value::as_u64)
+}
+
+/// Whether a loop entry's token budget has been reached.
+///
+/// Reads the same `token_goal_status` the routes do, so "met" means one thing
+/// across the product. An unmeasured budget is not met.
+fn candidate_token_goal_met(loop_meta: &Map<String, Value>, spend: Option<&Value>) -> bool {
+    let kind = GoalKind::parse(
+        loop_meta.get("goalKind").and_then(Value::as_str),
+        loop_meta.get("tokenBudget").and_then(Value::as_u64),
+    );
+    let billed = spend
+        .and_then(|spend| spend.get("billed"))
+        .and_then(Value::as_u64);
+    matches!(
+        crate::agent_goal::token_goal_status(&kind, billed),
+        crate::agent_goal::TokenGoalStatus::Met
+    )
 }

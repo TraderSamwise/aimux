@@ -2727,3 +2727,76 @@ fn a_paused_overseer_goal_stops_nudging() {
         "a paused overseer goal must stop nudging: {sends:?}"
     );
 }
+
+/// A token budget that has been reached is not an unmet goal, so there is
+/// nothing left to remind anyone of.
+#[test]
+fn a_met_token_budget_stops_the_reminders() {
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    worker_meta["loop"]["goalKind"] = json!("tokens");
+    worker_meta["loop"]["tokenBudget"] = json!(10_000);
+    worker_meta["tokenSpend"] = json!({ "billed": 10_000 });
+    let input = input_with_config(
+        vec![worker],
+        json!({ "sessions": { "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "autoNudgeWithoutOverseer": true }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(
+        watcher.scan(&input, NOW, &mut ok).is_empty(),
+        "a spent budget is a met goal"
+    );
+}
+
+#[test]
+fn an_unspent_token_budget_still_reminds_and_reports_the_standing() {
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    worker_meta["loop"]["goalKind"] = json!("tokens");
+    worker_meta["loop"]["tokenBudget"] = json!(10_000);
+    worker_meta["tokenSpend"] = json!({ "billed": 2_500 });
+    let input = input_with_config(
+        vec![worker],
+        json!({ "sessions": { "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "autoNudgeWithoutOverseer": true }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let sends = watcher.scan(&input, NOW, &mut ok);
+    let nudge = sends
+        .iter()
+        .find(|send| send.session_id == "worker")
+        .expect("still nudged");
+    assert!(nudge.text.contains("2500 of 10000"), "{:?}", nudge.text);
+}
+
+/// Unmeasured is not met, and must not read as nothing spent: aider and shell
+/// report no usage at all.
+#[test]
+fn an_unmeasured_token_budget_says_so_instead_of_claiming_zero() {
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    worker_meta["loop"]["goalKind"] = json!("tokens");
+    worker_meta["loop"]["tokenBudget"] = json!(10_000);
+    worker_meta["tokenSpend"] = json!({ "unmeasured": "this runtime does not report token usage" });
+    let input = input_with_config(
+        vec![worker],
+        json!({ "sessions": { "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "autoNudgeWithoutOverseer": true }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let sends = watcher.scan(&input, NOW, &mut ok);
+    let nudge = sends
+        .iter()
+        .find(|send| send.session_id == "worker")
+        .expect("an unmeasured budget keeps reminding");
+    assert!(
+        nudge.text.contains("not measured"),
+        "it must say it cannot check, got {:?}",
+        nudge.text
+    );
+    assert!(!nudge.text.contains("0 of 10000"), "{:?}", nudge.text);
+}

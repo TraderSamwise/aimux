@@ -4,11 +4,15 @@
 //! real inputs, delivers over the agent input route, and is the only place that
 //! decides which sessions the watcher is even allowed to see.
 
+use std::collections::BTreeMap;
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
+use crate::agent_token_spend::{SpendBaseline, SpendSinceBaseline, spend_for_session};
+use crate::backend_session_ids::claude_transcript_path;
 use crate::daemon_state::{MetadataState, metadata_state_path};
 use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::{
@@ -18,6 +22,7 @@ use crate::loop_watcher::{
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
+use crate::transcript_turn_state::{default_codex_sessions_dir, find_codex_transcript_path};
 
 use super::agent_output::AgentOutputResponseMode;
 use super::coordination_worklist::{build_coordination_thread_entries, build_coordination_view};
@@ -51,6 +56,11 @@ const LIVE_ACTIVITY_PROBE_START_LINE: i64 = -80;
 
 pub struct LoopWatcherTask {
     context: Arc<ProjectServiceRequestContext>,
+    /// What each session's token spend is measured against. Held here rather
+    /// than persisted: it is derived every tick, and the watcher state
+    /// hard-errors on an unknown version, so a field there would be a
+    /// migration for something recomputable.
+    spend_baselines: BTreeMap<String, SpendBaseline>,
     config: CachedProjectConfig,
     loop_config: Value,
     scan_interval_ms: i64,
@@ -64,6 +74,7 @@ impl LoopWatcherTask {
         let scan_interval_ms = loop_scan_interval_ms(&loop_config);
         let scan_every_ticks = loop_scan_every_ticks(&loop_config);
         Self {
+            spend_baselines: BTreeMap::new(),
             context,
             config,
             loop_config,
@@ -77,6 +88,28 @@ impl LoopWatcherTask {
         self.loop_config = loop_config_from(self.config.get());
         self.scan_interval_ms = loop_scan_interval_ms(&self.loop_config);
         self.scan_every_ticks = loop_scan_every_ticks(&self.loop_config);
+    }
+}
+
+impl LoopWatcherTask {
+    /// Put each token goal's spend on the scan input.
+    ///
+    /// Only sessions that actually have a token budget are read, so a project
+    /// without one pays nothing, and a runtime that reports no usage says so
+    /// rather than reporting zero spent.
+    fn apply_token_spend(&mut self, input: &mut Value) {
+        let sessions = token_goal_sessions(input);
+        if sessions.is_empty() {
+            self.spend_baselines.clear();
+            return;
+        }
+        self.spend_baselines
+            .retain(|id, _| sessions.iter().any(|session| &session.id == id));
+        for session in sessions {
+            let baseline = self.spend_baselines.entry(session.id.clone()).or_default();
+            let spend = spend_for_session(&session.tool, session.transcript.as_deref(), baseline);
+            apply_token_spend_to_input(input, &session.id, &spend);
+        }
     }
 }
 
@@ -149,6 +182,7 @@ impl PeriodicTask for LoopWatcherTask {
                 coordination_worklist,
             );
             let indeterminate = apply_live_activity_overrides_for_scan(context, &mut input).await?;
+            self.apply_token_spend(&mut input);
 
             let budget = TickLoopBudget::new(SCAN_BUDGET);
             let planned_at = now_ms();
@@ -527,4 +561,93 @@ fn array_field<'a>(value: &'a Value, key: &str) -> Vec<&'a Value> {
 
 pub fn loop_watcher_task(context: &Arc<ProjectServiceRequestContext>) -> Box<dyn PeriodicTask> {
     Box::new(LoopWatcherTask::new(Arc::clone(context)))
+}
+
+/// A session carrying a token goal, with whatever transcript it has.
+struct TokenGoalSession {
+    id: String,
+    tool: String,
+    transcript: Option<PathBuf>,
+}
+
+/// Sessions whose loop entry names a token budget. Nothing else is read.
+fn token_goal_sessions(input: &Value) -> Vec<TokenGoalSession> {
+    let metadata = input.get("metadata").unwrap_or(&Value::Null);
+    let Some(sessions) = metadata.get("sessions").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    sessions
+        .iter()
+        .filter_map(|(id, meta)| {
+            let loop_meta = meta.get("loop")?;
+            if loop_meta.get("active").and_then(Value::as_bool) != Some(true) {
+                return None;
+            }
+            loop_meta.get("tokenBudget").and_then(Value::as_u64)?;
+            let tool = session_tool(input, id).unwrap_or_default();
+            Some(TokenGoalSession {
+                transcript: session_transcript_path(input, id, &tool, meta),
+                id: id.clone(),
+                tool,
+            })
+        })
+        .collect()
+}
+
+fn session_tool(input: &Value, session_id: &str) -> Option<String> {
+    input
+        .get("sessions")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+        .and_then(|session| session.get("tool"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// Where this session's transcript is, by the same rules the reconciler uses.
+fn session_transcript_path(
+    input: &Value,
+    session_id: &str,
+    tool: &str,
+    meta: &Value,
+) -> Option<PathBuf> {
+    let backend = meta
+        .get("context")
+        .and_then(|context| context.get("backendSessionId"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())?;
+    match tool.trim() {
+        "codex" => find_codex_transcript_path(backend, default_codex_sessions_dir()),
+        "claude" => {
+            let cwd = input
+                .get("sessions")
+                .and_then(Value::as_array)?
+                .iter()
+                .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+                .and_then(|session| session.get("worktreePath"))
+                .and_then(Value::as_str)?;
+            Some(claude_transcript_path(cwd, backend, None))
+        }
+        _ => None,
+    }
+}
+
+/// Write the spend onto the scan input, the way live activity is overridden.
+///
+/// `Unmeasured` is recorded with its reason rather than dropped: the nudge has
+/// to be able to say it cannot measure instead of implying nothing was spent.
+fn apply_token_spend_to_input(input: &mut Value, session_id: &str, spend: &SpendSinceBaseline) {
+    let value = match spend {
+        SpendSinceBaseline::Measured(billed) => json!({ "billed": billed }),
+        SpendSinceBaseline::Unmeasured(reason) => json!({ "unmeasured": reason }),
+    };
+    if let Some(session) = input
+        .get_mut("metadata")
+        .and_then(|metadata| metadata.get_mut("sessions"))
+        .and_then(|sessions| sessions.get_mut(session_id))
+        .and_then(Value::as_object_mut)
+    {
+        session.insert("tokenSpend".into(), value);
+    }
 }

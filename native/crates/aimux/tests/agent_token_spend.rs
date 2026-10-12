@@ -1,7 +1,8 @@
 //! Billed-equivalent token spend, and the traps in getting there.
 
 use aimux::agent_token_spend::{
-    BASELINE_JUST_TAKEN, NO_TRANSCRIPT_YET, SpendSinceBaseline, claude_spend_chunk,
+    BASELINE_JUST_TAKEN, ClaudeSpendChunk, NO_TRANSCRIPT_YET, SpendBaseline, SpendSinceBaseline,
+    advance_cumulative_baseline, advance_summed_baseline, claude_spend_chunk,
     codex_cumulative_billed, cumulative_spend_since, offset_still_valid, runtime_reports_usage,
 };
 
@@ -157,4 +158,93 @@ fn only_the_runtimes_that_report_usage_can_be_measured() {
     for tool in ["aider", "shell", "", "Claude"] {
         assert!(!runtime_reports_usage(tool), "{tool} reports no usage");
     }
+}
+
+/// A resumed session forks a new transcript, so a baseline naming the old file
+/// belongs to somebody else: charging on would sum another session's tokens
+/// into this goal.
+#[test]
+fn a_new_transcript_re_baselines_rather_than_charging_on() {
+    let mut baseline = SpendBaseline {
+        offset: 4_000,
+        billed: 900,
+        transcript: Some("/old.jsonl".into()),
+        ..SpendBaseline::default()
+    };
+    advance_summed_baseline(
+        &mut baseline,
+        "/new.jsonl",
+        10_000,
+        ClaudeSpendChunk {
+            billed: 123,
+            consumed: 50,
+            last_id: Some("msg-9".into()),
+        },
+    );
+    assert_eq!(baseline.billed, 0, "the new file starts this goal at zero");
+    assert_eq!(
+        baseline.offset, 10_000,
+        "and from the end of what exists now"
+    );
+    assert_eq!(baseline.transcript.as_deref(), Some("/new.jsonl"));
+}
+
+/// A file shorter than the stored position was replaced or truncated.
+#[test]
+fn a_truncated_transcript_re_baselines() {
+    let mut baseline = SpendBaseline {
+        offset: 9_000,
+        billed: 900,
+        transcript: Some("/t.jsonl".into()),
+        ..SpendBaseline::default()
+    };
+    advance_summed_baseline(&mut baseline, "/t.jsonl", 10, ClaudeSpendChunk::default());
+    assert_eq!(baseline.billed, 0);
+    assert_eq!(baseline.offset, 10);
+}
+
+#[test]
+fn a_continuing_transcript_accumulates_across_ticks() {
+    let mut baseline = SpendBaseline {
+        transcript: Some("/t.jsonl".into()),
+        ..SpendBaseline::default()
+    };
+    advance_summed_baseline(
+        &mut baseline,
+        "/t.jsonl",
+        100,
+        ClaudeSpendChunk {
+            billed: 40,
+            consumed: 100,
+            last_id: Some("msg-1".into()),
+        },
+    );
+    advance_summed_baseline(
+        &mut baseline,
+        "/t.jsonl",
+        250,
+        ClaudeSpendChunk {
+            billed: 60,
+            consumed: 150,
+            last_id: Some("msg-2".into()),
+        },
+    );
+    assert_eq!(baseline.billed, 100);
+    assert_eq!(baseline.offset, 250);
+    assert_eq!(baseline.last_id.as_deref(), Some("msg-2"));
+}
+
+/// The cumulative runtime's first sight measures nothing, then differences.
+#[test]
+fn a_cumulative_baseline_measures_from_first_sight() {
+    let mut baseline = SpendBaseline::default();
+    assert_eq!(
+        advance_cumulative_baseline(&mut baseline, "/r.jsonl", Some(1_000_000)),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)
+    );
+    assert_eq!(
+        advance_cumulative_baseline(&mut baseline, "/r.jsonl", Some(1_000_250)),
+        SpendSinceBaseline::Measured(250)
+    );
+    assert_eq!(baseline.billed, 250);
 }
