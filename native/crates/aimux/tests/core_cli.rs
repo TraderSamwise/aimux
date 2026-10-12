@@ -2335,6 +2335,26 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
         }
     );
 
+    // But not from inside an agent session, where the flag could not have
+    // taken effect anyway: `loop_actor_payload` overrides the default with
+    // `agent`, so accepting it would mean a flag that does nothing and an
+    // operation refused with the flag looking like the fix.
+    let inside_a_session = CoreCliContext {
+        loop_actor: CoreLoopActorContext {
+            session_id: Some("claude-1".into()),
+            ..CoreLoopActorContext::default()
+        },
+        ..context(true, true)
+    };
+    let refused = classify_core_cli(
+        &["loop", "remove", "claude-1", "--project=/repo", "--as-me"],
+        &inside_a_session,
+    );
+    assert!(
+        refused.is_err(),
+        "--as-me inside a session must be refused, not quietly ignored"
+    );
+
     // And Sam says so deliberately.
     let remove_as_me = classify_core_cli(
         &["loop", "remove", "claude-1", "--project=/repo", "--as-me"],

@@ -1504,8 +1504,14 @@ fn a_rewrite_of_a_running_loop_keeps_when_it_started() {
         "a hand-over is not a new loop, and `since` is what a pause is keyed on"
     );
 
-    // A loop that was NOT running starts now.
+    // A loop that was NOT running starts now. `since` is millisecond
+    // resolution, so the clock is given a tick to move rather than asserting
+    // two back-to-back writes differ.
     post(json!({ "sessionId": "worker-1", "active": false, "source": "dashboard" }));
+    let wait_until = std::time::Instant::now() + std::time::Duration::from_millis(5);
+    while std::time::Instant::now() < wait_until {
+        std::hint::spin_loop();
+    }
     let restarted = post(json!({
         "sessionId": "worker-1",
         "active": true,

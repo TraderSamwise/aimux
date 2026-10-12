@@ -995,6 +995,17 @@ where
             // the two verbs a user-managed goal exists to refuse. Those
             // default to `unknown` and take `--as-me` to assert otherwise, so
             // closing Sam's goal is a deliberate act rather than the default.
+            // Refused rather than ignored: inside an aimux session
+            // `loop_actor_payload` overrides the default with `agent` or
+            // `overseer`, so the flag would be accepted and do nothing -- and
+            // the operation would then be refused with the flag looking like
+            // the thing that should have allowed it.
+            if parsed.as_me && context.loop_actor.session_id.is_some() {
+                return Err(CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: --as-me is for a shell, not an agent session".into(),
+                });
+            }
             let default_source = if parsed.as_me || !operation_ends_reminders(&parsed.subcommand) {
                 "human"
             } else {
