@@ -699,7 +699,9 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
         runtime.calls.last().unwrap().body.as_ref().unwrap(),
         &json!({
             "sessionId": "claude-1",
-            "source": "human",
+            // Unattributed is NOT Sam: a source that defaulted to "human"
+            // let any caller end a user-managed goal.
+            "source": "unknown",
             "updatedBy": "sam",
             "active": true,
             "action": "add",
@@ -737,7 +739,9 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
         runtime.calls.last().unwrap().body.as_ref().unwrap(),
         &json!({
             "sessionId": "claude-1",
-            "source": "human",
+            // Unattributed is NOT Sam: a source that defaulted to "human"
+            // let any caller end a user-managed goal.
+            "source": "unknown",
             "updatedBy": "sam",
             "reason": "human is intervening",
             "paused": true
@@ -756,7 +760,7 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
         runtime.calls.last().unwrap().body.as_ref().unwrap(),
         &json!({
             "sessionId": "claude-1",
-            "source": "human",
+            "source": "unknown",
             "paused": false
         })
     );
