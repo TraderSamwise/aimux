@@ -242,6 +242,7 @@ fn global_loop_alert_pause_persists_with_expiry_and_can_resume() {
             "global": true,
             "paused": true,
             "durationMs": 60000,
+            "source": "dashboard",
             "updatedBy": "dashboard",
             "reason": "human intervention"
         })),
@@ -286,6 +287,7 @@ fn loop_alert_state_is_readable_without_mutating_pause_state() {
             "global": true,
             "paused": true,
             "durationMs": 60000,
+            "source": "dashboard",
             "updatedBy": "dashboard",
             "reason": "human intervention"
         })),
@@ -1207,4 +1209,513 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+/// Sam's words: "user managed can only be by the user ... nothign ends it
+/// besides me for user managed goal. thats the whole point."
+///
+/// Asserted through the route rather than the helper, because the helper
+/// passing proves nothing about whether the route ever consults it.
+#[test]
+fn an_agent_cannot_close_a_user_managed_goal_through_the_loop_route() {
+    let project = temp_project("user-goal-close");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let add = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "migrate the whole thing",
+            "goalKind": "user",
+            "source": "dashboard"
+        })),
+    );
+    assert_eq!(add.status, 200, "{:?}", add.body);
+    assert_eq!(add.body["loop"]["goalKind"], "user");
+
+    for action in ["remove", "done", "block"] {
+        let close = route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::LOOP,
+            Some(&json!({
+                "sessionId": "worker-1",
+                "active": false,
+                "action": action,
+                "source": "agent"
+            })),
+        );
+        assert_eq!(
+            close.status, 409,
+            "`{action}` must be refused: {:?}",
+            close.body
+        );
+        let error = close.body["error"].as_str().unwrap_or_default();
+        assert!(
+            error.contains("user-managed") && error.contains(action),
+            "the refusal must name the kind and the operation, got {error:?}"
+        );
+    }
+
+    // And the goal is still there afterwards, which is the point.
+    let metadata = load_metadata_state(&state_dir);
+    let loop_meta = metadata.sessions["worker-1"]["loop"].clone();
+    assert_eq!(loop_meta["active"], true);
+    assert_eq!(loop_meta["goalKind"], "user");
+}
+
+/// The overseer is an agent too, and so is every automation.
+#[test]
+fn no_automation_closes_a_user_managed_goal_through_the_route() {
+    let project = temp_project("user-goal-automation");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "long haul",
+            "goalKind": "user",
+            "source": "dashboard"
+        })),
+    );
+
+    for source in ["overseer", "task", "system", "unknown"] {
+        let close = route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::LOOP,
+            Some(&json!({
+                "sessionId": "worker-1",
+                "active": false,
+                "action": "done",
+                "source": source
+            })),
+        );
+        assert_eq!(close.status, 409, "source {source} must be refused");
+    }
+}
+
+#[test]
+fn sam_closes_a_user_managed_goal_through_the_route() {
+    let project = temp_project("user-goal-sam");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "long haul",
+            "goalKind": "user",
+            "source": "dashboard"
+        })),
+    );
+    let close = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": false,
+            "action": "done",
+            "source": "dashboard"
+        })),
+    );
+    assert_eq!(close.status, 200, "{:?}", close.body);
+}
+
+/// `active: true` rewrites the whole loop object, so without a guard an agent
+/// re-adds a user-managed goal as agent-managed and then closes the one it
+/// just created. Changing the kind is a close in disguise.
+#[test]
+fn an_agent_cannot_launder_a_user_managed_goal_by_re_adding_it() {
+    let project = temp_project("user-goal-launder");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "long haul",
+            "goalKind": "user",
+            "source": "dashboard"
+        })),
+    );
+
+    let relabel = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "long haul",
+            "goalKind": "agent",
+            "source": "agent"
+        })),
+    );
+    assert_eq!(relabel.status, 409, "{:?}", relabel.body);
+
+    let metadata = load_metadata_state(&state_dir);
+    assert_eq!(metadata.sessions["worker-1"]["loop"]["goalKind"], "user");
+}
+
+/// Re-adding without naming a kind must keep the stored one, or every goal
+/// reverts to the permissive default the next time anything touches it.
+#[test]
+fn a_re_add_without_a_kind_keeps_the_stored_one() {
+    let project = temp_project("user-goal-keep");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "long haul",
+            "goalKind": "user",
+            "source": "dashboard"
+        })),
+    );
+    let edit = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "long haul, revised",
+            "source": "agent"
+        })),
+    );
+    assert_eq!(edit.status, 200, "editing the goal text is still allowed");
+    assert_eq!(edit.body["loop"]["goalKind"], "user");
+    assert_eq!(edit.body["loop"]["goal"], "long haul, revised");
+}
+
+/// The hole a review found: pausing silences the same reminders a close would,
+/// and this route used to ask nobody whose goal it was.
+#[test]
+fn an_agent_cannot_pause_the_alerts_on_a_user_managed_goal() {
+    let project = temp_project("user-goal-pause");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "long haul",
+            "goalKind": "user",
+            "source": "dashboard"
+        })),
+    );
+
+    let pause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "paused": true,
+            "source": "agent"
+        })),
+    );
+    assert_eq!(pause.status, 409, "{:?}", pause.body);
+
+    let sam = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "paused": true,
+            "source": "dashboard"
+        })),
+    );
+    assert_eq!(sam.status, 200, "Sam can still quiet it: {:?}", sam.body);
+}
+
+/// An agent-managed goal is the default and stays the agent's to close, so
+/// this cannot have broken the behaviour the loop already had.
+#[test]
+fn an_agent_still_closes_its_own_agent_managed_goal_through_the_route() {
+    let project = temp_project("agent-goal-close");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "fix the test",
+            "source": "agent"
+        })),
+    );
+    let close = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": false,
+            "action": "done",
+            "source": "agent"
+        })),
+    );
+    assert_eq!(close.status, 200, "{:?}", close.body);
+}
+
+/// Reading stored metadata falls back closed, but a REQUEST has somewhere to
+/// put an error -- so a caller asking for a token goal with no budget is told,
+/// rather than quietly handed a user-managed goal it never asked for.
+#[test]
+fn a_token_goal_request_without_a_budget_is_refused_not_converted() {
+    let project = temp_project("token-goal-budget");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for body in [
+        json!({ "sessionId": "worker-1", "active": true, "goalKind": "tokens", "source": "dashboard" }),
+        json!({ "sessionId": "worker-1", "active": true, "goalKind": "tokens", "tokenBudget": 0, "source": "dashboard" }),
+    ] {
+        let response =
+            route_project_service_request(&context, "POST", routes::agents::LOOP, Some(&body));
+        assert_eq!(response.status, 400, "{:?}", response.body);
+        assert!(
+            response.body["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("tokenBudget"),
+            "the refusal must name the missing field, got {:?}",
+            response.body["error"]
+        );
+    }
+
+    let good = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "spend no more than this",
+            "goalKind": "tokens",
+            "tokenBudget": 50_000,
+            "source": "dashboard"
+        })),
+    );
+    assert_eq!(good.status, 200, "{:?}", good.body);
+    assert_eq!(good.body["loop"]["goalKind"], "tokens");
+    assert_eq!(good.body["loop"]["tokenBudget"], 50_000);
+}
+
+/// A kind this build does not know is a typo, not a new feature.
+#[test]
+fn an_unknown_goal_kind_request_is_refused() {
+    let project = temp_project("goal-kind-unknown");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goalKind": "whenever",
+            "source": "dashboard"
+        })),
+    );
+    assert_eq!(response.status, 400, "{:?}", response.body);
+}
+
+/// A budget sent alongside a non-token kind is not stored, so it cannot come
+/// back out of `stored_goal_kind` as a token goal nobody asked for.
+#[test]
+fn a_budget_on_a_non_token_goal_is_not_persisted() {
+    let project = temp_project("goal-kind-stray-budget");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goalKind": "user",
+            "tokenBudget": 50_000,
+            "source": "dashboard"
+        })),
+    );
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    assert_eq!(response.body["loop"]["goalKind"], "user");
+    assert!(
+        response.body["loop"].get("tokenBudget").is_none(),
+        "a user-managed goal has no budget to store, got {:?}",
+        response.body["loop"]
+    );
+}
+
+/// A global pause silences every session's reminders at once, user-managed
+/// goals included -- so it is the one the per-session gate would have been
+/// trivially walked around with.
+#[test]
+fn an_agent_cannot_pause_the_whole_fleets_alerts() {
+    let project = temp_project("global-pause-agent");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for source in ["agent", "overseer", "task", "system", "unknown"] {
+        let pause = route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::LOOP_ALERTS,
+            Some(&json!({ "global": true, "paused": true, "source": source })),
+        );
+        assert_eq!(
+            pause.status, 409,
+            "source {source} must not quiet the fleet"
+        );
+    }
+
+    let unattributed = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({ "global": true, "paused": true })),
+    );
+    assert_eq!(
+        unattributed.status, 409,
+        "and a request that names nobody is not Sam"
+    );
+
+    let sam = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({ "global": true, "paused": true, "source": "dashboard" })),
+    );
+    assert_eq!(sam.status, 200, "{:?}", sam.body);
+}
+
+/// An agent may still CREATE a user-managed goal -- putting itself under one
+/// is not ending one. Without this, deleting the `stored_loop.is_some()` guard
+/// passed every other test while making this impossible.
+#[test]
+fn an_agent_can_put_itself_under_a_user_managed_goal() {
+    let project = temp_project("agent-sets-user-goal");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let add = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "the long migration",
+            "goalKind": "user",
+            "source": "agent"
+        })),
+    );
+    assert_eq!(add.status, 200, "{:?}", add.body);
+    assert_eq!(add.body["loop"]["goalKind"], "user");
+
+    // And having done so, it cannot take itself back out.
+    let close = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": false,
+            "action": "done",
+            "source": "agent"
+        })),
+    );
+    assert_eq!(close.status, 409, "{:?}", close.body);
+}
+
+/// Shrinking a token budget to one already spent would close the goal by
+/// construction, and the kind NAME does not change when it happens.
+#[test]
+fn an_agent_cannot_shrink_a_token_budget() {
+    let project = temp_project("token-budget-shrink");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "spend a million",
+            "goalKind": "tokens",
+            "tokenBudget": 1_000_000,
+            "source": "dashboard"
+        })),
+    );
+
+    let shrink = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "goal": "spend a million",
+            "goalKind": "tokens",
+            "tokenBudget": 1,
+            "source": "agent"
+        })),
+    );
+    assert_eq!(shrink.status, 409, "{:?}", shrink.body);
+
+    let metadata = load_metadata_state(&state_dir);
+    assert_eq!(
+        metadata.sessions["worker-1"]["loop"]["tokenBudget"], 1_000_000,
+        "the budget Sam set must survive"
+    );
+}
+
+/// A budget with no kind is a request nobody can honour.
+#[test]
+fn a_token_budget_without_a_kind_is_refused() {
+    let project = temp_project("budget-no-kind");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "active": true,
+            "tokenBudget": 50_000,
+            "source": "dashboard"
+        })),
+    );
+    assert_eq!(response.status, 400, "{:?}", response.body);
 }

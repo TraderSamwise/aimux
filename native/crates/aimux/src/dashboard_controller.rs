@@ -1872,6 +1872,7 @@ impl DashboardController {
             body: json!({
                 "global": true,
                 "paused": !currently_paused,
+                "source": "dashboard",
                 "updatedBy": "dashboard",
                 "reason": if currently_paused {
                     "human resumed loop alerts"

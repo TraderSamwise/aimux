@@ -1,4 +1,9 @@
 use serde_json::{Map, Value, json};
+
+use crate::agent_goal::{
+    DEFAULT_GOAL_KIND, GOAL_KIND_AGENT, GOAL_KIND_TOKENS, GOAL_KIND_USER, GoalCloseDecision,
+    GoalKind, goal_close_decision, source_is_human,
+};
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -111,6 +116,11 @@ fn route_loop_alerts(
                 format!("cannot pause loop alerts for {session_id}: session is not in a loop"),
             );
         };
+        // Pausing silences the same reminders a close would, and this route
+        // used to ask nobody whose goal it was.
+        if let Some(refusal) = refuse_goal_close(Some(loop_meta), body, "pause") {
+            return refusal;
+        }
         let Some(loop_key) = loop_pause_key_from_loop_metadata(loop_meta) else {
             // Two different refusals wore one sentence. A pause is pinned to
             // the loop's `since`, so a loop that is active but has no `since`
@@ -169,6 +179,16 @@ fn route_global_loop_alerts(
     let Some(paused) = body.get("paused").and_then(Value::as_bool) else {
         return json_error(400, "paused (boolean) is required");
     };
+    // Every session at once, user-managed goals included, so this needs the
+    // strongest authority rather than a per-goal verdict: the per-session
+    // pause got gated and this sibling would otherwise silence the lot.
+    if paused && !source_is_human(body_trimmed_string(body, "source").as_deref()) {
+        return json_error(
+            409,
+            "pausing every loop's alerts is not the agent's to make -- only Sam quiets the fleet"
+                .to_owned(),
+        );
+    }
     let now_ms = super::scheduler::scheduler_now_ms();
     let state_path = loop_watcher_state_path(context.project_state_dir());
     let mut watcher = match load_loop_watcher_state(&state_path) {
@@ -228,6 +248,8 @@ pub fn set_session_loop_metadata_at(
     }
     for key in [
         "goal",
+        "goalKind",
+        "tokenBudget",
         "source",
         "updatedBy",
         "updatedBySessionId",
@@ -477,6 +499,41 @@ fn clear_runtime_topology_control_role(
     .map(|_| ())
 }
 
+/// The goal kind recorded on a session's loop entry, and what a close would
+/// cost. One reader, because the two routes that can silence an agent -- the
+/// loop close and the alert pause -- must not answer differently.
+fn stored_goal_kind(loop_meta: Option<&Value>) -> GoalKind {
+    let Some(loop_meta) = loop_meta else {
+        return DEFAULT_GOAL_KIND;
+    };
+    GoalKind::parse(
+        loop_meta.get("goalKind").and_then(Value::as_str),
+        loop_meta.get("tokenBudget").and_then(Value::as_u64),
+    )
+}
+
+/// Whether this request may stop the reminders, given what is stored.
+///
+/// `source` is the caller's own claim: see `agent_goal`'s header. The honest
+/// path is right -- an aimux-launched agent derives `agent` from its own env
+/// -- and making it unforgeable needs provenance the daemon owns, which is
+/// queue item 947602-113, not something this route can decide.
+fn refuse_goal_close(
+    loop_meta: Option<&Value>,
+    body: &Value,
+    operation: &str,
+) -> Option<ProjectServiceDispatchResponse> {
+    let kind = stored_goal_kind(loop_meta);
+    match goal_close_decision(
+        &kind,
+        body_trimmed_string(body, "source").as_deref(),
+        operation,
+    ) {
+        GoalCloseDecision::Allow => None,
+        GoalCloseDecision::Refuse(reason) => Some(json_error(409, reason)),
+    }
+}
+
 fn route_loop(
     context: &ProjectServiceRequestContext,
     body: &Value,
@@ -490,11 +547,93 @@ fn route_loop(
     };
     let goal = body_trimmed_string(body, "goal").filter(|value| !value.is_empty());
     let now = now_iso();
+    // Read before write on both paths: a close has to see the stored kind to
+    // know whether it is allowed, and a re-add has to see it so it cannot
+    // quietly replace it.
+    let stored = match load_metadata_state_if_written(&context.project_state_dir()) {
+        Ok(metadata) => metadata,
+        Err(error) => return metadata_unavailable_error(error),
+    };
+    let stored_loop = stored
+        .sessions
+        .get(&session_id)
+        .and_then(|session| session.get("loop"))
+        .cloned();
     if active {
+        // `active: true` rewrites the whole loop object, so without this an
+        // agent re-adds a user-managed goal as agent-managed and then closes
+        // the one it just created. Changing a kind is a close in disguise.
+        let requested_kind = body_trimmed_string(body, "goalKind");
+        let requested_budget = body.get("tokenBudget").and_then(Value::as_u64);
+        // Reading stored metadata falls back closed because a projection read
+        // has nowhere to put an error. A REQUEST does, so a caller asking for
+        // a token goal without a budget is told, rather than quietly handed a
+        // user-managed goal it did not ask for.
+        if requested_kind.as_deref() == Some(GOAL_KIND_TOKENS)
+            && requested_budget.is_none_or(|budget| budget == 0)
+        {
+            return json_error(
+                400,
+                "goalKind \"tokens\" requires a positive tokenBudget".to_owned(),
+            );
+        }
+        if requested_kind.is_none() && requested_budget.is_some() {
+            return json_error(
+                400,
+                format!("tokenBudget needs goalKind \"{GOAL_KIND_TOKENS}\"").to_owned(),
+            );
+        }
+        if let Some(kind) = requested_kind.as_deref()
+            && ![GOAL_KIND_AGENT, GOAL_KIND_USER, GOAL_KIND_TOKENS].contains(&kind)
+        {
+            return json_error(
+                400,
+                format!(
+                    "unknown goalKind {kind}: expected {GOAL_KIND_AGENT}, {GOAL_KIND_USER} or {GOAL_KIND_TOKENS}"
+                ),
+            );
+        }
+        let stored_kind = stored_goal_kind(stored_loop.as_ref());
+        let requested_as_kind = requested_kind
+            .as_deref()
+            .map(|kind| GoalKind::parse(Some(kind), requested_budget));
+        // Compared as parsed kinds, not as names: `tokens` to `tokens` with a
+        // smaller budget is the same WORD and a different goal, and shrinking
+        // a budget to one already spent closes it by construction.
+        let replacing_kind = requested_as_kind
+            .as_ref()
+            .is_some_and(|kind| *kind != stored_kind);
+        // No `stored_loop.is_some()` test: the verdict already reads the
+        // STORED kind, which on a fresh session is the permissive default, so
+        // an agent can still put itself under a user-managed goal. Proved by
+        // mutation -- adding that condition back changes nothing.
+        if replacing_kind && refuse_goal_close(stored_loop.as_ref(), body, "done").is_some() {
+            // Borrows the close verdict, but not its wording: the caller sent
+            // `active: true`, so being told `done` is not theirs to make would
+            // send them looking for a close they never asked for.
+            return json_error(
+                409,
+                format!(
+                    "this goal is {}-managed, so its kind is not the agent's to change",
+                    stored_kind.as_str()
+                ),
+            );
+        }
         let mut loop_metadata = provenance(body);
         loop_metadata.insert("active".into(), Value::Bool(true));
         if let Some(goal) = goal.clone() {
             loop_metadata.insert("goal".into(), Value::String(goal));
+        }
+        // An explicit kind wins; otherwise whatever was already recorded
+        // survives the rewrite rather than reverting to the default.
+        let kind = match (requested_as_kind, stored_loop.is_some()) {
+            (Some(kind), _) => kind,
+            (None, true) => stored_kind,
+            (None, false) => DEFAULT_GOAL_KIND,
+        };
+        loop_metadata.insert("goalKind".into(), Value::String(kind.as_str().into()));
+        if let Some(budget) = kind.token_budget() {
+            loop_metadata.insert("tokenBudget".into(), Value::from(budget));
         }
         loop_metadata.insert("since".into(), Value::String(now.clone()));
         let mut loop_last_action = Map::new();
@@ -522,11 +661,12 @@ fn route_loop(
         );
     }
 
+    let action = session_loop_action(body.get("action"), "remove");
+    if let Some(refusal) = refuse_goal_close(stored_loop.as_ref(), body, &action) {
+        return refusal;
+    }
     let mut loop_last_action = provenance(body);
-    loop_last_action.insert(
-        "action".into(),
-        Value::String(session_loop_action(body.get("action"), "remove")),
-    );
+    loop_last_action.insert("action".into(), Value::String(action));
     loop_last_action.insert("at".into(), Value::String(now));
     if let Some(goal) = goal.clone() {
         loop_last_action.insert("goal".into(), Value::String(goal));
@@ -997,6 +1137,20 @@ pub(crate) fn load_metadata_state_strict(
         .map_err(|error| format!("parse metadata state {}: {error}", path.display()))
 }
 
+/// The stored metadata, where a project that has never written any is empty
+/// rather than an error -- that is the normal first `loop add`. A file that
+/// exists and cannot be read or parsed is still an error, because reading it
+/// as "nothing stored" would drop the goal kind that decides a refusal.
+pub(crate) fn load_metadata_state_if_written(
+    project_state_dir: &Path,
+) -> Result<MetadataState, String> {
+    let path = metadata_state_path(project_state_dir);
+    if !path.exists() {
+        return Ok(MetadataState::empty());
+    }
+    load_metadata_state_strict(project_state_dir)
+}
+
 fn lifecycle_watch_error_response(error: LifecycleMutationError) -> ProjectServiceDispatchResponse {
     watch_refusal(
         error.status(),
@@ -1049,6 +1203,8 @@ fn provenance(body: &Value) -> Map<String, Value> {
 
 fn copy_provenance(from: &Map<String, Value>, to: &mut Map<String, Value>) {
     for key in [
+        "goalKind",
+        "tokenBudget",
         "source",
         "updatedBy",
         "updatedBySessionId",

@@ -278,7 +278,12 @@ export function AgentManagementPanel({
                 runAction("loop", () =>
                   setAgentLoop(
                     endpoint,
-                    { sessionId: session.id, active: true, goal: trimmedGoal || undefined },
+                    {
+                      sessionId: session.id,
+                      active: true,
+                      goal: trimmedGoal || undefined,
+                      source: "dashboard",
+                    },
                     { token },
                   ),
                 )
@@ -294,7 +299,11 @@ export function AgentManagementPanel({
               disabled={!canAct || !loopActive}
               onPress={() =>
                 runAction("loop", () =>
-                  setAgentLoop(endpoint, { sessionId: session.id, active: false }, { token }),
+                  setAgentLoop(
+                    endpoint,
+                    { sessionId: session.id, active: false, source: "dashboard" },
+                    { token },
+                  ),
                 )
               }
             >

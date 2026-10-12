@@ -138,7 +138,12 @@ export default function LoopsScreen() {
     const goal = (goalDrafts[entry.session.id] ?? "").trim();
     await setAgentLoop(
       endpoint!,
-      { sessionId: entry.session.id, active: true, goal: goal || undefined },
+      {
+        sessionId: entry.session.id,
+        active: true,
+        goal: goal || undefined,
+        source: "dashboard",
+      },
       { token },
     );
     setGoalDrafts((current) => {
@@ -313,7 +318,7 @@ export default function LoopsScreen() {
                             const token = await getToken();
                             await setAgentLoop(
                               endpoint,
-                              { sessionId: entry.session.id, active: false },
+                              { sessionId: entry.session.id, active: false, source: "dashboard" },
                               { token },
                             );
                           },

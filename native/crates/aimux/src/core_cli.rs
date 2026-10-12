@@ -987,6 +987,9 @@ where
                 ("project".into(), Value::String(project_root)),
                 ("sessionId".into(), Value::String(parsed.session_id)),
             ]);
+            // Deliberately `human` here and `unknown` on the route: this is a
+            // shell with no AIMUX_SESSION_ID, which an aimux-launched agent
+            // always has, so it is Sam at a prompt. The route cannot tell.
             body.extend(loop_actor_payload(&context.loop_actor, "human"));
             if let Some(goal) = parsed.goal {
                 body.insert("goal".into(), Value::String(goal));
