@@ -1427,6 +1427,54 @@ fn shifted_p_opens_work_outline_overlay_for_selected_session() {
     );
 }
 
+/// Render drew the goal dialog over the restore prompt and the cache-cleanup
+/// confirm, while dispatch gave the keys to those two first: `y` on a screen
+/// showing the goal dialog ran a worktree cache cleanup. Found by review.
+#[test]
+fn the_goal_dialog_is_not_drawn_while_another_overlay_holds_the_keys() {
+    let quiet = snapshot_without_restore_offer();
+    let mut controller = DashboardController::new(&quiet);
+    focus_session(&mut controller, &quiet, "claude-0");
+
+    controller.handle_key(&quiet, DashboardKey::Printable('G'));
+    assert!(controller.goal_overlay.is_some(), "the dialog is open");
+    assert!(
+        controller.goal_overlay_owns_keys(&quiet),
+        "and it holds the keyboard while nothing else does"
+    );
+
+    // A cache-cleanup preview arrives while the dialog is up. Dispatch gives
+    // every key to the confirm, so the dialog must stop being drawn.
+    controller.worktree_cache_cleanup_confirm = Some(json!({ "entries": [] }));
+    assert!(
+        !controller.goal_overlay_owns_keys(&quiet),
+        "a confirm that owns the keys must not be hidden behind the goal dialog"
+    );
+
+    controller.worktree_cache_cleanup_confirm = None;
+    assert!(controller.goal_overlay_owns_keys(&quiet));
+
+    // Same for a restore offer, which dispatch also takes first.
+    let mut with_restore = quiet.clone();
+    with_restore.agent_restore_offer = Some(
+        serde_json::from_value(json!({
+            "id": "offer-1",
+            "updatedAt": "2026-09-22T03:24:09.985Z",
+            "sessionIds": ["codex-a"],
+            "sessions": [{ "id": "codex-a", "label": "codex-a", "tool": "codex" }]
+        }))
+        .expect("restore offer"),
+    );
+    assert!(
+        controller.agent_restore_prompt_active(&with_restore),
+        "the fixture must carry an unanswered restore offer, or this proves nothing"
+    );
+    assert!(
+        !controller.goal_overlay_owns_keys(&with_restore),
+        "a restore prompt that owns the keys must not be hidden either"
+    );
+}
+
 /// `k` is a hand-over, not a loop starter. Without the active check it sent
 /// `active: true` with a kind and no goal, which STARTS a watch on an agent
 /// Sam only wanted to look at.

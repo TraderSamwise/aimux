@@ -2,10 +2,10 @@
 
 use aimux::agent_token_spend::{
     BASELINE_JUST_TAKEN, ClaudeSpendChunk, MAX_CHUNK_BYTES, NO_TRANSCRIPT_YET, SpendBaseline,
-    SpendSinceBaseline, advance_cumulative_baseline, advance_summed_baseline,
-    chunk_spans_an_oversized_record, claude_spend_chunk, codex_cumulative_billed,
-    cumulative_spend_since, offset_still_valid, rebaseline_for_new_episode, runtime_reports_usage,
-    spend_for_session,
+    SpendSinceBaseline, TRANSCRIPT_UNREADABLE, advance_cumulative_baseline,
+    advance_summed_baseline, chunk_spans_an_oversized_record, claude_spend_chunk,
+    codex_cumulative_billed, cumulative_spend_since, offset_still_valid,
+    rebaseline_for_new_episode, runtime_reports_usage, spend_for_session,
 };
 
 fn claude_line(id: &str, input: u64, cache_read: u64, cache_creation: u64, output: u64) -> String {
@@ -251,6 +251,43 @@ fn a_cumulative_baseline_measures_from_first_sight() {
     assert_eq!(baseline.billed, 250);
 }
 
+/// First sight reads NOTHING: the baseline is the file's current end, taken
+/// from a stat. The old code called the reader at offset 0 and discarded the
+/// chunk, parsing up to 4MB of a 418MB file on the tick thread while the
+/// module header claimed a cold start never parses history. Found by review.
+#[test]
+fn first_sight_takes_the_end_of_the_file_without_reading_it() {
+    let dir = scratch("first-sight");
+    let path = dir.join("transcript.jsonl");
+    let history = format!(
+        "{}{}",
+        claude_line("old-1", 900_000, 0, 0, 100_000),
+        claude_line("old-2", 800_000, 0, 0, 100_000)
+    );
+    std::fs::write(&path, &history).expect("seed history");
+
+    let mut baseline = SpendBaseline::default();
+    assert_eq!(
+        spend_for_session("claude", Some(path.as_path()), &mut baseline),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)
+    );
+    assert_eq!(
+        baseline.offset,
+        history.len() as u64,
+        "the baseline is the end of the file"
+    );
+    assert_eq!(
+        baseline.billed, 0,
+        "and nothing written before the goal is charged to it"
+    );
+    assert_eq!(
+        baseline.last_id, None,
+        "nothing was parsed, so no id was carried"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A full window with no complete line in it is one record longer than the
 /// window, not a quiet file. Leaving the offset alone re-reads the same bytes
 /// every tick for ever.
@@ -393,4 +430,175 @@ fn a_forked_transcript_does_not_look_like_a_new_goal() {
     );
     assert_eq!(baseline.billed, 0, "but it does restart the count");
     assert!(!rebaseline_for_new_episode(&mut baseline, "since|500"));
+}
+
+fn scratch(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "aimux-spend-{}-{}-{name}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    dir
+}
+
+/// A transcript truncated or replaced in place under the SAME name restarts
+/// the count, and reporting that as `Measured(0)` told a goal at 480,000 of a
+/// 500,000 budget that it had spent nothing -- labelled as a measurement, so
+/// every surface believed it. Found by review.
+#[test]
+fn a_truncated_transcript_says_it_is_measuring_again_rather_than_zero() {
+    let dir = scratch("truncate");
+    let path = dir.join("transcript.jsonl");
+    std::fs::write(&path, claude_line("msg-1", 10, 0, 0, 5)).expect("seed");
+
+    let mut baseline = SpendBaseline::default();
+    spend_for_session("claude", Some(path.as_path()), &mut baseline);
+    std::fs::write(
+        &path,
+        format!(
+            "{}{}",
+            claude_line("msg-1", 10, 0, 0, 5),
+            claude_line("msg-2", 400_000, 0, 20_000, 60_000)
+        ),
+    )
+    .expect("append");
+    assert_eq!(
+        spend_for_session("claude", Some(path.as_path()), &mut baseline),
+        SpendSinceBaseline::Measured(480_000),
+        "spent, and measured"
+    );
+
+    // Replaced in place, same path, now shorter than the stored offset.
+    std::fs::write(&path, claude_line("msg-9", 1, 0, 0, 1)).expect("truncate");
+    assert_eq!(
+        spend_for_session("claude", Some(path.as_path()), &mut baseline),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN),
+        "a restarted count is not a measurement of zero"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A read that FAILED is a third outcome. Reporting it as "no transcript
+/// written yet" told the user nothing had been written while the cause went
+/// nowhere -- AGENTS.md "errors are not empty values".
+#[test]
+fn an_unreadable_transcript_is_not_reported_as_one_that_was_never_written() {
+    let dir = scratch("unreadable");
+    let path = dir.join("transcript.jsonl");
+    std::fs::write(&path, claude_line("msg-1", 10, 0, 0, 5)).expect("seed");
+
+    // The baseline is taken from a stat, so the failure has to happen on a
+    // tick that actually reads -- which is every tick after the first.
+    let mut baseline = SpendBaseline::default();
+    assert_eq!(
+        spend_for_session("claude", Some(path.as_path()), &mut baseline),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)
+    );
+    std::fs::write(
+        &path,
+        format!(
+            "{}{}",
+            claude_line("msg-1", 10, 0, 0, 5),
+            claude_line("msg-2", 20, 0, 0, 5)
+        ),
+    )
+    .expect("append");
+    let mut permissions = std::fs::metadata(&path).expect("stat").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o000);
+    std::fs::set_permissions(&path, permissions).expect("chmod");
+
+    // Asked directly rather than inferred from the result: a test that
+    // accepted NO_TRANSCRIPT_YET as "probably root" could never fail, which is
+    // the whole class of bug this file exists to catch.
+    assert!(
+        std::fs::File::open(&path).is_err(),
+        "this process can read a 0o000 file, so the case cannot be set up here"
+    );
+    assert_eq!(
+        spend_for_session("claude", Some(path.as_path()), &mut baseline),
+        SpendSinceBaseline::Unmeasured(TRANSCRIPT_UNREADABLE),
+        "an I/O failure must not read as absence"
+    );
+    assert_ne!(
+        TRANSCRIPT_UNREADABLE, NO_TRANSCRIPT_YET,
+        "and the two must be distinguishable at all"
+    );
+
+    let mut permissions = std::fs::metadata(&path).expect("stat").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o600);
+    std::fs::set_permissions(&path, permissions).ok();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Codex keeps a running total, and the tail has to be big enough to contain
+/// one. On a real 154MB rollout 128 of 1,832 gaps between `token_count`
+/// records exceed 256KiB, the largest being 2,380,073 bytes -- and those are
+/// the big-tool-output windows where spend is highest. A tail that misses the
+/// record read as no transcript at all.
+#[test]
+fn a_codex_total_far_from_the_end_of_the_file_is_still_found() {
+    let dir = scratch("codex-tail");
+    let path = dir.join("rollout.jsonl");
+    let total = r#"{"payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":5000,"cached_input_tokens":1000,"cache_write_input_tokens":200,"output_tokens":300}}}}"#;
+    // One megabyte of ordinary records after the total, which is four times
+    // the old window and well inside the real gaps measured above.
+    let filler = (0..4_000)
+        .map(|index| {
+            format!(
+                "{{\"payload\":{{\"type\":\"event\",\"index\":{index},\"pad\":\"{}\"}}}}\n",
+                "y".repeat(240)
+            )
+        })
+        .collect::<String>();
+    assert!(
+        filler.len() > 256 * 1024,
+        "the filler must exceed the old 256KiB tail, got {}",
+        filler.len()
+    );
+    std::fs::write(&path, format!("{total}\n{filler}")).expect("seed rollout");
+
+    let mut baseline = SpendBaseline::default();
+    assert_eq!(
+        spend_for_session("codex", Some(path.as_path()), &mut baseline),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN),
+        "first sight takes the baseline"
+    );
+    assert_eq!(
+        baseline.cumulative_at_baseline,
+        Some(4_500),
+        "5000 input - 1000 cached + 200 cache write + 300 output, found past \
+         the old window"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A multi-byte character straddling the tail boundary made the strict reader
+/// return nothing, and nothing read as "no transcript written yet". Spend
+/// cannot be stopped by one mangled character.
+#[test]
+fn a_split_character_at_the_tail_boundary_does_not_erase_the_reading() {
+    let dir = scratch("codex-split");
+    let path = dir.join("rollout.jsonl");
+    let total = r#"{"payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":90,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":10}}}}"#;
+    // Padded so the window starts inside a multi-byte character: the tail is
+    // taken from the END, so the boundary lands wherever the file length puts
+    // it, and a run of them guarantees one is split.
+    let padding = "é".repeat(3_000_000);
+    std::fs::write(&path, format!("{{\"pad\":\"{padding}\"}}\n{total}\n")).expect("seed rollout");
+
+    let mut baseline = SpendBaseline::default();
+    spend_for_session("codex", Some(path.as_path()), &mut baseline);
+    assert_eq!(
+        baseline.cumulative_at_baseline,
+        Some(100),
+        "the total must still be read across a split character"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }

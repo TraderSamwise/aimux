@@ -1056,6 +1056,22 @@ pub fn loop_text_route(
         Value::String(if input.active { "add" } else { "remove" }.into()),
     );
     insert_string_if_some(&mut request, "goal", goal.clone());
+    // Forwarded or the CLI half of goals does not exist: without these,
+    // `aimux loop add X --kind user --budget 50000` printed ok and the project
+    // service fell back to the agent-closable default, so a user-managed goal
+    // could not be created from a prompt at all and a token goal could not be
+    // created from anywhere.
+    insert_string_if_some(
+        &mut request,
+        "goalKind",
+        optional_string(route_url, body, "goalKind"),
+    );
+    if let Some(budget) = body
+        .and_then(|body| body.get("tokenBudget"))
+        .and_then(Value::as_u64)
+    {
+        request.insert("tokenBudget".into(), Value::from(budget));
+    }
     let (json, project_root) = match unwrap_project_result(runtime.post_project_service_json(
         &project,
         project_routes::agents::LOOP,

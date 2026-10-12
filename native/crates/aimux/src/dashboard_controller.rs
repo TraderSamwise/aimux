@@ -1089,6 +1089,20 @@ impl DashboardController {
         effect.stops_coalesced_dashboard_input() || before != self.input_surface()
     }
 
+    /// Whether the goal dialog is the overlay that will receive the next key.
+    ///
+    /// Render and dispatch answered this separately and disagreed: dispatch
+    /// hands keys to the restore prompt and the cache-cleanup confirm BEFORE
+    /// the goal dialog, while render drew the goal dialog over both -- so `y`
+    /// on a screen showing the goal dialog ran a worktree cache cleanup, and
+    /// Esc dismissed a fleet restore. Render asks this instead of repeating
+    /// the chain, so the thing on screen is the thing holding the keyboard.
+    pub fn goal_overlay_owns_keys(&self, snapshot: &DesktopStateSnapshot) -> bool {
+        self.goal_overlay.is_some()
+            && !self.agent_restore_prompt_active(snapshot)
+            && matches!(self.input_overlay(), DashboardInputOverlay::Goal)
+    }
+
     fn input_overlay(&self) -> DashboardInputOverlay {
         if self.tool_picker.is_some() {
             DashboardInputOverlay::ToolPicker
@@ -1858,7 +1872,7 @@ impl DashboardController {
             &selected.id,
             selected.loop_state.as_ref(),
             selected.token_spend.as_ref(),
-            selected.tool_config_key.as_deref().unwrap_or_default(),
+            selected.tool.as_deref(),
         ));
         DashboardControllerEffect::Render
     }

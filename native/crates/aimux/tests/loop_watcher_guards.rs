@@ -2797,6 +2797,162 @@ fn a_met_token_budget_is_announced_once_and_then_stops_reminding() {
     );
 }
 
+/// The announcement is delivered as INPUT, so the agent is busy on the next
+/// tick -- and a busy agent is not a candidate at all. Pruning the announced
+/// key against this tick's candidates therefore dropped it the moment the
+/// agent got back to work, and said the same thing again at its next stop,
+/// which is exactly what the notice tells it to do. Found by review.
+#[test]
+fn a_met_budget_is_not_announced_again_after_the_agent_gets_back_to_work() {
+    let scan_with = |activity: &str| {
+        let (worker, mut worker_meta) = looping_session("worker", activity);
+        worker_meta["loop"]["goalKind"] = json!("tokens");
+        worker_meta["loop"]["tokenBudget"] = json!(10_000);
+        worker_meta["tokenSpend"] = json!({ "billed": 10_000 });
+        input_with_config(
+            vec![worker],
+            json!({ "sessions": { "worker": worker_meta } }),
+            json!({
+                "nudgeCooldownMs": 0,
+                "stoppedDwellMs": 0,
+                "autoNudgeWithoutOverseer": true
+            }),
+        )
+    };
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(
+        watcher
+            .scan(&scan_with("idle"), NOW, &mut ok)
+            .iter()
+            .any(|send| send.session_id == "worker"),
+        "said once"
+    );
+    // The notice itself put it back to work.
+    assert!(
+        watcher
+            .scan(&scan_with("running"), NOW + 120_000, &mut ok)
+            .is_empty(),
+        "nothing while it is working"
+    );
+    // And when it stops again, it has already been told.
+    assert!(
+        watcher
+            .scan(&scan_with("idle"), NOW + 240_000, &mut ok)
+            .is_empty(),
+        "a reached budget is said ONCE, not once per working stint"
+    );
+    // Several cycles, because the failing version re-fired on each of them.
+    for cycle in 1..4 {
+        let at = NOW + 240_000 + cycle * 240_000;
+        watcher.scan(&scan_with("running"), at, &mut ok);
+        assert!(
+            watcher
+                .scan(&scan_with("idle"), at + 120_000, &mut ok)
+                .is_empty(),
+            "still said once after {cycle} more working stints"
+        );
+    }
+}
+
+/// Under the PRODUCTION dwell and cooldown, an overseer holding its own goal
+/// is nudged on a cadence, not on every tick. A review measured the failing
+/// shape: with the dwell bookkeeping removed this path fired on ticks
+/// [2,3,4,...,39] instead of [2,6,10,...,38], and every test stayed green
+/// because none of them scanned past a delivered send.
+#[test]
+fn an_overseer_own_goal_nudge_keeps_to_a_cadence_at_production_dwell() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = non_loop_session("worker", "running");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 60_000,
+            "stoppedDwellMs": 30_000,
+            "unchangedReminderTicks": 4
+        }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let mut fired = Vec::new();
+    for tick in 0..40 {
+        let now = NOW + tick * 15_000;
+        if watcher
+            .scan(&input, now, &mut ok)
+            .iter()
+            .any(|send| send.session_id == "boss" && send.kind == LoopSendKind::DirectNudge)
+        {
+            fired.push(tick);
+        }
+    }
+
+    assert!(
+        !fired.is_empty(),
+        "the overseer's own goal must be nudged at all"
+    );
+    let gaps = fired
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect::<Vec<_>>();
+    assert!(
+        gaps.iter().all(|gap| *gap >= 4),
+        "every gap must be at least the reminder cadence, got {fired:?}"
+    );
+    assert!(
+        fired.len() <= 12,
+        "forty ticks must not produce a nudge on nearly every one, got {fired:?}"
+    );
+}
+
+/// The prune is what makes a NEW goal announceable again. Without it the key
+/// of a goal that is long gone sits there for ever and the next goal with the
+/// same budget is never announced. A review showed replacing the prune with a
+/// no-op left every test green, so this pins it.
+#[test]
+fn a_goal_removed_and_set_again_is_announced_again() {
+    let scan = |active: bool| {
+        let (worker, mut worker_meta) = looping_session("worker", "idle");
+        worker_meta["loop"]["active"] = json!(active);
+        worker_meta["loop"]["goalKind"] = json!("tokens");
+        worker_meta["loop"]["tokenBudget"] = json!(10_000);
+        worker_meta["tokenSpend"] = json!({ "billed": 10_000 });
+        input_with_config(
+            vec![worker],
+            json!({ "sessions": { "worker": worker_meta } }),
+            json!({
+                "nudgeCooldownMs": 0,
+                "stoppedDwellMs": 0,
+                "autoNudgeWithoutOverseer": true
+            }),
+        )
+    };
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(
+        watcher
+            .scan(&scan(true), NOW, &mut ok)
+            .iter()
+            .any(|send| send.session_id == "worker"),
+        "said once"
+    );
+    // The goal is removed, so its key is no longer a live goal.
+    watcher.scan(&scan(false), NOW + 120_000, &mut ok);
+    // The SAME budget set again is a new goal to be told about.
+    assert!(
+        watcher
+            .scan(&scan(true), NOW + 240_000, &mut ok)
+            .iter()
+            .any(|send| send.session_id == "worker"),
+        "a goal set again must be announced again, or the key of a dead goal \
+         silences every later one with the same budget"
+    );
+}
+
 /// Said and attempted are different things. Recording the announcement at plan
 /// time meant a send that never landed was counted as delivered, and the agent
 /// was never told at all.

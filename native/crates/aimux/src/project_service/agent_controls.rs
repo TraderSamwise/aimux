@@ -2,7 +2,7 @@ use serde_json::{Map, Value, json};
 
 use crate::agent_goal::{
     DEFAULT_GOAL_KIND, GOAL_KIND_AGENT, GOAL_KIND_TOKENS, GOAL_KIND_USER, GoalCloseDecision,
-    GoalKind, goal_close_decision, source_is_human,
+    GoalKind, deactivation_operation, goal_close_decision, source_is_human,
 };
 use std::fs;
 use std::path::Path;
@@ -652,7 +652,19 @@ fn route_loop(
         if let Some(budget) = kind.token_budget() {
             loop_metadata.insert("tokenBudget".into(), Value::from(budget));
         }
-        loop_metadata.insert("since".into(), Value::String(now.clone()));
+        // `since` is when the loop became active, not when its record was
+        // last written. It is also the alert-pause KEY and part of the spend
+        // episode, so rewriting it on every `active: true` meant a kind-only
+        // hand-over cancelled a pause Sam had set, restarted the dwell window
+        // and re-baselined the token spend.
+        let since = stored_loop
+            .as_ref()
+            .filter(|loop_meta| loop_meta.get("active").and_then(Value::as_bool) == Some(true))
+            .and_then(|loop_meta| loop_meta.get("since"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| now.clone());
+        loop_metadata.insert("since".into(), Value::String(since));
         let mut loop_last_action = Map::new();
         loop_last_action.insert("action".into(), Value::String("add".into()));
         loop_last_action.insert("at".into(), Value::String(now));
@@ -679,7 +691,13 @@ fn route_loop(
     }
 
     let action = session_loop_action(body.get("action"), "remove");
-    if let Some(refusal) = refuse_goal_close(stored_loop.as_ref(), body, &action) {
+    // Asked about the EFFECT, not the label: this branch removes the loop
+    // object whatever the action is called, and `action: "add"` is a legal
+    // word that does not end reminders -- so gating on the label let
+    // `{"active": false, "action": "add"}` delete a user-managed goal.
+    if let Some(refusal) =
+        refuse_goal_close(stored_loop.as_ref(), body, deactivation_operation(&action))
+    {
         return refusal;
     }
     let mut loop_last_action = provenance(body);

@@ -16,9 +16,10 @@
 //! # Measured from when the goal started, not from the dawn of the session
 //!
 //! A budget is for this goal, and a transcript outlives it: the one in front
-//! of me is 415MB. So the reader takes a baseline at first sight and only ever
-//! counts forward. That also means a cold start never parses history, which it
-//! could not afford to do inside a tick budget.
+//! of me is 415MB. So the reader takes a baseline at first sight -- the file's
+//! current length, from a stat, reading nothing -- and only ever counts
+//! forward. A cold start therefore parses no history at all, which it could
+//! not afford to do inside a tick budget.
 //!
 //! # What a restart costs
 //!
@@ -29,7 +30,9 @@
 //! therefore never be reached. Persisting them would fix it and is not done
 //! here; the limit is written down rather than discovered.
 
-use serde_json::Value;
+use serde_json::{Value, json};
+
+use crate::debug_logging::{LogLevel, log_at};
 use std::fs::{File, metadata};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -152,6 +155,9 @@ pub fn runtime_reports_usage(tool: &str) -> bool {
 pub const NO_USAGE_FOR_RUNTIME: &str = "this runtime does not report token usage";
 pub const NO_TRANSCRIPT_YET: &str = "no transcript written yet";
 pub const BASELINE_JUST_TAKEN: &str = "measuring from now";
+/// A read that FAILED, which is not a transcript that was never written. The
+/// cause goes to the log, because this string reaches a nudge and a dialog.
+pub const TRANSCRIPT_UNREADABLE: &str = "transcript could not be read";
 
 /// Spend since a baseline, for a runtime that keeps a cumulative total.
 ///
@@ -223,12 +229,17 @@ pub fn rebaseline_for_new_episode(baseline: &mut SpendBaseline, episode: &str) -
 
 /// Fold a newly read chunk into a baseline, for a runtime that reports
 /// per-message usage and no total.
+/// Returns whether it started again, so the caller can report "measuring from
+/// now" instead of a confident zero: a transcript truncated in place under the
+/// SAME name reset `billed` to 0, and the old code then answered
+/// `Measured(0)` -- a goal at 480,000 of a 500,000 budget read as nothing
+/// spent, labelled as a measurement.
 pub fn advance_summed_baseline(
     baseline: &mut SpendBaseline,
     transcript: &str,
     file_len: u64,
     chunk: ClaudeSpendChunk,
-) {
+) -> bool {
     let same_file = baseline.transcript.as_deref() == Some(transcript);
     if !same_file || !offset_still_valid(baseline.offset, file_len) {
         // A new or truncated transcript: start again from here rather than
@@ -239,13 +250,14 @@ pub fn advance_summed_baseline(
             episode: baseline.episode.clone(),
             ..SpendBaseline::default()
         };
-        return;
+        return true;
     }
     baseline.offset += chunk.consumed;
     baseline.billed += chunk.billed;
     if chunk.last_id.is_some() {
         baseline.last_id = chunk.last_id;
     }
+    false
 }
 
 /// Fold a cumulative reading into a baseline, for a runtime that keeps a total.
@@ -348,18 +360,34 @@ pub fn spend_for_session(
     };
     let name = transcript.to_string_lossy().into_owned();
     if tool.trim() == "codex" {
-        let tail =
-            crate::transcript_turn_state::read_file_tail(transcript, None).unwrap_or_default();
+        let tail = match read_tail_lossy(transcript, CODEX_TAIL_BYTES) {
+            Ok(tail) => tail,
+            Err(reason) => return unreadable(transcript, &reason),
+        };
         return advance_cumulative_baseline(baseline, &name, codex_cumulative_billed(&tail));
     }
-    let fresh = baseline.transcript.as_deref() != Some(name.as_str());
+    if baseline.transcript.as_deref() != Some(name.as_str()) {
+        // Measured from HERE, so first sight reads nothing at all. The old
+        // code called `read_appended` at offset 0 and then discarded the
+        // chunk, which parsed up to 4MB of a 418MB file on the tick thread
+        // while the module header claimed a cold start never parses history.
+        let len = match metadata(transcript) {
+            Ok(stat) => stat.len(),
+            Err(error) => return unreadable(transcript, &error.to_string()),
+        };
+        *baseline = SpendBaseline {
+            offset: len,
+            transcript: Some(name),
+            episode: baseline.episode.clone(),
+            ..SpendBaseline::default()
+        };
+        return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
+    }
     let appended = match read_appended(transcript, baseline.offset) {
         Ok(read) => read,
-        // A read that failed is not a session that spent nothing.
-        Err(reason) => {
-            let _ = reason;
-            return SpendSinceBaseline::Unmeasured(NO_TRANSCRIPT_YET);
-        }
+        // A read that failed is not a session that spent nothing, and it is
+        // not one that was never written either.
+        Err(reason) => return unreadable(transcript, &reason),
     };
     let mut chunk = claude_spend_chunk(&appended.text, baseline.last_id.as_deref());
     if chunk_spans_an_oversized_record(chunk.consumed, appended.read) {
@@ -367,11 +395,71 @@ pub fn spend_for_session(
         // which is a smaller lie than a budget that never moves again. The
         // next chunk starts mid-record and its unparseable tail is consumed
         // the same way, so the reader recovers on its own.
+        log_at(
+            LogLevel::Warn,
+            "stepping over a transcript record larger than one tick's window",
+            "token-spend",
+            Some(json!({
+                "transcript": transcript.display().to_string(),
+                "skippedBytes": appended.read,
+            })),
+        );
         chunk.consumed = appended.read;
     }
-    advance_summed_baseline(baseline, &name, appended.len, chunk);
-    if fresh {
+    if advance_summed_baseline(baseline, &name, appended.len, chunk) {
+        // The file was truncated or replaced under the same name, so the count
+        // restarted. Reporting `Measured(0)` for that told a goal at 480,000
+        // of a 500,000 budget that it had spent nothing, and called it a
+        // measurement.
         return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
     }
     SpendSinceBaseline::Measured(baseline.billed)
+}
+
+/// One tick's tail for the runtime that keeps a running total.
+///
+/// Far larger than the 256KiB the turn-state probe uses: on a real 154MB
+/// rollout, 128 of 1,832 gaps between `token_count` records exceed 256KiB and
+/// the largest is 2,380,073 bytes -- and those are exactly the big-tool-output
+/// windows where spend is highest. A tail that misses the record reads as no
+/// transcript at all.
+pub const CODEX_TAIL_BYTES: u64 = MAX_CHUNK_BYTES;
+
+/// Read the last `max_bytes` of a file, tolerating a split character.
+///
+/// The shared turn-state tail reader is strict UTF-8, so a multi-byte
+/// character straddling the tail boundary made it return nothing -- and
+/// nothing read as "no transcript written yet". A spend reader cannot be
+/// stopped by one mangled character, which is why the claude path has always
+/// been lossy here.
+fn read_tail_lossy(path: &Path, max_bytes: u64) -> Result<String, String> {
+    let len = metadata(path)
+        .map_err(|error| format!("stat {}: {error}", path.display()))?
+        .len();
+    let start = len.saturating_sub(max_bytes);
+    let take = len - start;
+    if take == 0 {
+        return Ok(String::new());
+    }
+    let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(|error| format!("seek {}: {error}", path.display()))?;
+    let mut bytes = vec![0; take as usize];
+    file.read_exact(&mut bytes)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A read that failed, said out loud rather than passed off as absence.
+fn unreadable(transcript: &Path, reason: &str) -> SpendSinceBaseline {
+    log_at(
+        LogLevel::Warn,
+        "token spend could not read a transcript",
+        "token-spend",
+        Some(json!({
+            "transcript": transcript.display().to_string(),
+            "error": reason,
+        })),
+    );
+    SpendSinceBaseline::Unmeasured(TRANSCRIPT_UNREADABLE)
 }

@@ -2453,7 +2453,9 @@ fn render_dashboard_snapshot(
         preview_source: &controller.preview_source,
         scribe_preview_entries: &scribe_preview_entries,
     });
-    if let Some(goal) = controller.goal_overlay.as_ref() {
+    if controller.goal_overlay_owns_keys(snapshot)
+        && let Some(goal) = controller.goal_overlay.as_ref()
+    {
         // The lines come from the overlay module so the wording is testable:
         // the whole point is saying what the rest of the product only said by
         // refusing.

@@ -105,18 +105,23 @@ impl LoopWatcherTask {
     /// holds the baselines, and the dialog, the app and the nudge must all
     /// read one answer rather than each re-reading a 415MB transcript.
     fn apply_token_spend(&mut self, input: &mut Value) {
-        let sessions = token_goal_sessions(input);
-        let stale = self
-            .spend_baselines
-            .keys()
-            .filter(|id| !sessions.iter().any(|session| &&session.id == id))
-            .cloned()
-            .collect::<Vec<_>>();
+        let sessions = token_goal_sessions(input, &self.spend_baselines);
+        let has_goal = |id: &str| sessions.iter().any(|session| session.id == id);
+        // Read from what is PUBLISHED, not from the baselines this process
+        // happens to hold: a goal removed while the project service was down
+        // leaves no baseline to notice on restart, so its spend sat in
+        // metadata for ever and every surface reported it against a budget
+        // nobody held.
+        let stale = published_spend_sessions(input)
+            .into_iter()
+            .chain(self.spend_baselines.keys().cloned())
+            .filter(|id| !has_goal(id))
+            .collect::<std::collections::BTreeSet<_>>();
         for id in &stale {
             self.spend_baselines.remove(id);
             // A goal that ended must stop showing its last number, or the
             // panel keeps reporting spend against a budget nobody holds.
-            self.publish_token_spend(&id.clone(), None);
+            self.publish_token_spend(id, None);
         }
         for session in sessions {
             let baseline = self.spend_baselines.entry(session.id.clone()).or_default();
@@ -622,8 +627,24 @@ struct TokenGoalSession {
     episode: String,
 }
 
+/// Sessions that already carry a published spend, whoever wrote it.
+fn published_spend_sessions(input: &Value) -> Vec<String> {
+    let metadata = input.get("metadata").unwrap_or(&Value::Null);
+    let Some(sessions) = metadata.get("sessions").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    sessions
+        .iter()
+        .filter(|(_, meta)| meta.get("tokenSpend").is_some())
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
 /// Sessions whose loop entry names a token budget. Nothing else is read.
-fn token_goal_sessions(input: &Value) -> Vec<TokenGoalSession> {
+fn token_goal_sessions(
+    input: &Value,
+    cached: &BTreeMap<String, SpendBaseline>,
+) -> Vec<TokenGoalSession> {
     let metadata = input.get("metadata").unwrap_or(&Value::Null);
     let Some(sessions) = metadata.get("sessions").and_then(Value::as_object) else {
         return Vec::new();
@@ -642,13 +663,39 @@ fn token_goal_sessions(input: &Value) -> Vec<TokenGoalSession> {
                 .unwrap_or_default();
             let tool = session_tool(input, id).unwrap_or_default();
             Some(TokenGoalSession {
-                transcript: session_transcript_path(input, id, &tool, meta),
+                transcript: cached_transcript_path(cached.get(id), meta)
+                    .or_else(|| session_transcript_path(input, id, &tool, meta)),
                 episode: format!("{since}|{budget}"),
                 id: id.clone(),
                 tool,
             })
         })
         .collect()
+}
+
+/// The transcript this session's baseline already resolved, if it still fits.
+///
+/// Finding a codex rollout means walking `~/.codex/sessions`, which is a
+/// dated tree six levels deep, and a miss walks all of it -- once per codex
+/// token goal per scan. The resolved path is already carried on the baseline
+/// and was never consulted.
+///
+/// Checked against the backend id rather than taken on trust: a resumed
+/// session forks a new rollout while the old file still exists, and reading
+/// the old one for ever is worse than walking the tree.
+fn cached_transcript_path(baseline: Option<&SpendBaseline>, meta: &Value) -> Option<PathBuf> {
+    let backend = meta
+        .get("context")
+        .and_then(|context| context.get("backendSessionId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    let path = PathBuf::from(baseline?.transcript.as_deref()?);
+    let names_this_session = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.contains(backend));
+    (names_this_session && path.is_file()).then_some(path)
 }
 
 fn session_tool(input: &Value, session_id: &str) -> Option<String> {

@@ -1237,7 +1237,11 @@ fn an_agent_cannot_close_a_user_managed_goal_through_the_loop_route() {
     assert_eq!(add.status, 200, "{:?}", add.body);
     assert_eq!(add.body["loop"]["goalKind"], "user");
 
-    for action in ["remove", "done", "block"] {
+    // "add" is in the list because `active: false` with ANY action word takes
+    // the branch that removes the loop object: the guard has to read the
+    // effect, not the label. Omitting it was how a review deleted a
+    // user-managed goal with a 200.
+    for action in ["remove", "done", "block", "add"] {
         let close = route_project_service_request(
             &context,
             "POST",
@@ -1255,8 +1259,11 @@ fn an_agent_cannot_close_a_user_managed_goal_through_the_loop_route() {
             close.body
         );
         let error = close.body["error"].as_str().unwrap_or_default();
+        // A deactivation labelled `add` is refused as the removal it is, so
+        // the wording names `remove` rather than echoing the label back.
+        let named = if action == "add" { "remove" } else { action };
         assert!(
-            error.contains("user-managed") && error.contains(action),
+            error.contains("user-managed") && error.contains(named),
             "the refusal must name the kind and the operation, got {error:?}"
         );
     }
@@ -1460,6 +1467,60 @@ fn changing_only_the_kind_keeps_the_goal_it_was_written_as() {
     assert_eq!(
         stored.body["loop"]["goal"], "move every call site off the old client",
         "a later rewrite still reads the stored goal"
+    );
+}
+
+/// `since` is the alert-pause key and part of the spend episode, so rewriting
+/// it on every `active: true` meant the dashboard's `k` cancelled a pause Sam
+/// had set and re-baselined the token spend. Found by review.
+#[test]
+fn a_rewrite_of_a_running_loop_keeps_when_it_started() {
+    let project = temp_project("user-goal-since");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let post = |body: Value| {
+        route_project_service_request(&context, "POST", routes::agents::LOOP, Some(&body))
+    };
+    let first = post(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "goal": "the long migration",
+        "goalKind": "user",
+        "source": "dashboard"
+    }));
+    let started = first.body["loop"]["since"]
+        .as_str()
+        .expect("a start time")
+        .to_owned();
+
+    let handed_over = post(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "goalKind": "agent",
+        "source": "dashboard"
+    }));
+    assert_eq!(
+        handed_over.body["loop"]["since"], started,
+        "a hand-over is not a new loop, and `since` is what a pause is keyed on"
+    );
+
+    // A loop that was NOT running starts now. `since` is millisecond
+    // resolution, so the clock is given a tick to move rather than asserting
+    // two back-to-back writes differ.
+    post(json!({ "sessionId": "worker-1", "active": false, "source": "dashboard" }));
+    let wait_until = std::time::Instant::now() + std::time::Duration::from_millis(5);
+    while std::time::Instant::now() < wait_until {
+        std::hint::spin_loop();
+    }
+    let restarted = post(json!({
+        "sessionId": "worker-1",
+        "active": true,
+        "goal": "again",
+        "source": "dashboard"
+    }));
+    assert_ne!(
+        restarted.body["loop"]["since"], started,
+        "but a loop started again is genuinely new"
     );
 }
 
