@@ -1,7 +1,12 @@
+use crate::agent_goal::{GOAL_KIND_AGENT, GOAL_KIND_USER, GoalKind};
 use crate::dashboard_actions::{
     DashboardActionKind, DashboardActionPlan, DashboardActionRequest, plan_dashboard_action,
 };
 use crate::dashboard_create::{DashboardCreateBlocked, DashboardCreatePlan};
+use crate::dashboard_goal_overlay::{
+    DashboardGoalOverlayAction, DashboardGoalOverlayState, goal_overlay_from_session,
+    goal_overlay_key, kind_change_refusal,
+};
 use crate::dashboard_launch_options::DashboardLaunchOptionsState;
 use crate::dashboard_model::{
     DashboardSession, DesktopStateSnapshot, SessionStatus, dashboard_has_clearable_failures,
@@ -71,6 +76,7 @@ pub struct DashboardController {
     pub worktree_cache_cleanup_confirm: Option<Value>,
     pub agent_restore_prompt_dismissed: bool,
     pub overseer_overlay_open: bool,
+    pub goal_overlay: Option<DashboardGoalOverlayState>,
     pub overseer_watch_instructions: Option<DashboardOverseerWatchInstructionsState>,
     pub work_outline_overlay: Option<DashboardWorkOutlineOverlayState>,
     pub migrate_picker: Option<DashboardMigratePickerState>,
@@ -132,6 +138,7 @@ enum DashboardInputOverlay {
     WorktreeRemoveConfirm,
     WorktreeList,
     WorktreeCacheCleanupConfirm,
+    Goal,
     Overseer,
     OverseerWatchInstructions,
     WorkOutline,
@@ -582,6 +589,7 @@ impl DashboardController {
             worktree_cache_cleanup_confirm: None,
             agent_restore_prompt_dismissed: false,
             overseer_overlay_open: false,
+            goal_overlay: None,
             overseer_watch_instructions: None,
             work_outline_overlay: None,
             migrate_picker: None,
@@ -633,6 +641,9 @@ impl DashboardController {
         }
         if self.worktree_cache_cleanup_confirm.is_some() {
             return self.handle_worktree_cache_cleanup_confirm_key(key);
+        }
+        if self.goal_overlay.is_some() {
+            return self.handle_goal_overlay_key(snapshot, key);
         }
         if self.overseer_overlay_open {
             return self.handle_overseer_overlay_key(snapshot, key);
@@ -745,6 +756,7 @@ impl DashboardController {
             DashboardKey::Printable('o') => {
                 self.open_relevant_thread_for_selected_session(snapshot)
             }
+            DashboardKey::Printable('G') => self.open_goal_overlay(snapshot),
             DashboardKey::Printable('O') => {
                 self.overseer_overlay_open = true;
                 DashboardControllerEffect::Render
@@ -1094,6 +1106,8 @@ impl DashboardController {
             DashboardInputOverlay::WorktreeList
         } else if self.worktree_cache_cleanup_confirm.is_some() {
             DashboardInputOverlay::WorktreeCacheCleanupConfirm
+        } else if self.goal_overlay.is_some() {
+            DashboardInputOverlay::Goal
         } else if self.overseer_overlay_open {
             DashboardInputOverlay::Overseer
         } else if self.overseer_watch_instructions.is_some() {
@@ -1833,6 +1847,95 @@ impl DashboardController {
                 .map(|session| session.id.clone()),
             offset: None,
         }
+    }
+
+    fn open_goal_overlay(&mut self, snapshot: &DesktopStateSnapshot) -> DashboardControllerEffect {
+        let Some(selected) = self.selected_session_for_tool_action(snapshot) else {
+            self.set_note("Select an agent first".into());
+            return DashboardControllerEffect::Render;
+        };
+        self.goal_overlay = Some(goal_overlay_from_session(
+            &selected.id,
+            selected.loop_state.as_ref(),
+            selected.token_spend.as_ref(),
+            selected.tool_config_key.as_deref().unwrap_or_default(),
+        ));
+        DashboardControllerEffect::Render
+    }
+
+    fn handle_goal_overlay_key(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back | DashboardKey::Printable('q') => {
+                self.goal_overlay = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable(pressed) => match goal_overlay_key(pressed) {
+                Some(DashboardGoalOverlayAction::MarkDone) => self.close_goal_from_overlay(),
+                Some(DashboardGoalOverlayAction::ToggleKind) => {
+                    self.toggle_goal_kind_from_overlay()
+                }
+                Some(DashboardGoalOverlayAction::Close) | None => {
+                    let _ = snapshot;
+                    DashboardControllerEffect::Ignored
+                }
+            },
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    /// Closing it as Sam, which is the one action a user-managed goal takes --
+    /// and the reason this dialog exists at all.
+    fn close_goal_from_overlay(&mut self) -> DashboardControllerEffect {
+        let Some(state) = self.goal_overlay.clone() else {
+            return DashboardControllerEffect::Ignored;
+        };
+        if !state.active {
+            self.set_note("That agent is not in a loop".into());
+            return DashboardControllerEffect::Render;
+        }
+        self.goal_overlay = None;
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::LOOP,
+            body: json!({
+                "sessionId": state.session_id,
+                "active": false,
+                "action": "done",
+                "source": "dashboard",
+            }),
+        })
+    }
+
+    fn toggle_goal_kind_from_overlay(&mut self) -> DashboardControllerEffect {
+        let Some(state) = self.goal_overlay.clone() else {
+            return DashboardControllerEffect::Ignored;
+        };
+        // Said rather than attempted: the route refuses a kind change on a
+        // running goal, so offering a key that 409s would be a lie.
+        if let Some(refusal) = kind_change_refusal(&state) {
+            self.set_note(refusal);
+            return DashboardControllerEffect::Render;
+        }
+        let next = if matches!(state.kind, GoalKind::UserManaged) {
+            GOAL_KIND_AGENT
+        } else {
+            GOAL_KIND_USER
+        };
+        self.goal_overlay = None;
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::LOOP,
+            body: json!({
+                "sessionId": state.session_id,
+                "active": true,
+                "goalKind": next,
+                "source": "dashboard",
+            }),
+        })
     }
 
     fn handle_overseer_overlay_key(

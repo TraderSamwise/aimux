@@ -49,6 +49,7 @@ dashboard_controller
 dashboard_create
 dashboard_focus
 dashboard_footer_hints_contract
+dashboard_goal_overlay
 dashboard_interaction_contract
 dashboard_keypress_cost
 dashboard_launch_options
