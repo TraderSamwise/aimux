@@ -11,6 +11,7 @@ agent_plane_across_surfaces
 agent_prompt_submit
 agent_start_across_surfaces
 agent_status_label_surfaces
+agent_token_spend
 agent_unread_across_surfaces
 attachment_hosting
 attachment_hosting_url_safety
