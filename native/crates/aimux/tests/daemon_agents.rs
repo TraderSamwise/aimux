@@ -683,6 +683,70 @@ fn agent_read_mutation_routes_match_text_and_json_shapes() {
     );
 }
 
+/// The CLI half of goals went nowhere: this route forwarded only `goal`, so
+/// `aimux loop add X --kind user --budget 50000` printed ok and the project
+/// service fell back to the agent-closable default. A user-managed goal could
+/// not be made from a prompt, and a token goal could not be made at all.
+#[test]
+fn the_loop_route_forwards_the_goal_kind_and_budget_it_was_given() {
+    let mut runtime = FakeAgentRuntime::default();
+
+    route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.loop_add_text,
+        Some(&json!({
+            "project": "/repo",
+            "sessionId": "claude-1",
+            "goal": "the long migration",
+            "goalKind": "user",
+            "source": "human"
+        })),
+    )
+    .expect("loop add");
+    let forwarded = runtime.calls.last().unwrap().body.clone().unwrap();
+    assert_eq!(
+        forwarded["goalKind"], "user",
+        "the kind must reach the project service, got {forwarded}"
+    );
+
+    route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.loop_add_text,
+        Some(&json!({
+            "project": "/repo",
+            "sessionId": "claude-1",
+            "goal": "spend down",
+            "goalKind": "tokens",
+            "tokenBudget": 50_000,
+            "source": "human"
+        })),
+    )
+    .expect("loop add with a budget");
+    let forwarded = runtime.calls.last().unwrap().body.clone().unwrap();
+    assert_eq!(forwarded["goalKind"], "tokens");
+    assert_eq!(
+        forwarded["tokenBudget"], 50_000,
+        "a budget dropped here makes a token goal uncreatable, got {forwarded}"
+    );
+
+    // And a request that names neither still sends neither, so the project
+    // service keeps whatever kind is already stored.
+    route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.loop_add_text,
+        Some(&json!({ "project": "/repo", "sessionId": "claude-1", "goal": "ship" })),
+    )
+    .expect("loop add with no kind");
+    let forwarded = runtime.calls.last().unwrap().body.clone().unwrap();
+    assert!(
+        forwarded.get("goalKind").is_none() && forwarded.get("tokenBudget").is_none(),
+        "an unspecified kind must stay unspecified, got {forwarded}"
+    );
+}
+
 #[test]
 fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
     let mut runtime = FakeAgentRuntime::default();

@@ -96,6 +96,20 @@ pub fn operation_ends_reminders(operation: &str) -> bool {
 ///
 /// These are two of `SESSION_LOOP_SOURCES`; the dashboard is how the TUI
 /// speaks, so there is no separate source for it.
+/// What deactivating a loop actually does, whatever the request calls it.
+///
+/// The `active: false` branch removes the loop object, so it ends the
+/// reminders however it is labelled. Asking about the LABEL let
+/// `{"active": false, "action": "add"}` delete a user-managed goal with a 200,
+/// because `add` is a legal action word that does not end reminders.
+pub fn deactivation_operation(action: &str) -> &str {
+    if operation_ends_reminders(action) {
+        action
+    } else {
+        "remove"
+    }
+}
+
 pub fn source_is_human(source: Option<&str>) -> bool {
     matches!(source.map(str::trim), Some("human") | Some("dashboard"))
 }

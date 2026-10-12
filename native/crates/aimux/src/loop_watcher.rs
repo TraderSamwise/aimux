@@ -285,15 +285,14 @@ impl LoopWatcher {
         if let Some(id) = overseer_id.as_deref() {
             raw_candidates.extend(find_loop_candidates_only(input, id));
         }
-        // Taken before paused extraction and before dwelling: pruning against
-        // the candidates that merely SURVIVED this tick's cooldown would drop
-        // the key of a budget already announced and announce it again on every
-        // reminder beat.
-        let live_token_goals = raw_candidates
-            .iter()
-            .filter(|candidate| candidate_token_goal_reached(candidate))
-            .filter_map(token_goal_announcement_key)
-            .collect::<BTreeSet<_>>();
+        // Read from the stored goals, NOT from this tick's candidates. A
+        // candidate only exists while the agent is idle or gone, and the
+        // announcement is itself delivered as input -- so pruning against
+        // candidates dropped the key the moment the agent got back to work and
+        // said the same thing again at its next stop, which is exactly what
+        // the notice tells it to do. A goal keeps its key while it is stored,
+        // however busy its agent is.
+        let live_token_goals = live_token_goal_keys(input);
         self.announced_token_goals
             .retain(|key| live_token_goals.contains(key));
         let paused_candidates = self.extract_paused_candidates(&mut raw_candidates);
@@ -2494,6 +2493,29 @@ fn empty_object() -> &'static Map<String, Value> {
 }
 
 /// Billed spend recorded against a candidate, if it could be measured.
+/// Every stored token goal, keyed the way an announcement is.
+///
+/// Keyed on the budget as well as the session so raising it is a new thing to
+/// announce, and read from metadata rather than from candidates so a working
+/// agent does not look like a goal that went away.
+fn live_token_goal_keys(input: &Value) -> BTreeSet<String> {
+    let metadata = input.get("metadata").unwrap_or(&Value::Null);
+    let Some(sessions) = metadata.get("sessions").and_then(Value::as_object) else {
+        return BTreeSet::new();
+    };
+    sessions
+        .iter()
+        .filter_map(|(id, meta)| {
+            let loop_meta = meta.get("loop")?;
+            if loop_meta.get("active").and_then(Value::as_bool) != Some(true) {
+                return None;
+            }
+            let budget = loop_meta.get("tokenBudget").and_then(Value::as_u64)?;
+            Some(format!("{id}:{budget}"))
+        })
+        .collect()
+}
+
 /// Whether this candidate is a budget that has been reached.
 fn candidate_token_goal_reached(candidate: &Value) -> bool {
     candidate

@@ -2,7 +2,7 @@ use serde_json::{Map, Value, json};
 
 use crate::agent_goal::{
     DEFAULT_GOAL_KIND, GOAL_KIND_AGENT, GOAL_KIND_TOKENS, GOAL_KIND_USER, GoalCloseDecision,
-    GoalKind, goal_close_decision, source_is_human,
+    GoalKind, deactivation_operation, goal_close_decision, source_is_human,
 };
 use std::fs;
 use std::path::Path;
@@ -679,7 +679,13 @@ fn route_loop(
     }
 
     let action = session_loop_action(body.get("action"), "remove");
-    if let Some(refusal) = refuse_goal_close(stored_loop.as_ref(), body, &action) {
+    // Asked about the EFFECT, not the label: this branch removes the loop
+    // object whatever the action is called, and `action: "add"` is a legal
+    // word that does not end reminders -- so gating on the label let
+    // `{"active": false, "action": "add"}` delete a user-managed goal.
+    if let Some(refusal) =
+        refuse_goal_close(stored_loop.as_ref(), body, deactivation_operation(&action))
+    {
         return refusal;
     }
     let mut loop_last_action = provenance(body);

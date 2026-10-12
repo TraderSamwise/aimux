@@ -1237,7 +1237,11 @@ fn an_agent_cannot_close_a_user_managed_goal_through_the_loop_route() {
     assert_eq!(add.status, 200, "{:?}", add.body);
     assert_eq!(add.body["loop"]["goalKind"], "user");
 
-    for action in ["remove", "done", "block"] {
+    // "add" is in the list because `active: false` with ANY action word takes
+    // the branch that removes the loop object: the guard has to read the
+    // effect, not the label. Omitting it was how a review deleted a
+    // user-managed goal with a 200.
+    for action in ["remove", "done", "block", "add"] {
         let close = route_project_service_request(
             &context,
             "POST",
@@ -1255,8 +1259,11 @@ fn an_agent_cannot_close_a_user_managed_goal_through_the_loop_route() {
             close.body
         );
         let error = close.body["error"].as_str().unwrap_or_default();
+        // A deactivation labelled `add` is refused as the removal it is, so
+        // the wording names `remove` rather than echoing the label back.
+        let named = if action == "add" { "remove" } else { action };
         assert!(
-            error.contains("user-managed") && error.contains(action),
+            error.contains("user-managed") && error.contains(named),
             "the refusal must name the kind and the operation, got {error:?}"
         );
     }
