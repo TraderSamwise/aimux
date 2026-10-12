@@ -6,6 +6,7 @@
 //! `loop.autoNudgeWithoutOverseer` is set. waiting/error/interrupted states are
 //! deliberately excluded — those are genuine pauses we must not steamroll.
 
+use crate::agent_goal::GoalKind;
 use crate::atomic_write::write_json_atomic;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -267,13 +268,24 @@ impl LoopWatcher {
         let overseer_id = find_overseer_session_id(metadata);
         self.gc_stale_pauses(input);
         let loop_exit_summary = self.plan_loop_exit_summary(overseer_id.as_deref(), input);
+        // The fleet scan still excludes the overseer, because it also answers
+        // "who is spare capacity" -- an idle overseer under a goal would read
+        // as capacity forever and silence idle-fleet briefings. Its own goal
+        // is added here instead, so pause extraction and the dwell window
+        // cover it without the capacity callers ever seeing it.
         let mut raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        if let Some(id) = overseer_id.as_deref() {
+            raw_candidates.extend(find_loop_candidates_only(input, id));
+        }
         let paused_candidates = self.extract_paused_candidates(&mut raw_candidates);
         let paused_summary =
             self.plan_paused_summary(&paused_candidates, overseer_id.as_deref(), input);
         let reconciliation =
             self.plan_reconciliation(overseer_id.as_deref(), &paused_candidates, input, now_ms);
         let idle_fleet = self.plan_idle_fleet(overseer_id.as_deref(), input, now_ms);
+        // ONE call, over the fleet and the overseer together: it evicts every
+        // dwell key absent from the vec it is given, so two calls per scan
+        // dropped each other's state and nothing could ever dwell.
         let candidates = self.dwelled_candidates(
             raw_candidates,
             now_ms,
@@ -281,8 +293,32 @@ impl LoopWatcher {
             config_i64(input, "nudgeCooldownMs", 60_000),
             config_u64(input, "unchangedReminderTicks"),
         );
+        // Split after dwelling, not before: its own goal is not news about the
+        // fleet, so it is a direct nudge rather than a line in a briefing the
+        // overseer is meant to act on.
+        let (own_goal, candidates): (Vec<_>, Vec<_>) = match overseer_id.as_deref() {
+            Some(id) => candidates
+                .into_iter()
+                .partition(|candidate| str_field(&candidate.value, "id") == id),
+            None => (Vec::new(), candidates),
+        };
         if let Some(send) = loop_exit_summary {
             sends.push(send);
+        }
+        for candidate in own_goal {
+            let id = str_field(&candidate.value, "id").to_owned();
+            if !session_can_receive_loop_send(input, &id) {
+                continue;
+            }
+            let signature = candidate_signature(std::slice::from_ref(&candidate.value));
+            self.pending_send_keys
+                .insert(signature.clone(), vec![candidate.key.clone()]);
+            sends.push(LoopSend {
+                session_id: id,
+                text: build_canned_nudge(&candidate.value),
+                signature,
+                kind: LoopSendKind::DirectNudge,
+            });
         }
         if candidates.is_empty() {
             if let Some(send) = paused_summary {
@@ -1324,6 +1360,26 @@ pub fn loop_pause_key_from_loop_metadata(loop_meta: &Value) -> Option<String> {
 }
 
 pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
+    find_loop_candidates_excluding(input, overseer_id)
+}
+
+/// Loop candidates narrowed to one session, which is how the overseer's own
+/// goal is read without putting it in the fleet scan.
+pub fn find_loop_candidates_only(input: &Value, only: &str) -> Vec<Value> {
+    find_loop_candidates_excluding(input, None)
+        .into_iter()
+        .filter(|candidate| str_field(candidate, "id") == only)
+        .collect()
+}
+
+/// Loop candidates, with `excluded` left out.
+///
+/// The overseer used to be excluded unconditionally, which is right for "who
+/// is spare capacity" and wrong for "who has an unmet goal" -- it can hold one
+/// like any other agent now. `find_idle_loop_capacity` still excludes it, or a
+/// goal on an idle overseer would make it look like capacity forever and
+/// silence idle-fleet briefings for good.
+pub fn find_loop_candidates_excluding(input: &Value, excluded: Option<&str>) -> Vec<Value> {
     let metadata = input.get("metadata").unwrap_or(&Value::Null);
     let metadata_sessions = match metadata.get("sessions").and_then(Value::as_object) {
         Some(sessions) => sessions,
@@ -1341,7 +1397,7 @@ pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&st
         .iter()
         .filter_map(|session| {
             let id = str_field(session, "id");
-            if overseer_id == Some(id) || pending.contains(id) {
+            if excluded == Some(id) || pending.contains(id) {
                 return None;
             }
             let meta = metadata_sessions.get(id)?;
@@ -1371,6 +1427,14 @@ pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&st
 
             let mut candidate = Map::new();
             insert_str(&mut candidate, "id", Some(id));
+            insert_str(
+                &mut candidate,
+                "goalKind",
+                loop_meta.get("goalKind").and_then(Value::as_str),
+            );
+            if let Some(budget) = loop_meta.get("tokenBudget").and_then(Value::as_u64) {
+                candidate.insert("tokenBudget".into(), Value::from(budget));
+            }
             if condition == LoopCandidateCondition::Dead {
                 insert_str(&mut candidate, "condition", Some(condition.as_str()));
                 insert_value(&mut candidate, "status", session.get("status"));
@@ -2063,16 +2127,49 @@ pub fn build_canned_nudge(candidate: &Value) -> String {
     let goal = optional_str(candidate, "goal")
         .map(|goal| format!(" with this goal: {goal}"))
         .unwrap_or_default();
-    [
-        format!("[aimux loop] You stopped, but you're in a managed loop{goal}."),
-        String::from(
-            "Keep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:",
-        ),
-        String::from("- finished  → run `aimux loop done --reason \"…\"`"),
-        String::from("- hard-blocked → run `aimux loop block --reason \"…\"`"),
-        String::from("Otherwise, continue."),
-    ]
-    .join("\n")
+    let mut lines = vec![format!(
+        "[aimux loop] You stopped, but you're in a managed loop{goal}."
+    )];
+    match candidate_goal_kind(candidate) {
+        GoalKind::AgentManaged => {
+            lines.push(String::from(
+                "Keep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:",
+            ));
+            lines.push(String::from(
+                "- finished  → run `aimux loop done --reason \"…\"`",
+            ));
+            lines.push(String::from(
+                "- hard-blocked → run `aimux loop block --reason \"…\"`",
+            ));
+            lines.push(String::from("Otherwise, continue."));
+        }
+        GoalKind::UserManaged => {
+            lines.push(String::from(
+                "This goal is USER-MANAGED: it is not yours to close, pause or block, and those commands will be refused.",
+            ));
+            lines.push(String::from(
+                "Keep working toward it. If there is genuinely nothing left you can do, say so and what you are waiting on, then stop -- the reminder is not asking you to invent work.",
+            ));
+        }
+        GoalKind::TokenBudget(budget) => {
+            lines.push(format!(
+                "This goal is met at {budget} tokens of spend, measured rather than declared, so it is not yours to close."
+            ));
+            lines.push(String::from(
+                "Keep working toward it, or say what you are waiting on if there is nothing left to do.",
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+/// The goal kind recorded on a candidate, defaulting the way stored metadata
+/// does. The watcher reads the same field the routes write.
+pub fn candidate_goal_kind(candidate: &Value) -> GoalKind {
+    GoalKind::parse(
+        optional_str(candidate, "goalKind"),
+        candidate.get("tokenBudget").and_then(Value::as_u64),
+    )
 }
 
 pub fn find_overseer_session_id(metadata: &Value) -> Option<String> {

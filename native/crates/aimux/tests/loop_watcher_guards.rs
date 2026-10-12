@@ -96,7 +96,7 @@ fn temp_state_dir(name: &str) -> PathBuf {
 
 #[test]
 fn a_failed_send_is_recorded_and_backed_off_until_reminder() {
-    let (boss, boss_meta) = looping_session("boss", "idle");
+    let (boss, boss_meta) = non_loop_session("boss", "idle");
     let (worker, worker_meta) = looping_session("worker", "idle");
     let mut boss_meta = boss_meta;
     boss_meta["overseer"] = json!(true);
@@ -131,7 +131,7 @@ fn a_failed_send_is_recorded_and_backed_off_until_reminder() {
 fn a_reported_stopped_agent_does_not_realert_after_state_reload() {
     let state_dir = temp_state_dir("restart");
     let path = loop_watcher_state_path(&state_dir);
-    let (boss, boss_meta) = looping_session("boss", "idle");
+    let (boss, boss_meta) = non_loop_session("boss", "idle");
     let (worker, worker_meta) = looping_session("worker", "idle");
     let mut boss_meta = boss_meta;
     boss_meta["overseer"] = json!(true);
@@ -180,7 +180,7 @@ fn an_accepted_or_queued_overseer_briefing_suppresses_the_same_busy_receiver_lev
 fn a_failed_delivery_attempt_survives_reload_without_becoming_a_new_edge() {
     let state_dir = temp_state_dir("failed-delivery");
     let path = loop_watcher_state_path(&state_dir);
-    let (boss, boss_meta) = looping_session("boss", "idle");
+    let (boss, boss_meta) = non_loop_session("boss", "idle");
     let (worker, worker_meta) = looping_session("worker", "idle");
     let mut boss_meta = boss_meta;
     boss_meta["overseer"] = json!(true);
@@ -239,7 +239,7 @@ fn legacy_aggregate_state_migrates_to_per_agent_attempt_cadence() {
     )
     .expect("write legacy watcher state");
 
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let input = input_with_config(
@@ -258,7 +258,7 @@ fn legacy_aggregate_state_migrates_to_per_agent_attempt_cadence() {
 
 #[test]
 fn a_new_stopped_agent_still_alerts_immediately_after_a_failed_attempt() {
-    let (boss, boss_meta) = looping_session("boss", "idle");
+    let (boss, boss_meta) = non_loop_session("boss", "idle");
     let (worker, worker_meta) = looping_session("worker", "idle");
     let (second, second_meta) = looping_session("second", "idle");
     let mut boss_meta = boss_meta;
@@ -352,7 +352,7 @@ fn a_running_agent_is_left_alone() {
 
 #[test]
 fn a_loop_candidate_must_remain_stopped_for_the_dwell_window() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let input = input_with_config(
@@ -370,7 +370,7 @@ fn a_loop_candidate_must_remain_stopped_for_the_dwell_window() {
 
 #[test]
 fn retasking_resets_the_stopped_dwell_window_for_the_new_assignment() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "idle");
     let mut input = input_with_config(
@@ -398,7 +398,7 @@ fn retasking_resets_the_stopped_dwell_window_for_the_new_assignment() {
 
 #[test]
 fn assignment_add_action_resets_stale_stopped_dwell_for_a_fresh_dispatch() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "done");
     let mut input = input_with_config(
@@ -437,7 +437,7 @@ fn assignment_add_action_resets_stale_stopped_dwell_for_a_fresh_dispatch() {
 
 #[test]
 fn reassigning_an_already_enrolled_agent_resets_prior_stopped_alert_state() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "done");
     let mut input = input_with_config(
@@ -478,7 +478,7 @@ fn reassigning_an_already_enrolled_agent_resets_prior_stopped_alert_state() {
 
 #[test]
 fn same_assignment_bookkeeping_does_not_reset_the_stopped_dwell_window() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "idle");
     let mut input = input_with_config(
@@ -545,7 +545,7 @@ fn stopped_agent_still_alerts_while_surrounding_project_is_busy() {
 
 #[test]
 fn running_resets_the_stopped_dwell_window() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "idle");
     let mut input = input_with_config(
@@ -572,7 +572,7 @@ fn running_resets_the_stopped_dwell_window() {
 
 #[test]
 fn overseer_wakeups_are_per_agent_edges_then_reminded_by_tick_count() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let (second, second_meta) = looping_session("second", "idle");
@@ -620,7 +620,7 @@ fn overseer_wakeups_are_per_agent_edges_then_reminded_by_tick_count() {
 
 #[test]
 fn unchanged_candidate_reminders_do_not_bypass_the_cooldown_floor() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let input = input_with_config(
@@ -643,7 +643,7 @@ fn unchanged_candidate_reminders_do_not_bypass_the_cooldown_floor() {
 
 #[test]
 fn one_tick_stopped_flicker_does_not_alert_before_dwell() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "done");
     let mut input = input_with_config(
@@ -666,7 +666,7 @@ fn one_tick_stopped_flicker_does_not_alert_before_dwell() {
 
 #[test]
 fn resuming_one_stopped_agent_clears_only_that_agents_state() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "idle");
     let (second, second_meta) = looping_session("second", "idle");
@@ -714,7 +714,7 @@ fn resuming_one_stopped_agent_clears_only_that_agents_state() {
 
 #[test]
 fn sending_an_instruction_resets_only_that_agents_alert_cadence() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "idle");
     let (second, second_meta) = looping_session("second", "idle");
@@ -756,7 +756,7 @@ fn sending_an_instruction_resets_only_that_agents_alert_cadence() {
 
 #[test]
 fn paused_loop_agent_is_removed_from_stopped_reminders_but_summarized_by_cadence() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let input = input_with_config(
@@ -790,7 +790,7 @@ fn paused_loop_agent_is_removed_from_stopped_reminders_but_summarized_by_cadence
 
 #[test]
 fn global_pause_buffers_planned_alerts_instead_of_dropping_them() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let input = input_with_config(
@@ -816,7 +816,7 @@ fn global_pause_buffers_planned_alerts_instead_of_dropping_them() {
 fn clearing_global_pause_exposes_buffered_alert_for_delivery() {
     let state_dir = temp_state_dir("global-pause-buffered-delivery");
     let path = loop_watcher_state_path(&state_dir);
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let input = input_with_config(
@@ -853,7 +853,7 @@ fn clearing_global_pause_exposes_buffered_alert_for_delivery() {
 
 #[test]
 fn global_pause_expiry_resumes_without_human_input_and_keeps_buffered_alert() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let input = input_with_config(
@@ -876,7 +876,7 @@ fn global_pause_expiry_resumes_without_human_input_and_keeps_buffered_alert() {
 
 #[test]
 fn global_pause_with_no_due_alerts_releases_nothing() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "running");
     let input = input_with_config(
@@ -1451,7 +1451,7 @@ fn reconciliation_does_not_alert_for_unowned_work_without_idle_capacity() {
 
 #[test]
 fn unpausing_loop_alerts_restores_stopped_agent_reminders() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let input = input_with_config(
@@ -1476,7 +1476,7 @@ fn unpausing_loop_alerts_restores_stopped_agent_reminders() {
 
 #[test]
 fn stale_pause_for_recycled_session_id_is_gc_d_and_does_not_mute_new_loop_episode() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "idle");
     let old_pause_key =
@@ -2080,7 +2080,7 @@ mod scribe_spellings {
 /// thing that should end a pause.
 #[test]
 fn editing_a_paused_agents_goal_does_not_erase_the_pause() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let pause_key =
@@ -2118,7 +2118,7 @@ fn editing_a_paused_agents_goal_does_not_erase_the_pause() {
 /// And a genuine re-add does end it.
 #[test]
 fn re_adding_a_paused_agent_to_the_loop_ends_the_pause() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let pause_key =
@@ -2214,7 +2214,7 @@ fn the_overseer_brief_offers_pausing_instead_of_forgetting() {
 /// change exists to fix, caused by the fix.
 #[test]
 fn a_pause_written_before_the_key_shrank_survives_the_upgrade() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let since = worker_meta["loop"]["since"].as_str().expect("a loop since");
@@ -2312,7 +2312,7 @@ fn the_two_pause_keys_agree_for_an_active_loop() {
 /// removed, because nothing could have fired either way.
 #[test]
 fn editing_a_paused_agents_goal_does_not_prompt_the_overseer() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, mut worker_meta) = looping_session("worker", "idle");
     let mut input = input_with_config(
@@ -2360,7 +2360,7 @@ fn editing_a_paused_agents_goal_does_not_prompt_the_overseer() {
 /// exactly that.
 #[test]
 fn a_change_to_the_paused_set_still_reaches_the_overseer() {
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (a, a_meta) = looping_session("agent-a", "idle");
     let (b, b_meta) = looping_session("agent-b", "idle");
@@ -2438,7 +2438,7 @@ fn a_change_to_the_paused_set_still_reaches_the_overseer() {
 fn an_old_format_paused_signature_does_not_fire_on_upgrade() {
     let state_dir = temp_state_dir("paused-signature-upgrade");
     let path = loop_watcher_state_path(&state_dir);
-    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (worker, worker_meta) = looping_session("worker", "idle");
     let input = input_with_config(
@@ -2484,5 +2484,246 @@ fn an_old_format_paused_signature_does_not_fire_on_upgrade() {
     assert!(
         restarted.scan(&input, NOW + 1, &mut ok).is_empty(),
         "an upgrade must not prompt the overseer about an unchanged paused set"
+    );
+}
+
+/// Sam asked for a goal on "any agent type overseer or anything". The overseer
+/// used to be excluded from the scan outright, so it was the one agent that
+/// could not hold one.
+#[test]
+fn an_overseer_with_its_own_goal_is_nudged_about_it() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let input = input_with_config(
+        vec![boss],
+        json!({ "sessions": { "boss": boss_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let sends = watcher.scan(&input, NOW, &mut ok);
+    assert_eq!(sends.len(), 1, "{sends:?}");
+    assert_eq!(sends[0].session_id, "boss");
+    assert!(
+        sends[0].text.contains("managed loop"),
+        "the overseer is nudged about its own goal, got {:?}",
+        sends[0].text
+    );
+}
+
+/// Its own goal is not news about the fleet. Being listed in a briefing it is
+/// meant to act on would read as somebody else's problem.
+#[test]
+fn an_overseers_own_goal_is_not_briefed_to_itself_as_fleet_news() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let sends = watcher.scan(&input, NOW, &mut ok);
+    let briefing = sends
+        .iter()
+        .find(|send| briefing_mentions(send, "worker"))
+        .expect("the fleet briefing still goes out");
+    assert!(
+        !briefing_mentions(briefing, "boss"),
+        "the overseer must not appear in the list it is meant to act on: {:?}",
+        briefing.text
+    );
+    assert!(
+        sends
+            .iter()
+            .any(|send| send.session_id == "boss" && !briefing_mentions(send, "worker")),
+        "and it still gets its own nudge: {sends:?}"
+    );
+}
+
+/// A busy overseer is not interrupted: "dont ping while its not idle,
+/// pointless."
+#[test]
+fn a_busy_overseer_is_not_nudged_about_its_goal() {
+    let (boss, mut boss_meta) = looping_session_with_status("boss", Some("running"), "busy");
+    boss_meta["overseer"] = json!(true);
+    let input = input_with_config(
+        vec![boss],
+        json!({ "sessions": { "boss": boss_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+}
+
+/// An overseer under a goal must not read as spare capacity, or the idle-fleet
+/// briefing is silenced for as long as the goal lasts.
+#[test]
+fn an_overseer_with_a_goal_is_still_not_spare_capacity() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let input = input_with_config(
+        vec![boss],
+        json!({ "sessions": { "boss": boss_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let sends = watcher.scan(&input, NOW, &mut ok);
+    // One send, its own nudge -- not a reconciliation or idle-fleet report
+    // that offered the overseer to itself as a worker to hand things to.
+    assert_eq!(sends.len(), 1, "{sends:?}");
+    assert!(
+        !sends[0].text.contains("capacity"),
+        "the overseer is not capacity: {:?}",
+        sends[0].text
+    );
+}
+
+/// The nudge used to tell every agent to run `aimux loop done`, which is the
+/// one thing a user-managed goal refuses. An agent told to do the impossible
+/// keeps trying; told the truth, it reports and waits.
+#[test]
+fn a_user_managed_goal_is_not_told_to_close_itself() {
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    worker_meta["loop"]["goalKind"] = json!("user");
+    let input = input_with_config(
+        vec![worker],
+        json!({ "sessions": { "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "autoNudgeWithoutOverseer": true }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let sends = watcher.scan(&input, NOW, &mut ok);
+    let nudge = sends
+        .iter()
+        .find(|send| send.session_id == "worker")
+        .expect("the worker is nudged");
+    assert!(
+        nudge.text.contains("USER-MANAGED"),
+        "the agent must be told whose goal it is, got {:?}",
+        nudge.text
+    );
+    assert!(
+        !nudge.text.contains("aimux loop done"),
+        "and must not be told to run the command that will be refused: {:?}",
+        nudge.text
+    );
+}
+
+/// An agent-managed goal keeps the instructions it always had.
+#[test]
+fn an_agent_managed_goal_is_still_told_how_to_close_itself() {
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![worker],
+        json!({ "sessions": { "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "autoNudgeWithoutOverseer": true }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let sends = watcher.scan(&input, NOW, &mut ok);
+    let nudge = sends
+        .iter()
+        .find(|send| send.session_id == "worker")
+        .expect("the worker is nudged");
+    assert!(nudge.text.contains("aimux loop done"), "{:?}", nudge.text);
+    assert!(!nudge.text.contains("USER-MANAGED"), "{:?}", nudge.text);
+}
+
+/// A token goal has no spend feed yet, so it says so rather than implying a
+/// measurement nobody took.
+#[test]
+fn a_token_goal_says_the_budget_is_not_its_to_declare() {
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    worker_meta["loop"]["goalKind"] = json!("tokens");
+    worker_meta["loop"]["tokenBudget"] = json!(250_000);
+    let input = input_with_config(
+        vec![worker],
+        json!({ "sessions": { "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "autoNudgeWithoutOverseer": true }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let sends = watcher.scan(&input, NOW, &mut ok);
+    let nudge = sends
+        .iter()
+        .find(|send| send.session_id == "worker")
+        .expect("the worker is nudged");
+    assert!(nudge.text.contains("250000"), "{:?}", nudge.text);
+    assert!(!nudge.text.contains("aimux loop done"), "{:?}", nudge.text);
+}
+
+/// The bug every other goal test was blind to, because they all pin the dwell
+/// to zero: `dwelled_candidates` evicts every dwell key absent from the vec it
+/// is handed, so reading the overseer's goal through a SECOND call dropped the
+/// fleet's dwell state and the fleet's call dropped the overseer's. With the
+/// 30s dwell the project service always inserts, nothing could ever elapse --
+/// giving the overseer a goal silenced the entire watcher.
+#[test]
+fn an_overseer_goal_does_not_reset_the_fleets_dwell_window() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 30_000 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+    assert!(watcher.scan(&input, NOW + 29_999, &mut ok).is_empty());
+    let sends = watcher.scan(&input, NOW + 30_000, &mut ok);
+    assert!(
+        sends.iter().any(|send| briefing_mentions(send, "worker")),
+        "the fleet briefing must still elapse with an overseer goal present: {sends:?}"
+    );
+    assert!(
+        sends
+            .iter()
+            .any(|send| send.session_id == "boss" && !briefing_mentions(send, "worker")),
+        "and the overseer's own nudge must elapse too: {sends:?}"
+    );
+}
+
+/// Pausing the overseer's alerts has to work on its own goal as well, or the
+/// one agent that cannot be quieted is the one watching everything.
+#[test]
+fn a_paused_overseer_goal_stops_nudging() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let input = input_with_config(
+        vec![boss],
+        json!({ "sessions": { "boss": boss_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert_eq!(watcher.scan(&input, NOW, &mut ok).len(), 1);
+
+    let loop_key = loop_pause_key_from_loop_metadata(
+        &json!({ "active": true, "since": "2026-09-09T00:00:00.000Z" }),
+    )
+    .expect("pause key");
+    watcher.pause_loop_alerts("boss", loop_key, NOW, LoopAlertPauseProvenance::default());
+    let sends = watcher.scan(&input, NOW + 120_000, &mut ok);
+    assert!(
+        !sends
+            .iter()
+            .any(|send| send.session_id == "boss" && send.kind == LoopSendKind::DirectNudge),
+        "a paused overseer goal must stop nudging: {sends:?}"
     );
 }
