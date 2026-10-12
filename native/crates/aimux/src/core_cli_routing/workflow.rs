@@ -16,6 +16,7 @@ pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLo
     let mut goal = None;
     let mut goal_kind = None;
     let mut token_budget = None;
+    let mut as_me = false;
     let mut reason = None;
     let mut project = None;
     let mut json = false;
@@ -68,6 +69,17 @@ pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLo
             index += 1;
             continue;
         }
+        // Only on the verbs that end reminders: elsewhere there is nothing
+        // for it to assert, and a flag that silently does nothing is worse
+        // than one that is rejected.
+        if arg == "--as-me" {
+            if !matches!(subcommand, "remove" | "pause") {
+                return None;
+            }
+            as_me = true;
+            index += 1;
+            continue;
+        }
         if arg == "--project" {
             let value = required_value(args, index)?;
             if value.starts_with('-') {
@@ -110,6 +122,7 @@ pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLo
         goal,
         goal_kind,
         token_budget,
+        as_me,
         reason,
         project,
         json,

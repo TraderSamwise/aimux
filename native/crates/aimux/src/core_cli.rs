@@ -1,3 +1,4 @@
+use crate::agent_goal::operation_ends_reminders;
 use crate::core_cli_routing::{
     CoreAgentPlaneTarget, CoreHostAgentReadArgsError, CoreHostAgentStreamArgsError, CoreLogsArgs,
     CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_identity_args,
@@ -987,10 +988,19 @@ where
                 ("project".into(), Value::String(project_root)),
                 ("sessionId".into(), Value::String(parsed.session_id)),
             ]);
-            // Deliberately `human` here and `unknown` on the route: this is a
-            // shell with no AIMUX_SESSION_ID, which an aimux-launched agent
-            // always has, so it is Sam at a prompt. The route cannot tell.
-            body.extend(loop_actor_payload(&context.loop_actor, "human"));
+            // An unattributed shell reads as Sam for everything EXCEPT the
+            // verbs that end reminders. An aimux-launched agent always has
+            // AIMUX_SESSION_ID and so never reaches this default -- but
+            // unsetting it is one word, and `remove` and `pause` are exactly
+            // the two verbs a user-managed goal exists to refuse. Those
+            // default to `unknown` and take `--as-me` to assert otherwise, so
+            // closing Sam's goal is a deliberate act rather than the default.
+            let default_source = if parsed.as_me || !operation_ends_reminders(&parsed.subcommand) {
+                "human"
+            } else {
+                "unknown"
+            };
+            body.extend(loop_actor_payload(&context.loop_actor, default_source));
             if let Some(goal) = parsed.goal {
                 body.insert("goal".into(), Value::String(goal));
             }

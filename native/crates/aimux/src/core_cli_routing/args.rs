@@ -172,6 +172,11 @@ pub struct CoreLoopMutationArgs {
     /// Who may end the goal: `agent`, `user`, or `tokens` with a budget.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal_kind: Option<String>,
+    /// Asserts the caller is Sam, for the verbs that END reminders. Without
+    /// it an unattributed shell is `unknown`, which cannot close a
+    /// user-managed goal.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub as_me: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_budget: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

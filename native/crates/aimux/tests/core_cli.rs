@@ -2314,6 +2314,9 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
         }
     );
 
+    // `remove` ENDS the reminders, so an unattributed shell does not get to
+    // be Sam by default: an agent that unsets AIMUX_SESSION_ID would
+    // otherwise close a user-managed goal with one word.
     let remove = classify_core_cli(
         &["loop", "remove", "claude-1", "--project=/repo"],
         &context(true, true),
@@ -2322,6 +2325,24 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
     assert_eq!(remove.operation, CoreCliOperation::LoopRemove);
     assert_eq!(
         remove.action,
+        CoreCliAction::TextRoute {
+            path: "/core/loop/remove-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "source": "unknown",
+            })),
+        }
+    );
+
+    // And Sam says so deliberately.
+    let remove_as_me = classify_core_cli(
+        &["loop", "remove", "claude-1", "--project=/repo", "--as-me"],
+        &context(true, true),
+    )
+    .expect("loop remove --as-me plan");
+    assert_eq!(
+        remove_as_me.action,
         CoreCliAction::TextRoute {
             path: "/core/loop/remove-text".into(),
             body: Some(json!({
@@ -2344,6 +2365,8 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
     )
     .expect("loop pause plan");
     assert_eq!(pause.operation, CoreCliOperation::LoopPause);
+    // `pause` silences the reminders as surely as a close, so it defaults the
+    // same way `remove` does.
     assert_eq!(
         pause.action,
         CoreCliAction::TextRoute {
@@ -2351,7 +2374,7 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
             body: Some(json!({
                 "project": "/repo",
                 "sessionId": "claude-1",
-                "source": "human",
+                "source": "unknown",
                 "reason": "human is intervening",
             })),
         }
@@ -2362,6 +2385,7 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
         &context(true, true),
     )
     .expect("loop unpause plan");
+    // `unpause` RESUMES them, so there is nothing to protect and no flag.
     assert_eq!(unpause.operation, CoreCliOperation::LoopUnpause);
     assert_eq!(
         unpause.action,
