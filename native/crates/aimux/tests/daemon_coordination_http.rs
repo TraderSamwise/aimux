@@ -933,7 +933,9 @@ fn loop_routes_round_trip_through_daemon_http_to_project_service() {
         request_json_body(&requests[1]),
         json!({
             "sessionId": "claude-1",
-            "source": "human",
+            // Unattributed is NOT Sam: a source that defaulted to "human"
+            // let any caller end a user-managed goal.
+            "source": "unknown",
             "updatedBy": "sam",
             "updatedBySessionId": "overseer-1",
             "updatedByRole": "overseer",

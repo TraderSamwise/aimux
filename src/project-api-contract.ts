@@ -1515,6 +1515,14 @@ export interface MigrateAgentResponse extends ProjectLifecycleTransitionResponse
 export interface AgentLoopInput extends AgentSessionInput {
   active: boolean;
   goal?: string;
+  /**
+   * Who may end the goal's reminders. `agent` is the default for a loop entry
+   * written without one; `user` can be ended only by `source: human` or
+   * `dashboard`; `tokens` is ended by measurement and needs `tokenBudget`.
+   * Omitting it on a re-add keeps whatever is already stored.
+   */
+  goalKind?: "agent" | "user" | "tokens";
+  tokenBudget?: number;
   action?: "add" | "remove" | "done" | "block";
   source?: "human" | "dashboard" | "overseer" | "agent" | "task" | "system" | "unknown";
   updatedBy?: string;

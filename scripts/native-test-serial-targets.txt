@@ -63,3 +63,4 @@ tmux_open_hyperlink	shell script subprocess and tmux hyperlink command behavior
 tmux_runtime_manager	real tmux runtime manager and socket/session operations
 dashboard_render_loop	drives the real render loop, which owns terminal state and timing
 git_delivery_spawn_budget	mutates process-global PATH to put a counting git shim ahead of the real one
+loop_watcher_token_goal_episode	sets CLAUDE_CONFIG_DIR, which is process-wide and would move where every other target in a shared binary looks for a transcript

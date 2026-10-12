@@ -4,11 +4,17 @@
 //! real inputs, delivers over the agent input route, and is the only place that
 //! decides which sessions the watcher is even allowed to see.
 
+use std::collections::BTreeMap;
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
+use crate::agent_token_spend::{
+    SpendBaseline, SpendSinceBaseline, rebaseline_for_new_episode, spend_for_session,
+};
+use crate::backend_session_ids::claude_transcript_path;
 use crate::daemon_state::{MetadataState, metadata_state_path};
 use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::{
@@ -18,10 +24,12 @@ use crate::loop_watcher::{
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
+use crate::transcript_turn_state::{default_codex_sessions_dir, find_codex_transcript_path};
 
 use super::agent_output::AgentOutputResponseMode;
 use super::coordination_worklist::{build_coordination_thread_entries, build_coordination_view};
 use super::interactions::pending_interactions_for_stream;
+use super::metadata::update_session_metadata;
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::scheduler::{CachedProjectConfig, PeriodicTask, PeriodicTaskFuture};
@@ -51,6 +59,11 @@ const LIVE_ACTIVITY_PROBE_START_LINE: i64 = -80;
 
 pub struct LoopWatcherTask {
     context: Arc<ProjectServiceRequestContext>,
+    /// What each session's token spend is measured against. Held here rather
+    /// than persisted: it is derived every tick, and the watcher state
+    /// hard-errors on an unknown version, so a field there would be a
+    /// migration for something recomputable.
+    spend_baselines: BTreeMap<String, SpendBaseline>,
     config: CachedProjectConfig,
     loop_config: Value,
     scan_interval_ms: i64,
@@ -64,6 +77,7 @@ impl LoopWatcherTask {
         let scan_interval_ms = loop_scan_interval_ms(&loop_config);
         let scan_every_ticks = loop_scan_every_ticks(&loop_config);
         Self {
+            spend_baselines: BTreeMap::new(),
             context,
             config,
             loop_config,
@@ -77,6 +91,73 @@ impl LoopWatcherTask {
         self.loop_config = loop_config_from(self.config.get());
         self.scan_interval_ms = loop_scan_interval_ms(&self.loop_config);
         self.scan_every_ticks = loop_scan_every_ticks(&self.loop_config);
+    }
+}
+
+impl LoopWatcherTask {
+    /// Put each token goal's spend on the scan input, and publish it.
+    ///
+    /// Only sessions that actually have a token budget are read, so a project
+    /// without one pays nothing, and a runtime that reports no usage says so
+    /// rather than reporting zero spent.
+    ///
+    /// Published to session metadata because this task is the only thing that
+    /// holds the baselines, and the dialog, the app and the nudge must all
+    /// read one answer rather than each re-reading a 415MB transcript.
+    fn apply_token_spend(&mut self, input: &mut Value) {
+        let sessions = token_goal_sessions(input);
+        let stale = self
+            .spend_baselines
+            .keys()
+            .filter(|id| !sessions.iter().any(|session| &&session.id == id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for id in &stale {
+            self.spend_baselines.remove(id);
+            // A goal that ended must stop showing its last number, or the
+            // panel keeps reporting spend against a budget nobody holds.
+            self.publish_token_spend(&id.clone(), None);
+        }
+        for session in sessions {
+            let baseline = self.spend_baselines.entry(session.id.clone()).or_default();
+            // A session can hold one token goal after another without its loop
+            // ever going inactive, so the key alone does not say the count is
+            // still this goal's.
+            rebaseline_for_new_episode(baseline, &session.episode);
+            let spend = spend_for_session(&session.tool, session.transcript.as_deref(), baseline);
+            apply_token_spend_to_input(input, &session.id, &spend);
+            let published = token_spend_value(&spend);
+            self.publish_token_spend(&session.id, Some(published));
+        }
+    }
+
+    /// Write the spend where every surface already reads session metadata.
+    ///
+    /// Unchanged values cost no disk write: the metadata update compares the
+    /// payload and reports `changed: false` without saving.
+    fn publish_token_spend(&self, session_id: &str, spend: Option<Value>) {
+        let result =
+            update_session_metadata(self.context.project_state_dir(), session_id, |current| {
+                let mut current = match current {
+                    Value::Object(map) => map,
+                    _ => Map::new(),
+                };
+                match &spend {
+                    Some(value) => current.insert("tokenSpend".into(), value.clone()),
+                    None => current.remove("tokenSpend"),
+                };
+                Value::Object(current)
+            });
+        if let Err(error) = result {
+            // Not swallowed: a goal whose spend cannot be published reads as
+            // unmeasured on every surface, and that needs a cause on record.
+            log_at(
+                LogLevel::Warn,
+                "token spend could not be published to session metadata",
+                "loop-watcher",
+                Some(json!({ "sessionId": session_id, "error": error })),
+            );
+        }
     }
 }
 
@@ -149,6 +230,7 @@ impl PeriodicTask for LoopWatcherTask {
                 coordination_worklist,
             );
             let indeterminate = apply_live_activity_overrides_for_scan(context, &mut input).await?;
+            self.apply_token_spend(&mut input);
 
             let budget = TickLoopBudget::new(SCAN_BUDGET);
             let planned_at = now_ms();
@@ -527,4 +609,108 @@ fn array_field<'a>(value: &'a Value, key: &str) -> Vec<&'a Value> {
 
 pub fn loop_watcher_task(context: &Arc<ProjectServiceRequestContext>) -> Box<dyn PeriodicTask> {
     Box::new(LoopWatcherTask::new(Arc::clone(context)))
+}
+
+/// A session carrying a token goal, with whatever transcript it has.
+struct TokenGoalSession {
+    id: String,
+    tool: String,
+    transcript: Option<PathBuf>,
+    /// Which goal this is: its start and its budget. Both move when a goal is
+    /// replaced, and the budget alone is not enough because re-adding the same
+    /// number is still a new goal.
+    episode: String,
+}
+
+/// Sessions whose loop entry names a token budget. Nothing else is read.
+fn token_goal_sessions(input: &Value) -> Vec<TokenGoalSession> {
+    let metadata = input.get("metadata").unwrap_or(&Value::Null);
+    let Some(sessions) = metadata.get("sessions").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    sessions
+        .iter()
+        .filter_map(|(id, meta)| {
+            let loop_meta = meta.get("loop")?;
+            if loop_meta.get("active").and_then(Value::as_bool) != Some(true) {
+                return None;
+            }
+            let budget = loop_meta.get("tokenBudget").and_then(Value::as_u64)?;
+            let since = loop_meta
+                .get("since")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let tool = session_tool(input, id).unwrap_or_default();
+            Some(TokenGoalSession {
+                transcript: session_transcript_path(input, id, &tool, meta),
+                episode: format!("{since}|{budget}"),
+                id: id.clone(),
+                tool,
+            })
+        })
+        .collect()
+}
+
+fn session_tool(input: &Value, session_id: &str) -> Option<String> {
+    input
+        .get("sessions")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+        .and_then(|session| session.get("tool"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// Where this session's transcript is, by the same rules the reconciler uses.
+fn session_transcript_path(
+    input: &Value,
+    session_id: &str,
+    tool: &str,
+    meta: &Value,
+) -> Option<PathBuf> {
+    let backend = meta
+        .get("context")
+        .and_then(|context| context.get("backendSessionId"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())?;
+    match tool.trim() {
+        "codex" => find_codex_transcript_path(backend, default_codex_sessions_dir()),
+        "claude" => {
+            let cwd = input
+                .get("sessions")
+                .and_then(Value::as_array)?
+                .iter()
+                .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+                .and_then(|session| session.get("worktreePath"))
+                .and_then(Value::as_str)?;
+            Some(claude_transcript_path(cwd, backend, None))
+        }
+        _ => None,
+    }
+}
+
+/// The one shape a spend is rendered in, read by the nudge, the dialog and the
+/// app. `unmeasured` carries the reason rather than a zero nobody measured.
+fn token_spend_value(spend: &SpendSinceBaseline) -> Value {
+    match spend {
+        SpendSinceBaseline::Measured(billed) => json!({ "billed": billed }),
+        SpendSinceBaseline::Unmeasured(reason) => json!({ "unmeasured": reason }),
+    }
+}
+
+/// Write the spend onto the scan input, the way live activity is overridden.
+///
+/// `Unmeasured` is recorded with its reason rather than dropped: the nudge has
+/// to be able to say it cannot measure instead of implying nothing was spent.
+fn apply_token_spend_to_input(input: &mut Value, session_id: &str, spend: &SpendSinceBaseline) {
+    let value = token_spend_value(spend);
+    if let Some(session) = input
+        .get_mut("metadata")
+        .and_then(|metadata| metadata.get_mut("sessions"))
+        .and_then(|sessions| sessions.get_mut(session_id))
+        .and_then(Value::as_object_mut)
+    {
+        session.insert("tokenSpend".into(), value);
+    }
 }

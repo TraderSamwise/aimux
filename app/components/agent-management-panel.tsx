@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
+import { agentGoalKind, agentGoalKindIsChangeable, agentGoalLabel } from "@/lib/agent-goal-label";
 import { migrateAgent, renameAgent, setAgentLoop, setAgentOverseer } from "@/lib/api";
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -39,7 +40,15 @@ export function AgentManagementPanel({
   const [label, setLabel] = useState(session.label || "");
   const sessionLoopGoal = getLoopGoal(session.loop) ?? "";
   const [loopGoal, setLoopGoal] = useState(sessionLoopGoal);
+  const storedGoalKind = agentGoalKind(session);
+  // The toggle only ever offers these two; a token budget hides it entirely.
+  const sessionLoopKind = storedGoalKind === "agent" ? "agent" : "user";
+  const [loopKind, setLoopKind] = useState<"agent" | "user">(sessionLoopKind);
+  // A token budget's kind IS its budget, so handing it over would discard the
+  // number. Every other kind is Sam's to change, running or not.
+  const canChangeGoalKind = agentGoalKindIsChangeable(storedGoalKind);
   const lastSyncedLoopGoalRef = useRef(sessionLoopGoal);
+  const lastSyncedLoopKindRef = useRef(sessionLoopKind);
   const [targetWorktreePath, setTargetWorktreePath] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<AgentManagementAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +62,17 @@ export function AgentManagementPanel({
     lastSyncedLoopGoalRef.current = sessionLoopGoal;
     setLoopGoal((current) => (current === previousSyncedGoal ? sessionLoopGoal : current));
   }, [session.id, sessionLoopGoal]);
+
+  // The panel stays mounted across refreshes, so without this a hand-over made
+  // elsewhere leaves the toggle showing the old kind -- and the next goal-text
+  // save would send that stale kind and undo the hand-over. Follows the stored
+  // kind only while the user has no unsaved choice of their own, the same way
+  // the goal text does.
+  useEffect(() => {
+    const previousSyncedKind = lastSyncedLoopKindRef.current;
+    lastSyncedLoopKindRef.current = sessionLoopKind;
+    setLoopKind((current) => (current === previousSyncedKind ? sessionLoopKind : current));
+  }, [session.id, sessionLoopKind]);
 
   const worktreeChoices = useMemo(
     () =>
@@ -150,7 +170,12 @@ export function AgentManagementPanel({
   const canRename = canAct && trimmedLabel !== (session.label || "");
   const canMigrate =
     canAct && Boolean(selectedWorktreePath) && selectedWorktreePath !== currentWorktreePath;
-  const canSaveLoop = canAct && (!loopActive || trimmedGoal !== currentLoopGoal);
+  // A hand-over with no edit to the goal text is still a change to save.
+  const canSaveLoop =
+    canAct &&
+    (!loopActive ||
+      trimmedGoal !== currentLoopGoal ||
+      (canChangeGoalKind && loopKind !== sessionLoopKind));
   const canClearOverseer = canAct && overseerActive;
   const fieldIdPrefix = `agent-${session.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
   const visibleError = error;
@@ -261,7 +286,20 @@ export function AgentManagementPanel({
 
         <View className="min-w-[280px] flex-[1.3]">
           <PanelLabel icon={Repeat2} label="Loop" />
+          <Text className="mt-1 text-xs text-muted-foreground">{agentGoalLabel(session)}</Text>
           <View className="mt-2 flex-row gap-2">
+            {canChangeGoalKind ? (
+              <Button
+                variant="outline"
+                size="sm"
+                accessibilityLabel="Goal kind"
+                onPress={() => setLoopKind((current) => (current === "user" ? "agent" : "user"))}
+              >
+                <Text className="text-sm text-foreground">
+                  {loopKind === "user" ? "Yours" : "Agent's"}
+                </Text>
+              </Button>
+            ) : null}
             <Input
               nativeID={`${fieldIdPrefix}-loop-goal`}
               accessibilityLabel="Loop goal"
@@ -278,7 +316,18 @@ export function AgentManagementPanel({
                 runAction("loop", () =>
                   setAgentLoop(
                     endpoint,
-                    { sessionId: session.id, active: true, goal: trimmedGoal || undefined },
+                    {
+                      sessionId: session.id,
+                      active: true,
+                      // Sent even when empty, so clearing the goal clears it:
+                      // an omitted field means "keep what is stored", which is
+                      // what a kind-only hand-over needs.
+                      goal: trimmedGoal,
+                      // Withheld only on a token goal, where sending a plain
+                      // kind would throw the budget away.
+                      goalKind: canChangeGoalKind ? loopKind : undefined,
+                      source: "dashboard",
+                    },
                     { token },
                   ),
                 )
@@ -294,7 +343,11 @@ export function AgentManagementPanel({
               disabled={!canAct || !loopActive}
               onPress={() =>
                 runAction("loop", () =>
-                  setAgentLoop(endpoint, { sessionId: session.id, active: false }, { token }),
+                  setAgentLoop(
+                    endpoint,
+                    { sessionId: session.id, active: false, source: "dashboard" },
+                    { token },
+                  ),
                 )
               }
             >

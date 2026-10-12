@@ -1955,3 +1955,68 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         assert!(!is_core_cli_command(&args), "accepted {args:?}");
     }
 }
+
+/// A goal kind was settable only through the raw route, so the CLI could not
+/// create the one kind the feature exists for.
+#[test]
+fn loop_add_accepts_a_goal_kind_and_budget() {
+    let spaced = parse_core_loop_mutation_args(&[
+        "loop",
+        "add",
+        "claude-1",
+        "--goal",
+        "the long migration",
+        "--kind",
+        "user",
+    ])
+    .expect("spaced flags parse");
+    assert_eq!(spaced.goal_kind.as_deref(), Some("user"));
+    assert_eq!(spaced.token_budget, None);
+
+    let joined = parse_core_loop_mutation_args(&[
+        "loop",
+        "add",
+        "claude-1",
+        "--kind=tokens",
+        "--budget=50000",
+    ])
+    .expect("joined flags parse");
+    assert_eq!(joined.goal_kind.as_deref(), Some("tokens"));
+    assert_eq!(joined.token_budget, Some(50_000));
+}
+
+/// Changing a kind later is a close in disguise and the route refuses it, so
+/// there is no flag that looks like it would work.
+#[test]
+fn only_loop_add_takes_a_kind() {
+    for subcommand in ["remove", "pause", "unpause"] {
+        assert!(
+            parse_core_loop_mutation_args(&["loop", subcommand, "claude-1", "--kind", "user"])
+                .is_none(),
+            "`loop {subcommand} --kind` must not parse"
+        );
+        assert!(
+            parse_core_loop_mutation_args(&["loop", subcommand, "claude-1", "--budget=10"])
+                .is_none(),
+            "`loop {subcommand} --budget` must not parse"
+        );
+    }
+}
+
+/// A budget that is not a number is a typo, not a zero.
+#[test]
+fn a_non_numeric_budget_is_refused() {
+    assert!(
+        parse_core_loop_mutation_args(&["loop", "add", "claude-1", "--budget", "lots"]).is_none()
+    );
+    assert!(parse_core_loop_mutation_args(&["loop", "add", "claude-1", "--budget="]).is_none());
+}
+
+/// Without a kind the loop behaves exactly as it always did.
+#[test]
+fn loop_add_without_a_kind_is_unchanged() {
+    let plain = parse_core_loop_mutation_args(&["loop", "add", "claude-1", "--goal", "ship it"])
+        .expect("parses");
+    assert_eq!(plain.goal_kind, None);
+    assert_eq!(plain.token_budget, None);
+}

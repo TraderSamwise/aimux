@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { agentGoalLabel } from "@/lib/agent-goal-label";
 import { servedStatusWord } from "@/lib/agent-status-label";
 import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
@@ -138,7 +139,12 @@ export default function LoopsScreen() {
     const goal = (goalDrafts[entry.session.id] ?? "").trim();
     await setAgentLoop(
       endpoint!,
-      { sessionId: entry.session.id, active: true, goal: goal || undefined },
+      {
+        sessionId: entry.session.id,
+        active: true,
+        goal: goal || undefined,
+        source: "dashboard",
+      },
       { token },
     );
     setGoalDrafts((current) => {
@@ -299,7 +305,7 @@ export default function LoopsScreen() {
                   key={entry.session.id}
                   entry={entry}
                   icon={Eye}
-                  detail={entry.session.loop?.goal || "Watching without a goal"}
+                  detail={agentGoalLabel(entry.session)}
                   onOpen={() => openAgent(entry)}
                   actions={
                     <Button
@@ -313,7 +319,7 @@ export default function LoopsScreen() {
                             const token = await getToken();
                             await setAgentLoop(
                               endpoint,
-                              { sessionId: entry.session.id, active: false },
+                              { sessionId: entry.session.id, active: false, source: "dashboard" },
                               { token },
                             );
                           },

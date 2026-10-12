@@ -173,6 +173,9 @@ pub struct DashboardSession {
     pub services: Option<Vec<DashboardSessionService>>,
     #[serde(rename = "loop", skip_serializing_if = "Option::is_none")]
     pub loop_state: Option<DashboardSessionLoop>,
+    /// Billed spend against a token goal, or why it could not be measured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_spend: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub loop_last_action: Option<DashboardSessionLoopLastAction>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -652,13 +655,19 @@ pub struct DashboardSessionService {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardSessionLoop {
     #[serde(default)]
     pub active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal: Option<String>,
+    /// Who may end the goal. Absent is the old agent-closable loop, and the
+    /// TUI could not see this at all before the goal dialog needed it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub since: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

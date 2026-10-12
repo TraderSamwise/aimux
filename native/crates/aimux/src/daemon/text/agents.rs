@@ -1048,7 +1048,7 @@ pub fn loop_text_route(
     let goal = optional_string(route_url, body, "goal");
     let source = optional_string(route_url, body, "source")
         .or_else(|| input.source.map(str::to_owned))
-        .unwrap_or_else(|| "human".into());
+        .unwrap_or_else(|| "unknown".into());
     let mut request = loop_base_request(route_url, body, session_id.clone(), source);
     request.insert("active".into(), Value::Bool(input.active));
     request.insert(
@@ -1172,7 +1172,8 @@ pub fn loop_alert_text_route(
         route_url,
         body,
         session_id.clone(),
-        optional_string(route_url, body, "source").unwrap_or_else(|| "human".into()),
+        // Unattributed is `unknown`, not Sam: see the loop route above.
+        optional_string(route_url, body, "source").unwrap_or_else(|| "unknown".into()),
     );
     request.insert("paused".into(), Value::Bool(input.paused));
     insert_string_if_some(

@@ -158,6 +158,13 @@ pub fn watched_by_overseer_notification_refusal_reason_for_state(
         return None;
     }
     let overseer_id = find_overseer_session_id(metadata)?;
+    // The overseer can hold a goal now, and this refusal exists because the
+    // overseer is already watching -- which it cannot be of itself. Without
+    // this, giving the overseer a goal silences its own "nothing more to do,
+    // waiting on user", and that notification is the whole afk case.
+    if overseer_id == session_id {
+        return None;
+    }
     if !overseer_is_verified_alive(sessions, &overseer_id, live_window_ids) {
         return None;
     }
