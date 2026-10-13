@@ -127,6 +127,14 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
         Ok(())
     }
 
+    fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        self.actions.push(FakeRuntimeAction::Text(
+            window_id.to_owned(),
+            text.to_owned(),
+        ));
+        Ok(())
+    }
+
     fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::Key(window_id.to_owned(), key.to_owned()));
@@ -178,6 +186,10 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
     }
 
     fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        self.inner.send_text(window_id, text)
+    }
+
+    fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
         self.inner.send_text(window_id, text)
     }
 
@@ -2316,14 +2328,14 @@ fn queued_duplicate_loop_checks_are_delivered_once() {
     assert_eq!(
         runtime.inner.actions,
         vec![
+            // One delivery, newlines and all. This used to be three separate
+            // sends with a `C-j` keypress between each -- a three-line prompt
+            // became five execs, and a twelve-item list became dozens, typed
+            // into a composer that redraws between them.
             FakeRuntimeAction::Text(
                 "@1".into(),
-                "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.".into()
+                "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.\n- worklist item\n... and 50 more".into()
             ),
-            FakeRuntimeAction::Key("@1".into(), "C-j".into()),
-            FakeRuntimeAction::Text("@1".into(), "- worklist item".into()),
-            FakeRuntimeAction::Key("@1".into(), "C-j".into()),
-            FakeRuntimeAction::Text("@1".into(), "... and 50 more".into()),
             FakeRuntimeAction::CarriageReturn("@1".into()),
         ],
         "duplicate generated loop-check prompts must collapse before delivery"

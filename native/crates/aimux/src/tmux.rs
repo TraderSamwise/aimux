@@ -1146,6 +1146,36 @@ impl TmuxRuntimeManager {
         Ok(())
     }
 
+    /// Deliver text to a pane in ONE operation.
+    ///
+    /// `send_text` types the text as a sequence of `send-keys` execs, and the
+    /// prompt path above it adds a separate `C-j` exec per newline -- so a
+    /// twelve-item list became dozens of processes typed into a composer that
+    /// redraws between them, and the head of the message was lost while the
+    /// tail survived. A buffer paste is one load and one paste whatever the
+    /// length, so there is no window in the middle for anything to clear.
+    pub fn paste_text(&mut self, target: &TmuxTarget, text: &str) -> Result<(), String> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        let buffer_name = prompt_buffer_name(&target.window_id);
+        let path = std::env::temp_dir().join(&buffer_name);
+        std::fs::write(&path, text.as_bytes())
+            .map_err(|error| format!("staging prompt for paste failed: {error}"))?;
+        let path_text = path.to_string_lossy().into_owned();
+        let loaded = self.exec_owned(load_buffer_argv(&buffer_name, &path_text), None);
+        let _ = std::fs::remove_file(&path);
+        loaded?;
+        // `paste-buffer -d` deletes the buffer, but only if the paste runs.
+        match self.exec_owned(paste_buffer_argv(&buffer_name, &target.window_id), None) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let _ = self.exec_owned(delete_buffer_argv(&buffer_name), None);
+                Err(error)
+            }
+        }
+    }
+
     pub fn send_enter(&mut self, target: &TmuxTarget) -> Result<(), String> {
         self.exec_owned(send_enter_argv(&target.window_id), None)
             .map(|_| ())
@@ -3031,6 +3061,65 @@ pub fn send_client_carriage_return_argv(client_tty: &str, window_id: &str) -> Ve
         "-H".to_owned(),
         "0d".to_owned(),
     ]
+}
+
+/// Load a file into a named tmux buffer.
+///
+/// The text goes through a FILE rather than argv on purpose: `send-keys -l --`
+/// carries its text as an argument, which is why it had to be chunked at 4000
+/// bytes, and chunking is what lost the head of a long message. A buffer has
+/// no such ceiling.
+pub fn load_buffer_argv(buffer_name: &str, path: &str) -> Vec<String> {
+    vec![
+        "load-buffer".to_owned(),
+        "-b".to_owned(),
+        buffer_name.to_owned(),
+        path.to_owned(),
+    ]
+}
+
+/// Paste a named buffer into a window, and delete the buffer.
+///
+/// `-p` asks tmux to wrap the paste in bracketed-paste markers when the
+/// program in the pane has turned that mode on, which is how an agent's
+/// composer is meant to receive a multi-line message: as one block, rather
+/// than as text interleaved with newline keypresses it may act on.
+pub fn paste_buffer_argv(buffer_name: &str, window_id: &str) -> Vec<String> {
+    vec![
+        "paste-buffer".to_owned(),
+        "-d".to_owned(),
+        "-p".to_owned(),
+        "-b".to_owned(),
+        buffer_name.to_owned(),
+        "-t".to_owned(),
+        window_id.to_owned(),
+    ]
+}
+
+/// Drop a buffer that a failed paste may have left behind.
+pub fn delete_buffer_argv(buffer_name: &str) -> Vec<String> {
+    vec![
+        "delete-buffer".to_owned(),
+        "-b".to_owned(),
+        buffer_name.to_owned(),
+    ]
+}
+
+/// A buffer name no other send can collide with.
+pub fn prompt_buffer_name(window_id: &str) -> String {
+    static PASTE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = PASTE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let sanitized: String = window_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("aimux-prompt-{sanitized}-{}-{sequence}", std::process::id())
 }
 
 pub fn send_carriage_return_argv(window_id: &str) -> Vec<String> {

@@ -19,9 +19,9 @@ use crate::runtime_topology::{
 };
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux::{
-    CapturePaneOptions, TMUX_RUNTIME_OWNER_OPTION, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxTarget,
-    WINDOW_TARGET_FORMAT, capture_pane_argv, resize_window_argv, send_carriage_return_argv,
-    send_escape_argv, send_key_argv, send_text_argv, split_text_for_tmux_send_keys,
+    CapturePaneOptions, TMUX_RUNTIME_OWNER_OPTION, TmuxTarget, WINDOW_TARGET_FORMAT,
+    capture_pane_argv, delete_buffer_argv, load_buffer_argv, paste_buffer_argv, prompt_buffer_name,
+    resize_window_argv, send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
     try_tmux_command_from_env,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
@@ -121,6 +121,11 @@ pub trait AgentOutputCaptureRuntime {
     }
 
     fn send_text(&mut self, _window_id: &str, _text: &str) -> Result<(), String> {
+        Err("agent input not supported by this service".into())
+    }
+
+    /// Deliver a whole prompt in one paste. See `paste_prompt_with`.
+    fn paste_text(&mut self, _window_id: &str, _text: &str) -> Result<(), String> {
         Err("agent input not supported by this service".into())
     }
 
@@ -298,6 +303,12 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
         .map(|_| ())
     }
 
+    fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        paste_prompt_with(window_id, text, |argv, message| {
+            run_tmux_argv(argv, message).map(|_| ())
+        })
+    }
+
     fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
         let mut runtime = SystemSyncPromptSubmitRuntime {
             window_id: window_id.to_owned(),
@@ -425,6 +436,12 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
             format!("tmux send carriage return failed for {window_id}"),
         )
         .map(|_| ())
+    }
+
+    fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        paste_prompt_with(window_id, text, |argv, message| {
+            self.run_tmux_argv(argv, message).map(|_| ())
+        })
     }
 
     fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
@@ -2082,26 +2099,86 @@ fn resolve_session_tool(topology: &Value, session_id: &str) -> Option<String> {
         })
 }
 
+/// A prompt staged on disk, ready to load into a tmux buffer.
+///
+/// `send_prompt_to_tmux` used to walk the text character by character,
+/// flushing a `send-keys` exec for each 4000-byte run and a separate `C-j`
+/// exec for every newline. A twelve-item list was therefore dozens of
+/// processes typed into a composer that redraws between them, sharing one
+/// deadline -- and when something cleared the composer partway, the head of
+/// the message was gone and the tail was submitted without a word. Sam saw a
+/// message arrive starting at item 12.
+///
+/// A buffer paste is one load and one paste whatever the length. There is no
+/// window in the middle, and the text never passes through argv, which is the
+/// only reason it had to be chunked.
+struct StagedPrompt {
+    buffer_name: String,
+    path: std::path::PathBuf,
+}
+
+impl StagedPrompt {
+    fn write(window_id: &str, text: &str) -> Result<Self, String> {
+        let buffer_name = prompt_buffer_name(window_id);
+        let path = std::env::temp_dir().join(&buffer_name);
+        std::fs::write(&path, text.as_bytes())
+            .map_err(|error| format!("staging prompt for paste failed: {error}"))?;
+        Ok(Self { buffer_name, path })
+    }
+
+    fn load_argv(&self) -> Vec<String> {
+        load_buffer_argv(&self.buffer_name, &self.path.to_string_lossy())
+    }
+
+    fn paste_argv(&self, window_id: &str) -> Vec<String> {
+        paste_buffer_argv(&self.buffer_name, window_id)
+    }
+
+    fn delete_argv(&self) -> Vec<String> {
+        delete_buffer_argv(&self.buffer_name)
+    }
+
+    /// The staging file is of no further use once tmux has read it, and the
+    /// prompt is a user's message, so it does not linger in the temp dir.
+    fn discard_file(&self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn paste_prompt_with(
+    window_id: &str,
+    text: &str,
+    mut run: impl FnMut(Vec<String>, String) -> Result<(), String>,
+) -> Result<(), String> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    let staged = StagedPrompt::write(window_id, text)?;
+    let loaded = run(
+        staged.load_argv(),
+        format!("tmux load-buffer failed for {window_id}"),
+    );
+    staged.discard_file();
+    loaded?;
+    // `paste-buffer -d` drops the buffer, but only once the paste runs.
+    match run(
+        staged.paste_argv(window_id),
+        format!("tmux paste-buffer failed for {window_id}"),
+    ) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = run(staged.delete_argv(), String::new());
+            Err(error)
+        }
+    }
+}
+
 pub(super) fn send_prompt_to_tmux(
     runtime: &mut impl AgentOutputCaptureRuntime,
     window_id: &str,
     text: &str,
 ) -> Result<(), String> {
-    let mut pending = String::new();
-    for character in text.chars() {
-        match character {
-            '\r' => {
-                flush_tmux_text(runtime, window_id, &mut pending)?;
-                runtime.send_carriage_return(window_id)?;
-            }
-            '\n' => {
-                flush_tmux_text(runtime, window_id, &mut pending)?;
-                runtime.send_key(window_id, "C-j")?;
-            }
-            value => pending.push(value),
-        }
-    }
-    flush_tmux_text(runtime, window_id, &mut pending)
+    runtime.paste_text(window_id, text)
 }
 
 pub(super) fn deliver_prompt_to_tmux_for_tool(
@@ -2116,22 +2193,6 @@ pub(super) fn deliver_prompt_to_tmux_for_tool(
         PromptSubmitMode::AgentComposer => runtime.submit_prompt(window_id, prompt),
     }
 }
-
-fn flush_tmux_text(
-    runtime: &mut impl AgentOutputCaptureRuntime,
-    window_id: &str,
-    pending: &mut String,
-) -> Result<(), String> {
-    if pending.is_empty() {
-        return Ok(());
-    }
-    for chunk in split_text_for_tmux_send_keys(pending, TMUX_SEND_TEXT_CHUNK_BYTES) {
-        runtime.send_text(window_id, &chunk)?;
-    }
-    pending.clear();
-    Ok(())
-}
-
 fn remote_actor_from_headers(
     headers: &std::collections::BTreeMap<String, String>,
 ) -> Option<RemoteActor> {
@@ -2525,53 +2586,39 @@ async fn send_prompt_to_tmux_async(
     text: &str,
     deadline: Instant,
 ) -> Result<(), String> {
-    let mut pending = String::new();
-    for character in text.chars() {
-        match character {
-            '\r' => {
-                flush_tmux_text_async(window_id, &mut pending, deadline).await?;
-                run_tmux_argv_with_timeout_async(
-                    send_carriage_return_argv(window_id),
-                    format!("tmux send carriage return failed for {window_id}"),
-                    remaining_until(deadline)?,
-                )
-                .await?;
-            }
-            '\n' => {
-                flush_tmux_text_async(window_id, &mut pending, deadline).await?;
-                run_tmux_argv_with_timeout_async(
-                    send_key_argv(window_id, "C-j"),
-                    format!("tmux send-keys C-j failed for {window_id}"),
-                    remaining_until(deadline)?,
-                )
-                .await?;
-            }
-            value => pending.push(value),
-        }
-    }
-    flush_tmux_text_async(window_id, &mut pending, deadline).await
-}
-
-async fn flush_tmux_text_async(
-    window_id: &str,
-    pending: &mut String,
-    deadline: Instant,
-) -> Result<(), String> {
-    if pending.is_empty() {
+    if text.is_empty() {
         return Ok(());
     }
-    for chunk in split_text_for_tmux_send_keys(pending, TMUX_SEND_TEXT_CHUNK_BYTES) {
-        run_tmux_argv_with_timeout_async(
-            send_text_argv(window_id, &chunk),
-            format!("tmux send-keys text failed for {window_id}"),
-            remaining_until(deadline)?,
-        )
-        .await?;
+    let staged = StagedPrompt::write(window_id, text)?;
+    let loaded = run_tmux_argv_with_timeout_async(
+        staged.load_argv(),
+        format!("tmux load-buffer failed for {window_id}"),
+        remaining_until(deadline)?,
+    )
+    .await;
+    staged.discard_file();
+    loaded?;
+    match run_tmux_argv_with_timeout_async(
+        staged.paste_argv(window_id),
+        format!("tmux paste-buffer failed for {window_id}"),
+        remaining_until(deadline)?,
+    )
+    .await
+    {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            if let Ok(remaining) = remaining_until(deadline) {
+                let _ = run_tmux_argv_with_timeout_async(
+                    staged.delete_argv(),
+                    String::new(),
+                    remaining,
+                )
+                .await;
+            }
+            Err(error)
+        }
     }
-    pending.clear();
-    Ok(())
 }
-
 async fn wait_for_prompt_submit_async(
     window_id: &str,
     draft: &str,
@@ -3073,6 +3120,11 @@ mod tests {
             Ok(())
         }
 
+        fn paste_text(&mut self, _window_id: &str, text: &str) -> Result<(), String> {
+            self.text_sends.push(text.to_owned());
+            Ok(())
+        }
+
         fn send_key(&mut self, _window_id: &str, key: &str) -> Result<(), String> {
             self.key_sends.push(key.to_owned());
             Ok(())
@@ -3087,6 +3139,53 @@ mod tests {
             self.submit_prompts.push(draft.to_owned());
             Ok(())
         }
+    }
+
+    /// A long numbered list arrives whole, in one delivery.
+    ///
+    /// The bug Sam reported: a twelve-item list reached the agent starting at
+    /// item 12, items 1-11 simply gone, no warning. This path walked the text
+    /// character by character, flushing a `send-keys` exec for every
+    /// 4000-byte run and a separate `C-j` exec for every newline -- so that
+    /// message was dozens of processes typed into a composer that redraws
+    /// between them, and whatever cleared the composer partway took the head
+    /// of the message with it. The tail was submitted as if it were the
+    /// whole thing.
+    ///
+    /// Under the old path this is 12 sends and 11 keypresses, and every
+    /// assertion below fails.
+    #[test]
+    fn a_long_multiline_prompt_crosses_in_one_delivery() {
+        let prompt = (1..=12)
+            .map(|index| format!("{index}. item number {index} with enough text to be a real line"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut runtime = FakeAgentInputRuntime::default();
+
+        deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", &prompt, Some("claude"))
+            .expect("the prompt is delivered");
+
+        assert_eq!(
+            runtime.text_sends.len(),
+            1,
+            "a multi-line prompt must cross in one delivery, got {:?}",
+            runtime.text_sends
+        );
+        assert_eq!(
+            runtime.text_sends[0], prompt,
+            "the delivered text must be the whole prompt"
+        );
+        assert!(
+            runtime.text_sends[0].starts_with("1. item number 1"),
+            "the head must survive"
+        );
+        // Newlines travel inside the paste. Sending them as keypresses is what
+        // turned one message into dozens of execs.
+        assert!(
+            runtime.key_sends.is_empty(),
+            "no per-newline keypresses, got {:?}",
+            runtime.key_sends
+        );
     }
 
     #[test]

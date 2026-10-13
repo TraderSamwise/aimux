@@ -69,6 +69,19 @@ impl AgentOutputCaptureRuntime for FakeDeliveryRuntime {
         Ok(())
     }
 
+    fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        if self.fail_text_for_window.as_deref() == Some(window_id) {
+            return Err(format!(
+                "tmux send-keys text failed for {window_id}: injected failure"
+            ));
+        }
+        self.actions.push(FakeRuntimeAction::Text(
+            window_id.to_owned(),
+            text.to_owned(),
+        ));
+        Ok(())
+    }
+
     fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::Key(window_id.to_owned(), key.to_owned()));
