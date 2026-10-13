@@ -14,15 +14,18 @@ on them with nothing on screen to say so. The unread notification count now
 sits in a badge beside the agent name, and the rest of these counts say what
 they are, in the words the details pane uses for them.
 
-They are also capped at two per row, in priority order. Seven chips pushed the
-next action and the headline off the end -- a row ending `→ open…` with no
-headline is worse than one that shows the two things that matter most and
-leaves the rest to the details pane, which carries all of them. This is the
-same bargain the supervisor chips already make by truncating to five.
+They are also capped at two per row, in priority order, with a `+N more` chip
+for what did not fit. Seven chips pushed the next action and the headline off
+the end -- a row ending `→ open…` with no headline is worse than one that
+shows the two things that matter most. What the row must not do is drop the
+rest in silence, which an earlier cut of this change did: the details pane's
+own overflow says `{n} more` rather than just ending its list, and that is the
+precedent followed here.
 
 Both frames differ by exactly two row lines each. `label-claude-0` gains
-`8 threads unread` ahead of `8 pending` (its headline truncates by that much),
-and `label-claude-1` leads with `waiting on you` -- read from the project
+`8 threads unread` ahead of `8 pending` and a `+1 more`, and `label-claude-1`
+leads with `waiting on you` followed by `8 threads unread` and a `+2 more`
+(both headlines truncate by that much). `waiting on you` is read from -- read from the project
 service's own `waitingOnMeCount`, already the greater of the thread and
 coordination counts, where Node read the two raw fields separately and put a
 thread waiting on you in the middle digit of that triple. Nothing else

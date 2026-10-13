@@ -1091,8 +1091,10 @@ fn an_unread_badge_takes_its_room_from_the_parenthetical_not_the_name() {
         "the badge sits beside a whole name, got {plain}"
     );
     assert!(
-        !plain.contains("[1] claude…"),
-        "the name is not cut instead"
+        // The producible truncations, not `claude…`: a cut lands before the
+        // final `e`, so an assertion on `claude…` could never fail.
+        !plain.contains("clau…") && !plain.contains("claud…"),
+        "the name is not cut instead, got {plain}"
     );
     assert!(plain.contains("Ready"));
     for line in frame_content_only(&result.frame).split("\r\n") {
@@ -3014,9 +3016,8 @@ fn snapshot_with_semantic(semantic: Option<serde_json::Value>) -> DesktopStateSn
     session.id = "claude-solo".into();
     session.command = "claude".into();
     session.label = None;
-    session.semantic = semantic
-        .map(|value| serde_json::from_value(value).expect("semantic parses"))
-        .or(None);
+    session.semantic =
+        semantic.map(|value| serde_json::from_value(value).expect("semantic parses"));
     let only = session.clone();
     // One agent in the whole frame. The fixture's other sessions carry their
     // own counts, so a frame-wide `contains` answered about them instead -- a
@@ -3278,4 +3279,89 @@ fn waiting_on_you_comes_from_the_published_count() {
         strip_ansi(&row_frame(&published_says_yes)).contains("waiting on you"),
         "and the published count does"
     );
+}
+
+/// The thread and new-output counts fall back to their flat fields too.
+///
+/// Every test that renders them set the `semantic` value and the flat field to
+/// the same number, so dropping either `.max(flat)` passed the whole suite.
+/// Here `semantic` omits them -- which is what a payload from a build that
+/// predates the field looks like, since every field in `SessionSemanticState`
+/// is `#[serde(default)]` -- and the flat fields carry the counts.
+#[test]
+fn the_thread_and_activity_counts_fall_back_to_their_flat_fields() {
+    let mut snapshot = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 0 }
+    })));
+    for session in [
+        &mut snapshot.sessions[0],
+        &mut snapshot.worktree_groups[0].sessions[0],
+    ] {
+        session.thread_unread_count = 6;
+        session.unseen_count = 9;
+    }
+    let plain = strip_ansi(&row_frame(&snapshot));
+    assert!(plain.contains("6 threads unread"), "got {plain}");
+    assert!(plain.contains("9 new activity"), "got {plain}");
+}
+
+/// What does not fit says so.
+///
+/// The row carries two chips. Dropping the rest silently was the wrong half of
+/// that trade -- `8 pending` left a row with nothing to say it had -- so the
+/// overflow is counted, the way the details pane's own `{n} more` does.
+#[test]
+fn chips_that_do_not_fit_are_counted_rather_than_dropped() {
+    let mut snapshot = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 0 },
+        "waitingOnMeCount": 1,
+        "threadUnreadCount": 2
+    })));
+    for session in [
+        &mut snapshot.sessions[0],
+        &mut snapshot.worktree_groups[0].sessions[0],
+    ] {
+        session.thread_unread_count = 2;
+        session.unseen_count = 3;
+        session.thread_pending_count = 4;
+        session.thread_waiting_on_them_count = 5;
+    }
+    let plain = strip_ansi(&row_frame(&snapshot));
+
+    // The two that matter most, then the count of what is left.
+    assert!(plain.contains("waiting on you"), "got {plain}");
+    assert!(plain.contains("2 threads unread"), "got {plain}");
+    assert!(plain.contains("+3 more"), "got {plain}");
+    // And the ones it stands for are not also on the row.
+    assert!(!plain.contains("3 new activity"), "got {plain}");
+    assert!(!plain.contains("4 pending"), "got {plain}");
+}
+
+/// `waiting on you` is the one count with no flat fallback, deliberately.
+///
+/// Its flat equivalent is `max` of two fields, and spelling that out next to
+/// the renderer is the copy AGENTS.md rules out -- so an absent `semantic`
+/// block shows no chip rather than a second opinion on what waiting means.
+/// Asserted so the asymmetry with its three siblings reads as a decision.
+#[test]
+fn waiting_on_you_has_no_flat_fallback_on_purpose() {
+    let mut snapshot = snapshot_with_semantic(None);
+    for session in [
+        &mut snapshot.sessions[0],
+        &mut snapshot.worktree_groups[0].sessions[0],
+    ] {
+        session.thread_waiting_on_me_count = 3;
+        session.workflow_on_me_count = 4;
+        session.notification_unread_count = 1;
+    }
+    let plain = strip_ansi(&row_frame(&snapshot));
+    assert!(
+        plain.contains("claude 1 "),
+        "the badge does fall back, got {plain}"
+    );
+    assert!(!plain.contains("waiting on you"), "and this one does not");
 }

@@ -1244,6 +1244,8 @@ fn identity_with_unread_badge(session: &DashboardSession, width: usize) -> Strin
     // One plain cell is reserved after the badge: `cols` concatenates columns
     // with no gap, and the status cell is itself a reverse-video pill, so a
     // badge that filled the column merged with it into one highlighted run.
+    // Reserving the width is the whole fix -- `pad_visible` fills the cell --
+    // so there is no trailing space here to go with it.
     let room = width.saturating_sub(visible_width(&badge) + 1);
     let identity = format!("{name}{suffix}");
     let identity = if visible_width(&identity) > room {
@@ -1251,7 +1253,7 @@ fn identity_with_unread_badge(session: &DashboardSession, width: usize) -> Strin
     } else {
         identity
     };
-    format!("{}{badge} ", truncate_ansi(&identity, room))
+    format!("{}{badge}", truncate_ansi(&identity, room))
 }
 
 /// The name, and the parenthetical id that disambiguates it. Separate because
@@ -1519,9 +1521,14 @@ fn is_session_offline(session: &DashboardSession) -> bool {
 /// `waitingOnMeCount` is already the greater of the thread and coordination
 /// counts. The row read the two raw fields separately, so a thread waiting on
 /// you was the middle digit of `thread 8/0/5` while a coordination one got a
-/// chip that said so. The published answer is read and not recomputed here:
-/// spelling the `max` out again is the copy AGENTS.md rules out, and it would
-/// go on saying `max` after the server rule changed.
+/// chip that said so.
+///
+/// Deliberately the one count here with NO fallback to its flat fields, unlike
+/// `unread_count` and the two below. Theirs fall back to a single raw field,
+/// which carries no rule; this one's flat equivalent is `max` of two fields,
+/// and spelling that out again is the copy AGENTS.md rules out. So a payload
+/// with no `semantic` block shows no `waiting on you` rather than a second
+/// opinion on what waiting means.
 fn waiting_on_me_count(session: &DashboardSession) -> usize {
     session
         .semantic
@@ -1601,12 +1608,17 @@ fn session_activity_chips(session: &DashboardSession) -> String {
             ChipTone::Muted,
         ));
     }
-    // Two, in the order above. The row also has to hold the next action and
-    // the headline, and seven chips pushed both off the end -- `→ open…` and
-    // a headline cut to nothing is a worse row than one that shows the two
-    // things that matter most and leaves the rest to the details pane. Same
-    // bargain the supervisor chips already make by truncating to five.
+    // Two, in the order above, and a count of what did not fit. The row also
+    // has to hold the next action and the headline, and seven chips pushed
+    // both off the end. Dropping the rest silently is the part that would be
+    // wrong: the details pane's own overflow says "{n} more" rather than just
+    // ending the list, so this says how many are not shown, and the pane has
+    // all of them.
+    let hidden = chips.len().saturating_sub(ROW_CHIP_BUDGET);
     chips.truncate(ROW_CHIP_BUDGET);
+    if hidden > 0 {
+        chips.push(chip(&format!("+{hidden} more"), ChipTone::Muted));
+    }
     chips.join(" ")
 }
 
