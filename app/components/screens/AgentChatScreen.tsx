@@ -1208,6 +1208,9 @@ export default function ChatScreen() {
   // said "Send not confirmed yet" with nothing on screen to explain it.
   const composerSendPendingEcho = acceptedComposerMessages.some((message) => !message.settled);
   const heldDeliveryNotice = heldDelivery?.notice ?? null;
+  // Passes the three inputs rather than the `chatViewVisible` computed above:
+  // a boolean handed in could be hardwired, and was. Same arguments, same
+  // render, same pure helper, so the two calls cannot disagree.
   const composerFooterStateValue = composerFooterState({
     activityLabel,
     activityLabelShimmer,

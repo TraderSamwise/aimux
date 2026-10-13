@@ -107,11 +107,6 @@ describe("a send is confirmed in every view mode", () => {
   // the agent's own terminal. It has to show in every mode.
   it("shows a held send in every mode, transcript or not", () => {
     for (const mode of AGENT_OUTPUT_VIEW_MODES) {
-      const { chatViewVisible } = chatOutputPaneVisibility({
-        mode,
-        rawOutputAllowed: true,
-        width: WIDE,
-      });
       expect(
         composerFooterState({
           ...QUIET,
