@@ -181,3 +181,35 @@ describe("the composer footer is wired to the derived state", () => {
     expect(call).toContain("sending: sendBusy || composerAwaitingAck");
   });
 });
+
+/**
+ * The pre-send size check's WIRING, which no test can execute.
+ *
+ * Same limitation as the footer below: `app/` has no render environment, so
+ * nothing can mount this screen and attempt a send. `attachment-limits.test.ts`
+ * covers the decision and `attachment-limits.cross-surface.test.ts` pins the
+ * number to the project service's own constant; this only catches the check
+ * being removed or moved after the upload loop. An edit that keeps these
+ * strings and changes the behaviour passes. Queued as 947602-129.
+ */
+describe("attachments are checked before anything is uploaded", () => {
+  it("runs the check before the send is marked busy", () => {
+    const source = agentChatScreenSource();
+    const checkAt = source.indexOf("firstOversizedAttachment(attachments)");
+    expect(checkAt).toBeGreaterThanOrEqual(0);
+
+    // Before `sendBusyRef.current = true`, so a refused send leaves the draft
+    // and the attachments exactly as they were.
+    const busyAt = source.indexOf("sendBusyRef.current = true;");
+    expect(busyAt).toBeGreaterThan(checkAt);
+
+    // And before the upload loop, so a rejection cannot leave earlier files
+    // already stored on the service.
+    const uploadAt = source.indexOf("await uploadAttachment(");
+    expect(uploadAt).toBeGreaterThan(checkAt);
+  });
+
+  it("says which file and how large, not just that it failed", () => {
+    expect(agentChatScreenSource()).toContain("attachmentTooLargeMessage({");
+  });
+});

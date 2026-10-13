@@ -178,3 +178,84 @@ fn request<const N: usize, const M: usize>(
         body_chunks: chunks.into_iter().map(|chunk| chunk.to_vec()).collect(),
     }
 }
+
+/// An attachment may send what the attachment policy says it may.
+///
+/// `MAX_ATTACHMENT_BYTES` declares 10 MB and was unreachable: the flat 1 MiB
+/// body cap rejected an upload at about 786 KB of image -- under any phone
+/// photo -- so the limit that fired was not the limit the code stated. Nothing
+/// covered the cap on `/attachments` at all, because every other attachment
+/// test calls the route directly and skips the body path.
+#[test]
+fn an_attachment_body_is_measured_against_the_attachment_policy() {
+    let limit = aimux::project_service::attachments::attachment_upload_body_limit();
+    assert!(
+        limit > 1024 * 1024,
+        "the attachment budget has to exceed the flat body cap or nothing changed"
+    );
+
+    // A body the flat cap would have refused, and the attachment policy allows.
+    let mut routed = false;
+    let accepted = handle_project_service_http_request(
+        ProjectServiceHttpRequest {
+            method: "POST".into(),
+            path: routes::ATTACHMENTS.into(),
+            headers: BTreeMap::new(),
+            body_chunks: vec![body_of_size(2 * 1024 * 1024)],
+        },
+        |_method, _path, _body| {
+            routed = true;
+            ProjectServiceDispatchResponse {
+                status: 200,
+                body: json!({ "ok": true }),
+                bytes: None,
+                content_type: None,
+                stream: None,
+            }
+        },
+    );
+    assert_ne!(
+        accepted.status, 413,
+        "a 2 MiB attachment body must not be refused"
+    );
+    assert!(
+        routed,
+        "it has to reach the route, not stop at the body cap"
+    );
+
+    // And past the policy it is still refused.
+    let oversized = handle_project_service_http_request(
+        ProjectServiceHttpRequest {
+            method: "POST".into(),
+            path: routes::ATTACHMENTS.into(),
+            headers: BTreeMap::new(),
+            body_chunks: vec![vec![b'x'; limit + 1]],
+        },
+        |_method, _path, _body| panic!("an oversized attachment body should not route"),
+    );
+    assert_eq!(oversized.status, 413);
+
+    // A route that carries no attachment keeps the smaller cap, so raising one
+    // budget did not raise every budget.
+    let other = handle_project_service_http_request(
+        ProjectServiceHttpRequest {
+            method: "POST".into(),
+            path: routes::runtime::SET_STATUS.into(),
+            headers: BTreeMap::new(),
+            body_chunks: vec![vec![b'x'; 1024 * 1024 + 1]],
+        },
+        |_method, _path, _body| panic!("oversized body should not route"),
+    );
+    assert_eq!(other.status, 413);
+}
+
+/// A syntactically valid JSON body of roughly `bytes` bytes.
+fn body_of_size(bytes: usize) -> Vec<u8> {
+    let prefix = br#"{"kind":"image","filename":"a.png","mimeType":"image/png","dataBase64":""#;
+    let suffix = br#""}"#;
+    let padding = bytes.saturating_sub(prefix.len() + suffix.len());
+    let mut body = prefix.to_vec();
+    body.extend(std::iter::repeat_n(b'A', padding));
+    body.extend_from_slice(suffix);
+    body
+}

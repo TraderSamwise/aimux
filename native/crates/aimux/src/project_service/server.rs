@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use super::dispatcher::ProjectServiceDispatchResponse;
 use super::http::{
-    MAX_BODY_BYTES, PreparedProjectServiceResponse, ProjectServiceBodyError,
+    PreparedProjectServiceResponse, ProjectServiceBodyError, body_limit_for_route,
     prepare_project_service_bytes_response, prepare_project_service_empty_response,
     prepare_project_service_json_response, prepare_project_service_sse_response,
     project_service_cors_headers, read_json_body_limited, reject_project_service_cors_response,
@@ -36,7 +36,7 @@ where
     let body = if method_reads_json_body(&request.method) {
         match read_json_body_limited(
             request.body_chunks.iter().map(Vec::as_slice),
-            MAX_BODY_BYTES,
+            body_limit_for_route(&request.method, &request.path),
         ) {
             Ok(value) => Some(value),
             Err(ProjectServiceBodyError::TooLarge(error)) => {
