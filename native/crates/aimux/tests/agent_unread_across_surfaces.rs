@@ -75,6 +75,22 @@ fn topology(project_root: &str) -> Value {
     .expect("topology")
 }
 
+/// A sortable instant per index.
+///
+/// These fixtures run to 150 threads, and `"00:0{}"` produced `00:0154:00`
+/// past index 5 -- malformed, and no longer ordered, which is what
+/// `summarize_notification_stats` picks `latestUnread` by. Minutes roll into
+/// hours so the whole range stays a real, increasing timestamp.
+fn fixture_instant(index: usize, seconds: u32) -> String {
+    let minutes = 4 + index;
+    format!(
+        "2026-09-05T{:02}:{:02}:{:02}.000Z",
+        minutes / 60,
+        minutes % 60,
+        seconds
+    )
+}
+
 /// `count` notification-tagged threads the agent has not read.
 fn exchange(count: usize) -> Value {
     let threads = (0..count)
@@ -85,7 +101,7 @@ fn exchange(count: usize) -> Value {
                 "kind": "conversation",
                 "status": "open",
                 "createdAt": "2026-09-05T00:02:00.000Z",
-                "updatedAt": format!("2026-09-05T00:0{}:00.000Z", 4 + index),
+                "updatedAt": fixture_instant(index, 0),
                 "participants": ["aimux", SESSION],
                 "unreadBy": [SESSION],
                 "tags": ["notification"],
@@ -216,7 +232,7 @@ fn needs_input_exchange(count: usize) -> Value {
                 "threadId": format!("thread-notification-{index}"),
                 "author": "aimux",
                 "body": "codex-live is waiting on you",
-                "ts": format!("2026-09-05T00:0{}:30.000Z", 4 + index),
+                "ts": fixture_instant(index, 30),
                 "metadata": { "kind": "needs_input" },
             })
         })
@@ -395,4 +411,23 @@ fn past_ninety_nine_every_surface_caps_the_same_way() {
         hint.contains(" unread"),
         "the statusline sniff still matches"
     );
+}
+
+/// The newest unread is the one the surfaces quote.
+///
+/// `summarize_notification_stats` picks `latestUnread` by comparing
+/// `updatedAt` as text, so a fixture whose timestamps stopped being ordered --
+/// `00:0154:00` past index 5, before `fixture_instant` -- silently made this
+/// arbitrary. Nothing asserted it, so the malformed range went unnoticed.
+#[test]
+fn the_latest_unread_is_the_newest_thread() {
+    for count in [3usize, 7, 150] {
+        let state = desktop_state("/repo", &exchange(count), None);
+        let latest = &state["sessions"][0]["semantic"]["notifications"]["latestUnread"];
+        assert_eq!(
+            latest["threadId"],
+            json!(format!("thread-notification-{}", count - 1)),
+            "the last thread is the newest for {count}"
+        );
+    }
 }
