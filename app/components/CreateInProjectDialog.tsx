@@ -105,7 +105,11 @@ export function CreateInProjectDialog({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ name: string; path: string } | null>(null);
+  const [created, setCreated] = useState<{
+    name: string;
+    path: string;
+    alreadyUnderway: boolean;
+  } | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
@@ -167,7 +171,11 @@ export function CreateInProjectDialog({
       // The worktree you just made is also the one you are about to put
       // something in.
       const createdPath = response.path ?? null;
-      setCreated(createdPath ? { name: trimmedName, path: createdPath } : null);
+      // `creating` means a create for this path was ALREADY in flight and the
+      // route answered idempotently -- a 200 for something it did not do.
+      // Saying "Created" there claims someone else's work as this tap's.
+      const alreadyUnderway = response.status === "creating";
+      setCreated(createdPath ? { name: trimmedName, path: createdPath, alreadyUnderway } : null);
       setName("");
       setWorktreePath(createdPath);
       setKind("agent");
@@ -281,8 +289,10 @@ export function CreateInProjectDialog({
 
           {created ? (
             <Text className="mt-4 text-[12px] text-muted-foreground">
-              Created {created.name}. It stays empty until something runs in it — launch an agent to
-              see it in the sidebar.
+              {created.alreadyUnderway
+                ? `${created.name} was already being created — this did not start a second one.`
+                : `Created ${created.name}.`}{" "}
+              It stays empty until something runs in it — launch an agent to see it in the sidebar.
             </Text>
           ) : null}
 
@@ -293,9 +303,12 @@ export function CreateInProjectDialog({
           ) : null}
 
           <View className="mt-5 flex-row justify-end gap-2">
-            {/* Never disabled: there is no request timeout, so a hung POST
-                would otherwise trap the dialog open with no way out but the
-                backdrop -- which the keyboard is sitting on. */}
+            {/* Never disabled. These are queued lifecycle routes with a long
+                timeout -- 120s to spawn, 180s to create a worktree -- so a
+                disabled Cancel meant minutes trapped behind a dialog whose
+                only other exit is the backdrop the keyboard sits on. It
+                abandons rather than cancels: the request carries on, and what
+                it created appears at the next poll. */}
             <Button variant="ghost" size="sm" onPress={onDismiss}>
               <Text className="text-sm text-foreground">Cancel</Text>
             </Button>

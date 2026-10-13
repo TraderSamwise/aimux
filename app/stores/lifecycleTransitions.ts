@@ -10,6 +10,7 @@ import type {
   DesktopSession,
   DesktopState,
   DesktopWorktree,
+  DesktopWorktreeGroup,
 } from "@/lib/desktop-state";
 
 export interface AppLifecycleTransitionRecord {
@@ -139,7 +140,104 @@ export function applyProjectLifecycleTransitionsToDesktopState(
     }
   }
 
-  return { ...state, sessions, services, worktrees };
+  // `worktreeGroups` as well, because that is what every app surface actually
+  // renders: `groupByWorktree` returns early from the server-composed groups
+  // and the regrouping path below it only runs for older payloads. Overlaying
+  // only `sessions`/`services`/`worktrees` meant every optimistic row was
+  // written and then displayed nowhere -- a create looked like nothing had
+  // happened until the next poll agreed.
+  const worktreeGroups = Array.isArray(state.worktreeGroups)
+    ? overlayWorktreeGroups(state.worktreeGroups, records)
+    : state.worktreeGroups;
+
+  return { ...state, sessions, services, worktrees, worktreeGroups };
+}
+
+/** Where an agent landed, with the main checkout spelled as the server spells it. */
+function groupMatchesPath(group: DesktopWorktreeGroup, path: string | undefined): boolean {
+  return (group.path ?? null) === (path ?? null);
+}
+
+function overlayWorktreeGroups(
+  groups: DesktopWorktreeGroup[],
+  records: AppLifecycleTransitionRecord[],
+): DesktopWorktreeGroup[] {
+  const next = groups.map((group) => ({ ...group, sessions: [...group.sessions] }));
+
+  for (const record of records) {
+    const { transition } = record;
+    if (!PROJECTABLE_PHASES.has(transition.phase)) continue;
+
+    if (transition.targetKind === "worktree") {
+      const path = record.worktreePath ?? transition.targetPath;
+      if (!path) continue;
+      const index = next.findIndex((group) => group.path === path);
+      if (shouldCreateOptimisticWorktree(transition.operation)) {
+        if (index >= 0) next[index] = { ...next[index], pending: true };
+        else {
+          const name =
+            record.worktreeName ?? transition.targetId ?? path.split(/[\\/]/).pop() ?? path;
+          next.push({
+            name,
+            path,
+            branch: name,
+            // Active, because it is being made: an "offline" worktree reads as
+            // one that failed rather than one on its way.
+            status: "active",
+            pending: true,
+            sessions: [],
+            services: [],
+          });
+        }
+      } else if (isRemovingWorktreeOperation(transition.operation) && index >= 0) {
+        next[index] = { ...next[index], removing: true };
+      }
+      continue;
+    }
+
+    if (transition.targetKind !== "agent") continue;
+    const sessionId = transition.targetId;
+    const pendingAction = agentPendingAction(transition.operation);
+    if (!sessionId || !pendingAction) continue;
+    const status = agentPendingStatus();
+    const existing = next.findIndex((group) =>
+      group.sessions.some((session) => session.id === sessionId),
+    );
+    if (existing >= 0) {
+      next[existing] = {
+        ...next[existing],
+        sessions: next[existing].sessions.map((session) =>
+          session.id === sessionId
+            ? { ...session, status, pendingAction, optimistic: true }
+            : session,
+        ),
+      };
+      continue;
+    }
+    if (!shouldCreateOptimisticAgent(transition.operation)) continue;
+    // A spawn names the worktree it was asked for; without a matching group the
+    // row would vanish rather than appear somewhere wrong.
+    const target = next.findIndex((group) => groupMatchesPath(group, record.worktreePath));
+    if (target < 0) continue;
+    next[target] = {
+      ...next[target],
+      sessions: [
+        ...next[target].sessions,
+        {
+          id: sessionId,
+          label: record.label ?? sessionId,
+          command: record.tool,
+          toolConfigKey: record.tool,
+          worktreePath: record.worktreePath,
+          status,
+          pendingAction,
+          optimistic: true,
+        },
+      ],
+    };
+  }
+
+  return next;
 }
 
 function overlayAgentTransition(
