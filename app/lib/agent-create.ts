@@ -54,6 +54,30 @@ export function creatableWorktreeChoices(groups: WorktreeBucket[]): AgentWorktre
 }
 
 /**
+ * The worktrees that can be removed.
+ *
+ * A different rule from `creatableWorktreeChoices`, not the same one with a
+ * filter on top: removal additionally requires the worktree to be empty, and
+ * it deliberately KEEPS one whose directory is gone -- that is a worktree you
+ * particularly want to be able to remove, while it is the last place you can
+ * launch an agent into.
+ */
+export function removableWorktreeChoices(groups: WorktreeBucket[]): AgentWorktreeChoice[] {
+  return groups
+    .filter(
+      (group) =>
+        !group.isMainCheckout &&
+        !group.isSupervisorLane &&
+        !group.pending &&
+        !group.removing &&
+        group.sessions.length === 0 &&
+        group.services.length === 0 &&
+        Boolean(group.path),
+    )
+    .map((group) => ({ key: group.key, label: group.name, path: group.path as string }));
+}
+
+/**
  * Whether a path is still one of the choices.
  *
  * A worktree can be removed while a form sits open, and sending its path would

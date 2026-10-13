@@ -8,6 +8,7 @@ import {
   canSubmitCreation,
   creatableWorktreeChoices,
   isSelectableWorktreePath,
+  removableWorktreeChoices,
   worktreeNameIsCreatable,
 } from "./agent-create";
 
@@ -57,6 +58,24 @@ describe("where a new agent can be launched", () => {
   });
 });
 
+describe("which worktrees can be removed", () => {
+  it("needs the worktree to be empty", () => {
+    const empty = bucket({ key: "a", name: "alpha" });
+    expect(removableWorktreeChoices([empty])).toHaveLength(1);
+    expect(removableWorktreeChoices([{ ...empty, sessions: [{ id: "s" } as never] }])).toEqual([]);
+    expect(removableWorktreeChoices([{ ...empty, services: [{ id: "v" } as never] }])).toEqual([]);
+  });
+
+  // The rule that makes this a different question from "where can an agent
+  // go": a worktree whose directory is gone is the one you most want to be
+  // able to remove, and the last place you would launch anything.
+  it("keeps a worktree whose directory is gone, where launching would not", () => {
+    const gone = bucket({ pathMissing: true });
+    expect(removableWorktreeChoices([gone])).toHaveLength(1);
+    expect(creatableWorktreeChoices([gone])).toEqual([]);
+  });
+});
+
 describe("what the route will accept as a worktree name", () => {
   it("needs a name that is not just space", () => {
     expect(worktreeNameIsCreatable("feat/thing")).toBe(true);
@@ -69,29 +88,37 @@ describe("what the route will accept as a worktree name", () => {
 });
 
 describe("what a creation changes", () => {
-  it("refreshes every list a new agent appears in", () => {
-    // Not just the worktree it landed in: an agent shows up in the agent list,
-    // the topology, the team and the coordination worklist too, and a
-    // creation that refreshes only one leaves the rest stale.
-    for (const view of ["agents", "topology", "team", "coordination-worklist", "worktrees"]) {
-      expect(AGENT_CREATION_REFRESH_VIEWS).toContain(view);
-    }
+  // Asserted as an exact set, not a subset: a `toContain` list let an entry be
+  // deleted and a bogus one added without anything failing, and a view key
+  // that does not exist refreshes nothing silently.
+  it("refreshes exactly the lists a new agent appears in", () => {
+    expect([...AGENT_CREATION_REFRESH_VIEWS].sort()).toEqual([
+      "agents",
+      "coordination-worklist",
+      "project-observability",
+      "team",
+      "topology",
+      "worktrees",
+    ]);
   });
 
   // A different set, not the same one. Sending the agent list for a worktree
   // left the library stale, which is how two surfaces showing the same project
   // started to disagree.
-  it("refreshes the lists a new worktree appears in, which are not the agent ones", () => {
-    for (const view of ["worktrees", "library", "graveyard"]) {
-      expect(WORKTREE_CREATION_REFRESH_VIEWS).toContain(view);
-    }
-    expect(WORKTREE_CREATION_REFRESH_VIEWS).not.toContain("agents");
-    expect(AGENT_CREATION_REFRESH_VIEWS).not.toContain("library");
+  it("refreshes exactly the lists a new worktree appears in", () => {
+    expect([...WORKTREE_CREATION_REFRESH_VIEWS].sort()).toEqual([
+      "graveyard",
+      "library",
+      "project-observability",
+      "topology",
+      "worktrees",
+    ]);
   });
 
-  it("offers the runtimes an agent can be", () => {
-    expect(AGENT_TOOL_CHOICES).toContain("claude");
-    expect(AGENT_TOOL_CHOICES).toContain("codex");
+  it("offers exactly the runtimes an agent can be", () => {
+    // Also an exact set: dropping one silently removes a chip from every
+    // surface at once, which is the cost of deriving it in one place.
+    expect([...AGENT_TOOL_CHOICES]).toEqual(["claude", "codex", "aider"]);
   });
 });
 

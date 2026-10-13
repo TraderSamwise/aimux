@@ -8,7 +8,11 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
 import { createWorktree, removeWorktree } from "@/lib/api";
-import { WORKTREE_CREATION_REFRESH_VIEWS, worktreeNameIsCreatable } from "@/lib/agent-create";
+import {
+  WORKTREE_CREATION_REFRESH_VIEWS,
+  removableWorktreeChoices,
+  worktreeNameIsCreatable,
+} from "@/lib/agent-create";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 import { isTransientRequestError } from "@/lib/request-errors";
@@ -43,21 +47,7 @@ export function WorktreeManagementPanel({
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
-  const removableWorktrees = useMemo(
-    () =>
-      groups
-        .filter(
-          (group) =>
-            !group.isMainCheckout &&
-            group.path &&
-            !group.pending &&
-            !group.removing &&
-            group.sessions.length === 0 &&
-            group.services.length === 0,
-        )
-        .map((group) => ({ key: group.key, label: group.name, path: group.path as string })),
-    [groups],
-  );
+  const removableWorktrees = useMemo(() => removableWorktreeChoices(groups), [groups]);
 
   async function runAction(action: WorktreeAction, fn: () => Promise<unknown>) {
     if (!endpoint || busyAction) return;

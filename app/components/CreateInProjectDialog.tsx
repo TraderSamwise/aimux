@@ -1,5 +1,13 @@
-import React, { useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import React, { useMemo, useRef, useState } from "react";
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from "react-native";
 import { useSetAtom } from "jotai";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -45,6 +53,7 @@ function ChoiceChip({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
+      accessibilityLabel={label}
       accessibilityState={{ selected: active }}
       className={cn(
         "rounded-md border px-3 py-2",
@@ -84,6 +93,11 @@ export function CreateInProjectDialog({
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  // A latch, not the state: `busy` is a closure that two taps 40ms apart both
+  // read as false, and the button is not the only trigger -- the name field
+  // submits on return as well. The Project screen's panel keeps refs for
+  // exactly this; dropping them here spawned two agents.
+  const inFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<string | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
@@ -101,7 +115,8 @@ export function CreateInProjectDialog({
   const canSubmit = canSubmitCreation({ kind, hasEndpoint: Boolean(endpoint), busy, name });
 
   async function submit() {
-    if (!endpoint || !canSubmit) return;
+    if (!endpoint || !canSubmit || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -142,26 +157,40 @@ export function CreateInProjectDialog({
       setWorktreePath(response.path ?? null);
       setKind("agent");
     } catch (e) {
-      // Shown verbatim: the route is the thing that knows a name is taken, and
-      // it names the path. A guess made here would be wrong in both
-      // directions.
-      if (!isTransientRequestError(e)) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
+      // Shown verbatim: the route is the thing that knows a name is taken,
+      // and it names the path. A guess made here would be wrong in both
+      // directions. A transient error still says SOMETHING -- swallowing it
+      // left the button back at "Launch agent" and the dialog open, which
+      // looks exactly like never having tapped it.
+      setError(
+        isTransientRequestError(e)
+          ? "Lost contact with the project host. Nothing was created — try again."
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
 
   return (
-    <Modal transparent visible animationType="fade" onRequestClose={onDismiss}>
+    <Modal transparent visible animationType="fade" statusBarTranslucent onRequestClose={onDismiss}>
       <Pressable
         onPress={onDismiss}
         style={StyleSheet.absoluteFill}
         className="bg-black/60"
         accessibilityLabel="Dismiss"
       />
-      <View className="flex-1 items-center justify-center p-6" pointerEvents="box-none">
+      {/* iOS Modals do not resize for the keyboard, and the worktree step
+          opens it immediately because the name is its only field -- without
+          this, both buttons sit under the keyboard on a small phone. */}
+      <KeyboardAvoidingView
+        className="flex-1 items-center justify-center p-6"
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        pointerEvents="box-none"
+      >
         <Card className="w-full max-w-sm p-5">
           <Text className="text-lg font-semibold text-foreground">Add to this project</Text>
 
@@ -249,7 +278,10 @@ export function CreateInProjectDialog({
           ) : null}
 
           <View className="mt-5 flex-row justify-end gap-2">
-            <Button variant="ghost" size="sm" onPress={onDismiss} disabled={busy}>
+            {/* Never disabled: there is no request timeout, so a hung POST
+                would otherwise trap the dialog open with no way out but the
+                backdrop -- which the keyboard is sitting on. */}
+            <Button variant="ghost" size="sm" onPress={onDismiss}>
               <Text className="text-sm text-foreground">Cancel</Text>
             </Button>
             <Button variant="outline" size="sm" disabled={!canSubmit} onPress={() => void submit()}>
@@ -265,7 +297,7 @@ export function CreateInProjectDialog({
             </Text>
           ) : null}
         </Card>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
