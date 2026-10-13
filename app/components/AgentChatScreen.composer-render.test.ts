@@ -126,3 +126,54 @@ describe("AgentChatScreen composer render contract", () => {
     expect(terminalSource).toContain("bottomInset: terminalGeometryRef.current.bottomInset");
   });
 });
+
+describe("sending shows the newest output in the pane it was sent from", () => {
+  // The terminal pane holds its rendered output back while the reader has
+  // scrolled up (`terminalVisibleOutputForLiveChange`), and
+  // `executeTerminalScrollCommand` drops any command that is not `initial` or
+  // `navigation` while unpinned. So sending from a scrolled-up terminal never
+  // showed the echo of your own message. The chat viewport had `showNewest`
+  // for exactly this; the terminal pane had no handle at all.
+  it("gives the terminal pane the same handle the chat viewport has", () => {
+    const terminalSource = componentSource(agentChatScreenSource(), "AgentTerminalOutputPane");
+    expect(terminalSource).toContain("useImperativeHandle");
+    expect(terminalSource).toContain("showNewest: showNewestTerminalOutput");
+
+    // Sliced to the handler's own body. Asserting against the whole component
+    // passed with the body gutted, because `setVisibleOutput(liveOutput)` also
+    // appears in the re-pin-on-reaching-end path further down.
+    const handlerStart = terminalSource.indexOf("const showNewestTerminalOutput = useCallback(");
+    expect(handlerStart).toBeGreaterThanOrEqual(0);
+    const handlerEnd = terminalSource.indexOf("useImperativeHandle", handlerStart);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+    const handlerSource = terminalSource.slice(handlerStart, handlerEnd);
+
+    // Re-pinning is what lets the dropped scroll command through, and
+    // releasing the frozen output is what makes the echo render at all.
+    // Without both, the handle does nothing.
+    expect(handlerSource).toContain("chatPolicyAfterNavigationFocus()");
+    expect(handlerSource).toContain("setVisibleOutput(liveOutput)");
+    expect(handlerSource).toContain("executeTerminalScrollCommand(");
+  });
+
+  it("asks both panes on send, because split view mounts both", () => {
+    const source = agentChatScreenSource();
+    const sendStart = source.indexOf("const handleSendMessage = useCallback(");
+    expect(sendStart).toBeGreaterThanOrEqual(0);
+    const sendEnd = source.indexOf("const handleSendPress = useCallback(", sendStart);
+    expect(sendEnd).toBeGreaterThan(sendStart);
+    const sendSource = source.slice(sendStart, sendEnd);
+
+    expect(sendSource).toContain("chatViewportRef.current?.showNewest()");
+    expect(sendSource).toContain("terminalViewportRef.current?.showNewest()");
+  });
+
+  it("passes the ref to the pane, or the handle is never attached", () => {
+    const source = agentChatScreenSource();
+    const mountStart = source.indexOf("<AgentTerminalOutputPane");
+    expect(mountStart).toBeGreaterThanOrEqual(0);
+    const mountEnd = source.indexOf("/>", mountStart);
+    expect(mountEnd).toBeGreaterThan(mountStart);
+    expect(source.slice(mountStart, mountEnd)).toContain("ref={terminalViewportRef}");
+  });
+});

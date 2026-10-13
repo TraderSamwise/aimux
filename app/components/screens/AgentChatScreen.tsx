@@ -667,6 +667,7 @@ export default function ChatScreen() {
   const sendBusyRef = useRef(false);
   const composerInputRef = useRef<TextInput | null>(null);
   const chatViewportRef = useRef<ChatSessionViewportHandle | null>(null);
+  const terminalViewportRef = useRef<ChatSessionViewportHandle | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
   const composerFocusedRef = useRef(false);
   const screenFocusedRef = useRef(false);
@@ -1337,7 +1338,12 @@ export default function ChatScreen() {
       const baselineUserMessageCount = userMessageCountRef.current;
       const baselineParsedMessageCount = parsedMessageCountRef.current;
       const baselineParsedUserMessageCount = parsedUserMessageCountRef.current;
+      // Whichever pane is on screen. Only the mounted one has a ref, and in
+      // split view both are and both should move: sending is an explicit ask
+      // to see what happens next, which is why it overrides the freeze that
+      // holds output back while a reader has scrolled up.
       chatViewportRef.current?.showNewest();
+      terminalViewportRef.current?.showNewest();
       setSendBusy(true);
       setSendError(null);
       setHeldDeliveryNotice(null);
@@ -2777,6 +2783,7 @@ export default function ChatScreen() {
                 {terminalViewVisible ? (
                   <View className="flex-1 bg-background" style={{ minWidth: 0 }}>
                     <AgentTerminalOutputPane
+                      ref={terminalViewportRef}
                       bottomContentInset={chatBottomContentReserve}
                       dividerWidth={chatDividerWidth}
                       keyboardVisible={keyboardVisible}
@@ -2985,263 +2992,292 @@ type AgentTerminalOutputPaneProps = {
   topContentInset: number;
 };
 
-const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
-  bottomContentInset,
-  dividerWidth,
-  keyboardVisible,
-  onChromeVisibleChange,
-  agentKey,
-  topContentInset,
-}: AgentTerminalOutputPaneProps) {
-  const outputPlain = useAtomValue(outputBufferFamily(agentKey));
-  const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
-  const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
-  const scrollRef = useRef<ChatScrollHandle | null>(null);
-  const output = outputAnsi || outputPlain;
-  const outputTail = useMemo(
-    () => output.replace(/\r/g, "").split("\n").slice(-TERMINAL_OUTPUT_MAX_LINES).join("\n"),
-    [output],
-  );
-  const liveLines = useMemo(
-    () =>
-      formatTerminalOutputForDisplay(outputTail, {
-        dividerWidth: Math.max(48, dividerWidth * 2),
-      }),
-    [dividerWidth, outputTail],
-  );
-  const liveOutput = useMemo(
-    () =>
-      terminalVisibleOutputForPinned({
-        lines: liveLines,
-        outputAvailable,
-        outputText: outputTail,
-        sessionKey: agentKey,
-      }),
-    [liveLines, outputAvailable, outputTail, agentKey],
-  );
-  const [visibleOutput, setVisibleOutput] = useState(liveOutput);
-  const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
-  const terminalScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
-  const terminalScrollFrameRef = useRef<number | null>(null);
-  const terminalInitialLayoutKeyRef = useRef<string | null>(null);
-  // `scrollToEnd` targets `contentHeight - viewportHeight` and knows nothing
-  // about the keyboard's contentInset, so with the keyboard up it lands short by
-  // exactly the inset and the newest output stays behind it. Track the geometry
-  // and scroll to the offset that really shows the last line.
-  const terminalGeometryRef = useRef<ChatScrollMetrics>({
-    bottomInset: 0,
-    contentHeight: 0,
-    offsetY: 0,
-    viewportHeight: 0,
-  });
-  const extraContentPadding = useSharedValue(bottomContentInset);
-  const visibleLines = visibleOutput.sessionKey === agentKey ? visibleOutput.lines : liveLines;
-  const visibleOutputText =
-    visibleOutput.sessionKey === agentKey ? visibleOutput.outputText : outputTail;
-  const visibleOutputAvailable =
-    visibleOutput.sessionKey === agentKey ? visibleOutput.outputAvailable : outputAvailable;
-  const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
+const AgentTerminalOutputPane = React.memo(
+  React.forwardRef<ChatSessionViewportHandle, AgentTerminalOutputPaneProps>(
+    function AgentTerminalOutputPane(
+      {
+        bottomContentInset,
+        dividerWidth,
+        keyboardVisible,
+        onChromeVisibleChange,
+        agentKey,
+        topContentInset,
+      },
+      ref,
+    ) {
+      const outputPlain = useAtomValue(outputBufferFamily(agentKey));
+      const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
+      const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
+      const scrollRef = useRef<ChatScrollHandle | null>(null);
+      const output = outputAnsi || outputPlain;
+      const outputTail = useMemo(
+        () => output.replace(/\r/g, "").split("\n").slice(-TERMINAL_OUTPUT_MAX_LINES).join("\n"),
+        [output],
+      );
+      const liveLines = useMemo(
+        () =>
+          formatTerminalOutputForDisplay(outputTail, {
+            dividerWidth: Math.max(48, dividerWidth * 2),
+          }),
+        [dividerWidth, outputTail],
+      );
+      const liveOutput = useMemo(
+        () =>
+          terminalVisibleOutputForPinned({
+            lines: liveLines,
+            outputAvailable,
+            outputText: outputTail,
+            sessionKey: agentKey,
+          }),
+        [liveLines, outputAvailable, outputTail, agentKey],
+      );
+      const [visibleOutput, setVisibleOutput] = useState(liveOutput);
+      const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+      const terminalScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
+      const terminalScrollFrameRef = useRef<number | null>(null);
+      const terminalInitialLayoutKeyRef = useRef<string | null>(null);
+      // `scrollToEnd` targets `contentHeight - viewportHeight` and knows nothing
+      // about the keyboard's contentInset, so with the keyboard up it lands short by
+      // exactly the inset and the newest output stays behind it. Track the geometry
+      // and scroll to the offset that really shows the last line.
+      const terminalGeometryRef = useRef<ChatScrollMetrics>({
+        bottomInset: 0,
+        contentHeight: 0,
+        offsetY: 0,
+        viewportHeight: 0,
+      });
+      const extraContentPadding = useSharedValue(bottomContentInset);
+      const visibleLines = visibleOutput.sessionKey === agentKey ? visibleOutput.lines : liveLines;
+      const visibleOutputText =
+        visibleOutput.sessionKey === agentKey ? visibleOutput.outputText : outputTail;
+      const visibleOutputAvailable =
+        visibleOutput.sessionKey === agentKey ? visibleOutput.outputAvailable : outputAvailable;
+      const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
 
-  const cancelPendingTerminalScroll = useCallback(() => {
-    if (terminalScrollFrameRef.current === null) return;
-    cancelAnimationFrame(terminalScrollFrameRef.current);
-    terminalScrollFrameRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    return cancelPendingTerminalScroll;
-  }, [cancelPendingTerminalScroll]);
-
-  useEffect(() => {
-    extraContentPadding.value = bottomContentInset;
-  }, [bottomContentInset, extraContentPadding]);
-
-  const executeTerminalScrollCommand = useCallback(
-    (command: ChatScrollCommand) => {
-      if (command.kind === "none") return;
-      cancelPendingTerminalScroll();
-      terminalScrollFrameRef.current = requestAnimationFrame(() => {
+      const cancelPendingTerminalScroll = useCallback(() => {
+        if (terminalScrollFrameRef.current === null) return;
+        cancelAnimationFrame(terminalScrollFrameRef.current);
         terminalScrollFrameRef.current = null;
-        if (
-          command.reason !== "initial" &&
-          command.reason !== "navigation" &&
-          terminalScrollPolicyRef.current.intent !== "pinned"
-        ) {
-          return;
-        }
-        const target = chatScrollTargetForEnd(terminalGeometryRef.current);
-        if (target > 0) {
-          scrollRef.current?.scrollTo({ animated: command.animated, y: target });
-        } else {
-          scrollRef.current?.scrollToEnd({ animated: command.animated });
-        }
-      });
-    },
-    [cancelPendingTerminalScroll],
-  );
+      }, []);
 
-  useEffect(() => {
-    terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
-    terminalScrollChromeRef.current = createChatScrollChromeState();
-    terminalInitialLayoutKeyRef.current = null;
-    onChromeVisibleChange(true);
-    executeTerminalScrollCommand(chatCommandForNavigationFocus());
-  }, [executeTerminalScrollCommand, onChromeVisibleChange, agentKey]);
+      useEffect(() => {
+        return cancelPendingTerminalScroll;
+      }, [cancelPendingTerminalScroll]);
 
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    executeTerminalScrollCommand(chatCommandForKeyboardChange(terminalScrollPolicyRef.current));
-  }, [executeTerminalScrollCommand, keyboardVisible]);
+      useEffect(() => {
+        extraContentPadding.value = bottomContentInset;
+      }, [bottomContentInset, extraContentPadding]);
 
-  useEffect(() => {
-    const next = terminalVisibleOutputForLiveChange(visibleOutput, {
-      intent: terminalScrollPolicyRef.current.intent,
-      liveOutput,
-    });
-    if (next !== visibleOutput) setVisibleOutput(next);
-  }, [liveOutput, visibleOutput]);
+      const executeTerminalScrollCommand = useCallback(
+        (command: ChatScrollCommand) => {
+          if (command.kind === "none") return;
+          cancelPendingTerminalScroll();
+          terminalScrollFrameRef.current = requestAnimationFrame(() => {
+            terminalScrollFrameRef.current = null;
+            if (
+              command.reason !== "initial" &&
+              command.reason !== "navigation" &&
+              terminalScrollPolicyRef.current.intent !== "pinned"
+            ) {
+              return;
+            }
+            const target = chatScrollTargetForEnd(terminalGeometryRef.current);
+            if (target > 0) {
+              scrollRef.current?.scrollTo({ animated: command.animated, y: target });
+            } else {
+              scrollRef.current?.scrollToEnd({ animated: command.animated });
+            }
+          });
+        },
+        [cancelPendingTerminalScroll],
+      );
 
-  const handleTerminalLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      terminalGeometryRef.current = {
-        ...terminalGeometryRef.current,
-        viewportHeight: event.nativeEvent.layout.height,
-      };
-      if (terminalInitialLayoutKeyRef.current !== agentKey) {
-        terminalInitialLayoutKeyRef.current = agentKey;
-        executeTerminalScrollCommand(chatCommandForInitialLayout());
-        return;
-      }
-      executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
-    },
-    [executeTerminalScrollCommand, agentKey],
-  );
-
-  const handleTerminalContentSizeChange = useCallback(
-    (_contentWidth: number, contentHeight: number) => {
-      terminalGeometryRef.current = { ...terminalGeometryRef.current, contentHeight };
-      executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
-    },
-    [executeTerminalScrollCommand],
-  );
-
-  // Android does not report the keyboard-driven inset in the scroll event, so
-  // the library hands it over here instead.
-  const handleTerminalContentInsetChange = useCallback((insets: { bottom: number }) => {
-    terminalGeometryRef.current = {
-      ...terminalGeometryRef.current,
-      bottomInset: insets.bottom,
-    };
-  }, []);
-
-  const handleTerminalScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const metrics: ChatScrollMetrics = {
-        bottomInset: terminalGeometryRef.current.bottomInset,
-        contentHeight: event.nativeEvent.contentSize.height,
-        offsetY: event.nativeEvent.contentOffset.y,
-        viewportHeight: event.nativeEvent.layoutMeasurement.height,
-      };
-      terminalGeometryRef.current = metrics;
-      const previousIntent = terminalScrollPolicyRef.current.intent;
-      const nextScroll = terminalScrollStateAfterUserScroll({
-        chrome: terminalScrollChromeRef.current,
-        metrics,
-        policy: terminalScrollPolicyRef.current,
-      });
-      const nextPolicy = nextScroll.policy;
-      if (nextPolicy.intent === "reading") {
-        cancelPendingTerminalScroll();
-      }
-      terminalScrollPolicyRef.current = nextPolicy;
-      if (nextScroll.chrome !== terminalScrollChromeRef.current) {
-        terminalScrollChromeRef.current = nextScroll.chrome;
-        onChromeVisibleChange(nextScroll.chrome.visible);
-      }
-      if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+      // The terminal twin of the chat viewport's `showNewest`. The pane freezes
+      // its rendered output while the reader has scrolled up -- see
+      // `terminalVisibleOutputForLiveChange` -- so without this, sending from a
+      // scrolled-up terminal never showed the echo of your own message, and
+      // `executeTerminalScrollCommand` drops any command that is not `initial` or
+      // `navigation` while unpinned.
+      const showNewestTerminalOutput = useCallback(() => {
+        terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+        terminalScrollChromeRef.current = createChatScrollChromeState();
+        onChromeVisibleChange(true);
         setVisibleOutput(liveOutput);
-      }
-    },
-    [cancelPendingTerminalScroll, liveOutput, onChromeVisibleChange],
-  );
+        executeTerminalScrollCommand(chatCommandForNavigationFocus());
+      }, [executeTerminalScrollCommand, liveOutput, onChromeVisibleChange]);
 
-  const contentContainerStyle = {
-    flexGrow: 1,
-    justifyContent: "flex-end" as const,
-    paddingBottom: Platform.OS === "web" ? bottomContentInset + 18 : 18,
-    paddingHorizontal: 12,
-    paddingTop: topContentInset + 16,
-  };
-  const content = hasOutput ? (
-    <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
-      {visibleLines.map((line, lineIndex) => (
-        <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
-          {line.length === 0
-            ? "\u00a0"
-            : line.map((span, spanIndex) => (
-                <RNText key={spanIndex} style={span.style}>
-                  {span.text}
-                </RNText>
-              ))}
-        </RNText>
-      ))}
-    </View>
-  ) : (
-    <View className="items-center justify-center px-4 py-10">
-      <View
-        className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
-        style={{ minWidth: 220 }}
-      >
-        <ActivityIndicator size="small" color="#a1a1aa" />
-        <View className="min-w-0 shrink">
-          <Text className="text-sm text-muted-foreground">Loading output</Text>
-          <Text className="mt-1 text-xs text-muted-foreground">
-            Waiting for terminal output from the project service.
-          </Text>
+      useImperativeHandle(ref, () => ({ showNewest: showNewestTerminalOutput }), [
+        showNewestTerminalOutput,
+      ]);
+
+      useEffect(() => {
+        terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+        terminalScrollChromeRef.current = createChatScrollChromeState();
+        terminalInitialLayoutKeyRef.current = null;
+        onChromeVisibleChange(true);
+        executeTerminalScrollCommand(chatCommandForNavigationFocus());
+      }, [executeTerminalScrollCommand, onChromeVisibleChange, agentKey]);
+
+      useEffect(() => {
+        if (Platform.OS === "web") return;
+        executeTerminalScrollCommand(chatCommandForKeyboardChange(terminalScrollPolicyRef.current));
+      }, [executeTerminalScrollCommand, keyboardVisible]);
+
+      useEffect(() => {
+        const next = terminalVisibleOutputForLiveChange(visibleOutput, {
+          intent: terminalScrollPolicyRef.current.intent,
+          liveOutput,
+        });
+        if (next !== visibleOutput) setVisibleOutput(next);
+      }, [liveOutput, visibleOutput]);
+
+      const handleTerminalLayout = useCallback(
+        (event: LayoutChangeEvent) => {
+          terminalGeometryRef.current = {
+            ...terminalGeometryRef.current,
+            viewportHeight: event.nativeEvent.layout.height,
+          };
+          if (terminalInitialLayoutKeyRef.current !== agentKey) {
+            terminalInitialLayoutKeyRef.current = agentKey;
+            executeTerminalScrollCommand(chatCommandForInitialLayout());
+            return;
+          }
+          executeTerminalScrollCommand(
+            chatCommandForContentChange(terminalScrollPolicyRef.current),
+          );
+        },
+        [executeTerminalScrollCommand, agentKey],
+      );
+
+      const handleTerminalContentSizeChange = useCallback(
+        (_contentWidth: number, contentHeight: number) => {
+          terminalGeometryRef.current = { ...terminalGeometryRef.current, contentHeight };
+          executeTerminalScrollCommand(
+            chatCommandForContentChange(terminalScrollPolicyRef.current),
+          );
+        },
+        [executeTerminalScrollCommand],
+      );
+
+      // Android does not report the keyboard-driven inset in the scroll event, so
+      // the library hands it over here instead.
+      const handleTerminalContentInsetChange = useCallback((insets: { bottom: number }) => {
+        terminalGeometryRef.current = {
+          ...terminalGeometryRef.current,
+          bottomInset: insets.bottom,
+        };
+      }, []);
+
+      const handleTerminalScroll = useCallback(
+        (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+          const metrics: ChatScrollMetrics = {
+            bottomInset: terminalGeometryRef.current.bottomInset,
+            contentHeight: event.nativeEvent.contentSize.height,
+            offsetY: event.nativeEvent.contentOffset.y,
+            viewportHeight: event.nativeEvent.layoutMeasurement.height,
+          };
+          terminalGeometryRef.current = metrics;
+          const previousIntent = terminalScrollPolicyRef.current.intent;
+          const nextScroll = terminalScrollStateAfterUserScroll({
+            chrome: terminalScrollChromeRef.current,
+            metrics,
+            policy: terminalScrollPolicyRef.current,
+          });
+          const nextPolicy = nextScroll.policy;
+          if (nextPolicy.intent === "reading") {
+            cancelPendingTerminalScroll();
+          }
+          terminalScrollPolicyRef.current = nextPolicy;
+          if (nextScroll.chrome !== terminalScrollChromeRef.current) {
+            terminalScrollChromeRef.current = nextScroll.chrome;
+            onChromeVisibleChange(nextScroll.chrome.visible);
+          }
+          if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+            setVisibleOutput(liveOutput);
+          }
+        },
+        [cancelPendingTerminalScroll, liveOutput, onChromeVisibleChange],
+      );
+
+      const contentContainerStyle = {
+        flexGrow: 1,
+        justifyContent: "flex-end" as const,
+        paddingBottom: Platform.OS === "web" ? bottomContentInset + 18 : 18,
+        paddingHorizontal: 12,
+        paddingTop: topContentInset + 16,
+      };
+      const content = hasOutput ? (
+        <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
+          {visibleLines.map((line, lineIndex) => (
+            <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
+              {line.length === 0
+                ? "\u00a0"
+                : line.map((span, spanIndex) => (
+                    <RNText key={spanIndex} style={span.style}>
+                      {span.text}
+                    </RNText>
+                  ))}
+            </RNText>
+          ))}
         </View>
-      </View>
-    </View>
-  );
+      ) : (
+        <View className="items-center justify-center px-4 py-10">
+          <View
+            className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
+            style={{ minWidth: 220 }}
+          >
+            <ActivityIndicator size="small" color="#a1a1aa" />
+            <View className="min-w-0 shrink">
+              <Text className="text-sm text-muted-foreground">Loading output</Text>
+              <Text className="mt-1 text-xs text-muted-foreground">
+                Waiting for terminal output from the project service.
+              </Text>
+            </View>
+          </View>
+        </View>
+      );
 
-  if (Platform.OS !== "web") {
-    return (
-      <KeyboardChatScrollView
-        ref={scrollRef as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
-        className="flex-1 bg-background"
-        contentContainerStyle={contentContainerStyle}
-        extraContentPadding={extraContentPadding}
-        keyboardDismissMode="interactive"
-        keyboardLiftBehavior="whenAtEnd"
-        keyboardShouldPersistTaps="handled"
-        onContentInsetChange={handleTerminalContentInsetChange}
-        onContentSizeChange={handleTerminalContentSizeChange}
-        onLayout={handleTerminalLayout}
-        onScroll={handleTerminalScroll}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator
-      >
-        {content}
-      </KeyboardChatScrollView>
-    );
-  }
+      if (Platform.OS !== "web") {
+        return (
+          <KeyboardChatScrollView
+            ref={scrollRef as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
+            className="flex-1 bg-background"
+            contentContainerStyle={contentContainerStyle}
+            extraContentPadding={extraContentPadding}
+            keyboardDismissMode="interactive"
+            keyboardLiftBehavior="whenAtEnd"
+            keyboardShouldPersistTaps="handled"
+            onContentInsetChange={handleTerminalContentInsetChange}
+            onContentSizeChange={handleTerminalContentSizeChange}
+            onLayout={handleTerminalLayout}
+            onScroll={handleTerminalScroll}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator
+          >
+            {content}
+          </KeyboardChatScrollView>
+        );
+      }
 
-  return (
-    <ScrollView
-      ref={scrollRef as React.Ref<ScrollView>}
-      className="flex-1 bg-background"
-      contentContainerStyle={contentContainerStyle}
-      keyboardDismissMode="on-drag"
-      keyboardShouldPersistTaps="handled"
-      onContentSizeChange={handleTerminalContentSizeChange}
-      onLayout={handleTerminalLayout}
-      onScroll={handleTerminalScroll}
-      scrollEventThrottle={16}
-      showsVerticalScrollIndicator
-    >
-      {content}
-    </ScrollView>
-  );
-});
+      return (
+        <ScrollView
+          ref={scrollRef as React.Ref<ScrollView>}
+          className="flex-1 bg-background"
+          contentContainerStyle={contentContainerStyle}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={handleTerminalContentSizeChange}
+          onLayout={handleTerminalLayout}
+          onScroll={handleTerminalScroll}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator
+        >
+          {content}
+        </ScrollView>
+      );
+    },
+  ),
+);
 AgentTerminalOutputPane.displayName = "AgentTerminalOutputPane";
 
 type AgentChatSessionViewportProps = {
