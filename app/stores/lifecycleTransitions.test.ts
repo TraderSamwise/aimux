@@ -381,3 +381,77 @@ describe("project lifecycle transition projection", () => {
     ]);
   });
 });
+
+// `groupByWorktree` returns early from the server-composed `worktreeGroups`,
+// and that is what every app surface renders -- so an overlay that wrote only
+// `sessions`/`worktrees` was write-only: the "creating" row existed in state
+// and appeared on no screen. Found reviewing the sidebar's create dialog, where
+// it looked like pressing the button had done nothing.
+describe("the optimistic rows reach the groups the app actually renders", () => {
+  function withGroups(): DesktopState {
+    return desktopState({
+      worktreeGroups: [
+        { name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] },
+        {
+          name: "feature",
+          branch: "feature",
+          path: "/repo/.aimux/worktrees/feature",
+          status: "active",
+          sessions: [],
+          services: [],
+        },
+      ],
+    });
+  }
+
+  it("puts a spawning agent in the worktree it was asked for", () => {
+    const projected = applyProjectLifecycleTransitionsToDesktopState(withGroups(), [
+      {
+        transition: transition("agent.spawn", "agent-9", "agent"),
+        label: "agent-9",
+        tool: "claude",
+        worktreePath: "/repo/.aimux/worktrees/feature",
+      },
+    ]);
+    const groups = projected?.worktreeGroups ?? [];
+    expect(groups[0].sessions).toHaveLength(0);
+    expect(groups[1].sessions).toHaveLength(1);
+    expect(groups[1].sessions[0]).toMatchObject({ id: "agent-9", optimistic: true });
+  });
+
+  it("puts one with no worktree in the main checkout", () => {
+    const projected = applyProjectLifecycleTransitionsToDesktopState(withGroups(), [
+      { transition: transition("agent.spawn", "agent-main", "agent"), tool: "claude" },
+    ]);
+    const groups = projected?.worktreeGroups ?? [];
+    expect(groups[0].sessions.map((session) => session.id)).toEqual(["agent-main"]);
+  });
+
+  it("adds a worktree being created as a pending group", () => {
+    const projected = applyProjectLifecycleTransitionsToDesktopState(withGroups(), [
+      {
+        transition: transition(
+          "worktree.create",
+          "new-wt",
+          "worktree",
+          "/repo/.aimux/worktrees/new-wt",
+        ),
+        worktreeName: "new-wt",
+        worktreePath: "/repo/.aimux/worktrees/new-wt",
+      },
+    ]);
+    const made = (projected?.worktreeGroups ?? []).find(
+      (group) => group.path === "/repo/.aimux/worktrees/new-wt",
+    );
+    expect(made).toMatchObject({ name: "new-wt", pending: true });
+  });
+
+  // Older payloads have no groups and are regrouped client-side, so there is
+  // nothing to overlay and nothing to invent.
+  it("leaves a payload without groups alone", () => {
+    const projected = applyProjectLifecycleTransitionsToDesktopState(desktopState(), [
+      { transition: transition("agent.spawn", "agent-1", "agent"), tool: "claude" },
+    ]);
+    expect(projected?.worktreeGroups).toBeUndefined();
+  });
+});
