@@ -567,6 +567,10 @@ fn footer_chips_render_in_tmux_window_order() {
 /// fewer.
 #[test]
 fn footer_chips_are_not_capped_at_five() {
+    // The hints are synthetic labels, chosen only to be distinguishable per
+    // window -- `600 unread` is not a hint the service can derive, since
+    // `compactHint` caps at `99+`. This gate is about which chips survive a
+    // narrow line, not about how a count is written.
     fn agent(window_index: i64) -> Value {
         json!({
             "id": format!("claude-{window_index}"),
@@ -624,4 +628,41 @@ fn footer_chips_are_not_capped_at_five() {
         narrow.contains('\u{2039}') || narrow.contains('\u{203a}'),
         "hidden chips must be marked: {narrow}"
     );
+}
+
+/// The top line caps the unread count too.
+///
+/// `render_active_metadata` renders this number when the active agent's status
+/// label is idle, and it was the one surface of the four that
+/// `capped_count_label` was introduced for with no gate on it -- reverting it
+/// to `format!("{unread_count} unread")` passed everything, so the top line
+/// said "150 unread" while every other surface said "99+".
+#[test]
+fn the_top_line_caps_the_unread_count_like_the_others() {
+    let snapshot = json!({
+        "sessions": [{
+            "id": "codex-live",
+            "kind": "agent",
+            "command": "codex",
+            "windowName": "codex",
+            "tmuxWindowId": "@1",
+            "worktreePath": "/repo",
+            "notificationUnreadCount": 150,
+            "semantic": {
+                "user": { "label": "idle", "attention": "none" },
+                "notifications": { "unreadCount": 150 },
+                "presentation": { "statusLabel": "idle", "compactHint": null, "attentionScore": 2 }
+            }
+        }],
+        "metadata": { "codex-live": { "derived": {} } },
+    });
+    let rendered = aimux::project_service::statusline::render_tmux_statusline_contract(&json!({
+        "data": snapshot,
+        "projectRoot": "/repo",
+        "line": "top",
+        "options": { "currentPath": "/repo", "currentWindowId": "@1", "width": 400 },
+    }));
+    let text = rendered["text"].as_str().expect("statusline text");
+    assert!(text.contains("99+ unread"), "got {text:?}");
+    assert!(!text.contains("150 unread"), "got {text:?}");
 }

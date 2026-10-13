@@ -18,6 +18,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
 import { formatServiceRecency, formatSessionRecency } from "@/lib/recency";
+import { unreadBadgeLabel } from "@/lib/unread-badge";
 import {
   formatPreviewCaptureUnavailable,
   summarizeOperationFailures,
@@ -120,16 +121,17 @@ function StatusCell({ state }: { state: AgentState }) {
   );
 }
 
-// The count the footer chip renders as "N unread", from the same derived field.
-// Rendering it here rather than recomputing it is what keeps the two surfaces
-// showing one number.
+// The count the footer chip renders as "N unread" and the TUI row badges, from
+// the same derived field. Rendering it here rather than recomputing it is what
+// keeps the surfaces showing one number, and `unreadBadgeLabel` is how it is
+// written -- the cap was a literal here and a different rule in two other
+// places.
 function UnreadBadge({ count }: { count?: number }) {
-  if (!count || count < 1) return null;
+  const label = unreadBadgeLabel(count);
+  if (label === null) return null;
   return (
     <View className="rounded-full bg-[#e0b341] px-1.5 py-[1px]">
-      <Text className="font-mono text-[10px] font-bold text-[#1a1c22]">
-        {count > 99 ? "99+" : String(count)}
-      </Text>
+      <Text className="font-mono text-[10px] font-bold text-[#1a1c22]">{label}</Text>
     </View>
   );
 }

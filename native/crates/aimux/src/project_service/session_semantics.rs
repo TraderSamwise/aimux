@@ -355,24 +355,41 @@ fn compact_hint(input: CompactHintInput<'_>) -> Value {
         }
         _ if integer_field(input.notifications, "unreadCount") > 0 => Some(format!(
             "{} unread",
-            integer_field(input.notifications, "unreadCount").min(99)
+            capped_count_label(integer_field(input.notifications, "unreadCount"))
         )),
         _ if input.waiting_on_me_count > 0 => Some("on you".to_owned()),
         _ if input.blocked_count > 0 => Some("blocked task".to_owned()),
         _ if input.waiting_on_them_count > 0 => Some("on them".to_owned()),
-        _ if input.thread_unread_count > 0 => {
-            Some(format!("{} thread", input.thread_unread_count.min(99)))
-        }
-        _ if input.activity_new_count > 0 => {
-            Some(format!("{} new", input.activity_new_count.min(99)))
-        }
-        _ if input.pending_delivery_count > 0 => {
-            Some(format!("{} pending", input.pending_delivery_count.min(99)))
-        }
+        _ if input.thread_unread_count > 0 => Some(format!(
+            "{} thread",
+            capped_count_label(input.thread_unread_count)
+        )),
+        _ if input.activity_new_count > 0 => Some(format!(
+            "{} new",
+            capped_count_label(input.activity_new_count)
+        )),
+        _ if input.pending_delivery_count > 0 => Some(format!(
+            "{} pending",
+            capped_count_label(input.pending_delivery_count)
+        )),
         _ if input.has_active_task => Some("task".to_owned()),
         _ => None,
     };
     hint.map(Value::String).unwrap_or(Value::Null)
+}
+
+/// The published label for an unread count.
+///
+/// One rule, because four surfaces render this number: the TUI row badge, the
+/// app badge, `compactHint` below and the statusline's top line. `min(99)` was
+/// not a cap -- it rendered "99 unread" when there were 150, which states a
+/// wrong number rather than marking it as capped.
+pub fn capped_count_label(count: i64) -> String {
+    if count > 99 {
+        "99+".to_owned()
+    } else {
+        count.to_string()
+    }
 }
 
 fn positive(value: i64) -> i64 {

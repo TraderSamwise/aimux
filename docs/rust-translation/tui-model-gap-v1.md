@@ -90,7 +90,7 @@ Legend:
 | `workflowBlockedCount` | typed | `DashboardSession.workflow_blocked_count` |
 | `workflowFamilyCount` | typed | `DashboardSession.workflow_family_count` |
 | `notificationUnreadCount` | typed | `DashboardSession.notification_unread_count` |
-| `notificationNeedsInputUnreadCount` | typed | `DashboardSession.notification_needs_input_unread_count` |
+| `notificationNeedsInputUnreadCount` | raw | preserved in `DashboardSession.extra`; the typed field was removed when the row stopped subtracting it from the unread count, and the project service is the only reader left (`notificationStale`) |
 | `notificationStale` | typed | `DashboardSession.notification_stale` |
 | `backendSessionId` | raw | preserved in `DashboardSession.extra`; details renderer reads it after serializing to `Value` |
 | `restoreState` | raw | preserved in `DashboardSession.extra`; not typed, so restore affordances are not first-class |

@@ -5,17 +5,44 @@ Captured from the Node dashboard renderer and used as literal parity gates.
 ## Recorded divergences
 
 `dashboard-node-full-frame-v1.txt` and `dashboard-node-control-scribe-frame-v1.txt`
-were re-recorded on 2026-10-05 so the "8 pending" chip stops being red.
+were re-recorded on 2026-10-13 so the agent row stops carrying unlabelled
+numbers, and carries a bounded number of them.
 
-`pendingDeliveries` counts thread messages that have not arrived yet. Node drew
-that chip in the danger colour (`38;5;174`), beside the chips for things that
-genuinely went wrong, so a thread that was merely mid-delivery read as a thread
-that had failed. It is now the working colour (`38;5;80`), which is what the
-rest of this change gives every transient state.
+Node drew up to seven chips on a row. Two were unreadable: `N unseen`, and a
+`thread 8/0/5` triple whose three digits were unread / waiting on me / waiting
+on them with nothing on screen to say so. The unread notification count now
+sits in a badge beside the agent name, and the rest of these counts say what
+they are rather than printing a bare digit. Three of the four use the details
+pane's own wording -- `8 threads unread`, `8 pending`, `12 new activity`
+against its `Threads: 8 unread · … · 8 pending` and `New activity: 12`. The
+fourth does not: the row says `waiting on you` where the pane says `on me` and
+`compactHint` says `on you`, so that fact still has three spellings.
 
-Both frames differ by exactly those two chips. Nothing else changed, and this
-is a deliberate divergence from the Node capture.
+They are also capped at two per row, in priority order, with a single `›` for
+what did not fit. Seven chips pushed the next action and the headline off the
+end. What the row must not do is drop the rest in silence, which an earlier cut
+of this change did -- but the first fix for that, a `+N more` chip, cost nine
+cells to save the two that `8 pending` costs over it, took `label-claude-0`'s
+headline down to a bare `…`, and truncated to `+2 …` itself on a 100-column
+terminal. The glyph is the mark the statusline already uses for chips it could
+not fit, and the count it replaced was not something a reader could act on.
 
+Both frames differ by exactly two row lines each, under the normalisation
+`frame_content_only` applies to both sides. `label-claude-0` gains
+`8 threads unread` ahead of `8 pending` and a `›`, and `label-claude-1` leads
+with `waiting on you` followed by `8 threads unread` and a `›`; both headlines
+lose a few characters to that. `waiting on you` is read from the project
+service's own `waitingOnMeCount`, already the greater of the thread and
+coordination counts, where Node read the two raw fields separately and put a
+thread waiting on you in the middle digit of that triple.
+
+Note for anyone diffing these files rather than running the gate: every line
+changed, not two. The frames were re-recorded from a renderer that paints row
+by row, so each line gained an `\x1b[m\x1b[K` prefix and the leading `\x1b[2J`
+became `\x1b[H`. `frame_content_only` strips exactly those from both sides, so
+the gate still compares the two row lines above and nothing was lost -- but the
+raw diff looks like a whole-file rewrite. This is a deliberate divergence from
+the Node capture.
 
 `subscreen-node-library-frame-v1.txt` was re-recorded on 2026-10-05 so a
 transient footer note carries the same mark on a subscreen as it does on the

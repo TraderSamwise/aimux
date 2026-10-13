@@ -43,6 +43,8 @@ const COL_SELECT: usize = 2;
 const COL_DOT: usize = 2;
 const COL_INDEX: usize = 4;
 const COL_IDENTITY: usize = 16;
+/// How many activity chips a row carries before the rest is details-pane work.
+const ROW_CHIP_BUDGET: usize = 2;
 const COL_STATUS: usize = 14;
 const COL_TIME: usize = 16;
 
@@ -872,7 +874,7 @@ fn supervisor_session_row(
     let digit = digit.map(|digit| format!("{digit}.")).unwrap_or_default();
     let role = style(supervisor_role_label(session), Tone::Strong);
     let dot = format!("{} ", session_status_dot(session));
-    let identity = agent_identity(session);
+    let identity = identity_with_unread_badge(session, COL_IDENTITY);
     let status = session_status_cell(session, &derived_status_label(session));
     let time = session_time_text(session);
     let location = session
@@ -1021,8 +1023,8 @@ fn agent_row(
         .map(|digit| style(&format!("[{digit}]"), Tone::Muted))
         .unwrap_or_default();
     let dot = format!("{} ", session_status_dot(session));
-    let identity = agent_identity(session);
-    let identity_width = agent_identity_column_width(session, &identity);
+    let identity_width = agent_identity_column_width(session, &agent_identity(session));
+    let identity = identity_with_unread_badge(session, identity_width);
     let status = session_status_cell(session, &derived_status_label(session));
     let grid = grid_cols(&[
         Column {
@@ -1195,7 +1197,68 @@ fn service_row(service: &DashboardService, selected: bool, digit: Option<usize>)
     }
 }
 
-fn agent_identity(session: &DashboardSession) -> String {
+/// The unread count every surface renders.
+///
+/// Both spellings come from one `NotificationStats::unread_count`, so they
+/// agree; the greater is taken because every field in `semantic` is
+/// `#[serde(default)]`. Reading the nested one alone let a payload carrying a
+/// `semantic` block without `notifications` report zero unread, and an absent
+/// field is not a count of none.
+fn unread_count(session: &DashboardSession) -> usize {
+    let published = session
+        .semantic
+        .as_ref()
+        .map(|semantic| semantic.notifications.unread_count)
+        .unwrap_or(0);
+    published.max(session.notification_unread_count)
+}
+
+/// The app's unread badge: a filled count beside the agent name, nothing at
+/// zero, `99+` past two digits. Muted for an agent that is gone, or for a
+/// notice whose agent has since moved on.
+fn unread_badge(session: &DashboardSession) -> String {
+    let count = unread_count(session);
+    if count == 0 {
+        return String::new();
+    }
+    let label = crate::project_service::session_semantics::capped_count_label(count as i64);
+    let tone = if is_session_offline(session) || session.notification_stale {
+        Tone::Muted
+    } else {
+        Tone::Accent
+    };
+    pill(&label, tone)
+}
+
+/// The column keeps its width and the identity yields to the badge, which is
+/// what the app's row does and what keeps every row's columns lined up.
+///
+/// The parenthetical id yields first: it only disambiguates two agents of the
+/// same name, and losing it beats cutting the name down to `codex (liv`.
+fn identity_with_unread_badge(session: &DashboardSession, width: usize) -> String {
+    let (name, suffix) = agent_identity_parts(session);
+    let badge = unread_badge(session);
+    if badge.is_empty() {
+        return format!("{name}{suffix}");
+    }
+    // One plain cell is reserved after the badge: `cols` concatenates columns
+    // with no gap, and the status cell is itself a reverse-video pill, so a
+    // badge that filled the column merged with it into one highlighted run.
+    // Reserving the width is the whole fix -- `pad_visible` fills the cell --
+    // so there is no trailing space here to go with it.
+    let room = width.saturating_sub(visible_width(&badge) + 1);
+    let identity = format!("{name}{suffix}");
+    let identity = if visible_width(&identity) > room {
+        name
+    } else {
+        identity
+    };
+    format!("{}{badge}", truncate_ansi(&identity, room))
+}
+
+/// The name, and the parenthetical id that disambiguates it. Separate because
+/// the unread badge drops the parenthetical rather than truncate the name.
+fn agent_identity_parts(session: &DashboardSession) -> (String, String) {
     let label = crate::dashboard_model::agent_display_name(session);
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
@@ -1212,7 +1275,12 @@ fn agent_identity(session: &DashboardSession) -> String {
     } else {
         Tone::Text
     };
-    format!("{}{}", style(&label, weight), suffix)
+    (style(&label, weight), suffix)
+}
+
+fn agent_identity(session: &DashboardSession) -> String {
+    let (name, suffix) = agent_identity_parts(session);
+    format!("{name}{suffix}")
 }
 
 fn agent_identity_column_width(session: &DashboardSession, identity: &str) -> usize {
@@ -1448,77 +1516,114 @@ fn is_session_offline(session: &DashboardSession) -> bool {
         )
 }
 
-fn session_activity_chips(session: &DashboardSession) -> String {
-    let notification_unread = session
+/// Who is waiting on you, as the project service works it out.
+///
+/// `waitingOnMeCount` is already the greater of the thread and coordination
+/// counts. The row read the two raw fields separately, so a thread waiting on
+/// you was the middle digit of `thread 8/0/5` while a coordination one got a
+/// chip that said so.
+///
+/// Deliberately the one count here with NO fallback to its flat fields, unlike
+/// `unread_count` and the two below. Theirs fall back to a single raw field,
+/// which carries no rule; this one's flat equivalent is `max` of two fields,
+/// and spelling that out again is the copy AGENTS.md rules out. So a payload
+/// with no `semantic` block shows no `waiting on you` rather than a second
+/// opinion on what waiting means.
+fn waiting_on_me_count(session: &DashboardSession) -> usize {
+    session
         .semantic
         .as_ref()
-        .map(|semantic| semantic.notifications.unread_count)
-        .unwrap_or(session.notification_unread_count);
-    let activity_new = session
+        .map(|semantic| semantic.waiting_on_me_count)
+        .unwrap_or(0)
+}
+
+/// New output the user has not looked at. A different count from the unread
+/// badge: this one is agent output, cleared on view, and carries no
+/// notification at all.
+fn activity_new_count(session: &DashboardSession) -> usize {
+    let published = session
         .semantic
         .as_ref()
         .map(|semantic| semantic.activity_new_count)
-        .unwrap_or(session.unseen_count);
-    let thread_unread = session.thread_unread_count;
-    let waiting_on_me = session.thread_waiting_on_me_count;
-    let waiting_on_them = session.thread_waiting_on_them_count;
-    let thread_pending = session.thread_pending_count;
+        .unwrap_or(0);
+    published.max(session.unseen_count)
+}
+
+/// Unread messages on threads the agent takes part in. Disjoint from the
+/// unread badge by construction -- `summarize_thread_stats` skips every
+/// notification-tagged thread and `summarize_notification_stats` skips every
+/// thread that is not one -- so the badge cannot stand in for this.
+fn thread_unread_count(session: &DashboardSession) -> usize {
+    let published = session
+        .semantic
+        .as_ref()
+        .map(|semantic| semantic.thread_unread_count)
+        .unwrap_or(0);
+    published.max(session.thread_unread_count)
+}
+
+fn session_activity_chips(session: &DashboardSession) -> String {
     let offline = is_session_offline(session);
     let tone = |active| if offline { ChipTone::Muted } else { active };
-    let needs_input_unread = session.notification_needs_input_unread_count;
-    let state_conveys_needs_input = matches!(
-        session
-            .semantic
-            .as_ref()
-            .map(|semantic| semantic.user.label.as_str()),
-        Some("needs_input" | "needs_response")
-    );
-    let shown_unread = notification_unread.saturating_sub(if state_conveys_needs_input {
-        needs_input_unread.min(notification_unread)
-    } else {
-        0
-    });
+    let label = crate::project_service::session_semantics::capped_count_label;
     let mut chips = Vec::new();
-    if shown_unread > 0 {
-        chips.push(chip(
-            &format!("{} unread", shown_unread.min(99)),
-            if session.notification_stale {
-                ChipTone::Muted
-            } else {
-                tone(ChipTone::Work)
-            },
-        ));
-    }
-    if activity_new > 0 {
-        chips.push(chip(
-            &format!("{} unseen", activity_new.min(99)),
-            tone(ChipTone::Info),
-        ));
-    }
-    if thread_unread > 0 || waiting_on_me > 0 || waiting_on_them > 0 {
-        chips.push(chip(
-            &format!("thread {thread_unread}/{waiting_on_me}/{waiting_on_them}"),
-            ChipTone::Muted,
-        ));
-    }
-    if thread_pending > 0 {
-        chips.push(chip(
-            &format!("{thread_pending} pending"),
-            // Undelivered is in flight, not failed.
-            tone(ChipTone::Work),
-        ));
-    }
-    if session.workflow_on_me_count > 0 {
-        chips.push(chip("coordination on you", tone(ChipTone::Attention)));
+    // The badge beside the name carries the notification unread count. These
+    // are the other facts the row used to pack into `thread 8/0/5` and
+    // `N unseen` -- different counts, not the same one spelled twice, so they
+    // stay on the row. What changed is that each says what it is. Three of
+    // them use the details pane's wording; `waiting on you` does not -- the
+    // pane says `on me` and `compactHint` says `on you`.
+    if waiting_on_me_count(session) > 0 {
+        chips.push(chip("waiting on you", tone(ChipTone::Attention)));
     }
     if session.workflow_blocked_count > 0 {
         chips.push(chip("coordination blocked", tone(ChipTone::Danger)));
+    }
+    let thread_unread = thread_unread_count(session);
+    if thread_unread > 0 {
+        chips.push(chip(
+            &format!("{} threads unread", label(thread_unread as i64)),
+            tone(ChipTone::Work),
+        ));
+    }
+    let activity_new = activity_new_count(session);
+    if activity_new > 0 {
+        chips.push(chip(
+            &format!("{} new activity", label(activity_new as i64)),
+            tone(ChipTone::Info),
+        ));
+    }
+    if session.thread_pending_count > 0 {
+        chips.push(chip(
+            // Undelivered is in flight, not failed.
+            &format!("{} pending", label(session.thread_pending_count as i64)),
+            tone(ChipTone::Work),
+        ));
+    }
+    if session.thread_waiting_on_them_count > 0 {
+        chips.push(chip("waiting on them", ChipTone::Muted));
     }
     if session.workflow_family_count > 0 {
         chips.push(chip(
             &format!("coordination {}", session.workflow_family_count),
             ChipTone::Muted,
         ));
+    }
+    // Two, in the order above, and a mark if there were more. The row also has
+    // to hold the next action and the headline, and seven chips pushed both
+    // off the end. Dropping the rest in silence is the part that would be
+    // wrong, so the row says there is more without spending the width to say
+    // how much.
+    let hidden = chips.len() > ROW_CHIP_BUDGET;
+    chips.truncate(ROW_CHIP_BUDGET);
+    if hidden {
+        // One cell, the glyph the statusline already uses for chips it could
+        // not fit. `+N more` was nine cells to save the two that `8 pending`
+        // costs over it, and it took the headline down to a bare `…` and the
+        // next action with it -- then truncated to `+2 …` itself on a 100
+        // column terminal. The count it carried was not actionable; the
+        // details pane names every one of them in words.
+        chips.push(style("\u{203a}", Tone::Muted));
     }
     chips.join(" ")
 }
