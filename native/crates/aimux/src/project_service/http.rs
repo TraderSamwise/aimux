@@ -9,6 +9,21 @@ const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 
+/// How large a body this route may send.
+///
+/// An attachment carries its bytes base64 in the JSON body, so a flat cap for
+/// every route made the 10 MB limit `attachments.rs` declares unreachable --
+/// an upload was rejected at about 786 KB of image, which is under any phone
+/// photo. Derived from that declared limit rather than written down again, so
+/// the number that fires is the number the policy states.
+pub fn body_limit_for_route(method: &str, path: &str) -> usize {
+    if super::attachments::is_attachment_upload_route(method, path) {
+        super::attachments::attachment_upload_body_limit()
+    } else {
+        MAX_BODY_BYTES
+    }
+}
+
 const CORS_ALLOWED_ORIGINS: &[&str] = &[
     "http://localhost:8081",
     "http://127.0.0.1:8081",

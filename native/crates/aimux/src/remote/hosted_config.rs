@@ -47,7 +47,13 @@ impl Default for HostedConfig {
             },
             max_prompt_bytes: 16_384,
             max_response_bytes: 1_048_576,
-            max_attachment_bytes: 14 * 1024 * 1024,
+            // Derived from the project service's own attachment policy, so
+            // the relay and the service it proxies to cannot disagree about
+            // how large an upload may be. These were 14 MiB here and an
+            // effective ~786 KB there, so a remote client was told it could
+            // send 14 MiB and then rejected by the service behind it.
+            max_attachment_bytes: crate::project_service::attachments::attachment_upload_body_limit(
+            ) as i64,
             max_context_bytes: 8_192,
             audit_prompt_bodies: true,
             webhook_url: None,
@@ -97,7 +103,10 @@ pub fn normalize_hosted_config(raw: &Value) -> HostedConfig {
         ),
         max_attachment_bytes: bounded_i64(
             value.get("maxAttachmentBytes"),
-            14 * 1024 * 1024,
+            // The same derivation the `Default` impl uses. Written as a
+            // literal here it was a second default that could drift from the
+            // first, which is the thing this change exists to stop.
+            crate::project_service::attachments::attachment_upload_body_limit() as i64,
             16_384,
             104_857_600,
         ),

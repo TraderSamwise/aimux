@@ -186,6 +186,7 @@ import {
   mergeActiveSharedSessions,
   sharedSessionsEqual,
 } from "@/lib/shared-sessions";
+import { attachmentTooLargeMessage, firstOversizedAttachment } from "@/lib/attachment-limits";
 import { chatHistoryAtFloor, chatHistoryFloorNotice } from "@/lib/chat-history-floor";
 import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
@@ -1339,6 +1340,21 @@ export default function ChatScreen() {
         composerAwaitingAck ||
         (!text && attachments.length === 0)
       ) {
+        return;
+      }
+      // Checked over the whole set before anything is uploaded or the draft is
+      // touched. The upload loop below runs inside the send's `try`, so a
+      // rejection partway through abandons the send with earlier files already
+      // stored on the service -- and the rejection it got was
+      // "body exceeds 1048576 bytes", a byte count rather than an answer.
+      const oversized = firstOversizedAttachment(attachments);
+      if (oversized) {
+        setSendError(
+          attachmentTooLargeMessage({
+            filename: oversized.filename,
+            sizeBytes: oversized.sizeBytes ?? 0,
+          }),
+        );
         return;
       }
       sendBusyRef.current = true;
