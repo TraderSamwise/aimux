@@ -6,6 +6,7 @@ import {
   AGENT_CREATION_REFRESH_VIEWS,
   WORKTREE_CREATION_REFRESH_VIEWS,
   canSubmitCreation,
+  choicesIncludingJustCreated,
   creatableWorktreeChoices,
   isSelectableWorktreePath,
   removableWorktreeChoices,
@@ -55,6 +56,32 @@ describe("where a new agent can be launched", () => {
     expect(isSelectableWorktreePath(choices, "/repo/wt-gone")).toBe(false);
     // null is the main checkout, which is always there.
     expect(isSelectableWorktreePath([], null)).toBe(true);
+  });
+});
+
+describe("a worktree that was just created", () => {
+  // It is `pending` for the moment between the create returning and the
+  // refresh arriving, and pending buckets are not launch targets -- so
+  // offering it as the place to put an agent silently fell back to the main
+  // checkout, which is the opposite of what was just asked for.
+  it("stays a choice while it has not landed yet", () => {
+    const choices = choicesIncludingJustCreated([], { name: "feat/new", path: "/repo/wt-new" });
+    expect(choices).toHaveLength(1);
+    expect(choices[0]).toMatchObject({ label: "feat/new", path: "/repo/wt-new" });
+  });
+
+  it("does not become a duplicate once the real bucket arrives", () => {
+    const real = creatableWorktreeChoices([
+      bucket({ key: "a", name: "feat/new", path: "/repo/wt-new" }),
+    ]);
+    const choices = choicesIncludingJustCreated(real, { name: "feat/new", path: "/repo/wt-new" });
+    expect(choices).toHaveLength(1);
+    expect(choices[0].key).toBe("a");
+  });
+
+  it("changes nothing when there is none", () => {
+    const real = creatableWorktreeChoices([bucket({ key: "a" })]);
+    expect(choicesIncludingJustCreated(real, null)).toEqual(real);
   });
 });
 

@@ -464,13 +464,22 @@ export function ProjectSidebar() {
     }
   }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
-  // Closed with the project it belongs to. The dialog only renders while a
-  // project is resolved, so without this a project that goes away mid-create
-  // takes the dialog off screen while leaving it "open" -- and it reappears
-  // unannounced, on a different project, whenever one resolves again.
+  // Closed whenever the project it was opened for stops being the one on
+  // screen -- gone, or simply switched. The dialog keeps its form state and
+  // takes whatever endpoint it is handed, so surviving a switch means the next
+  // submit creates in a project the dialog was never opened for.
+  const createOpenForProjectRef = useRef<string | null>(null);
   usePrePaintEffect(() => {
-    if (!effectiveProjectPath) setCreateOpen(false);
-  }, [effectiveProjectPath]);
+    if (!createOpen) {
+      createOpenForProjectRef.current = null;
+      return;
+    }
+    if (createOpenForProjectRef.current === null) {
+      createOpenForProjectRef.current = effectiveProjectPath ?? null;
+      return;
+    }
+    if (createOpenForProjectRef.current !== effectiveProjectPath) setCreateOpen(false);
+  }, [createOpen, effectiveProjectPath]);
 
   const routeProjectStateKey = projectStateKey(pickedProjectRef);
   const desktopState = useAtomValue(desktopStateFamily(routeProjectStateKey));

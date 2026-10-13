@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -21,6 +21,7 @@ import {
   WORKTREE_CREATION_REFRESH_VIEWS,
   creatableWorktreeChoices,
   canSubmitCreation,
+  choicesIncludingJustCreated,
   isSelectableWorktreePath,
   type AgentToolChoice,
 } from "@/lib/agent-create";
@@ -34,6 +35,16 @@ import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransiti
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type CreateKind = "agent" | "worktree";
+
+/**
+ * Creations in flight, by project.
+ *
+ * Module scope rather than a ref, because Cancel unmounts the dialog without
+ * stopping the request: a ref is recreated on reopen, so a second submit could
+ * launch another agent while the first was still going. The `finally` that
+ * clears this runs whether or not the dialog is still on screen.
+ */
+const CREATIONS_IN_FLIGHT = new Set<string>();
 
 const KIND_OPTIONS = [
   { value: "agent" as const, label: "Agent" },
@@ -93,18 +104,16 @@ export function CreateInProjectDialog({
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
-  // A latch, not the state: `busy` is a closure that two taps 40ms apart both
-  // read as false, and the button is not the only trigger -- the name field
-  // submits on return as well. The Project screen's panel keeps refs for
-  // exactly this; dropping them here spawned two agents.
-  const inFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ name: string; path: string } | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
-  const worktreeChoices = useMemo(() => creatableWorktreeChoices(groups), [groups]);
+  const worktreeChoices = useMemo(
+    () => choicesIncludingJustCreated(creatableWorktreeChoices(groups), created),
+    [groups, created],
+  );
   // Re-read every render rather than trusted from state: a worktree can be
   // removed while this dialog is open, and launching into a path that is gone
   // fails in a way nobody could have predicted from the form.
@@ -115,8 +124,13 @@ export function CreateInProjectDialog({
   const canSubmit = canSubmitCreation({ kind, hasEndpoint: Boolean(endpoint), busy, name });
 
   async function submit() {
-    if (!endpoint || !canSubmit || inFlight.current) return;
-    inFlight.current = true;
+    // Keyed on the project, not on this component: two taps 40ms apart both
+    // read `busy` as false, the name field submits on return as a second
+    // trigger, and dismissing mid-flight and reopening would otherwise reset
+    // the guard entirely.
+    const flightKey = `${projectStateKey}:${kind}`;
+    if (!endpoint || !canSubmit || CREATIONS_IN_FLIGHT.has(flightKey)) return;
+    CREATIONS_IN_FLIGHT.add(flightKey);
     setBusy(true);
     setError(null);
     try {
@@ -152,9 +166,10 @@ export function CreateInProjectDialog({
       // stops being pending -- closing here would look like nothing happened.
       // The worktree you just made is also the one you are about to put
       // something in.
-      setCreated(trimmedName);
+      const createdPath = response.path ?? null;
+      setCreated(createdPath ? { name: trimmedName, path: createdPath } : null);
       setName("");
-      setWorktreePath(response.path ?? null);
+      setWorktreePath(createdPath);
       setKind("agent");
     } catch (e) {
       // Shown verbatim: the route is the thing that knows a name is taken,
@@ -164,13 +179,13 @@ export function CreateInProjectDialog({
       // looks exactly like never having tapped it.
       setError(
         isTransientRequestError(e)
-          ? "Lost contact with the project host. Nothing was created — try again."
+          ? "Lost contact with the project host, so it is not known whether this was created. Check the project before trying again."
           : e instanceof Error
             ? e.message
             : String(e),
       );
     } finally {
-      inFlight.current = false;
+      CREATIONS_IN_FLIGHT.delete(flightKey);
       setBusy(false);
     }
   }
@@ -266,8 +281,8 @@ export function CreateInProjectDialog({
 
           {created ? (
             <Text className="mt-4 text-[12px] text-muted-foreground">
-              Created {created}. It stays empty until something runs in it — launch an agent to see
-              it in the sidebar.
+              Created {created.name}. It stays empty until something runs in it — launch an agent to
+              see it in the sidebar.
             </Text>
           ) : null}
 

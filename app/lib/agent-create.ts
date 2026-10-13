@@ -78,6 +78,27 @@ export function removableWorktreeChoices(groups: WorktreeBucket[]): AgentWorktre
 }
 
 /**
+ * The choices, plus a worktree just created that has not landed yet.
+ *
+ * A worktree is `pending` for the moment between the create returning and the
+ * refresh arriving, and `creatableWorktreeChoices` excludes pending buckets --
+ * so offering the new worktree as the place to put an agent silently fell back
+ * to the main checkout, which is the opposite of what was just asked for. It
+ * stays a choice until the real bucket appears under the same path.
+ */
+export function choicesIncludingJustCreated(
+  choices: AgentWorktreeChoice[],
+  created: { name: string; path: string } | null,
+): AgentWorktreeChoice[] {
+  if (!created) return choices;
+  if (choices.some((choice) => choice.path === created.path)) return choices;
+  return [
+    ...choices,
+    { key: `just-created:${created.path}`, label: created.name, path: created.path },
+  ];
+}
+
+/**
  * Whether a path is still one of the choices.
  *
  * A worktree can be removed while a form sits open, and sending its path would
