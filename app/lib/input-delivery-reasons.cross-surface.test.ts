@@ -43,9 +43,23 @@ const FALLBACK = "Aimux will retry shortly; the agent terminal was busy.";
 function heldReasonsFromService(): string[] {
   const source = readFileSync(DELIVERY_SOURCE, "utf8");
   const reasons = new Set<string>();
-  const holdPattern = /AgentInputDeliveryDecision::Hold\s*\{([\s\S]*?)\}/g;
-  for (const [, body] of source.matchAll(holdPattern)) {
-    for (const [, reason] of body.matchAll(/reason:\s*"([^"]+)"/g)) {
+  // Scanned with a brace counter rather than a non-greedy `\{...\}`: that
+  // pattern stopped at the first `}` inside the arm, so an ordinary field
+  // containing braces before `reason:` hid the whole arm from this gate.
+  const marker = "AgentInputDeliveryDecision::Hold";
+  for (let at = source.indexOf(marker); at !== -1; at = source.indexOf(marker, at + 1)) {
+    const open = source.indexOf("{", at);
+    if (open === -1) continue;
+    let depth = 0;
+    let close = open;
+    for (; close < source.length; close += 1) {
+      if (source[close] === "{") depth += 1;
+      else if (source[close] === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    for (const [, reason] of source.slice(open, close).matchAll(/reason:\s*"([^"]+)"/g)) {
       reasons.add(reason);
     }
   }

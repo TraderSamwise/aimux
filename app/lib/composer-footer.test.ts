@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   COMPOSER_SEND_AWAITING_ECHO_NOTICE,
   composerFooterState,
-  heldDeliveryClearDelayMs,
+  heldNoticeDurationMs,
+  MAX_HELD_NOTICE_MS,
 } from "@/lib/composer-footer";
 
 /** Terminal mode: the one that mounts no transcript pane. */
@@ -89,26 +90,29 @@ describe("what the composer footer says", () => {
   });
 });
 
-describe("when a held send's notice retires", () => {
-  // Keyed on the service's own deadline, not on counting user messages. The
-  // count was wrong in exactly the case the notice exists for: the service
-  // holds BECAUSE the agent terminal has unsubmitted text, so the user
-  // submitting that text moved the count and cleared the notice while our
-  // input was still queued.
-  it("waits the remaining time until the deadline", () => {
-    expect(heldDeliveryClearDelayMs({ maxDeliverAtMs: 5_000, nowMs: 2_000 })).toBe(3_000);
+describe("how long a held send's notice stays up", () => {
+  // The duration the service published, not a deadline compared against the
+  // client's clock: `maxDeliverAtMs` is the SERVICE's epoch-ms, so any skew
+  // distorted the countdown, and a device far enough behind produced a delay
+  // `setTimeout` clamps -- firing immediately for what should be a long hold.
+  it("uses the duration the service gave", () => {
+    expect(heldNoticeDurationMs({ holdMs: 3_000 })).toBe(3_000);
   });
 
-  it("clears immediately once the deadline has passed", () => {
-    expect(heldDeliveryClearDelayMs({ maxDeliverAtMs: 5_000, nowMs: 5_000 })).toBe(0);
-    // Never negative: a clock that moved, or a deadline already behind us,
-    // must not become a timer that waits forever.
-    expect(heldDeliveryClearDelayMs({ maxDeliverAtMs: 5_000, nowMs: 9_000 })).toBe(0);
+  it("never waits a negative amount", () => {
+    expect(heldNoticeDurationMs({ holdMs: -5 })).toBe(0);
   });
 
-  // A service that did not say when it would deliver has given nothing to
-  // count down, so the notice stays until the next send replaces it.
-  it("has nothing to wait for when no deadline was given", () => {
-    expect(heldDeliveryClearDelayMs({ maxDeliverAtMs: null, nowMs: 5_000 })).toBeNull();
+  // Above `setTimeout`'s 32-bit delay the timer fires after 1ms, which is the
+  // opposite of what a long hold should do, so it is clamped.
+  it("clamps a duration long enough to overflow the timer", () => {
+    expect(heldNoticeDurationMs({ holdMs: 2_147_483_648 })).toBe(MAX_HELD_NOTICE_MS);
+    expect(MAX_HELD_NOTICE_MS).toBeLessThan(2_147_483_647);
+  });
+
+  // A service that did not say has given nothing to count down, so the notice
+  // stays until the next send replaces it.
+  it("has nothing to wait for when no duration was given", () => {
+    expect(heldNoticeDurationMs({ holdMs: null })).toBeNull();
   });
 });

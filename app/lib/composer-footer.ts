@@ -27,11 +27,20 @@ export const COMPOSER_SEND_AWAITING_ECHO_NOTICE = "Sent — waiting for the agen
 
 export interface ComposerFooterStateInput {
   /**
-   * The same three the panes are mounted from. Taken instead of a
-   * `transcriptVisible` boolean on purpose: that boolean was the screen's to
-   * pass, so it could be hardwired to `true` -- which restored the bug this
-   * whole change exists to fix, with every gate green. These three cannot be
-   * faked without also unmounting the pane the user is looking at.
+   * The same inputs the panes are mounted from, passed instead of a
+   * `transcriptVisible` boolean: that boolean was the screen's to pass, so it
+   * could be hardwired to `true`, which restored the bug this whole change
+   * exists to fix with every gate green.
+   *
+   * It raises the cost of faking rather than removing it -- a reviewer showed
+   * `mode: mode === "terminal" ? "chat" : mode` still fakes it at this call
+   * site alone. What it buys is that the honest call passes the same bindings
+   * the panes use, so the two cannot drift.
+   *
+   * `width` only maps `split` to `chat`, and both render a transcript, so it
+   * does not currently affect this answer. It is passed because
+   * `chatOutputPaneVisibility` takes it and the day visibility does depend on
+   * width, this follows without being touched.
    */
   mode: AgentOutputViewMode;
   rawOutputAllowed: boolean;
@@ -74,25 +83,25 @@ export function composerFooterState(input: ComposerFooterStateInput): ComposerFo
 }
 
 /**
- * How long until a held send's deadline, or null if there is nothing to wait
- * for.
+ * How long to keep a held send's notice up, or null if nothing says.
  *
- * Keyed on the deadline the project service publishes with the hold, not on
- * counting user messages. The count was wrong in exactly the case the notice
- * exists for: the service holds BECAUSE the agent terminal has unsubmitted
- * text, so when the user submits that text it becomes a user message, the
- * count moves, and the notice vanished with our input still queued. Returning
- * from background (a -2000 history window replacing the transcript wholesale)
- * and scrolling up both moved it too.
+ * Takes the duration the service published rather than an absolute deadline:
+ * `maxDeliverAtMs` is the service's own epoch-ms and the client's clock may
+ * disagree, which both distorts the countdown and -- for a device far enough
+ * behind -- produces a delay `setTimeout` clamps, firing immediately.
  *
- * Null means the service gave no deadline, so there is nothing to count down
+ * Clamped at both ends. Below zero a negative delay fires immediately, which
+ * is right; above `MAX_HELD_NOTICE_MS` a timer long enough to overflow
+ * `setTimeout`'s 32-bit delay also fires immediately, which is the opposite of
+ * what a long hold should do.
+ *
+ * Null means the service gave no duration, so there is nothing to count down
  * and the notice stays until the next send replaces it -- the honest answer
  * for a service that did not say when it would deliver.
  */
-export function heldDeliveryClearDelayMs(input: {
-  maxDeliverAtMs: number | null;
-  nowMs: number;
-}): number | null {
-  if (input.maxDeliverAtMs === null) return null;
-  return Math.max(0, input.maxDeliverAtMs - input.nowMs);
+export const MAX_HELD_NOTICE_MS = 60_000;
+
+export function heldNoticeDurationMs(input: { holdMs: number | null }): number | null {
+  if (input.holdMs === null) return null;
+  return Math.min(MAX_HELD_NOTICE_MS, Math.max(0, input.holdMs));
 }

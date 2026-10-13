@@ -129,14 +129,14 @@ describe("what a send response means for the composer", () => {
         delivery: {
           state: "held",
           reason: "visible-unsubmitted-input-recent-user-input",
-          maxDeliverAtMs: 1_700_000_000_000,
+          retryAfterMs: 4_000,
         },
       }),
     ).toEqual({
       kind: "held",
       notice:
         "Input held, not delivered yet: the agent terminal already has typed text. Clear or send that terminal draft, or Aimux will send this after the 15s safety hold.",
-      maxDeliverAtMs: 1_700_000_000_000,
+      holdMs: 4_000,
     });
   });
 
@@ -153,12 +153,12 @@ describe("what a send response means for the composer", () => {
     expect(sendDeliveryStateAfterResponse({ delivery: undefined })).toEqual({ kind: "none" });
   });
 
-  // No deadline means nothing to count down, which `heldDeliveryStillPending`
-  // treats as still waiting rather than guessing.
-  it("carries a null deadline when the service sent none", () => {
+  // No duration means nothing to count down, which `heldNoticeDurationMs`
+  // treats as nothing to wait for rather than guessing.
+  it("carries a null duration when the service sent none", () => {
     const state = sendDeliveryStateAfterResponse({
       delivery: { state: "held", reason: "active-client-recent-input" },
     });
-    expect(state).toMatchObject({ kind: "held", maxDeliverAtMs: null });
+    expect(state).toMatchObject({ kind: "held", holdMs: null });
   });
 });

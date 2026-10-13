@@ -112,7 +112,7 @@ import {
 } from "@/lib/image-picker";
 import {
   composerFooterState,
-  heldDeliveryClearDelayMs,
+  heldNoticeDurationMs,
   type ComposerFooterState,
 } from "@/lib/composer-footer";
 import {
@@ -549,12 +549,11 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   // An accepted send the project service queued rather than delivered. Kept
   // apart from `sendError`: the route returns it with `accepted: true`. The
-  // baseline rides along so the notice can retire itself once the queued input
-  // actually lands, rather than sitting there claiming "not delivered yet"
-  // about something delivered seconds ago.
+  // hold duration rides along so the notice retires on its own rather than
+  // sitting there claiming "not delivered yet" indefinitely.
   const [heldDelivery, setHeldDelivery] = useState<{
     notice: string;
-    maxDeliverAtMs: number | null;
+    holdMs: number | null;
   } | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
@@ -782,9 +781,8 @@ export default function ChatScreen() {
     setSendBusy(false);
     sendBusyRef.current = false;
     setSendError(null);
-    // Its baseline is a count of THIS conversation's user messages, so
-    // carrying it into another agent's composer would measure it against the
-    // wrong transcript and strand the notice there.
+    // Carrying it into another agent's composer would strand "Input held, not
+    // delivered yet" on a composer that never sent anything.
     setHeldDelivery(null);
   }, [composerDraftKey, jotaiStore]);
 
@@ -1208,9 +1206,10 @@ export default function ChatScreen() {
   // said "Send not confirmed yet" with nothing on screen to explain it.
   const composerSendPendingEcho = acceptedComposerMessages.some((message) => !message.settled);
   const heldDeliveryNotice = heldDelivery?.notice ?? null;
-  // Passes the three inputs rather than the `chatViewVisible` computed above:
-  // a boolean handed in could be hardwired, and was. Same arguments, same
-  // render, same pure helper, so the two calls cannot disagree.
+  // Passes the mode rather than the `chatViewVisible` computed above: a
+  // boolean handed in could be hardwired, and in the first cut of this change
+  // it was. Same bindings, same render, same pure helper, so the two calls
+  // cannot disagree.
   const composerFooterStateValue = composerFooterState({
     activityLabel,
     activityLabelShimmer,
@@ -1225,10 +1224,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (!heldDelivery) return;
-    const delay = heldDeliveryClearDelayMs({
-      maxDeliverAtMs: heldDelivery.maxDeliverAtMs,
-      nowMs: Date.now(),
-    });
+    const delay = heldNoticeDurationMs({ holdMs: heldDelivery.holdMs });
     if (delay === null) return;
     const timer = setTimeout(() => setHeldDelivery(null), delay);
     return () => clearTimeout(timer);
@@ -1418,10 +1414,7 @@ export default function ChatScreen() {
           // `sendDeliveryStateAfterResponse` owns the routing: `held` comes
           // back with `accepted: true`, so it is a wait, not a failure.
           if (deliveryState.kind === "held") {
-            setHeldDelivery({
-              maxDeliverAtMs: deliveryState.maxDeliverAtMs,
-              notice: deliveryState.notice,
-            });
+            setHeldDelivery({ holdMs: deliveryState.holdMs, notice: deliveryState.notice });
           } else {
             setSendError(deliveryState.text);
           }

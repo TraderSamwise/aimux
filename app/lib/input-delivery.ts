@@ -70,8 +70,26 @@ function formatLivePaneInputDeliveryReason(reason: string | undefined): string |
  */
 export type SendDeliveryState =
   | { kind: "none" }
-  | { kind: "held"; notice: string; maxDeliverAtMs: number | null }
+  | { kind: "held"; notice: string; holdMs: number | null }
   | { kind: "error"; text: string };
+
+/**
+ * How long the service says it will hold the input, as a duration.
+ *
+ * `retryAfterMs` and `maxDeliverAtMs` are both on the wire. The duration is
+ * the one to use: `maxDeliverAtMs` is the SERVICE's absolute epoch-ms, and
+ * comparing it against the client's `Date.now()` makes the countdown wrong by
+ * whatever the two clocks disagree by -- a device a few weeks behind turns a
+ * 15s hold into a timer long enough that `setTimeout` clamps it and fires
+ * immediately.
+ */
+function holdDurationMs(delivery: LivePaneInputDelivery | undefined): number | null {
+  const retryAfter = delivery?.retryAfterMs;
+  if (typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter >= 0) {
+    return retryAfter;
+  }
+  return null;
+}
 
 export function sendDeliveryStateAfterResponse(
   response: Pick<LivePaneInputResponse, "delivery">,
@@ -81,12 +99,7 @@ export function sendDeliveryStateAfterResponse(
   if (livePaneInputDeliveryOutcome(response.delivery) !== "pending") {
     return { kind: "error", text: notice };
   }
-  const deadline = response.delivery?.maxDeliverAtMs;
-  return {
-    kind: "held",
-    notice,
-    maxDeliverAtMs: typeof deadline === "number" && Number.isFinite(deadline) ? deadline : null,
-  };
+  return { kind: "held", notice, holdMs: holdDurationMs(response.delivery) };
 }
 
 export function formatLivePaneInputResponseRefusal(response: LivePaneInputResponse): string | null {
