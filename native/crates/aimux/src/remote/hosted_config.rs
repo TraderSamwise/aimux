@@ -103,7 +103,10 @@ pub fn normalize_hosted_config(raw: &Value) -> HostedConfig {
         ),
         max_attachment_bytes: bounded_i64(
             value.get("maxAttachmentBytes"),
-            14 * 1024 * 1024,
+            // The same derivation the `Default` impl uses. Written as a
+            // literal here it was a second default that could drift from the
+            // first, which is the thing this change exists to stop.
+            crate::project_service::attachments::attachment_upload_body_limit() as i64,
             16_384,
             104_857_600,
         ),

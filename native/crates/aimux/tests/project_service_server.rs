@@ -259,3 +259,27 @@ fn body_of_size(bytes: usize) -> Vec<u8> {
     body.extend_from_slice(suffix);
     body
 }
+
+/// The relay's attachment budget is the service's attachment budget.
+///
+/// The relay allowed 14 MiB while the service behind it allowed an effective
+/// 786 KB, so a remote client was told it could send 14 MiB and then refused
+/// by the thing it was proxying to. Both of the relay's defaults -- the
+/// `Default` impl and the config-parse path -- are derived from the same
+/// function now, because written as a literal the second one could drift from
+/// the first.
+#[test]
+fn the_relay_and_the_service_agree_on_how_large_an_attachment_may_be() {
+    let service = aimux::project_service::attachments::attachment_upload_body_limit() as i64;
+
+    let defaults = aimux::remote::hosted_config::HostedConfig::default();
+    assert_eq!(defaults.max_attachment_bytes, service);
+
+    // The parse path with nothing configured has to land on the same number.
+    let parsed = aimux::remote::hosted_config::normalize_hosted_config(&serde_json::json!({}));
+    assert_eq!(parsed.max_attachment_bytes, service);
+
+    // And it has to be inside the range the validator permits, or config
+    // loading would quietly clamp the default away from the policy.
+    assert!(service > 16_384 && service < 104_857_600);
+}
