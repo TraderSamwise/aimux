@@ -567,6 +567,10 @@ fn footer_chips_render_in_tmux_window_order() {
 /// fewer.
 #[test]
 fn footer_chips_are_not_capped_at_five() {
+    // The hints are synthetic labels, chosen only to be distinguishable per
+    // window -- `600 unread` is not a hint the service can derive, since
+    // `compactHint` caps at `99+`. This gate is about which chips survive a
+    // narrow line, not about how a count is written.
     fn agent(window_index: i64) -> Value {
         json!({
             "id": format!("claude-{window_index}"),
